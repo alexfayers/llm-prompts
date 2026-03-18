@@ -4,6 +4,14 @@ ROOT_DIR=$(dirname "$SCRIPT_DIR")
 
 AGENTS_DIR="$HOME/.agents"
 
+if [[ "$(uname)" == "Darwin" ]]; then
+    CLINE_BASE_DIR="$HOME/Documents/Cline"
+else
+    CLINE_BASE_DIR="$HOME/Cline"
+fi
+CLINE_RULES_DIR="$CLINE_BASE_DIR/Rules"
+CLINE_WORKFLOWS_DIR="$CLINE_BASE_DIR/Workflows"
+
 log() {
     local levels=(debug info warn error success) i
     for i in "${!levels[@]}"; do [[ "${levels[i]}" == "$1" ]] && break; done
@@ -18,7 +26,7 @@ log() {
 }
 
 # Install skills
-for skill in "$ROOT_DIR/skills/"*; do
+for skill in "$ROOT_DIR/cline/skills/"*; do
     if [ -d "$skill" ]; then
         skill_name=$(basename "$skill")
 
@@ -32,5 +40,41 @@ for skill in "$ROOT_DIR/skills/"*; do
             continue
         fi
         log success "Installed skill: $skill_name"
+    fi
+done
+
+# Install cline rules
+mkdir -p "$CLINE_RULES_DIR"
+for rule in "$ROOT_DIR/cline/rules/"*; do
+    if [ -f "$rule" ]; then
+        rule_name=$(basename "$rule")
+        dest="$CLINE_RULES_DIR/$rule_name"
+        if [ -f "$dest" ]; then
+            log warn "Rule '$rule_name' is already installed. Skipping."
+            continue
+        fi
+        if ! ln "$rule" "$dest"; then
+            log error "Failed to install rule: $rule_name"
+            continue
+        fi
+        log success "Installed rule: $rule_name"
+    fi
+done
+
+# Install cline workflows
+mkdir -p "$CLINE_WORKFLOWS_DIR"
+for workflow in "$ROOT_DIR/cline/workflows/"*; do
+    if [ -f "$workflow" ]; then
+        workflow_name=$(basename "$workflow")
+        dest="$CLINE_WORKFLOWS_DIR/$workflow_name"
+        if [ -f "$dest" ]; then
+            log warn "Workflow '$workflow_name' is already installed. Skipping."
+            continue
+        fi
+        if ! ln "$workflow" "$dest"; then
+            log error "Failed to install workflow: $workflow_name"
+            continue
+        fi
+        log success "Installed workflow: $workflow_name"
     fi
 done
