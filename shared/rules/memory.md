@@ -1,5 +1,5 @@
 ---
-description: Guide Cline on using mcp-memory-sqlite for project-scoped and global memory.
+description: Guide {{agent}} on using mcp-memory-sqlite for project-scoped and global memory.
 ---
 
 # Memory Usage with mcp-memory-sqlite
@@ -51,20 +51,20 @@ For ANY and EVERY task, you **MUST** follow ALL of these steps - no exceptions, 
 1. **ALWAYS** use `read_graph` on `memory-global` first - this surfaces recent entities. Never skip this step.
 2. **ALWAYS** use `read_graph` on `memory-project` second - this surfaces recent project entities.
 3. **ALWAYS** use `search_nodes` on `memory-global` to find entities related to the user's request. Search for:
-   - Keywords and terms from the user's message (e.g. file names, feature names, ticket IDs)
-   - `user-preferences` (always search this - it contains workflow and coding style rules)
-   - The current project/repository name
-   - Any relevant `pattern/` entities (e.g. `pattern/aws-lambda-debugging`, `pattern/dynamodb-batch-get-retry`) - search for keywords related to the tools/services being used
+	- Keywords and terms from the user's message (e.g. file names, feature names, ticket IDs)
+	- `user-preferences` (always search this - it contains workflow and coding style rules)
+	- The current project/repository name
+	- Any relevant `pattern/` entities (e.g. `pattern/aws-lambda-debugging`, `pattern/dynamodb-batch-get-retry`) - search for keywords related to the tools/services being used
 4. **ALWAYS** use `search_nodes` on `memory-project` to find entities related to:
-   - Keywords and terms from the user's message
-   - The current file(s) or directory being worked on
-   - Any feature or ticket identifiers mentioned in the request
+	- Keywords and terms from the user's message
+	- The current file(s) or directory being worked on
+	- Any feature or ticket identifiers mentioned in the request
 5. **ALWAYS** use `get_entity_with_relations` on every relevant entity found in steps 3-4. This traverses the graph to discover linked context that search alone would miss.
-   - Use `search_related_nodes` instead when you need to filter by `entityType` or `relationType` (e.g. find all `task` entities related to `project/x`).
+	- Use `search_related_nodes` instead when you need to filter by `entityType` or `relationType` (e.g. find all `task` entities related to `project/x`).
 
 6. If relevant entities exist:
-   - Briefly summarize what is already known before making a plan.
-   - Highlight prior decisions, constraints, and pitfalls.
+	- Briefly summarize what is already known before making a plan.
+	- Highlight prior decisions, constraints, and pitfalls.
 
 ## Entity and observation standards
 
@@ -120,15 +120,15 @@ Use entity type to distinguish current facts from past actions:
 For each significant unit of work (feature implemented, bug fixed, refactor completed), and **BEFORE** calling the `attempt_completion` tool:
 
 1. Using `memory-project`:
-   - Ensure there is an entity representing this project and, if useful, one for the specific feature/area.
-   - Add new observations describing:
-     - What changed
-     - Why it changed (rationale)
-     - Any important consequences, caveats, or follow-up TODOs.
+	- Ensure there is an entity representing this project and, if useful, one for the specific feature/area.
+	- Add new observations describing:
+	  - What changed
+	  - Why it changed (rationale)
+	  - Any important consequences, caveats, or follow-up TODOs.
 
 2. When the knowledge is reusable across projects:
-   - Also update `memory-global` with a concise, generalized observation.
-   - Avoid project-specific details in global memory; focus on patterns and lessons.
+	- Also update `memory-global` with a concise, generalized observation.
+	- Avoid project-specific details in global memory; focus on patterns and lessons.
 
 3. If a memory is no longer relevant, was incorrect, or would actively mislead future sessions, use `delete_entity` and/or `delete_relation` to remove it. Use this sparingly - prefer marking things deprecated in text unless the memory would cause harm.
 

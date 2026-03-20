@@ -1,3 +1,8 @@
+---
+description: Style consistency guidelines when making any changes
+copilot_apply_to: '**'
+---
+
 # Consistency
 
 When making any changes, it is **extremely important** that you look for other examples within the workspace/directory/remotely/etc for the style that the user writes/creates/designs in. Existing styles should overrule other guidelines unless explicitly told otherwise. You MUST make the user aware if you are not following existing styles.

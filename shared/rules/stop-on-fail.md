@@ -1,8 +1,13 @@
+---
+description: Stop and ask for help when a task or tool fails
+copilot_apply_to: '**'
+---
+
 # Stop On Failures
 
 If you cannot run a task or tool, such as in the following situations:
 - Failed build
-- Failed MCP tool
+- Failed tool call
 - Failed command
 - Missing info
 

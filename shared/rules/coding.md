@@ -1,3 +1,8 @@
+---
+description: Coding guidelines to follow when generating, reviewing, or modifying code
+copilot_apply_to: '**'
+---
+
 # Coding guidelines
 
 - Keep any resulting code concise but readable
@@ -8,8 +13,8 @@
   - Comments should not be necessary in general
 - Add new imports at THE SAME TIME as making code changes
 - All produced code MUST follow the existing style within the package (variable names, documentation, etc.)
-- NEVER use the `attempt_completion` tool until all tasks in the focus chain are completed.
-- In ACT mode, never narrate or describe what you are about to do - just do it. If you need to plan, use `ask_followup_question` to ask the user to switch to PLAN mode.
+- NEVER {{TOOL_COMPLETE}} until all tasks in the focus chain are completed.
+- {{ACTION_NO_NARRATE}}
 - Code should be written with reusability and maintainability in mind at all times. If multiple functions do similar things, merge them into one or create an interface
 - It is extremely important that you NEVER write comments explaining the reasoning for a specific change. Comments should only be used to explain complex code. If comments are required, consider a different approach.
 - Avoid unnecessary variable assignment unless it improves the clarity of the code. If a variable is used once, it probably doesn't need to be a variable.

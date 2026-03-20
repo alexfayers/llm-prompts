@@ -1,3 +1,8 @@
+---
+description: Reconsider your approach and simplify before implementing
+copilot_mode: ask
+---
+
 Reconsider.
 
 Think step by step about whether there exists a solution to the problem that is:

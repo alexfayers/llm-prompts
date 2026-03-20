@@ -1,3 +1,8 @@
+---
+description: Search the workspace for TODOs and present them
+copilot_mode: ask
+---
+
 # TODO Search
 
 Search the workspace for TODOs. Present them to the user in the following format:

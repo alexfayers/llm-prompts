@@ -1,3 +1,8 @@
+---
+description: Evaluate confidence and quality of an approach before implementing
+copilot_mode: ask
+---
+
 Based on the following rules, how confident are you about your approach? Be brutally honest and do not sugarcoat your opinion.
 
 Split the problem into it's component parts. Assign each part an integer score from _1 to 10_ for the following categories:
@@ -25,9 +30,9 @@ After you have calculated the score for each subcategory, calculate the category
 
 Only state the overall score at the end of your response, after your calculations.
 
-If the score for any category is less than 10, state how it be improved using the notes you stated for each subcategory, then take steps to improve the score to a 10. Don't ask the user before doing this.
+If the score for any category is less than 10, state how it can be improved using the notes you stated for each subcategory, then take steps to improve the score to a 10. Don't ask the user before doing this.
 
-If, after deep investigation, you are unable to find a high-scoring solution or answer, explain the problem to the user and for more information using the `ask_followup_question` tool. However, this should be avoided if possible.
+If, after deep investigation, you are unable to find a high-scoring solution or answer, {{TOOL_ASK}}. However, this should be avoided if possible.
 
 Once you have calculated the scores and ways to improve, present the scores and improvements to the user.
 
@@ -37,6 +42,6 @@ NEVER use markdown tables when outputting.
 
 **Do not start implementation until both the quality and the confidence are at least a 9.**
 
-Once ready to begin implementation, use the `new_task` tool to create a new task to keep token usage low, proving information about the implementation plan and any project/task specific rules.
+{{TOOL_WRAP_UP}}
 
 > NOTE: if any of the rules contradict any existing coding styles, best practices, or suggestions within the current project then the rules can be overridden. However, if the rules _are_ overridden, this _must_ be **explicitly** mentioned to the user.

@@ -1,3 +1,8 @@
+---
+description: Workflow to follow after each change - test, lint, commit
+copilot_mode: agent
+---
+
 After each change, perform the following steps in order:
 
 1. If tests do not exist for your changes, create them.
@@ -13,6 +18,6 @@ After each "atomic change", make a commit. Always ensure that all tests pass _be
 
 If you encounter any other issues as you go, or the user asks you to do something else, add those tasks as TODOs.
 
-Once all steps in the focus chain have been completed, all tests pass, memory is updated, instruction suggestions have been made, and everything is committed, THEN AND (ONLY THEN!) can you call the `attempt_completion` tool.
+Once all steps in the focus chain have been completed, all tests pass, memory is updated, instruction suggestions have been made, and everything is committed, THEN AND (ONLY THEN!) can you {{TOOL_COMPLETE}}.
 
-**Once ready, use the `new_task` tool to create a new task to keep token usage low**. Make sure to pass all information that you have gathered, or references to it, as well as the established rules.
+{{TOOL_WRAP_UP}}

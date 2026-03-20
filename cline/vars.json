@@ -1,0 +1,7 @@
+{
+  "agent": "Cline",
+  "ACTION_NO_NARRATE": "In ACT mode, never narrate or describe what you are about to do - just do it. If you need to plan, use `ask_followup_question` to ask the user to switch to PLAN mode.",
+  "TOOL_COMPLETE": "call the `attempt_completion` tool",
+  "TOOL_ASK": "explain the problem to the user and ask for more information using the `ask_followup_question` tool",
+  "TOOL_WRAP_UP": "**Once ready, use the `new_task` tool to create a new task to keep token usage low**. Make sure to pass all information that you have gathered, or references to it, as well as the established rules."
+}
