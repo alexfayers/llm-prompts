@@ -290,7 +290,7 @@ def _install_skills(skills_src: Path, agents_dir: Path) -> None:
             if skill_dest.is_symlink() and skill_dest.resolve() == skill_path.resolve():
                 log("debug", f"Skill '{skill_name}' is up to date. Skipping.")
                 continue
-            already_existed = skill_dest.exists()
+            already_existed = skill_dest.exists() or skill_dest.is_symlink()
             if already_existed:
                 if skill_dest.is_symlink():
                     skill_dest.unlink()
