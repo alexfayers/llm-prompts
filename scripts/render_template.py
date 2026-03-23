@@ -126,7 +126,8 @@ def render_template(template_path: str, variables_path: str, target: str) -> str
     """
     template_content = _read_text(Path(template_path))
     variables = json.loads(_read_text(Path(variables_path)))
-    
+    variables.setdefault("REPO_ROOT", str(Path(__file__).parent.parent.resolve()))
+
     # Substitute variables
     substituted = substitute_variables(template_content, variables)
     

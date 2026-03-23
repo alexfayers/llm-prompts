@@ -1,18 +1,18 @@
 #!/usr/bin/env python
 """Install Cline and Copilot rules, workflows, skills, and prompts."""
 
+import json
 import os
 import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Literal
 
 try:
     from render_template import render_template
 except ModuleNotFoundError:
     from scripts.render_template import render_template
-
 
 LogLevel = Literal["debug", "info", "warn", "error", "success"]
 
@@ -67,7 +67,7 @@ def _vscode_user_dir() -> Path:
         return home / ".config" / "Code" / "User"
 
 
-def _get_dirs() -> dict[str, Path]:
+def _get_dirs() -> dict[str, dict[str, Path] | Path]:
     """Build destination directories used during installation.
 
     Returns:
@@ -79,12 +79,18 @@ def _get_dirs() -> dict[str, Path]:
     vscode_user = _vscode_user_dir()
     return {
         "agents": home / ".agents",
-        "cline_rules": cline_base / "Rules",
-        "cline_rules_merged": cline_merged / "rules",
-        "cline_workflows": cline_base / "Workflows",
-        "cline_workflows_merged": cline_merged / "workflows",
-        "copilot_instructions": home / ".copilot" / "instructions",
-        "copilot_prompts": vscode_user / "prompts",
+        "cline_symlinks": {
+            "rules": cline_base / "Rules",
+            "workflows": cline_base / "Workflows",
+        },
+        "cline": {
+            "rules": cline_merged / "rules",
+            "workflows": cline_merged / "workflows",
+        },
+        "copilot": {
+            "rules": home / ".copilot" / "instructions",
+            "workflows": vscode_user / "prompts",
+        },
     }
 
 
@@ -108,6 +114,22 @@ def _write_text(path: Path, content: str) -> None:
         content: Text to write.
     """
     path.write_text(content, encoding="utf-8")
+
+
+def _read_overlay_name(root_dir: Path) -> str | None:
+    """Read the overlay directory name from overlay.json.
+
+    Args:
+        root_dir: Repository root directory.
+
+    Returns:
+        Overlay directory name, or None if not configured.
+    """
+    overlay_config = root_dir / "overlay.json"
+    if not overlay_config.exists():
+        return None
+    data = json.loads(_read_text(overlay_config))
+    return data.get("overlay") or None
 
 
 def _install_rendered(src: Path, dest: Path, vars_path: Path, target: str, label: str) -> None:
@@ -174,34 +196,79 @@ def _install_linked(src: Path, dest: Path, label: str) -> None:
 
 
 @dataclass
-class _Section:
-    label_type: str
-    shared_src: Path
-    agent_src: Path
-    dest_dir: Path
-    vars_path: Path
-    target: str
-    dest_name: Callable[[Path], str]
+class _Agent:
+    """Agent installation configuration."""
+
+    name: str
+    root_dir: Path
+    dirs: dict
+
+    def vars_path(self) -> Path:
+        """Return the path to the agent's variables JSON file."""
+        return self.root_dir / self.name / "vars.json"
+
+    def agent_src(self, subdir: str) -> Path:
+        """Return the path to agent-specific source files for a content subdir."""
+        return self.root_dir / self.name / subdir
+
+    def dest_dir(self, subdir: str) -> Path:
+        """Return the destination directory for a content subdir."""
+        return self.dirs[self.name][subdir]
+
+    def dest_name(self, src: Path, subdir: str) -> str:
+        """Return the destination filename for a source file."""
+        return src.name
 
 
-def _install_section(section: _Section) -> None:
-    """Install one content section.
+class _CopilotAgent(_Agent):
+    """Copilot agent with format-specific destination naming."""
+
+    _SUFFIXES: dict[str, str] = {"rules": "instructions", "workflows": "prompt"}
+
+    def dest_name(self, src: Path, subdir: str) -> str:
+        return f"{src.stem}.{self._SUFFIXES[subdir]}.md"
+
+
+def _install_content(
+    agent: _Agent,
+    subdir: str,
+    shared_src: Path,
+    overlay_src: Path | None,
+) -> None:
+    """Install shared and agent-specific content for one agent and content type.
 
     Args:
-        section: Section configuration.
+        agent: Agent configuration.
+        subdir: Content subdirectory name (e.g. 'rules' or 'workflows').
+        shared_src: Base shared source directory.
+        overlay_src: Optional overlay source directory (installed first).
     """
-    log("info", f"[{section.target}] Installing {section.label_type}s...")
-    section.dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_dir = agent.dest_dir(subdir)
+    vars_path = agent.vars_path()
+    target = agent.name
 
-    for src in sorted(section.shared_src.glob("*.md")):
-        dest_filename = section.dest_name(src)
-        _install_rendered(src, section.dest_dir / dest_filename, section.vars_path, section.target, f"{section.label_type} '{dest_filename}'")
+    log("info", f"[{target}] Installing {subdir}...")
+    dest_dir.mkdir(parents=True, exist_ok=True)
 
-    if section.agent_src.exists():
-        for src in sorted(section.agent_src.glob("*.md")):
-            if (section.shared_src / src.name).exists():
-                continue
-            _install_linked(src, section.dest_dir / src.name, f"{section.label_type} '{src.name}'")
+    installed: set[str] = set()
+
+    if overlay_src and overlay_src.exists():
+        for src in sorted(overlay_src.glob("*.md")):
+            name = agent.dest_name(src, subdir)
+            _install_rendered(src, dest_dir / name, vars_path, target, f"{subdir}/{name}")
+            installed.add(name)
+
+    for src in sorted(shared_src.glob("*.md")):
+        name = agent.dest_name(src, subdir)
+        if name not in installed:
+            _install_rendered(src, dest_dir / name, vars_path, target, f"{subdir}/{name}")
+            installed.add(name)
+
+    agent_src = agent.agent_src(subdir)
+    if agent_src.exists():
+        for src in sorted(agent_src.glob("*.md")):
+            if not (shared_src / src.name).exists():
+                _install_linked(src, dest_dir / src.name, f"{subdir}/{src.name}")
 
 
 def _install_skills(skills_src: Path, agents_dir: Path) -> None:
@@ -265,54 +332,32 @@ def main() -> None:
     root_dir = script_dir.parent
     dirs = _get_dirs()
 
-    cline_vars = root_dir / "cline" / "vars.json"
-    copilot_vars = root_dir / "copilot" / "vars.json"
+    overlay_name = _read_overlay_name(root_dir)
+    overlay_dir = root_dir / overlay_name if overlay_name else None
 
     _install_skills(root_dir / "cline" / "skills", dirs["agents"])
+    if overlay_dir:
+        _install_skills(overlay_dir / "cline" / "skills", dirs["agents"])
 
-    for section in [
-        _Section(
-            label_type="rule",
-            shared_src=root_dir / "shared" / "rules",
-            agent_src=root_dir / "cline" / "rules",
-            dest_dir=dirs["cline_rules_merged"],
-            vars_path=cline_vars,
-            target="cline",
-            dest_name=lambda p: p.name,
-        ),
-        _Section(
-            label_type="workflow",
-            shared_src=root_dir / "shared" / "workflows",
-            agent_src=root_dir / "cline" / "workflows",
-            dest_dir=dirs["cline_workflows_merged"],
-            vars_path=cline_vars,
-            target="cline",
-            dest_name=lambda p: p.name,
-        ),
-        _Section(
-            label_type="instruction",
-            shared_src=root_dir / "shared" / "rules",
-            agent_src=root_dir / "copilot" / "instructions",
-            dest_dir=dirs["copilot_instructions"],
-            vars_path=copilot_vars,
-            target="copilot",
-            dest_name=lambda p: f"{p.stem}.instructions.md",
-        ),
-        _Section(
-            label_type="prompt",
-            shared_src=root_dir / "shared" / "workflows",
-            agent_src=root_dir / "copilot" / "prompts",
-            dest_dir=dirs["copilot_prompts"],
-            vars_path=copilot_vars,
-            target="copilot",
-            dest_name=lambda p: f"{p.stem}.prompt.md",
-        ),
-    ]:
-        _install_section(section)
+    agents: list[_Agent] = [
+        _Agent(name="cline", root_dir=root_dir, dirs=dirs),
+        _CopilotAgent(name="copilot", root_dir=root_dir, dirs=dirs),
+    ]
+
+    for agent in agents:
+        for subdir in ["rules", "workflows"]:
+            overlay_src = (overlay_dir / "shared" / subdir) if overlay_dir else None
+            _install_content(
+                agent=agent,
+                subdir=subdir,
+                shared_src=root_dir / "shared" / subdir,
+                overlay_src=overlay_src,
+            )
 
     log("info", "[cline] Symlinking rules and workflows...")
-    _symlink_dir(dirs["cline_rules_merged"], dirs["cline_rules"])
-    _symlink_dir(dirs["cline_workflows_merged"], dirs["cline_workflows"])
+    cline_symlinks: dict[str, Path] = dirs["cline_symlinks"]
+    for subdir, symlink_dest in cline_symlinks.items():
+        _symlink_dir(dirs["cline"][subdir], symlink_dest)
 
 
 if __name__ == "__main__":
