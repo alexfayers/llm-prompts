@@ -51,20 +51,22 @@ For ANY and EVERY task, you **MUST** follow ALL of these steps - no exceptions, 
 1. **ALWAYS** use `read_graph` on `memory-global` first - this surfaces recent entities. Never skip this step.
 2. **ALWAYS** use `read_graph` on `memory-project` second - this surfaces recent project entities.
 3. **ALWAYS** use `search_nodes` on `memory-global` to find entities related to the user's request. Search for:
-	- Keywords and terms from the user's message (e.g. file names, feature names, ticket IDs)
-	- `user-preferences` (always search this - it contains workflow and coding style rules)
-	- The current project/repository name
-	- Any relevant `pattern/` entities (e.g. `pattern/aws-lambda-debugging`, `pattern/dynamodb-batch-get-retry`) - search for keywords related to the tools/services being used
+    - Keywords and terms from the user's message (e.g. file names, feature names, ticket IDs)
+    - `user-preferences` (always search this - it contains workflow and coding style rules)
+    - The current project/repository name
+    - Any relevant `pattern/` entities (e.g. `pattern/aws-lambda-debugging`, `pattern/dynamodb-batch-get-retry`) - search for keywords related to the tools/services being used
 4. **ALWAYS** use `search_nodes` on `memory-project` to find entities related to:
-	- Keywords and terms from the user's message
-	- The current file(s) or directory being worked on
-	- Any feature or ticket identifiers mentioned in the request
+    - Keywords and terms from the user's message
+    - The current file(s) or directory being worked on
+    - Any feature or ticket identifiers mentioned in the request
+    - `STATUS in-progress` (always search this - it finds any unfinished task entities for the current project)
 5. **ALWAYS** use `get_entity_with_relations` on every relevant entity found in steps 3-4. This traverses the graph to discover linked context that search alone would miss.
-	- Use `search_related_nodes` instead when you need to filter by `entityType` or `relationType` (e.g. find all `task` entities related to `project/x`).
+    - Use `search_related_nodes` instead when you need to filter by `entityType` or `relationType` (e.g. find all `task` entities related to `project/x`).
+    - **ALWAYS** call `search_related_nodes(name="project/<current-project>", entityType="task")` to find all task entities for the current project - this catches in-progress tasks even if they didn't appear in text searches.
 
 6. If relevant entities exist:
-	- Briefly summarize what is already known before making a plan.
-	- Highlight prior decisions, constraints, and pitfalls.
+    - Briefly summarize what is already known before making a plan.
+    - Highlight prior decisions, constraints, and pitfalls.
 
 ## Entity and observation standards
 
@@ -83,6 +85,16 @@ Entity names must be unique across all entity types. Always prefix the name with
 | A reusable pattern | `pattern` | `pattern/<short-noun>` | `pattern/dynamodb-batch-get-retry` |
 | A completed change | `changelog` | `changelog/<TICKET-ID>-<slug>` or `changelog/<project>-<date>-<slug>` | `changelog/ABC-123-idempotency-simplification` |
 
+### Task entity discipline
+
+**CRITICAL: In-progress work MUST be tracked as a separate `task/` entity - never as observations on a `project/` entity.**
+
+- Every `task/` entity MUST include a `STATUS:` observation: `STATUS: in-progress`, `STATUS: blocked`, or `STATUS: complete`
+- Task entities MUST be linked to their parent project with a `belongs-to` relation
+- When starting a new piece of work, create the `task/` entity and relation immediately - before writing any code
+- When completing a task, update its STATUS observation from `in-progress` to `complete`
+- Do not store implementation details or work-in-progress notes on the `project/` entity
+
 ### Entity relations
 
 Memory is a graph database - use `get_entity_with_relations` to traverse linked entities and discover connected context.
@@ -91,6 +103,7 @@ Memory is a graph database - use `get_entity_with_relations` to traverse linked 
 
 Use relations to link related entities, e.g.:
 - task `implements` feature
+- task `belongs-to` project
 - feature `belongs-to` project
 - pattern `used-in` project
 - changelog `modified` project or feature
@@ -120,15 +133,16 @@ Use entity type to distinguish current facts from past actions:
 For each significant unit of work (feature implemented, bug fixed, refactor completed), and **BEFORE** calling the `attempt_completion` tool:
 
 1. Using `memory-project`:
-	- Ensure there is an entity representing this project and, if useful, one for the specific feature/area.
-	- Add new observations describing:
-	  - What changed
-	  - Why it changed (rationale)
-	  - Any important consequences, caveats, or follow-up TODOs.
+    - Ensure there is an entity representing this project and, if useful, one for the specific feature/area.
+    - Add new observations describing:
+      - What changed
+      - Why it changed (rationale)
+      - Any important consequences, caveats, or follow-up TODOs.
+    - Update the `task/` entity STATUS observation from `in-progress` to `complete`.
 
 2. When the knowledge is reusable across projects:
-	- Also update `memory-global` with a concise, generalized observation.
-	- Avoid project-specific details in global memory; focus on patterns and lessons.
+    - Also update `memory-global` with a concise, generalized observation.
+    - Avoid project-specific details in global memory; focus on patterns and lessons.
 
 3. If a memory is no longer relevant, was incorrect, or would actively mislead future sessions, use `delete_entity` and/or `delete_relation` to remove it. Use this sparingly - prefer marking things deprecated in text unless the memory would cause harm.
 
