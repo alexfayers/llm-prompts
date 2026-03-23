@@ -61,8 +61,7 @@ For ANY and EVERY task, you **MUST** follow ALL of these steps - no exceptions, 
     - Any feature or ticket identifiers mentioned in the request
     - `STATUS in-progress` (always search this - it finds any unfinished task entities for the current project)
 5. **ALWAYS** use `get_entity_with_relations` on every relevant entity found in steps 3-4. This traverses the graph to discover linked context that search alone would miss.
-    - Use `search_related_nodes` instead when you need to filter by `entityType` or `relationType` (e.g. find all `task` entities related to `project/x`).
-    - **ALWAYS** call `search_related_nodes(name="project/<current-project>", entityType="task")` to find all task entities for the current project - this catches in-progress tasks even if they didn't appear in text searches.
+    - **ALWAYS** call `search_related_nodes(name="project/<current-project>", entityType="task")` to find all task entities for the current project.
 
 6. If relevant entities exist:
     - Briefly summarize what is already known before making a plan.
@@ -100,6 +99,8 @@ Entity names must be unique across all entity types. Always prefix the name with
 Memory is a graph database - use `get_entity_with_relations` to traverse linked entities and discover connected context.
 
 **CRITICAL: You MUST call `create_relations` whenever you call `create_entities`.** Relations are the core of the graph model - entities without relations are nearly useless. Always link new entities to existing ones.
+
+Every entity MUST have at least one relation, except `user-preferences` and `pattern` entities which are global singletons not tied to a specific project.
 
 Use relations to link related entities, e.g.:
 - task `implements` feature
