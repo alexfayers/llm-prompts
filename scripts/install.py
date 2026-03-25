@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 """Install Cline and Copilot rules, workflows, skills, and prompts."""
 
+from dataclasses import dataclass
 import json
 import os
+from pathlib import Path
 import shutil
 import sys
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal
 
 try:
@@ -61,10 +61,9 @@ def _vscode_user_dir() -> Path:
     home = Path.home()
     if sys.platform == "win32":
         return Path(os.environ["APPDATA"]) / "Code" / "User"
-    elif sys.platform == "darwin":
+    if sys.platform == "darwin":
         return home / "Library" / "Application Support" / "Code" / "User"
-    else:
-        return home / ".config" / "Code" / "User"
+    return home / ".config" / "Code" / "User"
 
 
 def _get_dirs() -> dict[str, dict[str, Path] | Path]:
@@ -116,20 +115,26 @@ def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def _read_overlay_name(root_dir: Path) -> str | None:
-    """Read the overlay directory name from overlay.json.
+def _read_overlay_names(root_dir: Path) -> list[str]:
+    """Read overlay directory names from overlay.json.
+
+    Supports both single-overlay {"overlay": "name"} and
+    multi-overlay {"overlays": ["name1", "name2"]} formats.
 
     Args:
         root_dir: Repository root directory.
 
     Returns:
-        Overlay directory name, or None if not configured.
+        List of overlay directory names, earliest entry has highest priority.
     """
     overlay_config = root_dir / "overlay.json"
     if not overlay_config.exists():
-        return None
+        return []
     data = json.loads(_read_text(overlay_config))
-    return data.get("overlay") or None
+    if "overlays" in data:
+        return [o for o in data["overlays"] if o]
+    single = data.get("overlay")
+    return [single] if single else []
 
 
 def _install_rendered(src: Path, dest: Path, vars_path: Path, target: str, label: str) -> None:
@@ -233,7 +238,7 @@ def _install_content(
     agent: _Agent,
     subdir: str,
     shared_src: Path,
-    overlay_src: Path | None,
+    overlay_srcs: list[Path],
 ) -> None:
     """Install shared and agent-specific content for one agent and content type.
 
@@ -241,7 +246,7 @@ def _install_content(
         agent: Agent configuration.
         subdir: Content subdirectory name (e.g. 'rules' or 'workflows').
         shared_src: Base shared source directory.
-        overlay_src: Optional overlay source directory (installed first).
+        overlay_srcs: Overlay source directories in priority order (first wins).
     """
     dest_dir = agent.dest_dir(subdir)
     vars_path = agent.vars_path()
@@ -252,11 +257,13 @@ def _install_content(
 
     installed: set[str] = set()
 
-    if overlay_src and overlay_src.exists():
-        for src in sorted(overlay_src.glob("*.md")):
-            name = agent.dest_name(src, subdir)
-            _install_rendered(src, dest_dir / name, vars_path, target, f"{subdir}/{name}")
-            installed.add(name)
+    for overlay_src in overlay_srcs:
+        if overlay_src.exists():
+            for src in sorted(overlay_src.glob("*.md")):
+                name = agent.dest_name(src, subdir)
+                if name not in installed:
+                    _install_rendered(src, dest_dir / name, vars_path, target, f"{subdir}/{name}")
+                    installed.add(name)
 
     for src in sorted(shared_src.glob("*.md")):
         name = agent.dest_name(src, subdir)
@@ -332,11 +339,11 @@ def main() -> None:
     root_dir = script_dir.parent
     dirs = _get_dirs()
 
-    overlay_name = _read_overlay_name(root_dir)
-    overlay_dir = root_dir / overlay_name if overlay_name else None
+    overlay_names = _read_overlay_names(root_dir)
+    overlay_dirs = [root_dir / name for name in overlay_names]
 
     _install_skills(root_dir / "cline" / "skills", dirs["agents"])
-    if overlay_dir:
+    for overlay_dir in overlay_dirs:
         _install_skills(overlay_dir / "cline" / "skills", dirs["agents"])
 
     agents: list[_Agent] = [
@@ -346,12 +353,12 @@ def main() -> None:
 
     for agent in agents:
         for subdir in ["rules", "workflows"]:
-            overlay_src = (overlay_dir / "shared" / subdir) if overlay_dir else None
+            overlay_srcs = [d / "shared" / subdir for d in overlay_dirs]
             _install_content(
                 agent=agent,
                 subdir=subdir,
                 shared_src=root_dir / "shared" / subdir,
-                overlay_src=overlay_src,
+                overlay_srcs=overlay_srcs,
             )
 
     log("info", "[cline] Symlinking rules and workflows...")
