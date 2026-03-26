@@ -1,46 +1,44 @@
 ---
-description: Guide {{agent}} on using mcp-memory-sqlite for project-scoped and global memory.
+description: Guide {{agent}} on using mcp-memory-sqlite for persistent memory.
 ---
 
 # Memory Usage with mcp-memory-sqlite
 
-You have two MCP memory servers available:
+You have one MCP memory server available: `memory`
 
-- `memory-project`: Project-scoped SQLite memory for this repository.
-- `memory-global`: Global SQLite memory shared across all projects.
+All tools require a `project` parameter that scopes data. Use two logical projects:
 
-These are **separate databases** - you cannot search across both with a single MCP call. Always query each server independently.
+- `global` - for cross-project knowledge (user preferences, patterns, reusable techniques)
+- `<repo-name>` - for project-specific knowledge (e.g. `fayers-mcp-memory-sqlite`)
 
-You can (and should) use these MCP in _both_ PLAN and ACT mode.
-
-Both servers are backed by fixed `SQLITE_DB_PATH` values in the MCP configuration. Never try to change file paths at runtime; just call the tools exposed by these servers as configured.
+You can (and should) use these MCP tools in _both_ PLAN and ACT mode.
 
 You _do not_ need to let the user know if/when you are interacting with memory.
 
 Ensure you _always_ update memory as you progress through a task, and just before you complete it.
 
-## When to use which memory
+## When to use which project scope
 
-- Use `memory-global` for:
+- Use `project="global"` for:
   - General user preferences (coding style, stack choices, tooling).
   - Cross-project summaries - brief notes about recent work across projects.
   - Reusable patterns and techniques (infra patterns, testing approach, migration strategies).
   - Long-lived knowledge that should be shared across projects.
-  - For project-related entries, keep observations short and summary-level (full details live in `memory-project`).
-  - Update after any change (successful or failed - note failures explicitly), any new information gained from the user, and any insight discovered during the task. You can also update memory before making changes to record intent.
+  - For project-related entries, keep observations short and summary-level.
+  - Update after any change (successful or failed - note failures explicitly), any new information gained from the user, and any insight discovered during the task.
 
-- Use `memory-project` for:
+- Use `project="<repo-name>"` for:
   - Architecture, design decisions, and constraints specific to this repo.
   - Module/API contracts, invariants, and non-obvious gotchas.
   - Project-specific user preferences that don't apply globally.
   - TODOs, partial work, and context that only matters in this codebase.
 
-### If `memory-project` is unavailable
+### If the `memory` server is unavailable
 
-If `memory-project` is not accessible and you need it for the current task:
-1. Create a `.memory` directory in the root of the first workspace folder.
-2. Ask the user to restart the project memory server.
-3. Do not continue until `memory-project` is available.
+If `memory` is not accessible and you need it for the current task:
+1. Start the server: `SQLITE_DB_PATH=~/.memory/memory.db alexfayers-mcp-memory-sqlite`
+2. Ask the user to reload the MCP connection.
+3. Do not continue until `memory` is available.
 
 ## Before starting a task
 
@@ -48,20 +46,20 @@ For ANY and EVERY task, you **MUST** follow ALL of these steps - no exceptions, 
 
 **CRITICAL: Do NOT respond to the user until ALL steps below are complete.** Skipping steps 3-5 defeats the purpose of having memory. `read_graph` alone is not enough - it only returns recent entities and misses deeper context.
 
-1. **ALWAYS** use `read_graph` on `memory-global` first - this surfaces recent entities. Never skip this step.
-2. **ALWAYS** use `read_graph` on `memory-project` second - this surfaces recent project entities.
-3. **ALWAYS** use `search_nodes` on `memory-global` to find entities related to the user's request. Search for:
+1. **ALWAYS** use `read_graph(project="global")` first - this surfaces recent global entities. Never skip this step.
+2. **ALWAYS** use `read_graph(project="<repo-name>")` second - this surfaces recent project entities.
+3. **ALWAYS** use `search_nodes(project="global")` to find entities related to the user's request. Search for:
     - Keywords and terms from the user's message (e.g. file names, feature names, ticket IDs)
     - `user-preferences` (always search this - it contains workflow and coding style rules)
     - The current project/repository name
     - Any relevant `pattern/` entities (e.g. `pattern/aws-lambda-debugging`, `pattern/dynamodb-batch-get-retry`) - search for keywords related to the tools/services being used
-4. **ALWAYS** use `search_nodes` on `memory-project` to find entities related to:
+4. **ALWAYS** use `search_nodes(project="<repo-name>")` to find entities related to:
     - Keywords and terms from the user's message
     - The current file(s) or directory being worked on
     - Any feature or ticket identifiers mentioned in the request
     - `STATUS in-progress` (always search this - it finds any unfinished task entities for the current project)
 5. **ALWAYS** use `get_entity_with_relations` on every relevant entity found in steps 3-4. This traverses the graph to discover linked context that search alone would miss.
-    - **ALWAYS** call `search_related_nodes(name="project/<current-project>", entityType="task")` to find all task entities for the current project.
+    - **ALWAYS** call `search_related_nodes(project="<repo-name>", name="project/<current-project>", entityType="task")` to find all task entities for the current project.
 
 6. If relevant entities exist:
     - Briefly summarize what is already known before making a plan.
@@ -133,7 +131,7 @@ Use entity type to distinguish current facts from past actions:
 
 For each significant unit of work (feature implemented, bug fixed, refactor completed), and **BEFORE** calling the `attempt_completion` tool:
 
-1. Using `memory-project`:
+1. Using `project="<repo-name>"`:
     - Ensure there is an entity representing this project and, if useful, one for the specific feature/area.
     - Add new observations describing:
       - What changed
@@ -142,7 +140,7 @@ For each significant unit of work (feature implemented, bug fixed, refactor comp
     - Update the `task/` entity STATUS observation from `in-progress` to `complete`.
 
 2. When the knowledge is reusable across projects:
-    - Also update `memory-global` with a concise, generalized observation.
+    - Also update `project="global"` with a concise, generalized observation.
     - Avoid project-specific details in global memory; focus on patterns and lessons.
 
 3. If a memory is no longer relevant, was incorrect, or would actively mislead future sessions, use `delete_entity` and/or `delete_relation` to remove it. Use this sparingly - prefer marking things deprecated in text unless the memory would cause harm.
@@ -157,8 +155,8 @@ When the user asks questions like:
 
 You should:
 
-1. Query `memory-project` for the most relevant entities and their observations.
-2. Optionally query `memory-global` if broader patterns or preferences might be relevant.
+1. Query `project="<repo-name>"` for the most relevant entities and their observations.
+2. Optionally query `project="global"` if broader patterns or preferences might be relevant.
 3. Present a concise summary, grouped by entity/topic.
 4. Clearly distinguish between project-specific memory and global, cross-project knowledge.
 
@@ -168,5 +166,5 @@ You should:
 - Always share these rules with any subagents
 - Query memory before starting a task
 - Update memory as you go - don't just wait until the end of a task
-- **ALL knowledge not stored in memory or prompt files is permanently lost at the end of each session.** This includes things told to you mid-session (e.g. user preferences, model config, tool behaviour). Always persist this kind of information immediately to `memory-global`.
+- **ALL knowledge not stored in memory or prompt files is permanently lost at the end of each session.** This includes things told to you mid-session (e.g. user preferences, model config, tool behaviour). Always persist this kind of information immediately to `project="global"`.
 - Calling `new_task` starts a fresh context window - treat it the same as ending a session. **Persist all important knowledge to memory before calling `new_task`.**

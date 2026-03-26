@@ -47,6 +47,7 @@ Unless otherwise specified:
 
 - NEVER use the `-f` flag with the `rm` command. It is too high risk.
 - NEVER use `rm -rf`. Use `rm -r` instead.
+- NEVER kill processes by port number (e.g. `kill $(lsof -ti:PORT)`). This can kill unrelated processes (e.g. VS Code extensions). Always kill by specific PID instead.
 
 # Testing guidelines
 
