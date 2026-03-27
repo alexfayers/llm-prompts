@@ -1,0 +1,11 @@
+{
+  "agent": "Kiro",
+  "ACTION_NO_NARRATE": "In ACT mode, never narrate or describe what you are about to do - just do it.",
+  "TOOL_COMPLETE": "mark the task as complete",
+  "TOOL_ASK": "ask the user for more information",
+  "TOOL_WRAP_UP": "",
+  "PLAN_MODE_RESPOND_TOOL": "present any plan",
+  "PLAN_MODE": "PLAN MODE",
+  "ACT_MODE": "ACT MODE",
+  "TASK_PROGRESS": "task progress"
+}

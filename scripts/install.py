@@ -90,6 +90,10 @@ def _get_dirs() -> dict[str, dict[str, Path] | Path]:
             "rules": home / ".copilot" / "instructions",
             "workflows": vscode_user / "prompts",
         },
+        "kiro": {
+            "rules": home / ".kiro" / "steering",
+            "workflows": home / ".kiro" / "prompts",
+        },
     }
 
 
@@ -379,9 +383,16 @@ def main() -> None:
         _install_skills(overlay_dir / "cline" / "skills", dirs["agents"], managed_skills)
     _check_unmanaged(dirs["agents"] / "skills", managed_skills, "skills", is_dir=True)
 
+    managed_kiro_skills: set[str] = set()
+    _install_skills(root_dir / "cline" / "skills", dirs["kiro"]["rules"].parent, managed_kiro_skills)
+    for overlay_dir in overlay_dirs:
+        _install_skills(overlay_dir / "cline" / "skills", dirs["kiro"]["rules"].parent, managed_kiro_skills)
+    _check_unmanaged(dirs["kiro"]["rules"].parent / "skills", managed_kiro_skills, "kiro skills", is_dir=True)
+
     agents: list[_Agent] = [
         _Agent(name="cline", root_dir=root_dir, dirs=dirs),
         _CopilotAgent(name="copilot", root_dir=root_dir, dirs=dirs),
+        _Agent(name="kiro", root_dir=root_dir, dirs=dirs),
     ]
 
     for agent in agents:
