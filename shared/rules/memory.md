@@ -15,7 +15,7 @@ You can (and should) use these MCP tools in _both_ PLAN and ACT mode.
 
 You _do not_ need to let the user know if/when you are interacting with memory.
 
-Ensure you _always_ update memory as you progress through a task, and just before you complete it.
+Ensure you _always_ update memory as you progress through a task, and just before you complete it. **Do not batch memory updates for the end - persist knowledge as soon as you learn it.**
 
 ## When to use which project scope
 
@@ -121,6 +121,12 @@ Use entity type to distinguish current facts from past actions:
 
 ## While working
 
+- **Update memory frequently** - after each meaningful step, not just at the end. Triggers include:
+  - Completing a file edit or group of related edits
+  - Discovering something unexpected (a bug, an API quirk, a design constraint)
+  - Making a decision or trade-off
+  - Receiving feedback or correction from the user
+  - Learning new factual information from any source
 - **CRITICAL: Hook reminders appear as `<hook_context>` blocks in the environment details. When you see one, you MUST act on it in your NEXT tool call - before doing anything else. Do NOT defer, skip, or queue it for later.**
 - As you discover important facts (architecture decisions, API contracts, subtle bugs, performance findings, etc.), update memory with observations worth persisting.
 - Prefer small, precise observations over long narrative text.
@@ -132,7 +138,7 @@ Use entity type to distinguish current facts from past actions:
 
 ## After completing a task or reaching a milestone
 
-For each significant unit of work (feature implemented, bug fixed, refactor completed), and **BEFORE** calling the `attempt_completion` tool:
+For each significant unit of work (feature implemented, bug fixed, refactor completed), and **BEFORE** you {{TOOL_COMPLETE}}:
 
 1. Using `project="<repo-name>"`:
     - Ensure there is an entity representing this project and, if useful, one for the specific feature/area.
