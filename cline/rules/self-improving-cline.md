@@ -9,7 +9,7 @@
 1.  **Always Reflect:** Before calling `attempt_completion`, always synthesize all feedback provided by the user throughout the entire conversation history for the task. Analyze how this feedback relates to the active `.clinerules` and identify areas where modified instructions could have improved the outcome or better aligned with user preferences.
 2.  **Identify Active Rules:** List the specific global and workspace `.clinerules` files active during the task.
 3.  **Apply Improvements Directly:** Generate specific, actionable improvements to ALL relevant files and apply them immediately - no need to ask for confirmation first. This includes `.clinerules/` rule files, skill `SKILL.md` files, and memory (both project and global). Prioritize suggestions directly addressing user feedback.
-4.  **Then check for any outstanding TODOs or side-requests noted during the session** (in memory, TODO.md, or the task_progress list). If any exist, mention them to the user and suggest tackling them next - either inline or by starting a new task. Do not silently call `attempt_completion` without surfacing queued work.
+4.  **Then check for any outstanding TODOs or side-requests noted during the session** (in memory, TODO.md, or the {{TASK_PROGRESS}} list). If any exist, mention them to the user and suggest tackling them next - either inline or by starting a new task. Do not silently call `attempt_completion` without surfacing queued work.
 
 **IMPORTANT: When surfacing queued tasks, use `ask_followup_question` to ask the user which one they'd like to continue on - do NOT call `attempt_completion` directly.**
 

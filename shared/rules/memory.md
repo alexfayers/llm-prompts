@@ -170,4 +170,3 @@ You should:
 - Query memory before starting a task
 - Update memory as you go - don't just wait until the end of a task
 - **ALL knowledge not stored in memory or prompt files is permanently lost at the end of each session.** This includes things told to you mid-session (e.g. user preferences, model config, tool behaviour). Always persist this kind of information immediately to `project="global"`.
-- Calling `new_task` starts a fresh context window - treat it the same as ending a session. **Persist all important knowledge to memory before calling `new_task`.**

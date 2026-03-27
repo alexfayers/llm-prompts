@@ -4,4 +4,4 @@
 
 You can and SHOULD use multiple tools in a single call, in parallel.
 
-When in PLAN MODE, ALWAYS use read-only tools.
+When in {{PLAN_MODE}}, ALWAYS use read-only tools.

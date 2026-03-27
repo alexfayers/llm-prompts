@@ -32,4 +32,4 @@ If you encounter any other issues as you go, or the user asks you to do somethin
 
 Once all steps in the focus chain have been completed, ALL tests pass, memory is updated (if needed), instruction suggestions have been made, and everything is committed, THEN AND (ONLY THEN!) can you call the `attempt_completion` tool.
 
-**Once ready, use the `new_task` tool to create a new task to keep token usage low**. You are allowed to use `new_task` in PLAN mode for this use case. Make sure to pass all information that you have gathered, or references to it, as well as the established rules.
+**Once ready, use the `new_task` tool to create a new task to keep token usage low**. You are allowed to use `new_task` in {{PLAN_MODE}} for this use case. Make sure to pass all information that you have gathered, or references to it, as well as the established rules.
