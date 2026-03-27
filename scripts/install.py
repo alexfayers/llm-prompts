@@ -320,7 +320,7 @@ def _install_skills(skills_src: Path, agents_dir: Path, managed: set[str]) -> No
     """
     if not skills_src.exists():
         return
-    log("info", "[cline] Installing skills...")
+    log("info", "[shared] Installing skills...")
     for skill_path in sorted(skills_src.iterdir()):
         if not skill_path.is_dir():
             continue
@@ -378,15 +378,15 @@ def main() -> None:
     overlay_dirs = [root_dir / name for name in overlay_names]
 
     managed_skills: set[str] = set()
-    _install_skills(root_dir / "cline" / "skills", dirs["agents"], managed_skills)
+    _install_skills(root_dir / "shared" / "skills", dirs["agents"], managed_skills)
     for overlay_dir in overlay_dirs:
-        _install_skills(overlay_dir / "cline" / "skills", dirs["agents"], managed_skills)
+        _install_skills(overlay_dir / "shared" / "skills", dirs["agents"], managed_skills)
     _check_unmanaged(dirs["agents"] / "skills", managed_skills, "skills", is_dir=True)
 
     managed_kiro_skills: set[str] = set()
-    _install_skills(root_dir / "cline" / "skills", dirs["kiro"]["rules"].parent, managed_kiro_skills)
+    _install_skills(root_dir / "shared" / "skills", dirs["kiro"]["rules"].parent, managed_kiro_skills)
     for overlay_dir in overlay_dirs:
-        _install_skills(overlay_dir / "cline" / "skills", dirs["kiro"]["rules"].parent, managed_kiro_skills)
+        _install_skills(overlay_dir / "shared" / "skills", dirs["kiro"]["rules"].parent, managed_kiro_skills)
     _check_unmanaged(dirs["kiro"]["rules"].parent / "skills", managed_kiro_skills, "kiro skills", is_dir=True)
 
     agents: list[_Agent] = [
