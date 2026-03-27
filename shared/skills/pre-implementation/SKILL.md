@@ -30,6 +30,6 @@ After each "atomic change", make a commit (and update memory). Always ensure tha
 
 If you encounter any other issues as you go, or the user asks you to do something that is not in the scope of the original plan, add those tasks or requests as TODOs (in memory, in a comment, or in a `TODO.md` file).
 
-Once all steps in the focus chain have been completed, ALL tests pass, memory is updated (if needed), instruction suggestions have been made, and everything is committed, THEN AND (ONLY THEN!) can you call the `attempt_completion` tool.
+Once all steps in the focus chain have been completed, ALL tests pass, memory is updated (if needed), instruction suggestions have been made, and everything is committed, THEN AND (ONLY THEN!) can you {{TOOL_COMPLETE}}.
 
-**Once ready, use the `new_task` tool to create a new task to keep token usage low**. You are allowed to use `new_task` in {{PLAN_MODE}} for this use case. Make sure to pass all information that you have gathered, or references to it, as well as the established rules.
+{{TOOL_WRAP_UP}}
