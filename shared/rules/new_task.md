@@ -12,6 +12,18 @@ The `new_task` tool enables context management and task continuity. It packages 
 - Context window filling up but work isn't done
 - Completing a logical subtask before starting the next
 - After research phase, ready to implement
+- Multiple independent changes are needed (use task chaining - see below)
+
+### Task Chaining
+
+When a user's request involves **multiple independent changes**, break them into a chain of `new_task` calls rather than doing everything in one context:
+
+1. **Store the chain**: If available, create a `task/` entity in memory listing all tasks in order, with enough detail for each to be picked up independently. If memory is not available, create temporary "task" files using markdown.
+2. **Complete one task per `new_task`**: Each task should make one coherent change, run tests, and commit.
+3. **Reference the chain**: In each `new_task` context, reference the memory entity or task file so the next task knows what comes next.
+4. **Advance the chain**: After completing a task, call `new_task` with context for the next item. The new task should check the chain entity in memory or the task file to know its position.
+
+This keeps context windows clean, commits atomic, and allows the user to review/adjust between tasks.
 
 ### How It Works
 
