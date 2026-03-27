@@ -60,7 +60,7 @@ For ANY and EVERY task, you **MUST** follow ALL of these steps - no exceptions, 
     - Keywords and terms from the user's message
     - The current file(s) or directory being worked on
     - Any feature or ticket identifiers mentioned in the request
-    - `STATUS in-progress` (always search this - it finds any unfinished task entities for the current project)
+    - use `status="in-progress"` filter on `search_nodes` to find any unfinished task entities for the current project (preferred over text search)
 5. **ALWAYS** use `get_entity_with_relations` on every relevant entity found in steps 3-4. This traverses the graph to discover linked context that search alone would miss.
     - **ALWAYS** call `search_related_nodes(project="<repo-name>", name="project/<current-project>", entityType="task")` to find all task entities for the current project.
 
@@ -89,10 +89,11 @@ Entity names must be unique across all entity types. Always prefix the name with
 
 **CRITICAL: In-progress work MUST be tracked as a separate `task/` entity - never as observations on a `project/` entity.**
 
-- Every `task/` entity MUST include a `STATUS:` observation: `STATUS: in-progress`, `STATUS: blocked`, or `STATUS: complete`
+- Every `task/` entity MUST have its `status` field set to one of: `planned`, `in-progress`, `blocked`, `resolved`, `archived`
+- Use `set_entity_status` or pass `status` in `create_entities` - do NOT add a `STATUS:` text observation
 - Task entities MUST be linked to their parent project with a `belongs-to` relation
 - When starting a new piece of work, create the `task/` entity and relation immediately - before writing any code
-- When completing a task, update its STATUS observation from `in-progress` to `complete`
+- When completing a task, call `set_entity_status` with `status="resolved"`
 - Do not store implementation details or work-in-progress notes on the `project/` entity
 
 ### Entity relations
@@ -146,7 +147,7 @@ For each significant unit of work (feature implemented, bug fixed, refactor comp
       - What changed
       - Why it changed (rationale)
       - Any important consequences, caveats, or follow-up TODOs.
-    - Update the `task/` entity STATUS observation from `in-progress` to `complete`.
+    - Call `set_entity_status` on the `task/` entity with `status="resolved"`.
 
 2. When the knowledge is reusable across projects:
     - Also update `project="global"` with a concise, generalized observation.
