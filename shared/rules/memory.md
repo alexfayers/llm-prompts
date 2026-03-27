@@ -33,6 +33,9 @@ Ensure you _always_ update memory as you progress through a task, and just befor
   - Project-specific user preferences that don't apply globally.
   - TODOs, partial work, and context that only matters in this codebase.
 
+- **NEVER put workspace-specific facts (repo names, file paths, workspace specific rules, tool configs specific to a repo) into global memory.**
+- When in doubt: if the fact only applies to the current workspace, it goes in project memory.
+
 ### If the `memory` server is unavailable
 
 If `memory` is not accessible and you need it for the current task:
