@@ -7,5 +7,6 @@
   "PLAN_MODE_RESPOND_TOOL": "present any plan",
   "PLAN_MODE": "PLAN MODE",
   "ACT_MODE": "ACT MODE",
-  "TASK_PROGRESS": "task progress"
+  "TASK_PROGRESS": "task progress",
+  "RULE_FILES": "steering files"
 }

@@ -7,5 +7,6 @@
   "PLAN_MODE_RESPOND_TOOL": "use the `plan_mode_respond` tool",
   "PLAN_MODE": "PLANNING MODE",
   "ACT_MODE": "MAKING CHANGES MODE",
-  "TASK_PROGRESS": "task todo"
+  "TASK_PROGRESS": "task todo",
+  "RULE_FILES": "instruction files"
 }
