@@ -27,3 +27,11 @@ The new_task tool is defined below:
 Description:
 Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions. This summary should be thorough in capturing technical details, code patterns, and architectural decisions that would be essential for continuing with the new task.
 The user will be presented with a preview of your generated context and can choose to create a new task or keep chatting in the current conversation.
+
+```xml
+<new_task>
+<context>
+Context to pass to the next task...
+</context>
+</new_task>
+```
