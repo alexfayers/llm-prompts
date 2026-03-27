@@ -9,3 +9,5 @@ Source locations:
 - Overlay (if configured): `{{REPO_ROOT}}/<overlay>/shared/rules/`, `{{REPO_ROOT}}/<overlay>/shared/workflows/`, `{{REPO_ROOT}}/<overlay>/shared/skills/`
 
 After editing any source file, run `python3 {{REPO_ROOT}}/scripts/install.py` to reinstall.
+
+Commit rule, workflow, and skill changes as you go - do not accumulate them for a single commit at the end.
