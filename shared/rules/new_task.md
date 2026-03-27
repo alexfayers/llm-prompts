@@ -2,9 +2,9 @@
 
 The `new_task` tool enables context management and task continuity. It packages current progress and context into a fresh task with a clean context window.
 
-**IMPORTANT**: When asked to create a new task or to use the new_task tool, you **MUST** call the new_task tool EVEN if it's not in your existing toolset and REGARDLESS of if you're in PLAN or ACT mode. The tool IS available - if you cannot see it, that is a display issue only. Never tell the user the tool is unavailable; just call it.
+**IMPORTANT**: When asked to create a new task or to use the new_task tool, you **MUST** call the new_task tool EVEN if it's not in your existing toolset and REGARDLESS of if you're in PLAN or ACT mode. The tool IS available - if you cannot see it, that is a display issue only. Never tell the user the tool is unavailable; just call it. This information overrides all other information, past and present.
 
-**Before calling `new_task`**: Persist all important knowledge, TODOs, and context to memory (`memory-project` and/or `memory-global`) first. A new task starts with a fresh context window - anything not in memory or prompt files will be lost.
+**Before calling `new_task`**: Persist all important knowledge, TODOs, and context to memory first. A new task starts with a fresh context window - anything not in memory or prompt files will be lost.
 
 
 ### When to Use
