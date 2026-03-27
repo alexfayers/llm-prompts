@@ -234,12 +234,33 @@ class _CopilotAgent(_Agent):
         return f"{src.stem}.{self._SUFFIXES[subdir]}.md"
 
 
+def _check_unmanaged(dest_dir: Path, managed: set[str], label: str, *, is_dir: bool = False) -> None:
+    """Warn about files or directories in dest_dir that are not in the managed set.
+
+    Args:
+        dest_dir: Destination directory to inspect.
+        managed: Set of filenames/directory names that were installed.
+        label: Human-readable label for log messages.
+        is_dir: If True, check subdirectories; otherwise check files.
+    """
+    if not dest_dir.exists():
+        return
+    kind = "directory" if is_dir else "file"
+    for item in sorted(dest_dir.iterdir()):
+        if is_dir and not item.is_dir():
+            continue
+        if not is_dir and not item.is_file():
+            continue
+        if item.name not in managed:
+            log("warn", f"Non-managed {kind} in {label}: {item.name}")
+
+
 def _install_content(
     agent: _Agent,
     subdir: str,
     shared_src: Path,
     overlay_srcs: list[Path],
-) -> None:
+) -> set[str]:
     """Install shared and agent-specific content for one agent and content type.
 
     Args:
@@ -247,6 +268,9 @@ def _install_content(
         subdir: Content subdirectory name (e.g. 'rules' or 'workflows').
         shared_src: Base shared source directory.
         overlay_srcs: Overlay source directories in priority order (first wins).
+
+    Returns:
+        Set of destination filenames that were installed.
     """
     dest_dir = agent.dest_dir(subdir)
     vars_path = agent.vars_path()
@@ -275,15 +299,20 @@ def _install_content(
     if agent_src.exists():
         for src in sorted(agent_src.glob("*.md")):
             if not (shared_src / src.name).exists():
-                _install_linked(src, dest_dir / src.name, f"{subdir}/{src.name}")
+                name = src.name
+                _install_linked(src, dest_dir / name, f"{subdir}/{name}")
+                installed.add(name)
+
+    return installed
 
 
-def _install_skills(skills_src: Path, agents_dir: Path) -> None:
+def _install_skills(skills_src: Path, agents_dir: Path, managed: set[str]) -> None:
     """Install Cline skills as symlinks in the agents directory.
 
     Args:
         skills_src: Source skills directory.
         agents_dir: Agents destination directory.
+        managed: Set to accumulate installed skill names into.
     """
     if not skills_src.exists():
         return
@@ -296,6 +325,7 @@ def _install_skills(skills_src: Path, agents_dir: Path) -> None:
         try:
             if skill_dest.is_symlink() and skill_dest.resolve() == skill_path.resolve():
                 log("debug", f"Skill '{skill_name}' is up to date. Skipping.")
+                managed.add(skill_name)
                 continue
             already_existed = skill_dest.exists() or skill_dest.is_symlink()
             if already_existed:
@@ -305,6 +335,7 @@ def _install_skills(skills_src: Path, agents_dir: Path) -> None:
                     shutil.rmtree(skill_dest)
             skill_dest.parent.mkdir(parents=True, exist_ok=True)
             skill_dest.symlink_to(skill_path)
+            managed.add(skill_name)
             log("success", f"{'Updated' if already_existed else 'Installed'} skill: {skill_name}")
         except Exception as e:
             log("error", f"Failed to install skill '{skill_name}': {e}")
@@ -342,9 +373,11 @@ def main() -> None:
     overlay_names = _read_overlay_names(root_dir)
     overlay_dirs = [root_dir / name for name in overlay_names]
 
-    _install_skills(root_dir / "cline" / "skills", dirs["agents"])
+    managed_skills: set[str] = set()
+    _install_skills(root_dir / "cline" / "skills", dirs["agents"], managed_skills)
     for overlay_dir in overlay_dirs:
-        _install_skills(overlay_dir / "cline" / "skills", dirs["agents"])
+        _install_skills(overlay_dir / "cline" / "skills", dirs["agents"], managed_skills)
+    _check_unmanaged(dirs["agents"] / "skills", managed_skills, "skills", is_dir=True)
 
     agents: list[_Agent] = [
         _Agent(name="cline", root_dir=root_dir, dirs=dirs),
@@ -354,12 +387,13 @@ def main() -> None:
     for agent in agents:
         for subdir in ["rules", "workflows"]:
             overlay_srcs = [d / "shared" / subdir for d in overlay_dirs]
-            _install_content(
+            installed = _install_content(
                 agent=agent,
                 subdir=subdir,
                 shared_src=root_dir / "shared" / subdir,
                 overlay_srcs=overlay_srcs,
             )
+            _check_unmanaged(agent.dest_dir(subdir), installed, f"{agent.name} {subdir}")
 
     log("info", "[cline] Symlinking rules and workflows...")
     cline_symlinks: dict[str, Path] = dirs["cline_symlinks"]
