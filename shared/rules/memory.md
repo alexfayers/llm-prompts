@@ -87,7 +87,7 @@ Entity names must be unique across all entity types. Always prefix the name with
 
 ### Task entity discipline
 
-**CRITICAL: In-progress work MUST be tracked as a separate `task/` entity - never as observations on a `project/` entity.**
+**CRITICAL: In-progress work MUST be tracked as a separate `task/` entity - never as observations on a `project/` entity.** This includes external tickets under investigation - each ticket gets its own `task/` entity with a `belongs-to` relation to the relevant knowledge or project entity. Do not store ticket-specific details as observations on a parent knowledge entity.
 
 - Every `task/` entity MUST have its `status` field set to one of: `planned`, `in-progress`, `blocked`, `resolved`, `archived`
 - Use `set_entity_status` or pass `status` in `create_entities` - do NOT add a `STATUS:` text observation
