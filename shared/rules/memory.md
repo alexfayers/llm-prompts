@@ -92,6 +92,7 @@ Entity names must be unique across all entity types. Always prefix the name with
 - Every `task/` entity MUST have its `status` field set to one of: `planned`, `in-progress`, `blocked`, `resolved`, `archived`
 - Use `set_entity_status` or pass `status` in `create_entities` - do NOT add a `STATUS:` text observation
 - Task entities MUST be linked to their parent project with a `belongs-to` relation
+- Only link a task to a project if the task modifies that project's code — do not associate general tooling, config, or environment tasks with the current workspace project just because you happen to be working in it
 - When starting a new piece of work, create the `task/` entity and relation immediately - before writing any code
 - When completing a task, call `set_entity_status` with `status="resolved"`
 - Do not store implementation details or work-in-progress notes on the `project/` entity
