@@ -68,6 +68,18 @@ def substitute_variables(content: str, variables: dict[str, str]) -> str:
     return result
 
 
+def find_unreplaced_variables(content: str) -> list[str]:
+    """Find any {{VAR}} placeholders remaining after substitution.
+
+    Args:
+        content: Content after variable substitution.
+
+    Returns:
+        List of unreplaced variable names.
+    """
+    return re.findall(r"\{\{(\w+)\}\}", content)
+
+
 def normalize_whitespace(content: str) -> str:
     """Collapse excessive blank lines to maximum of two.
 

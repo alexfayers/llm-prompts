@@ -10,9 +10,9 @@ import sys
 from typing import Literal
 
 try:
-    from render_template import render_template
+    from render_template import find_unreplaced_variables, render_template
 except ModuleNotFoundError:
-    from scripts.render_template import render_template
+    from scripts.render_template import find_unreplaced_variables, render_template
 
 LogLevel = Literal["debug", "info", "warn", "error", "success"]
 
@@ -156,6 +156,9 @@ def _install_rendered(src: Path, dest: Path, vars_path: Path, target: str, label
     except Exception as e:
         log("error", f"Failed to render {label}: {e}")
         return
+
+    for var in find_unreplaced_variables(output):
+        log("warn", f"Unreplaced variable '{{{{{var}}}}}' in {label}")
 
     if dest.exists():
         if _read_text(dest) == output:
