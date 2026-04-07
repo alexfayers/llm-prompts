@@ -12,6 +12,10 @@ Once you have planned out your implementation for a task and BEFORE showing the 
 
 Before you begin the implementation (when the user switches to {{ACT_MODE}}), you **MUST** use the `pre-implementation` skill to gain further insight into the correct implementation workflow before beginning your implementation.
 
+## Session End
+
+Before you {{TOOL_COMPLETE}} or end a conversation, you **MUST** use the `session-end` skill to ensure nothing is lost.
+
 ## Git
 
 You MUST use the `git-usage` skill before interacting with git in **ANY** way. This includes running ANY `git` command.
