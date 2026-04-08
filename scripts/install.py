@@ -2,7 +2,6 @@
 """Install Cline and Copilot rules, workflows, skills, and prompts."""
 
 from dataclasses import dataclass
-import json
 import os
 from pathlib import Path
 import shutil
@@ -119,26 +118,30 @@ def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def _read_overlay_names(root_dir: Path) -> list[str]:
-    """Read overlay directory names from overlay.json.
+def _discover_overlay_paths() -> list[Path]:
+    """Discover overlay directories from installed packages via entry_points.
 
-    Supports both single-overlay {"overlay": "name"} and
-    multi-overlay {"overlays": ["name1", "name2"]} formats.
-
-    Args:
-        root_dir: Repository root directory.
+    Packages declare an ``llm_prompts`` entry point group where each entry
+    point is a callable returning the Path to the package's overlay directory.
 
     Returns:
-        List of overlay directory names, earliest entry has highest priority.
+        List of overlay directory paths from installed packages.
     """
-    overlay_config = root_dir / "overlay.json"
-    if not overlay_config.exists():
-        return []
-    data = json.loads(_read_text(overlay_config))
-    if "overlays" in data:
-        return [o for o in data["overlays"] if o]
-    single = data.get("overlay")
-    return [single] if single else []
+    from importlib.metadata import entry_points
+
+    paths: list[Path] = []
+    for ep in entry_points(group="llm_prompts"):
+        try:
+            get_path = ep.load()
+            overlay_path = Path(get_path())
+            if overlay_path.is_dir():
+                log("info", f"[overlay] Discovered '{ep.name}' at {overlay_path}")
+                paths.append(overlay_path)
+            else:
+                log("warn", f"[overlay] '{ep.name}' path does not exist: {overlay_path}")
+        except Exception as e:
+            log("error", f"[overlay] Failed to load '{ep.name}': {e}")
+    return paths
 
 
 def _install_rendered(src: Path, dest: Path, vars_path: Path, target: str, label: str) -> None:
@@ -377,8 +380,7 @@ def main() -> None:
     root_dir = script_dir.parent
     dirs = _get_dirs()
 
-    overlay_names = _read_overlay_names(root_dir)
-    overlay_dirs = [root_dir / name for name in overlay_names]
+    overlay_dirs = _discover_overlay_paths()
 
     managed_skills: set[str] = set()
     _install_skills(root_dir / "shared" / "skills", dirs["agents"], managed_skills)
