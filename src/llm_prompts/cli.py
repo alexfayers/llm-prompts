@@ -52,6 +52,13 @@ def _collect_sources(agent: str) -> dict[str, Path]:
             for f in sorted(agent_src.glob("*.md")):
                 sources.setdefault(f"{subdir}/{f.name}", f)
 
+        # Overlay agent-specific sources
+        for overlay_dir in overlay_dirs:
+            overlay_agent_src = overlay_dir / agent / subdir
+            if overlay_agent_src.is_dir():
+                for f in sorted(overlay_agent_src.glob("*.md")):
+                    sources.setdefault(f"{subdir}/{f.name}", f)
+
     # Skills
     for skill_src in [root / "shared" / "skills"] + [
         d / "shared" / "skills" for d in overlay_dirs

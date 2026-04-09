@@ -282,6 +282,7 @@ def _install_content(
     subdir: str,
     shared_src: Path,
     overlay_srcs: list[Path],
+    overlay_agent_srcs: list[Path],
 ) -> set[str]:
     """Install shared and agent-specific content for one agent and content type.
 
@@ -289,7 +290,8 @@ def _install_content(
         agent: Agent configuration.
         subdir: Content subdirectory name (e.g. 'rules' or 'workflows').
         shared_src: Base shared source directory.
-        overlay_srcs: Overlay source directories in priority order (first wins).
+        overlay_srcs: Overlay shared source directories in priority order (first wins).
+        overlay_agent_srcs: Overlay agent-specific source directories in priority order.
 
     Returns:
         Set of destination filenames that were installed.
@@ -328,6 +330,16 @@ def _install_content(
                 name = src.name
                 _install_linked(src, dest_dir / name, f"{subdir}/{name}")
                 installed.add(name)
+
+    for overlay_agent_src in overlay_agent_srcs:
+        if overlay_agent_src.exists():
+            for src in sorted(overlay_agent_src.glob("*.md")):
+                name = agent.dest_name(src, subdir)
+                if name not in installed:
+                    _install_rendered(
+                        src, dest_dir / name, vars_path, target, f"{subdir}/{name}"
+                    )
+                    installed.add(name)
 
     return installed
 
@@ -450,11 +462,13 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
         agent = all_agents[name]
         for subdir in ["rules", "workflows"]:
             overlay_srcs = [d / "shared" / subdir for d in overlay_dirs]
+            overlay_agent_srcs = [d / agent.name / subdir for d in overlay_dirs]
             installed = _install_content(
                 agent=agent,
                 subdir=subdir,
                 shared_src=root_dir / "shared" / subdir,
                 overlay_srcs=overlay_srcs,
+                overlay_agent_srcs=overlay_agent_srcs,
             )
             _check_unmanaged(
                 agent.dest_dir(subdir), installed, f"{agent.name} {subdir}"
