@@ -8,4 +8,4 @@ Ideally, you should be able to clone this and have the most mega awesome AI setu
 
 ## Usage
 
-Run `uv run scripts/install.py` to install Cline and GitHub Copilot prompts!
+Run `llm-prompts install` to install Cline and GitHub Copilot prompts!

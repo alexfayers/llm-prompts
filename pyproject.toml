@@ -1,0 +1,16 @@
+[project]
+name = "llm-prompts"
+version = "0.1.0"
+description = "Cross-agent rules, workflows, and skills for LLM coding assistants"
+readme = "README.md"
+requires-python = ">=3.11"
+
+[project.scripts]
+llm-prompts = "llm_prompts.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/llm_prompts", "shared", "cline", "copilot", "kiro"]

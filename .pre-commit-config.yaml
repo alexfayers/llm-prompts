@@ -3,14 +3,14 @@ repos:
     hooks:
       - id: install-prompts-post-commit
         name: Install prompts (post-commit)
-        entry: python3 scripts/install.py
+        entry: llm-prompts install
         language: system
         stages: [post-commit]
         pass_filenames: false
         always_run: true
       - id: install-prompts-post-merge
         name: Install prompts (post-merge)
-        entry: python3 scripts/install.py
+        entry: llm-prompts install
         language: system
         stages: [post-merge]
         pass_filenames: false

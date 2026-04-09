@@ -8,10 +8,7 @@ import shutil
 import sys
 from typing import Literal
 
-try:
-    from render_template import find_unreplaced_variables, render_template
-except ModuleNotFoundError:
-    from scripts.render_template import find_unreplaced_variables, render_template
+from .render_template import find_unreplaced_variables, render_template
 
 LogLevel = Literal["debug", "info", "warn", "error", "success"]
 
@@ -376,8 +373,8 @@ def _symlink_dir(source: Path, dest: Path) -> None:
 
 def main() -> None:
     """Run the installation workflow."""
-    script_dir = Path(__file__).parent
-    root_dir = script_dir.parent
+    pkg_dir = Path(__file__).parent
+    root_dir = pkg_dir.parent.parent
     dirs = _get_dirs()
 
     overlay_dirs = _discover_overlay_paths()
