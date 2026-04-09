@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Install Cline and Copilot rules, workflows, skills, and prompts."""
 
 from dataclasses import dataclass
@@ -6,7 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
-from typing import Literal
+from typing import ClassVar, Literal
 
 from .render_template import find_unreplaced_variables, render_template
 
@@ -35,6 +34,9 @@ _PLAIN_SYMBOLS: dict[LogLevel, str] = {
 }
 
 
+_verbose = False
+
+
 def log(level: LogLevel, message: str) -> None:
     """Log a message with appropriate formatting.
 
@@ -42,6 +44,8 @@ def log(level: LogLevel, message: str) -> None:
         level: Log level.
         message: Message to print.
     """
+    if level == "debug" and not _verbose:
+        return
     if sys.stderr.isatty():
         print(f"{_COLORS[level]}{_SYMBOLS[level]} {message}\033[0;0m", file=sys.stderr)
     else:
@@ -69,7 +73,9 @@ def _get_dirs() -> dict[str, dict[str, Path] | Path]:
         Mapping of installation destination names to paths.
     """
     home = Path.home()
-    cline_base = (home / "Cline") if sys.platform == "linux" else (home / "Documents" / "Cline")
+    cline_base = (
+        (home / "Cline") if sys.platform == "linux" else (home / "Documents" / "Cline")
+    )
     cline_merged = home / ".cline_merged"
     vscode_user = _vscode_user_dir()
     return {
@@ -135,13 +141,17 @@ def _discover_overlay_paths() -> list[Path]:
                 log("info", f"[overlay] Discovered '{ep.name}' at {overlay_path}")
                 paths.append(overlay_path)
             else:
-                log("warn", f"[overlay] '{ep.name}' path does not exist: {overlay_path}")
+                log(
+                    "warn", f"[overlay] '{ep.name}' path does not exist: {overlay_path}"
+                )
         except Exception as e:
             log("error", f"[overlay] Failed to load '{ep.name}': {e}")
     return paths
 
 
-def _install_rendered(src: Path, dest: Path, vars_path: Path, target: str, label: str) -> None:
+def _install_rendered(
+    src: Path, dest: Path, vars_path: Path, target: str, label: str
+) -> None:
     """Render and install a templated file.
 
     Args:
@@ -235,13 +245,18 @@ class _Agent:
 class _CopilotAgent(_Agent):
     """Copilot agent with format-specific destination naming."""
 
-    _SUFFIXES: dict[str, str] = {"rules": "instructions", "workflows": "prompt"}
+    _SUFFIXES: ClassVar[dict[str, str]] = {
+        "rules": "instructions",
+        "workflows": "prompt",
+    }
 
     def dest_name(self, src: Path, subdir: str) -> str:
         return f"{src.stem}.{self._SUFFIXES[subdir]}.md"
 
 
-def _check_unmanaged(dest_dir: Path, managed: set[str], label: str, *, is_dir: bool = False) -> None:
+def _check_unmanaged(
+    dest_dir: Path, managed: set[str], label: str, *, is_dir: bool = False
+) -> None:
     """Warn about files or directories in dest_dir that are not in the managed set.
 
     Args:
@@ -293,13 +308,17 @@ def _install_content(
             for src in sorted(overlay_src.glob("*.md")):
                 name = agent.dest_name(src, subdir)
                 if name not in installed:
-                    _install_rendered(src, dest_dir / name, vars_path, target, f"{subdir}/{name}")
+                    _install_rendered(
+                        src, dest_dir / name, vars_path, target, f"{subdir}/{name}"
+                    )
                     installed.add(name)
 
     for src in sorted(shared_src.glob("*.md")):
         name = agent.dest_name(src, subdir)
         if name not in installed:
-            _install_rendered(src, dest_dir / name, vars_path, target, f"{subdir}/{name}")
+            _install_rendered(
+                src, dest_dir / name, vars_path, target, f"{subdir}/{name}"
+            )
             installed.add(name)
 
     agent_src = agent.agent_src(subdir)
@@ -343,7 +362,10 @@ def _install_skills(skills_src: Path, agents_dir: Path, managed: set[str]) -> No
             skill_dest.parent.mkdir(parents=True, exist_ok=True)
             skill_dest.symlink_to(skill_path)
             managed.add(skill_name)
-            log("success", f"{'Updated' if already_existed else 'Installed'} skill: {skill_name}")
+            log(
+                "success",
+                f"{'Updated' if already_existed else 'Installed'} skill: {skill_name}",
+            )
         except Exception as e:
             log("error", f"Failed to install skill '{skill_name}': {e}")
 
@@ -371,33 +393,61 @@ def _symlink_dir(source: Path, dest: Path) -> None:
         log("error", f"Failed to symlink {source} to {dest}: {e}")
 
 
-def main() -> None:
-    """Run the installation workflow."""
+def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None:
+    """Run the installation workflow.
+
+    Args:
+        agent_names: Agents to install for. None means all.
+        verbose: Show debug-level output.
+    """
+    global _verbose  # noqa: PLW0603
+    _verbose = verbose
     pkg_dir = Path(__file__).parent
     root_dir = pkg_dir.parent.parent
     dirs = _get_dirs()
 
     overlay_dirs = _discover_overlay_paths()
 
-    managed_skills: set[str] = set()
-    _install_skills(root_dir / "shared" / "skills", dirs["agents"], managed_skills)
-    for overlay_dir in overlay_dirs:
-        _install_skills(overlay_dir / "shared" / "skills", dirs["agents"], managed_skills)
-    _check_unmanaged(dirs["agents"] / "skills", managed_skills, "skills", is_dir=True)
+    all_agents: dict[str, _Agent] = {
+        "cline": _Agent(name="cline", root_dir=root_dir, dirs=dirs),
+        "copilot": _CopilotAgent(name="copilot", root_dir=root_dir, dirs=dirs),
+        "kiro": _Agent(name="kiro", root_dir=root_dir, dirs=dirs),
+    }
+    targets = agent_names or list(all_agents)
 
-    managed_kiro_skills: set[str] = set()
-    _install_skills(root_dir / "shared" / "skills", dirs["kiro"]["rules"].parent, managed_kiro_skills)
-    for overlay_dir in overlay_dirs:
-        _install_skills(overlay_dir / "shared" / "skills", dirs["kiro"]["rules"].parent, managed_kiro_skills)
-    _check_unmanaged(dirs["kiro"]["rules"].parent / "skills", managed_kiro_skills, "kiro skills", is_dir=True)
+    if "cline" in targets:
+        managed_skills: set[str] = set()
+        _install_skills(root_dir / "shared" / "skills", dirs["agents"], managed_skills)
+        for overlay_dir in overlay_dirs:
+            _install_skills(
+                overlay_dir / "shared" / "skills", dirs["agents"], managed_skills
+            )
+        _check_unmanaged(
+            dirs["agents"] / "skills", managed_skills, "skills", is_dir=True
+        )
 
-    agents: list[_Agent] = [
-        _Agent(name="cline", root_dir=root_dir, dirs=dirs),
-        _CopilotAgent(name="copilot", root_dir=root_dir, dirs=dirs),
-        _Agent(name="kiro", root_dir=root_dir, dirs=dirs),
-    ]
+    if "kiro" in targets:
+        managed_kiro_skills: set[str] = set()
+        _install_skills(
+            root_dir / "shared" / "skills",
+            dirs["kiro"]["rules"].parent,
+            managed_kiro_skills,
+        )
+        for overlay_dir in overlay_dirs:
+            _install_skills(
+                overlay_dir / "shared" / "skills",
+                dirs["kiro"]["rules"].parent,
+                managed_kiro_skills,
+            )
+        _check_unmanaged(
+            dirs["kiro"]["rules"].parent / "skills",
+            managed_kiro_skills,
+            "kiro skills",
+            is_dir=True,
+        )
 
-    for agent in agents:
+    for name in targets:
+        agent = all_agents[name]
         for subdir in ["rules", "workflows"]:
             overlay_srcs = [d / "shared" / subdir for d in overlay_dirs]
             installed = _install_content(
@@ -406,12 +456,15 @@ def main() -> None:
                 shared_src=root_dir / "shared" / subdir,
                 overlay_srcs=overlay_srcs,
             )
-            _check_unmanaged(agent.dest_dir(subdir), installed, f"{agent.name} {subdir}")
+            _check_unmanaged(
+                agent.dest_dir(subdir), installed, f"{agent.name} {subdir}"
+            )
 
-    log("info", "[cline] Symlinking rules and workflows...")
-    cline_symlinks: dict[str, Path] = dirs["cline_symlinks"]
-    for subdir, symlink_dest in cline_symlinks.items():
-        _symlink_dir(dirs["cline"][subdir], symlink_dest)
+    if "cline" in targets:
+        log("info", "[cline] Symlinking rules and workflows...")
+        cline_symlinks: dict[str, Path] = dirs["cline_symlinks"]
+        for subdir, symlink_dest in cline_symlinks.items():
+            _symlink_dir(dirs["cline"][subdir], symlink_dest)
 
 
 if __name__ == "__main__":

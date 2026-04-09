@@ -1,5 +1,6 @@
 {
   "agent": "Kiro",
+  "AGENT": "kiro",
   "ACTION_NO_NARRATE": "In ACT mode, never narrate or describe what you are about to do - just do it.",
   "TOOL_COMPLETE": "mark the task as complete",
   "TOOL_ASK": "ask the user for more information",

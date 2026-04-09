@@ -1,5 +1,6 @@
 {
   "agent": "GitHub Copilot",
+  "AGENT": "copilot",
   "ACTION_NO_NARRATE": "Never narrate or describe what you are about to do - just do it.",
   "TOOL_COMPLETE": "mark the task as complete",
   "TOOL_ASK": "ask the user for more information",

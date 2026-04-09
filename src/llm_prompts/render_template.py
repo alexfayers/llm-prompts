@@ -1,5 +1,5 @@
-#!/usr/bin/env python
 """Render templates with variable substitution and frontmatter transformation."""
+
 from __future__ import annotations
 
 import argparse
@@ -39,7 +39,7 @@ def parse_frontmatter(content: str) -> tuple[str, dict[str, str]]:
     if not frontmatter_match:
         return content, {}
 
-    body = content[frontmatter_match.end():].lstrip("\n")
+    body = content[frontmatter_match.end() :].lstrip("\n")
     frontmatter_text = frontmatter_match.group(1)
 
     frontmatter_dict = {}
@@ -187,7 +187,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("template_path", help="Path to the template file.")
     parser.add_argument("variables_path", help="Path to JSON file with variables.")
-    parser.add_argument("target", choices=["cline", "copilot", "kiro"], help="Output target format.")
+    parser.add_argument(
+        "target", choices=["cline", "copilot", "kiro"], help="Output target format."
+    )
     return parser
 
 

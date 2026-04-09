@@ -14,3 +14,13 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/llm_prompts", "shared", "cline", "copilot", "kiro"]
+
+[tool.ruff.lint]
+ignore = [
+    "BLE001",  # blind exception - intentional for resilient install
+    "PLC0415", # import not at top level - lazy imports for performance
+    "ARG002",  # unused method argument - required by interface
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/llm_prompts/install.py" = ["T201"]
