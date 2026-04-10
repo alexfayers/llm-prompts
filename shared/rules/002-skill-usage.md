@@ -14,7 +14,7 @@ Before you begin the implementation (when the user switches to {{ACT_MODE}}), yo
 
 ## Session End
 
-Before you {{TOOL_COMPLETE}} or end a conversation, you **MUST** use the `session-end` skill to ensure nothing is lost.
+Before you {{TOOL_COMPLETE}} or end a conversation, you **MUST** use the `session-end` skill to ensure nothing is lost. This includes ANY response where you indicate work is finished, such as "all done", "nothing else outstanding", or similar wrap-up language, **and any moment you internally conclude that all work is complete** - even if the user hasn't explicitly asked you to wrap up. **Load and run the skill BEFORE giving any wrap-up summary.**
 
 ## Git
 
