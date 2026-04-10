@@ -481,5 +481,28 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
             _symlink_dir(dirs["cline"][subdir], symlink_dest)
 
 
+def get_managed_dirs() -> list[Path]:
+    """Return directories managed by llm-prompts installation.
+
+    These are directories where ``llm-prompts install`` writes files.
+    External tools can use this to guard against direct edits.
+
+    Returns:
+        Sorted list of managed directory paths.
+    """
+    dirs = _get_dirs()
+    managed: set[Path] = set()
+    for key, value in dirs.items():
+        if key == "agents":
+            managed.add(Path(str(value)) / "skills")
+        elif isinstance(value, dict):
+            for subdir_path in value.values():
+                managed.add(Path(str(subdir_path)))
+            if key in ("cline", "kiro"):
+                parent = next(iter(value.values())).parent
+                managed.add(parent / "skills")
+    return sorted(managed)
+
+
 if __name__ == "__main__":
     main()
