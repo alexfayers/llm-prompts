@@ -96,8 +96,12 @@ def _source_args(installer: str, source: str, *, editable: bool) -> list[str]:
 
     if installer == "pipx":
         if editable:
-            return ["--editable" if local else "", path] if local else [path]
-        return ["--pip-args", f"{'--editable ' if local else ''}{path}"]
+            if local:
+                return ["--editable", path]
+            return [path]
+        if local:
+            return ["--pip-args", f"--editable {path}"]
+        return ["--pip-args", path]
 
     # pip
     if local:

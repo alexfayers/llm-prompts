@@ -14,4 +14,6 @@ uv tool upgrade llm-prompts --reinstall
 
 Then run `llm-prompts install` to symlink the updated files.
 
+For initial setup or full reinstall of all tools and overlays, use `llm-prompts setup`. Config is at `~/.config/llm-prompts/config.toml` - run `llm-prompts setup --init` to create it.
+
 Commit rule, workflow, and skill changes as you go - do not accumulate them for a single commit at the end.
