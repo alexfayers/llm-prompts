@@ -116,6 +116,21 @@ def main() -> None:
         choices=_AGENTS,
         help="Agent to show sources for.",
     )
+    setup_parser = subparsers.add_parser(
+        "setup", help="Install all configured tools with their overlay packages."
+    )
+    setup_parser.add_argument(
+        "--init", action="store_true", help="Create a starter config file."
+    )
+    setup_parser.add_argument(
+        "-n",
+        "--dry-run",
+        action="store_true",
+        help="Show commands without running them.",
+    )
+    setup_parser.add_argument(
+        "tool", nargs="?", help="Install only this tool (by name from config)."
+    )
 
     args = parser.parse_args()
 
@@ -126,6 +141,13 @@ def main() -> None:
         install_main(agent_names, verbose=args.verbose)
     elif args.command == "source":
         _print_sources(args.agent)
+    elif args.command == "setup":
+        from .setup import init_config, run_setup
+
+        if args.init:
+            init_config()
+        else:
+            run_setup(args.tool, dry_run=args.dry_run)
     else:
         parser.print_help()
         sys.exit(1)
