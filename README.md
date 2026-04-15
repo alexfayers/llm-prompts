@@ -7,17 +7,14 @@ Supports [Cline](https://github.com/cline/cline), [GitHub Copilot](https://githu
 ## Quick start
 
 ```bash
-# Install the core package
-uv tool install llm-prompts
+curl -LsSf https://raw.githubusercontent.com/alexfayers/llm-prompts/main/install.sh | sh
+```
 
-# Create a config file and add your overlay packages
-llm-prompts setup --init
+This installs [uv](https://docs.astral.sh/uv/) (if needed), installs llm-prompts, and creates a starter config. Then:
 
+```bash
 # Edit ~/.config/llm-prompts/config.toml to add your overlay packages, then:
-llm-prompts setup
-
-# Install rules, workflows, and skills for an agent
-llm-prompts install kiro    # or cline, copilot, all
+llm-prompts install {agent}    # kiro, cline, copilot, or all
 ```
 
 When sources are remote (git URLs or PyPI), `install` automatically runs `setup` first to pull the latest versions. Use `--no-update` to skip this.
