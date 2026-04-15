@@ -142,9 +142,9 @@ def main() -> None:
 
     if args.command == "install":
         if not args.no_update:
-            from .setup import CONFIG_PATH, run_setup
+            from .setup import CONFIG_PATH, has_remote_sources, run_setup
 
-            if CONFIG_PATH.exists():
+            if CONFIG_PATH.exists() and has_remote_sources():
                 run_setup()
 
         from .install import main as install_main

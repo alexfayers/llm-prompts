@@ -41,6 +41,12 @@ def _is_local_path(source: str) -> bool:
     return source.startswith(("~/", "/", "./", "../"))
 
 
+def has_remote_sources() -> bool:
+    """Check if any configured tool uses a non-local source."""
+    tools = _load_config()
+    return any(not _is_local_path(str(t.get("source", ""))) for t in tools)
+
+
 def _expand(path_str: str) -> Path:
     """Expand ~ and resolve a path string."""
     return Path(path_str).expanduser().resolve()
