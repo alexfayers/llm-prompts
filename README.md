@@ -10,7 +10,7 @@ Supports [Cline](https://github.com/cline/cline), [GitHub Copilot](https://githu
 # Install the core package
 uv tool install llm-prompts
 
-# Create a config file
+# Create a config file and add your overlay packages
 llm-prompts setup --init
 
 # Edit ~/.config/llm-prompts/config.toml to add your overlay packages, then:
@@ -19,6 +19,8 @@ llm-prompts setup
 # Install rules, workflows, and skills for an agent
 llm-prompts install kiro    # or cline, copilot, all
 ```
+
+When sources are remote (git URLs or PyPI), `install` automatically runs `setup` first to pull the latest versions. Use `--no-update` to skip this.
 
 ## Setup config
 
@@ -77,6 +79,7 @@ src/my_package/prompts/
 
 ```bash
 llm-prompts install <agent>    # install rules/workflows/skills
+llm-prompts install <agent> --no-update  # skip auto-update
 llm-prompts source <agent>     # show source file paths
 llm-prompts setup              # install all configured tools
 llm-prompts setup --init       # create starter config

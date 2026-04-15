@@ -4,15 +4,7 @@ When editing rules, workflows, prompts, or skills, always edit the **source file
 
 Run `llm-prompts source {{AGENT}}` to see the source file paths for all installed rules, workflows, and skills.
 
-After editing any source file, run `llm-prompts install` to reinstall.
-
-If the edited file is in an overlay package (e.g. mcp-memory/prompts/), run the full reinstall first:
-
-```
-uv tool upgrade llm-prompts --reinstall
-```
-
-Then run `llm-prompts install` to symlink the updated files.
+After editing any source file, run `llm-prompts install {{AGENT}}` to reinstall.
 
 For initial setup or full reinstall of all tools and overlays, use `llm-prompts setup`. Config is at `~/.config/llm-prompts/config.toml` - run `llm-prompts setup --init` to create it.
 
