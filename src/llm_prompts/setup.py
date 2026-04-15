@@ -63,10 +63,10 @@ def _detect_installer() -> str:
 
 def _build_commands(
     tools: list[dict[str, object]], installer: str
-) -> list[tuple[str, list[str]]]:
+) -> list[tuple[str, list[str], list[str] | None]]:
     """Build install commands for all core tools.
 
-    Returns list of (tool_name, command_args) tuples.
+    Returns list of (tool_name, install_cmd, upgrade_cmd_or_None) tuples.
     """
     overlay_map: dict[str, list[dict[str, object]]] = {}
     for tool in tools:
@@ -75,13 +75,14 @@ def _build_commands(
 
     cores = [t for t in tools if not t.get("overlays_for") or t.get("standalone")]
 
-    commands: list[tuple[str, list[str]]] = []
+    commands: list[tuple[str, list[str], list[str] | None]] = []
     for core in cores:
         name = str(core["name"])
         source = str(core["source"])
         overlays = overlay_map.get(name, [])
-        cmd = _build_install_cmd(installer, source, overlays)
-        commands.append((name, cmd))
+        install_cmd = _build_install_cmd(installer, source, overlays)
+        upgrade_cmd = _build_upgrade_cmd(installer, name, source, overlays)
+        commands.append((name, install_cmd, upgrade_cmd))
 
     return commands
 
@@ -118,23 +119,17 @@ def _source_args(installer: str, source: str, *, editable: bool) -> list[str]:
 def _build_install_cmd(
     installer: str, core_source: str, overlays: list[dict[str, object]]
 ) -> list[str]:
-    """Build a single install command."""
+    """Build a full install command."""
     if installer == "uv":
         cmd = ["uv", "tool", "install"]
         cmd.extend(_source_args(installer, core_source, editable=True))
-        remote_packages: list[str] = []
-        if not _is_local_path(core_source):
-            remote_packages.append(core_source.split("/")[-1].removesuffix(".git"))
         for overlay in overlays:
             src = str(overlay["source"])
             if _is_local_path(src):
                 cmd.extend(["--with-editable", str(_expand(src))])
             else:
                 cmd.extend(["--with", src])
-                remote_packages.append(str(overlay["name"]))
-        for pkg in remote_packages:
-            cmd.extend(["--reinstall-package", pkg])
-        cmd.append("--force")
+        cmd.extend(["--reinstall", "--force"])
         return cmd
 
     if installer == "pipx":
@@ -152,6 +147,27 @@ def _build_install_cmd(
     cmd.extend(_source_args(installer, core_source, editable=True))
     for overlay in overlays:
         cmd.extend(_source_args(installer, str(overlay["source"]), editable=False))
+    return cmd
+
+
+def _build_upgrade_cmd(
+    installer: str,
+    name: str,
+    core_source: str,
+    overlays: list[dict[str, object]],
+) -> list[str] | None:
+    """Build a targeted upgrade command, or None if not supported."""
+    if installer != "uv":
+        return None
+    remote_packages: list[str] = []
+    if not _is_local_path(core_source):
+        remote_packages.append(name)
+    for overlay in overlays:
+        if not _is_local_path(str(overlay["source"])):
+            remote_packages.append(str(overlay["name"]))
+    cmd = ["uv", "tool", "upgrade", name]
+    for pkg in remote_packages:
+        cmd.extend(["--reinstall-package", pkg])
     return cmd
 
 
@@ -206,16 +222,27 @@ def run_setup(tool_filter: str | None = None, *, dry_run: bool = False) -> None:
     commands = _build_commands(tools, installer)
 
     if tool_filter:
-        commands = [(n, c) for n, c in commands if n == tool_filter]
+        commands = [(n, i, u) for n, i, u in commands if n == tool_filter]
         if not commands:
             print(f"No tool named '{tool_filter}' in config.", file=sys.stderr)
             sys.exit(1)
 
     failed: list[str] = []
-    for name, cmd in commands:
-        print(f"\n[{name}] {' '.join(cmd)}")
+    for name, install_cmd, upgrade_cmd in commands:
+        if upgrade_cmd:
+            if dry_run:
+                print(f"\n[{name}] {' '.join(upgrade_cmd)}")
+                print(f"[{name}] (fallback) {' '.join(install_cmd)}")
+                continue
+            print(f"\n[{name}] {' '.join(upgrade_cmd)}")
+            result = subprocess.run(upgrade_cmd, check=False)
+            if result.returncode == 0:
+                continue
+            print(f"[{name}] Upgrade failed, falling back to full install...")
+
+        print(f"\n[{name}] {' '.join(install_cmd)}")
         if not dry_run:
-            result = subprocess.run(cmd, check=False)
+            result = subprocess.run(install_cmd, check=False)
             if result.returncode != 0:
                 failed.append(name)
 
