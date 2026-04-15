@@ -14,7 +14,7 @@ echo "Installing llm-prompts..."
 uv tool install "$REPO" --force
 
 echo "Creating default config..."
-llm-prompts setup --init 2>/dev/null || true
+llm-prompts setup --init >/dev/null 2>&1 || true
 
 echo ""
 echo "Done! Edit ~/.config/llm-prompts/config.toml to customise, then run:"
