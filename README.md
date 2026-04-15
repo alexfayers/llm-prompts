@@ -88,6 +88,41 @@ llm-prompts setup --init       # create starter config
 
 ## Development
 
+To contribute or edit rules locally, clone the repos and use local paths in your config:
+
+```bash
+git clone https://github.com/alexfayers/llm-prompts.git
+git clone https://github.com/alexfayers/mcp-memory.git
+git clone https://github.com/alexfayers/cline-hooks.git
+```
+
+Then update `~/.config/llm-prompts/config.toml` to use local paths:
+
+```toml
+[[tools]]
+name = "llm-prompts"
+source = "~/llm-prompts"
+
+[[tools]]
+name = "cline-hooks"
+source = "~/cline-hooks"
+
+[[tools]]
+name = "mcp-memory"
+source = "~/mcp-memory"
+standalone = true
+overlays_for = ["llm-prompts", "cline-hooks"]
+```
+
+Local paths are installed as editable, so changes to rules, workflows, and skills are picked up immediately by `llm-prompts install` without needing to re-run `setup`.
+
+```bash
+llm-prompts setup              # install all tools as editable
+llm-prompts install {agent}    # install rules/workflows/skills
+```
+
+### Linting
+
 ```bash
 uv run ruff check --fix && uv run ruff format
 ```
