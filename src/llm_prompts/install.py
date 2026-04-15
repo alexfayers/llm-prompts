@@ -359,6 +359,8 @@ def _install_skills(skills_src: Path, agents_dir: Path, managed: set[str]) -> No
     for skill_path in sorted(skills_src.iterdir()):
         if not skill_path.is_dir():
             continue
+        if not (skill_path / "SKILL.md").is_file():
+            continue
         skill_name = skill_path.name
         skill_dest = agents_dir / "skills" / skill_name
         try:
