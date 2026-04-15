@@ -109,6 +109,11 @@ def main() -> None:
     install_parser.add_argument(
         "-v", "--verbose", action="store_true", help="Show debug output."
     )
+    install_parser.add_argument(
+        "--no-update",
+        action="store_true",
+        help="Skip running setup before installing.",
+    )
     source_parser = subparsers.add_parser(
         "source", help="Show source file locations for an agent."
     )
@@ -136,6 +141,12 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "install":
+        if not args.no_update:
+            from .setup import CONFIG_PATH, run_setup
+
+            if CONFIG_PATH.exists():
+                run_setup()
+
         from .install import main as install_main
 
         agent_names = list(_AGENTS) if args.agent == "all" else [args.agent]

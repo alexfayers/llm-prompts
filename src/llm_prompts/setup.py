@@ -9,7 +9,7 @@ import sys
 import tomllib
 
 _CONFIG_DIR = Path.home() / ".config" / "llm-prompts"
-_CONFIG_PATH = _CONFIG_DIR / "config.toml"
+CONFIG_PATH = _CONFIG_DIR / "config.toml"
 
 _DEFAULT_CONFIG = """\
 # llm-prompts setup configuration
@@ -145,14 +145,14 @@ def _build_install_cmd(
 
 def _load_config() -> list[dict[str, object]]:
     """Load and return the tools list from config."""
-    if not _CONFIG_PATH.exists():
+    if not CONFIG_PATH.exists():
         print(
-            f"Config not found at {_CONFIG_PATH}\n"
+            f"Config not found at {CONFIG_PATH}\n"
             f"Run `llm-prompts setup --init` to create one.",
             file=sys.stderr,
         )
         sys.exit(1)
-    config = tomllib.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+    config = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     tools = config.get("tools", [])
     if not isinstance(tools, list) or not tools:
         print("Config must contain at least one [[tools]] entry.", file=sys.stderr)
@@ -172,12 +172,12 @@ def _validate_paths(tools: list[dict[str, object]]) -> list[str]:
 
 def init_config() -> None:
     """Create a starter config file."""
-    if _CONFIG_PATH.exists():
-        print(f"Config already exists at {_CONFIG_PATH}", file=sys.stderr)
+    if CONFIG_PATH.exists():
+        print(f"Config already exists at {CONFIG_PATH}", file=sys.stderr)
         sys.exit(1)
     _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    _CONFIG_PATH.write_text(_DEFAULT_CONFIG, encoding="utf-8")
-    print(f"Created {_CONFIG_PATH}")
+    CONFIG_PATH.write_text(_DEFAULT_CONFIG, encoding="utf-8")
+    print(f"Created {CONFIG_PATH}")
     print("Edit it to add your tools and overlay paths, then run `llm-prompts setup`.")
 
 
