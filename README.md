@@ -60,20 +60,10 @@ Overlay packages extend llm-prompts with additional rules, workflows, and skills
 ```toml
 # overlay's pyproject.toml
 [project.entry-points."llm_prompts"]
-my-overlay = "my_package.llm_prompts:get_prompts_dir"
+my-overlay = "my_package"
 ```
 
-Where `get_prompts_dir()` returns a `Path` to the overlay's prompt directory. Use `importlib.resources` so it works for both editable and non-editable installs:
-
-```python
-from importlib.resources import files
-from pathlib import Path
-
-def get_prompts_dir() -> Path:
-    return Path(str(files("my_package") / "prompts"))
-```
-
-The prompt directory follows this layout:
+The entry point value is the Python package name. Prompts are discovered by convention at `<package>/prompts/`:
 
 ```
 src/my_package/prompts/

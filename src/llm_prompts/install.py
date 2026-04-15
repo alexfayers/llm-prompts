@@ -126,7 +126,8 @@ def _discover_overlay_paths() -> list[Path]:
     """Discover overlay directories from installed packages via entry_points.
 
     Packages declare an ``llm_prompts`` entry point group where each entry
-    point is a callable returning the Path to the package's overlay directory.
+    point value is the package name. The prompts directory is resolved via
+    ``importlib.resources.files(<package>) / "prompts"``.
 
     Returns:
         List of overlay directory paths from installed packages.
@@ -136,8 +137,7 @@ def _discover_overlay_paths() -> list[Path]:
     paths: list[Path] = []
     for ep in entry_points(group="llm_prompts"):
         try:
-            get_path = ep.load()
-            overlay_path = Path(get_path())
+            overlay_path = Path(str(files(ep.value) / "prompts"))
             if overlay_path.is_dir():
                 log("info", f"[overlay] Discovered '{ep.name}' at {overlay_path}")
                 paths.append(overlay_path)
