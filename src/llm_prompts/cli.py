@@ -147,6 +147,7 @@ def main() -> None:
             from .setup import CONFIG_PATH, has_remote_sources, run_setup
 
             if CONFIG_PATH.exists() and has_remote_sources() and run_setup():
+                print("\nPackages updated, re-running install with fresh code...")
                 result = subprocess.run(
                     [sys.argv[0], "install", args.agent]
                     + (["--verbose"] if args.verbose else [])
