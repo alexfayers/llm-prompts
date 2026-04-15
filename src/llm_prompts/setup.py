@@ -209,8 +209,12 @@ def init_config() -> None:
     print("Edit it to add your tools and overlay paths, then run `llm-prompts setup`.")
 
 
-def run_setup(tool_filter: str | None = None, *, dry_run: bool = False) -> None:
-    """Install all configured tools with their overlays."""
+def run_setup(tool_filter: str | None = None, *, dry_run: bool = False) -> bool:
+    """Install all configured tools with their overlays.
+
+    Returns:
+        True if any packages were upgraded or installed.
+    """
     tools = _load_config()
     errors = _validate_paths(tools)
     if errors:
@@ -227,6 +231,7 @@ def run_setup(tool_filter: str | None = None, *, dry_run: bool = False) -> None:
             print(f"No tool named '{tool_filter}' in config.", file=sys.stderr)
             sys.exit(1)
 
+    changed = False
     failed: list[str] = []
     for name, install_cmd, upgrade_cmd in commands:
         if upgrade_cmd:
@@ -241,6 +246,7 @@ def run_setup(tool_filter: str | None = None, *, dry_run: bool = False) -> None:
             if result.returncode == 0:
                 if "Nothing to upgrade" not in result.stdout:
                     print(result.stdout, end="")
+                    changed = True
                 continue
             print(result.stdout, end="")
             print(f"[{name}] Upgrade failed, falling back to full install...")
@@ -250,9 +256,12 @@ def run_setup(tool_filter: str | None = None, *, dry_run: bool = False) -> None:
             result = subprocess.run(install_cmd, check=False)
             if result.returncode != 0:
                 failed.append(name)
+            else:
+                changed = True
 
     if failed:
         print(f"\nFailed: {', '.join(failed)}", file=sys.stderr)
         sys.exit(1)
     if not dry_run and commands:
         print("\nAll tools installed successfully.")
+    return changed

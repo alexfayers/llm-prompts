@@ -7,6 +7,7 @@ import contextlib
 import io
 from importlib.resources import files
 from pathlib import Path
+import subprocess
 import sys
 
 _AGENTS = ("cline", "copilot", "kiro")
@@ -145,8 +146,13 @@ def main() -> None:
         if not args.no_update:
             from .setup import CONFIG_PATH, has_remote_sources, run_setup
 
-            if CONFIG_PATH.exists() and has_remote_sources():
-                run_setup()
+            if CONFIG_PATH.exists() and has_remote_sources() and run_setup():
+                result = subprocess.run(
+                    [sys.executable, "-m", "llm_prompts", "install", args.agent]
+                    + (["--verbose"] if args.verbose else [])
+                    + ["--no-update"],
+                )
+                sys.exit(result.returncode)
 
         from .install import main as install_main
 
