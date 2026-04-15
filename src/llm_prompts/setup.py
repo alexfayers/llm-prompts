@@ -235,9 +235,14 @@ def run_setup(tool_filter: str | None = None, *, dry_run: bool = False) -> None:
                 print(f"[{name}] (fallback) {' '.join(install_cmd)}")
                 continue
             print(f"\n[{name}] {' '.join(upgrade_cmd)}")
-            result = subprocess.run(upgrade_cmd, check=False)
+            result = subprocess.run(
+                upgrade_cmd, check=False, capture_output=True, text=True
+            )
             if result.returncode == 0:
+                if "Nothing to upgrade" not in result.stdout:
+                    print(result.stdout, end="")
                 continue
+            print(result.stdout, end="")
             print(f"[{name}] Upgrade failed, falling back to full install...")
 
         print(f"\n[{name}] {' '.join(install_cmd)}")
