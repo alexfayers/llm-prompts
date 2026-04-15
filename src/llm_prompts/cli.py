@@ -99,7 +99,8 @@ def main() -> None:
     )
     subparsers = parser.add_subparsers(dest="command")
     install_parser = subparsers.add_parser(
-        "install", help="Install rules, workflows, and skills for all agents."
+        "install",
+        help="Install rules, workflows, and skills. Auto-updates remote sources first.",
     )
     install_parser.add_argument(
         "agent",
