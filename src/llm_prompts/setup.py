@@ -28,11 +28,15 @@ _DEFAULT_CONFIG = """\
 name = "llm-prompts"
 source = "git+https://github.com/alexfayers/llm-prompts.git"
 
-# [[tools]]
-# name = "mcp-memory"
-# source = "git+https://github.com/alexfayers/mcp-memory.git"
-# standalone = true
-# overlays_for = ["llm-prompts"]
+[[tools]]
+name = "cline-hooks"
+source = "git+https://github.com/alexfayers/cline-hooks.git"
+
+[[tools]]
+name = "mcp-memory"
+source = "git+https://github.com/alexfayers/mcp-memory.git"
+standalone = true
+overlays_for = ["llm-prompts", "cline-hooks"]
 """
 
 
