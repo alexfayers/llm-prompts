@@ -148,7 +148,7 @@ def main() -> None:
 
             if CONFIG_PATH.exists() and has_remote_sources() and run_setup():
                 result = subprocess.run(
-                    [sys.executable, "-m", "llm_prompts", "install", args.agent]
+                    [sys.argv[0], "install", args.agent]
                     + (["--verbose"] if args.verbose else [])
                     + ["--no-update"],
                 )
