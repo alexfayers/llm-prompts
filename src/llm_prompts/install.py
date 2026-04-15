@@ -1,6 +1,7 @@
 """Install Cline and Copilot rules, workflows, skills, and prompts."""
 
 from dataclasses import dataclass
+from importlib.resources import files
 import os
 from pathlib import Path
 import shutil
@@ -414,8 +415,7 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
     """
     global _verbose  # noqa: PLW0603
     _verbose = verbose
-    pkg_dir = Path(__file__).parent
-    root_dir = pkg_dir.parent.parent
+    root_dir = Path(str(files("llm_prompts") / "prompts"))
     dirs = _get_dirs()
 
     overlay_dirs = _discover_overlay_paths()

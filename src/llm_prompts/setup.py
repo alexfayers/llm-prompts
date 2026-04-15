@@ -17,20 +17,20 @@ _DEFAULT_CONFIG = """\
 
 # Each [[tools]] entry is a package to install.
 # `source` can be:
-#   - A local path (~/git/pkg or /abs/path) - installed as editable
-#   - A PyPI package name (e.g. "llm-prompts")
 #   - A git URL (e.g. "git+https://github.com/user/repo.git")
+#   - A PyPI package name (e.g. "llm-prompts")
+#   - A local path (~/git/pkg or /abs/path) - installed as editable
 #
 # `overlays_for` lists which other tools this package plugs into.
 # `standalone` = true means the tool also gets its own install (e.g. it has a CLI).
 
 [[tools]]
 name = "llm-prompts"
-source = "~/git/llm-prompts"
+source = "git+https://github.com/alexfayers/llm-prompts.git"
 
 # [[tools]]
 # name = "mcp-memory"
-# source = "~/git/mcp-memory"
+# source = "git+https://github.com/alexfayers/mcp-memory.git"
 # standalone = true
 # overlays_for = ["llm-prompts"]
 """

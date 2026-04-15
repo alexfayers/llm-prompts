@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+from importlib.resources import files
 from pathlib import Path
 import sys
 
@@ -12,8 +13,8 @@ _AGENTS = ("cline", "copilot", "kiro")
 
 
 def _get_root_dir() -> Path:
-    """Return the llm-prompts repository root directory."""
-    return Path(__file__).parent.parent.parent
+    """Return the llm-prompts package data directory."""
+    return Path(str(files("llm_prompts") / "prompts"))
 
 
 def _collect_sources(agent: str) -> dict[str, Path]:
