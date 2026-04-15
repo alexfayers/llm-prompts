@@ -14,6 +14,7 @@ _Note that these git rules override others._
 - Commits _must_ be created frequently - early and often, following best practices
 - When staging and committing modified files at the same time, run `git add` and `git commit` in a single commit by using `&&` instead of staging and committing separately.
 - If you are making a change that aligns with the previous commit, amend the previous commit instead of creating a new one.
+- **Before amending**, check if HEAD has been pushed with `git -P log --oneline @{u}..HEAD`. If the output is empty, HEAD is already pushed - do NOT amend. Create a new commit instead.
 - If using the focus chain, the last task in the TODO list MUST be to commit the changes
 
 Before making a commit, you must tell the user "I am following the predefined git rules" to confirm your understanding of these rules.
