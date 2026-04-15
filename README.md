@@ -19,6 +19,32 @@ llm-prompts install {agent}    # kiro, cline, copilot, or all
 
 When sources are remote (git URLs or PyPI), `install` automatically runs `setup` first to pull the latest versions. Use `--no-update` to skip this.
 
+## Concepts
+
+### Rules
+
+Rules are markdown files that steer agent behaviour. They are always active during a session - the agent reads them as part of its system prompt. Examples: coding style guidelines, git commit conventions, banned phrasing.
+
+Rules are installed to agent-specific directories (e.g. `~/.kiro/steering/` for Kiro, `~/Documents/Cline/Rules/` for Cline).
+
+### Workflows
+
+Workflows are markdown files that define multi-step procedures the agent can follow. Unlike rules (which are always active), workflows are loaded on demand when the agent needs to perform a specific task. Examples: pre-implementation checklist, confidence scoring, oncall investigation.
+
+### Skills
+
+Skills are directories containing a `SKILL.md` file that the agent reads before performing a specific action. They provide just-in-time guidance for tasks like git operations, session management, or plan refinement. Skills are installed as symlinks, so edits to the source are picked up immediately.
+
+### Templates
+
+Shared rules and workflows use `{{VAR}}` template placeholders that get substituted per agent. For example, `{{RULE_FILES}}` becomes "steering files" for Kiro and ".clinerules files" for Cline. This allows a single source file to work across all agents. Variables are defined in each agent's `vars.json`.
+
+### Overlays
+
+Overlays are separate packages that add extra rules, workflows, and skills on top of the core llm-prompts content. They are useful for organisation-specific or private rules that you don't want in the public repo.
+
+For example, [mcp-memory](https://github.com/alexfayers/mcp-memory) is an overlay that adds memory-related rules and skills. When installed alongside llm-prompts, its content is merged in during `llm-prompts install`. Overlay content takes priority over core content when filenames collide.
+
 ## Setup config
 
 `llm-prompts setup` reads `~/.config/llm-prompts/config.toml` to install all your tools and overlays in one go.
@@ -56,9 +82,9 @@ llm-prompts setup mcp-memory   # install just one tool
 llm-prompts setup --dry-run    # preview commands without running
 ```
 
-## Overlays
+## Creating an overlay
 
-Overlay packages extend llm-prompts with additional rules, workflows, and skills. They register via the `llm_prompts` entry point group:
+Overlay packages register via the `llm_prompts` entry point group:
 
 ```toml
 # overlay's pyproject.toml
