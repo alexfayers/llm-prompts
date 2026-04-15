@@ -122,13 +122,19 @@ def _build_install_cmd(
     if installer == "uv":
         cmd = ["uv", "tool", "install"]
         cmd.extend(_source_args(installer, core_source, editable=True))
+        remote_packages: list[str] = []
+        if not _is_local_path(core_source):
+            remote_packages.append(core_source.split("/")[-1].removesuffix(".git"))
         for overlay in overlays:
             src = str(overlay["source"])
             if _is_local_path(src):
                 cmd.extend(["--with-editable", str(_expand(src))])
             else:
                 cmd.extend(["--with", src])
-        cmd.extend(["--reinstall", "--force"])
+                remote_packages.append(str(overlay["name"]))
+        for pkg in remote_packages:
+            cmd.extend(["--reinstall-package", pkg])
+        cmd.append("--force")
         return cmd
 
     if installer == "pipx":
