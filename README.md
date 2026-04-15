@@ -27,11 +27,11 @@ llm-prompts install kiro    # or cline, copilot, all
 ```toml
 [[tools]]
 name = "llm-prompts"
-source = "~/git/llm-prompts"
+source = "git+https://github.com/alexfayers/llm-prompts.git"
 
 [[tools]]
 name = "mcp-memory"
-source = "mcp-memory"
+source = "git+https://github.com/alexfayers/mcp-memory.git"
 standalone = true
 overlays_for = ["llm-prompts"]
 ```
@@ -60,13 +60,23 @@ Overlay packages extend llm-prompts with additional rules, workflows, and skills
 ```toml
 # overlay's pyproject.toml
 [project.entry-points."llm_prompts"]
-my-overlay = "my_package:get_prompts_dir"
+my-overlay = "my_package.llm_prompts:get_prompts_dir"
 ```
 
-Where `get_prompts_dir()` returns a `Path` to the overlay's prompt directory, following the same layout:
+Where `get_prompts_dir()` returns a `Path` to the overlay's prompt directory. Use `importlib.resources` so it works for both editable and non-editable installs:
+
+```python
+from importlib.resources import files
+from pathlib import Path
+
+def get_prompts_dir() -> Path:
+    return Path(str(files("my_package") / "prompts"))
+```
+
+The prompt directory follows this layout:
 
 ```
-prompts/
+src/my_package/prompts/
   shared/rules/       # rules for all agents
   shared/skills/      # skills for all agents
   cline/rules/        # cline-only rules
