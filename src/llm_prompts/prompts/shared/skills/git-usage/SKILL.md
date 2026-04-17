@@ -19,6 +19,11 @@ _Note that these git rules override others._
 
 Before making a commit, you must tell the user "I am following the predefined git rules" to confirm your understanding of these rules.
 
+## Pushing
+
+- **NEVER** push without explicit user permission. Always ask first.
+- Before pushing, run `grep -r '<<<<<<< ' --include='*.py' --include='*.md' --include='*.toml' --include='*.json' .` on the repo to verify no conflict markers exist. If any are found, **do not push** - fix them first.
+
 ## Amending non-HEAD commits
 
 - `git commit --amend` only modifies HEAD - to edit an earlier commit use interactive rebase
