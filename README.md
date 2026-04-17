@@ -110,21 +110,36 @@ After installing rules and skills with `llm-prompts install kiro`, you need a Ki
 llm-prompts install kiro --agent-config ~/.kiro/agents/my-agent.json
 ```
 
-This adds `resources` entries for the installed steering files and skills to your agent config. If the entries already exist, they are left unchanged.
+This adds `resources` entries for the installed steering files and skills to your agent config. If [cline-hooks](https://github.com/alexfayers/cline-hooks) and [mcp-memory](https://github.com/alexfayers/mcp-memory) are installed (included in the default config), it also injects lifecycle hooks, the memory MCP server, and auto-approval for memory tools. If the entries already exist, they are left unchanged.
 
 To set up a Kiro agent from scratch:
 
-1. Create an agent config at `~/.kiro/agents/<name>.json`:
+1. Run the bootstrap script (installs uv, llm-prompts, and creates a starter config):
 
-```json
+```bash
+curl -LsSf https://raw.githubusercontent.com/alexfayers/llm-prompts/main/install.sh | sh
+```
+
+2. Install all configured tools and overlays:
+
+```bash
+llm-prompts setup
+```
+
+3. Create a minimal agent config:
+
+```bash
+mkdir -p ~/.kiro/agents
+cat > ~/.kiro/agents/my-agent.json << 'EOF'
 {
   "name": "my-agent",
   "description": "My agent",
   "tools": ["*"]
 }
+EOF
 ```
 
-2. Run the installer with `--agent-config` to inject resource entries:
+4. Install rules, skills, and patch the agent config:
 
 ```bash
 llm-prompts install kiro --agent-config ~/.kiro/agents/my-agent.json
