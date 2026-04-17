@@ -179,7 +179,7 @@ def main() -> None:
 
             patch_kiro_agent_config(args.agent_config)
             try_install_hooks(args.agent_config)
-            try_install_memory()
+            try_install_memory(args.agent_config)
     elif args.command == "source":
         _print_sources(args.agent)
     elif args.command == "setup":
