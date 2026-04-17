@@ -463,12 +463,14 @@ def try_install_hooks(agent_config_path: str) -> None:
     Args:
         agent_config_path: Path to the agent JSON file to patch.
     """
-    try:
-        from cline_hooks.frontends.kiro.install import install_kiro
-    except ImportError:
-        log("debug", "cline-hooks not installed, skipping hook injection.")
+    import shutil
+    import subprocess
+
+    binary = shutil.which("cline-hook")
+    if not binary:
+        log("debug", "cline-hook not found on PATH, skipping hook injection.")
         return
-    install_kiro(agent_config_path)
+    subprocess.run([binary, "install", "kiro", agent_config_path], check=False)
 
 
 def _memory_service_exists() -> bool:
@@ -482,28 +484,16 @@ def _memory_service_exists() -> bool:
 
 def try_install_memory() -> None:
     """Patch Kiro MCP config and set up the memory service if available."""
-    try:
-        from mcp_memory.cli import _cmd_install_kiro, _cmd_setup_service
-    except ImportError:
-        log("debug", "mcp-memory not installed, skipping MCP config injection.")
+    import shutil
+    import subprocess
+
+    binary = shutil.which("mcp-memory")
+    if not binary:
+        log("debug", "mcp-memory not found on PATH, skipping MCP config injection.")
         return
-
-    import argparse
-
-    install_args = argparse.Namespace(
-        port=os.environ.get("MCP_MEMORY_PORT", "8000"),
-        mcp_config=str(Path.home() / ".kiro" / "settings" / "mcp.json"),
-    )
-    _cmd_install_kiro(install_args)
-
+    subprocess.run([binary, "install", "kiro"], check=False)
     if not _memory_service_exists():
-        from mcp_memory.config import get_db_path
-
-        service_args = argparse.Namespace(
-            port=os.environ.get("MCP_MEMORY_PORT", "8000"),
-            db_path=str(get_db_path()),
-        )
-        _cmd_setup_service(service_args)
+        subprocess.run([binary, "setup-service"], check=False)
 
 
 def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None:
