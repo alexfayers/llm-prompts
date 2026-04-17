@@ -21,6 +21,13 @@ source = "<git-url-or-local-path>"
 overlays_for = ["llm-prompts"]
 ```
 
+The `source` field must be a pip-installable reference:
+- Git HTTPS: `git+https://github.com/user/repo.git`
+- Git SSH: `git+ssh://host/path/to/repo`
+- Local path: `~/path/to/repo`
+
+If given a web URL to a repository, convert it to a `git+https://` or `git+ssh://` URL that pip can install from.
+
 Then run `llm-prompts setup` to install it, followed by `llm-prompts install {{AGENT}}` to apply the new rules, workflows, and skills.
 
 ## Adding memory
