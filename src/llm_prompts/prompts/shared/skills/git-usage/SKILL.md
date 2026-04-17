@@ -22,7 +22,7 @@ Before making a commit, you must tell the user "I am following the predefined gi
 ## Pushing
 
 - **NEVER** push without explicit user permission. Always ask first.
-- Before pushing, run `grep -r '<<<<<<< ' --include='*.py' --include='*.md' --include='*.toml' --include='*.json' .` on the repo to verify no conflict markers exist. If any are found, **do not push** - fix them first.
+- Before pushing, run `git grep -n '^<<<<<<<' HEAD` to verify no conflict markers exist in tracked files. If any results are found, **do not push** - fix them first.
 
 ## Amending non-HEAD commits
 
