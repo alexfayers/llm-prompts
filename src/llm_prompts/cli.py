@@ -116,6 +116,11 @@ def main() -> None:
         action="store_true",
         help="Skip running setup before installing.",
     )
+    install_parser.add_argument(
+        "--agent-config",
+        metavar="PATH",
+        help="Kiro agent JSON to patch with resource entries.",
+    )
     source_parser = subparsers.add_parser(
         "source", help="Show source file locations for an agent."
     )
@@ -151,6 +156,11 @@ def main() -> None:
                 result = subprocess.run(
                     [sys.argv[0], "install", args.agent]
                     + (["--verbose"] if args.verbose else [])
+                    + (
+                        ["--agent-config", args.agent_config]
+                        if args.agent_config
+                        else []
+                    )
                     + ["--no-update"],
                 )
                 sys.exit(result.returncode)
@@ -159,6 +169,17 @@ def main() -> None:
 
         agent_names = list(_AGENTS) if args.agent == "all" else [args.agent]
         install_main(agent_names, verbose=args.verbose)
+
+        if args.agent_config:
+            from .install import (
+                patch_kiro_agent_config,
+                try_install_hooks,
+                try_install_memory,
+            )
+
+            patch_kiro_agent_config(args.agent_config)
+            try_install_hooks(args.agent_config)
+            try_install_memory()
     elif args.command == "source":
         _print_sources(args.agent)
     elif args.command == "setup":

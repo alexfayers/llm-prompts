@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from importlib.resources import files
+import json
 import os
 from pathlib import Path
 import shutil
@@ -406,6 +407,103 @@ def _symlink_dir(source: Path, dest: Path) -> None:
         dest.symlink_to(source)
     except Exception as e:
         log("error", f"Failed to symlink {source} to {dest}: {e}")
+
+
+def _kiro_resources() -> list[str]:
+    """Return the resource URIs that llm-prompts installs for Kiro.
+
+    Returns:
+        List of resource URI strings for steering files and skills.
+    """
+    dirs = _get_dirs()
+    kiro_dirs: dict[str, Path] = dirs["kiro"]
+    steering = kiro_dirs["rules"]
+    skills = steering.parent / "skills"
+    return [
+        f"file://{steering}/**/*.md",
+        f"skill://{skills}/**/SKILL.md",
+    ]
+
+
+def patch_kiro_agent_config(agent_config_path: str) -> None:
+    """Patch a Kiro agent config JSON file with llm-prompts resource entries.
+
+    Merges resource URIs for installed steering files and skills into the
+    agent config's ``resources`` array, avoiding duplicates.
+
+    Args:
+        agent_config_path: Path to the agent JSON file to patch.
+    """
+    config_path = Path(agent_config_path)
+    if not config_path.exists():
+        log("error", f"{config_path} does not exist")
+        sys.exit(1)
+
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    existing: list[str] = config.get("resources", [])
+    new_resources = _kiro_resources()
+
+    added = 0
+    for resource in new_resources:
+        if resource not in existing:
+            existing.append(resource)
+            added += 1
+
+    config["resources"] = existing
+    config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    if added:
+        log("success", f"Patched {config_path} with {added} resource(s).")
+    else:
+        log("info", f"{config_path} already has all resource entries.")
+
+
+def try_install_hooks(agent_config_path: str) -> None:
+    """Patch a Kiro agent config with cline-hooks entries if available.
+
+    Args:
+        agent_config_path: Path to the agent JSON file to patch.
+    """
+    try:
+        from cline_hooks.frontends.kiro.install import install_kiro
+    except ImportError:
+        log("debug", "cline-hooks not installed, skipping hook injection.")
+        return
+    install_kiro(agent_config_path)
+
+
+def _memory_service_exists() -> bool:
+    """Check whether the mcp-memory background service is installed."""
+    if sys.platform == "darwin":
+        return (
+            Path.home() / "Library" / "LaunchAgents" / "com.mcp-memory.plist"
+        ).exists()
+    return Path("/etc/systemd/system/mcp-memory.service").exists()
+
+
+def try_install_memory() -> None:
+    """Patch Kiro MCP config and set up the memory service if available."""
+    try:
+        from mcp_memory.cli import _cmd_install_kiro, _cmd_setup_service
+    except ImportError:
+        log("debug", "mcp-memory not installed, skipping MCP config injection.")
+        return
+
+    import argparse
+
+    install_args = argparse.Namespace(
+        port=os.environ.get("MCP_MEMORY_PORT", "8000"),
+        mcp_config=str(Path.home() / ".kiro" / "settings" / "mcp.json"),
+    )
+    _cmd_install_kiro(install_args)
+
+    if not _memory_service_exists():
+        from mcp_memory.config import get_db_path
+
+        service_args = argparse.Namespace(
+            port=os.environ.get("MCP_MEMORY_PORT", "8000"),
+            db_path=str(get_db_path()),
+        )
+        _cmd_setup_service(service_args)
 
 
 def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None:
