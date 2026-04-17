@@ -102,14 +102,55 @@ src/my_package/prompts/
   kiro/rules/         # kiro-only rules
 ```
 
+## Kiro agent setup
+
+After installing rules and skills with `llm-prompts install kiro`, you need a Kiro agent config that references them. If you already have an agent JSON file, the installer can patch it automatically:
+
+```bash
+llm-prompts install kiro --agent-config ~/.kiro/agents/my-agent.json
+```
+
+This adds `resources` entries for the installed steering files and skills to your agent config. If the entries already exist, they are left unchanged.
+
+To set up a Kiro agent from scratch:
+
+1. Create an agent config at `~/.kiro/agents/<name>.json`:
+
+```json
+{
+  "name": "my-agent",
+  "description": "My agent",
+  "tools": ["*"]
+}
+```
+
+2. Run the installer with `--agent-config` to inject resource entries:
+
+```bash
+llm-prompts install kiro --agent-config ~/.kiro/agents/my-agent.json
+```
+
+3. (Optional) Set up [mcp-memory](https://github.com/alexfayers/mcp-memory) for persistent memory across sessions. Add it as an MCP server in your Kiro MCP config and include the memory rules overlay in your `config.toml`.
+
+```bash
+mcp-memory install kiro
+```
+
+4. (Optional) Set up [cline-hooks](https://github.com/alexfayers/cline-hooks) for lifecycle hooks (pre/post tool use, session start, etc.). Install hooks into your agent config with:
+
+```bash
+cline-hook install kiro ~/.kiro/agents/my-agent.json
+```
+
 ## CLI
 
 ```bash
-llm-prompts install <agent>    # install rules/workflows/skills
-llm-prompts install <agent> --no-update  # skip auto-update
-llm-prompts source <agent>     # show source file paths
-llm-prompts setup              # install all configured tools
-llm-prompts setup --init       # create starter config
+llm-prompts install <agent>                    # install rules/workflows/skills
+llm-prompts install kiro --agent-config PATH   # also patch agent JSON with resources
+llm-prompts install <agent> --no-update        # skip auto-update
+llm-prompts source <agent>                     # show source file paths
+llm-prompts setup                              # install all configured tools
+llm-prompts setup --init                       # create starter config
 ```
 
 ## Development
