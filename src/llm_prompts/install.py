@@ -482,11 +482,11 @@ def _memory_service_exists() -> bool:
     return Path("/etc/systemd/system/mcp-memory.service").exists()
 
 
-def try_install_memory(agent_config_path: str | None = None) -> None:
-    """Patch Kiro MCP config and set up the memory service if available.
+def try_install_memory(agent_config_path: str) -> None:
+    """Patch Kiro agent config with memory MCP server and set up service if needed.
 
     Args:
-        agent_config_path: Optional agent JSON to patch with @memory allowedTools.
+        agent_config_path: Agent JSON to patch with memory server and @memory allowedTools.
     """
     import shutil
     import subprocess
@@ -495,10 +495,7 @@ def try_install_memory(agent_config_path: str | None = None) -> None:
     if not binary:
         log("debug", "mcp-memory not found on PATH, skipping MCP config injection.")
         return
-    cmd = [binary, "install", "kiro"]
-    if agent_config_path:
-        cmd.extend(["--agent-config", agent_config_path])
-    subprocess.run(cmd, check=False)
+    subprocess.run([binary, "install", "kiro", agent_config_path], check=False)
     if not _memory_service_exists():
         subprocess.run([binary, "setup-service"], check=False)
 
