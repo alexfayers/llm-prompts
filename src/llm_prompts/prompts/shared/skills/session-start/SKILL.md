@@ -11,3 +11,4 @@ At the start of every session, before responding to the user's first message, ch
 2. `search_nodes(project="<repo-name>", query="in-progress task", status="in-progress")` to find unfinished tasks.
 3. If in-progress tasks or active TODOs exist, briefly summarise them for the user.
 4. If nothing is in progress, proceed normally without mentioning the check.
+5. Run `llm-prompts update --check` to see if any tool sources have upstream updates available. If updates are found, mention them to the user.

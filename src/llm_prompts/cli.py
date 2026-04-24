@@ -92,6 +92,52 @@ def _print_sources(agent: str) -> None:
         print(f"  {sources[key]}")
 
 
+def _check_for_updates() -> bool:
+    """Check configured tool sources for available upstream changes.
+
+    Returns:
+        True if any updates are available.
+    """
+    from .setup import CONFIG_PATH, _expand, _is_local_path, _load_config
+
+    if not CONFIG_PATH.exists():
+        return False
+
+    tools = _load_config()
+    has_updates = False
+
+    for tool in tools:
+        name = str(tool.get("name", ""))
+        source = str(tool.get("source", ""))
+        if not _is_local_path(source):
+            continue
+        repo = _expand(source)
+        if not (repo / ".git").is_dir():
+            continue
+        # Fetch silently to update remote refs
+        subprocess.run(
+            ["git", "-C", str(repo), "fetch", "--quiet"],
+            check=False,
+            capture_output=True,
+        )
+        result = subprocess.run(
+            ["git", "-C", str(repo), "rev-list", "--count", "HEAD..@{u}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            continue
+        count = int(result.stdout.strip())
+        if count > 0:
+            print(f"[{name}] {count} new commit(s) available")
+            has_updates = True
+
+    if not has_updates:
+        print("All tools are up to date.")
+    return has_updates
+
+
 def _restart_memory_service() -> None:
     """Restart the mcp-memory background service if installed."""
     if sys.platform == "darwin":
@@ -164,9 +210,14 @@ def main() -> None:
     setup_parser.add_argument(
         "tool", nargs="?", help="Install only this tool (by name from config)."
     )
-    subparsers.add_parser(
+    update_parser = subparsers.add_parser(
         "update",
         help="Update all installed agents and restart services.",
+    )
+    update_parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Report available updates without applying them.",
     )
 
     args = parser.parse_args()
@@ -223,6 +274,10 @@ def main() -> None:
         else:
             run_setup(args.tool, dry_run=args.dry_run)
     elif args.command == "update":
+        if args.check:
+            _check_for_updates()
+            sys.exit(0)
+
         from .manifest import read_manifest
         from .setup import CONFIG_PATH, has_remote_sources, run_setup
 
