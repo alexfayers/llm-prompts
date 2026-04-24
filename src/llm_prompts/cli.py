@@ -92,6 +92,26 @@ def _print_sources(agent: str) -> None:
         print(f"  {sources[key]}")
 
 
+def _restart_memory_service() -> None:
+    """Restart the mcp-memory background service if installed."""
+    if sys.platform == "darwin":
+        plist = Path.home() / "Library" / "LaunchAgents" / "com.mcp-memory.plist"
+        if plist.exists():
+            uid = subprocess.run(
+                ["id", "-u"], capture_output=True, text=True, check=False
+            ).stdout.strip()
+            subprocess.run(
+                ["launchctl", "kickstart", "-k", f"gui/{uid}/com.mcp-memory"],
+                check=False,
+            )
+            print("Restarted mcp-memory service.")
+    else:
+        unit = Path("/etc/systemd/system/mcp-memory.service")
+        if unit.exists():
+            subprocess.run(["sudo", "systemctl", "restart", "mcp-memory"], check=False)
+            print("Restarted mcp-memory service.")
+
+
 def main() -> None:
     """Run the llm-prompts CLI."""
     parser = argparse.ArgumentParser(
@@ -144,6 +164,10 @@ def main() -> None:
     setup_parser.add_argument(
         "tool", nargs="?", help="Install only this tool (by name from config)."
     )
+    subparsers.add_parser(
+        "update",
+        help="Update all installed agents and restart services.",
+    )
 
     args = parser.parse_args()
 
@@ -176,10 +200,19 @@ def main() -> None:
                 try_install_hooks,
                 try_install_memory,
             )
+            from .manifest import write_manifest, read_manifest
 
             patch_kiro_agent_config(args.agent_config)
             try_install_hooks(args.agent_config)
             try_install_memory(args.agent_config)
+
+            for name in agent_names:
+                existing = read_manifest().get(name, {})
+                write_manifest(
+                    name,
+                    existing.get("files", []),
+                    agent_config=args.agent_config,
+                )
     elif args.command == "source":
         _print_sources(args.agent)
     elif args.command == "setup":
@@ -189,6 +222,41 @@ def main() -> None:
             init_config()
         else:
             run_setup(args.tool, dry_run=args.dry_run)
+    elif args.command == "update":
+        from .manifest import read_manifest
+        from .setup import CONFIG_PATH, has_remote_sources, run_setup
+
+        manifest = read_manifest()
+        if not manifest:
+            print(
+                "No installed agents found. Run `llm-prompts install <agent>` first.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        changed = False
+        if CONFIG_PATH.exists() and has_remote_sources():
+            changed = run_setup()
+
+        from .install import main as install_main
+
+        install_main(list(manifest))
+
+        for name, entry in manifest.items():
+            agent_config = entry.get("agent_config")
+            if agent_config:
+                from .install import (
+                    patch_kiro_agent_config,
+                    try_install_hooks,
+                    try_install_memory,
+                )
+
+                patch_kiro_agent_config(agent_config)
+                try_install_hooks(agent_config)
+                try_install_memory(agent_config)
+
+        if changed:
+            _restart_memory_service()
     else:
         parser.print_help()
         sys.exit(1)

@@ -521,6 +521,8 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
     }
     targets = agent_names or list(all_agents)
 
+    installed_files: dict[str, list[str]] = {name: [] for name in targets}
+
     if "cline" in targets:
         managed_skills: set[str] = set()
         _install_skills(root_dir / "shared" / "skills", dirs["agents"], managed_skills)
@@ -531,25 +533,32 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
         _check_unmanaged(
             dirs["agents"] / "skills", managed_skills, "skills", is_dir=True
         )
+        skills_dir = dirs["agents"] / "skills"
+        installed_files["cline"].extend(str(skills_dir / s) for s in managed_skills)
 
     if "kiro" in targets:
         managed_kiro_skills: set[str] = set()
+        kiro_skills_parent = dirs["kiro"]["rules"].parent
         _install_skills(
             root_dir / "shared" / "skills",
-            dirs["kiro"]["rules"].parent,
+            kiro_skills_parent,
             managed_kiro_skills,
         )
         for overlay_dir in overlay_dirs:
             _install_skills(
                 overlay_dir / "shared" / "skills",
-                dirs["kiro"]["rules"].parent,
+                kiro_skills_parent,
                 managed_kiro_skills,
             )
         _check_unmanaged(
-            dirs["kiro"]["rules"].parent / "skills",
+            kiro_skills_parent / "skills",
             managed_kiro_skills,
             "kiro skills",
             is_dir=True,
+        )
+        kiro_skills_dir = kiro_skills_parent / "skills"
+        installed_files["kiro"].extend(
+            str(kiro_skills_dir / s) for s in managed_kiro_skills
         )
 
     for name in targets:
@@ -567,12 +576,19 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
             _check_unmanaged(
                 agent.dest_dir(subdir), installed, f"{agent.name} {subdir}"
             )
+            dest_dir = agent.dest_dir(subdir)
+            installed_files[name].extend(str(dest_dir / f) for f in installed)
 
     if "cline" in targets:
         log("info", "[cline] Symlinking rules and workflows...")
         cline_symlinks: dict[str, Path] = dirs["cline_symlinks"]
         for subdir, symlink_dest in cline_symlinks.items():
             _symlink_dir(dirs["cline"][subdir], symlink_dest)
+
+    from .manifest import write_manifest
+
+    for name in targets:
+        write_manifest(name, installed_files[name])
 
 
 def get_managed_dirs() -> list[Path]:
