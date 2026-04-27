@@ -289,9 +289,8 @@ def main() -> None:
             )
             sys.exit(1)
 
-        changed = False
         if CONFIG_PATH.exists() and has_remote_sources():
-            changed = run_setup()
+            run_setup()
 
         from .install import main as install_main
 
@@ -310,8 +309,7 @@ def main() -> None:
                 try_install_hooks(agent_config)
                 try_install_memory(agent_config)
 
-        if changed:
-            _restart_memory_service()
+        _restart_memory_service()
     else:
         parser.print_help()
         sys.exit(1)
