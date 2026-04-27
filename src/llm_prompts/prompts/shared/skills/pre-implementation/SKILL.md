@@ -23,6 +23,7 @@ After each change, perform the following steps in order:
 7. Validate all of your changes. Go through each change and determine if the functionality is necessary, maintainable, and fall within the scope of the given task.
     1. If you have made changes that do not align with this rule, make adjustments, make TODOs, go back to the first step. DO NOT CONTINUE UNLESS ALL CHANGES ARE FUNCTIONAL.
 7. Add and commit your changes with a SHORT and meaningful commit message. Follow the commit style of the repository, never assume formatting.
+8. If the change affects a running service (e.g. mcp-memory, an MCP server, a daemon), reload it using the project's standard command (e.g. `llm-prompts update`) and smoke test the change live. Never manually restart services when a managed command exists.
 
 _NOTE: If tests do not exist in the current workspace, or if the change is the creation/adjustment of a small script, then tests are NOT required._
 
