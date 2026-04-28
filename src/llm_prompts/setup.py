@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+from typing import Any
 
 _CONFIG_DIR = Path.home() / ".config" / "llm-prompts"
 CONFIG_PATH = _CONFIG_DIR / "config.toml"
@@ -66,27 +67,28 @@ def _detect_installer() -> str:
 
 
 def _build_commands(
-    tools: list[dict[str, object]], installer: str
-) -> list[tuple[str, list[str], list[str] | None]]:
+    tools: list[dict[str, Any]], installer: str
+) -> list[tuple[str, list[str], list[str] | None, list[str]]]:
     """Build install commands for all core tools.
 
-    Returns list of (tool_name, install_cmd, upgrade_cmd_or_None) tuples.
+    Returns list of (tool_name, install_cmd, upgrade_cmd_or_None, overlay_names) tuples.
     """
-    overlay_map: dict[str, list[dict[str, object]]] = {}
+    overlay_map: dict[str, list[dict[str, Any]]] = {}
     for tool in tools:
         for target in tool.get("overlays_for", []):
             overlay_map.setdefault(str(target), []).append(tool)
 
     cores = [t for t in tools if not t.get("overlays_for") or t.get("standalone")]
 
-    commands: list[tuple[str, list[str], list[str] | None]] = []
+    commands: list[tuple[str, list[str], list[str] | None, list[str]]] = []
     for core in cores:
         name = str(core["name"])
         source = str(core["source"])
         overlays = overlay_map.get(name, [])
         install_cmd = _build_install_cmd(installer, source, overlays)
         upgrade_cmd = _build_upgrade_cmd(installer, name, source, overlays)
-        commands.append((name, install_cmd, upgrade_cmd))
+        overlay_names = [str(o["name"]) for o in overlays]
+        commands.append((name, install_cmd, upgrade_cmd, overlay_names))
 
     return commands
 
@@ -121,7 +123,7 @@ def _source_args(installer: str, source: str, *, editable: bool) -> list[str]:
 
 
 def _build_install_cmd(
-    installer: str, core_source: str, overlays: list[dict[str, object]]
+    installer: str, core_source: str, overlays: list[dict[str, Any]]
 ) -> list[str]:
     """Build a full install command."""
     if installer == "uv":
@@ -158,7 +160,7 @@ def _build_upgrade_cmd(
     installer: str,
     name: str,
     core_source: str,
-    overlays: list[dict[str, object]],
+    overlays: list[dict[str, Any]],
 ) -> list[str] | None:
     """Build a targeted upgrade command, or None if not supported."""
     if installer != "uv":
@@ -175,7 +177,34 @@ def _build_upgrade_cmd(
     return cmd
 
 
-def _load_config() -> list[dict[str, object]]:
+def _has_missing_overlays(tool_name: str, overlay_names: list[str]) -> bool:
+    """Check if any expected overlays are missing from a uv tool environment.
+
+    Args:
+        tool_name: The core tool name (used to find the uv tool dir).
+        overlay_names: Package names that should be installed as overlays.
+
+    Returns:
+        True if any overlay is missing.
+    """
+    if not overlay_names:
+        return False
+    receipt = (
+        Path.home()
+        / ".local"
+        / "share"
+        / "uv"
+        / "tools"
+        / tool_name
+        / "uv-receipt.toml"
+    )
+    if not receipt.exists():
+        return True
+    content = receipt.read_text(encoding="utf-8")
+    return any(name not in content for name in overlay_names)
+
+
+def _load_config() -> list[dict[str, Any]]:
     """Load and return the tools list from config."""
     if not CONFIG_PATH.exists():
         print(
@@ -192,7 +221,7 @@ def _load_config() -> list[dict[str, object]]:
     return tools
 
 
-def _validate_paths(tools: list[dict[str, object]]) -> list[str]:
+def _validate_paths(tools: list[dict[str, Any]]) -> list[str]:
     """Validate that all local source paths exist. Returns list of errors."""
     errors: list[str] = []
     for tool in tools:
@@ -230,14 +259,14 @@ def run_setup(tool_filter: str | None = None, *, dry_run: bool = False) -> bool:
     commands = _build_commands(tools, installer)
 
     if tool_filter:
-        commands = [(n, i, u) for n, i, u in commands if n == tool_filter]
+        commands = [(n, i, u, o) for n, i, u, o in commands if n == tool_filter]
         if not commands:
             print(f"No tool named '{tool_filter}' in config.", file=sys.stderr)
             sys.exit(1)
 
     changed = False
     failed: list[str] = []
-    for name, install_cmd, upgrade_cmd in commands:
+    for name, install_cmd, upgrade_cmd, overlay_names in commands:
         if upgrade_cmd:
             if dry_run:
                 print(f"\n[{name}] {' '.join(upgrade_cmd)}")
@@ -251,14 +280,21 @@ def run_setup(tool_filter: str | None = None, *, dry_run: bool = False) -> bool:
                 if "Nothing to upgrade" not in result.stdout:
                     print(result.stdout, end="")
                     changed = True
-                continue
-            print(result.stdout, end="")
-            print(f"[{name}] Upgrade failed, falling back to full install...")
+                if not _has_missing_overlays(name, overlay_names):
+                    continue
+                print(f"[{name}] Missing overlays, running full install...")
+
+            else:
+                print(result.stdout, end="")
+                print(f"[{name}] Upgrade failed, falling back to full install...")
 
         print(f"\n[{name}] {' '.join(install_cmd)}")
         if not dry_run:
-            result = subprocess.run(install_cmd, check=False)
+            result = subprocess.run(
+                install_cmd, check=False, capture_output=True, text=True
+            )
             if result.returncode != 0:
+                print(result.stderr, end="")
                 failed.append(name)
             else:
                 changed = True

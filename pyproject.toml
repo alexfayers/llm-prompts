@@ -15,6 +15,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/llm_prompts"]
 
+[project.entry-points.cline_hooks]
+llm-prompts = "llm_prompts.hooks:AutoReinstallPlugin"
+
 [tool.ruff.lint]
 ignore = [
     "BLE001",  # blind exception - intentional for resilient install
@@ -24,3 +27,9 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "src/llm_prompts/install.py" = ["T201"]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.20.2",
+    "pytest>=9.0.3",
+]
