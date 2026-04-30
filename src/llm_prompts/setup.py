@@ -22,8 +22,8 @@ _DEFAULT_CONFIG = """\
 #   - A PyPI package name (e.g. "llm-prompts")
 #   - A local path (~/git/pkg or /abs/path) - installed as editable
 #
-# `overlays_for` lists which other tools this package plugs into.
-# `standalone` = true means the tool also gets its own install (e.g. it has a CLI).
+# Overlay relationships are inferred from pyproject.toml entry points.
+# Standalone status is inferred from pyproject.toml scripts.
 
 [[tools]]
 name = "llm-prompts"
@@ -36,8 +36,6 @@ source = "git+https://github.com/alexfayers/cline-hooks.git"
 [[tools]]
 name = "mcp-memory"
 source = "git+https://github.com/alexfayers/mcp-memory.git"
-standalone = true
-overlays_for = ["llm-prompts", "cline-hooks"]
 """
 
 
@@ -75,10 +73,19 @@ def _build_commands(
     """
     overlay_map: dict[str, list[dict[str, Any]]] = {}
     for tool in tools:
-        for target in tool.get("overlays_for", []):
-            overlay_map.setdefault(str(target), []).append(tool)
+        targets = tool.get("overlays_for", []) + _infer_overlays_for(tool)
+        for target in targets:
+            existing = overlay_map.setdefault(str(target), [])
+            if not any(str(o["name"]) == str(tool["name"]) for o in existing):
+                existing.append(tool)
 
-    cores = [t for t in tools if not t.get("overlays_for") or t.get("standalone")]
+    cores = [
+        t
+        for t in tools
+        if t.get("standalone")
+        or _infer_standalone(t)
+        or not (t.get("overlays_for") or _infer_overlays_for(t))
+    ]
 
     commands: list[tuple[str, list[str], list[str] | None, list[str]]] = []
     for core in cores:
@@ -202,6 +209,47 @@ def _has_missing_overlays(tool_name: str, overlay_names: list[str]) -> bool:
         return True
     content = receipt.read_text(encoding="utf-8")
     return any(name not in content for name in overlay_names)
+
+
+def _infer_standalone(tool: dict[str, Any]) -> bool:
+    """Infer if a tool is standalone from its pyproject.toml scripts section."""
+    source = str(tool.get("source", ""))
+    if not _is_local_path(source):
+        return False
+    pyproject = _expand(source) / "pyproject.toml"
+    if not pyproject.exists():
+        return False
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return bool(data.get("project", {}).get("scripts"))
+
+
+def _infer_overlays_for(tool: dict[str, Any]) -> list[str]:
+    """Infer overlay targets from a tool's pyproject.toml entry point groups.
+
+    If the tool source is a local path, reads its pyproject.toml and checks
+    for entry point groups matching other tool names (with _ replaced by -).
+    The tool's own name is excluded from the results.
+    """
+    source = str(tool.get("source", ""))
+    if not _is_local_path(source):
+        return []
+    pyproject = _expand(source) / "pyproject.toml"
+    if not pyproject.exists():
+        return []
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    entry_points = data.get("project", {}).get("entry-points", {})
+    name = str(tool.get("name", ""))
+    return [
+        group.replace("_", "-")
+        for group in entry_points
+        if group.replace("_", "-") != name
+    ]
 
 
 def _load_config() -> list[dict[str, Any]]:
