@@ -16,6 +16,8 @@ Before you begin the implementation (when the user switches to {{ACT_MODE}}), yo
 
 Before you {{TOOL_COMPLETE}} or end a conversation, you **MUST** use the `session-end` skill to ensure nothing is lost. This includes ANY response where you indicate work is finished, such as "all done", "nothing else outstanding", or similar wrap-up language, **and any moment you internally conclude that all work is complete** - even if the user hasn't explicitly asked you to wrap up. **Load and run the skill BEFORE giving any wrap-up summary.**
 
+User signals that trigger session-end: "anything else?", "that's it", "thanks", "we're done", "wrap up", or any question implying the task is finished. When you see these, run the skill FIRST, then respond.
+
 ## Git
 
 You MUST use the `git-usage` skill before interacting with git in **ANY** way. This includes running ANY `git` command.
