@@ -5,8 +5,17 @@
 **Trigger:** Before you {{TOOL_COMPLETE}} for any task that involved user feedback at any point during the conversation, or involved multiple non-trivial steps (e.g., multiple file edits, complex logic generation).
 
 **Immediate Corrections:** When the user corrects a mistake mid-conversation, do NOT wait until task completion. Immediately:
-1. Persist the learning to memory (project and/or global scope as appropriate).
-2. Check whether the correction should also be added to a {{RULE_FILES}} or skill - if so, update it now.
+1. **Edit the relevant rule or skill source file.** This is the primary action - behavioral corrections MUST be encoded in rules/skills because they are always loaded into context. Memory must be actively searched for.
+2. Also persist to memory for broader discoverability.
+
+**Self-Resolved Mistakes:** When you make a mistake and fix it yourself (e.g. a test fails, a build breaks, you forgot a step), persist the learning IMMEDIATELY - do not just fix and move on. Record:
+1. What went wrong and the fix, as a memory observation (so the same error is not repeated).
+2. If the mistake reveals a missing process step or a pattern that should be enforced, edit the relevant rule/skill source file.
+
+**Heuristic:**
+- Changes *how you work* (approach, style, process, workflow) -> edit a rule/skill source file.
+- User-specific personal details (name, role, preferences unique to one person) -> memory only.
+- Information about the world (facts, dates, statuses) -> memory only.
 
 **Process:**
 
