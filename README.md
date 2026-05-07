@@ -2,7 +2,7 @@
 
 Cross-agent rules, workflows, and skills for LLM coding assistants.
 
-Supports [Cline](https://github.com/cline/cline), [GitHub Copilot](https://github.com/features/copilot), and [Kiro](https://kiro.dev).
+Supports [Cline](https://github.com/cline/cline), [GitHub Copilot](https://github.com/features/copilot), [Kiro](https://kiro.dev), and [Claude Code](https://code.claude.com).
 
 ## Quick start
 
@@ -14,7 +14,7 @@ This installs [uv](https://docs.astral.sh/uv/) (if needed), installs llm-prompts
 
 ```bash
 # Edit ~/.config/llm-prompts/config.toml to add your overlay packages, then:
-llm-prompts install {agent}    # kiro, cline, copilot, or all
+llm-prompts install {agent}    # kiro, cline, copilot, claude-code, or all
 ```
 
 When sources are remote (git URLs or PyPI), `install` automatically runs `setup` first to pull the latest versions. Use `--no-update` to skip this.
@@ -25,7 +25,7 @@ When sources are remote (git URLs or PyPI), `install` automatically runs `setup`
 
 Rules are markdown files that steer agent behaviour. They are always active during a session - the agent reads them as part of its system prompt. Examples: coding style guidelines, git commit conventions, banned phrasing.
 
-Rules are installed to agent-specific directories (e.g. `~/.kiro/steering/` for Kiro, `~/Documents/Cline/Rules/` for Cline).
+Rules are installed to agent-specific directories (e.g. `~/.kiro/steering/` for Kiro, `~/Documents/Cline/Rules/` for Cline, `~/.claude/rules/` for Claude Code).
 
 ### Workflows
 

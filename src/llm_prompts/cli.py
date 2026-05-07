@@ -10,7 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-_AGENTS = ("cline", "copilot", "kiro")
+_AGENTS = ("cline", "copilot", "kiro", "claude-code")
 
 
 def _get_root_dir() -> Path:
@@ -245,6 +245,17 @@ def main() -> None:
         agent_names = list(_AGENTS) if args.agent == "all" else [args.agent]
         install_main(agent_names, verbose=args.verbose)
 
+        if "claude-code" in agent_names:
+            from .install import (
+                try_allow_update_claude_code,
+                try_install_hooks_claude_code,
+                try_install_memory_claude_code,
+            )
+
+            try_install_hooks_claude_code()
+            try_install_memory_claude_code()
+            try_allow_update_claude_code()
+
         if args.agent_config:
             from .install import (
                 patch_kiro_agent_config,
@@ -295,6 +306,17 @@ def main() -> None:
         from .install import main as install_main
 
         install_main(list(manifest))
+
+        if "claude-code" in manifest:
+            from .install import (
+                try_allow_update_claude_code,
+                try_install_hooks_claude_code,
+                try_install_memory_claude_code,
+            )
+
+            try_install_hooks_claude_code()
+            try_install_memory_claude_code()
+            try_allow_update_claude_code()
 
         for name, entry in manifest.items():
             agent_config = entry.get("agent_config")

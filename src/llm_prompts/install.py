@@ -68,24 +68,16 @@ def _vscode_user_dir() -> Path:
     return home / ".config" / "Code" / "User"
 
 
-def _get_dirs() -> dict[str, dict[str, Path] | Path]:
+def _get_dirs() -> dict[str, dict[str, Path]]:
     """Build destination directories used during installation.
 
     Returns:
-        Mapping of installation destination names to paths.
+        Mapping of agent names to their content directories.
     """
     home = Path.home()
-    cline_base = (
-        (home / "Cline") if sys.platform == "linux" else (home / "Documents" / "Cline")
-    )
     cline_merged = home / ".cline_merged"
     vscode_user = _vscode_user_dir()
     return {
-        "agents": home / ".agents",
-        "cline_symlinks": {
-            "rules": cline_base / "Rules",
-            "workflows": cline_base / "Workflows",
-        },
         "cline": {
             "rules": cline_merged / "rules",
             "workflows": cline_merged / "workflows",
@@ -98,7 +90,29 @@ def _get_dirs() -> dict[str, dict[str, Path] | Path]:
             "rules": home / ".kiro" / "steering",
             "workflows": home / ".kiro" / "prompts",
         },
+        "claude-code": {
+            "rules": home / ".claude" / "rules",
+            "workflows": home / ".claude" / "commands",
+        },
     }
+
+
+def _get_cline_extra_dirs() -> tuple[Path, dict[str, Path]]:
+    """Return the Cline agents dir and symlink targets.
+
+    Returns:
+        Tuple of (agents_dir, symlink_targets).
+    """
+    home = Path.home()
+    cline_base = (
+        (home / "Cline") if sys.platform == "linux" else (home / "Documents" / "Cline")
+    )
+    agents = home / ".agents"
+    symlinks = {
+        "rules": cline_base / "Rules",
+        "workflows": cline_base / "Workflows",
+    }
+    return agents, symlinks
 
 
 def _read_text(path: Path) -> str:
@@ -416,8 +430,7 @@ def _kiro_resources() -> list[str]:
         List of resource URI strings for steering files and skills.
     """
     dirs = _get_dirs()
-    kiro_dirs: dict[str, Path] = dirs["kiro"]
-    steering = kiro_dirs["rules"]
+    steering = dirs["kiro"]["rules"]
     skills = steering.parent / "skills"
     return [
         f"file://{steering}/**/*.md",
@@ -473,6 +486,39 @@ def try_install_hooks(agent_config_path: str) -> None:
     subprocess.run([binary, "install", "kiro", agent_config_path], check=False)
 
 
+def try_install_hooks_claude_code() -> None:
+    """Patch Claude Code settings with cline-hooks entries if available."""
+    import shutil
+    import subprocess
+
+    binary = shutil.which("cline-hook")
+    if not binary:
+        log(
+            "debug",
+            "cline-hook not found on PATH, skipping Claude Code hook injection.",
+        )
+        return
+    subprocess.run([binary, "install", "claude-code"], check=False)
+
+
+def try_allow_update_claude_code() -> None:
+    """Add Bash(llm-prompts update *) to Claude Code permissions.allow."""
+    import json
+
+    settings_path = Path.home() / ".claude" / "settings.json"
+    if not settings_path.exists():
+        return
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    allow: list[str] = settings.setdefault("permissions", {}).setdefault("allow", [])
+    rule = "Bash(llm-prompts update *)"
+    if rule not in allow:
+        allow.append(rule)
+        settings_path.write_text(
+            json.dumps(settings, indent=2) + "\n", encoding="utf-8"
+        )
+        log("success", "Added Bash(llm-prompts update *) to Claude Code permissions.")
+
+
 def _memory_service_exists() -> bool:
     """Check whether the mcp-memory background service is installed."""
     if sys.platform == "darwin":
@@ -500,6 +546,20 @@ def try_install_memory(agent_config_path: str) -> None:
         subprocess.run([binary, "setup-service"], check=False)
 
 
+def try_install_memory_claude_code() -> None:
+    """Add mcp-memory to Claude Code if available."""
+    import shutil
+    import subprocess
+
+    binary = shutil.which("mcp-memory")
+    if not binary:
+        log("debug", "mcp-memory not found on PATH, skipping Claude Code MCP setup.")
+        return
+    subprocess.run([binary, "install", "claude-code"], check=False)
+    if not _memory_service_exists():
+        subprocess.run([binary, "setup-service"], check=False)
+
+
 def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None:
     """Run the installation workflow.
 
@@ -518,48 +578,37 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
         "cline": _Agent(name="cline", root_dir=root_dir, dirs=dirs),
         "copilot": _CopilotAgent(name="copilot", root_dir=root_dir, dirs=dirs),
         "kiro": _Agent(name="kiro", root_dir=root_dir, dirs=dirs),
+        "claude-code": _Agent(name="claude-code", root_dir=root_dir, dirs=dirs),
     }
     targets = agent_names or list(all_agents)
 
     installed_files: dict[str, list[str]] = {name: [] for name in targets}
 
     if "cline" in targets:
+        agents_dir, _ = _get_cline_extra_dirs()
         managed_skills: set[str] = set()
-        _install_skills(root_dir / "shared" / "skills", dirs["agents"], managed_skills)
+        _install_skills(root_dir / "shared" / "skills", agents_dir, managed_skills)
         for overlay_dir in overlay_dirs:
             _install_skills(
-                overlay_dir / "shared" / "skills", dirs["agents"], managed_skills
+                overlay_dir / "shared" / "skills", agents_dir, managed_skills
             )
-        _check_unmanaged(
-            dirs["agents"] / "skills", managed_skills, "skills", is_dir=True
-        )
-        skills_dir = dirs["agents"] / "skills"
+        _check_unmanaged(agents_dir / "skills", managed_skills, "skills", is_dir=True)
+        skills_dir = agents_dir / "skills"
         installed_files["cline"].extend(str(skills_dir / s) for s in managed_skills)
 
-    if "kiro" in targets:
-        managed_kiro_skills: set[str] = set()
-        kiro_skills_parent = dirs["kiro"]["rules"].parent
-        _install_skills(
-            root_dir / "shared" / "skills",
-            kiro_skills_parent,
-            managed_kiro_skills,
-        )
+    for skill_agent in ("kiro", "claude-code"):
+        if skill_agent not in targets:
+            continue
+        managed: set[str] = set()
+        skills_parent = dirs[skill_agent]["rules"].parent
+        _install_skills(root_dir / "shared" / "skills", skills_parent, managed)
         for overlay_dir in overlay_dirs:
-            _install_skills(
-                overlay_dir / "shared" / "skills",
-                kiro_skills_parent,
-                managed_kiro_skills,
-            )
+            _install_skills(overlay_dir / "shared" / "skills", skills_parent, managed)
         _check_unmanaged(
-            kiro_skills_parent / "skills",
-            managed_kiro_skills,
-            "kiro skills",
-            is_dir=True,
+            skills_parent / "skills", managed, f"{skill_agent} skills", is_dir=True
         )
-        kiro_skills_dir = kiro_skills_parent / "skills"
-        installed_files["kiro"].extend(
-            str(kiro_skills_dir / s) for s in managed_kiro_skills
-        )
+        skills_dir = skills_parent / "skills"
+        installed_files[skill_agent].extend(str(skills_dir / s) for s in managed)
 
     for name in targets:
         agent = all_agents[name]
@@ -581,7 +630,7 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
 
     if "cline" in targets:
         log("info", "[cline] Symlinking rules and workflows...")
-        cline_symlinks: dict[str, Path] = dirs["cline_symlinks"]
+        _, cline_symlinks = _get_cline_extra_dirs()
         for subdir, symlink_dest in cline_symlinks.items():
             _symlink_dir(dirs["cline"][subdir], symlink_dest)
 
@@ -601,16 +650,15 @@ def get_managed_dirs() -> list[Path]:
         Sorted list of managed directory paths.
     """
     dirs = _get_dirs()
+    agents_dir, _ = _get_cline_extra_dirs()
     managed: set[Path] = set()
+    managed.add(agents_dir / "skills")
     for key, value in dirs.items():
-        if key == "agents":
-            managed.add(Path(str(value)) / "skills")
-        elif isinstance(value, dict):
-            for subdir_path in value.values():
-                managed.add(Path(str(subdir_path)))
-            if key in ("cline", "kiro"):
-                parent = next(iter(value.values())).parent
-                managed.add(parent / "skills")
+        for subdir_path in value.values():
+            managed.add(subdir_path)
+        if key in ("cline", "kiro", "claude-code"):
+            parent = next(iter(value.values())).parent
+            managed.add(parent / "skills")
     return sorted(managed)
 
 
