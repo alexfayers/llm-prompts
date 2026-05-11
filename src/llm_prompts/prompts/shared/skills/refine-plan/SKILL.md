@@ -32,7 +32,7 @@ After you have calculated the score for each subcategory, calculate the category
 
 Only state the overall score at the end of your response, after your calculations.
 
-If the score for any category is less than 10, state how it be improved using the notes you stated for each subcategory, then take steps to improve the score to a 10. Don't ask the user before doing this.
+If the score for any category is less than 9, state how it be improved using the notes you stated for each subcategory, then take steps to improve the score to a 10. Don't ask the user before doing this.
 
 If, after deep investigation, you are unable to find a high-scoring solution or answer, {{TOOL_ASK}}. However, this should be avoided if possible.
 

@@ -11,6 +11,11 @@ Before you end the session or {{TOOL_COMPLETE}}, work through this checklist:
 2. **Update task entities.** Set the status of any `task/` entities you worked on (`resolved`, `blocked`, etc.).
 3. **Check for uncommitted changes.** If there are staged or unstaged changes that should be committed, commit them now.
 4. **Reflect on {{RULE_FILES}}.** If the session involved user feedback or corrections, consider whether any {{RULE_FILES}} or skill files should be updated to prevent the same issues next time. Apply improvements directly.
-5. **Review TODOs.** Check memory and any `TODO.md` files for outstanding items noted during the session. Surface them to the user.
+5. **Review TODOs (comprehensive).** Surface ALL outstanding work to the user:
+   - Read all `TODO.md` files in the workspace (use `find` to locate them)
+   - Search memory for TODO observations on the current project entity and related entities (`search_nodes` with query "TODO")
+   - Search memory for planned/in-progress tasks in the current project and other projects
+   - Mention any that are unblocked, overdue, or have cross-project dependencies on what was just completed
+   - Present as a consolidated, prioritised list - group by project, highlight anything newly unblocked by this session's work
 
 After completing the checklist, tell the user "I have followed the session-end checklist" to confirm.
