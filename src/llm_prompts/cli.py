@@ -92,6 +92,74 @@ def _print_sources(agent: str) -> None:
         print(f"  {sources[key]}")
 
 
+def _extract_git_url(source: str) -> str | None:
+    """Extract a usable git URL from a source string."""
+    if source.startswith("git+"):
+        return source[4:]
+    if source.startswith(("https://", "git://", "ssh://")):
+        return source
+    return None
+
+
+def _get_installed_commit(package_name: str) -> str | None:
+    """Get the installed commit hash from direct_url.json in a uv tool env."""
+    import json
+
+    uv_tools = Path.home() / ".local" / "share" / "uv" / "tools"
+    dist_name = package_name.replace("-", "_")
+
+    search_dirs = [uv_tools / package_name, uv_tools / "llm-prompts"]
+    for tools_dir in search_dirs:
+        if not tools_dir.is_dir():
+            continue
+        for dist_info in tools_dir.rglob(f"{dist_name}-*.dist-info/direct_url.json"):
+            try:
+                data = json.loads(dist_info.read_text(encoding="utf-8"))
+                vcs_info = data.get("vcs_info", {})
+                commit_id = vcs_info.get("commit_id")
+                if commit_id:
+                    return commit_id
+            except (OSError, json.JSONDecodeError):
+                continue
+    return None
+
+
+def _check_remote_source(name: str, source: str) -> bool:
+    """Check a remote git source for updates against the installed version.
+
+    Returns:
+        True if updates are available.
+    """
+    git_url = _extract_git_url(source)
+    if not git_url:
+        return False
+
+    installed_commit = _get_installed_commit(name)
+    if not installed_commit:
+        print(f"[{name}] not installed (run `llm-prompts setup` first)")
+        return True
+
+    result = subprocess.run(
+        ["git", "ls-remote", git_url, "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False
+
+    remote_commit = result.stdout.split()[0] if result.stdout.strip() else None
+    if not remote_commit:
+        return False
+
+    if remote_commit != installed_commit:
+        short_installed = installed_commit[:8]
+        short_remote = remote_commit[:8]
+        print(f"[{name}] update available ({short_installed} -> {short_remote})")
+        return True
+    return False
+
+
 def _check_for_updates() -> bool:
     """Check configured tool sources for available upstream changes.
 
@@ -109,29 +177,31 @@ def _check_for_updates() -> bool:
     for tool in tools:
         name = str(tool.get("name", ""))
         source = str(tool.get("source", ""))
-        if not _is_local_path(source):
-            continue
-        repo = _expand(source)
-        if not (repo / ".git").is_dir():
-            continue
-        # Fetch silently to update remote refs
-        subprocess.run(
-            ["git", "-C", str(repo), "fetch", "--quiet"],
-            check=False,
-            capture_output=True,
-        )
-        result = subprocess.run(
-            ["git", "-C", str(repo), "rev-list", "--count", "HEAD..@{u}"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            continue
-        count = int(result.stdout.strip())
-        if count > 0:
-            print(f"[{name}] {count} new commit(s) available")
-            has_updates = True
+
+        if _is_local_path(source):
+            repo = _expand(source)
+            if not (repo / ".git").is_dir():
+                continue
+            subprocess.run(
+                ["git", "-C", str(repo), "fetch", "--quiet"],
+                check=False,
+                capture_output=True,
+            )
+            result = subprocess.run(
+                ["git", "-C", str(repo), "rev-list", "--count", "HEAD..@{u}"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                continue
+            count = int(result.stdout.strip())
+            if count > 0:
+                print(f"[{name}] {count} new commit(s) available")
+                has_updates = True
+        else:
+            if _check_remote_source(name, source):
+                has_updates = True
 
     if not has_updates:
         print("All tools are up to date.")
