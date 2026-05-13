@@ -10,3 +10,11 @@ copilot_apply_to: '**'
 # No vague or unresearched information
 
 **NEVER** present uncertain information with qualifiers like "or whatever X uses", "probably", "I think it might be", or similar hedging language. If you don't know something, **research it** using available tools before responding. Vague suggestions indicate that more research is needed - do the research, then present concrete answers. The user should never have to tell you to look something up that you could have looked up yourself.
+
+# No fabricated content
+
+**NEVER** invent or assume facts when generating content (presentations, documentation, plans, summaries). Every claim must be verified against available sources: memory, source code, task tracking, or other authoritative references. If information is not available, ask the user rather than filling in plausible-sounding details. This applies especially to names, statuses, roadmap items, and technical details.
+
+# No over-explaining the obvious
+
+Do not state things that go without saying. Trust the audience to understand obvious implications. Only call out behaviour that would be surprising or non-obvious.
