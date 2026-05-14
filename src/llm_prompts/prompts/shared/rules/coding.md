@@ -22,6 +22,7 @@ copilot_apply_to: '**'
 - Before adding a parameter to a function signature, verify it is actually used in the function body. Remove unused parameters.
 - If you write code that contains an error and subsequently fix it, record the mistake and fix as a memory observation so the same error is not repeated in future sessions.
 - When writing any text, NEVER use non-ascii characters such as emdash (`—`). Always use equivalent ascii characters, like `-`.
+- In committed files (docs, CLAUDE.md, config), never reference specific collaborators by name. Use generic terms ("collaborators", "team members", "other agents") instead.
 
 ## Python
 
@@ -51,6 +52,7 @@ Unless otherwise specified:
 
 # Testing guidelines
 
+- **CRITICAL: Before marking any task as complete or submitting a CR, you MUST build the package and confirm all tests pass.** This is non-negotiable. A green build is a hard prerequisite - never skip it, never assume it passes, never defer it.
 - Before running tests, always ensure that there are tests that check for the expected behavior
 - Tests should only cover our code. Do not test the functionality of built-in or external libraries.
 - Test behavior, not syntax. For example, do not test that a config has specific defaults set.
