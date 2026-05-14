@@ -23,6 +23,7 @@ copilot_apply_to: '**'
 - If you write code that contains an error and subsequently fix it, record the mistake and fix as a memory observation so the same error is not repeated in future sessions.
 - When writing any text, NEVER use non-ascii characters such as emdash (`—`). Always use equivalent ascii characters, like `-`.
 - In committed files (docs, CLAUDE.md, config), never reference specific collaborators by name. Use generic terms ("collaborators", "team members", "other agents") instead.
+- Never hardcode user-specific values (aliases, personal account IDs, personal stack names) in committed files. Always use generic placeholders like `<personal-stack-id>`, `<account-id>`, `<profile>`.
 
 ## Python
 
