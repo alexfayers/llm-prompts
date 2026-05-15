@@ -21,4 +21,12 @@ Before you end the session or {{TOOL_COMPLETE}}, work through this checklist:
    - Mention any that are unblocked, overdue, or have cross-project dependencies on what was just completed
    - Present as a consolidated, prioritised list - group by project, highlight anything newly unblocked by this session's work
 
+6. **Retrospective reminder.** Increment the session counter and remind if due:
+   ```bash
+   counter_file="$HOME/.claude/.retrospective-counter"
+   count=$(cat "$counter_file" 2>/dev/null || echo 0)
+   echo $((count + 1)) > "$counter_file"
+   ```
+   If the counter reaches 5 or more, tell the user: "You have completed N sessions since your last /retrospective. Consider running it to capture learnings across recent sessions."
+
 After completing the checklist, tell the user "I have followed the session-end checklist" to confirm.

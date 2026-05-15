@@ -602,8 +602,12 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
         managed: set[str] = set()
         skills_parent = dirs[skill_agent]["rules"].parent
         _install_skills(root_dir / "shared" / "skills", skills_parent, managed)
+        _install_skills(root_dir / skill_agent / "skills", skills_parent, managed)
         for overlay_dir in overlay_dirs:
             _install_skills(overlay_dir / "shared" / "skills", skills_parent, managed)
+            _install_skills(
+                overlay_dir / skill_agent / "skills", skills_parent, managed
+            )
         _check_unmanaged(
             skills_parent / "skills", managed, f"{skill_agent} skills", is_dir=True
         )
