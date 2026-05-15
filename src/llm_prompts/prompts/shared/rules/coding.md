@@ -20,6 +20,7 @@ copilot_apply_to: '**'
 - Committed text (docs, CLAUDE.md, design decisions) must describe the current atomic state. Never reference failed intermediate approaches, removed features, or "we tried X then switched to Y". The code is the source of truth for what exists now.
 - Avoid unnecessary variable assignment unless it improves the clarity of the code. If a variable is used once, it probably doesn't need to be a variable.
 - Leave code better than you found it. If you notice an issue with something that you are already editing, fix it!
+- When fixing a bug, investigate and fix ALL directly related issues in the same code path - do not dismiss pre-existing failures as "separate" if they share root cause or context with the current fix.
 - Before adding a parameter to a function signature, verify it is actually used in the function body. Remove unused parameters.
 - If you write code that contains an error and subsequently fix it, record the mistake and fix as a memory observation so the same error is not repeated in future sessions.
 - When writing any text, NEVER use non-ascii characters such as emdash (`—`). Always use equivalent ascii characters, like `-`.
