@@ -3,56 +3,66 @@ name: refine-plan
 description: Evaluate and refine a plan before implementation begins. Use once you think you are  ready to present a plan or design to the user.
 ---
 
-# Confidence
+# Refine Plan
 
-Based on the following rules, how confident are you about your approach? Be brutally honest and do not sugarcoat your opinion.
+Score the plan objectively across quality and confidence dimensions. Be brutally honest and do not sugarcoat your opinion.
 
-Split the problem into it's component parts. Assign each part an integer score from _1 to 10_ for the following categories:
+Split the problem into its component parts. Assign each part an integer score from 1 to 10 for each category below. **Calculate the scores objectively and with care.**
 
-Quality categories:
+## 1. Score each category (1-10)
 
-- Elegance. Does the solution feel right? 10 is most elegant.
-- Simplicity. Can this be done with less? 10 is simplest.
-- Readability. Can someone understand it in 30 seconds? 10 is most readable.
-- Testability. Can simple unit tests be written for it? 10 is most testable. This category can be ignored if there are no existing tests in the workspace.
-- Decoupling. Can pieces be changed independently? 10 is least coupled (most decoupled).
-- Reusability. Does the solution deduce repetition? 10 is most reusable.
-- Focus. Does each piece do exactly one thing? 10 is most focused.
+**Quality:**
+- `elegance` - Does the solution feel right? 10 is most elegant.
+- `simplicity` - Can this be done with less? 10 is simplest.
+- `readability` - Can someone understand it in 30 seconds? 10 is most readable.
+- `testability` - Can simple unit tests be written for it? 10 is most testable. This category can be ignored if there are no existing tests in the workspace.
+- `decoupling` - Can pieces be changed independently? 10 is least coupled.
+- `reusability` - Does the solution reduce repetition? 10 is most reusable.
+- `focus` - Does each piece do exactly one thing? 10 is most focused.
 
-Confidence categories:
+**Confidence:**
+- `feasibility` - Do you know how to build it? Are there existing patterns? 10 is most feasible.
+- `scope_clarity` - Are requirements well-defined? 10 is exact scope defined.
 
-- Feasibility. Do you know how to build it? Are there existing established patterns available? 10 is most feasible.
-- Scope clarity. Are requirements well-defined? 10 is exact scope defined.
+For any score below 10, note how it could be improved.
 
-If the score is less than 10 for any subcategory, note how the score could be improved.
+## 2. Validate with script
 
-**Calculate the scores objectively and with care**.
+Run the scoring script with your scores and evidence:
 
-After you have calculated the score for each subcategory, calculate the category scores by averaging the subcategory scores.
+```bash
+python3 "<base-dir>/score.py" '<json>'
+```
 
-Only state the overall score at the end of your response, after your calculations.
+The JSON must contain:
+- `scores`: category -> integer 1-10
+- `evidence`: category -> concrete citation (required for scores >= 7). Must reference a specific file path, pattern, or verifiable finding.
+- `testability_skipped`: true (optional, if no tests exist)
 
-If the score for any category is less than 9, state how it be improved using the notes you stated for each subcategory, then take steps to improve the score to a 10. Don't ask the user before doing this.
+The script rejects scores >= 7 without evidence. This forces actual research before claiming high scores. Present the full output to the user.
 
-If, after deep investigation, you are unable to find a high-scoring solution or answer, {{TOOL_ASK}}. However, this should be avoided if possible.
+## 3. Validate evidence (if Agent tool available)
 
-Once you have calculated the scores and ways to improve, present the scores and improvements to the user.
+Launch a validation Agent with ONLY the evidence strings and scores:
 
-If you make any adjustments to your approach, recalculate the score using above method, in the same level of detail.
+> Verify these claims. For each, read the cited file/pattern/resource and confirm or dispute. Be skeptical - 9+ means near-perfect, which is rare.
+>
+> 1. [category]: [score] - "[evidence]"
+> ...
 
-**Do not start implementation until both the quality and the confidence are at least a 9.**
+If the validator disputes any score, lower it and re-run the script. Skip this step if the Agent tool is unavailable.
 
-Once ready to begin implementation, update memory with any learnings.
+## 4. Gate and iterate
 
-## Parallelisation check
+- **`pass: false`**: improve the plan to address below-threshold categories, re-score ALL categories, and re-run the script. Do not ask the user before improving - just do it. Repeat until the gate passes.
+- **`pass: true`**: present the scores and plan to the user.
 
-Before presenting the final plan, identify opportunities to parallelise the implementation:
-- Which steps are independent and can be done by parallel subagents?
-- Which file changes don't overlap and could be implemented concurrently?
-- Can research/verification tasks run in the background while implementation proceeds?
+If you cannot reach a passing score after deep investigation, {{TOOL_ASK}}.
 
-If the Agent tool is available, note which steps should be fanned out as parallel agents during implementation. Aim for at least one parallelisation opportunity per plan.
+**Do not start implementation until both quality and confidence averages >= 9.**
+
+Once passing, update memory with any learnings from the refinement process.
 
 {{TOOL_WRAP_UP}}
 
-> NOTE: if any of the rules contradict any existing coding styles, best practices, or suggestions within the current project then the rules can be overridden. However, if the rules _are_ overridden, this _must_ be **explicitly** mentioned to the user.
+> NOTE: if any of the rules contradict existing coding styles or best practices in the current project, they can be overridden - but this _must_ be **explicitly** mentioned to the user.
