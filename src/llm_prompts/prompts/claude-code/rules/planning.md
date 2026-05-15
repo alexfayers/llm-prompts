@@ -19,3 +19,18 @@ During plan mode, leverage subagents for research and design:
 3. **Refine**: Use the `refine-plan` skill to score and improve the design before presenting it.
 
 Do NOT skip the agent phase and try to plan everything in your head. The agents provide independent verification, catch things you'd miss, and produce higher-quality designs than reasoning alone.
+
+## Subagent usage during implementation
+
+Subagents are not just for planning - use them aggressively during implementation too:
+- **Research tasks**: Fan out Explore agents for parallel information gathering
+- **Independent changes**: Fan out implementation agents for non-overlapping file edits
+- **Verification**: Use agents to review/validate work in parallel with continued implementation
+- Target: 3-5 Agent calls per session for any non-trivial task. If you're past 50 turns without having used an Agent, you're likely doing sequential work that could be parallelised.
+
+## Session scope discipline
+
+Keep sessions focused on one coherent change. If a session is growing large:
+- At ~80-100 user turns, pause and assess: is this still one coherent change, or has scope crept?
+- If multiple unrelated changes have accumulated, commit what's done, note remaining work as TODOs, and suggest splitting into a new session.
+- A single session should ideally produce 1-3 commits covering one logical change.

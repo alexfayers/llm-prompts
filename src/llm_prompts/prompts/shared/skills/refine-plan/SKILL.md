@@ -44,6 +44,15 @@ If you make any adjustments to your approach, recalculate the score using above 
 
 Once ready to begin implementation, update memory with any learnings.
 
+## Parallelisation check
+
+Before presenting the final plan, identify opportunities to parallelise the implementation:
+- Which steps are independent and can be done by parallel subagents?
+- Which file changes don't overlap and could be implemented concurrently?
+- Can research/verification tasks run in the background while implementation proceeds?
+
+If the Agent tool is available, note which steps should be fanned out as parallel agents during implementation. Aim for at least one parallelisation opportunity per plan.
+
 {{TOOL_WRAP_UP}}
 
 > NOTE: if any of the rules contradict any existing coding styles, best practices, or suggestions within the current project then the rules can be overridden. However, if the rules _are_ overridden, this _must_ be **explicitly** mentioned to the user.
