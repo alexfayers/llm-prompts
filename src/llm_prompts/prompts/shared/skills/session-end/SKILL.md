@@ -8,7 +8,8 @@ description: Checklist for wrapping up a session - persist memory, check TODOs, 
 Before you end the session or {{TOOL_COMPLETE}}, work through this checklist:
 
 1. **Persist memory (MANDATORY).** Review everything learned this session - decisions, discoveries, corrections, new preferences - and ensure it is saved to memory (project and/or global as appropriate). You MUST make at least one memory write call (`create_entities`, `add_observations`, or `set_entity_status`) before completing. If truly nothing was learned, add an observation to the relevant task or project entity noting what was done. Knowledge not persisted is permanently lost.
-2. **Update task entities.** Set the status of any `task/` entities you worked on (`resolved`, `blocked`, etc.).
+   - **Quality gate:** Do NOT store session logs, implementation play-by-play, or observations that duplicate steering rules. Store only current-state facts, outcomes, and reusable learnings. If a task is resolved, trim its observations to 1-3 (outcome only).
+2. **Update task entities.** Set the status of any `task/` entities you worked on (`resolved`, `blocked`, etc.). When resolving a task, delete verbose implementation observations - keep only the outcome summary.
 3. **Check for uncommitted/unpushed changes.** Check the current workspace AND prompt/skill source repos (run `llm-prompts source claude-code` to find them) for:
    - Uncommitted changes - commit them now
    - Unpushed commits - surface them to the user and ask how they'd like to submit (push, PR/review, or leave for later)
