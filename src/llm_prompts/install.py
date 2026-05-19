@@ -560,6 +560,33 @@ def try_install_memory_claude_code() -> None:
         subprocess.run([binary, "setup-service"], check=False)
 
 
+def _cleanup_stale(
+    agent_name: str,
+    current_files: list[str],
+    previous_manifest: dict,
+) -> None:
+    """Remove files that were previously installed but are no longer managed.
+
+    Args:
+        agent_name: Agent whose stale files to remove.
+        current_files: Currently installed file paths for this agent.
+        previous_manifest: The manifest from the previous installation.
+    """
+    previous_entry = previous_manifest.get(agent_name, {})
+    previous_files = set(previous_entry.get("files", []))
+    current_set = set(current_files)
+    stale = previous_files - current_set
+
+    for filepath in sorted(stale):
+        path = Path(filepath)
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+            log("info", f"[{agent_name}] Removed stale file: {path.name}")
+        elif path.is_dir():
+            shutil.rmtree(path)
+            log("info", f"[{agent_name}] Removed stale directory: {path.name}")
+
+
 def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None:
     """Run the installation workflow.
 
@@ -638,9 +665,11 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
         for subdir, symlink_dest in cline_symlinks.items():
             _symlink_dir(dirs["cline"][subdir], symlink_dest)
 
-    from .manifest import write_manifest
+    from .manifest import read_manifest, write_manifest
 
+    previous_manifest = read_manifest()
     for name in targets:
+        _cleanup_stale(name, installed_files[name], previous_manifest)
         write_manifest(name, installed_files[name])
 
 

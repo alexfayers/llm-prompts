@@ -160,6 +160,51 @@ def _check_remote_source(name: str, source: str) -> bool:
     return False
 
 
+def _pull_local_sources() -> None:
+    """Pull upstream changes for all local-path tool sources."""
+    from .setup import CONFIG_PATH, _expand, _is_local_path, _load_config
+
+    if not CONFIG_PATH.exists():
+        return
+
+    tools = _load_config()
+    for tool in tools:
+        name = str(tool.get("name", ""))
+        source = str(tool.get("source", ""))
+
+        if not _is_local_path(source):
+            continue
+        repo = _expand(source)
+        if not (repo / ".git").is_dir():
+            continue
+        subprocess.run(
+            ["git", "-C", str(repo), "fetch", "--quiet"],
+            check=False,
+            capture_output=True,
+        )
+        result = subprocess.run(
+            ["git", "-C", str(repo), "rev-list", "--count", "HEAD..@{u}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            continue
+        count = int(result.stdout.strip())
+        if count > 0:
+            pull = subprocess.run(
+                ["git", "-C", str(repo), "pull", "--ff-only", "--quiet"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if pull.returncode == 0:
+                print(f"[{name}] pulled {count} new commit(s)")
+            else:
+                print(f"[{name}] {count} new commit(s) available but pull failed")
+                print(f"  {pull.stderr.strip()}")
+
+
 def _check_for_updates() -> bool:
     """Check configured tool sources for available upstream changes.
 
@@ -369,6 +414,8 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
+
+        _pull_local_sources()
 
         if CONFIG_PATH.exists() and has_remote_sources():
             run_setup()
