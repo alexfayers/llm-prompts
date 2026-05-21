@@ -695,5 +695,23 @@ def get_managed_dirs() -> list[Path]:
     return sorted(managed)
 
 
+def get_managed_files() -> set[str]:
+    """Return all file paths tracked in the installed manifest.
+
+    Use this for precise file-level checking rather than directory-level
+    blocking. Files not in this set are user-created and should not be
+    blocked from editing.
+
+    Returns:
+        Set of absolute file path strings from the manifest.
+    """
+    from .manifest import read_manifest
+
+    files: set[str] = set()
+    for entry in read_manifest().values():
+        files.update(entry.get("files", []))
+    return files
+
+
 if __name__ == "__main__":
     main()
