@@ -8,7 +8,7 @@ Use `EnterPlanMode` proactively for any task that involves:
 - New feature implementation
 - Unfamiliar code areas
 
-Err on the side of planning. The cost of an unnecessary plan is low; the cost of rework from a bad approach is high.
+This is not optional. Sessions involving new features or multi-file changes MUST use plan mode at least once. Err on the side of planning. The cost of an unnecessary plan is low; the cost of rework from a bad approach is high.
 
 ## How to plan effectively
 
@@ -26,7 +26,12 @@ Subagents are not just for planning - use them aggressively during implementatio
 - **Research tasks**: Fan out Explore agents for parallel information gathering
 - **Independent changes**: Fan out implementation agents for non-overlapping file edits
 - **Verification**: Use agents to review/validate work in parallel with continued implementation
+- **Bulk read-only tasks**: Reviewing memory entities, auditing files, summarising multiple items - parallelise via subagents, not sequentially in the main thread
 - Target: 3-5 Agent calls per session for any non-trivial task. If you're past 50 turns without having used an Agent, you're likely doing sequential work that could be parallelised.
+
+## Scope discipline during execution
+
+When the scope of an action (number of files, commands, or steps) is larger than the user's request implies, pause and summarise what you are about to do before proceeding. Do not assume a broad mandate from a narrow request.
 
 ## Session scope discipline
 
