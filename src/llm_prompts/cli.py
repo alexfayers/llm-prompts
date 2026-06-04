@@ -7,6 +7,7 @@ import contextlib
 import io
 from importlib.resources import files
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -253,8 +254,21 @@ def _check_for_updates() -> bool:
     return has_updates
 
 
+def _auto_migrate_memory_db() -> None:
+    """Consolidate a split mcp-memory database onto the default path.
+
+    TODO(remove later): transitional self-heal for machines whose service was set up with a
+    custom --db-path, which the hook plugin does not inherit (it reads the default). Idempotent
+    - a no-op once the DB is already at the default. Remove once all machines are migrated.
+    """
+    binary = shutil.which("mcp-memory")
+    if binary:
+        subprocess.run([binary, "migrate-db"], check=False)
+
+
 def _restart_memory_service() -> None:
     """Restart the mcp-memory background service if installed."""
+    _auto_migrate_memory_db()
     if sys.platform == "darwin":
         plist = Path.home() / "Library" / "LaunchAgents" / "com.mcp-memory.plist"
         if plist.exists():
