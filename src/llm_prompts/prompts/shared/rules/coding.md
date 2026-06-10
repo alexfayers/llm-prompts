@@ -56,6 +56,7 @@ Unless otherwise specified:
 # Testing guidelines
 
 - **CRITICAL: Before marking any task as complete or submitting a CR, you MUST build the package and confirm all tests pass.** This is non-negotiable. A green build is a hard prerequisite - never skip it, never assume it passes, never defer it.
+- **For any change that adds or repositions UI (CSS, fixed-position elements, form controls, layout), you MUST render the page and look at it before claiming done.** An API/curl test verifies data, not appearance - it will not catch overlap, an unstyled control, or clashing copy. Render the populated/interactive state (headless Chrome via CDP if needed) and visually confirm. If a plan flagged a layout/overlap risk, resolve it in the design - never ship the flagged position and defer.
 - Before running tests, always ensure that there are tests that check for the expected behavior
 - Tests should only cover our code. Do not test the functionality of built-in or external libraries.
 - Test behavior, not syntax. For example, do not test that a config has specific defaults set.
