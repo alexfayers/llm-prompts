@@ -33,7 +33,7 @@ Unless otherwise specified:
 
 - Type hints must be used for functions/methods, and for the initialization of empty collections (lists, sets, etc)
 - Google style docstrings must be used to give a brief summary of functions and methods
-- ruff for linting and formatting; always run with `--fix` first before manual edits
+- ruff for linting and formatting (run with `--fix` first), BUT only after confirming the project uses ruff. Many packages use black + isort or flake8 instead - check `pyproject.toml`/`setup.cfg` for `[tool.black]`, `[tool.isort]`, `[tool.ruff]`, or a flake8 config BEFORE running any formatter. Running ruff on a black/isort project makes invasive unrelated changes (e.g. `from __future__ import annotations`, `TYPE_CHECKING` blocks). Match the project's existing toolchain.
 - mypy for type checking
 - pytest for testing
 - object oriented approach, one class per file unless classes are closely related (a small type stub is allowed in a file with another class, for example)
