@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import os
 import re
 import sys
 from collections import Counter
@@ -100,55 +99,105 @@ def extract_corrections(session: dict) -> list[dict]:
     return corrections
 
 
+def _bash_lead(cmd: str) -> str:
+    """Return the meaningful leading command token of a shell string.
+
+    Skips a leading `cd <path> &&` so failures are attributed to the real
+    command rather than the directory change.
+    """
+    if not cmd:
+        return ""
+    segments = re.split(r"&&|;|\n", cmd)
+    for seg in segments:
+        tokens = seg.split("|")[0].strip().split()
+        if tokens and tokens[0] != "cd":
+            return tokens[0]
+    first = segments[0].strip().split()
+    return first[0] if first else ""
+
+
+def _result_is_error(result: dict) -> bool:
+    """Determine whether a tool_result block represents a failure."""
+    if result.get("is_error"):
+        return True
+    content = result.get("content", "")
+    if isinstance(content, list):
+        content = " ".join(
+            b.get("text", "") for b in content if isinstance(b, dict)
+        )
+    head = str(content)[:500]
+    return "<tool_use_error>" in head or "Exit code 1" in head
+
+
 def extract_retries(session: dict) -> list[dict]:
-    """Find tool calls that were retried after failure."""
-    retries = []
+    """Find tool calls that were retried after failure across the session.
+
+    tool_result blocks live in separate user messages keyed by tool_use_id,
+    so results are collected session-wide before walking the ordered tool_use
+    sequence to detect runs of consecutive same-tool failures.
+    """
     messages = session["messages"]
 
+    results_by_id: dict[str, dict] = {}
+    for msg in messages:
+        content = msg.get("message", {}).get("content", [])
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if block.get("type") == "tool_result":
+                results_by_id[block.get("tool_use_id", "")] = block
+
+    runs: list[dict] = []
     for msg in messages:
         if msg.get("type") != "assistant":
             continue
         content = msg.get("message", {}).get("content", [])
         if not isinstance(content, list):
             continue
-
-        tool_uses = []
-        tool_results = {}
         for block in content:
-            if block.get("type") == "tool_use":
-                tool_uses.append(block)
-            elif block.get("type") == "tool_result":
-                tool_results[block.get("tool_use_id", "")] = block
-
-        bash_runs: list[dict] = []
-        for tu in tool_uses:
-            if tu.get("name") != "Bash":
+            if block.get("type") != "tool_use":
                 continue
-            cmd = tu.get("input", {}).get("command", "")
-            lead = cmd.split("&&")[0].split("|")[0].strip().split()[0] if cmd else ""
-            result = tool_results.get(tu.get("id", ""), {})
-            result_content = result.get("content", "")
-            if isinstance(result_content, list):
-                result_content = str(result_content)
-            is_error = "error" in str(result_content).lower()[:500] or "Error" in str(
-                result_content
-            )[:500]
-            bash_runs.append({"command": cmd[:200], "lead": lead, "error": is_error})
-
-        consecutive_fails: list[dict] = []
-        for run in bash_runs:
-            if run["error"]:
-                consecutive_fails.append(run)
+            name = block.get("name", "")
+            if name == "Bash":
+                cmd = block.get("input", {}).get("command", "")
+                key = _bash_lead(cmd)
             else:
-                if len(consecutive_fails) >= 2 and run["lead"] == consecutive_fails[0]["lead"]:
-                    retries.append({
-                        "session_id": session["session_id"],
-                        "project": session["project"],
-                        "command_pattern": consecutive_fails[0]["lead"],
-                        "attempts": len(consecutive_fails) + 1,
-                        "first_command": consecutive_fails[0]["command"],
-                    })
-                consecutive_fails = []
+                cmd = ""
+                key = name
+            if not key:
+                continue
+            result = results_by_id.get(block.get("id", ""), {})
+            runs.append({
+                "key": key,
+                "command": cmd[:200],
+                "error": _result_is_error(result),
+            })
+
+    retries: list[dict] = []
+    fails: list[dict] = []
+    for run in runs:
+        if fails and (not run["error"] or run["key"] != fails[0]["key"]):
+            if len(fails) >= 2:
+                retries.append({
+                    "session_id": session["session_id"],
+                    "project": session["project"],
+                    "command_pattern": fails[0]["key"],
+                    "attempts": len(fails),
+                    "first_command": fails[0]["command"],
+                    "recovered": not run["error"] and run["key"] == fails[0]["key"],
+                })
+            fails = []
+        if run["error"]:
+            fails.append(run)
+    if len(fails) >= 2:
+        retries.append({
+            "session_id": session["session_id"],
+            "project": session["project"],
+            "command_pattern": fails[0]["key"],
+            "attempts": len(fails),
+            "first_command": fails[0]["command"],
+            "recovered": False,
+        })
 
     return retries
 
