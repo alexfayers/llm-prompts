@@ -1,6 +1,6 @@
 ---
 name: retrospective
-description: Analyse recent session transcripts to extract learnings, discover pain points, and persist them into memory/skills/rules. Run manually every 5-10 sessions.
+description: Analyse recent session transcripts to extract learnings, discover pain points, and persist them into memory/skills/rules. Run manually when the retrospective counter is due (session-end reminds you at 5+).
 ---
 
 # retrospective
@@ -9,10 +9,12 @@ Analyse recent Claude Code sessions to surface patterns, corrections, and pain p
 
 ## 1. Extract signals
 
-Run the extraction script (in this skill's directory):
+Analyse exactly the sessions that have elapsed since the last retrospective. The session counter at `~/.claude/.retrospective-counter` tracks this - read it and pass it to the script (clamp to a minimum of 1 if the counter is missing or 0, and let an explicit `SESSIONS` override win):
 
 ```bash
-python3 "<base-dir>/extract_signals.py" --sessions ${SESSIONS:-10}
+count=$(cat ~/.claude/.retrospective-counter 2>/dev/null || echo 0)
+sessions=${SESSIONS:-$(( count > 0 ? count : 1 ))}
+python3 "<base-dir>/extract_signals.py" --sessions "$sessions"
 ```
 
 Where `<base-dir>` is the base directory shown at the top of this skill's context. Save the JSON output for the next steps.
