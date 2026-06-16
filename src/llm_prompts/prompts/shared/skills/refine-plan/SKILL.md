@@ -28,10 +28,12 @@ For any score below 10, note how it could be improved.
 
 ## 2. Validate with script
 
-Run the scoring script with your scores and evidence:
+Run the scoring script with your scores and evidence. Pipe the JSON via stdin rather than passing it as a shell argument - inline single-quoted JSON breaks on apostrophes in evidence strings (e.g. "doesn't") and on newlines:
 
 ```bash
-python3 "<base-dir>/score.py" '<json>'
+python3 "<base-dir>/score.py" <<'JSON'
+<json>
+JSON
 ```
 
 The JSON must contain:
