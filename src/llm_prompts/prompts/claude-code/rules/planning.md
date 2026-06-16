@@ -27,7 +27,7 @@ Subagents are not just for planning - use them aggressively during implementatio
 - **Independent changes**: Fan out implementation agents for non-overlapping file edits
 - **Verification**: Use agents to review/validate work in parallel with continued implementation
 - **Bulk read-only tasks**: Reviewing memory entities, auditing files, summarising multiple items - parallelise via subagents, not sequentially in the main thread
-- Target: 3-5 Agent calls per session for any non-trivial task. If you're past 50 turns without having used an Agent, you're likely doing sequential work that could be parallelised.
+- Target a sustained rate of roughly one Agent call per 50 turns (3-5 per non-trivial session, more in long ones). A couple of agents early does not cover a 300-turn session - if subagent use is lagging behind the session's length, you're doing sequential work that could be parallelised.
 
 ## Scope discipline during execution
 
