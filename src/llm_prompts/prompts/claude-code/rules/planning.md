@@ -33,6 +33,10 @@ Subagents are not just for planning - use them aggressively during implementatio
 
 When the scope of an action (number of files, commands, or steps) is larger than the user's request implies, pause and summarise what you are about to do before proceeding. Do not assume a broad mandate from a narrow request.
 
+## Measure, don't estimate, when a quantity is observable
+
+When a plan rests on a numeric claim you can cheaply observe (a speed, a duration, a size, a count), measure it - do not substitute back-of-envelope arithmetic. A computed estimate that silently drops a factor reads as confident but can be wildly wrong. If the codebase has a harness or test path that produces the real number, run it before asserting the value or marking it "fine". Label any computed value as an estimate until measured.
+
 ## Session scope discipline
 
 Keep sessions focused on one coherent change. If a session is growing large:
