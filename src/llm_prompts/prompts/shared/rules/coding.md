@@ -62,3 +62,4 @@ Unless otherwise specified:
 - Tests should only cover our code. Do not test the functionality of built-in or external libraries.
 - Test behavior, not syntax. For example, do not test that a config has specific defaults set.
 - Never duplicate behavior in the test definition - always test the live code.
+- Do not couple tests to dynamic external state (e.g. live service status, environment registries, current dates, resource inventories). Derive expectations from the same source-of-truth the code under test reads, so the test tracks that state automatically. A test that must be hand-edited whenever external data changes (a hardcoded list, a snapshot of "what exists today") is brittle - assert the behaviour/invariant, not the current snapshot.
