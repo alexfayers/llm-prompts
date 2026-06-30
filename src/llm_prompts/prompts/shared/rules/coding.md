@@ -46,6 +46,7 @@ Unless otherwise specified:
 - Never return raw exception text (`str(e)`, stack traces) to an external caller (API response, HTTP body). It can leak internal detail (table names, ARNs, hostnames, file paths). Log the full detail server-side and return a generic message (e.g. "Internal server error") to the client. Hand-built, input-derived messages (e.g. "Resolver group 'X' already subscribed") are fine.
 - Imports **must** always be at the top of the file.
 - Avoid using the `Any` type wherever possible. Use it only as a last resort or if explicitly told otherwise.
+- Never annotate with `object`. Prefer a precise type; if you genuinely cannot, use `Any` rather than `object`.
 - Before using `subprocess` for external tool interactions, research and prefer a library (e.g. `gitpython` for git operations). Only use `subprocess` when no suitable library exists.
 
 ## Shell
