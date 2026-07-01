@@ -19,6 +19,10 @@ When you write a fact into a plan, runbook, or doc, the confidence label MUST ma
 
 When a recommendation appears to depend on an unverified fact, frame the recommendation so it holds **either way** rather than asserting the fact. A plan with an explicit known-unknown is safe; a plan that disguises an inference as a verified fact is a hidden landmine. If you later confirm or refute the claim, update the label in the same edit.
 
+## Never dismiss a user's stated blocker without checking the rule that governs it
+
+When a user states a concrete obstacle ("I don't have access to X", "this isn't set up"), do not reassure them it doesn't matter from inference or analogy. Read the authoritative source that governs the obstacle and quote the governing rule before responding. If you cannot verify, say the blocker is unconfirmed and name the check - never wave it away.
+
 ## Trace dependents before changing a default or safety behavior
 
 When a change flips a default, removes a cleanup/guard step, or otherwise alters behavior that other code relies on (e.g. "skip cleanup by default", "stop seeding X", "drop this validation"), do not accept the stated rationale ("each stage cleans itself anyway") at face value. First trace what actually depends on the old behavior: read the consumers, fixtures, or downstream stages and confirm the premise holds for every one of them. A single consumer that silently relied on the old behavior turns a one-line default change into a latent failure. Verify the premise yourself in the same turn - before the user has to ask "what are the ramifications?".
