@@ -2,7 +2,7 @@
 
 Cross-agent rules, workflows, and skills for LLM coding assistants.
 
-Supports [Cline](https://github.com/cline/cline), [GitHub Copilot](https://github.com/features/copilot), [Kiro](https://kiro.dev), and [Claude Code](https://code.claude.com).
+Supports [Cline](https://github.com/cline/cline), [GitHub Copilot](https://github.com/features/copilot), [Kiro](https://kiro.dev), [Claude Code](https://code.claude.com), and [Codex](https://openai.com/codex/).
 
 ## Quick start
 
@@ -14,7 +14,7 @@ This installs [uv](https://docs.astral.sh/uv/) (if needed), installs llm-prompts
 
 ```bash
 # Edit ~/.config/llm-prompts/config.toml to add your overlay packages, then:
-llm-prompts install {agent}    # kiro, cline, copilot, claude-code, or all
+llm-prompts install {agent}    # kiro, cline, copilot, claude-code, codex, or all
 ```
 
 When sources are remote (git URLs or PyPI), `install` automatically runs `setup` first to pull the latest versions. Use `--no-update` to skip this.
@@ -25,7 +25,7 @@ When sources are remote (git URLs or PyPI), `install` automatically runs `setup`
 
 Rules are markdown files that steer agent behaviour. They are always active during a session - the agent reads them as part of its system prompt. Examples: coding style guidelines, git commit conventions, banned phrasing.
 
-Rules are installed to agent-specific directories (e.g. `~/.kiro/steering/` for Kiro, `~/Documents/Cline/Rules/` for Cline, `~/.claude/rules/` for Claude Code).
+Rules are installed to agent-specific directories (e.g. `~/.kiro/steering/` for Kiro, `~/Documents/Cline/Rules/` for Cline, `~/.claude/rules/` for Claude Code). Codex has no rules directory, so all rules are concatenated into a single `~/.codex/AGENTS.md`.
 
 ### Workflows
 
@@ -37,7 +37,7 @@ Skills are directories containing a `SKILL.md` file that the agent reads before 
 
 ### Templates
 
-Shared rules and workflows use `{{VAR}}` template placeholders that get substituted per agent. For example, `{{RULE_FILES}}` becomes "steering files" for Kiro and ".clinerules files" for Cline. This allows a single source file to work across all agents. Variables are defined in each agent's `vars.json`.
+Shared rules and workflows use `{{VAR}}` template placeholders that get substituted per agent. For example, `{{RULE_FILES}}` becomes "steering files" for Kiro, ".clinerules files" for Cline, and "AGENTS.md" for Codex. This allows a single source file to work across all agents. Variables are defined in each agent's `vars.json`.
 
 ### Overlays
 

@@ -9,7 +9,11 @@ import shutil
 import sys
 from typing import ClassVar, Literal
 
-from .render_template import find_unreplaced_variables, render_template
+from .render_template import (
+    find_unreplaced_variables,
+    normalize_whitespace,
+    render_template,
+)
 
 LogLevel = Literal["debug", "info", "warn", "error", "success"]
 
@@ -94,7 +98,31 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
             "rules": home / ".claude" / "rules",
             "workflows": home / ".claude" / "commands",
         },
+        "codex": {
+            "rules": home / ".codex",
+            "workflows": home / ".codex" / "prompts",
+            "skills": home / ".codex" / "skills",
+        },
     }
+
+
+def _skills_parent(dirs: dict[str, dict[str, Path]], agent: str) -> Path:
+    """Return the directory whose ``skills`` subdir holds an agent's skills.
+
+    Agents with an explicit ``skills`` destination (e.g. codex) use its parent;
+    others derive it from the ``rules`` directory's parent.
+
+    Args:
+        dirs: Destination directory mapping from ``_get_dirs``.
+        agent: Agent name.
+
+    Returns:
+        Parent directory that contains the agent's ``skills`` subdirectory.
+    """
+    agent_dirs = dirs[agent]
+    if "skills" in agent_dirs:
+        return agent_dirs["skills"].parent
+    return agent_dirs["rules"].parent
 
 
 def _get_cline_extra_dirs() -> tuple[Path, dict[str, Path]]:
@@ -186,6 +214,17 @@ def _install_rendered(
     for var in find_unreplaced_variables(output):
         log("warn", f"Unreplaced variable '{{{{{var}}}}}' in {label}")
 
+    _write_if_changed(dest, output, label)
+
+
+def _write_if_changed(dest: Path, output: str, label: str) -> None:
+    """Write output to dest only if it differs, logging the action taken.
+
+    Args:
+        dest: Destination file path.
+        output: Content to write.
+        label: Log label for this file.
+    """
     if dest.exists():
         if _read_text(dest) == output:
             log("debug", f"{label} is up to date. Skipping.")
@@ -257,6 +296,26 @@ class _Agent:
         """Return the destination filename for a source file."""
         return src.name
 
+    def install_rules(
+        self,
+        shared_src: Path,
+        overlay_srcs: list[Path],
+        overlay_agent_srcs: list[Path],
+    ) -> set[str]:
+        """Install rule content, returning the destination filenames written.
+
+        Args:
+            shared_src: Base shared rules source directory.
+            overlay_srcs: Overlay shared rules directories in priority order.
+            overlay_agent_srcs: Overlay agent-specific rules directories.
+
+        Returns:
+            Set of destination filenames that were installed.
+        """
+        return _install_content(
+            self, "rules", shared_src, overlay_srcs, overlay_agent_srcs
+        )
+
 
 class _CopilotAgent(_Agent):
     """Copilot agent with format-specific destination naming."""
@@ -268,6 +327,83 @@ class _CopilotAgent(_Agent):
 
     def dest_name(self, src: Path, subdir: str) -> str:
         return f"{src.stem}.{self._SUFFIXES[subdir]}.md"
+
+
+class _CodexAgent(_Agent):
+    """Codex agent that concatenates all rules into a single AGENTS.md file."""
+
+    AGENTS_MD: ClassVar[str] = "AGENTS.md"
+
+    def install_rules(
+        self,
+        shared_src: Path,
+        overlay_srcs: list[Path],
+        overlay_agent_srcs: list[Path],
+    ) -> set[str]:
+        dest_dir = self.dest_dir("rules")
+        vars_path = self.vars_path()
+
+        log("info", f"[{self.name}] Installing rules...")
+        collected = _collect_content_srcs(
+            self, "rules", shared_src, overlay_srcs, overlay_agent_srcs
+        )
+
+        bodies: list[str] = []
+        for _, src in sorted((name, src) for name, src, _ in collected):
+            try:
+                bodies.append(render_template(str(src), str(vars_path), self.name))
+            except Exception as e:
+                log("error", f"Failed to render rules/{src.name}: {e}")
+
+        output = normalize_whitespace("\n\n".join(bodies))
+        for var in find_unreplaced_variables(output):
+            log("warn", f"Unreplaced variable '{{{{{var}}}}}' in {self.AGENTS_MD}")
+
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        _write_if_changed(dest_dir / self.AGENTS_MD, output, self.AGENTS_MD)
+        return {self.AGENTS_MD}
+
+
+_CODEX_DOC_LIMIT = 32768
+_CODEX_DOC_LIMIT_RAISED = 65536
+
+
+def _ensure_codex_doc_limit(config_path: Path, agents_md_path: Path) -> None:
+    """Raise Codex's project_doc_max_bytes when AGENTS.md would be truncated.
+
+    Codex truncates instruction files at ``project_doc_max_bytes`` (default
+    32768). When the generated ``AGENTS.md`` exceeds that and the config does not
+    already set the key, insert it before the first table header so the full file
+    is loaded.
+
+    Args:
+        config_path: Path to ``~/.codex/config.toml``.
+        agents_md_path: Path to the generated ``AGENTS.md``.
+    """
+    import tomllib
+
+    if not agents_md_path.exists() or not config_path.exists():
+        return
+    if agents_md_path.stat().st_size <= _CODEX_DOC_LIMIT:
+        return
+
+    text = _read_text(config_path)
+    try:
+        if "project_doc_max_bytes" in tomllib.loads(text):
+            return
+    except tomllib.TOMLDecodeError:
+        log("warn", f"Could not parse {config_path}; skipping doc-limit update.")
+        return
+
+    lines = text.splitlines(keepends=True)
+    new_line = f"project_doc_max_bytes = {_CODEX_DOC_LIMIT_RAISED}\n"
+    insert_at = next(
+        (i for i, line in enumerate(lines) if line.lstrip().startswith("[")),
+        len(lines),
+    )
+    lines.insert(insert_at, new_line)
+    _write_text(config_path, "".join(lines))
+    log("success", f"Set project_doc_max_bytes = {_CODEX_DOC_LIMIT_RAISED} in config.")
 
 
 def _check_unmanaged(
@@ -291,6 +427,56 @@ def _check_unmanaged(
             continue
         if item.name not in managed:
             log("warn", f"Non-managed {kind} in {label}: {item.name}")
+
+
+def _collect_content_srcs(
+    agent: _Agent,
+    subdir: str,
+    shared_src: Path,
+    overlay_srcs: list[Path],
+    overlay_agent_srcs: list[Path],
+) -> list[tuple[str, Path, bool]]:
+    """Collect content sources in overlay-priority order, first-wins per dest name.
+
+    Args:
+        agent: Agent configuration.
+        subdir: Content subdirectory name (e.g. 'rules' or 'workflows').
+        shared_src: Base shared source directory.
+        overlay_srcs: Overlay shared source directories in priority order (first wins).
+        overlay_agent_srcs: Overlay agent-specific source directories in priority order.
+
+    Returns:
+        List of (dest_name, source_path, is_agent_specific) tuples. Agent-specific
+        sources are copied verbatim; the rest are rendered.
+    """
+    collected: list[tuple[str, Path, bool]] = []
+    seen: set[str] = set()
+
+    def add(src: Path, name: str, *, agent_specific: bool) -> None:
+        if name not in seen:
+            collected.append((name, src, agent_specific))
+            seen.add(name)
+
+    for overlay_src in overlay_srcs:
+        if overlay_src.exists():
+            for src in sorted(overlay_src.glob("*.md")):
+                add(src, agent.dest_name(src, subdir), agent_specific=False)
+
+    for src in sorted(shared_src.glob("*.md")):
+        add(src, agent.dest_name(src, subdir), agent_specific=False)
+
+    agent_src = agent.agent_src(subdir)
+    if agent_src.exists():
+        for src in sorted(agent_src.glob("*.md")):
+            if not (shared_src / src.name).exists():
+                add(src, src.name, agent_specific=True)
+
+    for overlay_agent_src in overlay_agent_srcs:
+        if overlay_agent_src.exists():
+            for src in sorted(overlay_agent_src.glob("*.md")):
+                add(src, agent.dest_name(src, subdir), agent_specific=False)
+
+    return collected
 
 
 def _install_content(
@@ -319,45 +505,18 @@ def _install_content(
     log("info", f"[{target}] Installing {subdir}...")
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    installed: set[str] = set()
-
-    for overlay_src in overlay_srcs:
-        if overlay_src.exists():
-            for src in sorted(overlay_src.glob("*.md")):
-                name = agent.dest_name(src, subdir)
-                if name not in installed:
-                    _install_rendered(
-                        src, dest_dir / name, vars_path, target, f"{subdir}/{name}"
-                    )
-                    installed.add(name)
-
-    for src in sorted(shared_src.glob("*.md")):
-        name = agent.dest_name(src, subdir)
-        if name not in installed:
+    collected = _collect_content_srcs(
+        agent, subdir, shared_src, overlay_srcs, overlay_agent_srcs
+    )
+    for name, src, agent_specific in collected:
+        if agent_specific:
+            _install_linked(src, dest_dir / name, f"{subdir}/{name}")
+        else:
             _install_rendered(
                 src, dest_dir / name, vars_path, target, f"{subdir}/{name}"
             )
-            installed.add(name)
 
-    agent_src = agent.agent_src(subdir)
-    if agent_src.exists():
-        for src in sorted(agent_src.glob("*.md")):
-            if not (shared_src / src.name).exists():
-                name = src.name
-                _install_linked(src, dest_dir / name, f"{subdir}/{name}")
-                installed.add(name)
-
-    for overlay_agent_src in overlay_agent_srcs:
-        if overlay_agent_src.exists():
-            for src in sorted(overlay_agent_src.glob("*.md")):
-                name = agent.dest_name(src, subdir)
-                if name not in installed:
-                    _install_rendered(
-                        src, dest_dir / name, vars_path, target, f"{subdir}/{name}"
-                    )
-                    installed.add(name)
-
-    return installed
+    return {name for name, _, _ in collected}
 
 
 def _install_skills(skills_src: Path, agents_dir: Path, managed: set[str]) -> None:
@@ -606,6 +765,7 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
         "copilot": _CopilotAgent(name="copilot", root_dir=root_dir, dirs=dirs),
         "kiro": _Agent(name="kiro", root_dir=root_dir, dirs=dirs),
         "claude-code": _Agent(name="claude-code", root_dir=root_dir, dirs=dirs),
+        "codex": _CodexAgent(name="codex", root_dir=root_dir, dirs=dirs),
     }
     targets = agent_names or list(all_agents)
 
@@ -623,11 +783,11 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
         skills_dir = agents_dir / "skills"
         installed_files["cline"].extend(str(skills_dir / s) for s in managed_skills)
 
-    for skill_agent in ("kiro", "claude-code"):
+    for skill_agent in ("kiro", "claude-code", "codex"):
         if skill_agent not in targets:
             continue
         managed: set[str] = set()
-        skills_parent = dirs[skill_agent]["rules"].parent
+        skills_parent = _skills_parent(dirs, skill_agent)
         _install_skills(root_dir / "shared" / "skills", skills_parent, managed)
         _install_skills(root_dir / skill_agent / "skills", skills_parent, managed)
         for overlay_dir in overlay_dirs:
@@ -646,18 +806,29 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
         for subdir in ["rules", "workflows"]:
             overlay_srcs = [d / "shared" / subdir for d in overlay_dirs]
             overlay_agent_srcs = [d / agent.name / subdir for d in overlay_dirs]
-            installed = _install_content(
-                agent=agent,
-                subdir=subdir,
-                shared_src=root_dir / "shared" / subdir,
-                overlay_srcs=overlay_srcs,
-                overlay_agent_srcs=overlay_agent_srcs,
-            )
-            _check_unmanaged(
-                agent.dest_dir(subdir), installed, f"{agent.name} {subdir}"
-            )
+            shared_src = root_dir / "shared" / subdir
+            if subdir == "rules":
+                installed = agent.install_rules(
+                    shared_src, overlay_srcs, overlay_agent_srcs
+                )
+            else:
+                installed = _install_content(
+                    agent=agent,
+                    subdir=subdir,
+                    shared_src=shared_src,
+                    overlay_srcs=overlay_srcs,
+                    overlay_agent_srcs=overlay_agent_srcs,
+                )
             dest_dir = agent.dest_dir(subdir)
+            if not (isinstance(agent, _CodexAgent) and subdir == "rules"):
+                _check_unmanaged(dest_dir, installed, f"{agent.name} {subdir}")
             installed_files[name].extend(str(dest_dir / f) for f in installed)
+
+    if "codex" in targets:
+        _ensure_codex_doc_limit(
+            dirs["codex"]["rules"] / "config.toml",
+            dirs["codex"]["rules"] / _CodexAgent.AGENTS_MD,
+        )
 
     if "cline" in targets:
         log("info", "[cline] Symlinking rules and workflows...")
@@ -687,7 +858,9 @@ def get_managed_dirs() -> list[Path]:
     managed: set[Path] = set()
     managed.add(agents_dir / "skills")
     for key, value in dirs.items():
-        for subdir_path in value.values():
+        for subdir, subdir_path in value.items():
+            if key == "codex" and subdir == "rules":
+                continue
             managed.add(subdir_path)
         if key in ("cline", "kiro", "claude-code"):
             parent = next(iter(value.values())).parent

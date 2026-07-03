@@ -153,6 +153,18 @@ def render_for_claude_code(body: str) -> str:
     return normalize_whitespace(body)
 
 
+def render_for_codex(body: str) -> str:
+    """Render template for Codex.
+
+    Args:
+        body: Template body.
+
+    Returns:
+        Normalized body content.
+    """
+    return normalize_whitespace(body)
+
+
 def render_template(template_path: str, variables_path: str, target: str) -> str:
     """Render a template file with variable substitution.
 
@@ -186,6 +198,8 @@ def render_template(template_path: str, variables_path: str, target: str) -> str
         return render_for_kiro(body)
     if target == "claude-code":
         return render_for_claude_code(body)
+    if target == "codex":
+        return render_for_codex(body)
     msg = f"Unknown target format: {target}"
     raise ValueError(msg)
 
@@ -203,7 +217,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("variables_path", help="Path to JSON file with variables.")
     parser.add_argument(
         "target",
-        choices=["cline", "copilot", "kiro", "claude-code"],
+        choices=["cline", "copilot", "kiro", "claude-code", "codex"],
         help="Output target format.",
     )
     return parser

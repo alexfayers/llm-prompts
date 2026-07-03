@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import sys
 
-_AGENTS = ("cline", "copilot", "kiro", "claude-code")
+_AGENTS = ("cline", "copilot", "kiro", "claude-code", "codex")
 
 
 def _get_root_dir() -> Path:
