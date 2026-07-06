@@ -17,6 +17,8 @@
 - User-specific personal details (name, role, preferences unique to one person) -> memory only.
 - Information about the world (facts, dates, statuses) -> memory only.
 
+**Generalize before encoding:** A global rule MUST be phrased generally - it applies across every project, so never bake in a single task's specifics (a particular file, package, tool, or one-off scenario). If the correction only makes sense for the current task, it is project memory, not a global rule. Before writing a rule, strip it to the transferable principle and confirm it would still read correctly in an unrelated repo.
+
 **Process:**
 
 1. **Always Reflect:** Before you {{TOOL_COMPLETE}}, synthesize all feedback provided by the user throughout the entire conversation. Analyse how this feedback relates to the active {{RULE_FILES}} and identify areas where modified instructions could have improved the outcome or better aligned with user preferences.
