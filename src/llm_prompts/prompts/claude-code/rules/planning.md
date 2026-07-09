@@ -33,6 +33,14 @@ Subagents are not just for planning - use them aggressively during implementatio
 
 When the scope of an action (number of files, commands, or steps) is larger than the user's request implies, pause and summarise what you are about to do before proceeding. Do not assume a broad mandate from a narrow request.
 
+## Check feasibility before designing - a fatal constraint halts the plan
+
+Before investing in a design, state the mechanism the request depends on and confirm it can actually deliver the goal. If you identify a constraint that is fatal to the approach - one that means the mechanism cannot do the thing being asked - STOP and surface it. Do not carry a known-fatal limitation forward into an elaborate design and hope the details paper over it; a constraint you noted in your first response is load-bearing and must gate the whole plan, not get lost once the user delegates ("you know best" is trust to exercise judgement, including the judgement to say "this won't work").
+
+Distinguish "can this mechanism detect/do X at all" from "can it do a related-but-different Y" - a solution that reliably answers the wrong question is still the wrong solution. When the user's own instinct ("is this actually useful?") points at the gap, weight it heavily rather than defending the in-progress plan.
+
+Do not build a fix for an unmeasured problem. If the gap the work addresses has an observable frequency or size, confirm it is real (or add a cheap logger/measurement first) before designing the fix. A speculative solution to a problem that may not exist is churn - dropping it or measuring first is the cheaper, more honest move.
+
 ## Measure, don't estimate, when a quantity is observable
 
 When a plan rests on a numeric claim you can cheaply observe (a speed, a duration, a size, a count), measure it - do not substitute back-of-envelope arithmetic. A computed estimate that silently drops a factor reads as confident but can be wildly wrong. If the codebase has a harness or test path that produces the real number, run it before asserting the value or marking it "fine". Label any computed value as an estimate until measured.
