@@ -53,3 +53,5 @@ Keep sessions focused on one coherent change. If a session is growing large:
 - A single session should ideally produce 1-3 commits covering one logical change.
 
 **Do NOT start a new large task late in a long/high-context session.** When the user asks to begin a fresh multi-file feature or investigation and the session is already large (high context-usage notices, an earlier "start a fresh session" reminder, or many turns), STOP before planning and say so explicitly: recommend parking it for a new session, and only proceed if the user overrides. A one-line "this is a big task" aside is not enough - actually push back and get agreement before spending tokens on Explore/Plan agents. Quality degrades as context fills, and a plan authored at the end of a huge session is exactly the work best restarted clean. Capturing the request as a TODO/memory entry and stopping is the correct, cheaper move.
+
+When a request is ambiguous about how much to do now, resolve it toward the least-costly-to-reverse interpretation and confirm in one line before acting - do not pick the more ambitious reading because it looks helpful.
