@@ -29,4 +29,6 @@ Before you end the session or {{TOOL_COMPLETE}}, work through this checklist:
    ```
    If the counter reaches 5 or more, tell the user: "You have completed N sessions since your last /retrospective. Consider running it to capture learnings across recent sessions."
 
-After completing the checklist, tell the user "I have followed the session-end checklist" to confirm.
+7. **Hand off remaining work (conditional).** If incomplete work remains that is scoped to this project or directly related to what this session touched - unfinished `TODO.md` items, `in-progress` task entities, or `planned` tasks that are part of the current or a directly related effort - run the `handoff` skill to write `HANDOFF.md` so the next session can resume with full context. Base this on the work surfaced in step 5, restricted to the current project / directly related effort - do NOT trigger on the broad cross-project backlog. Skip this step only when no such work remains, or when you already wrote a `HANDOFF.md` this session or arrived here from the `handoff` skill (never re-trigger handoff in those cases).
+
+After completing the checklist, tell the user "I have followed the session-end checklist" to confirm - and, if you produced one, that a handoff doc is ready at `HANDOFF.md`.
