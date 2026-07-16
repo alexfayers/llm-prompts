@@ -24,6 +24,7 @@ Before making a commit, you must tell the user "I am following the predefined gi
 ## Pushing
 
 - **NEVER** push without explicit user permission. Always ask first.
+- **Classify a repo as internal vs public by its remote host, NEVER by its name.** Always run `git remote get-url origin` and inspect the host before deciding whether a repo is internal or public - a repo whose name looks personal/public may push to an internal host, and vice versa. Do not infer the host from the repo/package name.
 - Before pushing, run `git grep -n '^<<<<<<<' HEAD` to verify no conflict markers exist in tracked files. If any results are found, **do not push** - fix them first.
 - **Before pushing to a public remote (github.com, pypi, npm, etc.), you MUST scan the outgoing commits for internal/proprietary leakage** - this is a hard gate, do it at push time, not just at commit time. Check `git remote get-url origin` to classify the remote; internal/corporate git hosts are exempt. For public remotes, scan BOTH the diff and the commit messages of `@{u}..HEAD` for any internal identifiers your environment defines (internal hostnames/URLs, employer-specific project or package names, employee aliases, internal ticket IDs, cloud account IDs). If anything matches, **do not push** - fix it first. Any active no-internal-leakage rule defines the specific patterns.
 
