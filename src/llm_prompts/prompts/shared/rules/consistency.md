@@ -10,3 +10,7 @@ When making any changes, it is **extremely important** that you look for other e
 This applies to everything; code, commits, text, logs, etc.
 
 This ensures consistency and increases the chance that the user will accept your changes.
+
+## Filling a supplied template
+
+When populating a provided template, substitute only the placeholder tokens and leave all fixed boilerplate verbatim - do not reword, grammar-fix, or restyle it, even where it reads awkwardly. The exact text may be load-bearing. If boilerplate genuinely needs changing, raise it separately rather than editing inline.
