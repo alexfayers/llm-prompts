@@ -28,7 +28,7 @@ Subagents are not just for planning - use them aggressively during implementatio
 - **Verification**: Use agents to review/validate work in parallel with continued implementation
 - **Bulk read-only tasks**: Reviewing memory entities, auditing files, summarising multiple items - parallelise via subagents, not sequentially in the main thread
 - Target a sustained rate of roughly one Agent call per 50 turns (3-5 per non-trivial session, more in long ones). A couple of agents early does not cover a 300-turn session - if subagent use is lagging behind the session's length, you're doing sequential work that could be parallelised.
-- **Never idle-wait for a background agent.** While a subagent runs, always do useful work in the main thread - verify config, read related files, update memory, inspect other parts of the change, or launch further independent agents. A sleep purely to pass time is wasted; there is always something to advance or validate until the agent reports back.
+- **Never idle-wait for a background agent, and never `sleep` to pass time until one replies.** A background agent's completion, and any teammate message, arrives as an injected notification that re-invokes you - sleeping does not make it come sooner and cannot observe it mid-turn; it only burns wall-clock. If you have nothing left to advance, simply end your turn and let the notification wake you. While a subagent runs, prefer doing useful work in the main thread - verify config, read related files, update memory, inspect other parts of the change, or launch further independent agents - but "do other work" and "end the turn" are the only correct options; a bare `sleep` is neither.
 
 ## Scope discipline during execution
 
