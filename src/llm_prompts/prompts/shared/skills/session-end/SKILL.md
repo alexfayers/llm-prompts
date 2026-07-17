@@ -21,14 +21,6 @@ Before you end the session or {{TOOL_COMPLETE}}, work through this checklist:
    - Mention any that are unblocked, overdue, or have cross-project dependencies on what was just completed
    - Present as a consolidated, prioritised list - group by project, highlight anything newly unblocked by this session's work
 
-6. **Retrospective reminder.** Increment the session counter and remind if due:
-   ```bash
-   counter_file="$HOME/.claude/.retrospective-counter"
-   count=$(cat "$counter_file" 2>/dev/null || echo 0)
-   echo $((count + 1)) > "$counter_file"
-   ```
-   If the counter reaches 5 or more, tell the user: "You have completed N sessions since your last /retrospective. Consider running it to capture learnings across recent sessions."
-
-7. **Hand off remaining work (conditional).** If incomplete work remains that is scoped to this project or directly related to what this session touched - unfinished `TODO.md` items, `in-progress` task entities, or `planned` tasks that are part of the current or a directly related effort - run the `handoff` skill to write `HANDOFF.md` so the next session can resume with full context. Base this on the work surfaced in step 5, restricted to the current project / directly related effort - do NOT trigger on the broad cross-project backlog. Skip this step only when no such work remains, or when you already wrote a `HANDOFF.md` this session or arrived here from the `handoff` skill (never re-trigger handoff in those cases).
+6. **Hand off remaining work (conditional).** If incomplete work remains that is scoped to this project or directly related to what this session touched - unfinished `TODO.md` items, `in-progress` task entities, or `planned` tasks that are part of the current or a directly related effort - run the `handoff` skill to write `HANDOFF.md` so the next session can resume with full context. Base this on the work surfaced in step 5, restricted to the current project / directly related effort - do NOT trigger on the broad cross-project backlog. Skip this step only when no such work remains, or when you already wrote a `HANDOFF.md` this session or arrived here from the `handoff` skill (never re-trigger handoff in those cases).
 
 After completing the checklist, tell the user "I have followed the session-end checklist" to confirm - and, if you produced one, that a handoff doc is ready at `HANDOFF.md`.

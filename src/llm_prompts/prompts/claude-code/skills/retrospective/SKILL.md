@@ -9,10 +9,10 @@ Analyse recent Claude Code sessions to surface patterns, corrections, and pain p
 
 ## 1. Extract signals
 
-Analyse exactly the sessions that have elapsed since the last retrospective. The session counter at `~/.claude/.retrospective-counter` tracks this - read it and pass it to the script (clamp to a minimum of 1 if the counter is missing or 0, and let an explicit `SESSIONS` override win):
+Analyse exactly the sessions that have elapsed since the last retrospective. The `cline-hook` session counter tracks this - read it and pass it to the script (clamp to a minimum of 1 if the counter is missing or 0, and let an explicit `SESSIONS` override win):
 
 ```bash
-count=$(cat ~/.claude/.retrospective-counter 2>/dev/null || echo 0)
+count=$(cline-hook retro-count --get 2>/dev/null || echo 0)
 sessions=${SESSIONS:-$(( count > 0 ? count : 1 ))}
 python3 "<base-dir>/extract_signals.py" --sessions "$sessions"
 ```
@@ -58,5 +58,5 @@ After all subagents complete, compile a summary and **show it to the user**. Thi
 ## 4. Reset counter
 
 ```bash
-echo "0" > ~/.claude/.retrospective-counter
+cline-hook retro-count --reset
 ```
