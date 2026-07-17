@@ -12,6 +12,7 @@ from typing import ClassVar, Literal
 from .render_template import (
     find_unreplaced_variables,
     normalize_whitespace,
+    parse_frontmatter,
     render_template,
 )
 
@@ -163,6 +164,47 @@ def _write_text(path: Path, content: str) -> None:
         content: Text to write.
     """
     path.write_text(content, encoding="utf-8")
+
+
+def _env_var_set(name: str) -> bool:
+    """Check whether an env var is set in the process env or Claude Code settings.
+
+    Args:
+        name: Environment variable name.
+
+    Returns:
+        True if the variable has a truthy value in ``os.environ`` or in the
+        ``env`` block of ``~/.claude/settings.json``.
+    """
+    if os.environ.get(name):
+        return True
+    settings_path = Path.home() / ".claude" / "settings.json"
+    if not settings_path.exists():
+        return False
+    try:
+        settings = json.loads(_read_text(settings_path))
+    except (json.JSONDecodeError, OSError):
+        return False
+    return bool(settings.get("env", {}).get(name))
+
+
+def _passes_env_gate(src: Path) -> bool:
+    """Check a source file's ``requires_env`` frontmatter gate, if present.
+
+    Args:
+        src: Source file path.
+
+    Returns:
+        True if the file has no ``requires_env`` key, or the named env var
+        is set; False if the file should be skipped.
+    """
+    try:
+        content = _read_text(src)
+    except OSError:
+        return True
+    _, frontmatter = parse_frontmatter(content)
+    required_env = frontmatter.get("requires_env")
+    return not required_env or _env_var_set(required_env)
 
 
 def _discover_overlay_paths() -> list[Path]:
@@ -453,9 +495,13 @@ def _collect_content_srcs(
     seen: set[str] = set()
 
     def add(src: Path, name: str, *, agent_specific: bool) -> None:
-        if name not in seen:
-            collected.append((name, src, agent_specific))
-            seen.add(name)
+        if name in seen:
+            return
+        if not _passes_env_gate(src):
+            log("debug", f"Skipping {name}: requires_env not satisfied.")
+            return
+        collected.append((name, src, agent_specific))
+        seen.add(name)
 
     for overlay_src in overlay_srcs:
         if overlay_src.exists():
