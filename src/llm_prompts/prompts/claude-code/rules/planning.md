@@ -10,13 +10,16 @@ Use `EnterPlanMode` proactively for any task that involves:
 
 This is not optional. Sessions involving new features or multi-file changes MUST use plan mode at least once. Err on the side of planning. The cost of an unnecessary plan is low; the cost of rework from a bad approach is high.
 
+**Do the research and design work in subagents before entering plan mode, not after.** Every tool call made by the main session while plan mode is active still goes through full permission checks - so exploring and iterating on a design from inside plan mode turns into a wall of redundant approval prompts for tools already allowlisted outside of it. Instead: run the Explore/Design phases below as subagents first (each subagent's own tool calls are its own permission concern, not the main session's), then call `EnterPlanMode` only once the plan is fully formed, so the only thing that happens inside it is presenting the finished plan and calling `ExitPlanMode`. This keeps the plan-mode UI/approval step for the user while eliminating the redundant prompts.
+
 ## How to plan effectively
 
-During plan mode, leverage subagents for research and design:
+Leverage subagents for research and design, ahead of entering plan mode:
 
 1. **Explore phase**: Launch Explore agents (up to 3 in parallel) to investigate the codebase - find existing patterns, understand conventions, discover reusable utilities.
-2. **Design phase**: Launch a Plan agent with comprehensive context from the Explore results to synthesize a concrete implementation design.
+2. **Design phase**: Launch a named Plan agent with comprehensive context from the Explore results to synthesize a concrete implementation design.
 3. **Refine**: Use the `refine-plan` skill to score and improve the design before presenting it.
+4. **Enter plan mode to present**: Call `EnterPlanMode`, present the refined plan, and use `ExitPlanMode` to get the user's go-ahead - no exploration or iteration should happen after this point.
 
 Do NOT skip the agent phase and try to plan everything in your head. The agents provide independent verification, catch things you'd miss, and produce higher-quality designs than reasoning alone.
 
