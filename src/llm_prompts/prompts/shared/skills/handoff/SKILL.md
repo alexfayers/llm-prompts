@@ -15,6 +15,19 @@ Write to `HANDOFF.md` in the workspace root (or the directory the work lives in)
 unless the user names another location. One handoff doc at a time - if a stale
 `HANDOFF.md` exists and is no longer relevant, overwrite it.
 
+## Two directions: writing vs. resuming
+
+This skill's document below covers *writing* a handoff at the end of a session.
+The phrase "do/resume/pick up the handoff" points the other direction: an
+existing `HANDOFF.md` is present and the ask is to *execute* the work it
+describes, not to re-run the write flow. In that case: read `HANDOFF.md` and
+the memory entities/plan file it points to, delete the doc per its own Step 0,
+and go straight into the "next task, stated concretely" section as your first
+action. Only fall back to writing/refreshing the doc if the user's wording is
+actually about ending the session or handing off to someone else - if in doubt,
+treat "do the handoff" for an already-existing doc as an instruction to act on
+it, not to verify or rewrite it.
+
 ## Required structure
 
 The document MUST open with a self-delete instruction as step 1, so the resuming
