@@ -9,7 +9,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from llm_prompts.hooks import AutoReinstallPlugin, _ReinstallDebouncer
+from llm_prompts.hooks import (
+    _DEBOUNCE_SECONDS,
+    _UPDATE_CHECK_INTERVAL,
+    AutoReinstallPlugin,
+    _ReinstallDebouncer,
+)
 
 
 @pytest.fixture
@@ -56,6 +61,15 @@ class TestReinstallDebouncer:
         debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         (tmp_path / "stamp").write_text(str(time.time() - 10.0))
         assert debouncer.should_run()
+
+    def test_respects_custom_interval(self, tmp_path: Path) -> None:
+        d = _ReinstallDebouncer(tmp_path / "stamp", interval_seconds=100.0)
+        d.mark_run()
+        assert not d.should_run()
+        (tmp_path / "stamp").write_text(str(time.time() - 50))
+        assert not d.should_run()
+        (tmp_path / "stamp").write_text(str(time.time() - 150))
+        assert d.should_run()
 
 
 class TestAutoReinstallPlugin:
@@ -166,3 +180,76 @@ class TestAutoReinstallPlugin:
             parameters={"path": manifest_data["kiro"]["files"][0]},
         )
         assert plugin._installed_paths is None
+
+
+class TestUpdateCheckOnTaskStart:
+    """Tests for the TaskStart update-check dispatch."""
+
+    def test_task_start_reports_updates(self, tmp_path: Path) -> None:
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        with patch(
+            "llm_prompts.cli._collect_update_messages",
+            return_value=["[pkg] update available (a -> b)"],
+        ):
+            result = plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[])
+        assert result is not None
+        assert result.notes == ["[pkg] update available (a -> b)"]
+        assert (tmp_path / "update-stamp").exists()
+
+    def test_task_start_no_updates_marks_stamp(self, tmp_path: Path) -> None:
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        with patch("llm_prompts.cli._collect_update_messages", return_value=[]):
+            result = plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[])
+        assert result is None
+        assert (tmp_path / "update-stamp").exists()
+
+    def test_task_start_debounced(self, tmp_path: Path) -> None:
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        (tmp_path / "update-stamp").write_text(str(time.time()))
+        with patch("llm_prompts.cli._collect_update_messages") as mock_collect:
+            result = plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[])
+        assert result is None
+        mock_collect.assert_not_called()
+
+    def test_task_start_check_failure_does_not_mark(self, tmp_path: Path) -> None:
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        with patch(
+            "llm_prompts.cli._collect_update_messages",
+            side_effect=Exception("boom"),
+        ):
+            result = plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[])
+        assert result is None
+        assert not (tmp_path / "update-stamp").exists()
+
+    def test_task_start_survives_system_exit(self, tmp_path: Path) -> None:
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        with patch(
+            "llm_prompts.cli._collect_update_messages",
+            side_effect=SystemExit(1),
+        ):
+            result = plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[])
+        assert result is None
+        assert not (tmp_path / "update-stamp").exists()
+
+    def test_debouncers_are_independent(self) -> None:
+        plugin = AutoReinstallPlugin()
+        assert plugin._debouncer._stamp != plugin._update_check_debouncer._stamp
+        assert plugin._debouncer._interval_seconds == _DEBOUNCE_SECONDS
+        assert (
+            plugin._update_check_debouncer._interval_seconds == _UPDATE_CHECK_INTERVAL
+        )

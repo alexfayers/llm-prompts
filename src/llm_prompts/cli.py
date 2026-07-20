@@ -12,6 +12,7 @@ import subprocess
 import sys
 
 _AGENTS = ("cline", "copilot", "kiro", "claude-code", "codex")
+_GIT_TIMEOUT = 30
 
 
 def _get_root_dir() -> Path:
@@ -125,40 +126,73 @@ def _get_installed_commit(package_name: str) -> str | None:
     return None
 
 
-def _check_remote_source(name: str, source: str) -> bool:
-    """Check a remote git source for updates against the installed version.
+def _remote_source_messages(name: str, source: str) -> list[str]:
+    """Return update-availability messages for a remote git source.
 
     Returns:
-        True if updates are available.
+        Message lines describing available updates, or an empty list.
     """
     git_url = _extract_git_url(source)
     if not git_url:
-        return False
+        return []
 
     installed_commit = _get_installed_commit(name)
     if not installed_commit:
-        print(f"[{name}] not installed (run `llm-prompts setup` first)")
-        return True
+        return [f"[{name}] not installed (run `llm-prompts setup` first)"]
 
     result = subprocess.run(
         ["git", "ls-remote", git_url, "HEAD"],
         capture_output=True,
         text=True,
         check=False,
+        timeout=_GIT_TIMEOUT,
     )
     if result.returncode != 0:
-        return False
+        return []
 
     remote_commit = result.stdout.split()[0] if result.stdout.strip() else None
     if not remote_commit:
-        return False
+        return []
 
     if remote_commit != installed_commit:
         short_installed = installed_commit[:8]
         short_remote = remote_commit[:8]
-        print(f"[{name}] update available ({short_installed} -> {short_remote})")
-        return True
-    return False
+        return [f"[{name}] update available ({short_installed} -> {short_remote})"]
+    return []
+
+
+def _local_source_messages(name: str, source: str) -> list[str]:
+    """Return update-availability messages for a local-path git source.
+
+    Returns:
+        Message lines describing available updates, or an empty list.
+    """
+    from .setup import _expand
+
+    repo = _expand(source)
+    if not (repo / ".git").is_dir():
+        return []
+
+    subprocess.run(
+        ["git", "-C", str(repo), "fetch", "--quiet"],
+        check=False,
+        capture_output=True,
+        timeout=_GIT_TIMEOUT,
+    )
+    result = subprocess.run(
+        ["git", "-C", str(repo), "rev-list", "--count", "HEAD..@{u}"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=_GIT_TIMEOUT,
+    )
+    if result.returncode != 0:
+        return []
+
+    count = int(result.stdout.strip())
+    if count > 0:
+        return [f"[{name}] {count} new commit(s) available"]
+    return []
 
 
 def _pull_local_sources() -> None:
@@ -182,12 +216,14 @@ def _pull_local_sources() -> None:
             ["git", "-C", str(repo), "fetch", "--quiet"],
             check=False,
             capture_output=True,
+            timeout=_GIT_TIMEOUT,
         )
         result = subprocess.run(
             ["git", "-C", str(repo), "rev-list", "--count", "HEAD..@{u}"],
             capture_output=True,
             text=True,
             check=False,
+            timeout=_GIT_TIMEOUT,
         )
         if result.returncode != 0:
             continue
@@ -198,6 +234,7 @@ def _pull_local_sources() -> None:
                 check=False,
                 capture_output=True,
                 text=True,
+                timeout=_GIT_TIMEOUT,
             )
             if pull.returncode == 0:
                 print(f"[{name}] pulled {count} new commit(s)")
@@ -206,52 +243,41 @@ def _pull_local_sources() -> None:
                 print(f"  {pull.stderr.strip()}")
 
 
+def _collect_update_messages() -> list[str]:
+    """Collect update-availability messages across all configured tool sources.
+
+    Returns:
+        Message lines describing available updates, in config order.
+    """
+    from .setup import CONFIG_PATH, _is_local_path, _load_config
+
+    if not CONFIG_PATH.exists():
+        return []
+
+    messages: list[str] = []
+    for tool in _load_config():
+        name = str(tool.get("name", ""))
+        source = str(tool.get("source", ""))
+
+        if _is_local_path(source):
+            messages.extend(_local_source_messages(name, source))
+        else:
+            messages.extend(_remote_source_messages(name, source))
+    return messages
+
+
 def _check_for_updates() -> bool:
     """Check configured tool sources for available upstream changes.
 
     Returns:
         True if any updates are available.
     """
-    from .setup import CONFIG_PATH, _expand, _is_local_path, _load_config
-
-    if not CONFIG_PATH.exists():
-        return False
-
-    tools = _load_config()
-    has_updates = False
-
-    for tool in tools:
-        name = str(tool.get("name", ""))
-        source = str(tool.get("source", ""))
-
-        if _is_local_path(source):
-            repo = _expand(source)
-            if not (repo / ".git").is_dir():
-                continue
-            subprocess.run(
-                ["git", "-C", str(repo), "fetch", "--quiet"],
-                check=False,
-                capture_output=True,
-            )
-            result = subprocess.run(
-                ["git", "-C", str(repo), "rev-list", "--count", "HEAD..@{u}"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if result.returncode != 0:
-                continue
-            count = int(result.stdout.strip())
-            if count > 0:
-                print(f"[{name}] {count} new commit(s) available")
-                has_updates = True
-        else:
-            if _check_remote_source(name, source):
-                has_updates = True
-
-    if not has_updates:
+    messages = _collect_update_messages()
+    for message in messages:
+        print(message)
+    if not messages:
         print("All tools are up to date.")
-    return has_updates
+    return bool(messages)
 
 
 def _auto_migrate_memory_db() -> None:
