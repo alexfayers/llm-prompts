@@ -15,7 +15,7 @@ Before you end the session or {{TOOL_COMPLETE}}, work through this checklist:
    - Unpushed commits - surface them to the user and ask how they'd like to submit (push, PR/review, or leave for later)
 4. **Reflect on {{RULE_FILES}}.** If the session involved user feedback or corrections, consider whether any {{RULE_FILES}} or skill files should be updated to prevent the same issues next time. Apply improvements directly.
 5. **Review TODOs (comprehensive).** Surface ALL outstanding work to the user:
-   - Read all `TODO.md` files in the workspace (use `find` to locate them)
+   - Run the `todos` skill to scan the workspace for file- and code-based TODOs (TODO.md files plus TODO/FIXME markers). Fold its findings into the consolidated summary below.
    - Search memory for TODO observations on the current project entity and related entities (`search_nodes` with query "TODO")
    - Search memory for planned/in-progress tasks in the current project and other projects
    - Mention any that are unblocked, overdue, or have cross-project dependencies on what was just completed
