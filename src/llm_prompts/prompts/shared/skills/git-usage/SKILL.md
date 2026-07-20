@@ -19,6 +19,7 @@ _Note that these git rules override others._
 - **Before amending**, check if HEAD has been pushed with `git -P log --oneline @{u}..HEAD`. If the output is empty, HEAD is already pushed - do NOT amend. Create a new commit instead.
 - **Also do NOT amend a commit that backs an already-approved CR/review**, even if it is unpushed - a new, separate piece of work belongs in its own commit (and its own CR). Amending silently folds new code into an approved review. If unsure whether the previous commit is approved, ask the user before amending.
 - If using the focus chain, the last task in the TODO list MUST be to commit the changes
+- **Keep history linear - never create a merge commit.** When bringing one branch's commits into another (e.g. folding a worktree/feature branch back into the branch it came from), use `git rebase` (or fast-forward) instead of `git merge`. Reserve `git merge` only for integrating a remote/collaborator branch you cannot rewrite (already pushed and shared). If a merge commit ends up in history by mistake and none of the affected commits have been pushed, rebase it away rather than leaving it.
 
 Before making a commit, you must tell the user "I am following the predefined git rules" to confirm your understanding of these rules.
 
