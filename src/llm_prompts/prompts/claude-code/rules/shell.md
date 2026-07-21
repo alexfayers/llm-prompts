@@ -1,4 +1,5 @@
 # Shell
 
+- Do not pad a command with `&& echo <marker>` (e.g. `echo CLEAN`, `echo DONE`) when the command's own exit code and/or output already unambiguously answers the question. Only add an explicit echo/marker when the preceding command's exit code or empty output is genuinely ambiguous between two different real outcomes (e.g. `grep` exiting non-zero for both "no matches" and "grep errored") - not as a reflexive habit after every command.
 - The Bash tool's working directory PERSISTS across separate command invocations. A relative path in a later command can silently resolve against a directory an earlier `cd` left you in, producing a false result that looks like a real bug (a "file not found", or a diff/compare that reports spurious differences or false matches). For any cross-tree comparison, verification, or file check, use absolute paths or `cd` to a known root within the same command - never assume you are at the repo root.
 - Before naming a specific external tool in a script or command, confirm it is actually installed rather than assuming availability from general familiarity - prefer an already-available built-in alternative if the tool is missing.
