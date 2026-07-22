@@ -98,6 +98,7 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
         "claude-code": {
             "rules": home / ".claude" / "rules",
             "workflows": home / ".claude" / "commands",
+            "agents": home / ".claude" / "agents",
         },
         "codex": {
             "rules": home / ".codex",
@@ -605,6 +606,42 @@ def _install_skills(skills_src: Path, agents_dir: Path, managed: set[str]) -> No
             log("error", f"Failed to install skill '{skill_name}': {e}")
 
 
+def _install_agents(agents_src: Path, agents_dir: Path, managed: set[str]) -> None:
+    """Install Claude Code subagent definitions as symlinks.
+
+    Args:
+        agents_src: Source directory containing agent ``*.md`` files.
+        agents_dir: Destination agents directory (e.g. ~/.claude/agents).
+        managed: Set to accumulate installed agent filenames into.
+    """
+    if not agents_src.exists():
+        return
+    log("info", "[claude-code] Installing agents...")
+    for agent_path in sorted(agents_src.glob("*.md")):
+        agent_name = agent_path.name
+        agent_dest = agents_dir / agent_name
+        try:
+            if agent_dest.is_symlink() and agent_dest.resolve() == agent_path.resolve():
+                log("debug", f"Agent '{agent_name}' is up to date. Skipping.")
+                managed.add(agent_name)
+                continue
+            already_existed = agent_dest.exists() or agent_dest.is_symlink()
+            if already_existed:
+                if agent_dest.is_symlink() or agent_dest.is_file():
+                    agent_dest.unlink()
+                else:
+                    shutil.rmtree(agent_dest)
+            agent_dest.parent.mkdir(parents=True, exist_ok=True)
+            agent_dest.symlink_to(agent_path)
+            managed.add(agent_name)
+            log(
+                "success",
+                f"{'Updated' if already_existed else 'Installed'} agent: {agent_name}",
+            )
+        except Exception as e:
+            log("error", f"Failed to install agent '{agent_name}': {e}")
+
+
 def _symlink_dir(source: Path, dest: Path) -> None:
     """Replace a directory with a symlink to source.
 
@@ -846,6 +883,21 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
         )
         skills_dir = skills_parent / "skills"
         installed_files[skill_agent].extend(str(skills_dir / s) for s in managed)
+
+    if "claude-code" in targets:
+        managed_agents: set[str] = set()
+        agents_dest = dirs["claude-code"]["agents"]
+        _install_agents(
+            root_dir / "claude-code" / "agents", agents_dest, managed_agents
+        )
+        for overlay_dir in overlay_dirs:
+            _install_agents(
+                overlay_dir / "claude-code" / "agents", agents_dest, managed_agents
+            )
+        _check_unmanaged(agents_dest, managed_agents, "claude-code agents")
+        installed_files["claude-code"].extend(
+            str(agents_dest / a) for a in managed_agents
+        )
 
     for name in targets:
         agent = all_agents[name]

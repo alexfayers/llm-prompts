@@ -1,6 +1,6 @@
 # llm-prompts
 
-Cross-agent rules, workflows, and skills for LLM coding assistants.
+Cross-agent rules, workflows, skills, and agents for LLM coding assistants.
 
 Supports [Cline](https://github.com/cline/cline), [GitHub Copilot](https://github.com/features/copilot), [Kiro](https://kiro.dev), [Claude Code](https://code.claude.com), and [Codex](https://openai.com/codex/).
 
@@ -34,6 +34,10 @@ Workflows are markdown files that define multi-step procedures the agent can fol
 ### Skills
 
 Skills are directories containing a `SKILL.md` file that the agent reads before performing a specific action. They provide just-in-time guidance for tasks like git operations, session management, or plan refinement. Skills are installed as symlinks, so edits to the source are picked up immediately.
+
+### Agents
+
+Agents are Claude Code custom subagent definitions - single markdown files with YAML frontmatter (`name`, `description`, `model`, etc.) that define a specialised subagent. They are Claude-Code-specific: only Claude Code has a `~/.claude/agents/` subagent concept, so they are installed only for the `claude-code` target (unlike rules, workflows, and skills, which span multiple agents). Agents are installed as symlinks, so edits to the source are picked up immediately.
 
 ### Templates
 
@@ -96,10 +100,11 @@ The entry point value is the Python package name. Prompts are discovered by conv
 
 ```
 src/my_package/prompts/
-  shared/rules/       # rules for all agents
-  shared/skills/      # skills for all agents
-  cline/rules/        # cline-only rules
-  kiro/rules/         # kiro-only rules
+  shared/rules/         # rules for all agents
+  shared/skills/        # skills for all agents
+  cline/rules/          # cline-only rules
+  kiro/rules/           # kiro-only rules
+  claude-code/agents/   # claude-code-only subagents
 ```
 
 ## Kiro agent setup

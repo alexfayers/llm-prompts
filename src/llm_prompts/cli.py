@@ -73,6 +73,15 @@ def _collect_sources(agent: str) -> dict[str, Path]:
                 if skill_file.is_file():
                     sources.setdefault(f"skills/{skill_dir.name}", skill_file)
 
+    # Agents (claude-code only)
+    if agent == "claude-code":
+        for agents_src in [root / "claude-code" / "agents"] + [
+            d / "claude-code" / "agents" for d in overlay_dirs
+        ]:
+            if agents_src.is_dir():
+                for f in sorted(agents_src.glob("*.md")):
+                    sources.setdefault(f"agents/{f.name}", f)
+
     return sources
 
 
