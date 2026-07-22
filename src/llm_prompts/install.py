@@ -829,6 +829,103 @@ def _cleanup_stale(
             log("info", f"[{agent_name}] Removed stale directory: {path.name}")
 
 
+def _remove_manifest_files(agent_name: str, files: list[str]) -> None:
+    """Remove files that were installed for an agent.
+
+    Args:
+        agent_name: Agent whose files to remove.
+        files: Installed file paths to remove.
+    """
+    for filepath in files:
+        path = Path(filepath)
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+            log("info", f"[{agent_name}] Removed file: {path.name}")
+        elif path.is_dir():
+            shutil.rmtree(path)
+            log("info", f"[{agent_name}] Removed directory: {path.name}")
+
+
+def _remove_cline_symlinks() -> None:
+    """Remove Cline's rules and workflows directory symlinks."""
+    _, symlinks = _get_cline_extra_dirs()
+    for dest in symlinks.values():
+        if dest.is_symlink():
+            dest.unlink()
+            log("info", f"[cline] Removed symlink: {dest}")
+
+
+def _unpatch_kiro_agent_config(agent_config_path: str) -> None:
+    """Remove llm-prompts resource entries from a Kiro agent config.
+
+    Args:
+        agent_config_path: Path to the agent JSON file to unpatch.
+    """
+    config_path = Path(agent_config_path)
+    if not config_path.exists():
+        return
+
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    existing: list[str] = config.get("resources", [])
+    to_remove = set(_kiro_resources())
+    filtered = [r for r in existing if r not in to_remove]
+
+    if filtered != existing:
+        config["resources"] = filtered
+        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+        removed = len(existing) - len(filtered)
+        log("success", f"Removed {removed} resource(s) from {config_path}.")
+
+
+def _disallow_update_claude_code() -> None:
+    """Remove Bash(llm-prompts update *) from Claude Code permissions.allow."""
+    settings_path = Path.home() / ".claude" / "settings.json"
+    if not settings_path.exists():
+        return
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    allow: list[str] = settings.get("permissions", {}).get("allow", [])
+    rule = "Bash(llm-prompts update *)"
+    if rule in allow:
+        allow.remove(rule)
+        settings_path.write_text(
+            json.dumps(settings, indent=2) + "\n", encoding="utf-8"
+        )
+        log(
+            "success",
+            "Removed Bash(llm-prompts update *) from Claude Code permissions.",
+        )
+
+
+def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) -> None:
+    """Reverse an installation, removing installed files and manifest entries.
+
+    Args:
+        agent_names: Agents to uninstall. None means all installed agents.
+        verbose: Show debug-level output.
+    """
+    global _verbose  # noqa: PLW0603
+    _verbose = verbose
+    from .manifest import delete_agent, read_manifest
+
+    manifest = read_manifest()
+    targets = agent_names or list(manifest)
+    for name in targets:
+        entry = manifest.get(name)
+        if entry is None:
+            log("warn", f"[{name}] not installed; nothing to remove.")
+            continue
+        _remove_manifest_files(name, entry.get("files", []))
+        if name == "cline":
+            _remove_cline_symlinks()
+        agent_config = entry.get("agent_config")
+        if agent_config:
+            _unpatch_kiro_agent_config(agent_config)
+        if name == "claude-code":
+            _disallow_update_claude_code()
+        delete_agent(name)
+        log("success", f"[{name}] Uninstalled.")
+
+
 def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None:
     """Run the installation workflow.
 
