@@ -383,6 +383,18 @@ def main() -> None:
         action="store_true",
         help="Report available updates without applying them.",
     )
+    uninstall_parser = subparsers.add_parser(
+        "uninstall",
+        help="Remove installed rules, workflows, skills, and agent config patches.",
+    )
+    uninstall_parser.add_argument(
+        "agent",
+        choices=[*_AGENTS, "all"],
+        help="Agent to uninstall, or 'all'.",
+    )
+    uninstall_parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Show debug output."
+    )
 
     args = parser.parse_args()
 
@@ -498,6 +510,10 @@ def main() -> None:
                 try_install_memory(agent_config)
 
         _restart_memory_service()
+    elif args.command == "uninstall":
+        from .install import uninstall
+
+        uninstall(None if args.agent == "all" else [args.agent], verbose=args.verbose)
     else:
         parser.print_help()
         sys.exit(1)
