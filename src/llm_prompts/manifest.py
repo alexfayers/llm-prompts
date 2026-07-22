@@ -64,3 +64,20 @@ def write_manifest(
         json.dumps({"agents": agents}, indent=2) + "\n",
         encoding="utf-8",
     )
+
+
+def delete_agent(agent_name: str) -> None:
+    """Remove an agent's entry from the manifest.
+
+    Args:
+        agent_name: Agent whose manifest entry to remove.
+    """
+    agents = read_manifest()
+    if agent_name not in agents:
+        return
+    del agents[agent_name]
+    MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    MANIFEST_PATH.write_text(
+        json.dumps({"agents": agents}, indent=2) + "\n",
+        encoding="utf-8",
+    )
