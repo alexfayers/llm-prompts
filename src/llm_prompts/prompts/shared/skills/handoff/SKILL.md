@@ -70,6 +70,7 @@ Then include, in order:
 
 ## Rules
 
+- **Do not push to get uncommitted work committed before writing the handoff, unless the user asks.** A permission block on `git commit`/`git add` (or any other obstacle to committing) is not a reason to escalate for approval - capture the tree's actual state as-is, dirty or not, and note in the doc that changes are uncommitted plus where they live. Forcing a clean commit first is a separate, explicit ask the user makes when they want it; the default handoff reflects reality, not a tidied-up version of it.
 - **Memory first, doc second.** Everything durable (decisions, outcomes, reusable
   learnings, task status) MUST already be in the memory graph before you write the
   handoff - the doc only points at it and frames the immediate next move. If it
