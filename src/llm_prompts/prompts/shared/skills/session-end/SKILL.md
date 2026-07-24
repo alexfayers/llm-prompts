@@ -10,9 +10,13 @@ Before you end the session or {{TOOL_COMPLETE}}, work through this checklist:
 1. **Persist memory (MANDATORY).** Review everything learned this session - decisions, discoveries, corrections, new preferences - and ensure it is saved to memory (project and/or global as appropriate). You MUST make at least one memory write call (`create_entities`, `add_observations`, or `set_entity_status`) before completing. If truly nothing was learned, add an observation to the relevant task or project entity noting what was done. Knowledge not persisted is permanently lost.
    - **Quality gate:** Do NOT store session logs, implementation play-by-play, or observations that duplicate steering rules. Store only current-state facts, outcomes, and reusable learnings. If a task is resolved, trim its observations to 1-3 (outcome only).
 2. **Update task entities.** Set the status of any `task/` entities you worked on (`resolved`, `blocked`, etc.). When resolving a task, delete verbose implementation observations - keep only the outcome summary.
-3. **Check for uncommitted/unpushed changes.** Check the current workspace AND prompt/skill source repos (run `llm-prompts source claude-code` to find them) for:
-   - Uncommitted changes - commit them now
-   - Unpushed commits - surface them to the user and ask how they'd like to submit (push, PR/review, or leave for later)
+3. **Check for uncommitted/unpushed changes.** Run the co-located script - it checks the current workspace AND the prompt/skill source repos itself (it shells out to `llm-prompts source claude-code` to find them), so there's no need to invoke that separately:
+
+   ```bash
+   python3 "<base-dir>/check_repos.py" [--workspace <path>]
+   ```
+
+   `--workspace` defaults to the current directory. It prints JSON with a `repos` list (each `{path, uncommitted, unpushed, no_upstream}`) and a top-level `clean` flag, and exits non-zero when anything is outstanding (`no_upstream` is informational, not itself a blocker). For each repo with `uncommitted` entries, commit them now. For each repo with `unpushed` entries, surface them to the user and ask how they'd like to submit (push, PR/review, or leave for later). If any repo reports an `error`, investigate before proceeding.
 4. **Reflect on {{RULE_FILES}}.** If the session involved user feedback or corrections, consider whether any {{RULE_FILES}} or skill files should be updated to prevent the same issues next time. Apply improvements directly.
 5. **Review TODOs (comprehensive).** Surface ALL outstanding work to the user:
    - Run the `todos` skill to scan the workspace for file- and code-based TODOs (TODO.md files plus TODO/FIXME markers). Fold its findings into the consolidated summary below.

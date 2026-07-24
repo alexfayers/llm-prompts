@@ -53,7 +53,13 @@ Keep the change minimal and focused. Do not opportunistically reformat unrelated
    - Watch tests asserting call counts, ordering, or side effects - preserve them exactly.
    - Build and run the full suite (follow `pre-implementation` and the project's build skill). Linting/formatting must pass.
 
-5. **Gate: the diff must be net-negative, OR net-neutral with a clear maintainability win.** Check `git -P diff --stat` after each edit and across the whole changeset.
+5. **Gate: the diff must be net-negative, OR net-neutral with a clear maintainability win.** After each edit and across the whole changeset, run the co-located script:
+
+   ```bash
+   python3 "<base-dir>/check_reduction.py" [range]
+   ```
+
+   `range` is an optional commit range (e.g. `@{u}..` for the whole changeset since it diverged from upstream); default is the working tree vs `HEAD`. It prints JSON (`added`, `removed`, `net`, `pass`, `reason`) and exits non-zero when `net` exceeds the +5-line neutral band - a hard fail regardless of elegance. A `pass: true` with `net` at or below 0 clears the bar outright; a `pass: true` with `net` between 1 and 5 only clears it if you can point to a genuine structural maintainability win (see below) - otherwise treat it the same as a fail and revert.
    - **Default bar - net-negative**: deletions exceed insertions. This is the goal for every change; a net-positive diff that is *not* obviously more maintainable is a failed tidy - **revert it**.
    - **Neutral-cost exception**: a change that is roughly break-even (within a few lines either way - say -5 to +5) is acceptable IF the new pattern is *obviously* more maintainable or elegant than the old: e.g. a long if/elif chain becoming a flat dispatch table, deeply nested conditionals becoming a guard-clause sequence, a hand-rolled loop becoming a clear comprehension. "Obviously" means a reviewer would agree at a glance, not a judgement call you have to argue for. The improvement must be in *structure*, not taste.
    - **Hard rejects regardless of elegance**: a clearly net-positive diff (more than ~5 lines added net), any behaviour change, or any "cleaner" rewrite that adds a layer of abstraction without simplifying the call sites. When the maintainability win is debatable, fall back to the net-negative bar and revert.
@@ -63,7 +69,7 @@ Keep the change minimal and focused. Do not opportunistically reformat unrelated
 
 ## Anti-patterns to avoid
 
-- **Break-even extraction**: pulling a block into a helper whose signature + docstring + imports cost as many lines as it saved, with no structural win. If `git diff --stat` isn't net-negative and the result isn't *obviously* more maintainable (see the gate's neutral-cost exception), you just moved code and added a layer - revert.
+- **Break-even extraction**: pulling a block into a helper whose signature + docstring + imports cost as many lines as it saved, with no structural win. If `check_reduction.py` isn't net-negative and the result isn't *obviously* more maintainable (see the gate's neutral-cost exception), you just moved code and added a layer - revert.
 - **Hasty abstraction**: merging blocks that share syntax but not meaning. They diverge later and the helper becomes a tangle of flags. When unsure, leave them separate.
 - **Behaviour drift**: silently changing an error message, default, or edge case "while tidying". Keep behaviour byte-identical; route real changes to a separate task.
 - **Flag-driven helpers**: a function with boolean params switching between two unrelated paths - that's two functions in a trench coat.
