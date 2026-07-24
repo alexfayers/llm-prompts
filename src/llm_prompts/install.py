@@ -189,15 +189,16 @@ def _env_var_set(name: str) -> bool:
     return bool(settings.get("env", {}).get(name))
 
 
-def _passes_env_gate(src: Path) -> bool:
-    """Check a source file's ``requires_env`` frontmatter gate, if present.
+def _passes_requires_gate(src: Path) -> bool:
+    """Check a source file's ``requires_*`` frontmatter gates, if present.
 
     Args:
         src: Source file path.
 
     Returns:
-        True if the file has no ``requires_env`` key, or the named env var
-        is set; False if the file should be skipped.
+        True if the file has no ``requires_env``/``requires_command`` keys, or
+        every present gate is satisfied (env var set / command on PATH); False
+        if the file should be skipped.
     """
     try:
         content = _read_text(src)
@@ -205,7 +206,32 @@ def _passes_env_gate(src: Path) -> bool:
         return True
     _, frontmatter = parse_frontmatter(content)
     required_env = frontmatter.get("requires_env")
-    return not required_env or _env_var_set(required_env)
+    if required_env and not _env_var_set(required_env):
+        return False
+    required_command = frontmatter.get("requires_command")
+    if required_command and shutil.which(required_command) is None:
+        return False
+    return True
+
+
+def _excluded_targets(src: Path) -> set[str]:
+    """Return the set of agent names a source file opts out of installing to.
+
+    Parses the flat, comma-separated ``exclude_targets`` frontmatter key.
+
+    Args:
+        src: Source file path.
+
+    Returns:
+        Set of agent names to skip; empty if the key is absent.
+    """
+    try:
+        content = _read_text(src)
+    except OSError:
+        return set()
+    _, frontmatter = parse_frontmatter(content)
+    raw = frontmatter.get("exclude_targets", "")
+    return {name.strip() for name in raw.split(",") if name.strip()}
 
 
 def _discover_overlay_paths() -> list[Path]:
@@ -498,8 +524,8 @@ def _collect_content_srcs(
     def add(src: Path, name: str, *, agent_specific: bool) -> None:
         if name in seen:
             return
-        if not _passes_env_gate(src):
-            log("debug", f"Skipping {name}: requires_env not satisfied.")
+        if not _passes_requires_gate(src):
+            log("debug", f"Skipping {name}: requires gate not satisfied.")
             return
         collected.append((name, src, agent_specific))
         seen.add(name)
@@ -566,13 +592,17 @@ def _install_content(
     return {name for name, _, _ in collected}
 
 
-def _install_skills(skills_src: Path, agents_dir: Path, managed: set[str]) -> None:
+def _install_skills(
+    skills_src: Path, agents_dir: Path, managed: set[str], agent_name: str
+) -> None:
     """Install Cline skills as symlinks in the agents directory.
 
     Args:
         skills_src: Source skills directory.
         agents_dir: Agents destination directory.
         managed: Set to accumulate installed skill names into.
+        agent_name: Target agent name, used to apply the requires-gate and
+            ``exclude_targets`` checks.
     """
     if not skills_src.exists():
         return
@@ -581,6 +611,13 @@ def _install_skills(skills_src: Path, agents_dir: Path, managed: set[str]) -> No
         if not skill_path.is_dir():
             continue
         if not (skill_path / "SKILL.md").is_file():
+            continue
+        skill_md = skill_path / "SKILL.md"
+        if not _passes_requires_gate(skill_md):
+            log("debug", f"Skipping skill '{skill_path.name}': requires gate not satisfied.")
+            continue
+        if agent_name in _excluded_targets(skill_md):
+            log("debug", f"Skipping skill '{skill_path.name}': excluded for {agent_name}.")
             continue
         skill_name = skill_path.name
         skill_dest = agents_dir / "skills" / skill_name
@@ -954,10 +991,10 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
     if "cline" in targets:
         agents_dir, _ = _get_cline_extra_dirs()
         managed_skills: set[str] = set()
-        _install_skills(root_dir / "shared" / "skills", agents_dir, managed_skills)
+        _install_skills(root_dir / "shared" / "skills", agents_dir, managed_skills, "cline")
         for overlay_dir in overlay_dirs:
             _install_skills(
-                overlay_dir / "shared" / "skills", agents_dir, managed_skills
+                overlay_dir / "shared" / "skills", agents_dir, managed_skills, "cline"
             )
         _check_unmanaged(agents_dir / "skills", managed_skills, "skills", is_dir=True)
         skills_dir = agents_dir / "skills"
@@ -968,12 +1005,16 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
             continue
         managed: set[str] = set()
         skills_parent = _skills_parent(dirs, skill_agent)
-        _install_skills(root_dir / "shared" / "skills", skills_parent, managed)
-        _install_skills(root_dir / skill_agent / "skills", skills_parent, managed)
+        _install_skills(root_dir / "shared" / "skills", skills_parent, managed, skill_agent)
+        _install_skills(
+            root_dir / skill_agent / "skills", skills_parent, managed, skill_agent
+        )
         for overlay_dir in overlay_dirs:
-            _install_skills(overlay_dir / "shared" / "skills", skills_parent, managed)
             _install_skills(
-                overlay_dir / skill_agent / "skills", skills_parent, managed
+                overlay_dir / "shared" / "skills", skills_parent, managed, skill_agent
+            )
+            _install_skills(
+                overlay_dir / skill_agent / "skills", skills_parent, managed, skill_agent
             )
         _check_unmanaged(
             skills_parent / "skills", managed, f"{skill_agent} skills", is_dir=True

@@ -173,6 +173,22 @@ class TestCodexInstallLayout:
         assert (skills / "tdd").is_symlink()
         assert (skills / "git-usage").is_symlink()
 
+    def test_ask_codex_excluded_from_codex_skills(self, tmp_path: Path) -> None:
+        home = tmp_path / "home"
+        home.mkdir()
+        manifest = tmp_path / "installed.json"
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.install.shutil.which", return_value="/usr/bin/codex"),
+            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+        ):
+            install_main(["codex"])
+
+        skills = home / ".codex" / "skills"
+        assert (skills / "tdd").is_symlink()
+        assert not (skills / "ask-codex").exists()
+
     def test_reinstall_removes_stale_prompt(self, codex_home: Path, tmp_path: Path):
         stray = codex_home / ".codex" / "prompts" / "stray.md"
         stray.write_text("stale", encoding="utf-8")
