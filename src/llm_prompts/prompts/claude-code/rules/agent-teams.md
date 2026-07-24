@@ -6,6 +6,8 @@ requires_env: CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
 
 This file only applies when the agent-teams feature is enabled - it covers direct `SendMessage` between named teammates and the shared task list, both of which require `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`. For model-tier selection and delegating complex thought to subagents (which apply regardless of this feature), see `delegation.md`.
 
+The `requires_env` frontmatter above means the installer already checked this env var before rendering this file into context - if you can see this content at all, the flag is set. Do not re-verify it with a shell command; that only re-derives what the installer already proved.
+
 **Once the flag is set, spinning up a named team is the default - not something reserved for when the user explicitly asks for it.** For any task that would benefit from a team - research, multi-step design, parallel independent edits, or a verification pass - stand one up by default rather than working solo and waiting to be told "use agent teams". This mirrors how `delegation.md` already mandates Opus delegation for complex work as default behavior rather than an opt-in per request: teams are the standing operating mode whenever the flag is on, so the two files read consistently.
 
 ## Keep the main thread orchestration-only
