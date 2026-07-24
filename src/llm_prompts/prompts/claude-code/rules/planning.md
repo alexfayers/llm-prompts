@@ -44,6 +44,8 @@ Before investing in a design, state the mechanism the request depends on and con
 
 Distinguish "can this mechanism detect/do X at all" from "can it do a related-but-different Y" - a solution that reliably answers the wrong question is still the wrong solution. When the user's own instinct ("is this actually useful?") points at the gap, weight it heavily rather than defending the in-progress plan.
 
+**Before rejecting a mechanism as unfit, check whether you silently narrowed the goal it was being judged against.** Rejecting mechanism Y because it "doesn't do X" is only valid if X is what was actually asked - not a stricter version of X you substituted while reasoning (e.g. hearing "cite sources before the turn is truly done" and silently re-deriving the harder "context must land before the response is drafted at all"). When a user pushes back with "isn't that what we actually want?", re-derive the literal goal from their words before re-checking the mechanism against it - the fix is usually re-reading the ask, not new research.
+
 Do not build a fix for an unmeasured problem. If the gap the work addresses has an observable frequency or size, confirm it is real (or add a cheap logger/measurement first) before designing the fix. A speculative solution to a problem that may not exist is churn - dropping it or measuring first is the cheaper, more honest move.
 
 ## Measure, don't estimate, when a quantity is observable
