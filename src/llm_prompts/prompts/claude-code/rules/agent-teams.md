@@ -50,6 +50,10 @@ For a multi-step change that needs research, then design, then several independe
 4. **Implementers work in parallel and report to the sub-lead, not main.** Independent tasks (distinct files, no overlap) run concurrently. Gate the verification task with `addBlockedBy` on every implementation task so it cannot be claimed until they all complete - the verifier then starts automatically when unblocked, with no polling.
 5. **The sub-lead sends one final report to main** once design, implementation, and verification are all done. Main's entire footprint across the pipeline is: spawn the survey agent, spawn the sub-lead, spawn the roster the sub-lead specifies, and read the final report.
 
+## Stop teammates once their work is done
+
+Once a named teammate completes its assigned task and has no further work queued for it, stop it with `TaskStop` (by name) rather than leaving it idle in the roster. An idle teammate still occupies a slot and clutters the team view for no benefit - stopping is the default the moment its task is marked completed, not something to defer until a general cleanup pass. If a fresh piece of work in the same role is imminent, leaving it running to pick that up is fine; the point is not to let finished teammates linger by default.
+
 ## Rotate team members whose context is filling up
 
 If you are a team member and a context-usage nudge fires on you, do not just keep working degraded. `SendMessage` the lead: report that your context is getting high, hand off the state of your current task (what's done, what's left, any findings so far), and ask to be shut down. The lead should then spawn a fresh replacement team member for that role, seeded with the handed-off state, rather than letting a high-context member push on with softened accuracy. A short-lived replacement with full focus beats one worn-out member limping through the rest of the task list.
