@@ -100,7 +100,9 @@ class TestResultIsError:
         assert mod._result_is_error({"is_error": False, "content": "ok"}) is False
 
     def test_list_content(self, mod: ModuleType) -> None:
-        result = {"content": [{"type": "text", "text": "<tool_use_error>x</tool_use_error>"}]}
+        result = {
+            "content": [{"type": "text", "text": "<tool_use_error>x</tool_use_error>"}]
+        }
         assert mod._result_is_error(result) is True
 
 
@@ -108,12 +110,14 @@ class TestExtractRetries:
     """Tests for cross-message retry detection."""
 
     def test_detects_consecutive_failures(self, mod: ModuleType) -> None:
-        session = _session([
-            _assistant("a", "Bash", "docker-compose up"),
-            _result("a", error=True),
-            _assistant("b", "Bash", "docker-compose up"),
-            _result("b", error=True),
-        ])
+        session = _session(
+            [
+                _assistant("a", "Bash", "docker-compose up"),
+                _result("a", error=True),
+                _assistant("b", "Bash", "docker-compose up"),
+                _result("b", error=True),
+            ]
+        )
         retries = mod.extract_retries(session)
         assert len(retries) == 1
         assert retries[0]["command_pattern"] == "docker-compose"
@@ -121,52 +125,62 @@ class TestExtractRetries:
         assert retries[0]["recovered"] is False
 
     def test_recovered_flag_on_trailing_success(self, mod: ModuleType) -> None:
-        session = _session([
-            _assistant("a", "Bash", "uv run pytest"),
-            _result("a", error=True),
-            _assistant("b", "Bash", "uv run pytest"),
-            _result("b", error=True),
-            _assistant("c", "Bash", "uv run pytest"),
-            _result("c", error=False),
-        ])
+        session = _session(
+            [
+                _assistant("a", "Bash", "uv run pytest"),
+                _result("a", error=True),
+                _assistant("b", "Bash", "uv run pytest"),
+                _result("b", error=True),
+                _assistant("c", "Bash", "uv run pytest"),
+                _result("c", error=False),
+            ]
+        )
         retries = mod.extract_retries(session)
         assert len(retries) == 1
         assert retries[0]["recovered"] is True
 
     def test_single_failure_is_not_a_retry(self, mod: ModuleType) -> None:
-        session = _session([
-            _assistant("a", "Bash", "docker-compose up"),
-            _result("a", error=True),
-            _assistant("b", "Bash", "docker-compose up"),
-            _result("b", error=False),
-        ])
+        session = _session(
+            [
+                _assistant("a", "Bash", "docker-compose up"),
+                _result("a", error=True),
+                _assistant("b", "Bash", "docker-compose up"),
+                _result("b", error=False),
+            ]
+        )
         assert mod.extract_retries(session) == []
 
     def test_different_commands_do_not_group(self, mod: ModuleType) -> None:
-        session = _session([
-            _assistant("a", "Bash", "docker-compose up"),
-            _result("a", error=True),
-            _assistant("b", "Bash", "uv run pytest"),
-            _result("b", error=True),
-        ])
+        session = _session(
+            [
+                _assistant("a", "Bash", "docker-compose up"),
+                _result("a", error=True),
+                _assistant("b", "Bash", "uv run pytest"),
+                _result("b", error=True),
+            ]
+        )
         assert mod.extract_retries(session) == []
 
     def test_non_bash_tool_keyed_by_name(self, mod: ModuleType) -> None:
-        session = _session([
-            _assistant("a", "Read"),
-            _result("a", error=True),
-            _assistant("b", "Read"),
-            _result("b", error=True),
-        ])
+        session = _session(
+            [
+                _assistant("a", "Read"),
+                _result("a", error=True),
+                _assistant("b", "Read"),
+                _result("b", error=True),
+            ]
+        )
         retries = mod.extract_retries(session)
         assert len(retries) == 1
         assert retries[0]["command_pattern"] == "Read"
 
     def test_result_in_separate_message_is_matched(self, mod: ModuleType) -> None:
-        session = _session([
-            _assistant("a", "Bash", "docker-compose up"),
-            _assistant("b", "Bash", "docker-compose up"),
-            _result("a", error=True),
-            _result("b", error=True),
-        ])
+        session = _session(
+            [
+                _assistant("a", "Bash", "docker-compose up"),
+                _assistant("b", "Bash", "docker-compose up"),
+                _result("a", error=True),
+                _result("b", error=True),
+            ]
+        )
         assert len(mod.extract_retries(session)) == 1

@@ -614,10 +614,16 @@ def _install_skills(
             continue
         skill_md = skill_path / "SKILL.md"
         if not _passes_requires_gate(skill_md):
-            log("debug", f"Skipping skill '{skill_path.name}': requires gate not satisfied.")
+            log(
+                "debug",
+                f"Skipping skill '{skill_path.name}': requires gate not satisfied.",
+            )
             continue
         if agent_name in _excluded_targets(skill_md):
-            log("debug", f"Skipping skill '{skill_path.name}': excluded for {agent_name}.")
+            log(
+                "debug",
+                f"Skipping skill '{skill_path.name}': excluded for {agent_name}.",
+            )
             continue
         skill_name = skill_path.name
         skill_dest = agents_dir / "skills" / skill_name
@@ -991,7 +997,9 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
     if "cline" in targets:
         agents_dir, _ = _get_cline_extra_dirs()
         managed_skills: set[str] = set()
-        _install_skills(root_dir / "shared" / "skills", agents_dir, managed_skills, "cline")
+        _install_skills(
+            root_dir / "shared" / "skills", agents_dir, managed_skills, "cline"
+        )
         for overlay_dir in overlay_dirs:
             _install_skills(
                 overlay_dir / "shared" / "skills", agents_dir, managed_skills, "cline"
@@ -1005,7 +1013,9 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
             continue
         managed: set[str] = set()
         skills_parent = _skills_parent(dirs, skill_agent)
-        _install_skills(root_dir / "shared" / "skills", skills_parent, managed, skill_agent)
+        _install_skills(
+            root_dir / "shared" / "skills", skills_parent, managed, skill_agent
+        )
         _install_skills(
             root_dir / skill_agent / "skills", skills_parent, managed, skill_agent
         )
@@ -1014,7 +1024,10 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
                 overlay_dir / "shared" / "skills", skills_parent, managed, skill_agent
             )
             _install_skills(
-                overlay_dir / skill_agent / "skills", skills_parent, managed, skill_agent
+                overlay_dir / skill_agent / "skills",
+                skills_parent,
+                managed,
+                skill_agent,
             )
         _check_unmanaged(
             skills_parent / "skills", managed, f"{skill_agent} skills", is_dir=True

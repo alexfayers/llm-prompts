@@ -90,9 +90,7 @@ class TestPassesRequiresGate:
             "rule.md",
             "---\nrequires_command: mytool\n---\n\n# Rule\n",
         )
-        with patch(
-            "llm_prompts.install.shutil.which", return_value="/usr/bin/mytool"
-        ):
+        with patch("llm_prompts.install.shutil.which", return_value="/usr/bin/mytool"):
             assert _passes_requires_gate(rule) is True
 
     def test_false_when_required_command_absent(self, tmp_path: Path) -> None:
@@ -112,9 +110,7 @@ class TestPassesRequiresGate:
         )
         with (
             patch.dict("os.environ", {"MY_FLAG": "1"}),
-            patch(
-                "llm_prompts.install.shutil.which", return_value="/usr/bin/mytool"
-            ),
+            patch("llm_prompts.install.shutil.which", return_value="/usr/bin/mytool"),
         ):
             assert _passes_requires_gate(rule) is True
         with (
@@ -140,8 +136,9 @@ class TestCollectContentSrcsEnvGate:
             dirs={"claude-code": {"rules": tmp_path / "dest"}},
         )
 
-        with patch.dict("os.environ", {}, clear=True), patch(
-            "llm_prompts.install.Path.home", return_value=tmp_path / "home"
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("llm_prompts.install.Path.home", return_value=tmp_path / "home"),
         ):
             collected = _collect_content_srcs(
                 agent=agent,
@@ -209,9 +206,7 @@ class TestInstallSkillsGating:
     ) -> None:
         skills_src = tmp_path / "skills_src"
         self._make_skill(skills_src, "plain", "# Plain\n")
-        self._make_skill(
-            skills_src, "gated", "---\nrequires_command: sometool\n---\n"
-        )
+        self._make_skill(skills_src, "gated", "---\nrequires_command: sometool\n---\n")
         agents_dir = tmp_path / "agents"
         managed: set[str] = set()
 

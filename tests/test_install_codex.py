@@ -71,8 +71,10 @@ class TestCollectContentSrcs:
         names = [name for name, _, _ in collected]
         sources = {name: src for name, src, _ in collected}
         assert names == ["coding.md", "git.md"]
-        assert sources["coding.md"].read_text(encoding="utf-8").endswith(
-            "overlay-coding\n"
+        assert (
+            sources["coding.md"]
+            .read_text(encoding="utf-8")
+            .endswith("overlay-coding\n")
         )
 
     def test_includes_agent_specific_when_not_in_shared(self, tmp_path: Path) -> None:
@@ -258,9 +260,7 @@ class TestCodexDocLimit:
 
         assert config_path.read_text(encoding="utf-8") == config
 
-    def test_install_raises_limit_for_real_agents_md(
-        self, tmp_path: Path
-    ) -> None:
+    def test_install_raises_limit_for_real_agents_md(self, tmp_path: Path) -> None:
         home = tmp_path / "home"
         codex_dir = home / ".codex"
         codex_dir.mkdir(parents=True)

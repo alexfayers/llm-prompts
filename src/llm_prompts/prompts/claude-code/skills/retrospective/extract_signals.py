@@ -70,13 +70,15 @@ def extract_corrections(session: dict) -> list[dict]:
         if not content:
             continue
         if INTERRUPTION_MARKER in content:
-            corrections.append({
-                "session_id": session["session_id"],
-                "project": session["project"],
-                "title": session["title"],
-                "user_said": content[:300],
-                "type": "interruption",
-            })
+            corrections.append(
+                {
+                    "session_id": session["session_id"],
+                    "project": session["project"],
+                    "title": session["title"],
+                    "user_said": content[:300],
+                    "type": "interruption",
+                }
+            )
             continue
         if CORRECTION_PATTERNS.search(content[:200]):
             context = ""
@@ -88,14 +90,16 @@ def extract_corrections(session: dict) -> list[dict]:
                         if block.get("type") == "text":
                             context = block.get("text", "")[:200]
                             break
-            corrections.append({
-                "session_id": session["session_id"],
-                "project": session["project"],
-                "title": session["title"],
-                "user_said": content[:300],
-                "context_before": context,
-                "type": "correction",
-            })
+            corrections.append(
+                {
+                    "session_id": session["session_id"],
+                    "project": session["project"],
+                    "title": session["title"],
+                    "user_said": content[:300],
+                    "context_before": context,
+                    "type": "correction",
+                }
+            )
     return corrections
 
 
@@ -122,9 +126,7 @@ def _result_is_error(result: dict) -> bool:
         return True
     content = result.get("content", "")
     if isinstance(content, list):
-        content = " ".join(
-            b.get("text", "") for b in content if isinstance(b, dict)
-        )
+        content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
     head = str(content)[:500]
     return "<tool_use_error>" in head or "Exit code 1" in head
 
@@ -167,37 +169,43 @@ def extract_retries(session: dict) -> list[dict]:
             if not key:
                 continue
             result = results_by_id.get(block.get("id", ""), {})
-            runs.append({
-                "key": key,
-                "command": cmd[:200],
-                "error": _result_is_error(result),
-            })
+            runs.append(
+                {
+                    "key": key,
+                    "command": cmd[:200],
+                    "error": _result_is_error(result),
+                }
+            )
 
     retries: list[dict] = []
     fails: list[dict] = []
     for run in runs:
         if fails and (not run["error"] or run["key"] != fails[0]["key"]):
             if len(fails) >= 2:
-                retries.append({
-                    "session_id": session["session_id"],
-                    "project": session["project"],
-                    "command_pattern": fails[0]["key"],
-                    "attempts": len(fails),
-                    "first_command": fails[0]["command"],
-                    "recovered": not run["error"] and run["key"] == fails[0]["key"],
-                })
+                retries.append(
+                    {
+                        "session_id": session["session_id"],
+                        "project": session["project"],
+                        "command_pattern": fails[0]["key"],
+                        "attempts": len(fails),
+                        "first_command": fails[0]["command"],
+                        "recovered": not run["error"] and run["key"] == fails[0]["key"],
+                    }
+                )
             fails = []
         if run["error"]:
             fails.append(run)
     if len(fails) >= 2:
-        retries.append({
-            "session_id": session["session_id"],
-            "project": session["project"],
-            "command_pattern": fails[0]["key"],
-            "attempts": len(fails),
-            "first_command": fails[0]["command"],
-            "recovered": False,
-        })
+        retries.append(
+            {
+                "session_id": session["session_id"],
+                "project": session["project"],
+                "command_pattern": fails[0]["key"],
+                "attempts": len(fails),
+                "first_command": fails[0]["command"],
+                "recovered": False,
+            }
+        )
 
     return retries
 
@@ -247,8 +255,12 @@ def compute_session_meta(session: dict) -> dict:
 
 def main() -> None:
     """Run the signal extraction pipeline."""
-    parser = argparse.ArgumentParser(description="Extract signals from Claude Code transcripts")
-    parser.add_argument("--sessions", type=int, default=10, help="Number of recent sessions to analyse")
+    parser = argparse.ArgumentParser(
+        description="Extract signals from Claude Code transcripts"
+    )
+    parser.add_argument(
+        "--sessions", type=int, default=10, help="Number of recent sessions to analyse"
+    )
     args = parser.parse_args()
 
     paths = find_recent_sessions(args.sessions)
