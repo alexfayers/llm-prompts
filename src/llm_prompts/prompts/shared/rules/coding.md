@@ -27,6 +27,7 @@ copilot_apply_to: '**'
 - In committed files (docs, CLAUDE.md, config), never reference specific collaborators by name. Use generic terms ("collaborators", "team members", "other agents") instead.
 - Never hardcode user-specific values (aliases, personal account IDs, personal stack names) in committed files. Always use generic placeholders like `<personal-stack-id>`, `<account-id>`, `<profile>`.
 - In a globally-distributed instruction/doc (rules, skills, shared templates), never assert behaviour that depends on the individual reader's local configuration - e.g. "this command is auto-approved", "this needs no confirmation", "the tool is on PATH". Auto-approval hinges on the reader's own permission allowlist; availability hinges on their install. State the action to take; leave the local-environment consequence out.
+- Before writing new code/tooling to check or verify something, check whether an existing tool already does it - prefer that over building new.
 
 ## Python
 
