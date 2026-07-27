@@ -10,9 +10,12 @@ from llm_prompts.install import (
     _collect_content_srcs,
     _env_var_set,
     _excluded_targets,
+    _GATING_FRONTMATTER_KEYS,
+    _install_linked,
     _install_skills,
     _passes_requires_gate,
 )
+from llm_prompts.render_template import strip_gating_keys
 
 
 def _make_rule(directory: Path, name: str, body: str = "body") -> Path:
@@ -245,3 +248,97 @@ class TestInstallSkillsGating:
 
         assert (cc_agents / "skills" / "ask-codex").is_symlink() is True
         assert "ask-codex" in cc_managed
+
+
+_NON_GATING_FRONTMATTER = (
+    "---\n"
+    "description: Automate a new task\n"
+    "author: someone\n"
+    "version: 1.0.0\n"
+    'category: "Cline Core"\n'
+    "tags: automation, task\n"
+    "globs: **/*.md\n"
+    "---\n"
+    "\n"
+    "# Body\n"
+)
+
+
+class TestStripGatingKeys:
+    def test_only_gating_keys_removes_block(self) -> None:
+        content = "---\nrequires_env: MY_FLAG\n---\n\n# Body\n"
+        assert strip_gating_keys(content, _GATING_FRONTMATTER_KEYS) == "\n# Body\n"
+
+    def test_only_non_gating_keys_unchanged(self) -> None:
+        assert (
+            strip_gating_keys(_NON_GATING_FRONTMATTER, _GATING_FRONTMATTER_KEYS)
+            == _NON_GATING_FRONTMATTER
+        )
+
+    def test_mixed_keys_keeps_only_non_gating(self) -> None:
+        content = (
+            "---\n"
+            "requires_env: MY_FLAG\n"
+            "description: A thing\n"
+            "requires_command: sometool\n"
+            'category: "Cline Core"\n'
+            "exclude_targets: codex\n"
+            "---\n"
+            "\n"
+            "# Body\n"
+        )
+        expected = '---\ndescription: A thing\ncategory: "Cline Core"\n---\n\n# Body\n'
+        assert strip_gating_keys(content, _GATING_FRONTMATTER_KEYS) == expected
+
+    def test_no_frontmatter_unchanged(self) -> None:
+        content = "# Body\n\nsome text\n"
+        assert strip_gating_keys(content, _GATING_FRONTMATTER_KEYS) == content
+
+    def test_idempotent(self) -> None:
+        content = "---\nrequires_env: MY_FLAG\ndescription: A thing\n---\n\n# Body\n"
+        once = strip_gating_keys(content, _GATING_FRONTMATTER_KEYS)
+        twice = strip_gating_keys(once, _GATING_FRONTMATTER_KEYS)
+        assert once == twice
+
+
+class TestInstallLinked:
+    def test_only_gating_keys_stripped_from_dest(self, tmp_path: Path) -> None:
+        src = _make_rule(
+            tmp_path / "src", "rule.md", "---\nrequires_env: MY_FLAG\n---\n\n# Body\n"
+        )
+        dest = tmp_path / "dest" / "rule.md"
+        _install_linked(src, dest, "rule")
+        installed = dest.read_text(encoding="utf-8")
+        assert not installed.startswith("---")
+        assert "# Body" in installed
+
+    def test_non_gating_frontmatter_preserved_verbatim(self, tmp_path: Path) -> None:
+        src = _make_rule(tmp_path / "src", "wf.md", _NON_GATING_FRONTMATTER)
+        dest = tmp_path / "dest" / "wf.md"
+        _install_linked(src, dest, "wf")
+        assert dest.read_text(encoding="utf-8") == _NON_GATING_FRONTMATTER
+
+    def test_mixed_frontmatter_keeps_only_non_gating(self, tmp_path: Path) -> None:
+        body = (
+            "---\n"
+            "requires_env: MY_FLAG\n"
+            "description: A thing\n"
+            'category: "Cline Core"\n'
+            "---\n"
+            "\n"
+            "# Body\n"
+        )
+        src = _make_rule(tmp_path / "src", "rule.md", body)
+        dest = tmp_path / "dest" / "rule.md"
+        _install_linked(src, dest, "rule")
+        installed = dest.read_text(encoding="utf-8")
+        assert "requires_env" not in installed
+        assert "description: A thing" in installed
+        assert 'category: "Cline Core"' in installed
+
+    def test_no_frontmatter_unchanged(self, tmp_path: Path) -> None:
+        body = "# Body\n\nsome text\n"
+        src = _make_rule(tmp_path / "src", "rule.md", body)
+        dest = tmp_path / "dest" / "rule.md"
+        _install_linked(src, dest, "rule")
+        assert dest.read_text(encoding="utf-8") == body

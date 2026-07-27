@@ -14,9 +14,15 @@ from .render_template import (
     normalize_whitespace,
     parse_frontmatter,
     render_template,
+    strip_gating_keys,
 )
 
 LogLevel = Literal["debug", "info", "warn", "error", "success"]
+
+# Frontmatter keys consumed by the installer's own gating logic
+# (_passes_requires_gate, _excluded_targets). These are stripped from
+# agent-specific files before install so they never leak into the installed copy.
+_GATING_FRONTMATTER_KEYS = {"requires_env", "requires_command", "exclude_targets"}
 
 _COLORS: dict[LogLevel, str] = {
     "debug": "\033[0;90m",
@@ -320,8 +326,9 @@ def _install_linked(src: Path, dest: Path, label: str) -> None:
         dest: Destination file path.
         label: Log label for this file.
     """
+    src_content = strip_gating_keys(_read_text(src), _GATING_FRONTMATTER_KEYS)
     if dest.exists() and not dest.is_symlink():
-        if _read_text(dest) == _read_text(src):
+        if _read_text(dest) == src_content:
             log("debug", f"{label} is up to date. Skipping.")
             return
         action = "Updated"
@@ -335,7 +342,7 @@ def _install_linked(src: Path, dest: Path, label: str) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)
         if dest.exists():
             dest.unlink()
-        _write_text(dest, _read_text(src))
+        _write_text(dest, src_content)
         log("success", f"{action} {label}")
     except Exception as e:
         log("error", f"Failed to install {label}: {e}")

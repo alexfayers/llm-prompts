@@ -52,6 +52,34 @@ def parse_frontmatter(content: str) -> tuple[str, dict[str, str]]:
     return body, frontmatter_dict
 
 
+def strip_gating_keys(content: str, keys: set[str]) -> str:
+    """Remove gating frontmatter keys from content, preserving other keys verbatim.
+
+    Uses the same flat frontmatter model as :func:`parse_frontmatter`. Lines whose
+    key is in ``keys`` are dropped; all other lines are kept exactly as written. If
+    no keys remain, the entire frontmatter block is removed.
+
+    Args:
+        content: File content that may begin with a frontmatter block.
+        keys: Frontmatter keys to strip.
+
+    Returns:
+        Content with the named gating keys removed from its frontmatter.
+    """
+    match = re.match(r"^---\n(.*?)\n---\n?", content, re.DOTALL)
+    if not match:
+        return content
+    body = content[match.end() :]
+    kept = [
+        line
+        for line in match.group(1).splitlines()
+        if line.partition(": ")[0].strip() not in keys
+    ]
+    if not kept:
+        return body
+    return "---\n" + "\n".join(kept) + "\n---\n" + body
+
+
 def substitute_variables(content: str, variables: dict[str, str]) -> str:
     """Replace {{key}} placeholders with variable values.
 
