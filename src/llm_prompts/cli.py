@@ -11,6 +11,8 @@ import shutil
 import subprocess
 import sys
 
+from .setup import _extract_git_url
+
 _AGENTS = ("cline", "copilot", "kiro", "claude-code", "codex")
 _GIT_TIMEOUT = 30
 
@@ -101,15 +103,6 @@ def _print_sources(agent: str) -> None:
             print(f"{section}:")
             current_section = section
         print(f"  {sources[key]}")
-
-
-def _extract_git_url(source: str) -> str | None:
-    """Extract a usable git URL from a source string."""
-    if source.startswith("git+"):
-        return source[4:]
-    if source.startswith(("https://", "git://", "ssh://")):
-        return source
-    return None
 
 
 def _get_installed_commit(package_name: str) -> str | None:

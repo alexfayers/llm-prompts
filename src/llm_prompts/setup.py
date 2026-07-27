@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import functools
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 from typing import Any
 
 _CONFIG_DIR = Path.home() / ".config" / "llm-prompts"
 CONFIG_PATH = _CONFIG_DIR / "config.toml"
+_CLONE_TIMEOUT = 30
 
 _DEFAULT_CONFIG = """\
 # llm-prompts setup configuration
@@ -42,6 +45,70 @@ source = "git+https://github.com/alexfayers/mcp-memory.git"
 def _is_local_path(source: str) -> bool:
     """Check if a source string refers to a local path."""
     return source.startswith(("~/", "/", "./", "../"))
+
+
+def _extract_git_url(source: str) -> str | None:
+    """Extract a usable git URL from a source string."""
+    if source.startswith("git+"):
+        return source[4:]
+    if source.startswith(("https://", "git://", "ssh://")):
+        return source
+    return None
+
+
+@functools.lru_cache(maxsize=None)
+def _fetch_remote_pyproject(git_url: str) -> dict[str, Any] | None:
+    """Shallow-clone a remote git source and return its parsed pyproject.toml, or None."""
+    if not shutil.which("git"):
+        print(
+            f"Warning: git not available; skipping overlay inference for {git_url}",
+            file=sys.stderr,
+        )
+        return None
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = subprocess.run(
+                ["git", "clone", "--depth", "1", git_url, tmp],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=_CLONE_TIMEOUT,
+            )
+            if result.returncode != 0:
+                print(
+                    f"Warning: could not clone {git_url} for overlay inference",
+                    file=sys.stderr,
+                )
+                return None
+            pyproject = Path(tmp) / "pyproject.toml"
+            if not pyproject.exists():
+                return None
+            return tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except subprocess.TimeoutExpired:
+        print(
+            f"Warning: timed out cloning {git_url} for overlay inference",
+            file=sys.stderr,
+        )
+        return None
+    except Exception:
+        return None
+
+
+def _read_pyproject(tool: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the parsed pyproject.toml for a tool's source, local or remote."""
+    source = str(tool.get("source", ""))
+    if _is_local_path(source):
+        pyproject = _expand(source) / "pyproject.toml"
+        if not pyproject.exists():
+            return None
+        try:
+            return tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+    git_url = _extract_git_url(source)
+    if git_url:
+        return _fetch_remote_pyproject(git_url)
+    return None  # bare PyPI name: inference not supported, use explicit fields
 
 
 def has_remote_sources() -> bool:
@@ -213,35 +280,16 @@ def _has_missing_overlays(tool_name: str, overlay_names: list[str]) -> bool:
 
 def _infer_standalone(tool: dict[str, Any]) -> bool:
     """Infer if a tool is standalone from its pyproject.toml scripts section."""
-    source = str(tool.get("source", ""))
-    if not _is_local_path(source):
-        return False
-    pyproject = _expand(source) / "pyproject.toml"
-    if not pyproject.exists():
-        return False
-    try:
-        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    except Exception:
+    data = _read_pyproject(tool)
+    if data is None:
         return False
     return bool(data.get("project", {}).get("scripts"))
 
 
 def _infer_overlays_for(tool: dict[str, Any]) -> list[str]:
-    """Infer overlay targets from a tool's pyproject.toml entry point groups.
-
-    If the tool source is a local path, reads its pyproject.toml and checks
-    for entry point groups matching other tool names (with _ replaced by -).
-    The tool's own name is excluded from the results.
-    """
-    source = str(tool.get("source", ""))
-    if not _is_local_path(source):
-        return []
-    pyproject = _expand(source) / "pyproject.toml"
-    if not pyproject.exists():
-        return []
-    try:
-        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    except Exception:
+    """Infer overlay targets from a tool's pyproject.toml entry point groups."""
+    data = _read_pyproject(tool)
+    if data is None:
         return []
     entry_points = data.get("project", {}).get("entry-points", {})
     name = str(tool.get("name", ""))

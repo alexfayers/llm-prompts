@@ -28,6 +28,8 @@ The `source` field must be a pip-installable reference:
 
 If given a web URL to a repository, convert it to a `git+https://` or `git+ssh://` URL that pip can install from.
 
+For local and git sources, `overlays_for`/`standalone` are inferred from the package's `pyproject.toml`, so they are optional overrides; bare PyPI sources still need them set explicitly.
+
 Then run `llm-prompts setup` to install it, followed by `llm-prompts install {{AGENT}}` to apply the new rules, workflows, and skills.
 
 ## Adding memory
@@ -41,6 +43,8 @@ source = "git+https://github.com/alexfayers/mcp-memory.git"
 standalone = true
 overlays_for = ["llm-prompts"]
 ```
+
+For local and git sources, `overlays_for`/`standalone` are inferred from the package's `pyproject.toml`, so they are optional overrides; bare PyPI sources still need them set explicitly.
 
 Then run `llm-prompts setup` followed by `llm-prompts install {{AGENT}}`.
 

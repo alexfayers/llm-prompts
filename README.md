@@ -80,6 +80,8 @@ Each `[[tools]]` entry has:
 
 Tools without `overlays_for` are installed as standalone. Overlays are added via `--with-editable` (local) or `--with` (PyPI/git) to their target tools. The installer is auto-detected (`uv` > `pipx` > `pip`).
 
+For both local-path and git URL sources, `overlays_for` and `standalone` are inferred automatically from the package's own `pyproject.toml` (entry-point groups become overlay targets; a `[project.scripts]` table marks it standalone), so the explicit fields are optional overrides for those source types. Bare PyPI package sources cannot be inspected, so they still require the explicit fields.
+
 ```bash
 llm-prompts setup              # install all tools
 llm-prompts setup mcp-memory   # install just one tool

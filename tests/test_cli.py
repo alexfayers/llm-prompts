@@ -12,11 +12,11 @@ import pytest
 from llm_prompts.cli import (
     _check_for_updates,
     _collect_update_messages,
-    _extract_git_url,
     _get_installed_commit,
     _local_source_messages,
     _remote_source_messages,
 )
+from llm_prompts.setup import _extract_git_url
 
 
 class TestExtractGitUrl:
