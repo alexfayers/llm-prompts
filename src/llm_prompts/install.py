@@ -1,5 +1,6 @@
 """Install Cline and Copilot rules, workflows, skills, and prompts."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.resources import files
 import json
@@ -599,97 +600,143 @@ def _install_content(
     return {name for name, _, _ in collected}
 
 
-def _install_skills(
-    skills_src: Path, agents_dir: Path, managed: set[str], agent_name: str
-) -> None:
-    """Install Cline skills as symlinks in the agents directory.
+def _resolve_priority_sources(
+    candidate_dirs: list[Path],
+    list_children: Callable[[Path], list[Path]],
+    dest_name: Callable[[Path], str],
+    gate: Callable[[Path], bool] | None = None,
+) -> list[tuple[str, Path]]:
+    """Resolve name collisions across candidate dirs, first-occurrence wins.
 
     Args:
-        skills_src: Source skills directory.
-        agents_dir: Agents destination directory.
-        managed: Set to accumulate installed skill names into.
+        candidate_dirs: Source directories in priority order (first wins).
+        list_children: Returns the candidate source paths within a dir.
+        dest_name: Maps a source path to its destination name.
+        gate: Optional predicate; a source returning False is skipped.
+
+    Returns:
+        (dest_name, source_path) tuples, deduped first-wins, in encounter order.
+    """
+    resolved: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+    for directory in candidate_dirs:
+        if not directory.exists():
+            continue
+        for src in list_children(directory):
+            name = dest_name(src)
+            if name in seen:
+                continue
+            if gate is not None and not gate(src):
+                continue
+            resolved.append((name, src))
+            seen.add(name)
+    return resolved
+
+
+def _install_symlink(source: Path, dest: Path, label: str, managed: set[str]) -> None:
+    """Install ``source`` as a symlink at ``dest``, replacing any existing entry.
+
+    Idempotent: an already-correct symlink is left untouched. A pre-existing
+    regular file/dir at ``dest`` is replaced. Records ``dest.name`` in ``managed``.
+
+    Args:
+        source: Source path the symlink should point to.
+        dest: Destination symlink path.
+        label: Human-readable artifact label used in log messages.
+        managed: Set to accumulate the installed destination name into.
+    """
+    name = dest.name
+    try:
+        if dest.is_symlink() and dest.resolve() == source.resolve():
+            log("debug", f"{label} '{name}' is up to date. Skipping.")
+            managed.add(name)
+            return
+        already_existed = dest.exists() or dest.is_symlink()
+        if already_existed:
+            if dest.is_symlink() or dest.is_file():
+                dest.unlink()
+            else:
+                shutil.rmtree(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.symlink_to(source)
+        managed.add(name)
+        log(
+            "success",
+            f"{'Updated' if already_existed else 'Installed'} {label}: {name}",
+        )
+    except Exception as e:
+        log("error", f"Failed to install {label} '{name}': {e}")
+
+
+def _install_skills(
+    candidate_dirs: list[Path], skills_parent: Path, agent_name: str
+) -> set[str]:
+    """Install skills as symlinks, overlay dirs overriding base on name collision.
+
+    Args:
+        candidate_dirs: Source skills directories in priority order (first wins).
+        skills_parent: Parent directory whose ``skills`` subdir receives symlinks.
         agent_name: Target agent name, used to apply the requires-gate and
             ``exclude_targets`` checks.
+
+    Returns:
+        Set of installed skill names.
     """
-    if not skills_src.exists():
-        return
-    log("info", "[shared] Installing skills...")
-    for skill_path in sorted(skills_src.iterdir()):
-        if not skill_path.is_dir():
-            continue
-        if not (skill_path / "SKILL.md").is_file():
-            continue
+    dest_root = skills_parent / "skills"
+
+    def gate(skill_path: Path) -> bool:
         skill_md = skill_path / "SKILL.md"
+        if not skill_md.is_file():
+            return False
         if not _passes_requires_gate(skill_md):
             log(
                 "debug",
                 f"Skipping skill '{skill_path.name}': requires gate not satisfied.",
             )
-            continue
+            return False
         if agent_name in _excluded_targets(skill_md):
             log(
                 "debug",
                 f"Skipping skill '{skill_path.name}': excluded for {agent_name}.",
             )
-            continue
-        skill_name = skill_path.name
-        skill_dest = agents_dir / "skills" / skill_name
-        try:
-            if skill_dest.is_symlink() and skill_dest.resolve() == skill_path.resolve():
-                log("debug", f"Skill '{skill_name}' is up to date. Skipping.")
-                managed.add(skill_name)
-                continue
-            already_existed = skill_dest.exists() or skill_dest.is_symlink()
-            if already_existed:
-                if skill_dest.is_symlink():
-                    skill_dest.unlink()
-                else:
-                    shutil.rmtree(skill_dest)
-            skill_dest.parent.mkdir(parents=True, exist_ok=True)
-            skill_dest.symlink_to(skill_path)
-            managed.add(skill_name)
-            log(
-                "success",
-                f"{'Updated' if already_existed else 'Installed'} skill: {skill_name}",
-            )
-        except Exception as e:
-            log("error", f"Failed to install skill '{skill_name}': {e}")
+            return False
+        return True
+
+    log("info", "[shared] Installing skills...")
+    managed: set[str] = set()
+    resolved = _resolve_priority_sources(
+        candidate_dirs,
+        lambda d: [p for p in sorted(d.iterdir()) if p.is_dir()],
+        lambda p: p.name,
+        gate,
+    )
+    for name, src in resolved:
+        _install_symlink(src, dest_root / name, "skill", managed)
+    return managed
 
 
-def _install_agents(agents_src: Path, agents_dir: Path, managed: set[str]) -> None:
+def _install_agents(candidate_dirs: list[Path], agents_dir: Path) -> set[str]:
     """Install Claude Code subagent definitions as symlinks.
 
+    Overlay dirs override base on filename collision (first wins).
+
     Args:
-        agents_src: Source directory containing agent ``*.md`` files.
+        candidate_dirs: Source agent directories in priority order (first wins).
         agents_dir: Destination agents directory (e.g. ~/.claude/agents).
-        managed: Set to accumulate installed agent filenames into.
+
+    Returns:
+        Set of installed agent filenames.
     """
-    if not agents_src.exists():
-        return
     log("info", "[claude-code] Installing agents...")
-    for agent_path in sorted(agents_src.glob("*.md")):
-        agent_name = agent_path.name
-        agent_dest = agents_dir / agent_name
-        try:
-            if agent_dest.is_symlink() and agent_dest.resolve() == agent_path.resolve():
-                log("debug", f"Agent '{agent_name}' is up to date. Skipping.")
-                managed.add(agent_name)
-                continue
-            already_existed = agent_dest.exists() or agent_dest.is_symlink()
-            if already_existed:
-                if agent_dest.is_symlink() or agent_dest.is_file():
-                    agent_dest.unlink()
-                else:
-                    shutil.rmtree(agent_dest)
-            agent_dest.parent.mkdir(parents=True, exist_ok=True)
-            agent_dest.symlink_to(agent_path)
-            managed.add(agent_name)
-            log(
-                "success",
-                f"{'Updated' if already_existed else 'Installed'} agent: {agent_name}",
-            )
-        except Exception as e:
-            log("error", f"Failed to install agent '{agent_name}': {e}")
+    managed: set[str] = set()
+    resolved = _resolve_priority_sources(
+        candidate_dirs,
+        lambda d: sorted(d.glob("*.md")),
+        lambda p: p.name,
+    )
+    for name, src in resolved:
+        _install_symlink(src, agents_dir / name, "agent", managed)
+    return managed
 
 
 def _symlink_dir(source: Path, dest: Path) -> None:
@@ -1003,14 +1050,11 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
 
     if "cline" in targets:
         agents_dir, _ = _get_cline_extra_dirs()
-        managed_skills: set[str] = set()
-        _install_skills(
-            root_dir / "shared" / "skills", agents_dir, managed_skills, "cline"
-        )
-        for overlay_dir in overlay_dirs:
-            _install_skills(
-                overlay_dir / "shared" / "skills", agents_dir, managed_skills, "cline"
-            )
+        cline_skill_dirs = [
+            *(d / "shared" / "skills" for d in overlay_dirs),
+            root_dir / "shared" / "skills",
+        ]
+        managed_skills = _install_skills(cline_skill_dirs, agents_dir, "cline")
         _check_unmanaged(agents_dir / "skills", managed_skills, "skills", is_dir=True)
         skills_dir = agents_dir / "skills"
         installed_files["cline"].extend(str(skills_dir / s) for s in managed_skills)
@@ -1018,24 +1062,14 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
     for skill_agent in ("kiro", "claude-code", "codex"):
         if skill_agent not in targets:
             continue
-        managed: set[str] = set()
         skills_parent = _skills_parent(dirs, skill_agent)
-        _install_skills(
-            root_dir / "shared" / "skills", skills_parent, managed, skill_agent
-        )
-        _install_skills(
-            root_dir / skill_agent / "skills", skills_parent, managed, skill_agent
-        )
-        for overlay_dir in overlay_dirs:
-            _install_skills(
-                overlay_dir / "shared" / "skills", skills_parent, managed, skill_agent
-            )
-            _install_skills(
-                overlay_dir / skill_agent / "skills",
-                skills_parent,
-                managed,
-                skill_agent,
-            )
+        skill_dirs = [
+            *(d / "shared" / "skills" for d in overlay_dirs),
+            root_dir / "shared" / "skills",
+            root_dir / skill_agent / "skills",
+            *(d / skill_agent / "skills" for d in overlay_dirs),
+        ]
+        managed = _install_skills(skill_dirs, skills_parent, skill_agent)
         _check_unmanaged(
             skills_parent / "skills", managed, f"{skill_agent} skills", is_dir=True
         )
@@ -1043,15 +1077,12 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
         installed_files[skill_agent].extend(str(skills_dir / s) for s in managed)
 
     if "claude-code" in targets:
-        managed_agents: set[str] = set()
         agents_dest = dirs["claude-code"]["agents"]
-        _install_agents(
-            root_dir / "claude-code" / "agents", agents_dest, managed_agents
-        )
-        for overlay_dir in overlay_dirs:
-            _install_agents(
-                overlay_dir / "claude-code" / "agents", agents_dest, managed_agents
-            )
+        agent_dirs = [
+            *(d / "claude-code" / "agents" for d in overlay_dirs),
+            root_dir / "claude-code" / "agents",
+        ]
+        managed_agents = _install_agents(agent_dirs, agents_dest)
         _check_unmanaged(agents_dest, managed_agents, "claude-code agents")
         installed_files["claude-code"].extend(
             str(agents_dest / a) for a in managed_agents

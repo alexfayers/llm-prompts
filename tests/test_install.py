@@ -211,10 +211,9 @@ class TestInstallSkillsGating:
         self._make_skill(skills_src, "plain", "# Plain\n")
         self._make_skill(skills_src, "gated", "---\nrequires_command: sometool\n---\n")
         agents_dir = tmp_path / "agents"
-        managed: set[str] = set()
 
         with patch("llm_prompts.install.shutil.which", return_value=None):
-            _install_skills(skills_src, agents_dir, managed, "claude-code")
+            managed = _install_skills([skills_src], agents_dir, "claude-code")
 
         assert (agents_dir / "skills" / "plain").is_symlink() is True
         assert (agents_dir / "skills" / "gated").exists() is False
@@ -230,24 +229,40 @@ class TestInstallSkillsGating:
         )
 
         codex_agents = tmp_path / "codex_agents"
-        codex_managed: set[str] = set()
         with patch(
             "llm_prompts.install.shutil.which", return_value="/usr/bin/sometool"
         ):
-            _install_skills(skills_src, codex_agents, codex_managed, "codex")
+            codex_managed = _install_skills([skills_src], codex_agents, "codex")
 
         assert (codex_agents / "skills" / "ask-codex").exists() is False
         assert "ask-codex" not in codex_managed
 
         cc_agents = tmp_path / "cc_agents"
-        cc_managed: set[str] = set()
         with patch(
             "llm_prompts.install.shutil.which", return_value="/usr/bin/sometool"
         ):
-            _install_skills(skills_src, cc_agents, cc_managed, "claude-code")
+            cc_managed = _install_skills([skills_src], cc_agents, "claude-code")
 
         assert (cc_agents / "skills" / "ask-codex").is_symlink() is True
         assert "ask-codex" in cc_managed
+
+    def test_overlay_skill_overrides_base_on_name_collision(
+        self, tmp_path: Path
+    ) -> None:
+        base_dir = tmp_path / "base"
+        self._make_skill(base_dir, "shared-only", "# Shared\nBASE\n")
+        self._make_skill(base_dir, "collide", "# Collide\nBASE-COLLIDE\n")
+        overlay_dir = tmp_path / "overlay"
+        self._make_skill(overlay_dir, "collide", "# Collide\nOVERLAY-COLLIDE\n")
+        self._make_skill(overlay_dir, "overlay-only", "# Overlay\nOVL\n")
+        agents_dir = tmp_path / "agents"
+
+        managed = _install_skills([overlay_dir, base_dir], agents_dir, "claude-code")
+
+        collide = agents_dir / "skills" / "collide"
+        assert collide.is_symlink()
+        assert "OVERLAY-COLLIDE" in (collide / "SKILL.md").read_text(encoding="utf-8")
+        assert managed == {"shared-only", "collide", "overlay-only"}
 
 
 _NON_GATING_FRONTMATTER = (

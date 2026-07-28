@@ -66,8 +66,8 @@ def _collect_sources(agent: str) -> dict[str, Path]:
                     sources.setdefault(f"{subdir}/{f.name}", f)
 
     # Skills
-    for skill_src in [root / "shared" / "skills"] + [
-        d / "shared" / "skills" for d in overlay_dirs
+    for skill_src in [d / "shared" / "skills" for d in overlay_dirs] + [
+        root / "shared" / "skills"
     ]:
         if skill_src.is_dir():
             for skill_dir in sorted(skill_src.iterdir()):
@@ -77,8 +77,8 @@ def _collect_sources(agent: str) -> dict[str, Path]:
 
     # Agents (claude-code only)
     if agent == "claude-code":
-        for agents_src in [root / "claude-code" / "agents"] + [
-            d / "claude-code" / "agents" for d in overlay_dirs
+        for agents_src in [d / "claude-code" / "agents" for d in overlay_dirs] + [
+            root / "claude-code" / "agents"
         ]:
             if agents_src.is_dir():
                 for f in sorted(agents_src.glob("*.md")):

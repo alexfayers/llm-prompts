@@ -25,9 +25,8 @@ class TestInstallAgents:
         dest = tmp_path / "dest"
         a = _make_agent(src, "architect.md", "arch")
         b = _make_agent(src, "reviewer.md", "review")
-        managed: set[str] = set()
 
-        _install_agents(src, dest, managed)
+        managed = _install_agents([src], dest)
 
         assert (dest / "architect.md").is_symlink()
         assert (dest / "reviewer.md").is_symlink()
@@ -40,9 +39,8 @@ class TestInstallAgents:
         dest = tmp_path / "dest"
         a = _make_agent(src, "architect.md", "arch")
 
-        _install_agents(src, dest, set())
-        second: set[str] = set()
-        _install_agents(src, dest, second)
+        _install_agents([src], dest)
+        second = _install_agents([src], dest)
 
         assert (dest / "architect.md").is_symlink()
         assert (dest / "architect.md").resolve() == a.resolve()
@@ -56,9 +54,8 @@ class TestInstallAgents:
         a = _make_agent(src, "architect.md", "source content")
         dest.mkdir()
         (dest / "architect.md").write_text("hand-placed", encoding="utf-8")
-        managed: set[str] = set()
 
-        _install_agents(src, dest, managed)
+        managed = _install_agents([src], dest)
 
         assert (dest / "architect.md").is_symlink()
         assert (dest / "architect.md").read_text(encoding="utf-8") == a.read_text(
@@ -67,12 +64,28 @@ class TestInstallAgents:
         assert managed == {"architect.md"}
 
     def test_missing_source_dir_is_noop(self, tmp_path: Path) -> None:
-        managed: set[str] = set()
-
-        _install_agents(tmp_path / "nope", tmp_path / "dest", managed)
+        managed = _install_agents([tmp_path / "nope"], tmp_path / "dest")
 
         assert managed == set()
         assert not (tmp_path / "dest").exists()
+
+    def test_overlay_agent_overrides_base_on_name_collision(
+        self, tmp_path: Path
+    ) -> None:
+        base_dir = tmp_path / "base"
+        _make_agent(base_dir, "base-only.md", "BASE")
+        _make_agent(base_dir, "collide.md", "BASE-C")
+        overlay_dir = tmp_path / "overlay"
+        _make_agent(overlay_dir, "collide.md", "OVL-C")
+        _make_agent(overlay_dir, "overlay-only.md", "OVL")
+        dest = tmp_path / "dest"
+
+        managed = _install_agents([overlay_dir, base_dir], dest)
+
+        collide = dest / "collide.md"
+        assert collide.is_symlink()
+        assert "OVL-C" in collide.read_text(encoding="utf-8")
+        assert managed == {"base-only.md", "collide.md", "overlay-only.md"}
 
 
 @pytest.fixture

@@ -12,6 +12,7 @@ import pytest
 
 from llm_prompts.cli import (
     _check_for_updates,
+    _collect_sources,
     _collect_update_messages,
     _get_installed_commit,
     _local_source_messages,
@@ -342,6 +343,48 @@ class TestCollectUpdateMessages:
         mock_remote.assert_called_once_with(
             "remote-pkg", "git+https://github.com/user/repo.git"
         )
+
+
+class TestCollectSourcesOverlayPrecedence:
+    def test_overlay_skill_wins_name_collision(self, tmp_path: Path) -> None:
+        base = tmp_path / "base"
+        base_skill = base / "shared" / "skills" / "collide"
+        base_skill.mkdir(parents=True)
+        (base_skill / "SKILL.md").write_text("BASE\n")
+
+        overlay = tmp_path / "overlay"
+        overlay_skill = overlay / "shared" / "skills" / "collide"
+        overlay_skill.mkdir(parents=True)
+        (overlay_skill / "SKILL.md").write_text("OVERLAY\n")
+
+        with patch("llm_prompts.cli._get_root_dir", return_value=base):
+            with patch(
+                "llm_prompts.install._discover_overlay_paths",
+                return_value=[overlay],
+            ):
+                sources = _collect_sources("claude-code")
+
+        assert sources["skills/collide"].read_text() == "OVERLAY\n"
+
+    def test_overlay_agent_wins_name_collision(self, tmp_path: Path) -> None:
+        base = tmp_path / "base"
+        base_agents = base / "claude-code" / "agents"
+        base_agents.mkdir(parents=True)
+        (base_agents / "collide.md").write_text("BASE\n")
+
+        overlay = tmp_path / "overlay"
+        overlay_agents = overlay / "claude-code" / "agents"
+        overlay_agents.mkdir(parents=True)
+        (overlay_agents / "collide.md").write_text("OVERLAY\n")
+
+        with patch("llm_prompts.cli._get_root_dir", return_value=base):
+            with patch(
+                "llm_prompts.install._discover_overlay_paths",
+                return_value=[overlay],
+            ):
+                sources = _collect_sources("claude-code")
+
+        assert sources["agents/collide.md"].read_text() == "OVERLAY\n"
 
 
 class TestCheckForUpdates:
