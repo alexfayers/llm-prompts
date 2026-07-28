@@ -15,7 +15,7 @@ from llm_prompts.install import (
     _install_skills,
     _passes_requires_gate,
 )
-from llm_prompts.render_template import strip_gating_keys
+from llm_prompts.render_template import render_template, strip_gating_keys
 
 
 def _make_rule(directory: Path, name: str, body: str = "body") -> Path:
@@ -342,3 +342,73 @@ class TestInstallLinked:
         dest = tmp_path / "dest" / "rule.md"
         _install_linked(src, dest, "rule")
         assert dest.read_text(encoding="utf-8") == body
+
+
+class TestRenderForKiro:
+    def _render(self, tmp_path: Path, template_body: str) -> str:
+        template = tmp_path / "rule.md"
+        template.write_text(template_body, encoding="utf-8")
+        vars_file = tmp_path / "vars.json"
+        vars_file.write_text("{}", encoding="utf-8")
+        return render_template(str(template), str(vars_file), "kiro")
+
+    def test_no_frontmatter_body_only(self, tmp_path: Path) -> None:
+        output = self._render(tmp_path, "# Rule\n\nbody\n")
+        assert "---" not in output
+        assert "inclusion:" not in output
+        assert output.endswith("\n")
+
+    def test_always_inclusion(self, tmp_path: Path) -> None:
+        output = self._render(tmp_path, "---\nkiro_inclusion: always\n---\n\n# Rule\n")
+        assert output.startswith("---\ninclusion: always\n---")
+        assert output.endswith("\n")
+
+    def test_manual_inclusion_omits_extras(self, tmp_path: Path) -> None:
+        output = self._render(
+            tmp_path,
+            "---\nkiro_inclusion: manual\ndescription: some text\n---\n\n# Rule\n",
+        )
+        assert "inclusion: manual" in output
+        assert "name:" not in output
+        assert "description:" not in output
+        assert "fileMatchPattern:" not in output
+        assert output.endswith("\n")
+
+    def test_filematch_single_pattern(self, tmp_path: Path) -> None:
+        output = self._render(
+            tmp_path,
+            "---\nkiro_inclusion: fileMatch\n"
+            "kiro_file_match_pattern: '**/*.py'\n---\n\n# Rule\n",
+        )
+        assert "inclusion: fileMatch" in output
+        assert "fileMatchPattern: '**/*.py'" in output
+        assert "[" not in output
+        assert output.endswith("\n")
+
+    def test_filematch_multi_pattern(self, tmp_path: Path) -> None:
+        output = self._render(
+            tmp_path,
+            "---\nkiro_inclusion: fileMatch\n"
+            "kiro_file_match_pattern: '**/*.py, **/*.pyi'\n---\n\n# Rule\n",
+        )
+        assert "inclusion: fileMatch" in output
+        assert "fileMatchPattern: ['**/*.py', '**/*.pyi']" in output
+        assert output.endswith("\n")
+
+    def test_auto_inclusion_with_name_and_description(self, tmp_path: Path) -> None:
+        output = self._render(
+            tmp_path,
+            "---\nkiro_inclusion: auto\nname: subagents\n"
+            "description: some text\n---\n\n# Rule\n",
+        )
+        assert "inclusion: auto" in output
+        assert "name: subagents" in output
+        assert "description: some text" in output
+        assert output.endswith("\n")
+
+    def test_copilot_only_frontmatter_ignored(self, tmp_path: Path) -> None:
+        output = self._render(tmp_path, "---\ncopilot_apply_to: '**'\n---\n\n# Rule\n")
+        assert "---" not in output
+        assert "inclusion:" not in output
+        assert "applyTo" not in output
+        assert output.endswith("\n")

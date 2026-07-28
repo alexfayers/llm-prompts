@@ -1,3 +1,9 @@
+---
+inclusion: auto
+name: subagents
+description: How and when to spawn parallel Kiro subagents as a DAG pipeline
+---
+
 # Subagents
 
 Kiro supports spawning parallel AI agents as a DAG pipeline via the `subagent` tool.

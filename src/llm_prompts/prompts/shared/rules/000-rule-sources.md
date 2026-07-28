@@ -1,3 +1,7 @@
+---
+kiro_inclusion: manual
+---
+
 # Rule Sources
 
 When editing rules, workflows, prompts, or skills, always edit the **source files** in the repository - never edit the installed copies.

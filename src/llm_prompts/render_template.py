@@ -157,16 +157,41 @@ def render_for_copilot(body: str, frontmatter: dict[str, str]) -> str:
     return normalize_whitespace(output)
 
 
-def render_for_kiro(body: str) -> str:
+def render_for_kiro(body: str, frontmatter: dict[str, str]) -> str:
     """Render template for Kiro.
 
     Args:
         body: Template body.
+        frontmatter: Parsed frontmatter key-value pairs.
 
     Returns:
-        Normalized body content.
+        Kiro-formatted content, with inclusion-mode frontmatter when
+        ``kiro_inclusion`` is set, otherwise the normalized body only.
     """
-    return normalize_whitespace(body)
+    inclusion = frontmatter.get("kiro_inclusion")
+    if not inclusion:
+        return normalize_whitespace(body)
+
+    new_frontmatter = ["---", f"inclusion: {inclusion}"]
+    if inclusion == "fileMatch" and "kiro_file_match_pattern" in frontmatter:
+        patterns = [
+            p.strip()
+            for p in frontmatter["kiro_file_match_pattern"].split(",")
+            if p.strip()
+        ]
+        if len(patterns) == 1:
+            new_frontmatter.append(f"fileMatchPattern: '{patterns[0]}'")
+        elif patterns:
+            joined = ", ".join(f"'{p}'" for p in patterns)
+            new_frontmatter.append(f"fileMatchPattern: [{joined}]")
+    if inclusion == "auto":
+        if "name" in frontmatter:
+            new_frontmatter.append(f"name: {frontmatter['name']}")
+        if "description" in frontmatter:
+            new_frontmatter.append(f"description: {frontmatter['description']}")
+    new_frontmatter.append("---")
+    output = "\n".join(new_frontmatter) + "\n\n" + body
+    return normalize_whitespace(output)
 
 
 def render_for_claude_code(body: str) -> str:
@@ -223,7 +248,7 @@ def render_template(template_path: str, variables_path: str, target: str) -> str
     if target == "copilot":
         return render_for_copilot(body, frontmatter)
     if target == "kiro":
-        return render_for_kiro(body)
+        return render_for_kiro(body, frontmatter)
     if target == "claude-code":
         return render_for_claude_code(body)
     if target == "codex":

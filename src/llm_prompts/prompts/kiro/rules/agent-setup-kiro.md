@@ -1,3 +1,7 @@
+---
+inclusion: manual
+---
+
 # Kiro agent setup
 
 When installing for Kiro, use `--agent-config` to automatically patch the agent JSON with resources, MCP servers, hooks, and tool approvals:
