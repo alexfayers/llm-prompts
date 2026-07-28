@@ -123,6 +123,26 @@ class TestInferStandalone:
         assert not setup._infer_standalone({"name": "x", "source": "some-package"})
 
 
+class TestValidatePaths:
+    def test_bare_pypi_source_rejected(self) -> None:
+        errors = setup._validate_paths(
+            [{"name": "x", "source": "some-bare-package-name"}]
+        )
+        assert len(errors) == 1
+        assert "some-bare-package-name" in errors[0]
+
+    def test_git_url_source_ok(self) -> None:
+        assert (
+            setup._validate_paths(
+                [{"name": "x", "source": "git+https://github.com/user/repo.git"}]
+            )
+            == []
+        )
+
+    def test_local_path_source_ok(self, tmp_path: Path) -> None:
+        assert setup._validate_paths([{"name": "x", "source": str(tmp_path)}]) == []
+
+
 class TestBuildCommandsRegression:
     """Regression: git-source tools infer overlays so mcp-memory folds into its targets."""
 

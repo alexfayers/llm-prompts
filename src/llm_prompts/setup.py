@@ -22,7 +22,6 @@ _DEFAULT_CONFIG = """\
 # Each [[tools]] entry is a package to install.
 # `source` can be:
 #   - A git URL (e.g. "git+https://github.com/user/repo.git")
-#   - A PyPI package name (e.g. "llm-prompts")
 #   - A local path (~/git/pkg or /abs/path) - installed as editable
 #
 # Overlay relationships are inferred from pyproject.toml entry points.
@@ -108,7 +107,7 @@ def _read_pyproject(tool: dict[str, Any]) -> dict[str, Any] | None:
     git_url = _extract_git_url(source)
     if git_url:
         return _fetch_remote_pyproject(git_url)
-    return None  # bare PyPI name: inference not supported, use explicit fields
+    return None  # unrecognised source: inference not supported, use explicit fields
 
 
 def has_remote_sources() -> bool:
@@ -322,8 +321,14 @@ def _validate_paths(tools: list[dict[str, Any]]) -> list[str]:
     errors: list[str] = []
     for tool in tools:
         source = str(tool.get("source", ""))
-        if _is_local_path(source) and not _expand(source).is_dir():
-            errors.append(f"[{tool.get('name')}] Path does not exist: {source}")
+        if _is_local_path(source):
+            if not _expand(source).is_dir():
+                errors.append(f"[{tool.get('name')}] Path does not exist: {source}")
+        elif _extract_git_url(source) is None:
+            errors.append(
+                f"[{tool.get('name')}] Source must be a local path or git URL "
+                f"(PyPI sources are not currently supported): {source}"
+            )
     return errors
 
 

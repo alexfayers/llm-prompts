@@ -17,7 +17,7 @@ This installs [uv](https://docs.astral.sh/uv/) (if needed), installs llm-prompts
 llm-prompts install {agent}    # kiro, cline, copilot, claude-code, codex, or all
 ```
 
-When sources are remote (git URLs or PyPI), `install` automatically runs `setup` first to pull the latest versions. Use `--no-update` to skip this.
+When sources are remote (git URLs), `install` automatically runs `setup` first to pull the latest versions. Use `--no-update` to skip this.
 
 ## Concepts
 
@@ -65,8 +65,6 @@ source = "git+https://github.com/alexfayers/cline-hooks.git"
 [[tools]]
 name = "mcp-memory"
 source = "git+https://github.com/alexfayers/mcp-memory.git"
-standalone = true
-overlays_for = ["llm-prompts", "cline-hooks"]
 ```
 
 Each `[[tools]]` entry has:
@@ -74,13 +72,11 @@ Each `[[tools]]` entry has:
 | Field | Description |
 |---|---|
 | `name` | Tool name |
-| `source` | Local path (`~/...`), PyPI package name, or `git+` URL |
-| `overlays_for` | List of tools this package plugs into as an overlay |
-| `standalone` | Set `true` if the tool also needs its own install (e.g. it has a CLI) |
+| `source` | Local path (`~/...`) or `git+` URL |
 
-Tools without `overlays_for` are installed as standalone. Overlays are added via `--with-editable` (local) or `--with` (PyPI/git) to their target tools. The installer is auto-detected (`uv` > `pipx` > `pip`).
+For local-path and git URL sources, whether a package is an overlay (and which tools it targets) and whether it's standalone is inferred automatically from its own `pyproject.toml` (entry-point groups become overlay targets; a `[project.scripts]` table marks it standalone) - `mcp-memory` above needs no extra config because of this. Overlays are added via `--with-editable` (local) or `--with` (git) to their target tools. The installer is auto-detected (`uv` > `pipx` > `pip`).
 
-For both local-path and git URL sources, `overlays_for` and `standalone` are inferred automatically from the package's own `pyproject.toml` (entry-point groups become overlay targets; a `[project.scripts]` table marks it standalone), so the explicit fields are optional overrides for those source types. Bare PyPI package sources cannot be inspected, so they still require the explicit fields.
+To override the inference, set `overlays_for` (list of tools this package plugs into as an overlay) and/or `standalone` (`true` if the tool also needs its own install, e.g. it has a CLI) explicitly.
 
 ```bash
 llm-prompts setup              # install all tools
