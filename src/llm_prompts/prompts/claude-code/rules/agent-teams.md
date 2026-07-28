@@ -57,6 +57,16 @@ For a multi-step change that needs research, then design, then several independe
 4. **Implementers work in parallel and report to the sub-lead, not main.** Independent tasks (distinct files, no overlap) run concurrently. Gate the verification task with `addBlockedBy` on every implementation task so it cannot be claimed until they all complete - the verifier then starts automatically when unblocked, with no polling.
 5. **The sub-lead sends one final report to main** once design, implementation, and verification are all done. Main's entire footprint across the pipeline is: spawn the survey agent, spawn the sub-lead, spawn the roster the sub-lead specifies, and read the final report.
 
+## Multiple sub-leads for multiple independent tasks
+
+The survey -> sub-lead -> parallel execution -> verification pipeline above is written for one multi-step change. When the actual work is several genuinely independent tasks (unrelated features, unrelated bug fixes, separate areas of the codebase with no shared design decision), spawn one named Opus sub-lead per task instead of forcing a single sub-lead to interleave unrelated designs. Each sub-lead runs its own subteam - its own survey agent (or none, if the task doesn't need one), its own implementers, its own verification gate - and reports back to main independently when its task completes.
+
+- Split by task, not by role. Two sub-leads each owning a full task end-to-end beats one sub-lead owning "all the design" across both tasks - the tasks don't share context, so forcing one designer to hold both just adds unnecessary cross-task interference risk.
+- Keep each subteam's task-list entries scoped to its own task (e.g. via a task-id or name prefix) so a Sonnet worker scanning for unowned work doesn't accidentally self-claim a step that belongs to a different sub-lead's design.
+- Sub-leads do not coordinate with each other by default - they are solving unrelated problems. Only introduce cross-sub-lead `SendMessage` if the tasks turn out to share a real dependency (e.g. one touches a file the other also needs) discovered mid-work.
+- Main's footprint does not grow with the number of sub-leads: spawn each sub-lead, spawn the roster each one hands back, and read each one's final report - the fan-out is between sub-leads and their own subteams, not through main.
+- Do not default to this for one task with multiple facets - that is still the single-sub-lead pattern above. Reach for multiple sub-leads only when the tasks are independent enough that a single design conversation would not naturally cover both.
+
 ## Stop teammates once their work is done
 
 Once a named teammate completes its assigned task and has no further work queued for it, stop it with `TaskStop` (by name) rather than leaving it idle in the roster. An idle teammate still occupies a slot and clutters the team view for no benefit - stopping is the default the moment its task is marked completed, not something to defer until a general cleanup pass. If a fresh piece of work in the same role is imminent, leaving it running to pick that up is fine; the point is not to let finished teammates linger by default.
