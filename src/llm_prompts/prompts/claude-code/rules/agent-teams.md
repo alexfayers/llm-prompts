@@ -67,9 +67,19 @@ The survey -> sub-lead -> parallel execution -> verification pipeline above is w
 - Main's footprint does not grow with the number of sub-leads: spawn each sub-lead, spawn the roster each one hands back, and read each one's final report - the fan-out is between sub-leads and their own subteams, not through main.
 - Do not default to this for one task with multiple facets - that is still the single-sub-lead pattern above. Reach for multiple sub-leads only when the tasks are independent enough that a single design conversation would not naturally cover both.
 
+## Verify sub-lead coordination against TaskList, not against idle pings
+
+A sub-lead sending `idle_notification` pings (per the silent-relay rule above) looks identical whether it is actively coordinating downstream teammates or has stalled without actually issuing the `SendMessage` go-ahead it claimed to send. Idle pings carry no task-state information, so absence of a substantive message is not evidence that work is progressing - it is equally consistent with a stall.
+
+**This check is proactive, not something to run only after the user notices and asks.** Waiting for the user to say "I don't see them working" means the lead let a stall sit unnoticed - the exact failure this rule exists to prevent. Treat 3-4 consecutive idle pings with no task changing state as the trigger to self-check, on your own initiative, with zero user prompting required: call `TaskList` directly and compare against what the pings implied was happening. Do this silently (it produces no user-facing output by itself, per the rule above) unless it surfaces an actual problem.
+
+If `TaskList` confirms real progress (tasks completing, ownership changing), say nothing - the silent-relay rule still applies, this was only an internal check. If it instead shows tasks stuck `pending`/unowned despite a claimed unblock, that is a real stall: `SendMessage` the sub-lead asking for the concrete action it took (not just a status word) and have it correct course immediately. Don't wait for a further idle ping to resolve the ambiguity, since another idle ping would look identical to continued stalling.
+
 ## Stop teammates once their work is done
 
 Once a named teammate completes its assigned task and has no further work queued for it, stop it with `TaskStop` (by name) rather than leaving it idle in the roster. An idle teammate still occupies a slot and clutters the team view for no benefit - stopping is the default the moment its task is marked completed, not something to defer until a general cleanup pass. If a fresh piece of work in the same role is imminent, leaving it running to pick that up is fine; the point is not to let finished teammates linger by default.
+
+**A teammate finishing its task and handing off to a peer (per "let the team talk to each other" above) MUST also tell the lead directly, in the same turn, whether it is now killable.** A `SendMessage` to a peer reporting task completion is invisible to the lead - the lead only sees that teammate's own `idle_notification` pings, which (correctly, per the silent-relay rule) carry no task-state detail. Without an explicit self-report, the lead cannot apply the stop-when-done rule above without falling back to polling `TaskList` for every teammate on every ping, which is exactly the overhead named-team delegation is supposed to avoid. So: the moment a teammate marks its task `completed` via `TaskUpdate`, it sends one line to the lead - "task #N done, no further work queued, safe to stop" or "task #N done, standing by for #M" - distinct from and in addition to whatever it sends the peer/sub-lead it's handing off to. This is a substantive update (a completion + killability verdict), not a bare idle ping, so it does not fall under the silent-relay rule - the lead should act on it (stop the teammate, or leave it running if it flagged standby work).
 
 ## Rotate team members whose context is filling up
 
