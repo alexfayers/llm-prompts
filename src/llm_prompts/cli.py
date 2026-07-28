@@ -240,9 +240,25 @@ def _pull_local_sources() -> None:
             )
             if pull.returncode == 0:
                 print(f"[{name}] pulled {count} new commit(s)")
+                continue
+            rebase = subprocess.run(
+                ["git", "-C", str(repo), "rebase", "--quiet", "@{u}"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=_GIT_TIMEOUT,
+            )
+            if rebase.returncode == 0:
+                print(f"[{name}] rebased local commits onto {count} new commit(s)")
             else:
-                print(f"[{name}] {count} new commit(s) available but pull failed")
-                print(f"  {pull.stderr.strip()}")
+                subprocess.run(
+                    ["git", "-C", str(repo), "rebase", "--abort"],
+                    check=False,
+                    capture_output=True,
+                    timeout=_GIT_TIMEOUT,
+                )
+                print(f"[{name}] {count} new commit(s) available but rebase failed")
+                print(f"  {rebase.stderr.strip()}")
 
 
 def _collect_update_messages() -> list[str]:
