@@ -17,7 +17,15 @@ This installs [uv](https://docs.astral.sh/uv/) (if needed), installs llm-prompts
 llm-prompts install {agent}    # kiro, cline, copilot, claude-code, codex, or all
 ```
 
-When sources are remote (git URLs), `install` automatically runs `setup` first to pull the latest versions. Use `--no-update` to skip this.
+The first `install` bootstraps everything: when your config has any remote (git URL) `[[tools]]` entries, `install` automatically runs `setup` first to install/upgrade those packages, then installs rules/workflows/skills for the target agent(s). Pass `--no-update` to skip the automatic `setup`.
+
+From then on, keep everything current with:
+
+```bash
+llm-prompts update    # pull tool/plugin sources, refresh packages, reinstall for every agent you've set up
+```
+
+`update` re-pulls every git-based `[[tools]]` and `[[plugins]]` source, re-runs `setup` if any `[[tools]]` are remote, then reinstalls for each agent already in your manifest (i.e. every agent you've previously run `install` for) - no need to name agents again. Use `llm-prompts update --check` to see what's available without applying it.
 
 ## Concepts
 
@@ -83,6 +91,8 @@ llm-prompts setup              # install all tools
 llm-prompts setup mcp-memory   # install just one tool
 llm-prompts setup --dry-run    # preview commands without running
 ```
+
+`setup` installs or upgrades the tools/overlays in `config.toml`. Filter to a single tool by name, preview the commands with `--dry-run`, or create the starter config with `--init`.
 
 ## Plugin sources
 
@@ -187,9 +197,13 @@ cline-hook install kiro ~/.kiro/agents/my-agent.json
 llm-prompts install <agent>                    # install rules/workflows/skills
 llm-prompts install kiro --agent-config PATH   # also patch agent JSON with resources
 llm-prompts install <agent> --no-update        # skip auto-update
+llm-prompts update                             # pull tool/plugin sources, reinstall every configured agent
+llm-prompts update --check                     # report available updates without applying them
 llm-prompts uninstall <agent>                  # remove installed files and config patches
 llm-prompts source <agent>                     # show source file paths
 llm-prompts setup                              # install all configured tools
+llm-prompts setup <tool>                       # install just one tool
+llm-prompts setup --dry-run                    # preview install commands without running
 llm-prompts setup --init                       # create starter config
 ```
 
