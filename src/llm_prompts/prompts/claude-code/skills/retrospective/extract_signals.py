@@ -120,14 +120,32 @@ def _bash_lead(cmd: str) -> str:
     return first[0] if first else ""
 
 
+def _is_gate_result(content: str) -> bool:
+    """Detect the shared gate-script contract (e.g. refine-plan/score.py,
+    tidy-code/check_reduction.py): JSON stdout with a top-level `pass` boolean.
+
+    These scripts use a non-zero exit code to signal "blocked, revise and
+    re-run" by design, not an unexpected failure, so they must be excluded
+    from retry detection regardless of the tool's exit-code-derived is_error.
+    """
+    try:
+        data = json.loads(content.strip())
+    except (json.JSONDecodeError, AttributeError):
+        return False
+    return isinstance(data, dict) and isinstance(data.get("pass"), bool)
+
+
 def _result_is_error(result: dict) -> bool:
     """Determine whether a tool_result block represents a failure."""
-    if result.get("is_error"):
-        return True
     content = result.get("content", "")
     if isinstance(content, list):
         content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
-    head = str(content)[:500]
+    content = str(content)
+    if _is_gate_result(content):
+        return False
+    if result.get("is_error"):
+        return True
+    head = content[:500]
     return "<tool_use_error>" in head or "Exit code 1" in head
 
 
