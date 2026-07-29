@@ -105,6 +105,21 @@ class TestResultIsError:
         }
         assert mod._result_is_error(result) is True
 
+    def test_gate_script_blocked_is_not_error(self, mod: ModuleType) -> None:
+        result = {
+            "is_error": True,
+            "content": '{"pass": false, "errors": ["\'elegance\' needs evidence"]}',
+        }
+        assert mod._result_is_error(result) is False
+
+    def test_gate_script_passed_is_not_error(self, mod: ModuleType) -> None:
+        result = {"is_error": False, "content": '{"pass": true, "quality_avg": 9.2}'}
+        assert mod._result_is_error(result) is False
+
+    def test_non_gate_json_with_is_error_still_error(self, mod: ModuleType) -> None:
+        result = {"is_error": True, "content": '{"detail": "not found"}'}
+        assert mod._result_is_error(result) is True
+
 
 class TestExtractRetries:
     """Tests for cross-message retry detection."""
@@ -184,3 +199,16 @@ class TestExtractRetries:
             ]
         )
         assert len(mod.extract_retries(session)) == 1
+
+    def test_gate_script_reruns_are_not_retries(self, mod: ModuleType) -> None:
+        session = _session(
+            [
+                _assistant("a", "Bash", "python3 score.py"),
+                _result("a", error=True, text='{"pass": false, "errors": ["x"]}'),
+                _assistant("b", "Bash", "python3 score.py"),
+                _result("b", error=True, text='{"pass": false, "errors": ["y"]}'),
+                _assistant("c", "Bash", "python3 score.py"),
+                _result("c", error=False, text='{"pass": true, "quality_avg": 9.1}'),
+            ]
+        )
+        assert mod.extract_retries(session) == []
