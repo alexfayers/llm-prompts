@@ -715,6 +715,55 @@ def _install_skills(
     return managed
 
 
+def _install_plugin_skills(
+    skill_pairs: list[tuple[str, Path]],
+    skills_parent: Path,
+    agent_name: str,
+    already_managed: set[str],
+) -> set[str]:
+    """Install plugin-source skills as symlinks, lowest priority.
+
+    Plugin skills never overwrite a built-in/overlay skill of the same name, and
+    a duplicate name across plugins resolves in config order (first wins).
+
+    Args:
+        skill_pairs: ``(name, source_dir)`` pairs from plugin discovery, in
+            config order.
+        skills_parent: Parent directory whose ``skills`` subdir receives symlinks.
+        agent_name: Target agent name, for the requires-gate and
+            ``exclude_targets`` checks.
+        already_managed: Skill names already installed this run (built-in or
+            overlay); a plugin skill colliding with one is skipped.
+
+    Returns:
+        Set of installed plugin skill names.
+    """
+    dest_root = skills_parent / "skills"
+    managed: set[str] = set()
+    seen: set[str] = set()
+    for name, src_dir in skill_pairs:
+        if name in already_managed:
+            log("warn", f"Plugin skill '{name}' shadowed by existing skill, skipping")
+            continue
+        if name in seen:
+            log("warn", f"Duplicate plugin skill '{name}' skipped (config order wins)")
+            continue
+        seen.add(name)
+        skill_md = src_dir / "SKILL.md"
+        if not skill_md.is_file():
+            continue
+        if not _passes_requires_gate(skill_md):
+            log(
+                "debug", f"Skipping plugin skill '{name}': requires gate not satisfied."
+            )
+            continue
+        if agent_name in _excluded_targets(skill_md):
+            log("debug", f"Skipping plugin skill '{name}': excluded for {agent_name}.")
+            continue
+        _install_symlink(src_dir, dest_root / name, "plugin skill", managed)
+    return managed
+
+
 def _install_agents(candidate_dirs: list[Path], agents_dir: Path) -> set[str]:
     """Install Claude Code subagent definitions as symlinks.
 
@@ -1048,6 +1097,27 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
 
     installed_files: dict[str, list[str]] = {name: [] for name in targets}
 
+    from .plugins import (
+        _load_plugins,
+        _validate_plugins,
+        discover_skills,
+        ensure_cloned,
+    )
+
+    plugins = _load_plugins()
+    plugin_errors = _validate_plugins(plugins)
+    if plugin_errors:
+        for err in plugin_errors:
+            log("error", err)
+        sys.exit(1)
+
+    plugin_skill_pairs: list[tuple[str, Path]] = []
+    for plugin in plugins:
+        checkout = ensure_cloned(plugin)
+        if checkout is None:
+            continue
+        plugin_skill_pairs.extend(discover_skills(checkout, plugin.get("skills")))
+
     if "cline" in targets:
         agents_dir, _ = _get_cline_extra_dirs()
         cline_skill_dirs = [
@@ -1055,6 +1125,10 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
             root_dir / "shared" / "skills",
         ]
         managed_skills = _install_skills(cline_skill_dirs, agents_dir, "cline")
+        plugin_managed = _install_plugin_skills(
+            plugin_skill_pairs, agents_dir, "cline", managed_skills
+        )
+        managed_skills |= plugin_managed
         _check_unmanaged(agents_dir / "skills", managed_skills, "skills", is_dir=True)
         skills_dir = agents_dir / "skills"
         installed_files["cline"].extend(str(skills_dir / s) for s in managed_skills)
@@ -1070,6 +1144,10 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
             *(d / skill_agent / "skills" for d in overlay_dirs),
         ]
         managed = _install_skills(skill_dirs, skills_parent, skill_agent)
+        plugin_managed = _install_plugin_skills(
+            plugin_skill_pairs, skills_parent, skill_agent, managed
+        )
+        managed |= plugin_managed
         _check_unmanaged(
             skills_parent / "skills", managed, f"{skill_agent} skills", is_dir=True
         )

@@ -84,6 +84,27 @@ llm-prompts setup mcp-memory   # install just one tool
 llm-prompts setup --dry-run    # preview commands without running
 ```
 
+## Plugin sources
+
+`[[plugins]]` tracks raw git repos that ship Claude Code plugin/marketplace skills (a `skills/**/SKILL.md` layout, no Python packaging) and fans their skills out to every agent you've installed, the same way built-in and overlay skills are:
+
+```toml
+[[plugins]]
+name = "mattpocock-skills"
+source = "https://github.com/mattpocock/skills.git"
+ref = "main"                      # optional; branch/tag/SHA; defaults to the remote's default branch
+skills = ["tdd", "code-review"]   # optional; subset by skill directory name; defaults to all
+```
+
+| Field | Description |
+|---|---|
+| `name` | Plugin name; also its checkout directory under `~/.config/llm-prompts/plugin-sources/` |
+| `source` | Plain git URL (no pip/PyPI semantics) |
+| `ref` | Optional branch/tag/SHA to pin to |
+| `skills` | Optional list of skill names to install; installs every discovered skill if omitted |
+
+`llm-prompts update` refreshes each checkout (`git fetch` + `git reset --hard`, so it always lands on the upstream tip regardless of force-pushes or history rewrites) before reinstalling. A plugin skill never overwrites a built-in or overlay skill of the same name - a collision is skipped with a warning. Currently only skills are supported from external plugins; other components (`commands/`, `agents/`, `hooks/`, MCP/LSP servers) are ignored.
+
 ## Creating an overlay
 
 Overlay packages register via the `llm_prompts` entry point group:

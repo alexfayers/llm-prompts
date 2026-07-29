@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from llm_prompts.install import (
     _Agent,
     _collect_content_srcs,
@@ -12,9 +14,11 @@ from llm_prompts.install import (
     _excluded_targets,
     _GATING_FRONTMATTER_KEYS,
     _install_linked,
+    _install_plugin_skills,
     _install_skills,
     _passes_requires_gate,
 )
+from llm_prompts.install import main as install_main
 from llm_prompts.render_template import render_template, strip_gating_keys
 
 
@@ -263,6 +267,91 @@ class TestInstallSkillsGating:
         assert collide.is_symlink()
         assert "OVERLAY-COLLIDE" in (collide / "SKILL.md").read_text(encoding="utf-8")
         assert managed == {"shared-only", "collide", "overlay-only"}
+
+
+class TestInstallPluginSkills:
+    def _make_skill(self, parent: Path, name: str, skill_md: str) -> Path:
+        skill_dir = parent / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
+        return skill_dir
+
+    def test_plugin_skill_installed_as_symlink(self, tmp_path: Path) -> None:
+        src = self._make_skill(tmp_path / "checkout", "tdd", "# TDD\n")
+        agents_dir = tmp_path / "agents"
+
+        managed = _install_plugin_skills(
+            [("tdd", src)], agents_dir, "claude-code", set()
+        )
+
+        dest = agents_dir / "skills" / "tdd"
+        assert dest.is_symlink()
+        assert dest.resolve() == src.resolve()
+        assert "tdd" in managed
+
+    def test_collision_with_managed_skill_is_skipped(self, tmp_path: Path) -> None:
+        src = self._make_skill(tmp_path / "checkout", "tdd", "# PLUGIN\n")
+        agents_dir = tmp_path / "agents"
+        existing = agents_dir / "skills" / "tdd"
+        existing.mkdir(parents=True)
+        (existing / "SKILL.md").write_text("# BUILTIN\n", encoding="utf-8")
+
+        managed = _install_plugin_skills(
+            [("tdd", src)], agents_dir, "claude-code", {"tdd"}
+        )
+
+        assert existing.is_symlink() is False
+        assert (existing / "SKILL.md").read_text(encoding="utf-8") == "# BUILTIN\n"
+        assert "tdd" not in managed
+
+    def test_requires_gate_skips_skill(self, tmp_path: Path) -> None:
+        src = self._make_skill(
+            tmp_path / "checkout", "gated", "---\nrequires_command: sometool\n---\n"
+        )
+        agents_dir = tmp_path / "agents"
+
+        with patch("llm_prompts.install.shutil.which", return_value=None):
+            managed = _install_plugin_skills(
+                [("gated", src)], agents_dir, "claude-code", set()
+            )
+
+        assert (agents_dir / "skills" / "gated").exists() is False
+        assert "gated" not in managed
+
+    def test_duplicate_plugin_name_first_wins(self, tmp_path: Path) -> None:
+        first = self._make_skill(tmp_path / "a", "dup", "# FIRST\n")
+        second = self._make_skill(tmp_path / "b", "dup", "# SECOND\n")
+        agents_dir = tmp_path / "agents"
+
+        managed = _install_plugin_skills(
+            [("dup", first), ("dup", second)], agents_dir, "claude-code", set()
+        )
+
+        dest = agents_dir / "skills" / "dup"
+        assert dest.resolve() == first.resolve()
+        assert managed == {"dup"}
+
+
+class TestMainValidatesPlugins:
+    def test_invalid_plugin_entry_exits_before_touching_disk(
+        self, tmp_path: Path
+    ) -> None:
+        home = tmp_path / "home"
+        home.mkdir()
+        manifest = tmp_path / "installed.json"
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+            patch(
+                "llm_prompts.plugins._load_plugins",
+                return_value=[{"source": "https://x.git"}],
+            ),
+            pytest.raises(SystemExit),
+        ):
+            install_main(["claude-code"])
+
+        assert not (home / ".claude" / "skills").exists()
 
 
 _NON_GATING_FRONTMATTER = (

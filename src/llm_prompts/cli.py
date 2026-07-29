@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import contextlib
 import io
 from importlib.resources import files
@@ -11,10 +12,9 @@ import shutil
 import subprocess
 import sys
 
-from .setup import _extract_git_url
+from .setup import _GIT_TIMEOUT, _extract_git_url, _remote_update_message
 
 _AGENTS = ("cline", "copilot", "kiro", "claude-code", "codex")
-_GIT_TIMEOUT = 30
 
 
 def _get_root_dir() -> Path:
@@ -142,25 +142,7 @@ def _remote_source_messages(name: str, source: str) -> list[str]:
     if not installed_commit:
         return [f"[{name}] not installed (run `llm-prompts setup` first)"]
 
-    result = subprocess.run(
-        ["git", "ls-remote", git_url, "HEAD"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=_GIT_TIMEOUT,
-    )
-    if result.returncode != 0:
-        return []
-
-    remote_commit = result.stdout.split()[0] if result.stdout.strip() else None
-    if not remote_commit:
-        return []
-
-    if remote_commit != installed_commit:
-        short_installed = installed_commit[:8]
-        short_remote = remote_commit[:8]
-        return [f"[{name}] update available ({short_installed} -> {short_remote})"]
-    return []
+    return _remote_update_message(name, installed_commit, git_url)
 
 
 def _local_source_messages(name: str, source: str) -> list[str]:
@@ -197,68 +179,92 @@ def _local_source_messages(name: str, source: str) -> list[str]:
     return []
 
 
+def _pull_one_local_source(name: str, source: str) -> list[str]:
+    """Pull upstream changes for a single local-path tool source.
+
+    Args:
+        name: The source name, used in the messages.
+        source: The configured source string.
+
+    Returns:
+        Message lines describing the pull outcome, or an empty list.
+    """
+    from .setup import _expand, _is_local_path
+
+    if not _is_local_path(source):
+        return []
+    repo = _expand(source)
+    if not (repo / ".git").is_dir():
+        return []
+    subprocess.run(
+        ["git", "-C", str(repo), "fetch", "--quiet"],
+        check=False,
+        capture_output=True,
+        timeout=_GIT_TIMEOUT,
+    )
+    result = subprocess.run(
+        ["git", "-C", str(repo), "rev-list", "--count", "HEAD..@{u}"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=_GIT_TIMEOUT,
+    )
+    if result.returncode != 0:
+        return []
+    count = int(result.stdout.strip())
+    if count == 0:
+        return []
+    pull = subprocess.run(
+        ["git", "-C", str(repo), "pull", "--ff-only", "--quiet"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT,
+    )
+    if pull.returncode == 0:
+        return [f"[{name}] pulled {count} new commit(s)"]
+    rebase = subprocess.run(
+        ["git", "-C", str(repo), "rebase", "--quiet", "@{u}"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT,
+    )
+    if rebase.returncode == 0:
+        return [f"[{name}] rebased local commits onto {count} new commit(s)"]
+    subprocess.run(
+        ["git", "-C", str(repo), "rebase", "--abort"],
+        check=False,
+        capture_output=True,
+        timeout=_GIT_TIMEOUT,
+    )
+    return [
+        f"[{name}] {count} new commit(s) available but rebase failed",
+        f"  {rebase.stderr.strip()}",
+    ]
+
+
 def _pull_local_sources() -> None:
-    """Pull upstream changes for all local-path tool sources."""
-    from .setup import CONFIG_PATH, _expand, _is_local_path, _load_config
+    """Pull upstream changes for all local-path tool sources in parallel."""
+    from functools import partial
+
+    from .setup import CONFIG_PATH, _load_config, _run_parallel_ordered
 
     if not CONFIG_PATH.exists():
         return
 
-    tools = _load_config()
-    for tool in tools:
-        name = str(tool.get("name", ""))
-        source = str(tool.get("source", ""))
+    pulls: list[Callable[[], list[str]]] = [
+        partial(
+            _pull_one_local_source,
+            str(tool.get("name", "")),
+            str(tool.get("source", "")),
+        )
+        for tool in _load_config()
+    ]
 
-        if not _is_local_path(source):
-            continue
-        repo = _expand(source)
-        if not (repo / ".git").is_dir():
-            continue
-        subprocess.run(
-            ["git", "-C", str(repo), "fetch", "--quiet"],
-            check=False,
-            capture_output=True,
-            timeout=_GIT_TIMEOUT,
-        )
-        result = subprocess.run(
-            ["git", "-C", str(repo), "rev-list", "--count", "HEAD..@{u}"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=_GIT_TIMEOUT,
-        )
-        if result.returncode != 0:
-            continue
-        count = int(result.stdout.strip())
-        if count > 0:
-            pull = subprocess.run(
-                ["git", "-C", str(repo), "pull", "--ff-only", "--quiet"],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=_GIT_TIMEOUT,
-            )
-            if pull.returncode == 0:
-                print(f"[{name}] pulled {count} new commit(s)")
-                continue
-            rebase = subprocess.run(
-                ["git", "-C", str(repo), "rebase", "--quiet", "@{u}"],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=_GIT_TIMEOUT,
-            )
-            if rebase.returncode == 0:
-                print(f"[{name}] rebased local commits onto {count} new commit(s)")
-            else:
-                subprocess.run(
-                    ["git", "-C", str(repo), "rebase", "--abort"],
-                    check=False,
-                    capture_output=True,
-                    timeout=_GIT_TIMEOUT,
-                )
-                print(f"[{name}] {count} new commit(s) available but rebase failed")
-                print(f"  {rebase.stderr.strip()}")
+    for result in _run_parallel_ordered(pulls):
+        for line in result:
+            print(line)
 
 
 def _collect_update_messages() -> list[str]:
@@ -267,20 +273,28 @@ def _collect_update_messages() -> list[str]:
     Returns:
         Message lines describing available updates, in config order.
     """
-    from .setup import CONFIG_PATH, _is_local_path, _load_config
+    from functools import partial
+
+    from .plugins import _load_plugins, plugin_source_messages
+    from .setup import CONFIG_PATH, _is_local_path, _load_config, _run_parallel_ordered
 
     if not CONFIG_PATH.exists():
         return []
 
-    messages: list[str] = []
+    checks: list[Callable[[], list[str]]] = []
     for tool in _load_config():
         name = str(tool.get("name", ""))
         source = str(tool.get("source", ""))
-
         if _is_local_path(source):
-            messages.extend(_local_source_messages(name, source))
+            checks.append(partial(_local_source_messages, name, source))
         else:
-            messages.extend(_remote_source_messages(name, source))
+            checks.append(partial(_remote_source_messages, name, source))
+    for plugin in _load_plugins():
+        checks.append(partial(plugin_source_messages, plugin))
+
+    messages: list[str] = []
+    for result in _run_parallel_ordered(checks):
+        messages.extend(result)
     return messages
 
 
@@ -486,6 +500,10 @@ def main() -> None:
             sys.exit(1)
 
         _pull_local_sources()
+
+        from .plugins import pull_plugin_sources
+
+        pull_plugin_sources()
 
         if CONFIG_PATH.exists() and has_remote_sources():
             run_setup()

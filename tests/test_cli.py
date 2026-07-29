@@ -18,6 +18,7 @@ from llm_prompts.cli import (
     _local_source_messages,
     _pull_local_sources,
     _remote_source_messages,
+    main,
 )
 from llm_prompts.setup import _extract_git_url
 
@@ -310,6 +311,73 @@ class TestPullLocalSources:
             capsys.readouterr().out
         )
 
+    def _setup_ff_clone(self, tmp_path: Path, name: str) -> Path:
+        """Create a clone that is one commit behind its upstream (fast-forwardable)."""
+        upstream = tmp_path / f"{name}-upstream.git"
+        upstream.mkdir()
+        _git(upstream, "init", "-q", "--bare")
+        clone = tmp_path / f"{name}-clone"
+        _init_repo(clone)
+        _commit(clone, "a.txt", "x\n", "init")
+        _git(clone, "remote", "add", "origin", str(upstream))
+        _git(clone, "push", "-q", "-u", "origin", "HEAD")
+
+        other = tmp_path / f"{name}-other"
+        _git(tmp_path, "clone", "-q", str(upstream), str(other))
+        _commit(other, "b.txt", "y\n", "upstream change")
+        _git(other, "push", "-q")
+        return clone
+
+    def test_output_lines_preserve_config_order(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        first = self._setup_ff_clone(tmp_path, "first")
+        second = self._setup_ff_clone(tmp_path, "second")
+        third = self._setup_ff_clone(tmp_path, "third")
+
+        config = [
+            {"name": "first", "source": str(first)},
+            {"name": "second", "source": str(second)},
+            {"name": "third", "source": str(third)},
+        ]
+        with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
+            mock_config.exists.return_value = True
+            with patch("llm_prompts.setup._load_config", return_value=config):
+                _pull_local_sources()
+
+        assert capsys.readouterr().out.splitlines() == [
+            "[first] pulled 1 new commit(s)",
+            "[second] pulled 1 new commit(s)",
+            "[third] pulled 1 new commit(s)",
+        ]
+
+    def test_rebase_failure_lines_stay_adjacent_and_ordered(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        conflict_upstream, conflict = self._setup_clone(tmp_path)
+        other = tmp_path / "conflict-other"
+        _git(tmp_path, "clone", "-q", str(conflict_upstream), str(other))
+        _commit(other, "a.txt", "upstream-version\n", "upstream change")
+        _git(other, "push", "-q")
+        _commit(conflict, "a.txt", "local-version\n", "local change")
+
+        ff = self._setup_ff_clone(tmp_path, "ff")
+
+        config = [
+            {"name": "conflict", "source": str(conflict)},
+            {"name": "ff", "source": str(ff)},
+        ]
+        with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
+            mock_config.exists.return_value = True
+            with patch("llm_prompts.setup._load_config", return_value=config):
+                _pull_local_sources()
+
+        lines = capsys.readouterr().out.splitlines()
+        assert lines[0] == "[conflict] 1 new commit(s) available but rebase failed"
+        assert lines[1].startswith("  ")
+        assert lines[-1] == "[ff] pulled 1 new commit(s)"
+        assert "[ff]" not in "\n".join(lines[:-1])
+
 
 class TestCollectUpdateMessages:
     def test_no_config(self) -> None:
@@ -324,16 +392,19 @@ class TestCollectUpdateMessages:
         ]
         with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
             mock_config.exists.return_value = True
-            with patch("llm_prompts.setup._load_config", return_value=config):
-                with patch(
+            with (
+                patch("llm_prompts.setup._load_config", return_value=config),
+                patch("llm_prompts.plugins._load_plugins", return_value=[]),
+                patch(
                     "llm_prompts.cli._local_source_messages",
                     return_value=["[core] 2 new commit(s) available"],
-                ) as mock_local:
-                    with patch(
-                        "llm_prompts.cli._remote_source_messages",
-                        return_value=["[remote-pkg] update available (aa -> bb)"],
-                    ) as mock_remote:
-                        result = _collect_update_messages()
+                ) as mock_local,
+                patch(
+                    "llm_prompts.cli._remote_source_messages",
+                    return_value=["[remote-pkg] update available (aa -> bb)"],
+                ) as mock_remote,
+            ):
+                result = _collect_update_messages()
 
         assert result == [
             "[core] 2 new commit(s) available",
@@ -343,6 +414,50 @@ class TestCollectUpdateMessages:
         mock_remote.assert_called_once_with(
             "remote-pkg", "git+https://github.com/user/repo.git"
         )
+
+    def test_plugin_messages_appended_after_tools(self) -> None:
+        config = [{"name": "core", "source": "~/git/llm-prompts"}]
+        plugin = {"name": "p", "source": "https://github.com/u/r.git"}
+        with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
+            mock_config.exists.return_value = True
+            with (
+                patch("llm_prompts.setup._load_config", return_value=config),
+                patch(
+                    "llm_prompts.cli._local_source_messages",
+                    return_value=["[core] 1 new commit(s) available"],
+                ),
+                patch("llm_prompts.plugins._load_plugins", return_value=[plugin]),
+                patch(
+                    "llm_prompts.plugins.plugin_source_messages",
+                    return_value=["[p] update available (aa -> bb)"],
+                ) as mock_plugin,
+            ):
+                result = _collect_update_messages()
+
+        assert result == [
+            "[core] 1 new commit(s) available",
+            "[p] update available (aa -> bb)",
+        ]
+        mock_plugin.assert_called_once_with(plugin)
+
+
+class TestUpdateCommandPullsPlugins:
+    def test_update_invokes_pull_plugin_sources(self) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={"kiro": {"files": []}},
+            ),
+            patch("llm_prompts.cli._pull_local_sources"),
+            patch("llm_prompts.setup.has_remote_sources", return_value=False),
+            patch("llm_prompts.install.main"),
+            patch("llm_prompts.cli._restart_memory_service"),
+            patch("llm_prompts.plugins.pull_plugin_sources") as mock_pull,
+        ):
+            main()
+
+        mock_pull.assert_called_once_with()
 
 
 class TestCollectSourcesOverlayPrecedence:

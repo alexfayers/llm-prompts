@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 import functools
 from pathlib import Path
 import shutil
@@ -13,7 +15,7 @@ from typing import Any
 
 _CONFIG_DIR = Path.home() / ".config" / "llm-prompts"
 CONFIG_PATH = _CONFIG_DIR / "config.toml"
-_CLONE_TIMEOUT = 30
+_GIT_TIMEOUT = 30
 
 _DEFAULT_CONFIG = """\
 # llm-prompts setup configuration
@@ -55,6 +57,53 @@ def _extract_git_url(source: str) -> str | None:
     return None
 
 
+def _remote_update_message(
+    name: str, local_commit: str, git_url: str, ref: str | None = None
+) -> list[str]:
+    """Compare a known local commit against a remote git ref via ls-remote.
+
+    Args:
+        name: The source name, used in the message.
+        local_commit: The currently-installed or checked-out commit SHA.
+        git_url: The remote git URL to query.
+        ref: The remote ref to compare against; defaults to ``HEAD``.
+
+    Returns:
+        A one-line "update available" message if the remote ref points at a
+        different commit, or an empty list.
+    """
+    result = subprocess.run(
+        ["git", "ls-remote", git_url, ref or "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=_GIT_TIMEOUT,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return []
+    remote_commit = result.stdout.split()[0]
+    if remote_commit != local_commit:
+        return [
+            f"[{name}] update available ({local_commit[:8]} -> {remote_commit[:8]})"
+        ]
+    return []
+
+
+def _run_parallel_ordered(callables: list[Callable[[], list[str]]]) -> list[list[str]]:
+    """Run each callable concurrently, preserving submission order in the result.
+
+    Args:
+        callables: Zero-arg functions, each returning a list of message lines.
+
+    Returns:
+        One result list per callable, in the same order as ``callables``.
+    """
+    if not callables:
+        return []
+    with ThreadPoolExecutor(max_workers=len(callables)) as executor:
+        return list(executor.map(lambda fn: fn(), callables))
+
+
 @functools.lru_cache(maxsize=None)
 def _fetch_remote_pyproject(git_url: str) -> dict[str, Any] | None:
     """Shallow-clone a remote git source and return its parsed pyproject.toml, or None."""
@@ -71,7 +120,7 @@ def _fetch_remote_pyproject(git_url: str) -> dict[str, Any] | None:
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=_CLONE_TIMEOUT,
+                timeout=_GIT_TIMEOUT,
             )
             if result.returncode != 0:
                 print(

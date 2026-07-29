@@ -192,3 +192,12 @@ class TestBuildCommandsRegression:
             with patch("llm_prompts.setup.subprocess.run", counter):
                 setup._build_commands(self._shipped_tools(), "uv")
         assert counter.call_count == 3
+
+
+class TestRunParallelOrdered:
+    def test_empty_input_returns_empty_list(self) -> None:
+        assert setup._run_parallel_ordered([]) == []
+
+    def test_preserves_submission_order(self) -> None:
+        calls = [lambda: ["a"], lambda: ["b"], lambda: ["c"]]
+        assert setup._run_parallel_ordered(calls) == [["a"], ["b"], ["c"]]
