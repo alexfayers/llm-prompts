@@ -24,6 +24,10 @@ When a recommendation appears to depend on an unverified fact, frame the recomme
 
 When a user states a concrete obstacle ("I don't have access to X", "this isn't set up"), do not reassure them it doesn't matter from inference or analogy. Read the authoritative source that governs the obstacle and quote the governing rule before responding. If you cannot verify, say the blocker is unconfirmed and name the check - never wave it away.
 
+## Disambiguate before acting on an instruction with a destructive reading
+
+An instruction can admit multiple readings that differ sharply in blast radius or reversibility (e.g. "remove X" could mean delete code that produces X, or delete/mutate the data X already produced). Do not default to the more consequential reading just because it seems like the more literal or complete parse - especially when one reading touches live/production state and another is a purely local, reversible change. If a request is ambiguous along this axis, ask which is meant before drafting a plan or taking any action; do not let the ambiguity resolve itself by proceeding with whichever reading occurred to you first.
+
 ## Trace dependents before changing a default or safety behavior
 
 When a change flips a default, removes a cleanup/guard step, or otherwise alters behavior that other code relies on (e.g. "skip cleanup by default", "stop seeding X", "drop this validation"), do not accept the stated rationale ("each stage cleans itself anyway") at face value. First trace what actually depends on the old behavior: read the consumers, fixtures, or downstream stages and confirm the premise holds for every one of them. A single consumer that silently relied on the old behavior turns a one-line default change into a latent failure. Verify the premise yourself in the same turn - before the user has to ask "what are the ramifications?".

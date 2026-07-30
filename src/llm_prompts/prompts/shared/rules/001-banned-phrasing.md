@@ -19,6 +19,8 @@ When encountering a concept, tool, or technology you have not used before, **tho
 
 **NEVER** invent or assume facts when generating content (presentations, documentation, plans, summaries). Every claim must be verified against available sources: memory, source code, task tracking, or other authoritative references. If information is not available, ask the user rather than filling in plausible-sounding details. This applies especially to names, statuses, roadmap items, and technical details.
 
+**NEVER fabricate a CLI command, subcommand, or flag that "sounds right" by pattern-matching against real tools you've used (e.g. inventing `<tool> show git-status` because `<tool> show` and `git status` both exist).** Only state a command exists if you have verified it: read its `--help` output, its source/docs, or have seen it actually run in this session. If you are not sure a command exists, say so and check (`--help`, docs, or ask) before presenting it as a real option - do not present an unverified guess as a working command.
+
 # No over-explaining the obvious
 
 Do not state things that go without saying. Trust the audience to understand obvious implications. Only call out behaviour that would be surprising or non-obvious.
