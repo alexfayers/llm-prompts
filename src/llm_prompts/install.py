@@ -948,6 +948,20 @@ def try_install_memory_claude_code() -> None:
         subprocess.run([binary, "setup-service"], check=False)
 
 
+def try_install_memory_codex() -> None:
+    """Add mcp-memory to Codex if available."""
+    import shutil
+    import subprocess
+
+    binary = shutil.which("mcp-memory")
+    if not binary:
+        log("debug", "mcp-memory not found on PATH, skipping Codex MCP setup.")
+        return
+    subprocess.run([binary, "install", "codex"], check=False)
+    if not _memory_service_exists():
+        subprocess.run([binary, "setup-service"], check=False)
+
+
 def _cleanup_stale(
     agent_name: str,
     current_files: list[str],

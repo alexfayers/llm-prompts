@@ -455,6 +455,11 @@ def main() -> None:
             try_install_memory_claude_code()
             try_allow_update_claude_code()
 
+        if "codex" in agent_names:
+            from .install import try_install_memory_codex
+
+            try_install_memory_codex()
+
         if args.agent_config:
             from .install import (
                 patch_kiro_agent_config,
@@ -522,6 +527,11 @@ def main() -> None:
             try_install_hooks_claude_code()
             try_install_memory_claude_code()
             try_allow_update_claude_code()
+
+        if "codex" in manifest:
+            from .install import try_install_memory_codex
+
+            try_install_memory_codex()
 
         for name, entry in manifest.items():
             agent_config = entry.get("agent_config")
