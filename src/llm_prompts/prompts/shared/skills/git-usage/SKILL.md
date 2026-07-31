@@ -32,6 +32,4 @@ Before making a commit, you must tell the user "I am following the predefined gi
 
 ## Amending non-HEAD commits
 
-- `git commit --amend` only modifies HEAD - to edit an earlier commit use interactive rebase
-- Fold a change into a non-HEAD commit: `git commit --fixup <SHA>` then `GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash <PARENT>`
-- Rename a non-HEAD commit: use `reword` action; create a temporary Python script for `GIT_SEQUENCE_EDITOR` (to swap `pick` to `reword`) and `GIT_EDITOR` (to replace old message), then `GIT_SEQUENCE_EDITOR='python3 /tmp/seq.py' GIT_EDITOR='python3 /tmp/msg.py' git rebase -i <PARENT>`
+`git commit --amend` only modifies HEAD - to squash, fixup, reorder, reword, or drop unpushed non-HEAD commits, use the `git-tidy` skill.
