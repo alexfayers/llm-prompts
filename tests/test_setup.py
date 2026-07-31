@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import tomllib
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -75,7 +76,9 @@ class TestFetchRemotePyproject:
 
 class TestInferOverlaysFor:
     def test_entry_point_groups(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        data = {"project": {"entry-points": {"cline_hooks": {}, "llm_prompts": {}}}}
+        data: dict[str, Any] = {
+            "project": {"entry-points": {"cline_hooks": {}, "llm_prompts": {}}}
+        }
         monkeypatch.setattr(setup, "_fetch_remote_pyproject", lambda url: data)
         result = setup._infer_overlays_for(
             {"name": "mcp-memory", "source": "git+https://github.com/user/repo.git"}
@@ -83,7 +86,7 @@ class TestInferOverlaysFor:
         assert sorted(result) == ["cline-hooks", "llm-prompts"]
 
     def test_own_name_excluded(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        data = {"project": {"entry-points": {"cline_hooks": {}}}}
+        data: dict[str, Any] = {"project": {"entry-points": {"cline_hooks": {}}}}
         monkeypatch.setattr(setup, "_fetch_remote_pyproject", lambda url: data)
         result = setup._infer_overlays_for(
             {"name": "cline-hooks", "source": "git+https://github.com/user/repo.git"}
@@ -150,7 +153,7 @@ class TestBuildCommandsRegression:
         return tomllib.loads(setup._DEFAULT_CONFIG)["tools"]
 
     def _canned_pyproject(self, git_url: str) -> dict | None:
-        by_repo = {
+        by_repo: dict[str, dict[str, Any]] = {
             "llm-prompts": {
                 "project": {
                     "scripts": {"llm-prompts": "llm_prompts.cli:main"},

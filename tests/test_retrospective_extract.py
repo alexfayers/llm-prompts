@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -35,7 +36,7 @@ def mod() -> ModuleType:
 
 
 def _assistant(tool_id: str, name: str, command: str = "") -> dict:
-    tool_use = {"type": "tool_use", "id": tool_id, "name": name}
+    tool_use: dict[str, Any] = {"type": "tool_use", "id": tool_id, "name": name}
     if name == "Bash":
         tool_use["input"] = {"command": command}
     return {"type": "assistant", "message": {"content": [tool_use]}}
