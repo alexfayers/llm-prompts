@@ -26,6 +26,10 @@ User signals that trigger session-end: "anything else?", "that's it", "thanks", 
 
 You MUST use the `git-usage` skill before interacting with git in **ANY** way. This includes running ANY `git` command.
 
+## Handoff pickup
+
+If a `HANDOFF.md` file is present in the current workspace at session start, or the user points you at a handoff doc (their own or another agent's), you **MUST** use the `pickup` skill before doing anything else with it - including before reading it in full or deciding it's stale. Do not re-verify claims the handoff or memory already states as fact; that is the specific failure `pickup` exists to prevent.
+
 ---
 
 IMPORTANT: If you forget to follow any of these skill usage rules, there may be substantial consequences.

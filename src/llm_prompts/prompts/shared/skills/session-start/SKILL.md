@@ -7,6 +7,7 @@ description: Check memory for in-progress tasks and active TODOs at the start of
 
 At the start of every session, before responding to the user's first message, check memory for in-progress work using **compact mode** to minimise token usage:
 
+0. **Check for a `HANDOFF.md` in the workspace root first.** If one is present, stop this checklist and run the `pickup` skill instead - it covers reading, deleting, and resuming from the doc, and already includes its own memory lookups for the entities it points to. Do not run the rest of this checklist first "just to be thorough"; `pickup`'s reads supersede it.
 1. `read_graph(project="<repo-name>")` to surface recent entities for the current workspace.
 2. **CRITICAL - do NOT skip this step or substitute read_graph results.** Run both of these calls with `compact=true`:
    - `search_all_projects(query="task", status="in-progress", compact=true)`

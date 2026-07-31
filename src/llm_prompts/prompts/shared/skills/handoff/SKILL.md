@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Write a handoff document so a fresh session (or another agent) can resume multi-session work with full context. Use when the current session is ending mid-effort, context is running high, or the user asks to "hand off", "hand over", or prepare the next session/slice.
+description: Write a handoff document so a fresh session (or another agent) can resume multi-session work with full context. Use when the current session is ending mid-effort, context is running high, or the user asks to "hand off", "hand over", or prepare the next session/slice. To resume an EXISTING HANDOFF.md instead, use the `pickup` skill.
 ---
 
 # handoff
@@ -17,16 +17,14 @@ unless the user names another location. One handoff doc at a time - if a stale
 
 ## Two directions: writing vs. resuming
 
-This skill's document below covers *writing* a handoff at the end of a session.
-The phrase "do/resume/pick up the handoff" points the other direction: an
-existing `HANDOFF.md` is present and the ask is to *execute* the work it
-describes, not to re-run the write flow. In that case: read `HANDOFF.md` and
-the memory entities/plan file it points to, delete the doc per its own Step 0,
-and go straight into the "next task, stated concretely" section as your first
-action. Only fall back to writing/refreshing the doc if the user's wording is
-actually about ending the session or handing off to someone else - if in doubt,
-treat "do the handoff" for an already-existing doc as an instruction to act on
-it, not to verify or rewrite it.
+This skill covers *writing* a handoff at the end of a session. The phrase
+"do/resume/pick up the handoff" points the other direction - an existing
+`HANDOFF.md` is present and the ask is to *execute* the work it describes, not
+to re-run this write flow. That direction is the `pickup` skill; use it
+instead. Only fall back to writing/refreshing the doc here if the user's
+wording is actually about ending the session or handing off to someone else -
+if in doubt, treat "do the handoff" for an already-existing doc as an
+instruction to run `pickup`, not to verify or rewrite it.
 
 ## Required structure
 
@@ -70,6 +68,7 @@ Then include, in order:
 
 ## Rules
 
+- **Write for a resuming session with zero prior context, and write so that session never needs to re-verify you.** Assume the reader has no memory of this conversation - but also assume they will take every stated fact at face value and act on it without re-checking. That means: only state something as settled fact (a commit SHA, "tests pass", "X is confirmed") if you actually verified it this session; if you are inferring, guessing, or relaying an unconfirmed claim from earlier in the chain, say so explicitly ("UNVERIFIED - re-check before relying on this") rather than writing it as fact. A resuming session that has to re-run `git log`/an audit/a full re-fetch to double-check a claim you stated plainly has been let down by the doc, not by the resuming session being careless - and repeated across sessions, that gap is exactly what produces an endless re-verify-then-handoff loop instead of forward progress.
 - **Do not push to get uncommitted work committed before writing the handoff, unless the user asks.** A permission block on `git commit`/`git add` (or any other obstacle to committing) is not a reason to escalate for approval - capture the tree's actual state as-is, dirty or not, and note in the doc that changes are uncommitted plus where they live. Forcing a clean commit first is a separate, explicit ask the user makes when they want it; the default handoff reflects reality, not a tidied-up version of it.
 - **Memory first, doc second.** Everything durable (decisions, outcomes, reusable
   learnings, task status) MUST already be in the memory graph before you write the
