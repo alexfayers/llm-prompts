@@ -6,6 +6,7 @@ from importlib.resources import files
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
 from typing import ClassVar, Literal
@@ -23,7 +24,12 @@ LogLevel = Literal["debug", "info", "warn", "error", "success"]
 # Frontmatter keys consumed by the installer's own gating logic
 # (_passes_requires_gate, _excluded_targets). These are stripped from
 # agent-specific files before install so they never leak into the installed copy.
-_GATING_FRONTMATTER_KEYS = {"requires_env", "requires_command", "exclude_targets"}
+_GATING_FRONTMATTER_KEYS = {
+    "requires_env",
+    "requires_command",
+    "exclude_targets",
+    "generate_variants",
+}
 
 _COLORS: dict[LogLevel, str] = {
     "debug": "\033[0;90m",
@@ -764,10 +770,86 @@ def _install_plugin_skills(
     return managed
 
 
-def _install_agents(candidate_dirs: list[Path], agents_dir: Path) -> set[str]:
-    """Install Claude Code subagent definitions as symlinks.
+def _apply_variant_frontmatter(content: str, stem: str, model: str, effort: str) -> str:
+    """Rewrite a template's frontmatter for one generated model/effort variant.
 
-    Overlay dirs override base on filename collision (first wins).
+    Overrides ``name`` to the variant's own name, appends a ``[model, effort
+    effort]`` suffix to ``description``, and adds ``model``/``effort`` keys.
+    All other frontmatter keys and the body are carried verbatim.
+
+    Args:
+        content: Template content, already stripped of gating keys.
+        stem: Template filename stem (e.g. ``worker``).
+        model: Model name for this variant.
+        effort: Effort level for this variant.
+
+    Returns:
+        Content with the variant's frontmatter applied.
+    """
+    match = re.match(r"^---\n(.*?)\n---\n?", content, re.DOTALL)
+    if not match:
+        return content
+    body = content[match.end() :]
+    lines = []
+    for line in match.group(1).splitlines():
+        key = line.partition(": ")[0].strip()
+        if key == "name":
+            lines.append(f"name: {stem}-{model}-{effort}")
+        elif key == "description":
+            lines.append(f"{line} [{model}, {effort} effort]")
+        else:
+            lines.append(line)
+    lines.append(f"model: {model}")
+    lines.append(f"effort: {effort}")
+    return "---\n" + "\n".join(lines) + "\n---\n" + body
+
+
+def _expand_agent_variants(src_path: Path) -> list[tuple[str, str]]:
+    """Expand a ``generate_variants`` template source into generated variant files.
+
+    Parses the flat, comma-separated ``generate_variants`` frontmatter key
+    (each token a ``<model>-<effort>`` pair) and produces one generated file
+    per token. Malformed tokens are logged and skipped rather than raising.
+
+    Args:
+        src_path: Template source file path.
+
+    Returns:
+        List of ``(generated_filename, generated_content)`` pairs.
+    """
+    content = _read_text(src_path)
+    _, frontmatter = parse_frontmatter(content)
+    tokens = [
+        t.strip()
+        for t in frontmatter.get("generate_variants", "").split(",")
+        if t.strip()
+    ]
+    stripped = strip_gating_keys(content, _GATING_FRONTMATTER_KEYS)
+    stem = src_path.stem
+
+    generated: list[tuple[str, str]] = []
+    for token in tokens:
+        parts = token.split("-")
+        if len(parts) != 2:
+            log(
+                "warn", f"Skipping malformed variant token '{token}' in {src_path.name}"
+            )
+            continue
+        model, effort = parts
+        filename = f"{stem}-{model}-{effort}.md"
+        generated.append(
+            (filename, _apply_variant_frontmatter(stripped, stem, model, effort))
+        )
+    return generated
+
+
+def _install_agents(candidate_dirs: list[Path], agents_dir: Path) -> set[str]:
+    """Install Claude Code subagent definitions as symlinks or generated variants.
+
+    Overlay dirs override base on filename collision (first wins). A source
+    whose frontmatter has ``generate_variants`` is expanded into per-model/
+    effort files written to ``agents_dir``; other sources are symlinked as
+    before.
 
     Args:
         candidate_dirs: Source agent directories in priority order (first wins).
@@ -784,7 +866,15 @@ def _install_agents(candidate_dirs: list[Path], agents_dir: Path) -> set[str]:
         lambda p: p.name,
     )
     for name, src in resolved:
-        _install_symlink(src, agents_dir / name, "agent", managed)
+        _, frontmatter = parse_frontmatter(_read_text(src))
+        if "generate_variants" in frontmatter:
+            for gen_name, gen_content in _expand_agent_variants(src):
+                _write_if_changed(
+                    agents_dir / gen_name, gen_content, f"agent {gen_name}"
+                )
+                managed.add(gen_name)
+        else:
+            _install_symlink(src, agents_dir / name, "agent", managed)
     return managed
 
 

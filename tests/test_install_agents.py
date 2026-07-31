@@ -7,8 +7,13 @@ from unittest.mock import patch
 
 import pytest
 
-from llm_prompts.install import _install_agents, get_managed_dirs
+from llm_prompts.install import (
+    _expand_agent_variants,
+    _install_agents,
+    get_managed_dirs,
+)
 from llm_prompts.install import main as install_main
+from llm_prompts.render_template import parse_frontmatter
 
 
 def _make_agent(directory: Path, name: str, body: str = "body") -> Path:
@@ -17,6 +22,89 @@ def _make_agent(directory: Path, name: str, body: str = "body") -> Path:
     path = directory / name
     path.write_text(f"---\nname: {name}\n---\n\n{body}\n", encoding="utf-8")
     return path
+
+
+def _make_variant_template(
+    directory: Path,
+    name: str,
+    stem: str,
+    variants: str,
+    *,
+    description: str = "A generic agent.",
+    body: str = "You are an agent.",
+) -> Path:
+    """Create a template source with a ``generate_variants`` frontmatter key."""
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    path.write_text(
+        f"---\nname: {stem}\ndescription: {description}\n"
+        f"disallowedTools: Agent\ngenerate_variants: {variants}\n---\n\n{body}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+class TestExpandAgentVariants:
+    def test_generates_one_file_per_token_with_model_and_effort(
+        self, tmp_path: Path
+    ) -> None:
+        src = _make_variant_template(
+            tmp_path, "worker.md", "worker", "sonnet-low,sonnet-medium"
+        )
+
+        generated = _expand_agent_variants(src)
+
+        names = {name for name, _ in generated}
+        assert names == {"worker-sonnet-low.md", "worker-sonnet-medium.md"}
+        by_name = dict(generated)
+        _, frontmatter = parse_frontmatter(by_name["worker-sonnet-low.md"])
+        assert frontmatter["name"] == "worker-sonnet-low"
+        assert frontmatter["model"] == "sonnet"
+        assert frontmatter["effort"] == "low"
+
+    def test_description_gets_model_effort_suffix(self, tmp_path: Path) -> None:
+        src = _make_variant_template(
+            tmp_path,
+            "worker.md",
+            "worker",
+            "haiku-medium",
+            description="Does mechanical things.",
+        )
+
+        generated = dict(_expand_agent_variants(src))
+
+        _, frontmatter = parse_frontmatter(generated["worker-haiku-medium.md"])
+        assert frontmatter["description"] == (
+            "Does mechanical things. [haiku, medium effort]"
+        )
+
+    def test_body_and_other_frontmatter_carried_verbatim(self, tmp_path: Path) -> None:
+        src = _make_variant_template(
+            tmp_path, "worker.md", "worker", "sonnet-low", body="Line one.\nLine two."
+        )
+
+        generated = dict(_expand_agent_variants(src))
+
+        body, frontmatter = parse_frontmatter(generated["worker-sonnet-low.md"])
+        assert body.strip() == "Line one.\nLine two."
+        assert frontmatter["disallowedTools"] == "Agent"
+
+    def test_generate_variants_key_absent_from_output(self, tmp_path: Path) -> None:
+        src = _make_variant_template(tmp_path, "worker.md", "worker", "sonnet-low")
+
+        generated = dict(_expand_agent_variants(src))
+
+        _, frontmatter = parse_frontmatter(generated["worker-sonnet-low.md"])
+        assert "generate_variants" not in frontmatter
+
+    def test_malformed_token_is_skipped(self, tmp_path: Path) -> None:
+        src = _make_variant_template(
+            tmp_path, "worker.md", "worker", "sonnet-low,bogus,haiku-high"
+        )
+
+        generated = dict(_expand_agent_variants(src))
+
+        assert set(generated) == {"worker-sonnet-low.md", "worker-haiku-high.md"}
 
 
 class TestInstallAgents:
@@ -87,6 +175,58 @@ class TestInstallAgents:
         assert "OVL-C" in collide.read_text(encoding="utf-8")
         assert managed == {"base-only.md", "collide.md", "overlay-only.md"}
 
+    def test_variant_template_writes_generated_files_alongside_symlinks(
+        self, tmp_path: Path
+    ) -> None:
+        src = tmp_path / "agents"
+        _make_agent(src, "architect.md", "arch")
+        _make_variant_template(src, "worker.md", "worker", "sonnet-low,haiku-high")
+        dest = tmp_path / "dest"
+
+        managed = _install_agents([src], dest)
+
+        assert managed == {
+            "architect.md",
+            "worker-sonnet-low.md",
+            "worker-haiku-high.md",
+        }
+        assert (dest / "architect.md").is_symlink()
+        assert not (dest / "worker-sonnet-low.md").is_symlink()
+        assert (dest / "worker-sonnet-low.md").is_file()
+        assert not (dest / "worker.md").exists()
+
+    def test_variant_template_second_run_does_not_rewrite(self, tmp_path: Path) -> None:
+        src = tmp_path / "agents"
+        _make_variant_template(src, "worker.md", "worker", "sonnet-low")
+        dest = tmp_path / "dest"
+
+        _install_agents([src], dest)
+        generated = dest / "worker-sonnet-low.md"
+        before = generated.stat().st_mtime_ns
+
+        second = _install_agents([src], dest)
+
+        assert second == {"worker-sonnet-low.md"}
+        assert generated.stat().st_mtime_ns == before
+
+    def test_overlay_variant_template_overrides_base(self, tmp_path: Path) -> None:
+        base_dir = tmp_path / "base"
+        _make_variant_template(
+            base_dir, "worker.md", "worker", "sonnet-low", description="BASE"
+        )
+        overlay_dir = tmp_path / "overlay"
+        _make_variant_template(
+            overlay_dir, "worker.md", "worker", "haiku-high", description="OVL"
+        )
+        dest = tmp_path / "dest"
+
+        managed = _install_agents([overlay_dir, base_dir], dest)
+
+        assert managed == {"worker-haiku-high.md"}
+        assert not (dest / "worker-sonnet-low.md").exists()
+        content = (dest / "worker-haiku-high.md").read_text(encoding="utf-8")
+        assert "OVL" in content
+
 
 @pytest.fixture
 def claude_home(tmp_path: Path):
@@ -120,6 +260,55 @@ class TestClaudeCodeAgentsInstallLayout:
         assert architect.read_text(encoding="utf-8") == source.read_text(
             encoding="utf-8"
         )
+
+    def test_worker_and_reasoner_variants_installed_as_generated_files(
+        self, claude_home: Path
+    ) -> None:
+        agents_dir = claude_home / ".claude" / "agents"
+
+        expected = {
+            "worker-sonnet-low.md",
+            "worker-sonnet-medium.md",
+            "worker-sonnet-high.md",
+            "worker-haiku-low.md",
+            "worker-haiku-medium.md",
+            "worker-haiku-high.md",
+            "reasoner-opus-high.md",
+            "reasoner-opus-xhigh.md",
+        }
+        for name in expected:
+            path = agents_dir / name
+            assert path.is_file()
+            assert not path.is_symlink()
+
+        assert not (agents_dir / "worker.md").exists()
+        assert not (agents_dir / "reasoner.md").exists()
+
+        _, frontmatter = parse_frontmatter(
+            (agents_dir / "worker-sonnet-low.md").read_text(encoding="utf-8")
+        )
+        assert frontmatter["model"] == "sonnet"
+        assert frontmatter["effort"] == "low"
+        assert "generate_variants" not in frontmatter
+
+
+class TestClaudeCodeAgentsManifestTracking:
+    def test_generated_variants_tracked_and_removed_on_uninstall(
+        self, claude_home: Path
+    ) -> None:
+        from llm_prompts.install import uninstall
+        from llm_prompts.manifest import read_manifest
+
+        agents_dir = claude_home / ".claude" / "agents"
+        manifest_files = set(read_manifest()["claude-code"]["files"])
+        assert str(agents_dir / "worker-sonnet-low.md") in manifest_files
+        assert str(agents_dir / "reasoner-opus-high.md") in manifest_files
+
+        uninstall(["claude-code"])
+
+        assert not (agents_dir / "worker-sonnet-low.md").exists()
+        assert not (agents_dir / "reasoner-opus-high.md").exists()
+        assert "claude-code" not in read_manifest()
 
 
 class TestClaudeCodeManagedDirs:
