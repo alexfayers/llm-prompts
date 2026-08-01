@@ -79,6 +79,10 @@ def _vscode_user_dir() -> Path:
         Path to the VS Code user directory.
     """
     home = Path.home()
+    vscode_server = home / ".vscode-server"
+    if vscode_server.is_dir():
+        return vscode_server / "data" / "User"
+    
     if sys.platform == "win32":
         return Path(os.environ["APPDATA"]) / "Code" / "User"
     if sys.platform == "darwin":
@@ -103,6 +107,7 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
         "copilot": {
             "rules": home / ".copilot" / "instructions",
             "workflows": vscode_user / "prompts",
+            "skills": home / ".copilot" / "skills",
         },
         "kiro": {
             "rules": home / ".kiro" / "steering",
@@ -1237,7 +1242,7 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
         skills_dir = agents_dir / "skills"
         installed_files["cline"].extend(str(skills_dir / s) for s in managed_skills)
 
-    for skill_agent in ("kiro", "claude-code", "codex"):
+    for skill_agent in ("copilot", "kiro", "claude-code", "codex"):
         if skill_agent not in targets:
             continue
         skills_parent = _skills_parent(dirs, skill_agent)
