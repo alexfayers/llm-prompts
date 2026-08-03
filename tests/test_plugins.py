@@ -76,6 +76,77 @@ class TestValidatePlugins:
         )
         assert errors == []
 
+    def test_non_table_frontmatter_overrides_is_error(self) -> None:
+        errors = plugins._validate_plugins(
+            [
+                {
+                    "name": "a",
+                    "source": "https://github.com/u/r.git",
+                    "frontmatter_overrides": "nope",
+                }
+            ]
+        )
+        assert len(errors) == 1
+        assert "frontmatter_overrides" in errors[0]
+
+    def test_non_table_value_under_skill_name_is_error(self) -> None:
+        errors = plugins._validate_plugins(
+            [
+                {
+                    "name": "a",
+                    "source": "https://github.com/u/r.git",
+                    "frontmatter_overrides": {"skill-a": "nope"},
+                }
+            ]
+        )
+        assert len(errors) == 1
+        assert "skill-a" in errors[0]
+
+    def test_non_scalar_override_value_is_error(self) -> None:
+        errors = plugins._validate_plugins(
+            [
+                {
+                    "name": "a",
+                    "source": "https://github.com/u/r.git",
+                    "frontmatter_overrides": {"skill-a": {"key": [1, 2]}},
+                }
+            ]
+        )
+        assert len(errors) == 1
+        assert "key" in errors[0]
+
+    def test_str_bool_int_mix_scoped_to_one_skill_has_no_errors(self) -> None:
+        errors = plugins._validate_plugins(
+            [
+                {
+                    "name": "a",
+                    "source": "https://github.com/u/r.git",
+                    "frontmatter_overrides": {
+                        "skill-a": {
+                            "disable-model-invocation": False,
+                            "description": "custom",
+                            "priority": 1,
+                        }
+                    },
+                }
+            ]
+        )
+        assert errors == []
+
+
+class TestStringifyOverride:
+    def test_true_becomes_lowercase_true(self) -> None:
+        assert plugins._stringify_override(True) == "true"
+
+    def test_false_becomes_lowercase_false(self) -> None:
+        assert plugins._stringify_override(False) == "false"
+
+    def test_int_stringified(self) -> None:
+        assert plugins._stringify_override(3) == "3"
+
+    def test_str_passed_through(self) -> None:
+        assert plugins._stringify_override("x") == "x"
+
 
 def _make_skill(directory: Path) -> None:
     directory.mkdir(parents=True, exist_ok=True)

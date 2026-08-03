@@ -38,6 +38,20 @@ def _load_plugins() -> list[dict[str, Any]]:
     return plugins
 
 
+def _stringify_override(value: Any) -> str:
+    """Convert a TOML scalar to its frontmatter-line string form.
+
+    Args:
+        value: A ``str``, ``bool``, ``int``, or ``float`` override value.
+
+    Returns:
+        The lowercase-stringified form for booleans, or ``str(value)`` otherwise.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
 def _validate_plugins(plugins: list[dict[str, Any]]) -> list[str]:
     """Validate plugin entries.
 
@@ -55,6 +69,25 @@ def _validate_plugins(plugins: list[dict[str, Any]]) -> list[str]:
         source = str(plugin.get("source", ""))
         if not source or _extract_git_url(source) is None:
             errors.append(f"[{name}] plugin source must be a git URL: {source}")
+
+        if "frontmatter_overrides" not in plugin:
+            continue
+        frontmatter_overrides = plugin["frontmatter_overrides"]
+        if not isinstance(frontmatter_overrides, dict):
+            errors.append(f"[{name}] frontmatter_overrides must be a table: {source}")
+            continue
+        for skill_name, overrides in frontmatter_overrides.items():
+            if not isinstance(overrides, dict):
+                errors.append(
+                    f"[{name}] frontmatter_overrides.{skill_name} must be a table"
+                )
+                continue
+            for key, value in overrides.items():
+                if not isinstance(value, str | bool | int | float):
+                    errors.append(
+                        f"[{name}] frontmatter_overrides.{skill_name}.{key} must be "
+                        f"a string, bool, int, or float: {value!r}"
+                    )
     return errors
 
 
