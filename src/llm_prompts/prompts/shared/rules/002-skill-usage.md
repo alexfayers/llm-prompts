@@ -2,7 +2,7 @@
 
 ## Session Start
 
-At the start of every new conversation, you **MUST** use the `session-start` skill before responding to the user's first message.
+At the start of every new conversation, you **MUST** use the `session-start` skill before responding to the user's first message. This is a mechanical trip-wire, not a judgment call: your first tool call in a new conversation MUST be invoking `session-start` - before any file read, edit, search, or other tool use, even when the user's request seems to point straight at a specific file or action. Jumping straight to the obvious-looking task is the exact failure this rule exists to prevent.
 
 ## Planning
 
