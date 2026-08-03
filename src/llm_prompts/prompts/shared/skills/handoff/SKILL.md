@@ -78,8 +78,11 @@ Then include, in order:
 - **Keep it scannable.** Bullet points and short sections. If the doc is longer
   than what someone will read before starting, it has failed.
 - **Point to the plan.** If a plan file exists for the effort, reference it.
-- After writing the doc, ensure the rest of the `session-end` checklist is done
-  (memory persisted, commit/push status resolved, outstanding TODOs surfaced).
-  If you arrived here from `session-end`, those are already handled - do **not**
-  re-invoke `session-end` (it would loop back into handoff). Then tell the user
-  the handoff is ready and where it lives.
+- After writing the doc, run the `session-end` skill to cover everything else a
+  session close needs (memory persisted, commit/push status resolved, rule-file
+  reflection) - **except its step 5 comprehensive TODO/task review**, which this
+  skill's own "next task" section already narrows to the current effort; running
+  it again would just re-surface the broad cross-project backlog this handoff
+  isn't about. If you arrived here from `session-end` itself, those steps are
+  already handled - do **not** re-invoke it (that would loop back into handoff).
+  Then tell the user the handoff is ready and where it lives.
