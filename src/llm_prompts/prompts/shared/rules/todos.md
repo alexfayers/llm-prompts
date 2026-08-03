@@ -14,3 +14,9 @@ When the user asks to do something that is **not directly related** to the curre
 Each session should ideally cover one coherent change so commits stay manageable.
 
 NOTE: You are allowed to write to files in {{PLAN_MODE}} for this use case, but prefer memory over a new file per the default above.
+
+## Tracking completion in an existing TODO/task-list file
+
+When working through a list of items in an existing file (a `TODO.md`, a checklist in a plan doc, a persisted task list), mark each entry done as soon as you finish it - the same way completed work is marked `resolved` in memory. Do not wait until the end of the session to update the file in one batch.
+
+If an entry is a plain list item without a markdown checkbox (`- item` rather than `- [ ] item`), convert it to a checkbox (`- [ ]`) the first time you touch that list, then check it off (`- [x]`) the moment the item is done. A missing checkbox is not licence to leave the item unmarked - retrofit the syntax rather than skipping the update.
