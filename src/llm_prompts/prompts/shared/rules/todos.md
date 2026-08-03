@@ -9,6 +9,8 @@ When the user asks to do something that is **not directly related** to the curre
 4. **Add it to the end of the current {{TASK_PROGRESS}} checklist** so it will be picked up after the current task completes.
 5. **Continue** the current task to completion before picking up the side request.
 
+**Steps 1-2 are not a substitute for steps 3-4.** Acknowledging a side request in prose ("I'll get to that after") without also making the memory write and checklist entry in that same turn is the specific failure this rule exists to prevent - a promise in text is not tracked anywhere and reliably gets lost under later tool calls or context compaction. Do not defer the memory write to "when I have a free moment" - make it in the same response where you acknowledge the ask, before doing anything else for the current task.
+
 Each session should ideally cover one coherent change so commits stay manageable.
 
 NOTE: You are allowed to write to files in {{PLAN_MODE}} for this use case, but prefer memory over a new file per the default above.

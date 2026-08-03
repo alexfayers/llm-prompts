@@ -244,7 +244,7 @@ def claude_home(tmp_path: Path):
 
 
 class TestClaudeCodeAgentsInstallLayout:
-    def test_worker_reasoner_and_architect_variants_installed_as_generated_files(
+    def test_worker_reasoner_architect_and_surveyor_variants_installed_as_generated_files(
         self, claude_home: Path
     ) -> None:
         agents_dir = claude_home / ".claude" / "agents"
@@ -262,6 +262,9 @@ class TestClaudeCodeAgentsInstallLayout:
             "architect-opus-medium.md",
             "architect-opus-high.md",
             "architect-opus-xhigh.md",
+            "surveyor-sonnet-low.md",
+            "surveyor-sonnet-medium.md",
+            "surveyor-sonnet-high.md",
         }
         for name in expected:
             path = agents_dir / name
@@ -271,6 +274,7 @@ class TestClaudeCodeAgentsInstallLayout:
         assert not (agents_dir / "worker.md").exists()
         assert not (agents_dir / "reasoner.md").exists()
         assert not (agents_dir / "architect.md").exists()
+        assert not (agents_dir / "surveyor.md").exists()
 
         _, frontmatter = parse_frontmatter(
             (agents_dir / "worker-sonnet-low.md").read_text(encoding="utf-8")
@@ -278,6 +282,19 @@ class TestClaudeCodeAgentsInstallLayout:
         assert frontmatter["model"] == "sonnet"
         assert frontmatter["effort"] == "low"
         assert "generate_variants" not in frontmatter
+
+    def test_surveyor_variant_keeps_read_only_tool_restriction(
+        self, claude_home: Path
+    ) -> None:
+        agents_dir = claude_home / ".claude" / "agents"
+
+        _, frontmatter = parse_frontmatter(
+            (agents_dir / "surveyor-sonnet-medium.md").read_text(encoding="utf-8")
+        )
+        disallowed = frontmatter["disallowedTools"]
+        assert "Write" in disallowed
+        assert "Edit" in disallowed
+        assert "NotebookEdit" in disallowed
 
 
 class TestClaudeCodeAgentsManifestTracking:
