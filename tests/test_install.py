@@ -286,7 +286,7 @@ class TestInstallPluginSkills:
         agents_dir = tmp_path / "agents"
 
         managed = _install_plugin_skills(
-            [("tdd", src)], agents_dir, "claude-code", set()
+            [("tdd", src, {})], agents_dir, "claude-code", set()
         )
 
         dest = agents_dir / "skills" / "tdd"
@@ -302,7 +302,7 @@ class TestInstallPluginSkills:
         (existing / "SKILL.md").write_text("# BUILTIN\n", encoding="utf-8")
 
         managed = _install_plugin_skills(
-            [("tdd", src)], agents_dir, "claude-code", {"tdd"}
+            [("tdd", src, {})], agents_dir, "claude-code", {"tdd"}
         )
 
         assert existing.is_symlink() is False
@@ -317,7 +317,7 @@ class TestInstallPluginSkills:
 
         with patch("llm_prompts.install.shutil.which", return_value=None):
             managed = _install_plugin_skills(
-                [("gated", src)], agents_dir, "claude-code", set()
+                [("gated", src, {})], agents_dir, "claude-code", set()
             )
 
         assert (agents_dir / "skills" / "gated").exists() is False
@@ -329,12 +329,38 @@ class TestInstallPluginSkills:
         agents_dir = tmp_path / "agents"
 
         managed = _install_plugin_skills(
-            [("dup", first), ("dup", second)], agents_dir, "claude-code", set()
+            [("dup", first, {}), ("dup", second, {})],
+            agents_dir,
+            "claude-code",
+            set(),
         )
 
         dest = agents_dir / "skills" / "dup"
         assert dest.resolve() == first.resolve()
         assert managed == {"dup"}
+
+    def test_override_materializes_directory_no_override_stays_symlink(
+        self, tmp_path: Path
+    ) -> None:
+        src_a = self._make_skill(tmp_path / "checkout", "skill-a", "# a\n")
+        src_b = self._make_skill(tmp_path / "checkout", "skill-b", "# b\n")
+        agents_dir = tmp_path / "agents"
+
+        managed = _install_plugin_skills(
+            [
+                ("skill-a", src_a, {"disable-model-invocation": "false"}),
+                ("skill-b", src_b, {}),
+            ],
+            agents_dir,
+            "claude-code",
+            set(),
+        )
+
+        dest_a = agents_dir / "skills" / "skill-a"
+        dest_b = agents_dir / "skills" / "skill-b"
+        assert dest_a.is_dir() and not dest_a.is_symlink()
+        assert dest_b.is_symlink()
+        assert managed == {"skill-a", "skill-b"}
 
 
 class TestMaterializeOverrideSkill:
@@ -462,6 +488,49 @@ class TestMainValidatesPlugins:
             install_main(["claude-code"])
 
         assert not (home / ".claude" / "skills").exists()
+
+    def test_frontmatter_overrides_scoped_per_skill_name(
+        self, tmp_path: Path
+    ) -> None:
+        home = tmp_path / "home"
+        home.mkdir()
+        manifest = tmp_path / "installed.json"
+        checkout = tmp_path / "checkout"
+        (checkout / "skills" / "skill-a").mkdir(parents=True)
+        (checkout / "skills" / "skill-a" / "SKILL.md").write_text(
+            "---\ndisable-model-invocation: true\n---\n\nBody.\n", encoding="utf-8"
+        )
+        (checkout / "skills" / "skill-b").mkdir(parents=True)
+        (checkout / "skills" / "skill-b" / "SKILL.md").write_text(
+            "---\ndisable-model-invocation: true\n---\n\nBody.\n", encoding="utf-8"
+        )
+
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+            patch(
+                "llm_prompts.plugins._load_plugins",
+                return_value=[
+                    {
+                        "name": "multi",
+                        "source": "https://x.git",
+                        "frontmatter_overrides": {
+                            "skill-a": {"disable-model-invocation": False}
+                        },
+                    }
+                ],
+            ),
+            patch("llm_prompts.plugins.ensure_cloned", return_value=checkout),
+        ):
+            install_main(["claude-code"])
+
+        dest_a = home / ".claude" / "skills" / "skill-a"
+        dest_b = home / ".claude" / "skills" / "skill-b"
+        assert dest_a.is_dir() and not dest_a.is_symlink()
+        content_a = (dest_a / "SKILL.md").read_text(encoding="utf-8")
+        assert "disable-model-invocation: false" in content_a
+        assert dest_b.is_symlink()
 
 
 _NON_GATING_FRONTMATTER = (

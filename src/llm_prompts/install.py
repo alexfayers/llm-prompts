@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 from .render_template import (
     find_unreplaced_variables,
@@ -806,7 +806,7 @@ def _install_skills(
 
 
 def _install_plugin_skills(
-    skill_pairs: list[tuple[str, Path]],
+    skill_pairs: list[tuple[str, Path, dict[str, str]]],
     skills_parent: Path,
     agent_name: str,
     already_managed: set[str],
@@ -814,11 +814,14 @@ def _install_plugin_skills(
     """Install plugin-source skills as symlinks, lowest priority.
 
     Plugin skills never overwrite a built-in/overlay skill of the same name, and
-    a duplicate name across plugins resolves in config order (first wins).
+    a duplicate name across plugins resolves in config order (first wins). A
+    skill with a non-empty override map is materialized as a real directory
+    with a patched ``SKILL.md``; one with no overrides is installed as a plain
+    symlink, unchanged from today's behavior.
 
     Args:
-        skill_pairs: ``(name, source_dir)`` pairs from plugin discovery, in
-            config order.
+        skill_pairs: ``(name, source_dir, overrides)`` triples from plugin
+            discovery, in config order.
         skills_parent: Parent directory whose ``skills`` subdir receives symlinks.
         agent_name: Target agent name, for the requires-gate and
             ``exclude_targets`` checks.
@@ -831,7 +834,7 @@ def _install_plugin_skills(
     dest_root = skills_parent / "skills"
     managed: set[str] = set()
     seen: set[str] = set()
-    for name, src_dir in skill_pairs:
+    for name, src_dir, overrides in skill_pairs:
         if name in already_managed:
             log("warn", f"Plugin skill '{name}' shadowed by existing skill, skipping")
             continue
@@ -850,7 +853,10 @@ def _install_plugin_skills(
         if agent_name in _excluded_targets(skill_md):
             log("debug", f"Skipping plugin skill '{name}': excluded for {agent_name}.")
             continue
-        _install_symlink(src_dir, dest_root / name, "plugin skill", managed)
+        if overrides:
+            _materialize_override_skill(src_dir, dest_root / name, overrides, managed)
+        else:
+            _install_symlink(src_dir, dest_root / name, "plugin skill", managed)
     return managed
 
 
@@ -1287,6 +1293,7 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
 
     from .plugins import (
         _load_plugins,
+        _stringify_override,
         _validate_plugins,
         discover_skills,
         ensure_cloned,
@@ -1299,12 +1306,20 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
             log("error", err)
         sys.exit(1)
 
-    plugin_skill_pairs: list[tuple[str, Path]] = []
+    plugin_skill_pairs: list[tuple[str, Path, dict[str, str]]] = []
     for plugin in plugins:
         checkout = ensure_cloned(plugin)
         if checkout is None:
             continue
-        plugin_skill_pairs.extend(discover_skills(checkout, plugin.get("skills")))
+        overrides_by_skill: dict[str, dict[str, Any]] = (
+            plugin.get("frontmatter_overrides") or {}
+        )
+        for name, src in discover_skills(checkout, plugin.get("skills")):
+            overrides = {
+                key: _stringify_override(value)
+                for key, value in overrides_by_skill.get(name, {}).items()
+            }
+            plugin_skill_pairs.append((name, src, overrides))
 
     if "cline" in targets:
         agents_dir, _ = _get_cline_extra_dirs()
