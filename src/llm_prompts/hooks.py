@@ -18,7 +18,7 @@ logger = logging.getLogger("hooks.llm-prompts")
 
 _WRITE_TOOLS = frozenset({"replace_in_file", "write_to_file"})
 _DEBOUNCE_SECONDS = 5.0
-_UPDATE_CHECK_INTERVAL = 6.0 * 60 * 60
+_UPDATE_CHECK_INTERVAL = 60 * 60
 
 
 class _ReinstallDebouncer:
