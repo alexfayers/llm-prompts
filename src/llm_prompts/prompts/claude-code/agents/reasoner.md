@@ -2,7 +2,7 @@
 name: reasoner
 description: Generic design/judgment agent for architecture, root-cause investigation, and synthesis work that should stay off the main thread.
 disallowedTools: Agent
-generate_variants: opus-high,opus-xhigh
+generate_variants: opus-medium,opus-high,opus-xhigh
 color: green
 ---
 

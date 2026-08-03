@@ -14,7 +14,7 @@ description: >-
   pipeline - not for one-off lookups or mechanical execution, which belong to Sonnet or
   Haiku teammates.
 disallowedTools: Agent
-model: opus
+generate_variants: opus-medium,opus-high,opus-xhigh
 color: green
 ---
 
