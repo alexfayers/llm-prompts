@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from llm_prompts.install import (
+    _apply_frontmatter_overrides,
     _expand_agent_variants,
     _install_agents,
     get_managed_dirs,
@@ -42,6 +43,44 @@ def _make_variant_template(
         encoding="utf-8",
     )
     return path
+
+
+class TestApplyFrontmatterOverrides:
+    def test_replaces_existing_key(self) -> None:
+        content = "---\ndisable-model-invocation: true\n---\n\nBody.\n"
+        result = _apply_frontmatter_overrides(
+            content, {"disable-model-invocation": "false"}
+        )
+        _, frontmatter = parse_frontmatter(result)
+        assert frontmatter["disable-model-invocation"] == "false"
+
+    def test_appends_absent_key(self) -> None:
+        content = "---\nname: foo\n---\n\nBody.\n"
+        result = _apply_frontmatter_overrides(content, {"priority": "1"})
+        _, frontmatter = parse_frontmatter(result)
+        assert frontmatter["name"] == "foo"
+        assert frontmatter["priority"] == "1"
+
+    def test_other_frontmatter_lines_byte_identical(self) -> None:
+        content = (
+            '---\nname: foo\ndescription: "A thing"\n---\n\nBody.\n'
+        )
+        result = _apply_frontmatter_overrides(content, {"name": "bar"})
+        split = result.split("---\n")
+        assert 'description: "A thing"' in split[1]
+
+    def test_body_byte_identical(self) -> None:
+        content = "---\nname: foo\n---\n\nLine one.\nLine two.\n"
+        result = _apply_frontmatter_overrides(content, {"name": "bar"})
+        body, _ = parse_frontmatter(result)
+        assert body == "Line one.\nLine two.\n"
+
+    def test_synthesizes_block_when_none_exists(self) -> None:
+        content = "Body only, no frontmatter.\n"
+        result = _apply_frontmatter_overrides(content, {"name": "foo"})
+        body, frontmatter = parse_frontmatter(result)
+        assert frontmatter["name"] == "foo"
+        assert body == content
 
 
 class TestExpandAgentVariants:

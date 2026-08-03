@@ -16,6 +16,7 @@ from llm_prompts.install import (
     _install_linked,
     _install_plugin_skills,
     _install_skills,
+    _materialize_override_skill,
     _passes_requires_gate,
 )
 from llm_prompts.install import main as install_main
@@ -334,6 +335,111 @@ class TestInstallPluginSkills:
         dest = agents_dir / "skills" / "dup"
         assert dest.resolve() == first.resolve()
         assert managed == {"dup"}
+
+
+class TestMaterializeOverrideSkill:
+    def _make_skill(
+        self, parent: Path, name: str, skill_md: str, *extra_files: str
+    ) -> Path:
+        skill_dir = parent / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
+        for extra in extra_files:
+            (skill_dir / extra).write_text("extra", encoding="utf-8")
+        return skill_dir
+
+    def test_override_materializes_real_directory_with_patched_skill_md(
+        self, tmp_path: Path
+    ) -> None:
+        src = self._make_skill(
+            tmp_path / "checkout",
+            "adhd",
+            "---\ndisable-model-invocation: true\n---\n\nBody.\n",
+        )
+        dest = tmp_path / "dest" / "adhd"
+        managed: set[str] = set()
+
+        _materialize_override_skill(
+            src, dest, {"disable-model-invocation": "false"}, managed
+        )
+
+        assert dest.is_dir() and not dest.is_symlink()
+        content = (dest / "SKILL.md").read_text(encoding="utf-8")
+        assert "disable-model-invocation: false" in content
+        assert "adhd" in managed
+
+    def test_sibling_files_symlinked_and_stay_live(self, tmp_path: Path) -> None:
+        src = self._make_skill(
+            tmp_path / "checkout", "adhd", "# adhd\n", "reference.md"
+        )
+        dest = tmp_path / "dest" / "adhd"
+
+        _materialize_override_skill(src, dest, {"name": "adhd"}, set())
+
+        sibling = dest / "reference.md"
+        assert sibling.is_symlink()
+        (src / "reference.md").write_text("changed", encoding="utf-8")
+        assert sibling.read_text(encoding="utf-8") == "changed"
+
+    def test_sibling_removed_upstream_is_pruned(self, tmp_path: Path) -> None:
+        src = self._make_skill(
+            tmp_path / "checkout", "adhd", "# adhd\n", "reference.md"
+        )
+        dest = tmp_path / "dest" / "adhd"
+        _materialize_override_skill(src, dest, {"name": "adhd"}, set())
+        assert (dest / "reference.md").exists()
+
+        (src / "reference.md").unlink()
+        _materialize_override_skill(src, dest, {"name": "adhd"}, set())
+
+        assert not (dest / "reference.md").exists()
+
+    def test_idempotent_second_run_rewrites_nothing(self, tmp_path: Path) -> None:
+        src = self._make_skill(
+            tmp_path / "checkout",
+            "adhd",
+            "---\ndisable-model-invocation: true\n---\n\nBody.\n",
+        )
+        dest = tmp_path / "dest" / "adhd"
+        _materialize_override_skill(
+            src, dest, {"disable-model-invocation": "false"}, set()
+        )
+        before = (dest / "SKILL.md").stat().st_mtime_ns
+
+        _materialize_override_skill(
+            src, dest, {"disable-model-invocation": "false"}, set()
+        )
+
+        after = (dest / "SKILL.md").stat().st_mtime_ns
+        assert before == after
+
+    def test_prior_plain_symlink_converts_to_real_directory(
+        self, tmp_path: Path
+    ) -> None:
+        src = self._make_skill(tmp_path / "checkout", "adhd", "# adhd\n")
+        dest = tmp_path / "dest" / "adhd"
+        dest.parent.mkdir(parents=True)
+        dest.symlink_to(src)
+
+        _materialize_override_skill(src, dest, {"name": "adhd"}, set())
+
+        assert dest.is_dir() and not dest.is_symlink()
+
+    def test_removing_overrides_converts_materialized_dir_back_to_symlink(
+        self, tmp_path: Path
+    ) -> None:
+        src = self._make_skill(tmp_path / "checkout", "adhd", "# adhd\n")
+        dest = tmp_path / "dest" / "adhd"
+        _materialize_override_skill(src, dest, {"name": "adhd"}, set())
+        assert dest.is_dir() and not dest.is_symlink()
+
+        managed: set[str] = set()
+        from llm_prompts.install import _install_symlink
+
+        _install_symlink(src, dest, "plugin skill", managed)
+
+        assert dest.is_symlink()
+        assert dest.resolve() == src.resolve()
 
 
 class TestMainValidatesPlugins:

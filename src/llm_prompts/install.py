@@ -679,6 +679,85 @@ def _install_symlink(source: Path, dest: Path, label: str, managed: set[str]) ->
         log("error", f"Failed to install {label} '{name}': {e}")
 
 
+def _apply_frontmatter_overrides(content: str, overrides: dict[str, str]) -> str:
+    """Rewrite matching frontmatter keys with override values, preserving the rest.
+
+    Replaces each key present in both ``content``'s frontmatter and ``overrides``;
+    appends any override key absent from the frontmatter. All other frontmatter
+    lines and the body are carried verbatim. Synthesizes a frontmatter block if
+    ``content`` has none.
+
+    Args:
+        content: Source ``SKILL.md`` content.
+        overrides: Frontmatter key/value overrides, values already stringified.
+
+    Returns:
+        Content with the overrides applied.
+    """
+    split = split_frontmatter(content)
+    frontmatter_lines, body = split if split is not None else ([], content)
+
+    remaining = dict(overrides)
+    lines = []
+    for line in frontmatter_lines:
+        key = line.partition(": ")[0].strip()
+        if key in remaining:
+            lines.append(f"{key}: {remaining.pop(key)}")
+        else:
+            lines.append(line)
+    for key, value in remaining.items():
+        lines.append(f"{key}: {value}")
+
+    return "---\n" + "\n".join(lines) + "\n---\n" + body
+
+
+def _materialize_override_skill(
+    source: Path, dest: Path, overrides: dict[str, str], managed: set[str]
+) -> None:
+    """Install a plugin skill as a real directory with a patched ``SKILL.md``.
+
+    ``dest`` becomes a real directory (converted from a symlink/file if needed)
+    containing a frontmatter-patched ``SKILL.md`` plus every other top-level
+    entry of ``source`` symlinked in, so siblings keep tracking upstream. Any
+    entry in ``dest`` no longer present in ``source`` is pruned, since manifest
+    cleanup never inspects a skill directory's contents.
+
+    Args:
+        source: Plugin skill's checkout directory.
+        dest: Destination skill directory.
+        overrides: Frontmatter key/value overrides, values already stringified.
+        managed: Set to accumulate the installed destination name into.
+    """
+    name = dest.name
+    try:
+        if dest.is_symlink() or (dest.exists() and not dest.is_dir()):
+            dest.unlink()
+        dest.mkdir(parents=True, exist_ok=True)
+
+        patched = _apply_frontmatter_overrides(
+            _read_text(source / "SKILL.md"), overrides
+        )
+        _write_if_changed(dest / "SKILL.md", patched, f"plugin skill '{name}' SKILL.md")
+
+        source_names = {entry.name for entry in source.iterdir()}
+        for entry in source.iterdir():
+            if entry.name == "SKILL.md":
+                continue
+            _install_symlink(entry, dest / entry.name, "plugin skill sibling", set())
+
+        for existing in dest.iterdir():
+            if existing.name == "SKILL.md" or existing.name in source_names:
+                continue
+            if existing.is_symlink() or existing.is_file():
+                existing.unlink()
+            else:
+                shutil.rmtree(existing)
+
+        managed.add(name)
+    except Exception as e:
+        log("error", f"Failed to materialize plugin skill '{name}': {e}")
+
+
 def _install_skills(
     candidate_dirs: list[Path], skills_parent: Path, agent_name: str
 ) -> set[str]:
