@@ -6,7 +6,6 @@ from importlib.resources import files
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import sys
 from typing import ClassVar, Literal
@@ -16,6 +15,7 @@ from .render_template import (
     normalize_whitespace,
     parse_frontmatter,
     render_template,
+    split_frontmatter,
     strip_gating_keys,
 )
 
@@ -791,12 +791,12 @@ def _apply_variant_frontmatter(content: str, stem: str, model: str, effort: str)
     Returns:
         Content with the variant's frontmatter applied.
     """
-    match = re.match(r"^---\n(.*?)\n---\n?", content, re.DOTALL)
-    if not match:
+    split = split_frontmatter(content)
+    if split is None:
         return content
-    body = content[match.end() :]
+    frontmatter_lines, body = split
     lines = []
-    for line in match.group(1).splitlines():
+    for line in frontmatter_lines:
         key = line.partition(": ")[0].strip()
         if key == "name":
             lines.append(f"name: {stem}-{model}-{effort}")

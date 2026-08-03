@@ -52,6 +52,22 @@ def parse_frontmatter(content: str) -> tuple[str, dict[str, str]]:
     return body, frontmatter_dict
 
 
+def split_frontmatter(content: str) -> tuple[list[str], str] | None:
+    """Split content into its frontmatter lines and verbatim body.
+
+    Args:
+        content: File content that may begin with a ``---`` frontmatter block.
+
+    Returns:
+        A ``(frontmatter_lines, body)`` pair, or ``None`` when no block is
+        present. The body is returned verbatim (no leading-newline stripping).
+    """
+    match = re.match(r"^---\n(.*?)\n---\n?", content, re.DOTALL)
+    if not match:
+        return None
+    return match.group(1).splitlines(), content[match.end() :]
+
+
 def strip_gating_keys(content: str, keys: set[str]) -> str:
     """Remove gating frontmatter keys from content, preserving other keys verbatim.
 
@@ -66,13 +82,13 @@ def strip_gating_keys(content: str, keys: set[str]) -> str:
     Returns:
         Content with the named gating keys removed from its frontmatter.
     """
-    match = re.match(r"^---\n(.*?)\n---\n?", content, re.DOTALL)
-    if not match:
+    split = split_frontmatter(content)
+    if split is None:
         return content
-    body = content[match.end() :]
+    frontmatter_lines, body = split
     kept = [
         line
-        for line in match.group(1).splitlines()
+        for line in frontmatter_lines
         if line.partition(": ")[0].strip() not in keys
     ]
     if not kept:

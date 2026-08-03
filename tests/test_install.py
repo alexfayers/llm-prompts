@@ -19,7 +19,11 @@ from llm_prompts.install import (
     _passes_requires_gate,
 )
 from llm_prompts.install import main as install_main
-from llm_prompts.render_template import render_template, strip_gating_keys
+from llm_prompts.render_template import (
+    render_template,
+    split_frontmatter,
+    strip_gating_keys,
+)
 
 
 def _make_rule(directory: Path, name: str, body: str = "body") -> Path:
@@ -366,6 +370,16 @@ _NON_GATING_FRONTMATTER = (
     "\n"
     "# Body\n"
 )
+
+
+class TestSplitFrontmatter:
+    def test_returns_none_when_no_frontmatter_block(self) -> None:
+        assert split_frontmatter("# Body\n\nsome text\n") is None
+
+    def test_splits_lines_and_body(self) -> None:
+        content = "---\nname: foo\ndescription: A thing\n---\n\n# Body\n"
+        result = split_frontmatter(content)
+        assert result == (["name: foo", "description: A thing"], "\n# Body\n")
 
 
 class TestStripGatingKeys:
