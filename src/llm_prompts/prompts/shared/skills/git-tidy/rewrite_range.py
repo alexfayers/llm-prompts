@@ -86,25 +86,33 @@ def build_sequence_script(plan: list[dict[str, str]], script_path: Path) -> None
 
 
 def build_message_script(plan: list[dict[str, str]], script_path: Path) -> None:
-    """Write a GIT_EDITOR script that applies message overrides in order."""
+    """Write a GIT_EDITOR script that applies message overrides in order.
+
+    Each message is written to its own numbered file (rather than one
+    newline-joined queue read back line-by-line) so multi-line messages
+    survive intact.
+    """
     messages = [entry["message"] for entry in plan if entry["verb"] in ("squash", "reword") and entry.get("message")]
     if not messages:
         script_path.write_text("#!/bin/bash\ntrue\n")
         script_path.chmod(0o755)
         return
 
-    queue_file = script_path.with_suffix(".queue")
-    queue_file.write_text("\n".join(messages) + "\n")
+    queue_dir = script_path.with_suffix(".queue.d")
+    queue_dir.mkdir(exist_ok=True)
+    for index, message in enumerate(messages, start=1):
+        (queue_dir / f"{index}.txt").write_text(message)
 
+    count_file = script_path.with_suffix(".count")
     script = f"""#!/bin/bash
 FILE="$1"
-QUEUE="{queue_file}"
-COUNT_FILE="{queue_file}.count"
+QUEUE_DIR="{queue_dir}"
+COUNT_FILE="{count_file}"
 COUNT=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
-LINE=$((COUNT + 1))
-MESSAGE=$(sed -n "${{LINE}}p" "$QUEUE")
-if [ -n "$MESSAGE" ]; then
-  echo "$MESSAGE" > "$FILE"
+INDEX=$((COUNT + 1))
+MESSAGE_FILE="$QUEUE_DIR/$INDEX.txt"
+if [ -f "$MESSAGE_FILE" ]; then
+  cp "$MESSAGE_FILE" "$FILE"
   echo $((COUNT + 1)) > "$COUNT_FILE"
 fi
 """
