@@ -12,8 +12,10 @@ from typing import Any
 from .setup import (
     _CONFIG_DIR,
     _GIT_TIMEOUT,
+    _commit_subjects_between,
     _extract_git_url,
-    _remote_update_message,
+    _format_update_message,
+    _remote_head,
     _run_parallel_ordered,
 )
 
@@ -284,10 +286,20 @@ def plugin_source_messages(plugin: dict[str, Any]) -> list[str]:
     )
     if local.returncode != 0:
         return []
+    local_sha = local.stdout.strip()
 
-    return _remote_update_message(
-        name, local.stdout.strip(), git_url, plugin.get("ref")
+    remote_sha = _remote_head(git_url, plugin.get("ref"))
+    if remote_sha is None or remote_sha == local_sha:
+        return []
+
+    subprocess.run(
+        ["git", "-C", str(checkout), "fetch", "--quiet"],
+        check=False,
+        capture_output=True,
+        timeout=_GIT_TIMEOUT,
     )
+    subjects = _commit_subjects_between(checkout, local_sha, "FETCH_HEAD")
+    return _format_update_message(name, subjects, local_sha, remote_sha)
 
 
 _IGNORED_COMPONENTS = ("commands", "agents", "hooks", ".mcp.json", ".lsp.json")

@@ -19,6 +19,29 @@ def _clear_fetch_cache() -> None:
     setup._fetch_remote_pyproject.cache_clear()
 
 
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _init_repo(repo: Path) -> None:
+    repo.mkdir(parents=True, exist_ok=True)
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+
+
+def _commit(repo: Path, filename: str, content: str, message: str) -> str:
+    (repo / filename).write_text(content)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", message)
+    return _git(repo, "rev-parse", "HEAD").stdout.strip()
+
+
 class TestReadPyproject:
     def test_local_valid(self, tmp_path: Path) -> None:
         (tmp_path / "pyproject.toml").write_text(
@@ -204,3 +227,67 @@ class TestRunParallelOrdered:
     def test_preserves_submission_order(self) -> None:
         calls = [lambda: ["a"], lambda: ["b"], lambda: ["c"]]
         assert setup._run_parallel_ordered(calls) == [["a"], ["b"], ["c"]]
+
+
+class TestRemoteHead:
+    def test_returns_remote_sha(self) -> None:
+        with patch("llm_prompts.setup.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="deadbeef\tHEAD\n")
+            assert setup._remote_head("https://x/repo.git", None) == "deadbeef"
+
+    def test_returns_none_on_failure(self) -> None:
+        with patch("llm_prompts.setup.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=128, stdout="")
+            assert setup._remote_head("https://x/repo.git", None) is None
+
+    def test_returns_none_on_empty_output(self) -> None:
+        with patch("llm_prompts.setup.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="")
+            assert setup._remote_head("https://x/repo.git", "main") is None
+
+
+class TestCommitSubjectsBetween:
+    def test_lists_subjects_between_shas(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        _init_repo(repo)
+        base = _commit(repo, "a.txt", "1\n", "base")
+        _commit(repo, "b.txt", "2\n", "second")
+        tip = _commit(repo, "c.txt", "3\n", "third")
+        assert setup._commit_subjects_between(repo, base, tip) == ["third", "second"]
+
+    def test_returns_none_on_failure(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        _init_repo(repo)
+        _commit(repo, "a.txt", "1\n", "base")
+        assert setup._commit_subjects_between(repo, "nope1", "nope2") is None
+
+
+class TestFormatUpdateMessage:
+    def test_lists_subjects_with_trailing_instruction(self) -> None:
+        result = setup._format_update_message("core", ["Add feature X", "Fix bug Y"])
+        assert len(result) == 1
+        assert result[0] == (
+            "[core] update available:\n"
+            "- Add feature X\n"
+            "- Fix bug Y\n"
+            "Summarize these changes for the user in plain language, and flag "
+            "anything that looks like a breaking change."
+        )
+
+    def test_caps_list_and_reports_remainder(self) -> None:
+        subjects = [f"commit {i}" for i in range(25)]
+        result = setup._format_update_message("core", subjects, cap=20)
+        body = result[0]
+        assert "- commit 19" in body
+        assert "- commit 20" not in body
+        assert "... and 5 more" in body
+
+    def test_falls_back_to_sha_pair_when_subjects_missing(self) -> None:
+        assert setup._format_update_message(
+            "core", None, local="abc123aa", remote="def456bb"
+        ) == ["[core] update available (abc123aa -> def456bb)"]
+
+    def test_falls_back_to_bare_message_without_shas(self) -> None:
+        assert setup._format_update_message("core", []) == [
+            "[core] update available"
+        ]

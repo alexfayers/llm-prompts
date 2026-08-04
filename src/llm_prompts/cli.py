@@ -12,7 +12,13 @@ import shutil
 import subprocess
 import sys
 
-from .setup import _GIT_TIMEOUT, _extract_git_url, _remote_update_message
+from .setup import (
+    _GIT_TIMEOUT,
+    _extract_git_url,
+    _format_update_message,
+    _remote_commit_subjects,
+    _remote_head,
+)
 
 _AGENTS = ("cline", "copilot", "kiro", "claude-code", "codex")
 
@@ -142,7 +148,12 @@ def _remote_source_messages(name: str, source: str) -> list[str]:
     if not installed_commit:
         return [f"[{name}] not installed (run `llm-prompts setup` first)"]
 
-    return _remote_update_message(name, installed_commit, git_url)
+    remote_commit = _remote_head(git_url, None)
+    if remote_commit is None or remote_commit == installed_commit:
+        return []
+
+    subjects = _remote_commit_subjects(git_url, installed_commit, remote_commit)
+    return _format_update_message(name, subjects, installed_commit, remote_commit)
 
 
 def _local_source_messages(name: str, source: str) -> list[str]:
@@ -174,9 +185,18 @@ def _local_source_messages(name: str, source: str) -> list[str]:
         return []
 
     count = int(result.stdout.strip())
-    if count > 0:
-        return [f"[{name}] {count} new commit(s) available"]
-    return []
+    if count == 0:
+        return []
+
+    log = subprocess.run(
+        ["git", "-C", str(repo), "log", "--pretty=format:%s", "HEAD..@{u}"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=_GIT_TIMEOUT,
+    )
+    subjects = log.stdout.splitlines() if log.returncode == 0 else None
+    return _format_update_message(name, subjects)
 
 
 def _pull_one_local_source(name: str, source: str) -> list[str]:

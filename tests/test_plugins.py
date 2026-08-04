@@ -377,7 +377,7 @@ class TestPluginSourceMessages:
         plugins.ensure_cloned(plugin)
         assert plugins.plugin_source_messages(plugin) == []
 
-    def test_update_available_reports_shas(
+    def test_update_available_lists_commit_subjects(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         upstream = tmp_path / "upstream"
@@ -386,7 +386,12 @@ class TestPluginSourceMessages:
         monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
         plugin = {"name": "p", "source": f"git+file://{upstream}"}
         plugins.ensure_cloned(plugin)
-        _commit(upstream, "SKILL.md", "# s2\n", "second")
+        _commit(upstream, "SKILL.md", "# s2\n", "second commit subject")
         messages = plugins.plugin_source_messages(plugin)
         assert len(messages) == 1
-        assert "update available" in messages[0]
+        assert messages[0] == (
+            "[p] update available:\n"
+            "- second commit subject\n"
+            "Summarize these changes for the user in plain language, and flag "
+            "anything that looks like a breaking change."
+        )

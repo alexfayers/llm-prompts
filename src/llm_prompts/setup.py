@@ -57,20 +57,56 @@ def _extract_git_url(source: str) -> str | None:
     return None
 
 
-def _remote_update_message(
-    name: str, local_commit: str, git_url: str, ref: str | None = None
+_UPDATE_INSTRUCTION = (
+    "Summarize these changes for the user in plain language, and flag "
+    "anything that looks like a breaking change."
+)
+
+
+def _format_update_message(
+    name: str,
+    subjects: list[str] | None,
+    local: str | None = None,
+    remote: str | None = None,
+    cap: int = 20,
 ) -> list[str]:
-    """Compare a known local commit against a remote git ref via ls-remote.
+    """Build an update-availability message, listing commit subjects when known.
 
     Args:
-        name: The source name, used in the message.
-        local_commit: The currently-installed or checked-out commit SHA.
-        git_url: The remote git URL to query.
-        ref: The remote ref to compare against; defaults to ``HEAD``.
+        name: The source name, used in the header.
+        subjects: Commit subject lines newer than the local commit, or ``None``
+            when the commit list could not be determined.
+        local: The local commit SHA, used only for the bare fallback message.
+        remote: The remote commit SHA, used only for the bare fallback message.
+        cap: Maximum number of subject lines to list before truncating.
 
     Returns:
-        A one-line "update available" message if the remote ref points at a
-        different commit, or an empty list.
+        A single multi-line message listing the commit subjects and a trailing
+        instruction, or the bare "update available" fallback when ``subjects``
+        is empty/``None``.
+    """
+    if not subjects:
+        if local and remote:
+            return [f"[{name}] update available ({local[:8]} -> {remote[:8]})"]
+        return [f"[{name}] update available"]
+
+    lines = [f"[{name}] update available:"]
+    lines.extend(f"- {subject}" for subject in subjects[:cap])
+    if len(subjects) > cap:
+        lines.append(f"... and {len(subjects) - cap} more")
+    lines.append(_UPDATE_INSTRUCTION)
+    return ["\n".join(lines)]
+
+
+def _remote_head(git_url: str, ref: str | None) -> str | None:
+    """Return the commit SHA a remote git ref points at, via ls-remote.
+
+    Args:
+        git_url: The remote git URL to query.
+        ref: The remote ref to resolve; defaults to ``HEAD``.
+
+    Returns:
+        The remote commit SHA, or ``None`` if the query fails or is empty.
     """
     result = subprocess.run(
         ["git", "ls-remote", git_url, ref or "HEAD"],
@@ -80,13 +116,82 @@ def _remote_update_message(
         timeout=_GIT_TIMEOUT,
     )
     if result.returncode != 0 or not result.stdout.strip():
-        return []
-    remote_commit = result.stdout.split()[0]
-    if remote_commit != local_commit:
-        return [
-            f"[{name}] update available ({local_commit[:8]} -> {remote_commit[:8]})"
-        ]
-    return []
+        return None
+    return result.stdout.split()[0]
+
+
+def _commit_subjects_between(
+    repo: Path, from_sha: str, to_sha: str
+) -> list[str] | None:
+    """Return the commit subjects in ``from_sha..to_sha`` within a local repo.
+
+    Args:
+        repo: A local git checkout to run ``git log`` against.
+        from_sha: The exclusive lower-bound commit.
+        to_sha: The inclusive upper-bound commit.
+
+    Returns:
+        The subject lines newest-first, or ``None`` if the log command fails.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(repo), "log", "--pretty=format:%s", f"{from_sha}..{to_sha}"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=_GIT_TIMEOUT,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.splitlines()
+
+
+def _remote_commit_subjects(
+    git_url: str, from_sha: str, to_sha: str
+) -> list[str] | None:
+    """Get commit subjects between two SHAs by cloning a remote into a temp dir.
+
+    Uses a treeless, no-checkout partial clone to fetch history cheaply. Any
+    failure (git missing, clone/log error, timeout) degrades to ``None`` rather
+    than raising, so the caller can fall back to a bare message.
+
+    Args:
+        git_url: The remote git URL to clone.
+        from_sha: The exclusive lower-bound commit.
+        to_sha: The inclusive upper-bound commit.
+
+    Returns:
+        The subject lines newest-first, or ``None`` on any failure.
+    """
+    if not shutil.which("git"):
+        print(
+            f"Warning: git not available; skipping commit subjects for {git_url}",
+            file=sys.stderr,
+        )
+        return None
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = subprocess.run(
+                ["git", "clone", "--filter=tree:0", "--no-checkout", git_url, tmp],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=_GIT_TIMEOUT,
+            )
+            if result.returncode != 0:
+                print(
+                    f"Warning: could not clone {git_url} for commit subjects",
+                    file=sys.stderr,
+                )
+                return None
+            return _commit_subjects_between(Path(tmp), from_sha, to_sha)
+    except subprocess.TimeoutExpired:
+        print(
+            f"Warning: timed out cloning {git_url} for commit subjects",
+            file=sys.stderr,
+        )
+        return None
+    except Exception:
+        return None
 
 
 def _run_parallel_ordered(callables: list[Callable[[], list[str]]]) -> list[list[str]]:

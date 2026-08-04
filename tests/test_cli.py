@@ -155,52 +155,75 @@ class TestRemoteSourceMessages:
             assert result == ["[pkg] not installed (run `llm-prompts setup` first)"]
 
     def test_up_to_date(self) -> None:
-        with patch("llm_prompts.cli._get_installed_commit", return_value="abc123"):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(
-                    returncode=0,
-                    stdout="abc123\tHEAD\n",
-                )
-                result = _remote_source_messages(
-                    "pkg", "git+https://github.com/user/repo.git"
-                )
-                assert result == []
+        with (
+            patch("llm_prompts.cli._get_installed_commit", return_value="abc123"),
+            patch("llm_prompts.cli._remote_head", return_value="abc123"),
+        ):
+            result = _remote_source_messages(
+                "pkg", "git+https://github.com/user/repo.git"
+            )
+            assert result == []
 
-    def test_update_available(self) -> None:
-        with patch("llm_prompts.cli._get_installed_commit", return_value="abc123aa"):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(
-                    returncode=0,
-                    stdout="def456bb\tHEAD\n",
-                )
-                result = _remote_source_messages(
-                    "pkg", "git+https://github.com/user/repo.git"
-                )
-                assert result == ["[pkg] update available (abc123aa -> def456bb)"]
+    def test_update_available_lists_commit_subjects(self) -> None:
+        with (
+            patch("llm_prompts.cli._get_installed_commit", return_value="abc123aa"),
+            patch("llm_prompts.cli._remote_head", return_value="def456bb"),
+            patch(
+                "llm_prompts.cli._remote_commit_subjects",
+                return_value=["Add X", "Fix Y"],
+            ),
+        ):
+            result = _remote_source_messages(
+                "pkg", "git+https://github.com/user/repo.git"
+            )
+            assert result == [
+                "[pkg] update available:\n"
+                "- Add X\n"
+                "- Fix Y\n"
+                "Summarize these changes for the user in plain language, and flag "
+                "anything that looks like a breaking change."
+            ]
+
+    def test_update_available_falls_back_to_shas_when_clone_fails(self) -> None:
+        with (
+            patch("llm_prompts.cli._get_installed_commit", return_value="abc123aa"),
+            patch("llm_prompts.cli._remote_head", return_value="def456bb"),
+            patch("llm_prompts.cli._remote_commit_subjects", return_value=None),
+        ):
+            result = _remote_source_messages(
+                "pkg", "git+https://github.com/user/repo.git"
+            )
+            assert result == ["[pkg] update available (abc123aa -> def456bb)"]
 
     def test_ls_remote_fails(self) -> None:
-        with patch("llm_prompts.cli._get_installed_commit", return_value="abc123"):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(
-                    returncode=128,
-                    stdout="",
-                )
-                result = _remote_source_messages(
-                    "pkg", "git+https://github.com/user/repo.git"
-                )
-                assert result == []
+        with (
+            patch("llm_prompts.cli._get_installed_commit", return_value="abc123"),
+            patch("llm_prompts.cli._remote_head", return_value=None),
+        ):
+            result = _remote_source_messages(
+                "pkg", "git+https://github.com/user/repo.git"
+            )
+            assert result == []
 
 
 class TestLocalSourceMessages:
-    def test_has_updates(self, tmp_path: Path) -> None:
+    def test_has_updates_lists_commit_subjects(self, tmp_path: Path) -> None:
         (tmp_path / ".git").mkdir()
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
                 MagicMock(returncode=0, stdout=""),
                 MagicMock(returncode=0, stdout="3\n"),
+                MagicMock(returncode=0, stdout="Add A\nFix B\nTweak C\n"),
             ]
             result = _local_source_messages("core", str(tmp_path))
-            assert result == ["[core] 3 new commit(s) available"]
+            assert result == [
+                "[core] update available:\n"
+                "- Add A\n"
+                "- Fix B\n"
+                "- Tweak C\n"
+                "Summarize these changes for the user in plain language, and flag "
+                "anything that looks like a breaking change."
+            ]
 
     def test_up_to_date(self, tmp_path: Path) -> None:
         (tmp_path / ".git").mkdir()
@@ -224,6 +247,17 @@ class TestLocalSourceMessages:
             ]
             result = _local_source_messages("core", str(tmp_path))
             assert result == []
+
+    def test_log_failure_falls_back_to_bare_message(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").mkdir()
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=0, stdout=""),
+                MagicMock(returncode=0, stdout="2\n"),
+                MagicMock(returncode=128, stdout=""),
+            ]
+            result = _local_source_messages("core", str(tmp_path))
+            assert result == ["[core] update available"]
 
 
 class TestPullLocalSources:
