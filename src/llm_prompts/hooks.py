@@ -19,6 +19,7 @@ logger = logging.getLogger("hooks.llm-prompts")
 _WRITE_TOOLS = frozenset({"replace_in_file", "write_to_file"})
 _DEBOUNCE_SECONDS = 5.0
 _UPDATE_CHECK_INTERVAL = 60 * 60
+_DEBOUNCED_TASK_START_SOURCES = frozenset({"resume", "compact"})
 
 
 class _ReinstallDebouncer:
@@ -77,9 +78,24 @@ class AutoReinstallPlugin(HooksPlugin):
             self._installed_paths = frozenset(paths)
         return self._installed_paths
 
-    def _on_task_start(self) -> HookResult | None:
-        """Check for llm-prompts source updates and report any as session notes."""
-        if not self._update_check_debouncer.should_run():
+    def _on_task_start(self, source: str, agent_type: str) -> HookResult | None:
+        """Check for llm-prompts source updates and report any as session notes.
+
+        Args:
+            source: The TaskStart source (e.g. "", "resume", "compact"). A
+                genuine fresh start always runs the check, bypassing the
+                debounce that otherwise throttles resume/compact firings.
+            agent_type: Non-empty when this TaskStart fired inside a subagent
+                rather than the main session; the update check never runs
+                for subagents regardless of source.
+        """
+        if agent_type:
+            return None
+
+        if (
+            source in _DEBOUNCED_TASK_START_SOURCES
+            and not self._update_check_debouncer.should_run()
+        ):
             return None
 
         from .cli import _collect_update_messages  # noqa: PLC0415
@@ -106,7 +122,9 @@ class AutoReinstallPlugin(HooksPlugin):
             A HookResult with notes, or None.
         """
         if hook_name == "TaskStart":
-            return self._on_task_start()
+            return self._on_task_start(
+                str(kwargs.get("source", "")), str(kwargs.get("agent_type", ""))
+            )
 
         if hook_name != "PostToolUse":
             return None

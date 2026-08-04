@@ -216,7 +216,9 @@ class TestUpdateCheckOnTaskStart:
         )
         (tmp_path / "update-stamp").write_text(str(time.time()))
         with patch("llm_prompts.cli._collect_update_messages") as mock_collect:
-            result = plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[])
+            result = plugin.on_hook(
+                "TaskStart", task_id="t1", workspace_roots=[], source="resume"
+            )
         assert result is None
         mock_collect.assert_not_called()
 
@@ -253,3 +255,49 @@ class TestUpdateCheckOnTaskStart:
         assert (
             plugin._update_check_debouncer._interval_seconds == _UPDATE_CHECK_INTERVAL
         )
+
+    def test_fresh_start_bypasses_debounce(self, tmp_path: Path) -> None:
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        (tmp_path / "update-stamp").write_text(str(time.time()))
+        with patch(
+            "llm_prompts.cli._collect_update_messages",
+            return_value=["[pkg] update available (a -> b)"],
+        ):
+            result = plugin.on_hook(
+                "TaskStart", task_id="t1", workspace_roots=[], source=""
+            )
+        assert result is not None
+        assert result.notes == ["[pkg] update available (a -> b)"]
+
+    def test_resume_source_still_debounced(self, tmp_path: Path) -> None:
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        (tmp_path / "update-stamp").write_text(str(time.time()))
+        with patch("llm_prompts.cli._collect_update_messages") as mock_collect:
+            result = plugin.on_hook(
+                "TaskStart", task_id="t1", workspace_roots=[], source="resume"
+            )
+        assert result is None
+        mock_collect.assert_not_called()
+
+    def test_subagent_task_start_skips_check(self, tmp_path: Path) -> None:
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        with patch("llm_prompts.cli._collect_update_messages") as mock_collect:
+            result = plugin.on_hook(
+                "TaskStart",
+                task_id="t1",
+                workspace_roots=[],
+                source="",
+                agent_type="Explore",
+            )
+        assert result is None
+        mock_collect.assert_not_called()
+        assert not (tmp_path / "update-stamp").exists()
