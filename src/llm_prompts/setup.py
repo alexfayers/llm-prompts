@@ -57,6 +57,7 @@ def _extract_git_url(source: str) -> str | None:
     return None
 
 
+# Update prompts/shared/rules/hooks-llm-prompts.md if this message text changes.
 _UPDATE_INSTRUCTION = (
     "Summarize these changes for the user in plain language, and flag "
     "anything that looks like a breaking change."

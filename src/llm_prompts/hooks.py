@@ -78,6 +78,7 @@ class AutoReinstallPlugin(HooksPlugin):
             self._installed_paths = frozenset(paths)
         return self._installed_paths
 
+    # Update prompts/shared/rules/hooks-llm-prompts.md if this note's behavior changes.
     def _on_task_start(self, source: str, agent_type: str) -> HookResult | None:
         """Check for llm-prompts source updates and report any as session notes.
 
@@ -152,6 +153,7 @@ class AutoReinstallPlugin(HooksPlugin):
         if not self._debouncer.should_run():
             return None
 
+        # Update prompts/shared/rules/hooks-llm-prompts.md if this note's behavior changes.
         logger.info("Installed prompt file edited: %s", resolved)
         try:
             subprocess.run(
