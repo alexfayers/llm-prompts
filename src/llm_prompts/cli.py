@@ -443,10 +443,16 @@ def main() -> None:
 
     if args.command == "install":
         if not args.no_update:
-            from .setup import CONFIG_PATH, has_remote_sources, run_setup
+            from .setup import (
+                CONFIG_PATH,
+                detect_stale_local_tools,
+                has_remote_sources,
+                run_setup,
+            )
 
-            if CONFIG_PATH.exists() and has_remote_sources():
-                run_setup()
+            stale = detect_stale_local_tools()
+            if CONFIG_PATH.exists() and (has_remote_sources() or stale):
+                run_setup(force_reinstall=stale or None)
                 result = subprocess.run(
                     [sys.argv[0], "install", args.agent]
                     + (["--verbose"] if args.verbose else [])
@@ -514,7 +520,12 @@ def main() -> None:
             sys.exit(0)
 
         from .manifest import read_manifest
-        from .setup import CONFIG_PATH, has_remote_sources, run_setup
+        from .setup import (
+            CONFIG_PATH,
+            detect_stale_local_tools,
+            has_remote_sources,
+            run_setup,
+        )
 
         manifest = read_manifest()
         if not manifest:
@@ -530,8 +541,9 @@ def main() -> None:
 
         pull_plugin_sources()
 
-        if CONFIG_PATH.exists() and has_remote_sources():
-            run_setup()
+        stale = detect_stale_local_tools()
+        if CONFIG_PATH.exists() and (has_remote_sources() or stale):
+            run_setup(force_reinstall=stale or None)
 
         from .install import main as install_main
 

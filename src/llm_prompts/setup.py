@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 import functools
+import hashlib
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -271,6 +273,63 @@ def has_remote_sources() -> bool:
     return any(not _is_local_path(str(t.get("source", ""))) for t in tools)
 
 
+def _pyproject_stamp_path() -> Path:
+    """Return the path of the local-tool pyproject hash stamp file."""
+    from platformdirs import user_data_dir
+
+    return Path(user_data_dir("llm-prompts")) / ".llm-prompts-pyproject-stamp"
+
+
+def _hash_local_pyprojects() -> dict[str, str]:
+    """Return a name -> sha256 map of each local tool's pyproject.toml.
+
+    Tools whose source is non-local or whose pyproject.toml is missing are
+    skipped.
+
+    Returns:
+        A mapping of tool name to the hex digest of its pyproject.toml bytes.
+    """
+    hashes: dict[str, str] = {}
+    for tool in _load_config():
+        source = str(tool.get("source", ""))
+        if not _is_local_path(source):
+            continue
+        pyproject = _expand(source) / "pyproject.toml"
+        if not pyproject.exists():
+            continue
+        hashes[str(tool.get("name", ""))] = hashlib.sha256(
+            pyproject.read_bytes()
+        ).hexdigest()
+    return hashes
+
+
+def detect_stale_local_tools() -> set[str]:
+    """Return the names of local tools whose pyproject.toml differs from the stamp.
+
+    Returns:
+        An empty set if there is no config or no stamp file yet; otherwise the
+        names whose current hash is missing from or differs from the stamp.
+    """
+    if not CONFIG_PATH.exists():
+        return set()
+    stamp = _pyproject_stamp_path()
+    if not stamp.exists():
+        return set()
+    try:
+        recorded = json.loads(stamp.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return set()
+    current = _hash_local_pyprojects()
+    return {name for name, digest in current.items() if recorded.get(name) != digest}
+
+
+def write_pyproject_stamp() -> None:
+    """Write the current local-tool pyproject hashes to the stamp file."""
+    stamp = _pyproject_stamp_path()
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    stamp.write_text(json.dumps(_hash_local_pyprojects()), encoding="utf-8")
+
+
 def _expand(path_str: str) -> Path:
     """Expand ~ and resolve a path string."""
     return Path(path_str).expanduser().resolve()
@@ -498,12 +557,24 @@ def init_config() -> None:
     print("Edit it to add your tools and overlay paths, then run `llm-prompts setup`.")
 
 
-def run_setup(tool_filter: str | None = None, *, dry_run: bool = False) -> bool:
+def run_setup(
+    tool_filter: str | None = None,
+    *,
+    dry_run: bool = False,
+    force_reinstall: set[str] | None = None,
+) -> bool:
     """Install all configured tools with their overlays.
+
+    Args:
+        tool_filter: Install only the tool with this name, if given.
+        dry_run: Print commands without running them.
+        force_reinstall: Names of tools (cores or overlays) whose cores must
+            skip the upgrade path and run a full reinstall.
 
     Returns:
         True if any packages were upgraded or installed.
     """
+    force_reinstall = force_reinstall or set()
     tools = _load_config()
     errors = _validate_paths(tools)
     if errors:
@@ -523,7 +594,10 @@ def run_setup(tool_filter: str | None = None, *, dry_run: bool = False) -> bool:
     changed = False
     failed: list[str] = []
     for name, install_cmd, upgrade_cmd, overlay_names in commands:
-        if upgrade_cmd:
+        forced = name in force_reinstall or any(
+            o in force_reinstall for o in overlay_names
+        )
+        if upgrade_cmd and not forced:
             if dry_run:
                 print(f"\n[{name}] {' '.join(upgrade_cmd)}")
                 print(f"[{name}] (fallback) {' '.join(install_cmd)}")
@@ -560,4 +634,6 @@ def run_setup(tool_filter: str | None = None, *, dry_run: bool = False) -> bool:
         sys.exit(1)
     if not dry_run and commands:
         print("\nAll tools installed successfully.")
+    if not dry_run and not tool_filter:
+        write_pyproject_stamp()
     return changed

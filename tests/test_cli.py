@@ -20,7 +20,12 @@ from llm_prompts.cli import (
     _remote_source_messages,
     main,
 )
-from llm_prompts.setup import _extract_git_url
+from llm_prompts.setup import (
+    _extract_git_url,
+    detect_stale_local_tools,
+    run_setup,
+    write_pyproject_stamp,
+)
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -485,6 +490,8 @@ class TestUpdateCommandPullsPlugins:
             ),
             patch("llm_prompts.cli._pull_local_sources"),
             patch("llm_prompts.setup.has_remote_sources", return_value=False),
+            patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+            patch("llm_prompts.setup.run_setup") as mock_setup,
             patch("llm_prompts.install.main"),
             patch("llm_prompts.cli._restart_memory_service"),
             patch("llm_prompts.plugins.pull_plugin_sources") as mock_pull,
@@ -492,6 +499,55 @@ class TestUpdateCommandPullsPlugins:
             main()
 
         mock_pull.assert_called_once_with()
+        mock_setup.assert_not_called()
+
+    def test_update_runs_setup_with_stale_tools(self) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={"kiro": {"files": []}},
+            ),
+            patch("llm_prompts.cli._pull_local_sources"),
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.has_remote_sources", return_value=False),
+            patch(
+                "llm_prompts.setup.detect_stale_local_tools",
+                return_value={"cline-hooks"},
+            ),
+            patch("llm_prompts.setup.run_setup") as mock_setup,
+            patch("llm_prompts.install.main"),
+            patch("llm_prompts.cli._restart_memory_service"),
+            patch("llm_prompts.plugins.pull_plugin_sources"),
+        ):
+            mock_config.exists.return_value = True
+            main()
+
+        mock_setup.assert_called_once_with(force_reinstall={"cline-hooks"})
+
+    def test_update_forces_stale_local_tool_even_with_remote_sources(self) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={"kiro": {"files": []}},
+            ),
+            patch("llm_prompts.cli._pull_local_sources"),
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.has_remote_sources", return_value=True),
+            patch(
+                "llm_prompts.setup.detect_stale_local_tools",
+                return_value={"cline-hooks"},
+            ),
+            patch("llm_prompts.setup.run_setup") as mock_setup,
+            patch("llm_prompts.install.main"),
+            patch("llm_prompts.cli._restart_memory_service"),
+            patch("llm_prompts.plugins.pull_plugin_sources"),
+        ):
+            mock_config.exists.return_value = True
+            main()
+
+        mock_setup.assert_called_once_with(force_reinstall={"cline-hooks"})
 
 
 class TestCollectSourcesOverlayPrecedence:
@@ -534,6 +590,125 @@ class TestCollectSourcesOverlayPrecedence:
                 sources = _collect_sources("claude-code")
 
         assert sources["agents/collide.md"].read_text() == "OVERLAY\n"
+
+
+class TestDetectStaleLocalTools:
+    def _write_tool(self, tmp_path: Path, name: str, content: str) -> dict[str, str]:
+        repo = tmp_path / name
+        repo.mkdir()
+        (repo / "pyproject.toml").write_text(content)
+        return {"name": name, "source": str(repo)}
+
+    def test_no_config_returns_empty(self, tmp_path: Path) -> None:
+        with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
+            mock_config.exists.return_value = False
+            assert detect_stale_local_tools() == set()
+
+    def test_no_stamp_file_returns_empty(self, tmp_path: Path) -> None:
+        tool = self._write_tool(tmp_path, "core", "[project]\nname='core'\n")
+        with (
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=[tool]),
+            patch(
+                "llm_prompts.setup._pyproject_stamp_path",
+                return_value=tmp_path / "stamp.json",
+            ),
+        ):
+            mock_config.exists.return_value = True
+            assert detect_stale_local_tools() == set()
+
+    def test_matching_hash_is_not_stale(self, tmp_path: Path) -> None:
+        tool = self._write_tool(tmp_path, "core", "[project]\nname='core'\n")
+        stamp = tmp_path / "stamp.json"
+        with (
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=[tool]),
+            patch("llm_prompts.setup._pyproject_stamp_path", return_value=stamp),
+        ):
+            mock_config.exists.return_value = True
+            write_pyproject_stamp()
+            assert detect_stale_local_tools() == set()
+
+    def test_mismatched_hash_is_stale(self, tmp_path: Path) -> None:
+        tool = self._write_tool(tmp_path, "core", "[project]\nname='core'\n")
+        stamp = tmp_path / "stamp.json"
+        with (
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=[tool]),
+            patch("llm_prompts.setup._pyproject_stamp_path", return_value=stamp),
+        ):
+            mock_config.exists.return_value = True
+            write_pyproject_stamp()
+            (tmp_path / "core" / "pyproject.toml").write_text("[project]\nname='x'\n")
+            assert detect_stale_local_tools() == {"core"}
+
+    def test_tool_missing_from_stamp_is_stale(self, tmp_path: Path) -> None:
+        first = self._write_tool(tmp_path, "core", "[project]\nname='core'\n")
+        stamp = tmp_path / "stamp.json"
+        with (
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup._pyproject_stamp_path", return_value=stamp),
+        ):
+            mock_config.exists.return_value = True
+            with patch("llm_prompts.setup._load_config", return_value=[first]):
+                write_pyproject_stamp()
+            second = self._write_tool(tmp_path, "hooks", "[project]\nname='hooks'\n")
+            with patch("llm_prompts.setup._load_config", return_value=[first, second]):
+                assert detect_stale_local_tools() == {"hooks"}
+
+
+class TestWritePyprojectStamp:
+    def test_round_trip(self, tmp_path: Path) -> None:
+        repo = tmp_path / "core"
+        repo.mkdir()
+        (repo / "pyproject.toml").write_text("[project]\nname='core'\n")
+        tool = {"name": "core", "source": str(repo)}
+        stamp = tmp_path / "sub" / "stamp.json"
+        with (
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=[tool]),
+            patch("llm_prompts.setup._pyproject_stamp_path", return_value=stamp),
+        ):
+            mock_config.exists.return_value = True
+            write_pyproject_stamp()
+            recorded = json.loads(stamp.read_text())
+            assert set(recorded) == {"core"}
+            assert detect_stale_local_tools() == set()
+
+
+class TestRunSetupForceReinstall:
+    def _run(self, commands: list, force_reinstall: set[str]) -> list[list[str]]:
+        calls: list[list[str]] = []
+
+        def fake_run(cmd: list[str], **_kwargs: object) -> MagicMock:
+            calls.append(cmd)
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with (
+            patch("llm_prompts.setup._load_config", return_value=[]),
+            patch("llm_prompts.setup._validate_paths", return_value=[]),
+            patch("llm_prompts.setup._detect_installer", return_value="uv"),
+            patch("llm_prompts.setup._build_commands", return_value=commands),
+            patch("llm_prompts.setup.write_pyproject_stamp"),
+            patch("llm_prompts.setup.subprocess.run", side_effect=fake_run),
+        ):
+            run_setup(force_reinstall=force_reinstall)
+        return calls
+
+    def test_forced_core_skips_upgrade(self) -> None:
+        commands = [("core", ["uv", "install"], ["uv", "upgrade"], [])]
+        calls = self._run(commands, {"core"})
+        assert calls == [["uv", "install"]]
+
+    def test_stale_overlay_forces_its_core(self) -> None:
+        commands = [("core", ["uv", "install"], ["uv", "upgrade"], ["hooks"])]
+        calls = self._run(commands, {"hooks"})
+        assert calls == [["uv", "install"]]
+
+    def test_unforced_core_uses_upgrade(self) -> None:
+        commands = [("core", ["uv", "install"], ["uv", "upgrade"], [])]
+        calls = self._run(commands, {"other"})
+        assert calls[0] == ["uv", "upgrade"]
 
 
 class TestCheckForUpdates:
