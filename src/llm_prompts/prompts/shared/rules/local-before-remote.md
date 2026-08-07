@@ -5,6 +5,8 @@ copilot_apply_to: '**'
 
 # Local before remote
 
+**Before running any search, check whether the answer is already visible in the current context.** A skill's own preamble (e.g. a "Base directory for this skill: ..." header), a prior tool result from earlier in the same turn, or an explicit path/value already stated in the instructions you are following is not a lookup target - it is the answer. Use it directly instead of running `find`/`grep`/`ls` (or any broader search) for something already in front of you. Check the visible context first, before memory, before a "known target" lookup, before anything else.
+
 **Before searching for anything you don't already know, check memory first.** Search project and global memory (per `memory.md`) for this exact question before any other lookup - a prior session may have already answered it, including one where the user told you exactly where to look.
 
 **If memory has nothing and the answer is a known target, resolve it directly - no need to ask.** A known target (per `delegation.md`) is a specific file you already know is relevant, a tool's own `--help`/`man` page, a symbol in the current codebase, or a specific doc/URL you already know is authoritative. These are cheap, bounded lookups - just do them.
