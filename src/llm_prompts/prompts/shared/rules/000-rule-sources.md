@@ -12,7 +12,9 @@ After editing any source file, run `llm-prompts update` to reinstall.
 
 For initial setup or full reinstall of all tools and overlays, use `llm-prompts setup`. Config is at `~/.config/llm-prompts/config.toml` - run `llm-prompts setup --init` to create it.
 
-Commit rule, workflow, and skill changes as you go - do not accumulate them for a single commit at the end.
+**Commit rule, workflow, and skill changes as you go - this is a mechanical trip-wire, not a judgment call.** The moment you finish editing a source file under this rule (a rule, workflow, skill, or agent-config source), your very next git action on that repo MUST be staging and committing that file - before moving on to unrelated work, before a bare status/diff check for its own sake, and before ending the session. Do not accumulate multiple edits for a single commit at the end, and do not let "I'll commit later" survive past the current turn.
+
+Before creating that commit, check whether HEAD is an unpushed commit covering the same rule/skill/topic (per `git-usage`'s amend-alignment rule) - if so, amend it instead of adding a new commit for what is really the same change landing in two steps.
 
 ## Adding an overlay
 
