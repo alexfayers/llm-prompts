@@ -8,6 +8,7 @@ kiro_file_match_pattern: '**/*.sh, **/*.bash, **/*.zsh'
 # Shell coding guidelines
 
 - Before running `find`/`grep`/`ls` to locate a file, check whether the current context (skill instructions, a prior tool result, a known path pattern) already names or implies its directory - search that specific location first. Never default to scanning from `/` or another far-too-broad root when a narrower, already-known starting point exists; a root-level `find` is slow, can exhaust system resources, and is almost always unnecessary.
+- This applies to any file whose location is derivable from config rather than actually unknown - e.g. a build tool's own configured output/cache/source directory. Check that config for the real path first; only fall back to a broader search once the derivable location has been checked and doesn't hold the answer.
 - Do not prepend terminal command batches with `set -e`.
 - NEVER use the `-f` flag with the `rm` command. It is too high risk.
 - NEVER use `rm -rf`. Use `rm -r` instead.
