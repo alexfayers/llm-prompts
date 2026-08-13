@@ -10,11 +10,18 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from llm_prompts.hooks import (
+    _ANSI_COLOR,
+    _ANSI_RESET,
+    _BANNER_DIVIDER,
+    _BANNER_TITLE,
     _DEBOUNCE_SECONDS,
     _UPDATE_CHECK_INTERVAL,
     AutoReinstallPlugin,
+    _format_user_text,
     _ReinstallDebouncer,
+    _strip_update_instruction,
 )
+from llm_prompts.setup import _UPDATE_INSTRUCTION
 
 
 @pytest.fixture
@@ -44,6 +51,37 @@ def plugin(manifest_data: dict[str, Any], tmp_path: Path) -> AutoReinstallPlugin
     with patch("llm_prompts.hooks.read_manifest", return_value=manifest_data):
         p._get_installed_paths()
     return p
+
+
+class TestStripUpdateInstruction:
+    """Tests for stripping the trailing model-directive instruction."""
+
+    def test_strips_instruction_and_preceding_newline(self) -> None:
+        original = "[pkg] update available:\n- did a thing\n" + _UPDATE_INSTRUCTION
+        assert _strip_update_instruction(original) == (
+            "[pkg] update available:\n- did a thing"
+        )
+
+    def test_noop_on_bare_fallback(self) -> None:
+        bare = "[pkg] update available"
+        assert _strip_update_instruction(bare) == bare
+
+
+class TestFormatUserText:
+    """Tests for wrapping update text in a banner header/footer."""
+
+    def test_wraps_with_banner_and_blank_lines(self) -> None:
+        formatted = _format_user_text("[pkg] update available:\n- did a thing")
+        assert formatted == (
+            "\n"
+            f"{_ANSI_COLOR}{_BANNER_DIVIDER}\n"
+            f"{_BANNER_TITLE}\n"
+            f"{_BANNER_DIVIDER}{_ANSI_RESET}\n"
+            "\n"
+            "[pkg] update available:\n- did a thing\n"
+            "\n"
+            f"{_ANSI_COLOR}{_BANNER_DIVIDER}{_ANSI_RESET}"
+        )
 
 
 class TestReinstallDebouncer:
@@ -258,13 +296,19 @@ class TestUpdateCheckOnTaskStart:
         plugin._update_check_debouncer = _ReinstallDebouncer(
             tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
         )
+        message = "[pkg] update available:\n- did a thing\n" + _UPDATE_INSTRUCTION
         with patch(
             "llm_prompts.cli._collect_update_messages",
-            return_value=["[pkg] update available (a -> b)"],
+            return_value=[message],
         ):
             result = plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[])
         assert result is not None
-        assert result.notes == ["[pkg] update available (a -> b)"]
+        assert result.notes == [message]
+        assert len(result.user_notes) == 1
+        note = result.user_notes[0]
+        assert note.user_text == _format_user_text(
+            "[pkg] update available:\n- did a thing"
+        )
         assert (tmp_path / "update-stamp").exists()
 
     def test_task_start_no_updates_marks_stamp(self, tmp_path: Path) -> None:
@@ -339,6 +383,9 @@ class TestUpdateCheckOnTaskStart:
             )
         assert result is not None
         assert result.notes == ["[pkg] update available (a -> b)"]
+        assert len(result.user_notes) == 1
+        note = result.user_notes[0]
+        assert note.user_text == _format_user_text("[pkg] update available (a -> b)")
 
     def test_resume_source_still_debounced(self, tmp_path: Path) -> None:
         plugin = AutoReinstallPlugin()

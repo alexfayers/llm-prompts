@@ -8,9 +8,10 @@ import time
 from pathlib import Path
 
 from .manifest import read_manifest
+from .setup import _UPDATE_INSTRUCTION
 
 try:
-    from cline_hooks.core.plugin import HookResult, HooksPlugin
+    from cline_hooks.core.plugin import HookResult, HooksPlugin, UserFacingNote
 except ImportError:
     raise  # noqa: TRY004
 
@@ -22,6 +23,60 @@ _WRITE_TOOLS = frozenset(
 _DEBOUNCE_SECONDS = 5.0
 _UPDATE_CHECK_INTERVAL = 60 * 60
 _DEBOUNCED_TASK_START_SOURCES = frozenset({"resume", "compact"})
+
+
+def _strip_update_instruction(message: str) -> str:
+    """Return ``message`` without the trailing model-directive instruction.
+
+    Strips ``_UPDATE_INSTRUCTION`` and the newline immediately preceding it
+    when present, leaving the bare "update available" fallback (which carries
+    no instruction) unchanged.
+
+    Args:
+        message: An update-availability message string.
+
+    Returns:
+        The message with the trailing instruction removed, or unchanged.
+    """
+    suffix = "\n" + _UPDATE_INSTRUCTION
+    if message.endswith(suffix):
+        return message[: -len(suffix)]
+    return message
+
+
+_BANNER_DIVIDER = "=" * 60
+_BANNER_TITLE = r"""
+ _ _                                                 _
+ | | |_ __ ___        _ __  _ __ ___  _ __ ___  _ __ | |_ ___
+ | | | '_ ` _ \ _____| '_ \| '__/ _ \| '_ ` _ \| '_ \| __/ __|
+ | | | | | | | |_____| |_) | | | (_) | | | | | | |_) | |_\__ \
+ |_|_|_| |_| |_|     | .__/|_|  \___/|_| |_| |_| .__/ \__|___/
+                     |_|                       |_|
+""".strip("\n")
+_ANSI_COLOR = "\033[1;36m"  # bold cyan
+_ANSI_RESET = "\033[0m"
+
+
+def _format_user_text(stripped_message: str) -> str:
+    """Wrap update text in a colored header/footer banner so it's unmissable.
+
+    Args:
+        stripped_message: Update text with the model-directive instruction
+            already removed (see ``_strip_update_instruction``).
+
+    Returns:
+        The message framed with a banner header and footer.
+    """
+    return (
+        "\n"
+        f"{_ANSI_COLOR}{_BANNER_DIVIDER}\n"
+        f"{_BANNER_TITLE}\n"
+        f"{_BANNER_DIVIDER}{_ANSI_RESET}\n"
+        "\n"
+        f"{stripped_message}\n"
+        "\n"
+        f"{_ANSI_COLOR}{_BANNER_DIVIDER}{_ANSI_RESET}"
+    )
 
 
 class _ReinstallDebouncer:
@@ -112,7 +167,15 @@ class AutoReinstallPlugin(HooksPlugin):
         self._update_check_debouncer.mark_run()
         if not messages:
             return None
-        return HookResult(notes=messages)
+        return HookResult(
+            notes=[message for message in messages],
+            user_notes=[
+                UserFacingNote(
+                    user_text=_format_user_text(_strip_update_instruction(message)),
+                )
+                for message in messages
+            ],
+        )
 
     def on_hook(self, hook_name: str, **kwargs: object) -> HookResult | None:
         """Dispatch TaskStart update checks and PostToolUse auto-reinstalls.
