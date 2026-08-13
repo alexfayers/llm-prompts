@@ -19,6 +19,7 @@ copilot_apply_to: '**'
 - It is extremely important that you NEVER write comments explaining the reasoning for a specific change. Comments should only be used to explain complex code. If comments are required, consider a different approach.
 - Committed text (docs, CLAUDE.md, design decisions) must describe the current atomic state. Never reference failed intermediate approaches, removed features, or "we tried X then switched to Y". The code is the source of truth for what exists now.
 - Avoid unnecessary variable assignment unless it improves the clarity of the code. If a variable is used once, it probably doesn't need to be a variable.
+- Avoid magic numbers: when a numeric (or string) threshold appears in more than one place - in prose/wording, in a test, in a second code path - derive every occurrence from a single named constant instead of repeating the literal. This way a future change to the value only requires editing the constant's definition.
 - Leave code better than you found it. If you notice an issue with something that you are already editing, fix it!
 - When fixing a bug, investigate and fix ALL directly related issues in the same code path - do not dismiss pre-existing failures as "separate" if they share root cause or context with the current fix.
 - Before adding a parameter to a function signature, verify it is actually used in the function body. Remove unused parameters.
