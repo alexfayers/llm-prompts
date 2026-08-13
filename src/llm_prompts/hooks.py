@@ -16,7 +16,9 @@ except ImportError:
 
 logger = logging.getLogger("hooks.llm-prompts")
 
-_WRITE_TOOLS = frozenset({"replace_in_file", "write_to_file"})
+_WRITE_TOOLS = frozenset(
+    {"replace_in_file", "write_to_file", "Edit", "Write", "MultiEdit"}
+)
 _DEBOUNCE_SECONDS = 5.0
 _UPDATE_CHECK_INTERVAL = 60 * 60
 _DEBOUNCED_TASK_START_SOURCES = frozenset({"resume", "compact"})
@@ -138,7 +140,7 @@ class AutoReinstallPlugin(HooksPlugin):
         if not isinstance(parameters, dict):
             return None
 
-        path_str = parameters.get("path")
+        path_str = parameters.get("path") or parameters.get("file_path")
         if not path_str:
             return None
 
@@ -156,13 +158,17 @@ class AutoReinstallPlugin(HooksPlugin):
         # Update prompts/shared/rules/hooks-llm-prompts.md if this note's behavior changes.
         logger.info("Installed prompt file edited: %s", resolved)
         try:
-            subprocess.run(
+            completed = subprocess.run(
                 ["llm-prompts", "update"],  # noqa: S603, S607
                 check=False,
                 capture_output=True,
                 timeout=30,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):
+            logger.warning("Failed to run llm-prompts update")
+            return HookResult(notes=["Failed to auto-reinstall prompt files"])
+
+        if completed.returncode != 0:
             logger.warning("Failed to run llm-prompts update")
             return HookResult(notes=["Failed to auto-reinstall prompt files"])
 

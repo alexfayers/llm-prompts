@@ -127,6 +127,7 @@ class TestAutoReinstallPlugin:
         tmp_path: Path,
     ) -> None:
         mock_manifest.return_value = manifest_data
+        mock_run.return_value.returncode = 0
         plugin = AutoReinstallPlugin()
         plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         result = plugin.on_hook(
@@ -140,6 +141,71 @@ class TestAutoReinstallPlugin:
 
     @patch("llm_prompts.hooks.subprocess.run")
     @patch("llm_prompts.hooks.read_manifest")
+    def test_triggers_reinstall_for_claude_code_edit(
+        self,
+        mock_manifest: MagicMock,
+        mock_run: MagicMock,
+        manifest_data: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        mock_manifest.return_value = manifest_data
+        mock_run.return_value.returncode = 0
+        plugin = AutoReinstallPlugin()
+        plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
+        result = plugin.on_hook(
+            "PostToolUse",
+            tool_name="Edit",
+            parameters={"file_path": manifest_data["kiro"]["files"][0]},
+        )
+        assert result is not None
+        assert any("Auto-reinstalled" in note for note in result.notes)
+        mock_run.assert_called_once()
+
+    @patch("llm_prompts.hooks.subprocess.run")
+    @patch("llm_prompts.hooks.read_manifest")
+    def test_triggers_reinstall_for_claude_code_write(
+        self,
+        mock_manifest: MagicMock,
+        mock_run: MagicMock,
+        manifest_data: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        mock_manifest.return_value = manifest_data
+        mock_run.return_value.returncode = 0
+        plugin = AutoReinstallPlugin()
+        plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
+        result = plugin.on_hook(
+            "PostToolUse",
+            tool_name="Write",
+            parameters={"file_path": manifest_data["kiro"]["files"][1]},
+        )
+        assert result is not None
+        assert any("Auto-reinstalled" in note for note in result.notes)
+        mock_run.assert_called_once()
+
+    @patch("llm_prompts.hooks.subprocess.run")
+    @patch("llm_prompts.hooks.read_manifest")
+    def test_reports_failure_on_nonzero_exit(
+        self,
+        mock_manifest: MagicMock,
+        mock_run: MagicMock,
+        manifest_data: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        mock_manifest.return_value = manifest_data
+        mock_run.return_value.returncode = 1
+        plugin = AutoReinstallPlugin()
+        plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
+        result = plugin.on_hook(
+            "PostToolUse",
+            tool_name="write_to_file",
+            parameters={"path": manifest_data["kiro"]["files"][0]},
+        )
+        assert result is not None
+        assert result.notes == ["Failed to auto-reinstall prompt files"]
+
+    @patch("llm_prompts.hooks.subprocess.run")
+    @patch("llm_prompts.hooks.read_manifest")
     def test_debounces_rapid_writes(
         self,
         mock_manifest: MagicMock,
@@ -148,6 +214,7 @@ class TestAutoReinstallPlugin:
         tmp_path: Path,
     ) -> None:
         mock_manifest.return_value = manifest_data
+        mock_run.return_value.returncode = 0
         plugin = AutoReinstallPlugin()
         plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         path = manifest_data["kiro"]["files"][0]
@@ -172,6 +239,7 @@ class TestAutoReinstallPlugin:
         tmp_path: Path,
     ) -> None:
         mock_manifest.return_value = manifest_data
+        mock_run.return_value.returncode = 0
         plugin = AutoReinstallPlugin()
         plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         plugin.on_hook(
