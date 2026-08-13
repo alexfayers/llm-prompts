@@ -22,6 +22,7 @@ copilot_apply_to: '**'
 - Leave code better than you found it. If you notice an issue with something that you are already editing, fix it!
 - When fixing a bug, investigate and fix ALL directly related issues in the same code path - do not dismiss pre-existing failures as "separate" if they share root cause or context with the current fix.
 - Before adding a parameter to a function signature, verify it is actually used in the function body. Remove unused parameters.
+- Before declaring a value/function "dead" or unused and removing it, search across the WHOLE workspace (all sibling packages/modules), not just the one package that looks like the natural consumer - a value can be set in one package and consumed in a separate sibling package that a narrower search misses.
 - If you write code that contains an error and subsequently fix it, record the mistake and fix as a memory observation so the same error is not repeated in future sessions.
 - When writing any text, NEVER use non-ascii characters such as emdash (`—`). Always use equivalent ascii characters, like `-`.
 - In committed files (docs, CLAUDE.md, config), never reference specific collaborators by name. Use generic terms ("collaborators", "team members", "other agents") instead.
