@@ -311,6 +311,27 @@ class TestUpdateCheckOnTaskStart:
         )
         assert (tmp_path / "update-stamp").exists()
 
+    def test_multiple_messages_produce_single_banner(self, tmp_path: Path) -> None:
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        messages = [
+            "[pkg-a] update available:\n- did a thing",
+            "[pkg-b] not cloned (run `llm-prompts update`)",
+        ]
+        with patch(
+            "llm_prompts.cli._collect_update_messages",
+            return_value=messages,
+        ):
+            result = plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[])
+        assert result is not None
+        assert result.notes == messages
+        assert len(result.user_notes) == 1
+        note = result.user_notes[0]
+        assert note.user_text == _format_user_text("\n\n".join(messages))
+        assert note.user_text.count(_BANNER_TITLE) == 1
+
     def test_task_start_no_updates_marks_stamp(self, tmp_path: Path) -> None:
         plugin = AutoReinstallPlugin()
         plugin._update_check_debouncer = _ReinstallDebouncer(

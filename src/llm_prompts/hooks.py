@@ -7,13 +7,10 @@ import subprocess
 import time
 from pathlib import Path
 
+from cline_hooks.core.plugin import HookResult, HooksPlugin, UserFacingNote
+
 from .manifest import read_manifest
 from .setup import _UPDATE_INSTRUCTION
-
-try:
-    from cline_hooks.core.plugin import HookResult, HooksPlugin, UserFacingNote
-except ImportError:
-    raise  # noqa: TRY004
 
 logger = logging.getLogger("hooks.llm-prompts")
 
@@ -89,7 +86,7 @@ class _ReinstallDebouncer:
         stamp_name: str = ".llm-prompts-reinstall-stamp",
     ) -> None:
         if stamp_path is None:
-            from platformdirs import user_data_dir  # noqa: PLC0415
+            from platformdirs import user_data_dir
 
             stamp_path = Path(user_data_dir("cline-hooks")) / stamp_name
         self._stamp = stamp_path
@@ -156,7 +153,7 @@ class AutoReinstallPlugin(HooksPlugin):
         ):
             return None
 
-        from .cli import _collect_update_messages  # noqa: PLC0415
+        from .cli import _collect_update_messages
 
         try:
             messages = _collect_update_messages()
@@ -167,14 +164,12 @@ class AutoReinstallPlugin(HooksPlugin):
         self._update_check_debouncer.mark_run()
         if not messages:
             return None
+        stripped = "\n\n".join(
+            _strip_update_instruction(message) for message in messages
+        )
         return HookResult(
             notes=[message for message in messages],
-            user_notes=[
-                UserFacingNote(
-                    user_text=_format_user_text(_strip_update_instruction(message)),
-                )
-                for message in messages
-            ],
+            user_notes=[UserFacingNote(user_text=_format_user_text(stripped))],
         )
 
     def on_hook(self, hook_name: str, **kwargs: object) -> HookResult | None:
@@ -222,7 +217,7 @@ class AutoReinstallPlugin(HooksPlugin):
         logger.info("Installed prompt file edited: %s", resolved)
         try:
             completed = subprocess.run(
-                ["llm-prompts", "update"],  # noqa: S603, S607
+                ["llm-prompts", "update"],
                 check=False,
                 capture_output=True,
                 timeout=30,
