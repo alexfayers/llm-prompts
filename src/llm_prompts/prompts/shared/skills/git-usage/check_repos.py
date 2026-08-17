@@ -6,24 +6,30 @@ import subprocess
 import sys
 from pathlib import Path
 
-SOURCE_COMMAND = ("llm-prompts", "source", "claude-code")
+AGENTS = ("cline", "copilot", "kiro", "claude-code", "codex")
 
 
 def source_paths() -> list[str]:
-    """Return the filesystem paths printed by `llm-prompts source claude-code`."""
-    try:
-        result = subprocess.run(
-            list(SOURCE_COMMAND), capture_output=True, text=True, check=False
+    """Return the deduped filesystem paths printed by `llm-prompts source <agent>` across all agents."""
+    paths: list[str] = []
+    for agent in AGENTS:
+        try:
+            result = subprocess.run(
+                ["llm-prompts", "source", agent],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError:
+            return []
+        if result.returncode != 0:
+            continue
+        paths.extend(
+            stripped
+            for line in result.stdout.splitlines()
+            if (stripped := line.strip()).startswith("/")
         )
-    except FileNotFoundError:
-        return []
-    if result.returncode != 0:
-        return []
-    return [
-        stripped
-        for line in result.stdout.splitlines()
-        if (stripped := line.strip()).startswith("/")
-    ]
+    return list(dict.fromkeys(paths))
 
 
 def git_toplevel(path: Path) -> str | None:

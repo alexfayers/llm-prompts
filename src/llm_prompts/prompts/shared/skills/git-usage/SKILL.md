@@ -36,3 +36,13 @@ Before making a commit, you must tell the user "I am following the predefined gi
 ## Amending non-HEAD commits
 
 `git commit --amend` only modifies HEAD - to squash, fixup, reorder, reword, or drop unpushed non-HEAD commits, use the `git-tidy` skill.
+
+## Checking for uncommitted/unpushed changes across repos
+
+The co-located `check_repos.py` script sweeps every distinct workspace root you name for uncommitted and unpushed changes. This is optional, not mandatory, and never runs automatically - reach for it only when the user asks to check for outstanding changes across repos, or when you specifically need to confirm a repo is clean before ending a session:
+
+```bash
+python3 "<base-dir>/check_repos.py" [--workspace <path>]
+```
+
+`--workspace` defaults to the current directory; pass it explicitly once per additional touched repo root. It auto-adds the prompt/skill source repos too (it shells out to `llm-prompts source <agent>` for every supported agent to find those). It prints JSON with a `repos` list (each `{path, uncommitted, unpushed, no_upstream}`) and a top-level `clean` flag, and exits non-zero when anything is outstanding (`no_upstream` is informational, not itself a blocker). For each repo with `uncommitted` entries, commit them. For each repo with `unpushed` entries, surface them to the user and ask how they'd like to submit (push, PR/review, or leave for later). If any repo reports an `error`, investigate before proceeding.
