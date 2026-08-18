@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -185,12 +185,15 @@ class TestDiscoverSkills:
         assert "nope" in message
         assert "tdd" in message
 
-    def test_duplicate_leaf_name_first_wins(self, tmp_path: Path) -> None:
+    def test_duplicate_leaf_name_first_wins(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         checkout = tmp_path / "repo"
         _make_skill(checkout / "skills" / "a" / "tdd")
         _make_skill(checkout / "skills" / "b" / "tdd")
         result = plugins.discover_skills(checkout, None)
         assert result == [("tdd", checkout / "skills" / "a" / "tdd")]
+        assert "Duplicate skill name 'tdd'" in capsys.readouterr().err
 
     def test_skill_outside_skills_dir_is_ignored(self, tmp_path: Path) -> None:
         checkout = tmp_path / "repo"
@@ -198,6 +201,51 @@ class TestDiscoverSkills:
         _make_skill(checkout / ".cursor" / "skills" / "tdd")
         result = plugins.discover_skills(checkout, None)
         assert result == [("tdd", checkout / "skills" / "tdd")]
+
+    def test_skills_dir_takes_precedence_over_root(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        checkout = tmp_path / "example-plugin"
+        checkout.mkdir()
+        (checkout / "SKILL.md").write_text("# root\n")
+        _make_skill(checkout / "skills" / "example-plugin")
+        result = plugins.discover_skills(checkout, None)
+        assert result == [("example-plugin", checkout / "skills" / "example-plugin")]
+        assert "Duplicate" not in capsys.readouterr().err
+
+    def test_empty_skills_dir_falls_back_to_root(self, tmp_path: Path) -> None:
+        checkout = tmp_path / "repo"
+        (checkout / "skills").mkdir(parents=True)
+        (checkout / "SKILL.md").write_text("# root\n")
+        result = plugins.discover_skills(checkout, None)
+        assert result == [("repo", checkout)]
+
+    def test_symlinked_same_file_skipped_silently(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        checkout = tmp_path / "example-plugin"
+        real = checkout / "skills" / "alpha" / "shared"
+        _make_skill(real)
+        alias = checkout / "skills" / "beta" / "shared"
+        alias.mkdir(parents=True)
+        (alias / "SKILL.md").symlink_to(real / "SKILL.md")
+        result = plugins.discover_skills(checkout, None)
+        assert result == [("shared", real)]
+        assert "Duplicate" not in capsys.readouterr().err
+
+    def test_different_names_same_file_both_kept(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        checkout = tmp_path / "example-plugin"
+        real = checkout / "skills" / "alpha"
+        _make_skill(real)
+        alias = checkout / "skills" / "beta"
+        alias.mkdir(parents=True)
+        (alias / "SKILL.md").symlink_to(real / "SKILL.md")
+        result = plugins.discover_skills(checkout, None)
+        names = sorted(name for name, _ in result)
+        assert names == ["alpha", "beta"]
+        assert "Duplicate" not in capsys.readouterr().err
 
 
 class TestEnsureCloned:

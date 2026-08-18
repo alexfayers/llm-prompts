@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from pathlib import Path
 import shutil
 import subprocess
 import tomllib
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from .setup import (
@@ -314,8 +314,8 @@ def discover_skills(checkout: Path, subset: list[str] | None) -> list[tuple[str,
 
     Returns:
         ``(name, directory)`` pairs, one per discovered skill. A skill's name is
-        its leaf directory name, or the checkout name when ``SKILL.md`` sits at
-        the checkout root.
+        its leaf directory name. A root ``SKILL.md`` is used, named after the
+        checkout, only when the ``skills/`` directory yields no skills.
 
     Raises:
         ValueError: If a name in ``subset`` matches no discovered skill.
@@ -323,25 +323,29 @@ def discover_skills(checkout: Path, subset: list[str] | None) -> list[tuple[str,
     from .install import log
 
     skills: list[tuple[str, Path]] = []
-    seen: set[str] = set()
+    seen_names: set[str] = set()
+    seen_files: set[Path] = set()
 
     def add(name: str, skill_dir: Path) -> None:
-        if name in seen:
-            log(
-                "warn",
-                f"Duplicate skill name '{name}' in {checkout.name}; skipping {skill_dir}",
-            )
+        resolved = (skill_dir / "SKILL.md").resolve()
+        if name in seen_names:
+            if resolved not in seen_files:
+                log(
+                    "warn",
+                    f"Duplicate skill name '{name}' in {checkout.name}; skipping {skill_dir}",
+                )
             return
-        seen.add(name)
+        seen_names.add(name)
+        seen_files.add(resolved)
         skills.append((name, skill_dir))
-
-    if (checkout / "SKILL.md").is_file():
-        add(checkout.name, checkout)
 
     skills_dir = checkout / "skills"
     if skills_dir.is_dir():
         for skill_file in sorted(skills_dir.rglob("SKILL.md")):
             add(skill_file.parent.name, skill_file.parent)
+
+    if not skills and (checkout / "SKILL.md").is_file():
+        add(checkout.name, checkout)
 
     if not skills:
         log("warn", f"No skills (SKILL.md) found in {checkout.name}")
