@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable
 import contextlib
 import io
-from importlib.resources import files
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
+from importlib.resources import files
+from pathlib import Path
 
 from .setup import (
     _GIT_TIMEOUT,
@@ -492,7 +492,7 @@ def main() -> None:
                 try_install_hooks,
                 try_install_memory,
             )
-            from .manifest import write_manifest, read_manifest
+            from .manifest import read_manifest, write_manifest
 
             patch_kiro_agent_config(args.agent_config)
             try_install_hooks(args.agent_config)

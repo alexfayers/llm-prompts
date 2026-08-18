@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
-from unittest.mock import patch, MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 from llm_prompts.cli import (
     _check_for_updates,
@@ -562,12 +561,11 @@ class TestCollectSourcesOverlayPrecedence:
         overlay_skill.mkdir(parents=True)
         (overlay_skill / "SKILL.md").write_text("OVERLAY\n")
 
-        with patch("llm_prompts.cli._get_root_dir", return_value=base):
-            with patch(
-                "llm_prompts.install._discover_overlay_paths",
-                return_value=[overlay],
-            ):
-                sources = _collect_sources("claude-code")
+        with patch("llm_prompts.cli._get_root_dir", return_value=base), patch(
+            "llm_prompts.install._discover_overlay_paths",
+            return_value=[overlay],
+        ):
+            sources = _collect_sources("claude-code")
 
         assert sources["skills/collide"].read_text() == "OVERLAY\n"
 
@@ -582,12 +580,11 @@ class TestCollectSourcesOverlayPrecedence:
         overlay_agents.mkdir(parents=True)
         (overlay_agents / "collide.md").write_text("OVERLAY\n")
 
-        with patch("llm_prompts.cli._get_root_dir", return_value=base):
-            with patch(
-                "llm_prompts.install._discover_overlay_paths",
-                return_value=[overlay],
-            ):
-                sources = _collect_sources("claude-code")
+        with patch("llm_prompts.cli._get_root_dir", return_value=base), patch(
+            "llm_prompts.install._discover_overlay_paths",
+            return_value=[overlay],
+        ):
+            sources = _collect_sources("claude-code")
 
         assert sources["agents/collide.md"].read_text() == "OVERLAY\n"
 

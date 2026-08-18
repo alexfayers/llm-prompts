@@ -8,11 +8,11 @@ from unittest.mock import patch
 import pytest
 
 from llm_prompts.install import (
+    _GATING_FRONTMATTER_KEYS,
     _Agent,
     _collect_content_srcs,
     _env_var_set,
     _excluded_targets,
-    _GATING_FRONTMATTER_KEYS,
     _install_linked,
     _install_plugin_skills,
     _install_skills,
