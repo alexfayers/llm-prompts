@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
-from unittest.mock import patch, MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 from llm_prompts.cli import (
     _check_for_updates,
@@ -182,11 +181,13 @@ class TestRemoteSourceMessages:
                 "pkg", "git+https://github.com/user/repo.git"
             )
             assert result == [
-                "[pkg] update available:\n"
-                "- Add X\n"
-                "- Fix Y\n"
-                "Summarize these changes for the user in plain language, and flag "
-                "anything that looks like a breaking change."
+                (
+                    "[pkg] update available:\n"
+                    "- Add X\n"
+                    "- Fix Y\n"
+                    "Summarize these changes for the user in plain language, and flag "
+                    "anything that looks like a breaking change."
+                )
             ]
 
     def test_update_available_falls_back_to_shas_when_clone_fails(self) -> None:
@@ -222,12 +223,14 @@ class TestLocalSourceMessages:
             ]
             result = _local_source_messages("core", str(tmp_path))
             assert result == [
-                "[core] update available:\n"
-                "- Add A\n"
-                "- Fix B\n"
-                "- Tweak C\n"
-                "Summarize these changes for the user in plain language, and flag "
-                "anything that looks like a breaking change."
+                (
+                    "[core] update available:\n"
+                    "- Add A\n"
+                    "- Fix B\n"
+                    "- Tweak C\n"
+                    "Summarize these changes for the user in plain language, and flag "
+                    "anything that looks like a breaking change."
+                )
             ]
 
     def test_up_to_date(self, tmp_path: Path) -> None:
@@ -562,12 +565,14 @@ class TestCollectSourcesOverlayPrecedence:
         overlay_skill.mkdir(parents=True)
         (overlay_skill / "SKILL.md").write_text("OVERLAY\n")
 
-        with patch("llm_prompts.cli._get_root_dir", return_value=base):
-            with patch(
+        with (
+            patch("llm_prompts.cli._get_root_dir", return_value=base),
+            patch(
                 "llm_prompts.install._discover_overlay_paths",
                 return_value=[overlay],
-            ):
-                sources = _collect_sources("claude-code")
+            ),
+        ):
+            sources = _collect_sources("claude-code")
 
         assert sources["skills/collide"].read_text() == "OVERLAY\n"
 
@@ -582,12 +587,14 @@ class TestCollectSourcesOverlayPrecedence:
         overlay_agents.mkdir(parents=True)
         (overlay_agents / "collide.md").write_text("OVERLAY\n")
 
-        with patch("llm_prompts.cli._get_root_dir", return_value=base):
-            with patch(
+        with (
+            patch("llm_prompts.cli._get_root_dir", return_value=base),
+            patch(
                 "llm_prompts.install._discover_overlay_paths",
                 return_value=[overlay],
-            ):
-                sources = _collect_sources("claude-code")
+            ),
+        ):
+            sources = _collect_sources("claude-code")
 
         assert sources["agents/collide.md"].read_text() == "OVERLAY\n"
 
@@ -696,17 +703,23 @@ class TestRunSetupForceReinstall:
         return calls
 
     def test_forced_core_skips_upgrade(self) -> None:
-        commands = [("core", ["uv", "install"], ["uv", "upgrade"], [])]
+        commands: list[tuple[str, list[str], list[str], list[str]]] = [
+            ("core", ["uv", "install"], ["uv", "upgrade"], [])
+        ]
         calls = self._run(commands, {"core"})
         assert calls == [["uv", "install"]]
 
     def test_stale_overlay_forces_its_core(self) -> None:
-        commands = [("core", ["uv", "install"], ["uv", "upgrade"], ["hooks"])]
+        commands: list[tuple[str, list[str], list[str], list[str]]] = [
+            ("core", ["uv", "install"], ["uv", "upgrade"], ["hooks"])
+        ]
         calls = self._run(commands, {"hooks"})
         assert calls == [["uv", "install"]]
 
     def test_unforced_core_uses_upgrade(self) -> None:
-        commands = [("core", ["uv", "install"], ["uv", "upgrade"], [])]
+        commands: list[tuple[str, list[str], list[str], list[str]]] = [
+            ("core", ["uv", "install"], ["uv", "upgrade"], [])
+        ]
         calls = self._run(commands, {"other"})
         assert calls[0] == ["uv", "upgrade"]
 

@@ -1,13 +1,13 @@
 """Install Cline and Copilot rules, workflows, skills, and prompts."""
 
+import json
+import os
+import shutil
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.resources import files
-import json
-import os
 from pathlib import Path
-import shutil
-import sys
 from typing import Any, ClassVar, Literal
 
 from .render_template import (
@@ -82,7 +82,7 @@ def _vscode_user_dir() -> Path:
     vscode_server = home / ".vscode-server"
     if vscode_server.is_dir():
         return vscode_server / "data" / "User"
-    
+
     if sys.platform == "win32":
         return Path(os.environ["APPDATA"]) / "Code" / "User"
     if sys.platform == "darwin":
@@ -227,9 +227,7 @@ def _passes_requires_gate(src: Path) -> bool:
     if required_env and not _env_var_set(required_env):
         return False
     required_command = frontmatter.get("requires_command")
-    if required_command and shutil.which(required_command) is None:
-        return False
-    return True
+    return not (required_command and shutil.which(required_command) is None)
 
 
 def _excluded_targets(src: Path) -> set[str]:
@@ -1243,7 +1241,7 @@ def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) ->
         agent_names: Agents to uninstall. None means all installed agents.
         verbose: Show debug-level output.
     """
-    global _verbose  # noqa: PLW0603
+    global _verbose
     _verbose = verbose
     from .manifest import delete_agent, read_manifest
 
@@ -1273,7 +1271,7 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
         agent_names: Agents to install for. None means all.
         verbose: Show debug-level output.
     """
-    global _verbose  # noqa: PLW0603
+    global _verbose
     _verbose = verbose
     root_dir = Path(str(files("llm_prompts") / "prompts"))
     dirs = _get_dirs()

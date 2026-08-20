@@ -253,7 +253,7 @@ def compute_session_meta(session: dict) -> dict:
         ts = m.get("timestamp")
         if ts:
             try:
-                timestamps.append(datetime.fromisoformat(ts.replace("Z", "+00:00")))
+                timestamps.append(datetime.fromisoformat(ts))
             except (ValueError, TypeError):
                 pass
 

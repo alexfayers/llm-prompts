@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
+from datetime import UTC, datetime
 from typing import TypedDict
 
 from .setup import _CONFIG_DIR
-
 
 MANIFEST_PATH = _CONFIG_DIR / "installed.json"
 
@@ -52,7 +51,7 @@ def write_manifest(
 
     entry: AgentManifest = {
         "files": sorted(files),
-        "installed_at": datetime.now(tz=timezone.utc).isoformat(),
+        "installed_at": datetime.now(tz=UTC).isoformat(),
     }
     if agent_config:
         entry["agent_config"] = agent_config
