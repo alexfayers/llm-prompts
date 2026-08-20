@@ -82,7 +82,7 @@ def _vscode_user_dir() -> Path:
     vscode_server = home / ".vscode-server"
     if vscode_server.is_dir():
         return vscode_server / "data" / "User"
-    
+
     if sys.platform == "win32":
         return Path(os.environ["APPDATA"]) / "Code" / "User"
     if sys.platform == "darwin":
