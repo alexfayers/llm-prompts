@@ -489,9 +489,7 @@ class TestMainValidatesPlugins:
 
         assert not (home / ".claude" / "skills").exists()
 
-    def test_frontmatter_overrides_scoped_per_skill_name(
-        self, tmp_path: Path
-    ) -> None:
+    def test_frontmatter_overrides_scoped_per_skill_name(self, tmp_path: Path) -> None:
         home = tmp_path / "home"
         home.mkdir()
         manifest = tmp_path / "installed.json"

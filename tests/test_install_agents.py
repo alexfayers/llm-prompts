@@ -62,9 +62,7 @@ class TestApplyFrontmatterOverrides:
         assert frontmatter["priority"] == "1"
 
     def test_other_frontmatter_lines_byte_identical(self) -> None:
-        content = (
-            '---\nname: foo\ndescription: "A thing"\n---\n\nBody.\n'
-        )
+        content = '---\nname: foo\ndescription: "A thing"\n---\n\nBody.\n'
         result = _apply_frontmatter_overrides(content, {"name": "bar"})
         split = result.split("---\n")
         assert 'description: "A thing"' in split[1]
