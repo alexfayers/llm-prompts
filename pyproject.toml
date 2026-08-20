@@ -3,7 +3,11 @@ name = "llm-prompts"
 version = "0.1.0"
 description = "Cross-agent rules, workflows, and skills for LLM coding assistants"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
+dependencies = [
+    "cline-hooks@git+https://github.com/alexfayers/cline-hooks.git",
+    "platformdirs",
+]
 
 [project.scripts]
 llm-prompts = "llm_prompts.cli:main"
@@ -17,6 +21,9 @@ packages = ["src/llm_prompts"]
 
 [project.entry-points.cline_hooks]
 llm-prompts = "llm_prompts.hooks:AutoReinstallPlugin"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.ruff.lint]
 ignore = [
@@ -32,4 +39,5 @@ ignore = [
 dev = [
     "mypy>=1.20.2",
     "pytest>=9.0.3",
+    "ruff>=0.16.3",
 ]

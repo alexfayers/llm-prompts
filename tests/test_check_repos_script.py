@@ -1,4 +1,4 @@
-"""Tests for the session-end skill's repo-check script."""
+"""Tests for the git-usage skill's repo-check script."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ _SCRIPT = (
     / "prompts"
     / "shared"
     / "skills"
-    / "session-end"
+    / "git-usage"
     / "check_repos.py"
 )
 
@@ -136,6 +136,7 @@ class TestMain:
             [sys.executable, str(_SCRIPT), "--workspace", str(repo)],
             capture_output=True,
             text=True,
+            check=False,
         )
         assert completed.returncode == 1
         result = json.loads(completed.stdout)

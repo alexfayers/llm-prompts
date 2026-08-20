@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 import functools
 import hashlib
 import json
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import tomllib
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
 _CONFIG_DIR = Path.home() / ".config" / "llm-prompts"
@@ -212,7 +212,7 @@ def _run_parallel_ordered(callables: list[Callable[[], list[str]]]) -> list[list
         return list(executor.map(lambda fn: fn(), callables))
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _fetch_remote_pyproject(git_url: str) -> dict[str, Any] | None:
     """Shallow-clone a remote git source and return its parsed pyproject.toml, or None."""
     if not shutil.which("git"):

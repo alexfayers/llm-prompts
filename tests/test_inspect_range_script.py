@@ -59,6 +59,7 @@ def _run(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
         cwd=repo,
         capture_output=True,
         text=True,
+        check=False,
     )
 
 
