@@ -52,7 +52,9 @@ def _log_subjects(repo: Path, rev_range: str) -> list[str]:
     return [line for line in output.splitlines() if line]
 
 
-def _run(repo: Path, plan: list[dict[str, str]], *extra_args: str) -> subprocess.CompletedProcess[str]:
+def _run(
+    repo: Path, plan: list[dict[str, str]], *extra_args: str
+) -> subprocess.CompletedProcess[str]:
     plan_path = repo / "plan.json"
     plan_path.write_text(json.dumps(plan))
     return subprocess.run(
@@ -77,7 +79,11 @@ class TestMain:
 
         plan = [
             {"sha": base_sha, "verb": "pick"},
-            {"sha": fixup_sha, "verb": "squash", "message": "feat: base feature with fixup"},
+            {
+                "sha": fixup_sha,
+                "verb": "squash",
+                "message": "feat: base feature with fixup",
+            },
             {"sha": middle_sha, "verb": "pick"},
             {"sha": drop_sha, "verb": "drop"},
         ]
