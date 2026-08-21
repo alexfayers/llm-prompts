@@ -44,6 +44,12 @@ be wrong despite not being flagged, that's a defect in how the doc was
 written, not a sign that every resume needs a verification pass - note it in
 memory so the `handoff` skill can be reinforced, then keep moving.
 
+This covers facts the writing session owned - branch, commits, test results,
+findings. It does not cover state owned by a system outside the repo (ticket,
+deployment, or review status): that changes on its own after the doc is
+written, so read it from its own system when the current task turns on it, and
+never present a handoff-recorded value as the current state.
+
 ## After finishing the handed-off work
 
 Run `session-end` as normal when the work concludes. If more multi-session

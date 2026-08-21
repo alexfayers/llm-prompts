@@ -13,6 +13,8 @@ If you cannot run a task or tool, such as in the following situations:
 
 Unless you can immediately fix the issue, **do not proceed**. **Ask the user for help!**
 
+**A call that failed because its target was not in the state you assumed cannot succeed on a blind retry.** When an edit's match text is not found or not unique, or a write throws because the entity, observation, or relation does not exist, re-read that exact target first and reissue from what the read returned - never a guessed variation of the same call. Repeated retries against one target are the failure this prevents.
+
 Do not skip or alter tasks or take a different approach without explicit user permission.
 
 **Never** dismiss warnings as "expected" without verifying the cause. If a warning appears after your change, assume you caused it and investigate immediately.

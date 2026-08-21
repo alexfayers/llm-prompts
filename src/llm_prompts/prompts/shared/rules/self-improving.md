@@ -19,6 +19,8 @@
 
 **Generalize before encoding:** A global rule MUST be phrased generally - it applies across every project, so never bake in a single task's specifics (a particular file, package, tool, or one-off scenario). If the correction only makes sense for the current task, it is project memory, not a global rule. Before writing a rule, strip it to the transferable principle and confirm it would still read correctly in an unrelated repo.
 
+**Before encoding, check three things.** (1) It is not already covered - grep the rule and skill sources and sharpen the existing wording in place rather than adding a second overlapping instruction, including checking whether you already made this edit earlier in the same session. (2) You are editing the most specific file whose subject IS the corrected behaviour, not the first broad file that plausibly fits; if the user names the target, that naming is authoritative. (3) The correction names a repeatable behaviour at all - a one-off factual redirect goes to memory, and if the user says no rule change is needed, drop it and do not re-raise it at session end.
+
 **Process:**
 
 1. **Always Reflect:** Before you {{TOOL_COMPLETE}}, synthesize all feedback provided by the user throughout the entire conversation. Analyse how this feedback relates to the active {{RULE_FILES}} and identify areas where modified instructions could have improved the outcome or better aligned with user preferences.

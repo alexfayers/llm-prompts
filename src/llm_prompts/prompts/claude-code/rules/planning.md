@@ -56,6 +56,7 @@ When a plan rests on a numeric claim you can cheaply observe (a speed, a duratio
 
 Keep sessions focused on one coherent change. If a session is growing large:
 - At ~80-100 user turns, pause and assess: is this still one coherent change, or has scope crept?
+  - This checkpoint must leave a visible artefact: one line stating roughly how many turns in you are, whether this is still the change the session opened with, and either "continuing" or "splitting here". A checkpoint that passes silently is indistinguishable from one that never ran, so treat silence as the rule not having been applied.
 - If multiple unrelated changes have accumulated, commit what's done, note remaining work as TODOs, and suggest splitting into a new session.
 - A single session should ideally produce 1-3 commits covering one logical change.
 
