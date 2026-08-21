@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import sys
 from collections.abc import Callable
@@ -82,7 +83,7 @@ def _vscode_user_dir() -> Path:
     vscode_server = home / ".vscode-server"
     if vscode_server.is_dir():
         return vscode_server / "data" / "User"
-    
+
     if sys.platform == "win32":
         return Path(os.environ["APPDATA"]) / "Code" / "User"
     if sys.platform == "darwin":
@@ -860,7 +861,70 @@ def _install_plugin_skills(
     return managed
 
 
-def _apply_variant_frontmatter(content: str, stem: str, model: str, effort: str) -> str:
+_LONG_CONTEXT_SUFFIX = "[1m]"
+
+
+def _claude_model_catalogue() -> dict[str, str]:
+    """Map every model name this Claude Code install can select to its request value.
+
+    Bedrock installs are the reason this exists: the CLI's tier aliases resolve to
+    model ids an account may not serve, and an unservable id silently falls back to
+    the session's default model, so ``modelOverrides`` is the only authoritative
+    source there. Elsewhere ``availableModels`` names the models directly.
+
+    Returns:
+        Mapping of model name to the value to request, empty when unavailable.
+    """
+    try:
+        settings = json.loads(
+            (Path.home() / ".claude" / "settings.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if os.environ.get("CLAUDE_CODE_USE_BEDROCK") == "1":
+        overrides = settings.get("modelOverrides")
+        return overrides if isinstance(overrides, dict) else {}
+    available = settings.get("availableModels")
+    if not isinstance(available, list):
+        return {}
+    return {name: name for name in available if isinstance(name, str)}
+
+
+def _resolve_variant_model(alias: str, catalogue: dict[str, str]) -> str:
+    """Resolve a tier alias to the newest model of that family the install can run.
+
+    Picks the highest version within the alias's family and prefers that version's
+    long-context entry, never trading a newer model for an older long-context one.
+
+    Args:
+        alias: Tier alias from a variant token (e.g. ``haiku``).
+        catalogue: Mapping from :func:`_claude_model_catalogue`.
+
+    Returns:
+        Resolved model value, or the alias unchanged when nothing matches.
+    """
+    pattern = re.compile(
+        rf"claude-{re.escape(alias)}-(\d+(?:-\d+)*)"
+        rf"({re.escape(_LONG_CONTEXT_SUFFIX)})?"
+    )
+    best: tuple[tuple[int, ...], bool] | None = None
+    resolved = alias
+    for name, value in catalogue.items():
+        match = pattern.fullmatch(name)
+        if match is None:
+            continue
+        rank = (
+            tuple(int(part) for part in match.group(1).split("-")),
+            match.group(2) is not None,
+        )
+        if best is None or rank > best:
+            best, resolved = rank, value
+    return resolved
+
+
+def _apply_variant_frontmatter(
+    content: str, stem: str, model: str, effort: str, model_value: str
+) -> str:
     """Rewrite a template's frontmatter for one generated model/effort variant.
 
     Overrides ``name`` to the variant's own name, appends a ``[model, effort
@@ -870,8 +934,9 @@ def _apply_variant_frontmatter(content: str, stem: str, model: str, effort: str)
     Args:
         content: Template content, already stripped of gating keys.
         stem: Template filename stem (e.g. ``worker``).
-        model: Model name for this variant.
+        model: Tier alias for this variant, used in its name and description.
         effort: Effort level for this variant.
+        model_value: Value to emit as the ``model`` key.
 
     Returns:
         Content with the variant's frontmatter applied.
@@ -889,7 +954,7 @@ def _apply_variant_frontmatter(content: str, stem: str, model: str, effort: str)
             lines.append(f"{line} [{model}, {effort} effort]")
         else:
             lines.append(line)
-    lines.append(f"model: {model}")
+    lines.append(f"model: {model_value}")
     lines.append(f"effort: {effort}")
     return "---\n" + "\n".join(lines) + "\n---\n" + body
 
@@ -916,6 +981,7 @@ def _expand_agent_variants(src_path: Path) -> list[tuple[str, str]]:
     ]
     stripped = strip_gating_keys(content, _GATING_FRONTMATTER_KEYS)
     stem = src_path.stem
+    catalogue = _claude_model_catalogue()
 
     generated: list[tuple[str, str]] = []
     for token in tokens:
@@ -928,7 +994,16 @@ def _expand_agent_variants(src_path: Path) -> list[tuple[str, str]]:
         model, effort = parts
         filename = f"{stem}-{model}-{effort}.md"
         generated.append(
-            (filename, _apply_variant_frontmatter(stripped, stem, model, effort))
+            (
+                filename,
+                _apply_variant_frontmatter(
+                    stripped,
+                    stem,
+                    model,
+                    effort,
+                    _resolve_variant_model(model, catalogue),
+                ),
+            )
         )
     return generated
 

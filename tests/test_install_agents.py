@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,8 +10,10 @@ import pytest
 
 from llm_prompts.install import (
     _apply_frontmatter_overrides,
+    _claude_model_catalogue,
     _expand_agent_variants,
     _install_agents,
+    _resolve_variant_model,
     get_managed_dirs,
 )
 from llm_prompts.install import main as install_main
@@ -45,6 +48,131 @@ def _make_variant_template(
     return path
 
 
+@pytest.fixture(autouse=True)
+def _isolated_model_catalogue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Resolve models against an empty home so tests never read the real settings."""
+    monkeypatch.delenv("CLAUDE_CODE_USE_BEDROCK", raising=False)
+    with patch("llm_prompts.install.Path.home", return_value=tmp_path / "empty-home"):
+        yield
+
+
+def _write_settings(home: Path, settings: dict[str, object]) -> None:
+    """Write a Claude Code settings.json into a fake home directory."""
+    claude_dir = home / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    (claude_dir / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+
+
+_BEDROCK_SETTINGS: dict[str, object] = {
+    "modelOverrides": {
+        "claude-haiku-4-5": "bedrock/claude-haiku-4-5-dated",
+        "claude-opus-4-8[1m]": "bedrock/claude-opus-4-8[1m]",
+        "claude-opus-5": "bedrock/claude-opus-5",
+        "claude-opus-5[1m]": "bedrock/claude-opus-5[1m]",
+        "claude-sonnet-4-6[1m]": "bedrock/claude-sonnet-4-6[1m]",
+        "claude-sonnet-5": "bedrock/claude-sonnet-5",
+    },
+    "availableModels": ["claude-haiku-4-5", "claude-opus-5[1m]"],
+}
+
+
+class TestResolveVariantModel:
+    def test_bedrock_alias_becomes_mapped_id(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+        _write_settings(tmp_path, _BEDROCK_SETTINGS)
+
+        with patch("llm_prompts.install.Path.home", return_value=tmp_path):
+            catalogue = _claude_model_catalogue()
+
+        assert _resolve_variant_model("haiku", catalogue) == (
+            "bedrock/claude-haiku-4-5-dated"
+        )
+
+    def test_long_context_entry_preferred_for_same_version(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+        _write_settings(tmp_path, _BEDROCK_SETTINGS)
+
+        with patch("llm_prompts.install.Path.home", return_value=tmp_path):
+            catalogue = _claude_model_catalogue()
+
+        assert _resolve_variant_model("opus", catalogue) == "bedrock/claude-opus-5[1m]"
+
+    def test_newest_version_wins_over_older_long_context_entry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+        _write_settings(tmp_path, _BEDROCK_SETTINGS)
+
+        with patch("llm_prompts.install.Path.home", return_value=tmp_path):
+            catalogue = _claude_model_catalogue()
+
+        assert _resolve_variant_model("sonnet", catalogue) == "bedrock/claude-sonnet-5"
+
+    def test_non_bedrock_uses_available_models_verbatim(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CLAUDE_CODE_USE_BEDROCK", raising=False)
+        _write_settings(tmp_path, _BEDROCK_SETTINGS)
+
+        with patch("llm_prompts.install.Path.home", return_value=tmp_path):
+            catalogue = _claude_model_catalogue()
+
+        assert _resolve_variant_model("opus", catalogue) == "claude-opus-5[1m]"
+        assert _resolve_variant_model("haiku", catalogue) == "claude-haiku-4-5"
+
+    def test_unmatched_family_keeps_alias(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+        _write_settings(tmp_path, _BEDROCK_SETTINGS)
+
+        with patch("llm_prompts.install.Path.home", return_value=tmp_path):
+            catalogue = _claude_model_catalogue()
+
+        assert _resolve_variant_model("fable", catalogue) == "fable"
+
+    def test_missing_settings_file_keeps_alias(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+
+        with patch("llm_prompts.install.Path.home", return_value=tmp_path):
+            catalogue = _claude_model_catalogue()
+
+        assert catalogue == {}
+        assert _resolve_variant_model("haiku", catalogue) == "haiku"
+
+    def test_unreadable_settings_keeps_alias(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text(
+            "{not json", encoding="utf-8"
+        )
+
+        with patch("llm_prompts.install.Path.home", return_value=tmp_path):
+            catalogue = _claude_model_catalogue()
+
+        assert catalogue == {}
+        assert _resolve_variant_model("sonnet", catalogue) == "sonnet"
+
+    def test_bedrock_without_model_overrides_keeps_alias(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+        _write_settings(tmp_path, {"availableModels": ["claude-haiku-4-5"]})
+
+        with patch("llm_prompts.install.Path.home", return_value=tmp_path):
+            catalogue = _claude_model_catalogue()
+
+        assert _resolve_variant_model("haiku", catalogue) == "haiku"
+
+
 class TestApplyFrontmatterOverrides:
     def test_replaces_existing_key(self) -> None:
         content = "---\ndisable-model-invocation: true\n---\n\nBody.\n"
@@ -62,9 +190,7 @@ class TestApplyFrontmatterOverrides:
         assert frontmatter["priority"] == "1"
 
     def test_other_frontmatter_lines_byte_identical(self) -> None:
-        content = (
-            '---\nname: foo\ndescription: "A thing"\n---\n\nBody.\n'
-        )
+        content = '---\nname: foo\ndescription: "A thing"\n---\n\nBody.\n'
         result = _apply_frontmatter_overrides(content, {"name": "bar"})
         split = result.split("---\n")
         assert 'description: "A thing"' in split[1]
@@ -135,6 +261,22 @@ class TestExpandAgentVariants:
 
         _, frontmatter = parse_frontmatter(generated["worker-sonnet-low.md"])
         assert "generate_variants" not in frontmatter
+
+    def test_resolved_model_emitted_while_name_keeps_alias(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+        home = tmp_path / "home"
+        _write_settings(home, _BEDROCK_SETTINGS)
+        src = _make_variant_template(tmp_path, "worker.md", "worker", "haiku-low")
+
+        with patch("llm_prompts.install.Path.home", return_value=home):
+            generated = dict(_expand_agent_variants(src))
+
+        _, frontmatter = parse_frontmatter(generated["worker-haiku-low.md"])
+        assert frontmatter["model"] == "bedrock/claude-haiku-4-5-dated"
+        assert frontmatter["name"] == "worker-haiku-low"
+        assert frontmatter["description"].endswith("[haiku, low effort]")
 
     def test_malformed_token_is_skipped(self, tmp_path: Path) -> None:
         src = _make_variant_template(
