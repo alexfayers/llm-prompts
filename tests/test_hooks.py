@@ -269,6 +269,69 @@ class TestAutoReinstallPlugin:
 
     @patch("llm_prompts.hooks.subprocess.run")
     @patch("llm_prompts.hooks.read_manifest")
+    def test_flushes_debounced_write_on_later_hook(
+        self,
+        mock_manifest: MagicMock,
+        mock_run: MagicMock,
+        manifest_data: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        mock_manifest.return_value = manifest_data
+        mock_run.return_value.returncode = 0
+        plugin = AutoReinstallPlugin()
+        plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
+        path = manifest_data["kiro"]["files"][0]
+
+        plugin.on_hook(
+            "PostToolUse", tool_name="write_to_file", parameters={"path": path}
+        )
+        assert (
+            plugin.on_hook(
+                "PostToolUse", tool_name="write_to_file", parameters={"path": path}
+            )
+            is None
+        )
+        (tmp_path / "stamp").write_text(str(time.time() - _DEBOUNCE_SECONDS - 1))
+
+        result = plugin.on_hook(
+            "PostToolUse", tool_name="read_file", parameters={"path": path}
+        )
+        assert result is not None
+        assert any("Auto-reinstalled" in note for note in result.notes)
+        assert mock_run.call_count == 2
+
+    @patch("llm_prompts.hooks.subprocess.run")
+    @patch("llm_prompts.hooks.read_manifest")
+    def test_holds_pending_flush_until_interval_elapses(
+        self,
+        mock_manifest: MagicMock,
+        mock_run: MagicMock,
+        manifest_data: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        mock_manifest.return_value = manifest_data
+        mock_run.return_value.returncode = 0
+        plugin = AutoReinstallPlugin()
+        plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
+        path = manifest_data["kiro"]["files"][0]
+
+        plugin.on_hook(
+            "PostToolUse", tool_name="write_to_file", parameters={"path": path}
+        )
+        plugin.on_hook(
+            "PostToolUse", tool_name="write_to_file", parameters={"path": path}
+        )
+
+        assert (
+            plugin.on_hook(
+                "PostToolUse", tool_name="read_file", parameters={"path": path}
+            )
+            is None
+        )
+        assert mock_run.call_count == 1
+
+    @patch("llm_prompts.hooks.subprocess.run")
+    @patch("llm_prompts.hooks.read_manifest")
     def test_invalidates_cache_after_reinstall(
         self,
         mock_manifest: MagicMock,

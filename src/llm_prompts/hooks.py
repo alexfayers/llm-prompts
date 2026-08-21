@@ -90,6 +90,7 @@ class _ReinstallDebouncer:
 
             stamp_path = Path(user_data_dir("cline-hooks")) / stamp_name
         self._stamp = stamp_path
+        self._pending = stamp_path.with_name(f"{stamp_path.name}.pending")
         self._interval_seconds = interval_seconds
 
     def should_run(self) -> bool:
@@ -103,9 +104,19 @@ class _ReinstallDebouncer:
         return (time.time() - last_run) >= self._interval_seconds
 
     def mark_run(self) -> None:
-        """Record that a reinstall just happened."""
+        """Record that a reinstall just happened, satisfying any pending request."""
         self._stamp.parent.mkdir(parents=True, exist_ok=True)
         self._stamp.write_text(str(time.time()), encoding="utf-8")
+        self._pending.unlink(missing_ok=True)
+
+    def mark_pending(self) -> None:
+        """Record that a request was skipped and still needs a run."""
+        self._pending.parent.mkdir(parents=True, exist_ok=True)
+        self._pending.touch()
+
+    def is_pending(self) -> bool:
+        """Return True if a skipped request is still waiting for a run."""
+        return self._pending.exists()
 
 
 class AutoReinstallPlugin(HooksPlugin):
@@ -187,34 +198,53 @@ class AutoReinstallPlugin(HooksPlugin):
                 str(kwargs.get("source", "")), str(kwargs.get("agent_type", ""))
             )
 
-        if hook_name != "PostToolUse":
+        if not self._is_installed_file_edit(hook_name, kwargs):
+            return self._flush_pending()
+
+        if not self._debouncer.should_run():
+            self._debouncer.mark_pending()
             return None
 
-        tool_name = kwargs.get("tool_name")
-        if tool_name not in _WRITE_TOOLS:
-            return None
+        return self._run_update()
+
+    def _is_installed_file_edit(
+        self, hook_name: str, kwargs: dict[str, object]
+    ) -> bool:
+        """Return True if this hook is a write to a file the manifest tracks."""
+        if hook_name != "PostToolUse":
+            return False
+
+        if kwargs.get("tool_name") not in _WRITE_TOOLS:
+            return False
 
         parameters = kwargs.get("parameters")
         if not isinstance(parameters, dict):
-            return None
+            return False
 
         path_str = parameters.get("path") or parameters.get("file_path")
         if not path_str:
-            return None
+            return False
 
         try:
             resolved = Path(str(path_str)).resolve()
         except (OSError, ValueError):
-            return None
+            return False
 
         if resolved not in self._get_installed_paths():
-            return None
+            return False
 
-        if not self._debouncer.should_run():
-            return None
-
-        # Update prompts/shared/rules/hooks-llm-prompts.md if this note's behavior changes.
         logger.info("Installed prompt file edited: %s", resolved)
+        return True
+
+    def _flush_pending(self) -> HookResult | None:
+        """Run a reinstall the debounce deferred, once the interval has elapsed."""
+        if not self._debouncer.is_pending() or not self._debouncer.should_run():
+            return None
+        return self._run_update()
+
+    # Update prompts/shared/rules/hooks-llm-prompts.md if this note's behavior changes.
+    def _run_update(self) -> HookResult:
+        """Reinstall every prompt file, reporting the outcome as a hook note."""
         try:
             completed = subprocess.run(
                 ["llm-prompts", "update"],
