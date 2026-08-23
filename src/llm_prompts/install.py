@@ -929,7 +929,10 @@ def _apply_variant_frontmatter(
 
     Overrides ``name`` to the variant's own name, appends a ``[model, effort
     effort]`` suffix to ``description``, and adds ``model``/``effort`` keys.
-    All other frontmatter keys and the body are carried verbatim.
+    All other frontmatter keys and the body are carried verbatim. A block-scalar
+    (``>-``, ``|-``, etc.) description gets the suffix as a trailing continuation
+    line, folded into the value by the YAML parser, rather than appended onto
+    the indicator line itself where it would break the block-scalar syntax.
 
     Args:
         content: Template content, already stripped of gating keys.
@@ -945,15 +948,39 @@ def _apply_variant_frontmatter(
     if split is None:
         return content
     frontmatter_lines, body = split
+    suffix = f"[{model}, {effort} effort]"
     lines = []
+    in_description_block = False
+    description_indent = "  "
+
+    def close_description_block() -> None:
+        nonlocal in_description_block
+        if in_description_block:
+            lines.append(f"{description_indent}{suffix}")
+            in_description_block = False
+
     for line in frontmatter_lines:
+        if in_description_block and (not line.strip() or line[:1] in (" ", "\t")):
+            lines.append(line)
+            if line.strip():
+                description_indent = line[: len(line) - len(line.lstrip())]
+            continue
+        close_description_block()
+
         key = line.partition(": ")[0].strip()
         if key == "name":
             lines.append(f"name: {stem}-{model}-{effort}")
         elif key == "description":
-            lines.append(f"{line} [{model}, {effort} effort]")
+            value = line.partition(": ")[2].strip()
+            if re.fullmatch(r"[>|][+-]?", value):
+                lines.append(line)
+                in_description_block = True
+            else:
+                lines.append(f"{line} {suffix}")
         else:
             lines.append(line)
+    close_description_block()
+
     lines.append(f"model: {model_value}")
     lines.append(f"effort: {effort}")
     return "---\n" + "\n".join(lines) + "\n---\n" + body

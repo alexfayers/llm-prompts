@@ -7,9 +7,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from llm_prompts.install import (
     _apply_frontmatter_overrides,
+    _apply_variant_frontmatter,
     _claude_model_catalogue,
     _expand_agent_variants,
     _install_agents,
@@ -17,7 +19,7 @@ from llm_prompts.install import (
     get_managed_dirs,
 )
 from llm_prompts.install import main as install_main
-from llm_prompts.render_template import parse_frontmatter
+from llm_prompts.render_template import parse_frontmatter, split_frontmatter
 
 
 def _make_agent(directory: Path, name: str, body: str = "body") -> Path:
@@ -207,6 +209,55 @@ class TestApplyFrontmatterOverrides:
         body, frontmatter = parse_frontmatter(result)
         assert frontmatter["name"] == "foo"
         assert body == content
+
+
+class TestApplyVariantFrontmatterBlockScalarDescription:
+    def test_folded_scalar_description_parses_with_suffix_appended(self) -> None:
+        content = (
+            "---\n"
+            "name: architect\n"
+            "description: >-\n"
+            "  Opus sub-lead for the pipeline.\n"
+            "  Second line of the folded description.\n"
+            "disallowedTools: Agent\n"
+            "---\n\nBody.\n"
+        )
+
+        result = _apply_variant_frontmatter(
+            content, "architect", "opus", "medium", "claude-opus-5"
+        )
+
+        frontmatter_lines, _ = split_frontmatter(result)
+        parsed = yaml.safe_load("\n".join(frontmatter_lines))
+        assert parsed["description"] == (
+            "Opus sub-lead for the pipeline. Second line of the folded description. "
+            "[opus, medium effort]"
+        )
+        assert parsed["name"] == "architect-opus-medium"
+        assert parsed["disallowedTools"] == "Agent"
+
+    def test_single_line_description_still_appended_inline(self) -> None:
+        content = "---\nname: worker\ndescription: Does things.\n---\n\nBody.\n"
+
+        result = _apply_variant_frontmatter(
+            content, "worker", "sonnet", "low", "claude-sonnet-5"
+        )
+
+        _, frontmatter = parse_frontmatter(result)
+        assert frontmatter["description"] == "Does things. [sonnet, low effort]"
+
+    def test_block_scalar_description_as_last_frontmatter_key(self) -> None:
+        content = "---\nname: worker\ndescription: >-\n  Only line here.\n---\n\nB.\n"
+
+        result = _apply_variant_frontmatter(
+            content, "worker", "sonnet", "low", "claude-sonnet-5"
+        )
+
+        frontmatter_lines, _ = split_frontmatter(result)
+        parsed = yaml.safe_load("\n".join(frontmatter_lines))
+        assert parsed["description"] == "Only line here. [sonnet, low effort]"
+        assert parsed["model"] == "claude-sonnet-5"
+        assert parsed["effort"] == "low"
 
 
 class TestExpandAgentVariants:
@@ -476,6 +527,23 @@ class TestClaudeCodeAgentsInstallLayout:
         assert "Write" in disallowed
         assert "Edit" in disallowed
         assert "NotebookEdit" in disallowed
+
+    def test_architect_variants_have_valid_yaml_frontmatter(
+        self, claude_home: Path
+    ) -> None:
+        agents_dir = claude_home / ".claude" / "agents"
+
+        for name in (
+            "architect-opus-medium.md",
+            "architect-opus-high.md",
+            "architect-opus-xhigh.md",
+        ):
+            frontmatter_lines, _ = split_frontmatter(
+                (agents_dir / name).read_text(encoding="utf-8")
+            )
+            parsed = yaml.safe_load("\n".join(frontmatter_lines))
+            assert isinstance(parsed, dict)
+            assert parsed["description"].endswith("effort]")
 
 
 class TestClaudeCodeAgentsManifestTracking:
