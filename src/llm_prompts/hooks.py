@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import time
+from importlib.resources import files
 from pathlib import Path
 
 from cline_hooks.core.plugin import HookResult, HooksPlugin, UserFacingNote
@@ -131,7 +132,7 @@ class AutoReinstallPlugin(HooksPlugin):
         )
 
     def _get_installed_paths(self) -> frozenset[Path]:
-        """Load and cache resolved paths of all installed files from the manifest."""
+        """Load and cache resolved paths of all installed and source files."""
         if self._installed_paths is None:
             paths: set[Path] = set()
             for agent_entry in read_manifest().values():
@@ -140,8 +141,30 @@ class AutoReinstallPlugin(HooksPlugin):
                         paths.add(Path(file_str).resolve())
                     except (OSError, ValueError):
                         continue
+            paths.update(self._get_source_paths())
             self._installed_paths = frozenset(paths)
         return self._installed_paths
+
+    @staticmethod
+    def _get_source_paths() -> set[Path]:
+        """Return resolved paths of every file under the source prompt dirs.
+
+        Rules and agent variants are rendered copies rather than symlinks, so
+        editing their sources never resolves to a manifest path; walking the
+        source trees directly catches those edits too. This must be
+        recursive: skills live nested at ``prompts/*/skills/<name>/SKILL.md``,
+        so a shallow glob would miss every skill.
+        """
+        from .install import _discover_overlay_paths
+
+        dirs = [Path(str(files("llm_prompts") / "prompts")), *_discover_overlay_paths()]
+        return {
+            path.resolve()
+            for prompts_dir in dirs
+            if prompts_dir.is_dir()
+            for path in prompts_dir.rglob("*")
+            if path.is_file()
+        }
 
     # Update prompts/shared/rules/hooks-llm-prompts.md if this note's behavior changes.
     def _on_task_start(self, source: str, agent_type: str) -> HookResult | None:
@@ -250,6 +273,7 @@ class AutoReinstallPlugin(HooksPlugin):
                 ["llm-prompts", "update"],
                 check=False,
                 capture_output=True,
+                text=True,
                 timeout=30,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -257,8 +281,12 @@ class AutoReinstallPlugin(HooksPlugin):
             return HookResult(notes=["Failed to auto-reinstall prompt files"])
 
         if completed.returncode != 0:
-            logger.warning("Failed to run llm-prompts update")
-            return HookResult(notes=["Failed to auto-reinstall prompt files"])
+            stderr = completed.stderr.strip()
+            logger.warning("Failed to run llm-prompts update: %s", stderr)
+            note = "Failed to auto-reinstall prompt files"
+            if stderr:
+                note += f":\n{stderr}"
+            return HookResult(notes=[note])
 
         self._debouncer.mark_run()
         self._installed_paths = None

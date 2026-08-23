@@ -232,6 +232,7 @@ class TestAutoReinstallPlugin:
     ) -> None:
         mock_manifest.return_value = manifest_data
         mock_run.return_value.returncode = 1
+        mock_run.return_value.stderr = ""
         plugin = AutoReinstallPlugin()
         plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         result = plugin.on_hook(
@@ -241,6 +242,33 @@ class TestAutoReinstallPlugin:
         )
         assert result is not None
         assert result.notes == ["Failed to auto-reinstall prompt files"]
+
+    @patch("llm_prompts.hooks.subprocess.run")
+    @patch("llm_prompts.hooks.read_manifest")
+    def test_failure_note_includes_captured_stderr(
+        self,
+        mock_manifest: MagicMock,
+        mock_run: MagicMock,
+        manifest_data: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        mock_manifest.return_value = manifest_data
+        mock_run.return_value.returncode = 1
+        mock_run.return_value.stderr = "size guard: rule.md exceeds final\n"
+        plugin = AutoReinstallPlugin()
+        plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
+        result = plugin.on_hook(
+            "PostToolUse",
+            tool_name="write_to_file",
+            parameters={"path": manifest_data["kiro"]["files"][0]},
+        )
+        assert result is not None
+        assert result.notes == [
+            (
+                "Failed to auto-reinstall prompt files:\n"
+                "size guard: rule.md exceeds final"
+            ),
+        ]
 
     @patch("llm_prompts.hooks.subprocess.run")
     @patch("llm_prompts.hooks.read_manifest")
@@ -500,3 +528,64 @@ class TestUpdateCheckOnTaskStart:
         assert result is None
         mock_collect.assert_not_called()
         assert not (tmp_path / "update-stamp").exists()
+
+
+class TestSourcePathWatching:
+    """Tests that source prompt dirs are watched, not just installed manifest paths."""
+
+    @patch("llm_prompts.hooks.subprocess.run")
+    @patch("llm_prompts.install._discover_overlay_paths", return_value=[])
+    @patch("llm_prompts.hooks.read_manifest", return_value={})
+    def test_rule_source_edit_triggers_reinstall(
+        self,
+        mock_manifest: MagicMock,
+        mock_overlays: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stderr = ""
+        source_dir = tmp_path / "prompts"
+        rule_file = source_dir / "shared" / "rules" / "coding.md"
+        rule_file.parent.mkdir(parents=True)
+        rule_file.write_text("# Coding guidelines")
+
+        plugin = AutoReinstallPlugin()
+        plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
+        with patch("llm_prompts.hooks.files", return_value=tmp_path):
+            result = plugin.on_hook(
+                "PostToolUse",
+                tool_name="Edit",
+                parameters={"file_path": str(rule_file)},
+            )
+        assert result is not None
+        assert any("Auto-reinstalled" in note for note in result.notes)
+
+    @patch("llm_prompts.hooks.subprocess.run")
+    @patch("llm_prompts.install._discover_overlay_paths", return_value=[])
+    @patch("llm_prompts.hooks.read_manifest", return_value={})
+    def test_nested_skill_source_edit_triggers_reinstall(
+        self,
+        mock_manifest: MagicMock,
+        mock_overlays: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """A skill source, nested two levels below the rules dir, is still watched."""
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stderr = ""
+        source_dir = tmp_path / "prompts"
+        skill_file = source_dir / "shared" / "skills" / "example-skill" / "SKILL.md"
+        skill_file.parent.mkdir(parents=True)
+        skill_file.write_text("# Example skill")
+
+        plugin = AutoReinstallPlugin()
+        plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
+        with patch("llm_prompts.hooks.files", return_value=tmp_path):
+            result = plugin.on_hook(
+                "PostToolUse",
+                tool_name="Edit",
+                parameters={"file_path": str(skill_file)},
+            )
+        assert result is not None
+        assert any("Auto-reinstalled" in note for note in result.notes)
