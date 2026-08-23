@@ -170,10 +170,12 @@ class TestCodexInstallLayout:
         assert (prompts / "simplify.md").is_file()
         assert (prompts / "word-god.md").is_file()
 
-    def test_skills_symlink_into_codex_skills(self, codex_home: Path) -> None:
+    def test_skills_materialize_into_codex_skills(self, codex_home: Path) -> None:
         skills = codex_home / ".codex" / "skills"
-        assert (skills / "tdd").is_symlink()
-        assert (skills / "git-usage").is_symlink()
+        assert (skills / "tdd").is_dir() and not (skills / "tdd").is_symlink()
+        assert (skills / "git-usage").is_dir() and not (
+            skills / "git-usage"
+        ).is_symlink()
 
     def test_ask_codex_excluded_from_codex_skills(self, tmp_path: Path) -> None:
         home = tmp_path / "home"
@@ -188,7 +190,7 @@ class TestCodexInstallLayout:
             install_main(["codex"])
 
         skills = home / ".codex" / "skills"
-        assert (skills / "tdd").is_symlink()
+        assert (skills / "tdd").is_dir() and not (skills / "tdd").is_symlink()
         assert not (skills / "ask-codex").exists()
 
     def test_reinstall_removes_stale_prompt(self, codex_home: Path, tmp_path: Path):

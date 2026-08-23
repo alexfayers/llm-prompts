@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,9 +18,13 @@ from llm_prompts.install import (
     _excluded_targets,
     _install_linked,
     _install_plugin_skills,
+    _install_rendered,
     _install_skills,
+    _linked_content,
+    _materialize_builtin_skill,
     _materialize_override_skill,
     _passes_requires_gate,
+    _rendered_content,
 )
 from llm_prompts.install import main as install_main
 from llm_prompts.render_template import (
@@ -213,18 +220,22 @@ class TestInstallSkillsGating:
         skill_dir.mkdir(parents=True, exist_ok=True)
         (skill_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
 
-    def test_requires_command_unsatisfied_skill_not_symlinked(
+    def test_requires_command_unsatisfied_skill_not_materialized(
         self, tmp_path: Path
     ) -> None:
         skills_src = tmp_path / "skills_src"
         self._make_skill(skills_src, "plain", "# Plain\n")
         self._make_skill(skills_src, "gated", "---\nrequires_command: sometool\n---\n")
         agents_dir = tmp_path / "agents"
+        vars_path = tmp_path / "vars.json"
 
         with patch("llm_prompts.install.shutil.which", return_value=None):
-            managed = _install_skills([skills_src], agents_dir, "claude-code")
+            managed = _install_skills(
+                [skills_src], agents_dir, "claude-code", vars_path
+            )
 
-        assert (agents_dir / "skills" / "plain").is_symlink() is True
+        plain = agents_dir / "skills" / "plain"
+        assert plain.is_dir() and not plain.is_symlink()
         assert (agents_dir / "skills" / "gated").exists() is False
         assert "plain" in managed
         assert "gated" not in managed
@@ -236,12 +247,15 @@ class TestInstallSkillsGating:
             "ask-codex",
             "---\nrequires_command: sometool\nexclude_targets: codex\n---\n",
         )
+        vars_path = tmp_path / "vars.json"
 
         codex_agents = tmp_path / "codex_agents"
         with patch(
             "llm_prompts.install.shutil.which", return_value="/usr/bin/sometool"
         ):
-            codex_managed = _install_skills([skills_src], codex_agents, "codex")
+            codex_managed = _install_skills(
+                [skills_src], codex_agents, "codex", vars_path
+            )
 
         assert (codex_agents / "skills" / "ask-codex").exists() is False
         assert "ask-codex" not in codex_managed
@@ -250,9 +264,12 @@ class TestInstallSkillsGating:
         with patch(
             "llm_prompts.install.shutil.which", return_value="/usr/bin/sometool"
         ):
-            cc_managed = _install_skills([skills_src], cc_agents, "claude-code")
+            cc_managed = _install_skills(
+                [skills_src], cc_agents, "claude-code", vars_path
+            )
 
-        assert (cc_agents / "skills" / "ask-codex").is_symlink() is True
+        ask_codex = cc_agents / "skills" / "ask-codex"
+        assert ask_codex.is_dir() and not ask_codex.is_symlink()
         assert "ask-codex" in cc_managed
 
     def test_overlay_skill_overrides_base_on_name_collision(
@@ -265,11 +282,14 @@ class TestInstallSkillsGating:
         self._make_skill(overlay_dir, "collide", "# Collide\nOVERLAY-COLLIDE\n")
         self._make_skill(overlay_dir, "overlay-only", "# Overlay\nOVL\n")
         agents_dir = tmp_path / "agents"
+        vars_path = tmp_path / "vars.json"
 
-        managed = _install_skills([overlay_dir, base_dir], agents_dir, "claude-code")
+        managed = _install_skills(
+            [overlay_dir, base_dir], agents_dir, "claude-code", vars_path
+        )
 
         collide = agents_dir / "skills" / "collide"
-        assert collide.is_symlink()
+        assert collide.is_dir() and not collide.is_symlink()
         assert "OVERLAY-COLLIDE" in (collide / "SKILL.md").read_text(encoding="utf-8")
         assert managed == {"shared-only", "collide", "overlay-only"}
 
@@ -468,6 +488,92 @@ class TestMaterializeOverrideSkill:
         assert dest.resolve() == src.resolve()
 
 
+class TestMaterializeBuiltinSkill:
+    def _make_skill(
+        self, parent: Path, name: str, skill_md: str, *extra_files: str
+    ) -> Path:
+        skill_dir = parent / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
+        for extra in extra_files:
+            (skill_dir / extra).write_text("extra", encoding="utf-8")
+        return skill_dir
+
+    def _write_vars(self, tmp_path: Path, variables: dict[str, str]) -> Path:
+        path = tmp_path / "vars.json"
+        path.write_text(json.dumps(variables), encoding="utf-8")
+        return path
+
+    def test_skill_md_variables_substituted(self, tmp_path: Path) -> None:
+        src = self._make_skill(
+            tmp_path / "src", "session-end", "# Session end\n\n{{TOOL_COMPLETE}}.\n"
+        )
+        dest = tmp_path / "dest" / "session-end"
+        vars_path = self._write_vars(tmp_path, {"TOOL_COMPLETE": "mark done"})
+
+        _materialize_builtin_skill(src, dest, vars_path, set())
+
+        content = (dest / "SKILL.md").read_text(encoding="utf-8")
+        assert "mark done." in content
+        assert "{{TOOL_COMPLETE}}" not in content
+
+    def test_frontmatter_intact_after_substitution(self, tmp_path: Path) -> None:
+        src = self._make_skill(
+            tmp_path / "src",
+            "session-end",
+            "---\nname: session-end\ndescription: Wrap up.\n---\n\n{{TOOL_COMPLETE}}.\n",
+        )
+        dest = tmp_path / "dest" / "session-end"
+        vars_path = self._write_vars(tmp_path, {"TOOL_COMPLETE": "mark done"})
+
+        _materialize_builtin_skill(src, dest, vars_path, set())
+
+        content = (dest / "SKILL.md").read_text(encoding="utf-8")
+        assert "name: session-end" in content
+        assert "description: Wrap up." in content
+
+    def test_siblings_still_resolve_and_stay_live(self, tmp_path: Path) -> None:
+        src = self._make_skill(
+            tmp_path / "src", "tidy-code", "# Tidy code\n", "reference.md"
+        )
+        dest = tmp_path / "dest" / "tidy-code"
+        vars_path = self._write_vars(tmp_path, {})
+
+        _materialize_builtin_skill(src, dest, vars_path, set())
+
+        sibling = dest / "reference.md"
+        assert sibling.is_symlink()
+        (src / "reference.md").write_text("changed", encoding="utf-8")
+        assert sibling.read_text(encoding="utf-8") == "changed"
+
+    def test_companion_script_still_runs(self, tmp_path: Path) -> None:
+        src = self._make_skill(tmp_path / "src", "tidy-code", "# Tidy code\n")
+        (src / "check.py").write_text("print('ok')\n", encoding="utf-8")
+        dest = tmp_path / "dest" / "tidy-code"
+        vars_path = self._write_vars(tmp_path, {})
+
+        _materialize_builtin_skill(src, dest, vars_path, set())
+
+        completed = subprocess.run(
+            [sys.executable, str(dest / "check.py")],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert completed.stdout.strip() == "ok"
+
+    def test_missing_vars_file_defaults_to_no_substitution(
+        self, tmp_path: Path
+    ) -> None:
+        src = self._make_skill(tmp_path / "src", "session-end", "{{TOOL_COMPLETE}}.\n")
+        dest = tmp_path / "dest" / "session-end"
+
+        _materialize_builtin_skill(src, dest, tmp_path / "missing-vars.json", set())
+
+        content = (dest / "SKILL.md").read_text(encoding="utf-8")
+        assert "{{TOOL_COMPLETE}}" in content
+
+
 class TestMainValidatesPlugins:
     def test_invalid_plugin_entry_exits_before_touching_disk(
         self, tmp_path: Path
@@ -489,9 +595,7 @@ class TestMainValidatesPlugins:
 
         assert not (home / ".claude" / "skills").exists()
 
-    def test_frontmatter_overrides_scoped_per_skill_name(
-        self, tmp_path: Path
-    ) -> None:
+    def test_frontmatter_overrides_scoped_per_skill_name(self, tmp_path: Path) -> None:
         home = tmp_path / "home"
         home.mkdir()
         manifest = tmp_path / "installed.json"
@@ -635,6 +739,45 @@ class TestInstallLinked:
         dest = tmp_path / "dest" / "rule.md"
         _install_linked(src, dest, "rule")
         assert dest.read_text(encoding="utf-8") == body
+
+
+class TestRenderedAndLinkedContentEquivalence:
+    """Guards the render-vs-linked dispatch a measurement tool must replicate exactly.
+
+    Shared sources are rendered (variables substituted); agent-specific sources
+    are only stripped of gating keys. `_rendered_content`/`_linked_content` must
+    stay byte-identical to what the real install path writes to disk for both.
+    """
+
+    def test_rendered_shared_content_matches_install_output(
+        self, tmp_path: Path
+    ) -> None:
+        src = _make_rule(
+            tmp_path / "src", "rule.md", "---\ndescription: A rule.\n---\n\nBody.\n"
+        )
+        vars_path = tmp_path / "vars.json"
+        vars_path.write_text("{}", encoding="utf-8")
+        dest = tmp_path / "dest" / "rule.md"
+
+        _install_rendered(src, dest, vars_path, "claude-code", "rule")
+
+        assert dest.read_text(encoding="utf-8") == _rendered_content(
+            src, vars_path, "claude-code"
+        )
+
+    def test_linked_agent_specific_content_matches_install_output(
+        self, tmp_path: Path
+    ) -> None:
+        src = _make_rule(
+            tmp_path / "src",
+            "shell.md",
+            "---\nrequires_env: MY_FLAG\ndescription: Agent-specific.\n---\n\nBody.\n",
+        )
+        dest = tmp_path / "dest" / "shell.md"
+
+        _install_linked(src, dest, "shell")
+
+        assert dest.read_text(encoding="utf-8") == _linked_content(src)
 
 
 class TestRenderForKiro:

@@ -18,6 +18,7 @@ from .render_template import (
     render_template,
     split_frontmatter,
     strip_gating_keys,
+    substitute_variables,
 )
 
 LogLevel = Literal["debug", "info", "warn", "error", "success"]
@@ -281,6 +282,20 @@ def _discover_overlay_paths() -> list[Path]:
     return paths
 
 
+def _rendered_content(src: Path, vars_path: Path, target: str) -> str:
+    """Render a shared source file's content for one target, without writing it.
+
+    Args:
+        src: Source template path.
+        vars_path: Variables JSON path.
+        target: Render target.
+
+    Returns:
+        Rendered content, as it would be installed.
+    """
+    return render_template(str(src), str(vars_path), target)
+
+
 def _install_rendered(
     src: Path, dest: Path, vars_path: Path, target: str, label: str
 ) -> None:
@@ -294,7 +309,7 @@ def _install_rendered(
         label: Log label for this file.
     """
     try:
-        output = render_template(str(src), str(vars_path), target)
+        output = _rendered_content(src, vars_path, target)
     except Exception as e:
         log("error", f"Failed to render {label}: {e}")
         return
@@ -331,6 +346,22 @@ def _write_if_changed(dest: Path, output: str, label: str) -> None:
             dest.unlink()
 
 
+def _linked_content(src: Path) -> str:
+    """Return an agent-specific source file's content, without writing it.
+
+    Only the gating frontmatter keys are stripped; everything else, including
+    the rest of the frontmatter, is carried verbatim - agent-specific sources
+    never go through variable substitution or per-target rendering.
+
+    Args:
+        src: Source file path.
+
+    Returns:
+        Content as it would be installed.
+    """
+    return strip_gating_keys(_read_text(src), _GATING_FRONTMATTER_KEYS)
+
+
 def _install_linked(src: Path, dest: Path, label: str) -> None:
     """Install a file by copying source content to destination.
 
@@ -339,7 +370,7 @@ def _install_linked(src: Path, dest: Path, label: str) -> None:
         dest: Destination file path.
         label: Log label for this file.
     """
-    src_content = strip_gating_keys(_read_text(src), _GATING_FRONTMATTER_KEYS)
+    src_content = _linked_content(src)
     if dest.exists() and not dest.is_symlink():
         if _read_text(dest) == src_content:
             log("debug", f"{label} is up to date. Skipping.")
@@ -712,21 +743,22 @@ def _apply_frontmatter_overrides(content: str, overrides: dict[str, str]) -> str
     return "---\n" + "\n".join(lines) + "\n---\n" + body
 
 
-def _materialize_override_skill(
-    source: Path, dest: Path, overrides: dict[str, str], managed: set[str]
+def _materialize_skill_dir(
+    source: Path, dest: Path, content: str, label: str, managed: set[str]
 ) -> None:
-    """Install a plugin skill as a real directory with a patched ``SKILL.md``.
+    """Materialize a skill as a real directory with a rewritten ``SKILL.md``.
 
     ``dest`` becomes a real directory (converted from a symlink/file if needed)
-    containing a frontmatter-patched ``SKILL.md`` plus every other top-level
-    entry of ``source`` symlinked in, so siblings keep tracking upstream. Any
-    entry in ``dest`` no longer present in ``source`` is pruned, since manifest
-    cleanup never inspects a skill directory's contents.
+    containing ``content`` as its ``SKILL.md`` plus every other top-level entry
+    of ``source`` symlinked in, so siblings keep tracking upstream. Any entry in
+    ``dest`` no longer present in ``source`` is pruned, since manifest cleanup
+    never inspects a skill directory's contents.
 
     Args:
-        source: Plugin skill's checkout directory.
+        source: Skill's source directory.
         dest: Destination skill directory.
-        overrides: Frontmatter key/value overrides, values already stringified.
+        content: Content to write as ``dest``'s ``SKILL.md``.
+        label: Human-readable label for log/error messages.
         managed: Set to accumulate the installed destination name into.
     """
     name = dest.name
@@ -735,16 +767,13 @@ def _materialize_override_skill(
             dest.unlink()
         dest.mkdir(parents=True, exist_ok=True)
 
-        patched = _apply_frontmatter_overrides(
-            _read_text(source / "SKILL.md"), overrides
-        )
-        _write_if_changed(dest / "SKILL.md", patched, f"plugin skill '{name}' SKILL.md")
+        _write_if_changed(dest / "SKILL.md", content, f"{label} '{name}' SKILL.md")
 
         source_names = {entry.name for entry in source.iterdir()}
         for entry in source.iterdir():
             if entry.name == "SKILL.md":
                 continue
-            _install_symlink(entry, dest / entry.name, "plugin skill sibling", set())
+            _install_symlink(entry, dest / entry.name, f"{label} sibling", set())
 
         for existing in dest.iterdir():
             if existing.name == "SKILL.md" or existing.name in source_names:
@@ -756,19 +785,72 @@ def _materialize_override_skill(
 
         managed.add(name)
     except Exception as e:
-        log("error", f"Failed to materialize plugin skill '{name}': {e}")
+        log("error", f"Failed to materialize {label} '{name}': {e}")
+
+
+def _materialize_override_skill(
+    source: Path, dest: Path, overrides: dict[str, str], managed: set[str]
+) -> None:
+    """Install a plugin skill as a real directory with a patched ``SKILL.md``.
+
+    Args:
+        source: Plugin skill's checkout directory.
+        dest: Destination skill directory.
+        overrides: Frontmatter key/value overrides, values already stringified.
+        managed: Set to accumulate the installed destination name into.
+    """
+    patched = _apply_frontmatter_overrides(_read_text(source / "SKILL.md"), overrides)
+    _materialize_skill_dir(source, dest, patched, "plugin skill", managed)
+
+
+def _builtin_skill_vars(vars_path: Path) -> dict[str, str]:
+    """Load a target agent's variables JSON for built-in skill substitution.
+
+    Args:
+        vars_path: Variables JSON path.
+
+    Returns:
+        Parsed variables mapping, empty if the file is missing.
+    """
+    if not vars_path.exists():
+        return {}
+    return json.loads(_read_text(vars_path))
+
+
+def _materialize_builtin_skill(
+    source: Path, dest: Path, vars_path: Path, managed: set[str]
+) -> None:
+    """Install a built-in/overlay skill as a real directory with variables substituted.
+
+    Only ``substitute_variables`` is applied to ``SKILL.md`` - never
+    ``render_template``, which returns body only and would strip the
+    frontmatter a skill needs to register.
+
+    Args:
+        source: Skill's source directory.
+        dest: Destination skill directory.
+        vars_path: Variables JSON path for the target agent.
+        managed: Set to accumulate the installed destination name into.
+    """
+    raw = _read_text(source / "SKILL.md")
+    substituted = substitute_variables(raw, _builtin_skill_vars(vars_path))
+    for var in find_unreplaced_variables(substituted):
+        log("warn", f"Unreplaced variable '{{{{{var}}}}}' in skill '{source.name}'")
+    _materialize_skill_dir(source, dest, substituted, "skill", managed)
 
 
 def _install_skills(
-    candidate_dirs: list[Path], skills_parent: Path, agent_name: str
+    candidate_dirs: list[Path], skills_parent: Path, agent_name: str, vars_path: Path
 ) -> set[str]:
-    """Install skills as symlinks, overlay dirs overriding base on name collision.
+    """Install skills as materialized directories, overlay overriding base on collision.
 
     Args:
         candidate_dirs: Source skills directories in priority order (first wins).
-        skills_parent: Parent directory whose ``skills`` subdir receives symlinks.
+        skills_parent: Parent directory whose ``skills`` subdir receives the
+            materialized skill directories.
         agent_name: Target agent name, used to apply the requires-gate and
             ``exclude_targets`` checks.
+        vars_path: Variables JSON path for the target agent.
 
     Returns:
         Set of installed skill names.
@@ -802,7 +884,7 @@ def _install_skills(
         gate,
     )
     for name, src in resolved:
-        _install_symlink(src, dest_root / name, "skill", managed)
+        _materialize_builtin_skill(src, dest_root / name, vars_path, managed)
     return managed
 
 
@@ -1429,7 +1511,9 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
             *(d / "shared" / "skills" for d in overlay_dirs),
             root_dir / "shared" / "skills",
         ]
-        managed_skills = _install_skills(cline_skill_dirs, agents_dir, "cline")
+        managed_skills = _install_skills(
+            cline_skill_dirs, agents_dir, "cline", all_agents["cline"].vars_path()
+        )
         plugin_managed = _install_plugin_skills(
             plugin_skill_pairs, agents_dir, "cline", managed_skills
         )
@@ -1448,7 +1532,9 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
             root_dir / skill_agent / "skills",
             *(d / skill_agent / "skills" for d in overlay_dirs),
         ]
-        managed = _install_skills(skill_dirs, skills_parent, skill_agent)
+        managed = _install_skills(
+            skill_dirs, skills_parent, skill_agent, all_agents[skill_agent].vars_path()
+        )
         plugin_managed = _install_plugin_skills(
             plugin_skill_pairs, skills_parent, skill_agent, managed
         )
