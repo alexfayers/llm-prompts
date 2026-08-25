@@ -16,6 +16,8 @@ For initial setup or full reinstall of all tools and overlays, use `llm-prompts 
 
 Before creating that commit, check whether HEAD is an unpushed commit covering the same rule/skill/topic (per `git-usage`'s amend-alignment rule) - if so, amend it instead of adding a new commit for what is really the same change landing in two steps.
 
+**Pushing to the source repos.** If the local checkout's `origin` points at a fork (e.g. `codebeetl/llm-prompts`, forked from `alexfayers/llm-prompts`) because the authenticated account lacks push/merge rights on the upstream repo, push commits straight to the fork's `main` - it is the principal remote for this environment. Also open a PR from the fork to the corresponding upstream repo so the fix can flow back, and leave that PR open rather than trying to merge it (the account can't merge upstream); it's fine for the fork to run ahead of upstream in the meantime.
+
 ## Adding an overlay
 
 To add an llm-prompts overlay package, add a `[[tools]]` entry to `~/.config/llm-prompts/config.toml`:
