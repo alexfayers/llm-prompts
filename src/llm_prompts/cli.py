@@ -11,6 +11,7 @@ import sys
 from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .setup import (
     _GIT_TIMEOUT,
@@ -19,6 +20,9 @@ from .setup import (
     _remote_commit_subjects,
     _remote_head,
 )
+
+if TYPE_CHECKING:
+    from .size_guard import Artifact, Baseline
 
 _AGENTS = ("cline", "copilot", "kiro", "claude-code", "codex")
 
@@ -109,6 +113,130 @@ def _print_sources(agent: str) -> None:
             print(f"{section}:")
             current_section = section
         print(f"  {sources[key]}")
+
+
+def _size_guard_roots() -> list[Path]:
+    """Return this package's own prompts dir plus every discovered overlay's.
+
+    Used by the `check` subcommand, which measures the full checked union a
+    real install would see - unlike the pytest suite, which is confined to
+    this package's own root (see `size_guard`'s module docstring).
+    """
+    from .install import _discover_overlay_paths
+
+    with contextlib.redirect_stderr(io.StringIO()):
+        overlay_dirs = _discover_overlay_paths()
+    return [_get_root_dir(), *overlay_dirs]
+
+
+def _print_parked_state(artifacts: list[Artifact]) -> None:
+    """Print one visibility line per metric with artifacts still over final.
+
+    Args:
+        artifacts: Every measured artifact from a `size_guard.check()` run.
+    """
+    from .size_guard import parked_state_lines
+
+    for line in parked_state_lines(artifacts):
+        print(line)
+
+
+def _run_size_check() -> None:
+    """Run the prompt-size guard against the full checked union and report."""
+    from .size_guard import check as run_size_check
+
+    result = run_size_check(_size_guard_roots())
+    print(result.report)
+    if not result.passed:
+        sys.exit(1)
+    _print_parked_state(result.artifacts)
+
+
+def _split_baseline_additions(existing: Baseline, updated: Baseline) -> Baseline:
+    """Split a regenerated baseline into entries absent from `existing`.
+
+    A new entry grandfathers a file that has never been baselined before -
+    exactly the accidental-grandfathering case additions must be confirmed
+    for. An entry already present, even if its value changed, is a lowering
+    and is not an addition.
+
+    Args:
+        existing: Previously committed baseline.
+        updated: Freshly regenerated baseline.
+
+    Returns:
+        The subset of `updated` whose names are not in `existing`.
+    """
+    additions: Baseline = {}
+    for metric, targets in updated.items():
+        for target, names in targets.items():
+            for name, value in names.items():
+                if name not in existing.get(metric, {}).get(target, {}):
+                    additions.setdefault(metric, {}).setdefault(target, {})[name] = (
+                        value
+                    )
+    return additions
+
+
+def _run_update_baseline(*, confirm_additions: bool = False) -> None:
+    """Regenerate every root's size_baseline.json and report the diff.
+
+    Lowering an existing entry is always applied. A brand-new entry (a file
+    with no prior baseline) is withheld unless `confirm_additions` is set, so
+    grandfathering a newly-discovered oversized file at its current size can
+    never happen by accident.
+
+    Args:
+        confirm_additions: Allow writing new baseline entries, not just
+            lowering existing ones.
+    """
+    from .size_guard import (
+        baseline_path_for_root,
+        build_baseline,
+        iter_artifacts,
+        load_baseline,
+        save_baseline,
+    )
+
+    changed = 0
+    removed = 0
+    withheld: list[str] = []
+    for root in _size_guard_roots():
+        baseline_path = baseline_path_for_root(root)
+        existing = load_baseline(baseline_path)
+        updated = build_baseline(iter_artifacts([root]), existing=existing)
+
+        additions = _split_baseline_additions(existing, updated)
+        if additions and not confirm_additions:
+            for metric, targets in additions.items():
+                for target, names in targets.items():
+                    for name, value in names.items():
+                        withheld.append(f"{metric} {name} ({target}): {value}")
+                        updated[metric][target].pop(name, None)
+
+        for metric, targets in updated.items():
+            for target, names in targets.items():
+                for name, value in names.items():
+                    old = existing.get(metric, {}).get(target, {}).get(name)
+                    if old != value:
+                        changed += 1
+                        print(f"{metric} {name} ({target}): {old} -> {value}")
+
+        for metric, targets in existing.items():
+            for target, names in targets.items():
+                for name in names:
+                    if name not in updated.get(metric, {}).get(target, {}):
+                        removed += 1
+                        print(f"{metric} {name} ({target}): removed (now compliant)")
+
+        save_baseline(updated, baseline_path)
+
+    if withheld:
+        print("New baseline entries withheld (rerun with --confirm-additions):")
+        for line in withheld:
+            print(f"  {line}")
+
+    print(f"Baseline updated: {changed} changed, {removed} removed.")
 
 
 def _get_installed_commit(package_name: str) -> str | None:
@@ -438,6 +566,23 @@ def main() -> None:
     uninstall_parser.add_argument(
         "-v", "--verbose", action="store_true", help="Show debug output."
     )
+    check_parser = subparsers.add_parser(
+        "check",
+        help="Check prompt sizes against size_limits.py's thresholds.",
+    )
+    check_parser.add_argument(
+        "--update-baseline",
+        action="store_true",
+        help="Regenerate size_baseline.json from current measurements.",
+    )
+    check_parser.add_argument(
+        "--confirm-additions",
+        action="store_true",
+        help=(
+            "With --update-baseline, also write brand-new baseline entries, "
+            "not just lower existing ones."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -583,6 +728,11 @@ def main() -> None:
         from .install import uninstall
 
         uninstall(None if args.agent == "all" else [args.agent], verbose=args.verbose)
+    elif args.command == "check":
+        if args.update_baseline:
+            _run_update_baseline(confirm_additions=args.confirm_additions)
+        else:
+            _run_size_check()
     else:
         parser.print_help()
         sys.exit(1)

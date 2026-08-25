@@ -637,6 +637,135 @@ class TestMainValidatesPlugins:
         assert dest_b.is_symlink()
 
 
+class TestMainRunsSizeGuard:
+    def test_size_violation_exits_before_touching_disk(self, tmp_path: Path) -> None:
+        from llm_prompts.size_guard import CheckResult, Violation
+
+        home = tmp_path / "home"
+        home.mkdir()
+        manifest = tmp_path / "installed.json"
+        violation = Violation(
+            metric="rule_bytes",
+            target="claude-code",
+            dest_name="coding.md",
+            actual=99_999,
+            threshold=5_000,
+            source=tmp_path / "coding.md",
+        )
+        failing_result = CheckResult(
+            passed=False,
+            artifacts=[],
+            violations=[violation],
+            report="Prompt-size guard failed:\n  [rule_bytes] coding.md ...",
+        )
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+            patch("llm_prompts.size_guard.check", return_value=failing_result),
+            pytest.raises(SystemExit),
+        ):
+            install_main(["claude-code"])
+
+        assert not (home / ".claude" / "skills").exists()
+
+    def test_size_check_passes_for_own_prompts_dir(self, tmp_path: Path) -> None:
+        home = tmp_path / "home"
+        home.mkdir()
+        manifest = tmp_path / "installed.json"
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+        ):
+            install_main(["claude-code"])
+
+        assert (home / ".claude" / "skills").exists()
+
+    def test_passing_check_logs_parked_state_matching_the_shared_helper(
+        self, tmp_path: Path
+    ) -> None:
+        from llm_prompts.size_guard import Artifact, CheckResult, parked_state_lines
+        from llm_prompts.size_limits import FINALS, RULE_BYTES
+
+        home = tmp_path / "home"
+        home.mkdir()
+        manifest = tmp_path / "installed.json"
+        artifact = Artifact(
+            RULE_BYTES,
+            "claude-code",
+            "coding.md",
+            FINALS[RULE_BYTES] + 1,
+            tmp_path / "coding.md",
+        )
+        passing_result = CheckResult(
+            passed=True,
+            artifacts=[artifact],
+            violations=[],
+            report="All prompt-size checks passed.",
+        )
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+            patch("llm_prompts.size_guard.check", return_value=passing_result),
+            patch("llm_prompts.install.log") as mock_log,
+        ):
+            install_main(["claude-code"])
+
+        # This is the parity the pre-flight and `llm-prompts check` must share:
+        # both report a parked schedule through the exact same helper.
+        expected_lines = parked_state_lines([artifact])
+        assert expected_lines
+        logged_info = [
+            call.args[1] for call in mock_log.call_args_list if call.args[0] == "info"
+        ]
+        for line in expected_lines:
+            assert line in logged_info
+
+
+class TestMainScopesBaselinesPerRoot:
+    def test_an_overlays_own_baseline_grandfathers_its_oversized_file(
+        self, tmp_path: Path
+    ) -> None:
+        """Defect 1: baselines must resolve per repo, not just to llm-prompts' own.
+
+        An overlay's oversized file, baselined in *its own* size_baseline.json
+        (sibling of its prompts dir), must pass the pre-flight - proving the
+        overlay baseline is actually consulted, not just llm-prompts' own.
+        """
+        from llm_prompts.size_guard import build_baseline, iter_artifacts, save_baseline
+        from llm_prompts.size_limits import FINALS, RULE_BYTES
+
+        home = tmp_path / "home"
+        home.mkdir()
+        manifest = tmp_path / "installed.json"
+        overlay_dir = tmp_path / "overlay" / "prompts"
+        oversized = "# Overlay\n\n" + ("x " * FINALS[RULE_BYTES])
+        (overlay_dir / "shared" / "rules").mkdir(parents=True)
+        (overlay_dir / "shared" / "rules" / "overlay-big.md").write_text(
+            oversized, encoding="utf-8"
+        )
+        for target in ("claude-code", "copilot", "kiro"):
+            (overlay_dir / target).mkdir(parents=True)
+            (overlay_dir / target / "vars.json").write_text("{}", encoding="utf-8")
+
+        overlay_baseline = build_baseline(iter_artifacts([overlay_dir]))
+        save_baseline(overlay_baseline, overlay_dir.parent / "size_baseline.json")
+
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch(
+                "llm_prompts.install._discover_overlay_paths",
+                return_value=[overlay_dir],
+            ),
+            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+        ):
+            install_main(["claude-code"])
+
+        assert (home / ".claude" / "skills").exists()
+
+
 _NON_GATING_FRONTMATTER = (
     "---\n"
     "description: Automate a new task\n"
@@ -847,4 +976,91 @@ class TestRenderForKiro:
         assert "---" not in output
         assert "inclusion:" not in output
         assert "applyTo" not in output
+        assert output.endswith("\n")
+
+
+class TestPathsScoping:
+    def _render(self, tmp_path: Path, template_body: str, target: str) -> str:
+        template = tmp_path / "rule.md"
+        template.write_text(template_body, encoding="utf-8")
+        vars_file = tmp_path / "vars.json"
+        vars_file.write_text("{}", encoding="utf-8")
+        return render_template(str(template), str(vars_file), target)
+
+    def test_claude_code_emits_paths_as_yaml_list(self, tmp_path: Path) -> None:
+        output = self._render(
+            tmp_path, "---\npaths: '**/*.py'\n---\n\n# Rule\n", "claude-code"
+        )
+        assert output.startswith('---\npaths:\n  - "**/*.py"\n---')
+        assert output.endswith("\n")
+
+    def test_claude_code_emits_every_glob_in_source_order(
+        self, tmp_path: Path
+    ) -> None:
+        output = self._render(
+            tmp_path, "---\npaths: '**/*.py, **/*.pyi'\n---\n\n# Rule\n", "claude-code"
+        )
+        assert '  - "**/*.py"' in output
+        assert '  - "**/*.pyi"' in output
+        assert output.index('  - "**/*.py"') < output.index('  - "**/*.pyi"')
+
+    def test_claude_code_unscoped_rule_emits_no_frontmatter(
+        self, tmp_path: Path
+    ) -> None:
+        output = self._render(
+            tmp_path, "---\ndescription: A rule\n---\n\n# Rule\n", "claude-code"
+        )
+        assert "---" not in output
+        assert output.endswith("\n")
+
+    def test_copilot_apply_to_derived_from_paths(self, tmp_path: Path) -> None:
+        output = self._render(
+            tmp_path, "---\npaths: '**/*.py'\n---\n\n# Rule\n", "copilot"
+        )
+        assert "applyTo: '**/*.py'" in output
+        assert output.endswith("\n")
+
+    def test_copilot_apply_to_key_overrides_paths(self, tmp_path: Path) -> None:
+        output = self._render(
+            tmp_path,
+            "---\npaths: '**/*.py'\ncopilot_apply_to: '**'\n---\n\n# Rule\n",
+            "copilot",
+        )
+        assert "applyTo: '**'" in output
+        assert "**/*.py" not in output
+
+    def test_kiro_paths_implies_file_match_inclusion(self, tmp_path: Path) -> None:
+        output = self._render(tmp_path, "---\npaths: '**/*.py'\n---\n\n# Rule\n", "kiro")
+        assert "inclusion: fileMatch" in output
+        assert "fileMatchPattern: '**/*.py'" in output
+        assert output.endswith("\n")
+
+    def test_kiro_explicit_inclusion_overrides_paths(self, tmp_path: Path) -> None:
+        output = self._render(
+            tmp_path,
+            "---\nkiro_inclusion: manual\npaths: '**/*.py'\n---\n\n# Rule\n",
+            "kiro",
+        )
+        assert "inclusion: manual" in output
+        assert "fileMatchPattern:" not in output
+
+    def test_kiro_multiple_paths_emit_pattern_list(self, tmp_path: Path) -> None:
+        output = self._render(
+            tmp_path, "---\npaths: '**/*.py, **/*.pyi'\n---\n\n# Rule\n", "kiro"
+        )
+        assert "fileMatchPattern: ['**/*.py', '**/*.pyi']" in output
+        assert output.endswith("\n")
+
+    def test_codex_ignores_paths(self, tmp_path: Path) -> None:
+        output = self._render(
+            tmp_path, "---\npaths: '**/*.py'\n---\n\n# Rule\n", "codex"
+        )
+        assert "---" not in output
+        assert output.endswith("\n")
+
+    def test_cline_ignores_paths(self, tmp_path: Path) -> None:
+        output = self._render(
+            tmp_path, "---\npaths: '**/*.py'\n---\n\n# Rule\n", "cline"
+        )
+        assert "---" not in output
         assert output.endswith("\n")

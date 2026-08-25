@@ -1464,6 +1464,16 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
 
     overlay_dirs = _discover_overlay_paths()
 
+    from .size_guard import check as run_size_check, parked_state_lines
+
+    size_result = run_size_check([root_dir, *overlay_dirs])
+    if not size_result.passed:
+        for line in size_result.report.splitlines():
+            log("error", line)
+        sys.exit(1)
+    for line in parked_state_lines(size_result.artifacts):
+        log("info", line)
+
     all_agents: dict[str, _Agent] = {
         "cline": _Agent(name="cline", root_dir=root_dir, dirs=dirs),
         "copilot": _CopilotAgent(name="copilot", root_dir=root_dir, dirs=dirs),

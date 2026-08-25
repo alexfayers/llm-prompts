@@ -15,8 +15,12 @@ from llm_prompts.cli import (
     _collect_update_messages,
     _get_installed_commit,
     _local_source_messages,
+    _print_parked_state,
     _pull_local_sources,
     _remote_source_messages,
+    _run_size_check,
+    _run_update_baseline,
+    _size_guard_roots,
     main,
 )
 from llm_prompts.setup import (
@@ -25,6 +29,8 @@ from llm_prompts.setup import (
     run_setup,
     write_pyproject_stamp,
 )
+from llm_prompts.size_guard import Artifact
+from llm_prompts.size_limits import FINALS, RULE_BYTES
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -561,9 +567,12 @@ class TestCollectSourcesOverlayPrecedence:
         overlay_skill.mkdir(parents=True)
         (overlay_skill / "SKILL.md").write_text("OVERLAY\n")
 
-        with patch("llm_prompts.cli._get_root_dir", return_value=base), patch(
-            "llm_prompts.install._discover_overlay_paths",
-            return_value=[overlay],
+        with (
+            patch("llm_prompts.cli._get_root_dir", return_value=base),
+            patch(
+                "llm_prompts.install._discover_overlay_paths",
+                return_value=[overlay],
+            ),
         ):
             sources = _collect_sources("claude-code")
 
@@ -580,9 +589,12 @@ class TestCollectSourcesOverlayPrecedence:
         overlay_agents.mkdir(parents=True)
         (overlay_agents / "collide.md").write_text("OVERLAY\n")
 
-        with patch("llm_prompts.cli._get_root_dir", return_value=base), patch(
-            "llm_prompts.install._discover_overlay_paths",
-            return_value=[overlay],
+        with (
+            patch("llm_prompts.cli._get_root_dir", return_value=base),
+            patch(
+                "llm_prompts.install._discover_overlay_paths",
+                return_value=[overlay],
+            ),
         ):
             sources = _collect_sources("claude-code")
 
@@ -724,3 +736,199 @@ class TestCheckForUpdates:
             result = _check_for_updates()
         assert result is True
         assert capsys.readouterr().out == "a\nb\n"
+
+
+class TestSizeGuardRoots:
+    def test_includes_own_root_and_discovered_overlays(self, tmp_path: Path) -> None:
+        own_root = tmp_path / "own"
+        overlay_root = tmp_path / "overlay"
+        with (
+            patch("llm_prompts.cli._get_root_dir", return_value=own_root),
+            patch(
+                "llm_prompts.install._discover_overlay_paths",
+                return_value=[overlay_root],
+            ),
+        ):
+            roots = _size_guard_roots()
+        assert roots == [own_root, overlay_root]
+
+
+class TestPrintParkedState:
+    def test_no_artifacts_over_final_prints_nothing(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        artifact = Artifact(RULE_BYTES, "claude-code", "a.md", 10, Path("a.md"))
+        _print_parked_state([artifact])
+        assert capsys.readouterr().out == ""
+
+    def test_over_final_artifacts_grouped_by_metric(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        final = FINALS[RULE_BYTES]
+        artifacts = [
+            Artifact(RULE_BYTES, "claude-code", "a.md", final + 100, Path("a.md")),
+            Artifact(RULE_BYTES, "claude-code", "b.md", final + 5_000, Path("b.md")),
+        ]
+        _print_parked_state(artifacts)
+        out = capsys.readouterr().out
+        assert f"current {final + 5_000:,}" in out
+        assert f"final {final:,}" in out
+        assert "2 files awaiting compression" in out
+
+
+class TestRunSizeCheck:
+    def test_clean_tree_passes_and_exits_zero(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        root = tmp_path / "root"
+        (root / "shared" / "rules").mkdir(parents=True)
+        (root / "shared" / "rules" / "a.md").write_text("# A\n", encoding="utf-8")
+        for target in ("claude-code", "copilot", "kiro"):
+            target_dir = root / target
+            target_dir.mkdir(parents=True)
+            (target_dir / "vars.json").write_text("{}", encoding="utf-8")
+
+        with patch("llm_prompts.cli._size_guard_roots", return_value=[root]):
+            _run_size_check()
+
+        assert "All prompt-size checks passed." in capsys.readouterr().out
+
+    def test_oversized_artifact_exits_nonzero(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        root = tmp_path / "root"
+        (root / "shared" / "rules").mkdir(parents=True)
+        (root / "shared" / "rules" / "big.md").write_text(
+            "x " * FINALS[RULE_BYTES], encoding="utf-8"
+        )
+        for target in ("claude-code", "copilot", "kiro"):
+            target_dir = root / target
+            target_dir.mkdir(parents=True)
+            (target_dir / "vars.json").write_text("{}", encoding="utf-8")
+
+        with (
+            patch("llm_prompts.cli._size_guard_roots", return_value=[root]),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            _run_size_check()
+
+        assert exc_info.value.code == 1
+        assert "big.md" in capsys.readouterr().out
+
+
+class TestRunUpdateBaseline:
+    def test_new_entry_withheld_by_default_and_reported(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        root = tmp_path / "root"
+        (root / "shared" / "rules").mkdir(parents=True)
+        (root / "shared" / "rules" / "big.md").write_text(
+            "x " * FINALS[RULE_BYTES], encoding="utf-8"
+        )
+        (root / "claude-code").mkdir(parents=True)
+        (root / "claude-code" / "vars.json").write_text("{}", encoding="utf-8")
+        baseline_path = tmp_path / "size_baseline.json"
+
+        with patch("llm_prompts.cli._size_guard_roots", return_value=[root]):
+            _run_update_baseline()
+
+        saved = json.loads(baseline_path.read_text(encoding="utf-8"))
+        assert all(not names for targets in saved.values() for names in targets.values())
+        out = capsys.readouterr().out
+        assert "big.md" in out
+        assert "--confirm-additions" in out
+
+    def test_new_entry_written_when_additions_confirmed(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        root = tmp_path / "root"
+        (root / "shared" / "rules").mkdir(parents=True)
+        (root / "shared" / "rules" / "big.md").write_text(
+            "x " * FINALS[RULE_BYTES], encoding="utf-8"
+        )
+        (root / "claude-code").mkdir(parents=True)
+        (root / "claude-code" / "vars.json").write_text("{}", encoding="utf-8")
+        baseline_path = tmp_path / "size_baseline.json"
+
+        with patch("llm_prompts.cli._size_guard_roots", return_value=[root]):
+            _run_update_baseline(confirm_additions=True)
+
+        assert baseline_path.is_file()
+        saved = json.loads(baseline_path.read_text(encoding="utf-8"))
+        assert saved[RULE_BYTES]["claude-code"]["big.md"] > FINALS[RULE_BYTES]
+        assert "big.md" in capsys.readouterr().out
+
+    def test_regenerating_unchanged_content_reports_zero_changes(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        root = tmp_path / "root"
+        (root / "shared" / "rules").mkdir(parents=True)
+        (root / "shared" / "rules" / "big.md").write_text(
+            "x " * FINALS[RULE_BYTES], encoding="utf-8"
+        )
+        (root / "claude-code").mkdir(parents=True)
+        (root / "claude-code" / "vars.json").write_text("{}", encoding="utf-8")
+
+        with patch("llm_prompts.cli._size_guard_roots", return_value=[root]):
+            _run_update_baseline(confirm_additions=True)
+            capsys.readouterr()
+            _run_update_baseline()
+
+        assert "0 changed, 0 removed" in capsys.readouterr().out
+
+    def test_lowering_an_existing_entry_needs_no_confirmation(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        root = tmp_path / "root"
+        (root / "shared" / "rules").mkdir(parents=True)
+        (root / "shared" / "rules" / "big.md").write_text(
+            "x " * (FINALS[RULE_BYTES] + 200), encoding="utf-8"
+        )
+        (root / "claude-code").mkdir(parents=True)
+        (root / "claude-code" / "vars.json").write_text("{}", encoding="utf-8")
+        baseline_path = tmp_path / "size_baseline.json"
+
+        with patch("llm_prompts.cli._size_guard_roots", return_value=[root]):
+            _run_update_baseline(confirm_additions=True)
+            before = json.loads(baseline_path.read_text(encoding="utf-8"))
+            (root / "shared" / "rules" / "big.md").write_text(
+                "x " * (FINALS[RULE_BYTES] + 100), encoding="utf-8"
+            )
+            capsys.readouterr()
+            _run_update_baseline()
+
+        after = json.loads(baseline_path.read_text(encoding="utf-8"))
+        assert (
+            after[RULE_BYTES]["claude-code"]["big.md"]
+            < before[RULE_BYTES]["claude-code"]["big.md"]
+        )
+        assert "0 removed" in capsys.readouterr().out
+
+
+class TestCheckSubcommand:
+    def test_check_dispatches_to_run_size_check(self) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "check"]),
+            patch("llm_prompts.cli._run_size_check") as mock_check,
+        ):
+            main()
+        mock_check.assert_called_once_with()
+
+    def test_check_update_baseline_dispatches_to_run_update_baseline(self) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "check", "--update-baseline"]),
+            patch("llm_prompts.cli._run_update_baseline") as mock_update,
+        ):
+            main()
+        mock_update.assert_called_once_with(confirm_additions=False)
+
+    def test_check_confirm_additions_threads_through(self) -> None:
+        with (
+            patch(
+                "sys.argv",
+                ["llm-prompts", "check", "--update-baseline", "--confirm-additions"],
+            ),
+            patch("llm_prompts.cli._run_update_baseline") as mock_update,
+        ):
+            main()
+        mock_update.assert_called_once_with(confirm_additions=True)

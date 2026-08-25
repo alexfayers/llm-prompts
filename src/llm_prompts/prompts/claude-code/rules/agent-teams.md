@@ -2,93 +2,58 @@
 requires_env: CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
 ---
 
-# Agent teams: coordinate through the team, not just the main thread
+# Agent teams: coordinate through the team
 
-This file only applies when the agent-teams feature is enabled - it covers direct `SendMessage` between named teammates and the shared task list, both of which require `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`. For model-tier selection and delegating complex thought to subagents (which apply regardless of this feature), see `delegation.md`.
-
-The `requires_env` frontmatter above means the installer already checked this env var before rendering this file into context - if you can see this content at all, the flag is set. Do not re-verify it with a shell command; that only re-derives what the installer already proved.
-
-**Once the flag is set, spinning up a named team is the default - not something reserved for when the user explicitly asks for it.** For any task that would benefit from a team - research, multi-step design, parallel independent edits, or a verification pass - stand one up by default rather than working solo and waiting to be told "use agent teams".
+- Requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`, which gates direct `SendMessage` between named teammates and the shared task list. The installer already checked it; MUST NOT re-verify with a shell command. See `delegation.md` for model-tier selection.
+- A named team SHOULD be the default rather than reserved for an explicit ask - research, multi-step design, parallel edits, verification.
+- When standing up a team, MUST load the `agent-team-patterns` skill first - it carries the survey/sub-lead pipeline, multiple sub-leads, and verifying sub-lead progress.
+- Teammate-side duties - claiming, reporting, handing off, asking to be rotated out - live in the agent definition bodies, not here.
 
 ## Keep the main thread orchestration-only
 
-**This is not optional.** Once a team is active, the main thread's job is to spin the team up, scope and assign work through the shared task list, and check final results - never to do the delegable work itself. If you catch the main thread reading a file to synthesize an answer, writing code, or running an investigation that a teammate could instead be dispatched to do, STOP and spawn or message a teammate for it rather than continuing inline.
+- Main spins up the team, assigns work via the task list and checks final results. It MUST NOT do delegable work itself, and MUST stop and delegate the moment it catches itself reading a file, writing code or investigating.
+- Main MUST use only `Agent`, `SendMessage`, the `Task*` tools, and light verification - reading what a teammate produced. MUST NOT re-run a mechanical command (`git status`/`find`/a build) to double-check.
+- MUST NOT arbitrate between teammates - route the call to a named Opus delegate.
+- No exception for a quick lookup (`find`/`grep`/`ls`/status): MUST route it to a standing Haiku teammate.
+- No exception for a judgment-bearing skill (e.g. `refine-plan`), even via a slash command: MUST spawn a teammate to run it.
 
-Before the main thread uses any tool beyond team/task management (`Agent`, `SendMessage`, `TaskCreate`/`TaskUpdate`/`TaskList`/`TaskGet`) or light verification of a final result, ask "could a teammate do this instead?" - if yes, delegate it. **"Light verification" means reading or inspecting something a teammate already produced** - opening a changed file to confirm its contents, reading back a returned report - and does NOT extend to re-running a mechanical shell command (`git status`/`git diff`/`find`/a build) to double-check the work, even when the only motive is to confirm before reporting to the user. That re-run is main-thread execution and routes through a teammate exactly like the quick-lookup case below.
+## Only surface substantive teammate updates
 
-This also means the main thread MUST NOT arbitrate disagreements or judgment calls between teammates (conflicting findings, a design dispute, which approach is correct) - route those to a named Opus delegate instead. The main thread's role is orchestration, not reasoning; do not let it become the tiebreaker for decisions that need the deeper reasoning a dedicated Opus agent is for.
-
-**No exception for lookups that feel too quick to delegate.** A single `find`, `grep`, `ls`, or status/list command feels cheap enough to just run inline - that feeling is the loophole, not a justification. It is still main-thread execution and still forbidden once a team is active. Route it to a Haiku-tier named teammate instead (the mechanical, no-judgment case from `delegation.md`), even when it is one command and the answer is short. Spin up (or reuse) a standing Haiku teammate for this class of lookup rather than paying `Agent`-call overhead to think about whether a given command "counts."
-
-**No exception for invoking a skill that does judgment work.** A `Skill` call (e.g. `refine-plan`, scoring a design against a rubric, weighing evidence) feels like "using a tool," not "doing the work" - but the reasoning happens wherever the skill's instructions execute. If the main thread loads the skill and runs it itself (reading files, invoking `score.py`, judging evidence strength), that is main-thread execution of judgment work, forbidden by the same rule as above. Spawn a named teammate to load and run the skill instead, and have it report back only the result (scores, refined output) - never run a judgment-bearing skill inline just because the trigger was a slash command or a rule reference rather than a raw research question.
-
-## Only surface substantive teammate updates to the user
-
-Teammate `idle_notification` pings (a teammate reporting it is idle/available, or restating a message it already sent) carry no new information for the user. The lead MUST NOT relay these as status updates - stay silent and keep orchestrating. **Silent means no output at all - not a message announcing that you're staying silent.** Noting "(bare idle ping, ignoring)" or similar is itself an unwanted message; produce zero visible text for these events and only resume speaking when something substantive actually arrives. Surface a teammate's message to the user only when it carries something substantive: an actual result or finding, a real question that needs the user's input, or a blocker. A bare "still working" / "now available" / "I sent X" ping is orchestration noise, not a user-facing update. Send a single emoji and nothing else.
-
-**`idleReason: "available"` means the teammate has genuinely stopped, not that it's mid-task and pinging as a heartbeat.** It will not send anything further on its own - no result, no follow-up - until it receives a message. This is true even if the teammate finished real work (including committing code) before going idle: it can sit idle indefinitely with a completed result it hasn't reported, simply because nothing has prompted it to send that report. So the silence rule above (don't relay the ping) does not mean "wait, it'll report in a moment" - if the lead actually needs to know status or collect a result, it must proactively `SendMessage` the idle teammate rather than continuing to wait on further unsolicited pings that will never arrive.
+- MUST NOT relay `idle_notification` pings to the user - stay silent, or send a single emoji and nothing else.
+- MUST surface a teammate message only when substantive: a result, a question needing user input, or a blocker.
+- `idleReason: "available"` means the teammate has stopped and sends nothing unsolicited, even holding a finished result - `SendMessage` it if you need status.
 
 ## Let the team talk to each other
 
-Named agents MUST default to `SendMessage`ing each other directly, not routing through the main thread. Once an Opus agent has designed an approach, it hands pieces of the work straight to the named Sonnet agents via `SendMessage` rather than every result bouncing back through the main thread first. The main thread MUST NOT act as a relay between two teammates that could reach each other directly - forwarding a result or question through main burns the main thread's limited context for no benefit and recreates the bottleneck this section exists to avoid.
+- Named teammates SHOULD `SendMessage` each other directly - an Opus designer hands work straight to Sonnet workers.
+- Main MUST NOT relay between two teammates that can reach each other.
 
 ## Coordinate through the shared task list
 
-Default to the shared task list (`TaskCreate`) for delegated work, and start early - the moment a task looks like it will involve more than one independent piece of work, create the tasks you already know about rather than waiting until the full scope is clear or hand-assigning work turn by turn. The main thread creates and refines tasks; it does not claim or execute them itself - once a task exists, it belongs to the team:
+- Delegated work SHOULD default to `TaskCreate`, created the moment there is more than one independent piece, not once full scope is known.
+- Main creates and refines tasks; it MUST NOT claim or execute them.
+- SHOULD spawn teammates for expected roles before the list is full, so a standing team self-claims as tasks land.
+- MUST size each task for one member, and MUST split an oversized contract before spawning. Many sequential steps is a sizing failure - size by file or dependency. Use `addBlockedBy`/`addBlocks` so the team self-sequences without polling.
+- MUST set `owner` on Opus-tier tasks (design, root-cause, judgment); MUST leave mechanical tasks unowned.
+- A fully-specified plan (gate-passed design, handoff doc, TDD sequence) MUST still go on the task list.
+- The team SHOULD grow mid-task when the backlog exceeds the roster or new work fits no existing role.
+- A roster spec MUST carry each task's SUBJECT as well as its ID, and MUST be checked against `TaskList` before spawning - a predicted ID points at the wrong work or at nothing.
+- Only the lead spawns a named teammate. A member needing more hands sends a roster spec, which the lead spawns verbatim.
+- An editor carries exact text and no numbers. Every numeric or mechanical check goes to a runner, and what a number means stays with whoever set the target.
 
-- **Prep the roster before the task list is fully populated.** Spawn named teammates for the roles you expect to need as soon as delegation looks likely, even if some don't have a claimable task yet - a standing team can self-claim the instant new tasks land, instead of the main thread scoping everything first and only spinning people up once assignments are final.
-- Break the work into tasks sized for one team member each. Use `TaskUpdate`'s `addBlockedBy`/`addBlocks` for real sequencing dependencies - a blocked task cannot be claimed until its blockers complete, so the team self-sequences without you polling.
-- **Explicitly assign Opus-tier tasks.** Set `owner` on any task requiring design, root-cause work, or judgment (via `TaskUpdate`) so it cannot be accidentally self-claimed by a mechanical Sonnet worker. Leave mechanical Sonnet-tier tasks unowned so any free Sonnet team member can self-claim the next one via `TaskList`/`TaskUpdate`.
-- Team members should check `TaskList` for the next unowned, unblocked task after finishing their current one, rather than going idle and waiting to be told. This is what lets the team pick up appropriate work automatically instead of bottlenecking on the main thread.
-- **Claiming is not atomic - verify it stuck before doing the work.** Two idle teammates can see the same task unowned at the same instant and both call `TaskUpdate` to claim it; only one write survives as the recorded owner. After claiming, immediately `TaskGet`/`TaskList` the task again before starting any work. If the owner field names someone else, you lost the race: do not do the work anyway - `SendMessage` the teammate who won to confirm they're on it (or check with the lead if ownership is unclear), then move on to the next unowned task instead.
-- **Don't be afraid to grow the team mid-task.** If the task list reveals more independent work than the current roster can move through, or a new piece of work shows up that doesn't fit any existing member's role, spawn another named team member rather than queuing everything behind the ones you already have. An idle Sonnet worker with a backlog of unclaimed tasks is a sign to add another Sonnet member, not to make it work through the backlog serially.
-- **A plan that arrives already fully specified is not an exception.** Resuming a gate-passed design, a handoff doc, or a memory-recorded TDD sequence still means the work goes on the shared task list for teammates to claim - "the design/planning is already done, I'm just executing it now" is exactly the reasoning this rule exists to override. A pre-decided step-by-step sequence (e.g. "write test X, then implement Y, then test Z...") is mechanical, well-specified work for Sonnet teammates, not a reason for the main thread to run through it turn by turn itself.
-- **Only the lead can spawn teammates - team members cannot.** The roster is flat: the `Agent` tool that adds a named member belongs to the lead alone. A team member cannot spawn named sub-teammates - that call is rejected - though it may still spawn unnamed one-shot subagents (an `Agent` call with no `name`) for isolated research or lookups. This is a hard constraint - do not design around it. When you (a team member, including a named sub-lead) need more hands, `SendMessage` the lead with a concrete, ready-to-spawn roster spec: how many teammates, the name and tier for each (Opus for judgment, Sonnet for mechanical execution), and the task ID each should claim plus a one-line spawn prompt. Do this as soon as you spot the backlog - don't sit on parallelizable work waiting to be asked, and don't silently absorb it into your own queue and grind through it serially. The lead's job is to spawn exactly the roster you specify, not to re-derive it - so hand it a spec it can act on verbatim.
+## Set teammate effort, don't inherit it
 
-## Set teammate effort, don't inherit it by default
-
-A teammate's effort is a second axis from its model tier. For a mechanical Sonnet- or Haiku-tier teammate, pick (or create) a `subagent_type` whose frontmatter already pins a lower `effort` (`low` or `medium`) rather than letting it inherit the lead session's - lower effort is the one lever that actually cuts a teammate's per-task latency (a team is a throughput tool, not a per-turn speedup). See `delegation.md` for the full effort model.
-
-## Pattern: survey -> sub-lead design -> parallel execution -> gated verification
-
-For a multi-step change that needs research, then design, then several independent edits, then a checking pass, prefer this pipeline. It keeps the main thread's footprint to four spawns and one read, and pushes every piece of reasoning and coordination onto delegates:
-
-1. **Main spawns one or more `surveyor` teammates first** - one per independent research thread, run concurrently, rather than a single surveyor working through unrelated areas in sequence. `surveyor` is a Sonnet-tier subagent type whose tool access enforces read-only (`Write`/`Edit`/`NotebookEdit` withheld in its own frontmatter) - use it rather than asking `reasoner`/`worker` to "stay read-only" in the prompt, since a prompt instruction is advisory only and cannot stop a mistaken write. Each surveyor's job is to gather the facts the design depends on (existing conventions, what's already in place, per-item verdicts) for its own thread and report them - it edits nothing, and cannot even by mistake. Give each an explicit consumer: state in its spawn prompt exactly who to `SendMessage` the findings to. A surveyor left without a named recipient defaults to reporting to `main`, stranding the actual consumer - so when a named sub-lead will consume the findings, name that sub-lead in each surveyor's prompt, not `main`.
-2. **Main spawns exactly one named Opus sub-lead** and points it at the surveyor(s). The sub-lead pulls the findings directly via `SendMessage` from each one (never relayed through main), does the design, and writes fully-specified tasks onto the shared list - each task contract complete enough that an implementer can execute from `TaskGet` alone, with no design left to infer. The sub-lead owns the design task itself; it leaves mechanical implementation tasks unowned for Sonnet workers to self-claim.
-3. **The sub-lead hands main a ready-to-spawn roster spec** rather than trying to spawn anyone (it cannot - see the roster constraint above). The spec names each teammate, its tier, the task ID it should claim, and a one-line spawn prompt. Main spawns exactly that roster verbatim.
-4. **Implementers work in parallel and report to the sub-lead, not main.** Independent tasks (distinct files, no overlap) run concurrently. Gate the verification task with `addBlockedBy` on every implementation task so it cannot be claimed until they all complete - the verifier then starts automatically when unblocked, with no polling.
-5. **The sub-lead sends one final report to main** once design, implementation, and verification are all done. Main's entire footprint across the pipeline is: spawn the surveyor(s), spawn the sub-lead, spawn the roster the sub-lead specifies, and read the final report.
-
-## Multiple sub-leads for multiple independent tasks
-
-The survey -> sub-lead -> parallel execution -> verification pipeline above is written for one multi-step change. When the actual work is several genuinely independent tasks (unrelated features, unrelated bug fixes, separate areas of the codebase with no shared design decision), spawn one named Opus sub-lead per task instead of forcing a single sub-lead to interleave unrelated designs. Each sub-lead runs its own subteam - its own surveyor(s) (or none, if the task doesn't need one), its own implementers, its own verification gate - and reports back to main independently when its task completes.
-
-- Split by task, not by role. Two sub-leads each owning a full task end-to-end beats one sub-lead owning "all the design" across both tasks - the tasks don't share context, so forcing one designer to hold both just adds unnecessary cross-task interference risk.
-- Keep each subteam's task-list entries scoped to its own task (e.g. via a task-id or name prefix) so a Sonnet worker scanning for unowned work doesn't accidentally self-claim a step that belongs to a different sub-lead's design.
-- Sub-leads do not coordinate with each other by default - they are solving unrelated problems. Only introduce cross-sub-lead `SendMessage` if the tasks turn out to share a real dependency (e.g. one touches a file the other also needs) discovered mid-work.
-- Main's footprint does not grow with the number of sub-leads: spawn each sub-lead, spawn the roster each one hands back, and read each one's final report - the fan-out is between sub-leads and their own subteams, not through main.
-- Do not default to this for one task with multiple facets - that is still the single-sub-lead pattern above. Reach for multiple sub-leads only when the tasks are independent enough that a single design conversation would not naturally cover both.
-
-## Verify sub-lead coordination against TaskList, not against idle pings
-
-A sub-lead's `idle_notification` pings look identical whether it is actively coordinating downstream teammates or has stalled - idle pings carry no task-state information, so absence of a substantive message is not evidence that work is progressing.
-
-**This check is proactive, not something to run only after the user notices and asks.** Waiting for the user to say "I don't see them working" means the lead let a stall sit unnoticed - the exact failure this rule exists to prevent. Treat 3-4 consecutive idle pings with no task changing state as the trigger to self-check, on your own initiative, with zero user prompting required: call `TaskList` directly and compare against what the pings implied was happening. Do this silently (it produces no user-facing output by itself, per the rule above) unless it surfaces an actual problem.
-
-If `TaskList` confirms real progress (tasks completing, ownership changing), say nothing - the silent-relay rule still applies, this was only an internal check. If it instead shows tasks stuck `pending`/unowned despite a claimed unblock, that is a real stall: `SendMessage` the sub-lead asking for the concrete action it took (not just a status word) and have it correct course immediately. Don't wait for a further idle ping to resolve the ambiguity, since another idle ping would look identical to continued stalling.
+- Effort is separate from model tier and is the lever on latency. For a mechanical teammate, SHOULD pick a `subagent_type` whose frontmatter pins low/medium effort. See `delegation.md`.
 
 ## Stop teammates once their work is done
 
-Once a named teammate completes its assigned task and has no further work queued for it, stop it with `TaskStop` (by name) rather than leaving it idle in the roster. An idle teammate still occupies a slot and clutters the team view for no benefit - stopping is the default the moment its task is marked completed, not something to defer until a general cleanup pass. If a fresh piece of work in the same role is imminent, leaving it running to pick that up is fine; the point is not to let finished teammates linger by default.
+- MUST `TaskStop` a teammate by name once its task is complete with nothing queued, not in a later cleanup pass. MAY leave it running only if fresh same-role work is imminent.
+- A finished teammate left alive will self-claim the next unowned task in its area, so an owner field can name an agent the lead never assigned. MUST check the owner is the agent you spawned.
+- MUST NOT stop a producer that just reported to a peer on its own idle ping alone - wait for the consumer to confirm it has every expected input.
+- The lead MUST spawn a fresh replacement for a member that reports high context, rather than let it continue degraded.
 
-**Exception: a producer that just reported to a peer consumer (survey -> sub-lead pattern) is not yet safe to stop on its own idle ping.** A surveyor's task being marked `completed` and its idle ping arriving only prove it sent its `SendMessage` - not that the consuming sub-lead has actually received and processed it. Stopping it in that gap can make it unreachable right as the sub-lead tries to pull from it, forcing the sub-lead to redo the research itself. Wait for the consumer (the sub-lead) to confirm - via its own report - that it has all the inputs it expects before stopping the producers that fed it, rather than stopping each producer the moment its own idle ping arrives.
+## Persist before ending - the shared TaskList does not survive the session
 
-**A teammate finishing its task and handing off to a peer (per "let the team talk to each other" above) MUST also tell the lead directly, in the same turn, whether it is now killable.** A `SendMessage` to a peer is invisible to the lead, which otherwise sees only that teammate's task-state-free idle pings. So the moment a teammate marks its task `completed` via `TaskUpdate`, it sends one line to the lead - "task #N done, no further work queued, safe to stop" or "task #N done, standing by for #M" - distinct from and in addition to whatever it sends the peer/sub-lead it's handing off to. This is a substantive update, not a bare idle ping, so it does not fall under the silent-relay rule - the lead should act on it (stop the teammate, or leave it running if it flagged standby work).
-
-## The shared TaskList does not survive the session - persist and hand off before ending
-
-The shared `TaskList` is scoped to this session/team; it is gone once the session ends, including any item left `pending`/`in_progress` on it - even one deliberately deferred ("not part of this plan, keep it on the list so it isn't lost"). Before ending a lead session, run `TaskList` and treat every non-`completed` item as work that needs a durable home: give it its own memory `task/` entity (see `memory.md`'s task-entity rules) if it doesn't have one, and run the `handoff`/`session-end` skill if real work is still outstanding. This is not covered by "stop teammates once their work is done" above - a teammate can be correctly stopped (its own task finished) while the list still has other items nobody has picked up.
-
-## Rotate team members whose context is filling up
-
-If you are a team member and a context-usage nudge fires on you, do not just keep working degraded. `SendMessage` the lead: report that your context is getting high, hand off the state of your current task (what's done, what's left, any findings so far), and ask to be shut down. The lead should then spawn a fresh replacement team member for that role, seeded with the handed-off state, rather than letting a high-context member push on with softened accuracy. A short-lived replacement with full focus beats one worn-out member limping through the rest of the task list.
+- `TaskList` is session-scoped and lost at session end, deferred items included.
+- Before ending a lead session, MUST run `TaskList` and give every non-completed item a durable home: a memory `task/` entity (see `memory.md`), plus the `handoff`/`session-end` skill if work is outstanding.
+- A correctly stopped teammate can still leave unclaimed list items.

@@ -68,6 +68,54 @@ def split_frontmatter(content: str) -> tuple[list[str], str] | None:
     return match.group(1).splitlines(), content[match.end() :]
 
 
+_BLOCK_SCALAR_INDICATOR = re.compile(r"[>|][+-]?")
+
+
+def resolve_frontmatter(frontmatter_lines: list[str]) -> dict[str, str] | None:
+    """Resolve flat frontmatter lines into key/value strings, folding block scalars.
+
+    Uses the same flat frontmatter model as :func:`parse_frontmatter`, but also
+    folds ``>``/``|`` block-scalar values the way YAML would, instead of only
+    returning their indicator line. A value line whose indicator carries
+    trailing content beyond the bare ``>``/``>-``/``>+``/``|``/``|-``/``|+``
+    marker - the shape of a suffix mistakenly appended onto the indicator
+    itself, rather than as a continuation line - is malformed and fails the
+    whole block.
+
+    Args:
+        frontmatter_lines: Frontmatter lines, as returned by split_frontmatter.
+
+    Returns:
+        Mapping of key to resolved value, or None if any value is malformed.
+    """
+    resolved: dict[str, str] = {}
+    lines = frontmatter_lines
+    i = 0
+    while i < len(lines):
+        key, _, raw_value = lines[i].partition(": ")
+        key = key.strip()
+        raw_value = raw_value.strip()
+        i += 1
+        if not raw_value or raw_value[0] not in ">|":
+            resolved[key] = raw_value.strip("'\"")
+            continue
+        if not _BLOCK_SCALAR_INDICATOR.fullmatch(raw_value):
+            return None
+
+        block_lines: list[str] = []
+        indent = None
+        while i < len(lines) and (not lines[i].strip() or lines[i][:1] in " \t"):
+            if lines[i].strip():
+                if indent is None:
+                    indent = len(lines[i]) - len(lines[i].lstrip())
+                block_lines.append(lines[i][indent:])
+            else:
+                block_lines.append("")
+            i += 1
+        resolved[key] = ("\n" if raw_value[0] == "|" else " ").join(block_lines)
+    return resolved
+
+
 def strip_gating_keys(content: str, keys: set[str]) -> str:
     """Remove gating frontmatter keys from content, preserving other keys verbatim.
 
@@ -136,6 +184,24 @@ def normalize_whitespace(content: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", content).strip() + "\n"
 
 
+def _scoped_paths(
+    frontmatter: dict[str, str], override_key: str | None = None
+) -> list[str]:
+    """Return the glob patterns scoping a rule, honouring a target override.
+
+    Args:
+        frontmatter: Parsed frontmatter key-value pairs.
+        override_key: Target-specific key that wins over ``paths`` when set.
+
+    Returns:
+        Stripped, non-empty glob patterns in source order.
+    """
+    raw = frontmatter.get("paths", "")
+    if override_key is not None:
+        raw = frontmatter.get(override_key, raw)
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
+
 def render_for_cline(body: str) -> str:
     """Render template for Cline.
 
@@ -162,8 +228,9 @@ def render_for_copilot(body: str, frontmatter: dict[str, str]) -> str:
 
     if "description" in frontmatter:
         new_frontmatter.append(f"description: {frontmatter['description']}")
-    if "copilot_apply_to" in frontmatter:
-        new_frontmatter.append(f"applyTo: '{frontmatter['copilot_apply_to']}'")
+    apply_to = _scoped_paths(frontmatter, "copilot_apply_to")
+    if apply_to:
+        new_frontmatter.append(f"applyTo: '{', '.join(apply_to)}'")
     if "copilot_mode" in frontmatter:
         new_frontmatter.append(f"mode: '{frontmatter['copilot_mode']}'")
 
@@ -182,22 +249,21 @@ def render_for_kiro(body: str, frontmatter: dict[str, str]) -> str:
 
     Returns:
         Kiro-formatted content, with inclusion-mode frontmatter when
-        ``kiro_inclusion`` is set, otherwise the normalized body only.
+        ``kiro_inclusion`` is set or ``paths`` scopes the rule, otherwise the
+        normalized body only.
     """
-    inclusion = frontmatter.get("kiro_inclusion")
+    patterns = _scoped_paths(frontmatter, "kiro_file_match_pattern")
+    inclusion = frontmatter.get("kiro_inclusion") or (
+        "fileMatch" if patterns else None
+    )
     if not inclusion:
         return normalize_whitespace(body)
 
     new_frontmatter = ["---", f"inclusion: {inclusion}"]
-    if inclusion == "fileMatch" and "kiro_file_match_pattern" in frontmatter:
-        patterns = [
-            p.strip()
-            for p in frontmatter["kiro_file_match_pattern"].split(",")
-            if p.strip()
-        ]
+    if inclusion == "fileMatch" and patterns:
         if len(patterns) == 1:
             new_frontmatter.append(f"fileMatchPattern: '{patterns[0]}'")
-        elif patterns:
+        else:
             joined = ", ".join(f"'{p}'" for p in patterns)
             new_frontmatter.append(f"fileMatchPattern: [{joined}]")
     if inclusion == "auto":
@@ -210,16 +276,22 @@ def render_for_kiro(body: str, frontmatter: dict[str, str]) -> str:
     return normalize_whitespace(output)
 
 
-def render_for_claude_code(body: str) -> str:
+def render_for_claude_code(body: str, frontmatter: dict[str, str]) -> str:
     """Render template for Claude Code.
 
     Args:
         body: Template body.
+        frontmatter: Parsed frontmatter key-value pairs.
 
     Returns:
-        Normalized body content.
+        Normalized body, prefixed with a ``paths`` block when the rule is
+        scoped to specific files.
     """
-    return normalize_whitespace(body)
+    patterns = _scoped_paths(frontmatter)
+    if not patterns:
+        return normalize_whitespace(body)
+    listed = "\n".join(f'  - "{p}"' for p in patterns)
+    return normalize_whitespace(f"---\npaths:\n{listed}\n---\n\n{body}")
 
 
 def render_for_codex(body: str) -> str:
@@ -266,7 +338,7 @@ def render_template(template_path: str, variables_path: str, target: str) -> str
     if target == "kiro":
         return render_for_kiro(body, frontmatter)
     if target == "claude-code":
-        return render_for_claude_code(body)
+        return render_for_claude_code(body, frontmatter)
     if target == "codex":
         return render_for_codex(body)
     msg = f"Unknown target format: {target}"

@@ -5,43 +5,38 @@ copilot_apply_to: '**'
 
 # Coding guidelines
 
-- Keep any resulting code concise but readable
-- Any changes to code must be minimal
-- Code must be self-documenting with minimal comments
-  - It is extremely important that you NEVER add comments that refer to the changes you are making or explain the reasoning for a specific change. Comments must only refer to the code itself, and only to explain genuinely complex code; if a comment seems required, consider a different approach.
-  - Variable/function/method names must be descriptive
-- Add new imports at THE SAME TIME as making code changes
-- All produced code MUST follow the existing style within the package (variable names, documentation, etc.)
+- Keep code concise but readable, and keep any change minimal.
+- Code MUST be self-documenting with descriptive names and minimal comments. NEVER add a comment that refers to the change you are making or explains why - comments describe the code, and only where it is genuinely complex.
+- Add new imports at THE SAME TIME as the code that uses them.
+- Produced code MUST follow the existing style within the package.
 - NEVER {{TOOL_COMPLETE}} until all tasks in the focus chain are completed.
 - {{ACTION_NO_NARRATE}}
-- Code should be written with reusability and maintainability in mind at all times. If multiple functions do similar things, merge them into one or create an interface
-- Committed text (docs, CLAUDE.md, design decisions) must describe the current atomic state. Never reference failed intermediate approaches, removed features, or "we tried X then switched to Y". The code is the source of truth for what exists now.
-- Avoid unnecessary variable assignment unless it improves the clarity of the code. If a variable is used once, it probably doesn't need to be a variable.
-- Avoid magic numbers: when a numeric (or string) threshold appears in more than one place - in prose/wording, in a test, in a second code path - derive every occurrence from a single named constant instead of repeating the literal. This way a future change to the value only requires editing the constant's definition.
-- Leave code better than you found it. If you notice an issue with something that you are already editing, fix it!
-  - This stops at the ownership boundary: do not edit another team's or package's code just because your change sits next to it. Prefer the version of your change that touches only what you already own, even if slightly less elegant, and raise the rest separately.
-- When fixing a bug, investigate and fix ALL directly related issues in the same code path - do not dismiss pre-existing failures as "separate" if they share root cause or context with the current fix.
-- Before adding a parameter to a function signature, verify it is actually used in the function body. Remove unused parameters.
-- Before declaring a value/function "dead" or unused and removing it, search across the WHOLE workspace (all sibling packages/modules), not just the one package that looks like the natural consumer - a value can be set in one package and consumed in a separate sibling package that a narrower search misses.
-- If you write code that contains an error and subsequently fix it, record the mistake and fix as a memory observation so the same error is not repeated in future sessions.
-- When writing any text, NEVER use non-ascii characters such as emdash (`—`). Always use equivalent ascii characters, like `-`.
-- In committed files (docs, CLAUDE.md, config), never reference specific collaborators by name. Use generic terms ("collaborators", "team members", "other agents") instead.
-- Never hardcode user-specific values (aliases, personal account IDs, personal stack names) in committed files. Always use generic placeholders like `<personal-stack-id>`, `<account-id>`, `<profile>`.
-- In a globally-distributed instruction/doc (rules, skills, shared templates), never assert behaviour that depends on the individual reader's local configuration - e.g. "this command is auto-approved", "this needs no confirmation", "the tool is on PATH". Auto-approval hinges on the reader's own permission allowlist; availability hinges on their install. State the action to take; leave the local-environment consequence out.
-- Before writing new code/tooling to check or verify something, check whether an existing tool already does it - prefer that over building new.
+- Write for reuse: where several functions do similar things, merge them or create an interface.
+- Committed text (docs, CLAUDE.md, design decisions) MUST describe the current atomic state - never a failed intermediate approach, a removed feature, or "we tried X then switched to Y".
+- Avoid a variable assignment that does not improve clarity; a value used once probably does not need a name.
+- Avoid magic numbers: where a threshold appears in more than one place, derive every occurrence from one named constant.
+- Leave code better than you found it - fix an issue you notice in something you are already editing. This stops at the ownership boundary: MUST NOT edit another team's or package's code just because your change sits next to it. Raise the rest separately.
+- When fixing a bug, fix ALL directly related issues in the same code path - MUST NOT dismiss a pre-existing failure as separate if it shares root cause or context.
+- Before adding a parameter to a signature, verify the body uses it.
+- Before declaring a value or function dead and removing it, search the WHOLE workspace - a value can be set in one package and consumed in a sibling.
+- If you write an error and then fix it, record the mistake and the fix as a memory observation.
+- NEVER use non-ascii characters such as an emdash. Use the ascii equivalent.
+- In committed files, never name specific collaborators, and never hardcode user-specific values (aliases, account IDs, stack names) - use a placeholder like `<account-id>`.
+- In a globally-distributed instruction or doc, never assert behaviour that depends on the reader's local configuration ("this command is auto-approved"). State the action, not the local consequence.
+- Before writing new tooling to check something, check whether an existing tool already does it.
 
 # Testing guidelines
 
-- **CRITICAL: Before EVERY commit and push, and before marking any task complete or submitting a CR, you MUST build the package and confirm all tests pass.** This is non-negotiable. A green build is a hard prerequisite - never skip it, never assume it passes, never defer it. A passing run earlier in the session does NOT carry over: any change since then (including a docs/TODO-only follow-up commit) requires re-running the full suite before the next commit or push. Re-run immediately before the git operation, not once at the start.
-- **Verify with the project's real configuration, not a stricter one you chose.** Read the build/CI config for the flags actually used before deciding what "passing" means; enabling stricter checks than the project uses surfaces pre-existing issues that look like new regressions but are out of scope. Be wary of a stale/incremental verification baseline: only re-processed inputs are re-checked, so a "clean" incremental run does not prove a new setting passes across the whole tree. When something looks like a regression, compare against the committed baseline to confirm it is not pre-existing.
-- **When fixing a REPORTED bug (a freeze, crash, wrong output), first reproduce the symptom with a harness that matches how the code is actually invoked - then confirm your fix makes that reproduction pass.** A benchmark or test that exercises a function with unrealistic inputs (e.g. a `nullptr`/no-op callback where production wires a real one, an empty config, a tiny fixture) can pass while the real bug is untouched - a structural blind spot that makes you "fix" latent issues that were never the reported problem. Mirror the real call site's parameters and wiring. If you cannot reproduce the symptom, say so and keep investigating; do not ship speculative fixes and claim the issue is resolved.
-- **Verify an integration feature against the real target, not just a stub.** A feature whose job is to talk to an external target (host, API, DB) needs a real exercise - a mock only tests control-flow and misses real-world mismatches (wrong path, a destructive overwrite, an auth gap). Probe the target read-only first (reachability, fingerprint/version compare, `--dry-run`, `stat` before/after), which also surfaces footguns cheaply, then run the real path. Distinguish stub-tested from really-run when reporting.
-- **Default to exercising real code paths in test construction; avoid mocks where a real path is feasible.** Reserve mocking for what is genuinely infeasible to run for real in the test process (a live network call, a paid/rate-limited external API, a destructive side effect). If a dependency is safe to invoke for real (pure in-process logic, a bundled offline data snapshot, a local file read), invoke it for real rather than mocking it for convenience or isolation - a mock only proves the mock's contract, not the real one.
-- **Tests must run through the project's standard build/test invocation**, never a bespoke ad-hoc script or runner outside that path - otherwise the test suite silently stops being part of what CI/the team's normal gate actually checks.
-- **For any change that adds or repositions UI (CSS, fixed-position elements, form controls, layout), you MUST render the page and look at it before claiming done.** An API/curl test verifies data, not appearance - it will not catch overlap, an unstyled control, or clashing copy. Render the populated/interactive state (headless Chrome via CDP if needed) and visually confirm. If a plan flagged a layout/overlap risk, resolve it in the design - never ship the flagged position and defer.
-- Before running tests, always ensure that there are tests that check for the expected behavior
-- Tests should only cover our code. Do not test the functionality of built-in or external libraries.
-- Test behavior, not syntax. For example, do not test that a config has specific defaults set.
-- Never duplicate behavior in the test definition - always test the live code.
-- Do not couple tests to dynamic external state (e.g. live service status, environment registries, current dates, resource inventories). Derive expectations from the same source-of-truth the code under test reads, so the test tracks that state automatically. A test that must be hand-edited whenever external data changes (a hardcoded list, a snapshot of "what exists today") is brittle - assert the behaviour/invariant, not the current snapshot.
-- Keep the real-world case that motivated a change OUT of the test suite. A bug found in a specific third-party artifact, installed package, or machine-local path is reproduced with a generic synthetic fixture built by the test itself (neutral names, a temp directory), never by naming that artifact or reading its live location. The motivating case belongs in a smoke test or manual check. This applies to delegated test-writing too - say it in the spawn prompt, since a delegate handed a concrete real-world example will otherwise hardcode it into the tests.
+- Before EVERY commit and push, and before marking any task complete or submitting a CR, you MUST build the package and confirm all tests pass. An earlier passing run does NOT carry over - re-run the full suite immediately before the git operation.
+- MUST verify with the project's real configuration, not a stricter one you chose - read the build/CI config for the flags actually used, and compare against the committed baseline before calling something a regression.
+- When fixing a REPORTED bug, MUST reproduce the symptom with a harness matching how the code is actually invoked, then confirm the fix makes that reproduction pass. A test with unrealistic inputs can pass while the real bug is untouched. Where you cannot reproduce it, say so and keep investigating - MUST NOT ship a speculative fix and claim it resolved.
+- MUST verify an integration feature against the real target, not just a stub. Probe read-only first (`--dry-run`, `stat` before and after), then run the real path, and say which parts were stub-tested.
+- SHOULD exercise real code paths and avoid mocks where a real path is feasible - reserve mocking for what is genuinely infeasible in-process (a live network call, a rate-limited API, a destructive side effect).
+- Tests MUST run through the project's standard build/test invocation, never a bespoke script outside it, or they stop being part of the normal gate.
+- For any change that adds or repositions UI, you MUST render the page and look at it before claiming done - an API test verifies data, not appearance. Where a plan flagged a layout risk, MUST resolve it in the design rather than defer.
+- Before running tests, ensure a test exists for the expected behaviour.
+- Tests cover our code only - MUST NOT test a built-in or external library.
+- Test behaviour, not syntax; e.g. do not test that a config has specific defaults.
+- MUST NOT duplicate behaviour in a test definition - always test the live code.
+- MUST NOT couple a test to dynamic external state (live service status, registries, dates) - derive expectations from the same source of truth the code reads, and assert the invariant, not a snapshot.
+- Keep the real-world case that motivated a change OUT of the test suite - reproduce it with a generic synthetic fixture the test builds itself (neutral names, a temp directory). Say this when delegating test-writing, or the delegate hardcodes it.

@@ -10,8 +10,7 @@ _Note that these git rules override others._
 - When running `git` commands that can return paginated or scrollable output (such as `git log`), ALWAYS use the `-P` option (e.g. `git -P log`)
 - Commit messages MUST maintain a style consistent with previous commits in the repository. ALWAYS use `git -P log --oneline -20` to see the style of the most recent commits so that you can match it.
 - **Never** add a body to a commit, regardless of other instructions.
-- _Always_ make a commit after completing a change.
-- Commits _must_ be created frequently - early and often, following best practices
+- Commit early and often, always after completing a change; rule/skill/workflow/agent source edits commit in the same turn.
 - When staging and committing modified files at the same time, run `git add` and `git commit` in a single commit by using `&&` instead of staging and committing separately.
 - When staging files **explicitly by path** (rather than `git add -A`), re-check `git -P status --short` immediately after committing. If any file you intended to include is still listed as modified/untracked, you missed it - amend it in (a build/test run can mask this by reading the working tree, so green tests do NOT confirm the file was committed).
 - **Before staging a file you edited, run `git -P diff <path>` to check for pre-existing hunks that are not yours.** `git add <path>` stages the WHOLE file, so any foreign unstaged edit in that file gets folded into your commit (tell-tale: more insertions than you wrote). When a file carries edits you did not make, stage only your hunks with `git add -p <path>` and confirm with `git -P diff --cached <path>` before committing. If a foreign hunk already slipped into an unpushed commit, recover with `git reset --soft HEAD~1` then re-stage with `-p`.

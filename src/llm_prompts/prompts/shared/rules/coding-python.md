@@ -1,8 +1,6 @@
 ---
 description: Python-specific coding guidelines
-copilot_apply_to: '**'
-kiro_inclusion: fileMatch
-kiro_file_match_pattern: '**/*.py'
+paths: '**/*.py'
 ---
 
 # Python coding guidelines
