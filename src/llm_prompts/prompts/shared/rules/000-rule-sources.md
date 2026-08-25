@@ -8,6 +8,7 @@ kiro_inclusion: manual
 When editing rules, workflows, prompts, or skills, always edit the **source files** in the repository - never edit the installed copies.
 
 Rules and skills must be as terse as possible - short bullets only. Explain only where the rule would otherwise be ambiguous; prose that justifies or restates a rule is deleted, not shortened.
+Where a document's reader is a MODEL (a prompt-injected context blob, an instruction file), MUST write RFC 2119 directives, not explanatory prose - cut justification and background, keep every identifier. Reduce words, never coverage.
 
 Run `llm-prompts source {{AGENT}}` to see the source file paths for all installed rules, workflows, and skills.
 
