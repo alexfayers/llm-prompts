@@ -29,6 +29,7 @@ from llm_prompts.install import (
 from llm_prompts.install import main as install_main
 from llm_prompts.render_template import (
     render_template,
+    resolve_frontmatter,
     split_frontmatter,
     strip_gating_keys,
 )
@@ -1064,3 +1065,40 @@ class TestPathsScoping:
         )
         assert "---" not in output
         assert output.endswith("\n")
+
+
+class TestShippedTestingRule:
+    RULE = (
+        Path(__file__).parent.parent
+        / "src/llm_prompts/prompts/shared/rules/testing.md"
+    )
+
+    def _globs(self) -> list[str]:
+        split = split_frontmatter(self.RULE.read_text(encoding="utf-8"))
+        assert split is not None
+        frontmatter = resolve_frontmatter(split[0])
+        assert frontmatter is not None
+        return [p.strip() for p in frontmatter["paths"].split(",") if p.strip()]
+
+    def _render(self, tmp_path: Path, target: str) -> str:
+        vars_file = tmp_path / "vars.json"
+        vars_file.write_text("{}", encoding="utf-8")
+        return render_template(str(self.RULE), str(vars_file), target)
+
+    def test_claude_code_scopes_every_glob(self, tmp_path: Path) -> None:
+        output = self._render(tmp_path, "claude-code")
+        assert output.startswith("---\npaths:\n")
+        for glob in self._globs():
+            assert f'  - "{glob}"' in output
+
+    def test_copilot_scopes_every_glob(self, tmp_path: Path) -> None:
+        output = self._render(tmp_path, "copilot")
+        applied = output.partition("applyTo: '")[2].partition("'")[0]
+        for glob in self._globs():
+            assert glob in applied
+
+    def test_kiro_scopes_every_glob(self, tmp_path: Path) -> None:
+        output = self._render(tmp_path, "kiro")
+        assert "inclusion: fileMatch" in output
+        for glob in self._globs():
+            assert f"'{glob}'" in output

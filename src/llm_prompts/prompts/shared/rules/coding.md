@@ -31,12 +31,7 @@ copilot_apply_to: '**'
 - MUST verify with the project's real configuration, not a stricter one you chose - read the build/CI config for the flags actually used, and compare against the committed baseline before calling something a regression.
 - When fixing a REPORTED bug, MUST reproduce the symptom with a harness matching how the code is actually invoked, then confirm the fix makes that reproduction pass. A test with unrealistic inputs can pass while the real bug is untouched. Where you cannot reproduce it, say so and keep investigating - MUST NOT ship a speculative fix and claim it resolved.
 - MUST verify an integration feature against the real target, not just a stub. Probe read-only first (`--dry-run`, `stat` before and after), then run the real path, and say which parts were stub-tested.
-- SHOULD exercise real code paths and avoid mocks where a real path is feasible - reserve mocking for what is genuinely infeasible in-process (a live network call, a rate-limited API, a destructive side effect).
 - Tests MUST run through the project's standard build/test invocation, never a bespoke script outside it, or they stop being part of the normal gate.
 - For any change that adds or repositions UI, you MUST render the page and look at it before claiming done - an API test verifies data, not appearance. Where a plan flagged a layout risk, MUST resolve it in the design rather than defer.
 - Before running tests, ensure a test exists for the expected behaviour.
-- Tests cover our code only - MUST NOT test a built-in or external library.
-- Test behaviour, not syntax; e.g. do not test that a config has specific defaults.
-- MUST NOT duplicate behaviour in a test definition - always test the live code.
-- MUST NOT couple a test to dynamic external state (live service status, registries, dates) - derive expectations from the same source of truth the code reads, and assert the invariant, not a snapshot.
-- Keep the real-world case that motivated a change OUT of the test suite - reproduce it with a generic synthetic fixture the test builds itself (neutral names, a temp directory). Say this when delegating test-writing, or the delegate hardcodes it.
+- When delegating test-writing, MUST state that the motivating real-world case stays out of the suite, or the delegate hardcodes it.
