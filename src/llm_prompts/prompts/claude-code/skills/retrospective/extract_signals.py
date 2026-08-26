@@ -135,6 +135,13 @@ def _is_gate_result(content: str) -> bool:
     return isinstance(data, dict) and isinstance(data.get("pass"), bool)
 
 
+def _is_hook_block(content: str) -> bool:
+    """A PreToolUse hook rejection means the tool call never ran, so an
+    identical re-issue after satisfying the hook is compliance, not error
+    recovery - exclude it from retry detection."""
+    return content.lstrip().startswith("PreToolUse:")
+
+
 def _result_is_error(result: dict) -> bool:
     """Determine whether a tool_result block represents a failure."""
     content = result.get("content", "")
@@ -142,6 +149,8 @@ def _result_is_error(result: dict) -> bool:
         content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
     content = str(content)
     if _is_gate_result(content):
+        return False
+    if _is_hook_block(content):
         return False
     if result.get("is_error"):
         return True
