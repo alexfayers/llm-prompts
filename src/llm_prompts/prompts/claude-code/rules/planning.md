@@ -38,7 +38,6 @@ Before plan mode, in order: Explore agents (up to 3 in parallel) for existing pa
 ## Session scope discipline
 
 - Keep a session to one coherent change, and each logical change to ONE commit - see `git.md`.
-- At ~80-100 user turns, MUST pause, assess whether this is still one coherent change, and leave a one-line note: turns in, whether this is still the opening change, and "continuing" or "splitting here".
 - Once unrelated changes have accumulated, SHOULD commit what is done, record the rest as TODOs, and suggest a new session.
 - MUST NOT start a new large task late in a long or high-context session. Recommend parking it and proceed only if the user overrides - a one-line aside is not enough, get agreement first.
 - This gates the ACT of calling `EnterPlanMode` however trivial the task looks, and MUST happen before any research or plan-writing spend. A context-usage notice stays live until a fresh session starts.

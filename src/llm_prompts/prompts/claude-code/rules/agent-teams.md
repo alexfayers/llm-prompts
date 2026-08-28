@@ -39,7 +39,6 @@ requires_env: CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
 - The team SHOULD grow mid-task when the backlog exceeds the roster or new work fits no existing role.
 - A roster spec MUST carry each task's SUBJECT as well as its ID, and MUST be checked against `TaskList` before spawning - a predicted ID points at the wrong work or at nothing.
 - Only the lead spawns a named teammate. A member needing more hands sends a roster spec, which the lead spawns verbatim.
-- An editor carries exact text and no numbers. Every numeric or mechanical check goes to a runner, and what a number means stays with whoever set the target.
 
 ## Set teammate effort, don't inherit it
 

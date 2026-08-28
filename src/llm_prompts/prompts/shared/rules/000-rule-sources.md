@@ -10,6 +10,10 @@ When editing rules, workflows, prompts, or skills, always edit the **source file
 Rules and skills must be as terse as possible - short bullets only. Explain only where the rule would otherwise be ambiguous; prose that justifies or restates a rule is deleted, not shortened.
 Where a document's reader is a MODEL (a prompt-injected context blob, an instruction file), MUST write RFC 2119 directives, not explanatory prose - cut justification and background, keep every identifier. Reduce words, never coverage.
 
+These files are distributed and always loaded, so content MUST be generic - useful to MULTIPLE different people in MULTIPLE different situations.
+Anything specific to one person, one incident, one repo, or one past conversation MUST NOT go here; it belongs in memory or in local unmanaged rules.
+Before adding a rule, MUST check it would still read correctly in an unrelated repo for a different person.
+
 Run `llm-prompts source {{AGENT}}` to see the source file paths for all installed rules, workflows, and skills.
 
 After editing any source file, run `llm-prompts update` to reinstall.

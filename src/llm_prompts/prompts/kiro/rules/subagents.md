@@ -37,4 +37,3 @@ Kiro supports spawning parallel AI agents as a DAG pipeline via the `subagent` t
 
 - `fayers-default` for general-purpose work with memory access
 - `kiro_planner` for breaking down complex problems into plans
-- `amzn-builder` for Amazon-specific build and code generation tasks
