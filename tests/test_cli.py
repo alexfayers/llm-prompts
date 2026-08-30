@@ -398,6 +398,21 @@ class TestPullLocalSources:
             "[third] pulled 1 new commit(s)",
         ]
 
+    def test_only_sources_that_changed_are_reported_as_changed(
+        self, tmp_path: Path
+    ) -> None:
+        changed = self._setup_ff_clone(tmp_path, "changed")
+        _, current = self._setup_clone(tmp_path)
+
+        config = [
+            {"name": "changed", "source": str(changed)},
+            {"name": "current", "source": str(current)},
+        ]
+        with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
+            mock_config.exists.return_value = True
+            with patch("llm_prompts.setup._load_config", return_value=config):
+                assert _pull_local_sources() == {"changed"}
+
     def test_rebase_failure_lines_stay_adjacent_and_ordered(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -556,6 +571,125 @@ class TestUpdateCommandPullsPlugins:
             main()
 
         mock_setup.assert_called_once_with(force_reinstall={"cline-hooks"})
+
+
+class TestUpdateRestartsMemoryOnlyWhenItChanged:
+    def _run_update(self, changed: set[str]) -> tuple[MagicMock, MagicMock]:
+        """Run `llm-prompts update` with the given set of changed sources.
+
+        Returns:
+            The patched db-migration and service-restart mocks.
+        """
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={"kiro": {"files": []}},
+            ),
+            patch("llm_prompts.cli._pull_local_sources", return_value=changed),
+            patch("llm_prompts.setup.has_remote_sources", return_value=False),
+            patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+            patch("llm_prompts.setup.run_setup"),
+            patch("llm_prompts.install.main"),
+            patch("llm_prompts.cli._auto_migrate_memory_db") as mock_migrate,
+            patch("llm_prompts.cli._restart_memory_service") as mock_restart,
+            patch("llm_prompts.plugins.pull_plugin_sources"),
+        ):
+            main()
+        return mock_migrate, mock_restart
+
+    def test_unrelated_source_change_leaves_the_service_running(self) -> None:
+        _, restart = self._run_update({"cline-hooks"})
+        restart.assert_not_called()
+
+    def test_memory_source_change_restarts_the_service(self) -> None:
+        _, restart = self._run_update({"cline-hooks", "mcp-memory"})
+        restart.assert_called_once_with()
+
+    def test_reinstalled_remote_memory_restarts_the_service(self) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={"kiro": {"files": []}},
+            ),
+            patch("llm_prompts.cli._pull_local_sources", return_value=set()),
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.has_remote_sources", return_value=True),
+            patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+            patch("llm_prompts.setup.run_setup"),
+            patch("llm_prompts.install.main"),
+            patch(
+                "llm_prompts.cli._get_installed_commit",
+                side_effect=["oldcommit", "newcommit"],
+            ),
+            patch("llm_prompts.cli._auto_migrate_memory_db"),
+            patch("llm_prompts.cli._restart_memory_service") as mock_restart,
+            patch("llm_prompts.plugins.pull_plugin_sources"),
+        ):
+            mock_config.exists.return_value = True
+            main()
+
+        mock_restart.assert_called_once_with()
+
+
+class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
+    def _run_update(self, changed: set[str]) -> dict[str, MagicMock]:
+        """Run `llm-prompts update` with the given set of changed sources.
+
+        Returns:
+            The patched post-install configuration mocks, keyed by name.
+        """
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={"claude-code": {"files": []}, "codex": {"files": []}},
+            ),
+            patch("llm_prompts.cli._pull_local_sources", return_value=changed),
+            patch("llm_prompts.setup.has_remote_sources", return_value=False),
+            patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+            patch("llm_prompts.setup.run_setup"),
+            patch("llm_prompts.install.main"),
+            patch("llm_prompts.cli._get_installed_commit", return_value=None),
+            patch("llm_prompts.cli._restart_memory_service"),
+            patch("llm_prompts.plugins.pull_plugin_sources"),
+            patch("llm_prompts.install.try_install_hooks_claude_code") as hooks,
+            patch("llm_prompts.install.try_install_memory_claude_code") as memory,
+            patch("llm_prompts.install.try_allow_update_claude_code") as allow,
+            patch("llm_prompts.install.try_install_memory_codex") as codex,
+            patch("llm_prompts.cli._auto_migrate_memory_db") as migrate,
+        ):
+            main()
+        return {
+            "hooks": hooks,
+            "memory": memory,
+            "allow": allow,
+            "codex": codex,
+            "migrate": migrate,
+        }
+
+    def test_nothing_pulled_leaves_every_agent_config_untouched(self) -> None:
+        mocks = self._run_update(set())
+        for mock in mocks.values():
+            mock.assert_not_called()
+
+    def test_a_pulled_source_reconfigures_the_agents(self) -> None:
+        mocks = self._run_update({"cline-hooks"})
+        mocks["hooks"].assert_called_once_with()
+        mocks["allow"].assert_called_once_with()
+
+    def test_memory_config_and_db_wait_for_a_memory_change(self) -> None:
+        mocks = self._run_update({"cline-hooks"})
+        mocks["memory"].assert_not_called()
+        mocks["codex"].assert_not_called()
+        mocks["migrate"].assert_not_called()
+
+    def test_a_memory_change_reconfigures_memory_and_migrates_the_db(self) -> None:
+        mocks = self._run_update({"mcp-memory"})
+        mocks["memory"].assert_called_once_with()
+        mocks["codex"].assert_called_once_with()
+        mocks["migrate"].assert_called_once_with()
 
 
 class TestCollectSourcesOverlayPrecedence:

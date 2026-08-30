@@ -11,7 +11,7 @@ import sys
 from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from .setup import (
     _GIT_TIMEOUT,
@@ -22,9 +22,11 @@ from .setup import (
 )
 
 if TYPE_CHECKING:
+    from .manifest import AgentManifest
     from .size_guard import Artifact
 
 _AGENTS = ("cline", "copilot", "kiro", "claude-code", "codex")
+_MEMORY_TOOL = "mcp-memory"
 
 
 def _get_root_dir() -> Path:
@@ -242,7 +244,15 @@ def _local_source_messages(name: str, source: str) -> list[str]:
     return _format_update_message(name, subjects)
 
 
-def _pull_one_local_source(name: str, source: str) -> list[str]:
+class _PullOutcome(NamedTuple):
+    """The result of pulling one tool source."""
+
+    name: str
+    changed: bool
+    messages: list[str]
+
+
+def _pull_one_local_source(name: str, source: str) -> _PullOutcome:
     """Pull upstream changes for a single local-path tool source.
 
     Args:
@@ -250,15 +260,16 @@ def _pull_one_local_source(name: str, source: str) -> list[str]:
         source: The configured source string.
 
     Returns:
-        Message lines describing the pull outcome, or an empty list.
+        Whether the source moved, and message lines describing the pull outcome.
     """
     from .setup import _expand, _is_local_path
 
+    unchanged = _PullOutcome(name, False, [])
     if not _is_local_path(source):
-        return []
+        return unchanged
     repo = _expand(source)
     if not (repo / ".git").is_dir():
-        return []
+        return unchanged
     subprocess.run(
         ["git", "-C", str(repo), "fetch", "--quiet"],
         check=False,
@@ -273,10 +284,10 @@ def _pull_one_local_source(name: str, source: str) -> list[str]:
         timeout=_GIT_TIMEOUT,
     )
     if result.returncode != 0:
-        return []
+        return unchanged
     count = int(result.stdout.strip())
     if count == 0:
-        return []
+        return unchanged
     pull = subprocess.run(
         ["git", "-C", str(repo), "pull", "--ff-only", "--quiet"],
         check=False,
@@ -285,7 +296,7 @@ def _pull_one_local_source(name: str, source: str) -> list[str]:
         timeout=_GIT_TIMEOUT,
     )
     if pull.returncode == 0:
-        return [f"[{name}] pulled {count} new commit(s)"]
+        return _PullOutcome(name, True, [f"[{name}] pulled {count} new commit(s)"])
     rebase = subprocess.run(
         ["git", "-C", str(repo), "rebase", "--quiet", "@{u}"],
         check=False,
@@ -294,29 +305,41 @@ def _pull_one_local_source(name: str, source: str) -> list[str]:
         timeout=_GIT_TIMEOUT,
     )
     if rebase.returncode == 0:
-        return [f"[{name}] rebased local commits onto {count} new commit(s)"]
+        return _PullOutcome(
+            name,
+            True,
+            [f"[{name}] rebased local commits onto {count} new commit(s)"],
+        )
     subprocess.run(
         ["git", "-C", str(repo), "rebase", "--abort"],
         check=False,
         capture_output=True,
         timeout=_GIT_TIMEOUT,
     )
-    return [
-        f"[{name}] {count} new commit(s) available but rebase failed",
-        f"  {rebase.stderr.strip()}",
-    ]
+    return _PullOutcome(
+        name,
+        False,
+        [
+            f"[{name}] {count} new commit(s) available but rebase failed",
+            f"  {rebase.stderr.strip()}",
+        ],
+    )
 
 
-def _pull_local_sources() -> None:
-    """Pull upstream changes for all local-path tool sources in parallel."""
+def _pull_local_sources() -> set[str]:
+    """Pull upstream changes for all local-path tool sources in parallel.
+
+    Returns:
+        The names of the tool sources that actually moved.
+    """
     from functools import partial
 
     from .setup import CONFIG_PATH, _load_config, _run_parallel_ordered
 
     if not CONFIG_PATH.exists():
-        return
+        return set()
 
-    pulls: list[Callable[[], list[str]]] = [
+    pulls: list[Callable[[], _PullOutcome]] = [
         partial(
             _pull_one_local_source,
             str(tool.get("name", "")),
@@ -325,9 +348,13 @@ def _pull_local_sources() -> None:
         for tool in _load_config()
     ]
 
-    for result in _run_parallel_ordered(pulls):
-        for line in result:
+    changed: set[str] = set()
+    for outcome in _run_parallel_ordered(pulls):
+        for line in outcome.messages:
             print(line)
+        if outcome.changed:
+            changed.add(outcome.name)
+    return changed
 
 
 def _collect_update_messages() -> list[str]:
@@ -387,9 +414,45 @@ def _auto_migrate_memory_db() -> None:
         subprocess.run([binary, "migrate-db"], check=False)
 
 
+def _reconfigure_agents(
+    manifest: dict[str, AgentManifest], *, memory_changed: bool
+) -> None:
+    """Re-apply hook, memory and agent-config wiring for every installed agent.
+
+    Args:
+        manifest: The installed-agent manifest.
+        memory_changed: Whether the mcp-memory source moved, gating the memory wiring.
+    """
+    from .install import (
+        patch_kiro_agent_config,
+        try_allow_update_claude_code,
+        try_install_hooks,
+        try_install_hooks_claude_code,
+        try_install_memory,
+        try_install_memory_claude_code,
+        try_install_memory_codex,
+    )
+
+    if "claude-code" in manifest:
+        try_install_hooks_claude_code()
+        if memory_changed:
+            try_install_memory_claude_code()
+        try_allow_update_claude_code()
+
+    if "codex" in manifest and memory_changed:
+        try_install_memory_codex()
+
+    for entry in manifest.values():
+        agent_config = entry.get("agent_config")
+        if agent_config:
+            patch_kiro_agent_config(agent_config)
+            try_install_hooks(agent_config)
+            if memory_changed:
+                try_install_memory(agent_config)
+
+
 def _restart_memory_service() -> None:
     """Restart the mcp-memory background service if installed."""
-    _auto_migrate_memory_db()
     if sys.platform == "darwin":
         plist = Path.home() / "Library" / "LaunchAgents" / "com.mcp-memory.plist"
         if plist.exists():
@@ -583,50 +646,29 @@ def main() -> None:
             )
             sys.exit(1)
 
-        _pull_local_sources()
+        changed_sources = _pull_local_sources()
 
         from .plugins import pull_plugin_sources
 
         pull_plugin_sources()
 
+        memory_commit = _get_installed_commit(_MEMORY_TOOL)
         stale = detect_stale_local_tools()
         if CONFIG_PATH.exists() and (has_remote_sources() or stale):
             run_setup(force_reinstall=stale or None)
+        if _get_installed_commit(_MEMORY_TOOL) != memory_commit:
+            changed_sources.add(_MEMORY_TOOL)
 
         from .install import main as install_main
 
         install_main(list(manifest))
 
-        if "claude-code" in manifest:
-            from .install import (
-                try_allow_update_claude_code,
-                try_install_hooks_claude_code,
-                try_install_memory_claude_code,
-            )
-
-            try_install_hooks_claude_code()
-            try_install_memory_claude_code()
-            try_allow_update_claude_code()
-
-        if "codex" in manifest:
-            from .install import try_install_memory_codex
-
-            try_install_memory_codex()
-
-        for name, entry in manifest.items():
-            agent_config = entry.get("agent_config")
-            if agent_config:
-                from .install import (
-                    patch_kiro_agent_config,
-                    try_install_hooks,
-                    try_install_memory,
-                )
-
-                patch_kiro_agent_config(agent_config)
-                try_install_hooks(agent_config)
-                try_install_memory(agent_config)
-
-        _restart_memory_service()
+        memory_changed = _MEMORY_TOOL in changed_sources
+        if changed_sources:
+            _reconfigure_agents(manifest, memory_changed=memory_changed)
+        if memory_changed:
+            _auto_migrate_memory_db()
+            _restart_memory_service()
     elif args.command == "uninstall":
         from .install import uninstall
 

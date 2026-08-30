@@ -13,7 +13,9 @@ import tomllib
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
+
+_T = TypeVar("_T")
 
 _CONFIG_DIR = Path.home() / ".config" / "llm-prompts"
 CONFIG_PATH = _CONFIG_DIR / "config.toml"
@@ -197,14 +199,14 @@ def _remote_commit_subjects(
         return None
 
 
-def _run_parallel_ordered(callables: list[Callable[[], list[str]]]) -> list[list[str]]:
+def _run_parallel_ordered(callables: list[Callable[[], _T]]) -> list[_T]:
     """Run each callable concurrently, preserving submission order in the result.
 
     Args:
-        callables: Zero-arg functions, each returning a list of message lines.
+        callables: Zero-arg functions.
 
     Returns:
-        One result list per callable, in the same order as ``callables``.
+        One result per callable, in the same order as ``callables``.
     """
     if not callables:
         return []
