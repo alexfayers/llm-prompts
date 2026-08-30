@@ -453,22 +453,10 @@ def _reconfigure_agents(
 
 def _restart_memory_service() -> None:
     """Restart the mcp-memory background service if installed."""
-    if sys.platform == "darwin":
-        plist = Path.home() / "Library" / "LaunchAgents" / "com.mcp-memory.plist"
-        if plist.exists():
-            uid = subprocess.run(
-                ["id", "-u"], capture_output=True, text=True, check=False
-            ).stdout.strip()
-            subprocess.run(
-                ["launchctl", "kickstart", "-k", f"gui/{uid}/com.mcp-memory"],
-                check=False,
-            )
-            print("Restarted mcp-memory service.")
-    else:
-        unit = Path("/etc/systemd/system/mcp-memory.service")
-        if unit.exists():
-            subprocess.run(["sudo", "systemctl", "restart", "mcp-memory"], check=False)
-            print("Restarted mcp-memory service.")
+    binary = shutil.which("mcp-memory")
+    if binary:
+        subprocess.run([binary, "restart"], check=False)
+        print("Restarted mcp-memory service.")
 
 
 def main() -> None:

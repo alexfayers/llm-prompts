@@ -18,6 +18,7 @@ from llm_prompts.cli import (
     _print_parked_state,
     _pull_local_sources,
     _remote_source_messages,
+    _restart_memory_service,
     _run_size_check,
     _size_guard_roots,
     main,
@@ -571,6 +572,28 @@ class TestUpdateCommandPullsPlugins:
             main()
 
         mock_setup.assert_called_once_with(force_reinstall={"cline-hooks"})
+
+
+class TestRestartMemoryService:
+    def test_restarts_via_the_mcp_memory_binary(self) -> None:
+        with (
+            patch("shutil.which", return_value="/usr/local/bin/mcp-memory"),
+            patch("subprocess.run") as mock_run,
+        ):
+            _restart_memory_service()
+
+        mock_run.assert_called_once_with(
+            ["/usr/local/bin/mcp-memory", "restart"], check=False
+        )
+
+    def test_does_nothing_when_the_binary_is_not_installed(self) -> None:
+        with (
+            patch("shutil.which", return_value=None),
+            patch("subprocess.run") as mock_run,
+        ):
+            _restart_memory_service()
+
+        mock_run.assert_not_called()
 
 
 class TestUpdateRestartsMemoryOnlyWhenItChanged:
