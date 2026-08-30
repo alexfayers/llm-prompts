@@ -229,9 +229,7 @@ def _passes_requires_gate(src: Path) -> bool:
     if required_env and not _env_var_set(required_env):
         return False
     required_command = frontmatter.get("requires_command")
-    if required_command and shutil.which(required_command) is None:
-        return False
-    return True
+    return not (required_command and shutil.which(required_command) is None)
 
 
 def _excluded_targets(src: Path) -> set[str]:

@@ -95,7 +95,11 @@ class TestMain:
         self._init_repo(tmp_path)
         (tmp_path / "f.txt").write_text("a\n")
         completed = subprocess.run(
-            [sys.executable, str(_SCRIPT)], cwd=tmp_path, capture_output=True, text=True
+            [sys.executable, str(_SCRIPT)],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         result = json.loads(completed.stdout)
         assert result["pass"] is True
@@ -105,7 +109,11 @@ class TestMain:
         self._init_repo(tmp_path)
         (tmp_path / "f.txt").write_text("a\nb\nc\nd\ne\n" + "x\n" * 10)
         completed = subprocess.run(
-            [sys.executable, str(_SCRIPT)], cwd=tmp_path, capture_output=True, text=True
+            [sys.executable, str(_SCRIPT)],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         result = json.loads(completed.stdout)
         assert result["pass"] is False

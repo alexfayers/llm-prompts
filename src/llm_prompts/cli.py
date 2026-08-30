@@ -509,6 +509,7 @@ def main() -> None:
                         else []
                     )
                     + ["--no-update"],
+                    check=False,
                 )
                 sys.exit(result.returncode)
 

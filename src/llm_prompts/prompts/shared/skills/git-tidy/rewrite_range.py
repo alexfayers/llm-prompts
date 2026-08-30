@@ -151,6 +151,7 @@ def main() -> None:
         result = subprocess.run(
             ["git", "rebase", "-i", base],
             env={**__import__("os").environ, **env},
+            check=False,
         )
         sys.exit(result.returncode)
 

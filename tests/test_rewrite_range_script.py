@@ -60,6 +60,7 @@ def _run(repo: Path, plan: list[dict[str, str]], *extra_args: str) -> subprocess
         cwd=repo,
         capture_output=True,
         text=True,
+        check=False,
     )
 
 

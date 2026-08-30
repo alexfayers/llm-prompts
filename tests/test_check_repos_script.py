@@ -136,6 +136,7 @@ class TestMain:
             [sys.executable, str(_SCRIPT), "--workspace", str(repo)],
             capture_output=True,
             text=True,
+            check=False,
         )
         assert completed.returncode == 1
         result = json.loads(completed.stdout)

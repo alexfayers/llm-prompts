@@ -79,21 +79,25 @@ class TestFetchRemotePyproject:
         assert "git not available" in capsys.readouterr().err
 
     def test_clone_non_zero(self, capsys: pytest.CaptureFixture[str]) -> None:
-        with patch("llm_prompts.setup.shutil.which", return_value="/usr/bin/git"):
-            with patch(
+        with (
+            patch("llm_prompts.setup.shutil.which", return_value="/usr/bin/git"),
+            patch(
                 "llm_prompts.setup.subprocess.run",
                 return_value=MagicMock(returncode=1),
-            ):
-                assert setup._fetch_remote_pyproject("https://x/repo.git") is None
+            ),
+        ):
+            assert setup._fetch_remote_pyproject("https://x/repo.git") is None
         assert "could not clone" in capsys.readouterr().err
 
     def test_clone_timeout(self, capsys: pytest.CaptureFixture[str]) -> None:
-        with patch("llm_prompts.setup.shutil.which", return_value="/usr/bin/git"):
-            with patch(
+        with (
+            patch("llm_prompts.setup.shutil.which", return_value="/usr/bin/git"),
+            patch(
                 "llm_prompts.setup.subprocess.run",
                 side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=30),
-            ):
-                assert setup._fetch_remote_pyproject("https://x/repo.git") is None
+            ),
+        ):
+            assert setup._fetch_remote_pyproject("https://x/repo.git") is None
         assert "timed out" in capsys.readouterr().err
 
 
@@ -214,9 +218,11 @@ class TestBuildCommandsRegression:
 
     def test_fetch_cached_per_url(self) -> None:
         counter = MagicMock(return_value=None)
-        with patch("llm_prompts.setup.shutil.which", return_value="/usr/bin/git"):
-            with patch("llm_prompts.setup.subprocess.run", counter):
-                setup._build_commands(self._shipped_tools(), "uv")
+        with (
+            patch("llm_prompts.setup.shutil.which", return_value="/usr/bin/git"),
+            patch("llm_prompts.setup.subprocess.run", counter),
+        ):
+            setup._build_commands(self._shipped_tools(), "uv")
         assert counter.call_count == 3
 
 

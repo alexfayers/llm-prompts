@@ -186,11 +186,13 @@ class TestRemoteSourceMessages:
                 "pkg", "git+https://github.com/user/repo.git"
             )
             assert result == [
-                "[pkg] update available:\n"
-                "- Add X\n"
-                "- Fix Y\n"
-                "Summarize these changes for the user in plain language, and flag "
-                "anything that looks like a breaking change."
+                (
+                    "[pkg] update available:\n"
+                    "- Add X\n"
+                    "- Fix Y\n"
+                    "Summarize these changes for the user in plain language, and flag "
+                    "anything that looks like a breaking change."
+                )
             ]
 
     def test_update_available_falls_back_to_shas_when_clone_fails(self) -> None:
@@ -226,12 +228,14 @@ class TestLocalSourceMessages:
             ]
             result = _local_source_messages("core", str(tmp_path))
             assert result == [
-                "[core] update available:\n"
-                "- Add A\n"
-                "- Fix B\n"
-                "- Tweak C\n"
-                "Summarize these changes for the user in plain language, and flag "
-                "anything that looks like a breaking change."
+                (
+                    "[core] update available:\n"
+                    "- Add A\n"
+                    "- Fix B\n"
+                    "- Tweak C\n"
+                    "Summarize these changes for the user in plain language, and flag "
+                    "anything that looks like a breaking change."
+                )
             ]
 
     def test_up_to_date(self, tmp_path: Path) -> None:
