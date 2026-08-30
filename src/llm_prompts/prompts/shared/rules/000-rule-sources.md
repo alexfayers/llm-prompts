@@ -26,6 +26,7 @@ Rules and skills request compliance; only a cline-hooks handler actually enforce
 Anything that genuinely must not happen belongs in a hook, not in a rule phrased with MUST/NEVER.
 A MUST/NEVER for behaviour no hook checks asserts a guarantee the rule cannot actually deliver.
 When writing or reviewing a rule, ask whether the behaviour is observable at a tool call or lifecycle event - if so, it should be a hook.
+When the event reached for fires only after the change has landed, MUST check whether an earlier event can predict the outcome from the tool's own input, not conclude enforcement is impossible.
 
 ## Adding an overlay
 
