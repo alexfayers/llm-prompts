@@ -12,7 +12,10 @@ session and need to write the doc.
 
 ## Procedure
 
-1. Read `HANDOFF.md` (and any memory entities/plan file it points to).
+1. Read `HANDOFF.md`, plus any memory entities/plan file it points to. The doc
+   sits at the session's workspace root, NOT inside the repo the work is about.
+   Before concluding none exists, MUST check every workspace root:
+   `find <roots> -maxdepth 3 -iname 'HANDOFF*.md'`.
 2. Delete it as its own standalone tool call - do not chain the delete with
    another command (e.g. `rm HANDOFF.md && git status`). A chained command
    fails as a unit if the other half trips a permission/hook gate (such as a
