@@ -20,7 +20,7 @@ WORKFLOW_BYTES = "workflow_bytes"
 WORKFLOW_LINES = "workflow_lines"
 SKILL_DESCRIPTION_CHARS = "skill_description_chars"
 AGENT_DESCRIPTION_CHARS = "agent_description_chars"
-CORPUS_BYTES = "corpus_bytes"
+COLLECTION_BYTES = "collection_bytes"
 FRONTMATTER_VALID = "frontmatter_valid"
 NO_UNSUBSTITUTED_PLACEHOLDERS = "no_unsubstituted_placeholders"
 
@@ -32,7 +32,7 @@ UNITS: dict[str, str] = {
     WORKFLOW_LINES: "rendered lines",
     SKILL_DESCRIPTION_CHARS: "chars",
     AGENT_DESCRIPTION_CHARS: "chars, post-expansion",
-    CORPUS_BYTES: "owned bytes per target",
+    COLLECTION_BYTES: "owned bytes per target",
 }
 
 FINALS: dict[str, int] = {
@@ -43,7 +43,7 @@ FINALS: dict[str, int] = {
     WORKFLOW_LINES: 200,
     SKILL_DESCRIPTION_CHARS: 200,
     AGENT_DESCRIPTION_CHARS: 200,
-    CORPUS_BYTES: 50_000,
+    COLLECTION_BYTES: 50_000,
 }
 
 # `_apply_variant_frontmatter` appends " [<model>, <effort> effort]" to every
@@ -106,12 +106,13 @@ class Schedule:
 
 
 @dataclass(frozen=True)
-class CorpusStep:
-    """One step of the per-target corpus-bytes schedule (M8).
+class CollectionStep:
+    """One step of the per-target collection-bytes schedule (M8).
 
     Args:
         name: Step identifier (e.g. ``"open"``, ``"W1"``).
-        threshold: Ceiling enforced on each checked target's owned corpus size.
+        threshold: Ceiling enforced on each checked target's owned collection
+            size.
     """
 
     name: str
@@ -119,20 +120,22 @@ class CorpusStep:
 
 
 @dataclass(frozen=True)
-class CorpusSchedule:
-    """Hand-set per-target corpus-byte descent schedule.
+class CollectionSchedule:
+    """Hand-set per-target collection-byte descent schedule.
 
-    Unlike the per-file schedules, corpus_bytes has no `final` to fall back on
-    - a corpus total is only computable in an installed environment, never
-    from this repo's own test suite - so the active step is always the ceiling
-    in force, rather than an optional tightening on top of one.
+    Unlike the per-file schedules, collection_bytes has no `final` to fall back
+    on - `FINALS` records the terminal step's target, not a ceiling in force -
+    so the active step is always the whole ceiling rather than an optional
+    tightening on top of one. The total is computable from sources alone; its
+    value depends on which roots are scanned, so this repo's own test suite
+    measures a smaller collection than an install that discovers overlays.
 
     Args:
         steps: Steps in the order they are meant to be worked through.
         active_step: Name of the step currently enforced.
     """
 
-    steps: tuple[CorpusStep, ...]
+    steps: tuple[CollectionStep, ...]
     active_step: str
 
     def active_threshold(self) -> int:
@@ -293,13 +296,21 @@ SCHEDULES: dict[str, Schedule] = {
     ),
 }
 
-CORPUS_SCHEDULE = CorpusSchedule(
+COLLECTION_SCHEDULE = CollectionSchedule(
     steps=(
-        CorpusStep("open", 425_000),
-        CorpusStep("W1", 135_000),
-        CorpusStep("W2", 95_000),
-        CorpusStep("W3", 75_000),
-        CorpusStep("W4", 50_000),
+        CollectionStep("open", 425_000),
+        CollectionStep("W1", 135_000),
+        CollectionStep("W2", 95_000),
+        CollectionStep("W3", 75_000),
+        CollectionStep("W4", 50_000),
     ),
     active_step="open",
 )
+
+# Transitional aliases for the pre-rename CORPUS_* names, kept only while a
+# concurrent change holds `tests/test_prompt_sizes.py`. Remove both these and
+# that module's imports once it lands.
+CORPUS_BYTES = COLLECTION_BYTES
+CorpusStep = CollectionStep
+CorpusSchedule = CollectionSchedule
+CORPUS_SCHEDULE = COLLECTION_SCHEDULE
