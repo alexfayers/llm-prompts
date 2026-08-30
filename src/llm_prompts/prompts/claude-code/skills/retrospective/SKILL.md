@@ -1,6 +1,6 @@
 ---
 name: retrospective
-description: Analyse recent session transcripts to extract learnings, discover pain points, and persist them into memory/skills/rules. Run manually when the retrospective counter is due (session-end reminds you at 5+).
+description: Analyse recent session transcripts to extract learnings, discover pain points, and persist them into memory/skills/rules. Run when the retrospective counter is due (session-end reminds at 5+).
 ---
 
 # retrospective

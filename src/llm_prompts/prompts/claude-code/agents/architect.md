@@ -1,18 +1,9 @@
 ---
 name: architect
 description: >-
-  Opus sub-lead for the "survey -> sub-lead design -> parallel execution -> gated
-  verification" team pipeline documented in agent-teams.md. Reach for this subagent
-  type when a task needs research, then design, then several independent edits, then a
-  checking pass, and you want the reasoning and coordination kept off the main thread.
-  The architect pulls survey/research findings directly from the surveying teammate via
-  SendMessage, produces the design, writes fully-specified tasks other teammates can
-  execute from TaskGet alone, hands the lead a ready-to-spawn roster spec (it cannot
-  spawn teammates itself), coordinates implementers and the verifier via direct
-  SendMessage, and sends exactly one final report to the lead when design, implementation,
-  and verification are all complete. Use it as the single named Opus delegate in that
-  pipeline - not for one-off lookups or mechanical execution, which belong to Sonnet or
-  Haiku teammates.
+  Opus sub-lead for work needing research, design, several independent edits, and a
+  checking pass. Keeps reasoning and coordination off the main thread; cannot spawn
+  teammates.
 disallowedTools: Agent, Write, Edit, NotebookEdit
 generate_variants: opus-medium,opus-high,opus-xhigh
 color: green

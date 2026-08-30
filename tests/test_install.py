@@ -725,48 +725,6 @@ class TestMainRunsSizeGuard:
             assert line in logged_info
 
 
-class TestMainScopesBaselinesPerRoot:
-    def test_an_overlays_own_baseline_grandfathers_its_oversized_file(
-        self, tmp_path: Path
-    ) -> None:
-        """Defect 1: baselines must resolve per repo, not just to llm-prompts' own.
-
-        An overlay's oversized file, baselined in *its own* size_baseline.json
-        (sibling of its prompts dir), must pass the pre-flight - proving the
-        overlay baseline is actually consulted, not just llm-prompts' own.
-        """
-        from llm_prompts.size_guard import build_baseline, iter_artifacts, save_baseline
-        from llm_prompts.size_limits import FINALS, RULE_BYTES
-
-        home = tmp_path / "home"
-        home.mkdir()
-        manifest = tmp_path / "installed.json"
-        overlay_dir = tmp_path / "overlay" / "prompts"
-        oversized = "# Overlay\n\n" + ("x " * FINALS[RULE_BYTES])
-        (overlay_dir / "shared" / "rules").mkdir(parents=True)
-        (overlay_dir / "shared" / "rules" / "overlay-big.md").write_text(
-            oversized, encoding="utf-8"
-        )
-        for target in ("claude-code", "copilot", "kiro"):
-            (overlay_dir / target).mkdir(parents=True)
-            (overlay_dir / target / "vars.json").write_text("{}", encoding="utf-8")
-
-        overlay_baseline = build_baseline(iter_artifacts([overlay_dir]))
-        save_baseline(overlay_baseline, overlay_dir.parent / "size_baseline.json")
-
-        with (
-            patch("llm_prompts.install.Path.home", return_value=home),
-            patch(
-                "llm_prompts.install._discover_overlay_paths",
-                return_value=[overlay_dir],
-            ),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
-        ):
-            install_main(["claude-code"])
-
-        assert (home / ".claude" / "skills").exists()
-
-
 _NON_GATING_FRONTMATTER = (
     "---\n"
     "description: Automate a new task\n"

@@ -81,8 +81,7 @@ class Schedule:
         steps: Steps in the order they are meant to be worked through.
         active_step: Name of the step currently enforced, or ``None`` before
             the schedule is engaged. A name the schedule would otherwise gate
-            falls back to its baseline (or the metric's final, if unbaselined)
-            until its step becomes active.
+            falls back to the metric's final until its step becomes active.
     """
 
     steps: tuple[ScheduleStep, ...]
@@ -123,8 +122,8 @@ class CorpusStep:
 class CorpusSchedule:
     """Hand-set per-target corpus-byte descent schedule.
 
-    Unlike the per-file schedules, corpus_bytes has no baseline to fall back
-    on - a corpus total is only computable in an installed environment, never
+    Unlike the per-file schedules, corpus_bytes has no `final` to fall back on
+    - a corpus total is only computable in an installed environment, never
     from this repo's own test suite - so the active step is always the ceiling
     in force, rather than an optional tightening on top of one.
 

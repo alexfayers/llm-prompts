@@ -19,7 +19,6 @@ from llm_prompts.cli import (
     _pull_local_sources,
     _remote_source_messages,
     _run_size_check,
-    _run_update_baseline,
     _size_guard_roots,
     main,
 )
@@ -816,95 +815,6 @@ class TestRunSizeCheck:
         assert "big.md" in capsys.readouterr().out
 
 
-class TestRunUpdateBaseline:
-    def test_new_entry_withheld_by_default_and_reported(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        root = tmp_path / "root"
-        (root / "shared" / "rules").mkdir(parents=True)
-        (root / "shared" / "rules" / "big.md").write_text(
-            "x " * FINALS[RULE_BYTES], encoding="utf-8"
-        )
-        (root / "claude-code").mkdir(parents=True)
-        (root / "claude-code" / "vars.json").write_text("{}", encoding="utf-8")
-        baseline_path = tmp_path / "size_baseline.json"
-
-        with patch("llm_prompts.cli._size_guard_roots", return_value=[root]):
-            _run_update_baseline()
-
-        saved = json.loads(baseline_path.read_text(encoding="utf-8"))
-        assert all(not names for targets in saved.values() for names in targets.values())
-        out = capsys.readouterr().out
-        assert "big.md" in out
-        assert "--confirm-additions" in out
-
-    def test_new_entry_written_when_additions_confirmed(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        root = tmp_path / "root"
-        (root / "shared" / "rules").mkdir(parents=True)
-        (root / "shared" / "rules" / "big.md").write_text(
-            "x " * FINALS[RULE_BYTES], encoding="utf-8"
-        )
-        (root / "claude-code").mkdir(parents=True)
-        (root / "claude-code" / "vars.json").write_text("{}", encoding="utf-8")
-        baseline_path = tmp_path / "size_baseline.json"
-
-        with patch("llm_prompts.cli._size_guard_roots", return_value=[root]):
-            _run_update_baseline(confirm_additions=True)
-
-        assert baseline_path.is_file()
-        saved = json.loads(baseline_path.read_text(encoding="utf-8"))
-        assert saved[RULE_BYTES]["claude-code"]["big.md"] > FINALS[RULE_BYTES]
-        assert "big.md" in capsys.readouterr().out
-
-    def test_regenerating_unchanged_content_reports_zero_changes(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        root = tmp_path / "root"
-        (root / "shared" / "rules").mkdir(parents=True)
-        (root / "shared" / "rules" / "big.md").write_text(
-            "x " * FINALS[RULE_BYTES], encoding="utf-8"
-        )
-        (root / "claude-code").mkdir(parents=True)
-        (root / "claude-code" / "vars.json").write_text("{}", encoding="utf-8")
-
-        with patch("llm_prompts.cli._size_guard_roots", return_value=[root]):
-            _run_update_baseline(confirm_additions=True)
-            capsys.readouterr()
-            _run_update_baseline()
-
-        assert "0 changed, 0 removed" in capsys.readouterr().out
-
-    def test_lowering_an_existing_entry_needs_no_confirmation(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        root = tmp_path / "root"
-        (root / "shared" / "rules").mkdir(parents=True)
-        (root / "shared" / "rules" / "big.md").write_text(
-            "x " * (FINALS[RULE_BYTES] + 200), encoding="utf-8"
-        )
-        (root / "claude-code").mkdir(parents=True)
-        (root / "claude-code" / "vars.json").write_text("{}", encoding="utf-8")
-        baseline_path = tmp_path / "size_baseline.json"
-
-        with patch("llm_prompts.cli._size_guard_roots", return_value=[root]):
-            _run_update_baseline(confirm_additions=True)
-            before = json.loads(baseline_path.read_text(encoding="utf-8"))
-            (root / "shared" / "rules" / "big.md").write_text(
-                "x " * (FINALS[RULE_BYTES] + 100), encoding="utf-8"
-            )
-            capsys.readouterr()
-            _run_update_baseline()
-
-        after = json.loads(baseline_path.read_text(encoding="utf-8"))
-        assert (
-            after[RULE_BYTES]["claude-code"]["big.md"]
-            < before[RULE_BYTES]["claude-code"]["big.md"]
-        )
-        assert "0 removed" in capsys.readouterr().out
-
-
 class TestCheckSubcommand:
     def test_check_dispatches_to_run_size_check(self) -> None:
         with (
@@ -913,22 +823,3 @@ class TestCheckSubcommand:
         ):
             main()
         mock_check.assert_called_once_with()
-
-    def test_check_update_baseline_dispatches_to_run_update_baseline(self) -> None:
-        with (
-            patch("sys.argv", ["llm-prompts", "check", "--update-baseline"]),
-            patch("llm_prompts.cli._run_update_baseline") as mock_update,
-        ):
-            main()
-        mock_update.assert_called_once_with(confirm_additions=False)
-
-    def test_check_confirm_additions_threads_through(self) -> None:
-        with (
-            patch(
-                "sys.argv",
-                ["llm-prompts", "check", "--update-baseline", "--confirm-additions"],
-            ),
-            patch("llm_prompts.cli._run_update_baseline") as mock_update,
-        ):
-            main()
-        mock_update.assert_called_once_with(confirm_additions=True)

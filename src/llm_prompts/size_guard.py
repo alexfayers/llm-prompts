@@ -10,7 +10,6 @@ class of bug this guard exists to catch.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from importlib.resources import files
@@ -52,10 +51,6 @@ from .size_limits import (
 )
 
 CHECKED_TARGETS: tuple[str, ...] = ("claude-code", "copilot", "kiro")
-
-Baseline = dict[str, dict[str, dict[str, int]]]
-
-BASELINE_PATH = Path(__file__).parent / "size_baseline.json"
 
 
 @dataclass(frozen=True)
@@ -324,115 +319,15 @@ def iter_artifacts(
             yield from _iter_agent_artifacts(root, target)
 
 
-def baseline_path_for_root(root: Path) -> Path:
-    """Return the baseline file committed alongside a prompts root's own repo.
+def evaluate(artifacts: Iterable[Artifact]) -> list[Violation]:
+    """Check measured artifacts against finals and active schedules.
 
-    Each source repo commits its own `size_baseline.json` as a sibling of its
-    `prompts/` directory - the same layout this package uses for its own
-    `size_baseline.json` next to `size_guard.py`. Resolving per root keeps
-    baselines from coupling repos: an overlay's oversized files are tracked
-    in that overlay's own baseline, never grandfathered into this one.
-
-    Args:
-        root: A prompts directory, e.g. from `iter_artifacts`'s `roots`.
-
-    Returns:
-        The baseline JSON path for the repo `root` belongs to.
-    """
-    return root.parent / "size_baseline.json"
-
-
-def load_baseline(path: Path = BASELINE_PATH) -> Baseline:
-    """Load the committed baseline, or an empty one if it does not exist yet.
-
-    Args:
-        path: Baseline JSON path.
-
-    Returns:
-        Mapping of metric -> target -> destination name -> committed value.
-    """
-    if not path.is_file():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _baseline_value(baseline: Baseline, artifact: Artifact) -> int | None:
-    """Return the committed baseline value for an artifact, if any."""
-    return (
-        baseline.get(artifact.metric, {})
-        .get(artifact.target, {})
-        .get(artifact.dest_name)
-    )
-
-
-def save_baseline(baseline: Baseline, path: Path = BASELINE_PATH) -> None:
-    """Write a baseline to disk, sorted for a stable, reviewable diff.
-
-    Args:
-        baseline: Baseline to write.
-        path: Baseline JSON path.
-    """
-    ordered = {
-        metric: {
-            target: dict(sorted(baseline[metric][target].items()))
-            for target in sorted(baseline[metric])
-        }
-        for metric in sorted(baseline)
-    }
-    path.write_text(json.dumps(ordered, indent=2) + "\n", encoding="utf-8")
-
-
-def build_baseline(
-    artifacts: Iterable[Artifact], existing: Baseline | None = None
-) -> Baseline:
-    """Build a baseline from measured artifacts, tracking only over-final ones.
-
-    An artifact already at or under its metric's final needs no baseline entry
-    - `evaluate` checks it against the final directly, so a new file is born
-    compliant automatically. Only an artifact currently exceeding its final
-    gets tracked, grandfathering its current size rather than failing the
-    guard outright for pre-existing debt, while still forbidding further
-    growth (or regrowth once compressed and dropped from the baseline).
-
-    Args:
-        artifacts: Measured artifacts, e.g. from `iter_artifacts`.
-        existing: Previously committed baseline, if regenerating one. A name
-            already present keeps the lower of its existing and newly measured
-            value - regenerating a baseline is a ratchet, it never silently
-            records a regression as the new normal.
-
-    Returns:
-        The new baseline.
-    """
-    new_baseline: Baseline = {}
-    for artifact in artifacts:
-        final = FINALS.get(artifact.metric)
-        if final is None or artifact.value <= final:
-            continue
-
-        existing_value = _baseline_value(existing or {}, artifact)
-        value = (
-            artifact.value
-            if existing_value is None
-            else min(artifact.value, existing_value)
-        )
-        new_baseline.setdefault(artifact.metric, {}).setdefault(artifact.target, {})[
-            artifact.dest_name
-        ] = value
-    return new_baseline
-
-
-def evaluate(artifacts: Iterable[Artifact], baseline: Baseline) -> list[Violation]:
-    """Check measured artifacts against finals, baselines, and active schedules.
-
-    A numeric artifact's ceiling is its baseline if one is committed (tightened
-    further by its metric's active schedule step, if that step gates this
-    name), or the metric's final if it has no baseline entry yet. A bool
+    A numeric artifact's ceiling is its metric's final, tightened further by
+    its metric's active schedule step if that step gates this name. A bool
     artifact must simply be True.
 
     Args:
         artifacts: Measured artifacts, e.g. from `iter_artifacts`.
-        baseline: Committed baseline, e.g. from `load_baseline`.
 
     Returns:
         Violations for every artifact that exceeded its ceiling.
@@ -453,8 +348,7 @@ def evaluate(artifacts: Iterable[Artifact], baseline: Baseline) -> list[Violatio
                 )
             continue
 
-        baseline_value = _baseline_value(baseline, artifact)
-        ceiling = FINALS[artifact.metric] if baseline_value is None else baseline_value
+        ceiling = FINALS[artifact.metric]
 
         schedule = SCHEDULES.get(artifact.metric)
         active_threshold = (
@@ -538,32 +432,19 @@ def format_report(violations: list[Violation]) -> str:
 def check(
     roots: Iterable[Path],
     targets: tuple[str, ...] = CHECKED_TARGETS,
-    baseline_path: Path | None = None,
 ) -> CheckResult:
     """Measure every checked artifact under `roots` and evaluate it.
-
-    Each root is evaluated against its own repo's baseline (per
-    `baseline_path_for_root`), so a root with no committed baseline entry
-    falls through to each metric's `final` ceiling rather than being measured
-    against an unrelated repo's baseline.
 
     Args:
         roots: Prompts directories to scan.
         targets: Render targets to check.
-        baseline_path: Baseline JSON path to use for every root, overriding
-            the per-root default. Intended for tests scanning a single root.
 
     Returns:
         The full check outcome: pass/fail, every measured artifact, any
         violations, and a formatted report.
     """
-    artifacts: list[Artifact] = []
-    violations: list[Violation] = []
-    for root in roots:
-        root_artifacts = list(iter_artifacts([root], targets))
-        path = baseline_path if baseline_path is not None else baseline_path_for_root(root)
-        violations.extend(evaluate(root_artifacts, load_baseline(path)))
-        artifacts.extend(root_artifacts)
+    artifacts = list(iter_artifacts(roots, targets))
+    violations = evaluate(artifacts)
     return CheckResult(
         passed=not violations,
         artifacts=artifacts,

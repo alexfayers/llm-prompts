@@ -1,6 +1,6 @@
 ---
 name: ask-codex
-description: Delegate a task to codex (a separate CLI agent running a different engine) for an independent perspective - most importantly an adversarial second-opinion review of a diff, plan, or piece of work. Use when you want a genuinely different model to review/critique/stress-test something, or to run one of codex's own installed skills.
+description: Delegate to codex, a separate CLI agent running a different engine, for an independent or adversarial second opinion on a diff, plan, or piece of work. Use when you want a different model's review.
 requires_command: codex
 exclude_targets: codex
 ---

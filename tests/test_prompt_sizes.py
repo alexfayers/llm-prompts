@@ -10,18 +10,13 @@ import pytest
 
 from llm_prompts.render_template import resolve_frontmatter, split_frontmatter
 from llm_prompts.size_guard import (
-    BASELINE_PATH,
     Artifact,
     Violation,
-    baseline_path_for_root,
-    build_baseline,
     check,
     evaluate,
     format_report,
     iter_artifacts,
-    load_baseline,
     parked_state_lines,
-    save_baseline,
 )
 from llm_prompts.size_limits import (
     AGENT_BASE_DESCRIPTION_MAX_CHARS,
@@ -377,44 +372,34 @@ class TestIterArtifactsDispatch:
 
 
 class TestEvaluate:
-    def test_unbaselined_artifact_checked_against_final(self) -> None:
-        artifact = Artifact(RULE_BYTES, "claude-code", "big.md", 6_000, Path("big.md"))
-        violations = evaluate([artifact], baseline={})
+    def test_artifact_within_final_passes(self) -> None:
+        artifact = Artifact(RULE_BYTES, "claude-code", "ok.md", 5_000, Path("ok.md"))
+        assert evaluate([artifact]) == []
+
+    def test_artifact_exceeding_final_fails(self) -> None:
+        artifact = Artifact(RULE_BYTES, "claude-code", "big.md", 5_001, Path("big.md"))
+        violations = evaluate([artifact])
         assert violations == [
-            Violation(RULE_BYTES, "claude-code", "big.md", 6_000, 5_000, Path("big.md"))
+            Violation(RULE_BYTES, "claude-code", "big.md", 5_001, 5_000, Path("big.md"))
         ]
 
-    def test_baselined_artifact_within_baseline_passes(self) -> None:
-        artifact = Artifact(RULE_BYTES, "claude-code", "big.md", 6_000, Path("big.md"))
-        baseline = {RULE_BYTES: {"claude-code": {"big.md": 6_000}}}
-        assert evaluate([artifact], baseline) == []
-
-    def test_baselined_artifact_exceeding_baseline_fails(self) -> None:
-        artifact = Artifact(RULE_BYTES, "claude-code", "big.md", 6_001, Path("big.md"))
-        baseline = {RULE_BYTES: {"claude-code": {"big.md": 6_000}}}
-        violations = evaluate([artifact], baseline)
-        assert violations == [
-            Violation(RULE_BYTES, "claude-code", "big.md", 6_001, 6_000, Path("big.md"))
-        ]
-
-    def test_active_schedule_step_tightens_a_looser_baseline(self) -> None:
-        artifact = Artifact(RULE_BYTES, "claude-code", "a.md", 12_000, Path("a.md"))
-        baseline = {RULE_BYTES: {"claude-code": {"a.md": 20_000}}}
+    def test_active_schedule_step_tightens_the_final(self) -> None:
+        artifact = Artifact(RULE_BYTES, "claude-code", "a.md", 4_500, Path("a.md"))
         schedule = Schedule(
-            steps=(ScheduleStep("W2", 10_000, frozenset({"a.md"})),),
+            steps=(ScheduleStep("W2", 4_000, frozenset({"a.md"})),),
             active_step="W2",
         )
         with patch.dict(SCHEDULES, {RULE_BYTES: schedule}):
-            violations = evaluate([artifact], baseline)
+            violations = evaluate([artifact])
         assert violations == [
-            Violation(RULE_BYTES, "claude-code", "a.md", 12_000, 10_000, Path("a.md"))
+            Violation(RULE_BYTES, "claude-code", "a.md", 4_500, 4_000, Path("a.md"))
         ]
 
     def test_bool_metric_false_is_a_violation(self) -> None:
         artifact = Artifact(
             FRONTMATTER_VALID, "claude-code", "bad.md", False, Path("bad.md")
         )
-        violations = evaluate([artifact], baseline={})
+        violations = evaluate([artifact])
         assert violations == [
             Violation(
                 FRONTMATTER_VALID, "claude-code", "bad.md", False, True, Path("bad.md")
@@ -425,7 +410,7 @@ class TestEvaluate:
         artifact = Artifact(
             FRONTMATTER_VALID, "claude-code", "ok.md", True, Path("ok.md")
         )
-        assert evaluate([artifact], baseline={}) == []
+        assert evaluate([artifact]) == []
 
 
 class TestFormatReport:
@@ -449,18 +434,15 @@ class TestCheck:
         self, tmp_path: Path
     ) -> None:
         _make_prompts_tree(tmp_path)
-        baseline_path = tmp_path / "size_baseline.json"
 
         with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
-            result = check(
-                [tmp_path], targets=("claude-code",), baseline_path=baseline_path
-            )
+            result = check([tmp_path], targets=("claude-code",))
 
         assert result.passed is True
         assert result.violations == []
         assert result.report == "All prompt-size checks passed."
 
-    def test_oversized_unbaselined_artifact_fails_with_a_readable_report(
+    def test_oversized_artifact_fails_with_a_readable_report(
         self, tmp_path: Path
     ) -> None:
         _make_prompts_tree(tmp_path)
@@ -468,12 +450,9 @@ class TestCheck:
             tmp_path / "shared" / "rules" / "shared-rule.md",
             "# Shared rule\n\n" + ("x " * FINALS[RULE_BYTES]),
         )
-        baseline_path = tmp_path / "size_baseline.json"
 
         with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
-            result = check(
-                [tmp_path], targets=("claude-code",), baseline_path=baseline_path
-            )
+            result = check([tmp_path], targets=("claude-code",))
 
         assert result.passed is False
         assert any(
@@ -502,58 +481,6 @@ class TestCheck:
         assert names == {"overlay.md"}
 
 
-class TestBaselinePathForRoot:
-    def test_resolves_to_sibling_of_the_prompts_dir(self) -> None:
-        root = Path("/some/pkg/prompts")
-        assert baseline_path_for_root(root) == Path("/some/pkg/size_baseline.json")
-
-    def test_own_repo_root_resolves_to_the_committed_baseline_path(self) -> None:
-        from importlib.resources import files
-
-        root = Path(str(files("llm_prompts") / "prompts"))
-        assert baseline_path_for_root(root) == BASELINE_PATH
-
-
-class TestCheckScopesBaselinesPerRoot:
-    """Defect 1: a single global baseline let an overlay's oversized files fall
-    through to `final` with no way to grandfather them, and would have let one
-    repo's baseline cover an unrelated repo's file of the same name."""
-
-    def test_a_roots_own_baseline_does_not_cover_a_different_roots_same_named_file(
-        self, tmp_path: Path
-    ) -> None:
-        first = tmp_path / "first" / "prompts"
-        second = tmp_path / "second" / "prompts"
-        oversized = "# Big\n\n" + ("x " * FINALS[RULE_BYTES])
-        _write(first / "claude-code" / "vars.json", "{}")
-        _write(second / "claude-code" / "vars.json", "{}")
-        _write(first / "shared" / "rules" / "big.md", oversized)
-        _write(second / "shared" / "rules" / "big.md", oversized)
-
-        with patch("llm_prompts.size_guard._own_root_dir", return_value=first):
-            measured = next(
-                a
-                for a in iter_artifacts([first], targets=("claude-code",))
-                if a.metric == RULE_BYTES and a.dest_name == "big.md"
-            )
-            save_baseline(
-                {RULE_BYTES: {"claude-code": {"big.md": measured.value}}},
-                first.parent / "size_baseline.json",
-            )
-
-            result = check([first, second], targets=("claude-code",))
-
-        assert result.passed is False
-        assert any(
-            v.dest_name == "big.md" and v.source == second / "shared" / "rules" / "big.md"
-            for v in result.violations
-        )
-        assert not any(
-            v.dest_name == "big.md" and v.source == first / "shared" / "rules" / "big.md"
-            for v in result.violations
-        )
-
-
 class TestParkedStateLines:
     def test_no_artifacts_over_final_reports_nothing(self) -> None:
         artifact = Artifact(RULE_BYTES, "claude-code", "a.md", 10, Path("a.md"))
@@ -572,86 +499,10 @@ class TestParkedStateLines:
         assert "2 files awaiting compression" in lines[0]
 
 
-class TestBuildBaseline:
-    def test_compliant_artifact_gets_no_entry(self) -> None:
-        final = FINALS[RULE_BYTES]
-        artifact = Artifact(RULE_BYTES, "claude-code", "small.md", final, Path("x"))
-        assert build_baseline([artifact]) == {}
-
-    def test_over_final_artifact_recorded_at_measured_value(self) -> None:
-        final = FINALS[RULE_BYTES]
-        artifact = Artifact(RULE_BYTES, "claude-code", "big.md", final + 1, Path("x"))
-        baseline = build_baseline([artifact])
-        assert baseline == {RULE_BYTES: {"claude-code": {"big.md": final + 1}}}
-
-    def test_bool_metrics_never_get_a_baseline_entry(self) -> None:
-        artifact = Artifact(FRONTMATTER_VALID, "claude-code", "a.md", True, Path("x"))
-        assert build_baseline([artifact]) == {}
-
-    def test_regenerating_never_raises_an_existing_value(self) -> None:
-        final = FINALS[RULE_BYTES]
-        existing = {RULE_BYTES: {"claude-code": {"big.md": final + 10}}}
-        # Measured value grew past the committed baseline - regeneration must
-        # not silently adopt the regression as the new normal.
-        artifact = Artifact(RULE_BYTES, "claude-code", "big.md", final + 50, Path("x"))
-        baseline = build_baseline([artifact], existing=existing)
-        assert baseline[RULE_BYTES]["claude-code"]["big.md"] == final + 10
-
-    def test_regenerating_adopts_a_real_shrink(self) -> None:
-        final = FINALS[RULE_BYTES]
-        existing = {RULE_BYTES: {"claude-code": {"big.md": final + 50}}}
-        artifact = Artifact(RULE_BYTES, "claude-code", "big.md", final + 10, Path("x"))
-        baseline = build_baseline([artifact], existing=existing)
-        assert baseline[RULE_BYTES]["claude-code"]["big.md"] == final + 10
-
-
-class TestSaveAndLoadBaseline:
-    def test_round_trip(self, tmp_path: Path) -> None:
-        baseline = {RULE_BYTES: {"claude-code": {"big.md": 6_000}}}
-        path = tmp_path / "size_baseline.json"
-        save_baseline(baseline, path)
-        assert load_baseline(path) == baseline
-
-    def test_missing_file_loads_empty(self, tmp_path: Path) -> None:
-        assert load_baseline(tmp_path / "missing.json") == {}
-
-    def test_output_is_sorted_for_a_stable_diff(self, tmp_path: Path) -> None:
-        baseline = {
-            RULE_BYTES: {"claude-code": {"b.md": 6_000, "a.md": 7_000}},
-        }
-        path = tmp_path / "size_baseline.json"
-        save_baseline(baseline, path)
-        assert list(json.loads(path.read_text())[RULE_BYTES]["claude-code"]) == [
-            "a.md",
-            "b.md",
-        ]
-
-
-class TestOwnRepoOwnBaselineIsClean:
-    """The monotonic-descent guarantee: this repo's committed baseline must
-    match reality, or a regression has slipped in uncaught since it was set."""
-
-    def test_check_against_own_prompts_dir_has_no_violations(self) -> None:
-        from importlib.resources import files
-
-        root = Path(str(files("llm_prompts") / "prompts"))
-        result = check([root])
-        assert result.passed, result.report
-
-    def test_regenerating_the_committed_baseline_is_a_no_op(self) -> None:
-        from importlib.resources import files
-
-        root = Path(str(files("llm_prompts") / "prompts"))
-        committed = load_baseline(BASELINE_PATH)
-        regenerated = build_baseline(iter_artifacts([root]), existing=committed)
-        assert regenerated == committed
-
-
 class TestNoOwnedTemplateUsesRepoRoot:
     """REPO_ROOT resolves to an absolute, machine-specific path. If any owned
-    template used it, rendered content - and the baseline measuring it - would
-    differ by machine. Keeping the corpus free of it keeps the baseline
-    portable."""
+    template used it, rendered content - and the measurements checked against
+    it - would differ by machine."""
 
     def test_no_md_file_references_repo_root(self) -> None:
         from importlib.resources import files

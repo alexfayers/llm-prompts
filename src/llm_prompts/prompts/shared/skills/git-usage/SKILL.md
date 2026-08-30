@@ -5,44 +5,44 @@ description: Rules and style preferences for the usage of git. Use before you in
 
 # Git
 
-_Note that these git rules override others._
+These git rules override others.
 
-- When running `git` commands that can return paginated or scrollable output (such as `git log`), ALWAYS use the `-P` option (e.g. `git -P log`)
-- Commit messages MUST maintain a style consistent with previous commits in the repository. ALWAYS use `git -P log --oneline -20` to see the style of the most recent commits so that you can match it.
-- **Never** add a body to a commit, regardless of other instructions.
-- Commit early and often, always after completing a change; rule/skill/workflow/agent source edits commit in the same turn.
-- When staging and committing modified files at the same time, run `git add` and `git commit` in a single commit by using `&&` instead of staging and committing separately.
-- When staging files **explicitly by path** (rather than `git add -A`), re-check `git -P status --short` immediately after committing. If any file you intended to include is still listed as modified/untracked, you missed it - amend it in (a build/test run can mask this by reading the working tree, so green tests do NOT confirm the file was committed).
-- **Before staging a file you edited, run `git -P diff <path>` to check for pre-existing hunks that are not yours.** `git add <path>` stages the WHOLE file, so any foreign unstaged edit in that file gets folded into your commit (tell-tale: more insertions than you wrote). When a file carries edits you did not make, stage only your hunks with `git add -p <path>` and confirm with `git -P diff --cached <path>` before committing. If a foreign hunk already slipped into an unpushed commit, recover with `git reset --soft HEAD~1` then re-stage with `-p`.
-- **A local commit not yet on the upstream remote is not final - amend, reword, squash, reorder or drop it freely.** Check with `git -P log --oneline @{u}..HEAD`; anything listed is fair game, even if it looks finished or predates this session. The approved-review exception below is the one case where an unpushed commit is off-limits.
-- If you are making a change that aligns with the previous commit, amend the previous commit instead of creating a new one. **Concrete trigger, check every time before running `git commit`:** if the file(s) you are about to commit are the same file(s) HEAD touched, and HEAD is unpushed, and no other unrelated commit landed in between - that is "aligns with the previous commit." Default to amending; only create a new commit if you can name a reason the two changes are independent (e.g. HEAD already backs an approved/in-review change elsewhere, or genuinely unrelated work landed on the same file by coincidence).
-- **The same applies further back than HEAD, and right away, not later.** If a fix you're about to commit actually corrects an earlier unpushed commit, use the `git-tidy` skill to fold it in immediately (`--fixup=`/`--squash=` + autosquash rebase), in the same turn as the fix. Do not commit it as a new standalone commit and wait for a separate tidy-up request.
-- **"Related" also covers same-topic-different-angle, not just literal corrections.** A commit that contributes to the same underlying goal as an earlier unpushed one - even in a different file, even without fixing a specific bug in it - should still be folded in immediately rather than left standalone. Use `--squash=<target>` when the new commit directly corrects the target (keeps both messages); use `--fixup=<target>` when it's just another angle on the same topic (keeps only one message - whichever of the two best describes the combined result, not necessarily the earlier commit's).
-- **Before amending**, check if HEAD has been pushed with `git -P log --oneline @{u}..HEAD`. If the output is empty, HEAD is already pushed - do NOT amend. Create a new commit instead.
-- **Also do NOT amend a commit that backs an already-approved CR/review**, even if it is unpushed - a new, separate piece of work belongs in its own commit (and its own CR). Amending silently folds new code into an approved review. If unsure whether the previous commit is approved, ask the user before amending.
-- If using the focus chain, the last task in the TODO list MUST be to commit the changes
-- **Keep history linear - never create a merge commit.** When bringing one branch's commits into another (e.g. folding a worktree/feature branch back into the branch it came from), use `git rebase` (or fast-forward) instead of `git merge`. Reserve `git merge` only for integrating a remote/collaborator branch you cannot rewrite (already pushed and shared). If a merge commit ends up in history by mistake and none of the affected commits have been pushed, rebase it away rather than leaving it.
-- **Resolve a conflict with `git checkout <ref> -- <file>`, NEVER `--ours`/`--theirs`.** Their meaning flips: in `git rebase <base>`, `--ours` is the base; in `git merge <branch>`, it is the current branch. The wrong side resolves silently, with no error. Naming the ref (e.g. `origin/main`) is unambiguous in both.
+- ALWAYS use `-P` for paginated/scrollable output (e.g. `git -P log`).
+- Match commit message style to `git -P log --oneline -20`.
+- NEVER add a body to a commit, regardless of other instructions.
+- Commit early and often, right after each change; rule/skill/workflow/agent source edits commit in the same turn.
+- Staging and committing together: run `git add` and `git commit` in one command via `&&`.
+- After staging explicit paths (not `git add -A`) and committing, re-check `git -P status --short`. Anything still modified/untracked was missed - amend it in. A green test run does NOT confirm the file was committed.
+- Before staging an edited file, run `git -P diff <path>` for foreign unstaged hunks - `git add <path>` stages the WHOLE file (tell-tale: more insertions than you wrote). Stage only your hunks with `git add -p <path>`, confirm with `git -P diff --cached <path>`. If a foreign hunk already reached an unpushed commit, `git reset --soft HEAD~1` then re-stage with `-p`.
+- An unpushed commit (`git -P log --oneline @{u}..HEAD`) is not final - amend, reword, squash, reorder, or drop freely. Exception: a commit backing an approved/in-review CR.
+- Prefer amending the previous commit over a new one when: same file(s) as HEAD, HEAD unpushed, no unrelated commit landed between. Skip only if HEAD backs an approved/in-review change elsewhere, or the overlap is coincidental unrelated work.
+- A fix for an earlier unpushed non-HEAD commit: fold it in immediately, same turn, via `git-tidy` (`--fixup=`/`--squash=` + autosquash rebase) - never a standalone commit for later tidying.
+- "Related" also covers same-topic-different-angle - fold a same-goal commit in immediately even without fixing a specific bug. `--squash=<target>` when directly correcting it (keeps both messages); `--fixup=<target>` for another angle on the same topic (keeps whichever message best describes the result).
+- Before amending, check `git -P log --oneline @{u}..HEAD`. Empty output means HEAD is already pushed - do NOT amend; create a new commit instead.
+- Do NOT amend a commit backing an already-approved CR/review, even unpushed - new work gets its own commit and CR. Ask if unsure.
+- If using a focus chain, the last task MUST be committing the changes.
+- Keep history linear - NEVER create a merge commit. Use `git rebase` (or fast-forward) to fold one branch into another; reserve `git merge` for an already-pushed/shared branch you cannot rewrite. Rebase away an accidental unpushed merge commit.
+- Resolve conflicts with `git checkout <ref> -- <file>`, NEVER `--ours`/`--theirs` - meaning flips silently between `git rebase` (`--ours` = base) and `git merge` (`--ours` = current branch). Naming the ref (e.g. `origin/main`) is unambiguous either way.
 
-Before making a commit, you must tell the user "I am following the predefined git rules" to confirm your understanding of these rules.
+Before making a commit, tell the user: "I am following the predefined git rules".
 
 ## Pushing
 
-- **NEVER** push without explicit user permission. Always ask first.
-- **Classify a repo as internal vs public by its remote host, NEVER by its name.** Always run `git remote get-url origin` and inspect the host before deciding whether a repo is internal or public - a repo whose name looks personal/public may push to an internal host, and vice versa. Do not infer the host from the repo/package name.
-- Before pushing, run `git grep -n '^<<<<<<<' HEAD` to verify no conflict markers exist in tracked files. If any results are found, **do not push** - fix them first.
-- **Before pushing to a public remote (github.com, pypi, npm, etc.), you MUST scan the outgoing commits for internal/proprietary leakage** - this is a hard gate, do it at push time, not just at commit time. Check `git remote get-url origin` to classify the remote; internal/corporate git hosts are exempt. For public remotes, scan BOTH the diff and the commit messages of `@{u}..HEAD` for any internal identifiers your environment defines (internal hostnames/URLs, employer-specific project or package names, employee aliases, internal ticket IDs, cloud account IDs). If anything matches, **do not push** - fix it first. Any active no-internal-leakage rule defines the specific patterns.
+- NEVER push without explicit user permission - always ask first.
+- Classify a repo as internal vs public by remote host, NEVER by name - run `git remote get-url origin` and inspect the host; a personal/public-looking name can still push to an internal host, and vice versa.
+- Before pushing, run `git grep -n '^<<<<<<<' HEAD` to check for conflict markers in tracked files. If any are found, do not push - fix them first.
+- Before pushing to a public remote (github.com, pypi, npm, etc.) - a hard gate at push time, not just commit time - scan the diff and commit messages of `@{u}..HEAD` for internal/proprietary identifiers (hostnames/URLs, employer-specific project/package names, employee aliases, ticket IDs, cloud account IDs). Internal/corporate hosts are exempt. If anything matches, do not push - fix it first. Any active no-internal-leakage rule defines the specific patterns.
 
 ## Amending non-HEAD commits
 
-`git commit --amend` only modifies HEAD - to squash, fixup, reorder, reword, or drop unpushed non-HEAD commits, use the `git-tidy` skill.
+`git commit --amend` only modifies HEAD. To squash, fixup, reorder, reword, or drop unpushed non-HEAD commits, use the `git-tidy` skill.
 
 ## Checking for uncommitted/unpushed changes across repos
 
-The co-located `check_repos.py` script sweeps every distinct workspace root you name for uncommitted and unpushed changes. This is optional, not mandatory, and never runs automatically - reach for it only when the user asks to check for outstanding changes across repos, or when you specifically need to confirm a repo is clean before ending a session:
+The co-located `check_repos.py` script sweeps every named workspace root for uncommitted and unpushed changes. Optional, never automatic - use it when asked to check outstanding changes across repos, or to confirm a repo is clean before ending a session:
 
 ```bash
 python3 "<base-dir>/check_repos.py" [--workspace <path>]
 ```
 
-`--workspace` defaults to the current directory; pass it explicitly once per additional touched repo root. It auto-adds the prompt/skill source repos too (it shells out to `llm-prompts source <agent>` for every supported agent to find those). It prints JSON with a `repos` list (each `{path, uncommitted, unpushed, no_upstream}`) and a top-level `clean` flag, and exits non-zero when anything is outstanding (`no_upstream` is informational, not itself a blocker). For each repo with `uncommitted` entries, commit them. For each repo with `unpushed` entries, surface them to the user and ask how they'd like to submit (push, PR/review, or leave for later). If any repo reports an `error`, investigate before proceeding.
+`--workspace` defaults to the current directory; pass it explicitly once per additional touched repo root. It auto-adds the prompt/skill source repos too (shells out to `llm-prompts source <agent>` per supported agent). Prints JSON with a `repos` list (each `{path, uncommitted, unpushed, no_upstream}`) and a top-level `clean` flag, exiting non-zero when anything is outstanding (`no_upstream` is informational, not a blocker). For repos with `uncommitted` entries, commit them. For repos with `unpushed` entries, surface them and ask how to submit (push, PR/review, or leave for later). If any repo reports an `error`, investigate before proceeding.

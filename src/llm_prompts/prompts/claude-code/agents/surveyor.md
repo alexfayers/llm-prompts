@@ -1,6 +1,6 @@
 ---
 name: surveyor
-description: Generic read-only research/survey agent for gathering facts (existing conventions, current state, per-item verdicts) that another teammate's design or decision depends on. Tool access enforces read-only - unlike asking reasoner/worker to "stay read-only" in the prompt, this agent cannot write or edit even by mistake.
+description: Read-only research/survey agent for gathering facts another teammate's decision depends on. Tool access enforces read-only, so it cannot write or edit even by mistake.
 disallowedTools: Agent, Write, Edit, NotebookEdit
 generate_variants: sonnet-low,sonnet-medium,sonnet-high
 color: yellow
