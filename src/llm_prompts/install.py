@@ -1462,7 +1462,8 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
 
     overlay_dirs = _discover_overlay_paths()
 
-    from .size_guard import check as run_size_check, parked_state_lines
+    from .size_guard import check as run_size_check
+    from .size_guard import parked_state_lines
 
     size_result = run_size_check([root_dir, *overlay_dirs])
     if not size_result.passed:
