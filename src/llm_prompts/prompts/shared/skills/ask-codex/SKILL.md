@@ -17,31 +17,31 @@ Delegate a task to `codex` - a separate CLI coding agent running a different und
 
 ## Availability guard
 
-Run `command -v codex` first. If it prints nothing, codex is not installed - tell the user and stop. Never fabricate a review or guess what codex "would" say. This guard is the real safeguard: the installer only warns about a stale skill link, it never removes one, so this skill can outlive a codex uninstall - the runtime check is what prevents a fabricated review in that gap.
+MUST run `command -v codex` first. If it prints nothing, codex is not installed - MUST tell the user and stop. MUST NOT fabricate a review or guess what codex "would" say. The installer only warns about a stale skill link, never removes one, so this skill can outlive a codex uninstall.
 
 ## Reviewing a diff, plan, or delegating a task
 
-Use the generic exec form for everything - a diff, a plan, a design doc, or a general delegated task:
+MUST use the generic exec form for everything - a diff, a plan, a design doc, or a general delegated task:
 
 ```
 codex exec -s read-only --skip-git-repo-check "<adversarial prompt>"
 ```
 
-Do not use `codex exec review`: its diff-selection flags (e.g. `--base`) are mutually exclusive with a custom prompt in current codex versions, so it can't carry an adversarial framing alongside a diff. The generic form always composes with any prompt, regardless of the content's source.
+MUST NOT use `codex exec review`: its diff-selection flags (e.g. `--base`) are mutually exclusive with a custom prompt in current codex versions, so it cannot carry an adversarial framing alongside a diff. The generic form always composes with any prompt, regardless of the content's source.
 
-`-s read-only` keeps codex from writing anything; `--skip-git-repo-check` lets it run from any cwd. Do not pass `-m` unless the user asks for a specific model - use codex's default.
+`-s read-only` keeps codex from writing anything; `--skip-git-repo-check` lets it run from any cwd. MUST NOT pass `-m` unless the user asks for a specific model - use codex's default.
 
-For large content (a diff, a long plan), pipe it via stdin instead of an arg, to avoid `ARG_MAX`:
+MUST pipe large content (a diff, a long plan) via stdin, not an arg, to avoid `ARG_MAX`:
 
 ```
 { printf '%s\n' "<adversarial prompt>"; git diff <range>; } | codex exec -s read-only --skip-git-repo-check -
 ```
 
-Substitute `cat <file>` for `git diff <range>` when reviewing a plan or design doc instead of a diff.
+MUST substitute `cat <file>` for `git diff <range>` when reviewing a plan or design doc.
 
 ## Delegate to codex's own skills
 
-Codex receives the same shared skill set as you and has a native skills tool, so you can name a skill directly in the prompt:
+Codex receives the same shared skill set as you and has a native skills tool, so you MAY name a skill directly in the prompt:
 
 ```
 codex exec -s read-only --skip-git-repo-check "Use your refine-plan skill to score this plan, then return the scored output:\n\n<plan>"
@@ -49,12 +49,12 @@ codex exec -s read-only --skip-git-repo-check "Use your refine-plan skill to sco
 
 ## Reading output & safety
 
-- Read codex's stdout directly. Do not use `-o <file>`.
-- If codex disagrees with your own view, present both to the user - do not silently pick a side.
-- Codex has its own auth/config under `~/.codex`. On an auth failure, tell the user to run `codex login`; do not swallow the error.
-- Never use `--dangerously-bypass-approvals-and-sandbox`, `-s workspace-write`, or `-s danger-full-access` for review or delegation.
-- A review can take a while; fire a notification when it finishes, per the notify rule.
+- MUST read codex's stdout directly. MUST NOT use `-o <file>`.
+- Where codex disagrees with your view, MUST present both to the user - MUST NOT silently pick a side.
+- Codex has its own auth/config under `~/.codex`. On an auth failure, MUST tell the user to run `codex login`; MUST NOT swallow the error.
+- MUST NOT use `--dangerously-bypass-approvals-and-sandbox`, `-s workspace-write`, or `-s danger-full-access`.
+- A review can take a while; MUST fire a notification when it finishes, per the notify rule.
 
 ## Relationship to other skills
 
-Reach for a different tool depending on what you need: self-scoring a plan against a rubric is one skill; interactively interrogating the user about a design is another; this skill is specifically for an *external, different-engine* take. Use it when the value is that the reviewer is not Claude.
+This skill is specifically for an *external, different-engine* take - self-scoring a plan against a rubric and interrogating the user about a design are other skills. SHOULD use it when the value is that the reviewer is not Claude.
