@@ -724,6 +724,66 @@ class TestMainRunsSizeGuard:
         for line in expected_lines:
             assert line in logged_info
 
+    def test_declaration_error_aborts_before_touching_disk(
+        self, tmp_path: Path
+    ) -> None:
+        from llm_prompts.size_guard import CheckResult
+
+        home = tmp_path / "home"
+        home.mkdir()
+        manifest = tmp_path / "installed.json"
+        failing_result = CheckResult(
+            passed=False,
+            artifacts=[],
+            violations=[],
+            report="Prompt-size allowance declarations invalid:\n"
+            "  bad.json: unknown metric 'nope'",
+            declaration_errors=["bad.json: unknown metric 'nope'"],
+        )
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+            patch("llm_prompts.size_guard.check", return_value=failing_result),
+            patch("llm_prompts.install.log") as mock_log,
+            pytest.raises(SystemExit),
+        ):
+            install_main(["claude-code"])
+
+        assert not (home / ".claude" / "skills").exists()
+        logged_error = [
+            call.args[1] for call in mock_log.call_args_list if call.args[0] == "error"
+        ]
+        assert any("unknown metric" in line for line in logged_error)
+
+    def test_stale_allowance_logged_without_aborting(self, tmp_path: Path) -> None:
+        from llm_prompts.size_guard import CheckResult
+
+        home = tmp_path / "home"
+        home.mkdir()
+        manifest = tmp_path / "installed.json"
+        passing_result = CheckResult(
+            passed=True,
+            artifacts=[],
+            violations=[],
+            report="All prompt-size checks passed.",
+            stale=["overlay.json: allowance for 'rule_bytes.x.md' is stale"],
+        )
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+            patch("llm_prompts.size_guard.check", return_value=passing_result),
+            patch("llm_prompts.install.log") as mock_log,
+        ):
+            install_main(["claude-code"])
+
+        assert (home / ".claude" / "skills").exists()
+        logged_warn = [
+            call.args[1] for call in mock_log.call_args_list if call.args[0] == "warn"
+        ]
+        assert any("is stale" in line for line in logged_warn)
+
 
 _NON_GATING_FRONTMATTER = (
     "---\n"

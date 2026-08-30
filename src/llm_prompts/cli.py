@@ -150,6 +150,8 @@ def _run_size_check() -> None:
     if not result.passed:
         sys.exit(1)
     _print_parked_state(result.artifacts)
+    for line in result.stale:
+        print(line)
 
 
 def _get_installed_commit(package_name: str) -> str | None:

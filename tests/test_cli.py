@@ -28,7 +28,7 @@ from llm_prompts.setup import (
     run_setup,
     write_pyproject_stamp,
 )
-from llm_prompts.size_guard import Artifact
+from llm_prompts.size_guard import ALLOWANCES_FILENAME, Artifact
 from llm_prompts.size_limits import FINALS, RULE_BYTES
 
 
@@ -813,6 +813,48 @@ class TestRunSizeCheck:
 
         assert exc_info.value.code == 1
         assert "big.md" in capsys.readouterr().out
+
+    def test_stale_allowance_prints_on_a_passing_run(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        root = tmp_path / "root"
+        (root / "shared" / "rules").mkdir(parents=True)
+        (root / "shared" / "rules" / "a.md").write_text("# A\n", encoding="utf-8")
+        for target in ("claude-code", "copilot", "kiro"):
+            target_dir = root / target
+            target_dir.mkdir(parents=True)
+            (target_dir / "vars.json").write_text("{}", encoding="utf-8")
+        (root / ALLOWANCES_FILENAME).write_text(
+            json.dumps({RULE_BYTES: {"nonexistent.md": 1_000}}), encoding="utf-8"
+        )
+
+        with patch("llm_prompts.cli._size_guard_roots", return_value=[root]):
+            _run_size_check()
+
+        assert "nonexistent.md" in capsys.readouterr().out
+
+    def test_declaration_error_exits_nonzero(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        root = tmp_path / "root"
+        (root / "shared" / "rules").mkdir(parents=True)
+        (root / "shared" / "rules" / "a.md").write_text("# A\n", encoding="utf-8")
+        for target in ("claude-code", "copilot", "kiro"):
+            target_dir = root / target
+            target_dir.mkdir(parents=True)
+            (target_dir / "vars.json").write_text("{}", encoding="utf-8")
+        (root / ALLOWANCES_FILENAME).write_text(
+            json.dumps({"not_a_metric": {"a": 1}}), encoding="utf-8"
+        )
+
+        with (
+            patch("llm_prompts.cli._size_guard_roots", return_value=[root]),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            _run_size_check()
+
+        assert exc_info.value.code == 1
+        assert "not_a_metric" in capsys.readouterr().out
 
 
 class TestCheckSubcommand:

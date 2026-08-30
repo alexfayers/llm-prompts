@@ -10,8 +10,9 @@ class of bug this guard exists to catch.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.resources import files
 from pathlib import Path
 
@@ -51,6 +52,7 @@ from .size_limits import (
 )
 
 CHECKED_TARGETS: tuple[str, ...] = ("claude-code", "copilot", "kiro")
+ALLOWANCES_FILENAME = "size_allowances.json"
 
 
 @dataclass(frozen=True)
@@ -64,6 +66,8 @@ class Artifact:
         value: Measured value - an int for size metrics, a bool for the
             unconditional frontmatter/placeholder checks.
         source: Source file path, for failure reporting.
+        allowance: Declared per-artifact ceiling from the owning root's
+            `size_allowances.json`, or None if undeclared.
     """
 
     metric: str
@@ -71,6 +75,7 @@ class Artifact:
     dest_name: str
     value: int | bool
     source: Path
+    allowance: int | None = None
 
 
 @dataclass(frozen=True)
@@ -93,6 +98,8 @@ class CheckResult:
     artifacts: list[Artifact]
     violations: list[Violation]
     report: str
+    declaration_errors: list[str] = field(default_factory=list)
+    stale: list[str] = field(default_factory=list)
 
 
 def _own_root_dir() -> Path:
@@ -177,8 +184,59 @@ def _common_artifacts(
     )
 
 
+def _declared_allowances(root: Path) -> tuple[dict[str, dict[str, int]], list[str]]:
+    """Load and validate one root's declared per-artifact size allowances.
+
+    Args:
+        root: Prompts directory whose `size_allowances.json` to load.
+
+    Returns:
+        A ``(allowances, errors)`` pair. `allowances` maps metric to
+        dest_name to ceiling; a metric with any error contributes no
+        allowances. `errors` are human-readable lines naming the file.
+    """
+    path = root / ALLOWANCES_FILENAME
+    if not path.is_file():
+        return {}, []
+
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return {}, [f"{path}: could not parse JSON: {e}"]
+
+    allowances: dict[str, dict[str, int]] = {}
+    errors: list[str] = []
+    for metric, entries in raw.items():
+        if metric not in FINALS:
+            errors.append(f"{path}: unknown metric '{metric}'")
+            continue
+        if not isinstance(entries, dict):
+            errors.append(f"{path}: '{metric}' must map dest names to ceilings")
+            continue
+        metric_errors = []
+        resolved: dict[str, int] = {}
+        for dest_name, ceiling in entries.items():
+            if isinstance(ceiling, bool) or not isinstance(ceiling, int) or ceiling <= 0:
+                metric_errors.append(
+                    f"{path}: '{metric}.{dest_name}' must be a positive int, "
+                    f"got {ceiling!r}"
+                )
+                continue
+            resolved[dest_name] = ceiling
+        if metric_errors:
+            errors.extend(metric_errors)
+            continue
+        allowances[metric] = resolved
+    return allowances, errors
+
+
 def _iter_rendered_kind_artifacts(
-    root: Path, target: str, subdir: str, bytes_metric: str, lines_metric: str
+    root: Path,
+    target: str,
+    subdir: str,
+    bytes_metric: str,
+    lines_metric: str,
+    allowances: dict[str, dict[str, int]],
 ) -> Iterator[Artifact]:
     """Yield size/validity artifacts for one rules/workflows subdir.
 
@@ -192,6 +250,7 @@ def _iter_rendered_kind_artifacts(
         subdir: Content subdirectory (``"rules"`` or ``"workflows"``).
         bytes_metric: Metric identifier for the byte-count measurement.
         lines_metric: Metric identifier for the line-count measurement.
+        allowances: This root's declared per-artifact ceilings.
     """
     agent = _agent_for(target, root)
     shared_src = root / "shared" / subdir
@@ -205,12 +264,28 @@ def _iter_rendered_kind_artifacts(
             if agent_specific
             else _rendered_content(src, vars_path, target)
         )
-        yield Artifact(bytes_metric, target, dest_name, len(content.encode()), src)
-        yield Artifact(lines_metric, target, dest_name, len(content.splitlines()), src)
+        yield Artifact(
+            bytes_metric,
+            target,
+            dest_name,
+            len(content.encode()),
+            src,
+            allowances.get(bytes_metric, {}).get(dest_name),
+        )
+        yield Artifact(
+            lines_metric,
+            target,
+            dest_name,
+            len(content.splitlines()),
+            src,
+            allowances.get(lines_metric, {}).get(dest_name),
+        )
         yield from _common_artifacts(content, target, dest_name, src)
 
 
-def _iter_skill_artifacts(root: Path, target: str) -> Iterator[Artifact]:
+def _iter_skill_artifacts(
+    root: Path, target: str, allowances: dict[str, dict[str, int]]
+) -> Iterator[Artifact]:
     """Yield size/validity artifacts for shared and per-target skills.
 
     Skills never split by shared-vs-agent-specific the way rules/workflows do
@@ -220,6 +295,7 @@ def _iter_skill_artifacts(root: Path, target: str) -> Iterator[Artifact]:
     Args:
         root: Prompts directory being scanned.
         target: Render target.
+        allowances: This root's declared per-artifact ceilings.
     """
     candidate_dirs = [root / "shared" / "skills", root / target / "skills"]
     variables = _builtin_skill_vars(_own_vars_path(target))
@@ -245,18 +321,28 @@ def _iter_skill_artifacts(root: Path, target: str) -> Iterator[Artifact]:
         # the frontmatter block, matching what the metric intends to measure.
         body, _ = parse_frontmatter(substituted)
         _, frontmatter, _ = _resolve_content_frontmatter(substituted)
-        yield Artifact(SKILL_BODY_BYTES, target, name, len(body.encode()), skill_md)
+        yield Artifact(
+            SKILL_BODY_BYTES,
+            target,
+            name,
+            len(body.encode()),
+            skill_md,
+            allowances.get(SKILL_BODY_BYTES, {}).get(name),
+        )
         yield Artifact(
             SKILL_DESCRIPTION_CHARS,
             target,
             name,
             len(frontmatter.get("description", "")),
             skill_md,
+            allowances.get(SKILL_DESCRIPTION_CHARS, {}).get(name),
         )
         yield from _common_artifacts(substituted, target, name, skill_md)
 
 
-def _iter_agent_artifacts(root: Path, target: str) -> Iterator[Artifact]:
+def _iter_agent_artifacts(
+    root: Path, target: str, allowances: dict[str, dict[str, int]]
+) -> Iterator[Artifact]:
     """Yield post-expansion description/validity artifacts for claude-code agents.
 
     A `generate_variants` source is measured once per generated variant, since
@@ -266,6 +352,7 @@ def _iter_agent_artifacts(root: Path, target: str) -> Iterator[Artifact]:
     Args:
         root: Prompts directory being scanned.
         target: Render target - agents are claude-code only.
+        allowances: This root's declared per-artifact ceilings.
     """
     if target != "claude-code":
         return
@@ -289,6 +376,7 @@ def _iter_agent_artifacts(root: Path, target: str) -> Iterator[Artifact]:
                 name,
                 len(frontmatter.get("description", "")) if valid else 0,
                 src,
+                allowances.get(AGENT_DESCRIPTION_CHARS, {}).get(name),
             )
             yield from _common_artifacts(content, target, name, src)
 
@@ -308,23 +396,25 @@ def iter_artifacts(
         One `Artifact` per (metric, target, destination) measurement.
     """
     for root in roots:
+        allowances, _ = _declared_allowances(root)
         for target in targets:
             yield from _iter_rendered_kind_artifacts(
-                root, target, "rules", RULE_BYTES, RULE_LINES
+                root, target, "rules", RULE_BYTES, RULE_LINES, allowances
             )
             yield from _iter_rendered_kind_artifacts(
-                root, target, "workflows", WORKFLOW_BYTES, WORKFLOW_LINES
+                root, target, "workflows", WORKFLOW_BYTES, WORKFLOW_LINES, allowances
             )
-            yield from _iter_skill_artifacts(root, target)
-            yield from _iter_agent_artifacts(root, target)
+            yield from _iter_skill_artifacts(root, target, allowances)
+            yield from _iter_agent_artifacts(root, target, allowances)
 
 
 def evaluate(artifacts: Iterable[Artifact]) -> list[Violation]:
-    """Check measured artifacts against finals and active schedules.
+    """Check measured artifacts against finals, schedules and allowances.
 
     A numeric artifact's ceiling is its metric's final, tightened further by
-    its metric's active schedule step if that step gates this name. A bool
-    artifact must simply be True.
+    its metric's active schedule step if that step gates this name, then
+    replaced outright by a declared allowance if one applies. A bool artifact
+    must simply be True.
 
     Args:
         artifacts: Measured artifacts, e.g. from `iter_artifacts`.
@@ -357,6 +447,9 @@ def evaluate(artifacts: Iterable[Artifact]) -> list[Violation]:
         if active_threshold is not None:
             ceiling = min(ceiling, active_threshold)
 
+        if artifact.allowance is not None:
+            ceiling = artifact.allowance
+
         if artifact.value > ceiling:
             violations.append(
                 Violation(
@@ -377,7 +470,8 @@ def parked_state_lines(artifacts: Iterable[Artifact]) -> list[str]:
     A guard that only speaks when it fails cannot report a parked schedule -
     this is the line both `install.main()`'s pre-flight and `llm-prompts
     check` print on every passing run, so the schedule's current position is
-    always visible, not just its violations.
+    always visible, not just its violations. A declared allowance covering an
+    artifact takes it out of this report - it is not awaiting compression.
 
     Args:
         artifacts: Every measured artifact from a `check()` run.
@@ -392,6 +486,7 @@ def parked_state_lines(artifacts: Iterable[Artifact]) -> list[str]:
             final is not None
             and isinstance(artifact.value, int)
             and artifact.value > final
+            and artifact.allowance is None
         ):
             over_final.setdefault(artifact.metric, []).append(artifact.value)
 
@@ -407,25 +502,70 @@ def parked_state_lines(artifacts: Iterable[Artifact]) -> list[str]:
     return lines
 
 
-def format_report(violations: list[Violation]) -> str:
-    """Format violations into a human-readable failure report.
+def stale_allowance_lines(
+    roots: Iterable[Path], artifacts: Iterable[Artifact]
+) -> list[str]:
+    """Report declared allowances that matched no artifact under their own root.
+
+    Args:
+        roots: Prompts directories that were scanned.
+        artifacts: Every measured artifact from a `check()` run.
+
+    Returns:
+        One non-fatal line per stale (root, metric, dest_name) declaration,
+        naming the metric, the name, and the declaring file.
+    """
+    measured_by_root: dict[Path, set[tuple[str, str]]] = {}
+    for artifact in artifacts:
+        for root in roots:
+            if artifact.source.is_relative_to(root):
+                measured_by_root.setdefault(root, set()).add(
+                    (artifact.metric, artifact.dest_name)
+                )
+                break
+
+    lines = []
+    for root in roots:
+        allowances, _ = _declared_allowances(root)
+        measured = measured_by_root.get(root, set())
+        path = root / ALLOWANCES_FILENAME
+        for metric in sorted(allowances):
+            for dest_name in sorted(allowances[metric]):
+                if (metric, dest_name) not in measured:
+                    lines.append(
+                        f"{path}: allowance for '{metric}.{dest_name}' matches no "
+                        "measured artifact - remove it."
+                    )
+    return lines
+
+
+def format_report(violations: list[Violation], errors: list[str] | None = None) -> str:
+    """Format violations and declaration errors into a human-readable report.
 
     Args:
         violations: Violations from `evaluate`.
+        errors: Declaration errors from `_declared_allowances`, if any.
 
     Returns:
-        A report line per violation naming the file, metric, actual value,
-        threshold, and the compress-not-split remedy; a pass message if empty.
+        Declaration errors first under their own header, then a report line
+        per violation naming the file, metric, actual value, threshold, and
+        the compress-not-split remedy; a pass message if both are empty.
     """
-    if not violations:
+    errors = errors or []
+    if not violations and not errors:
         return "All prompt-size checks passed."
-    lines = ["Prompt-size guard failed:"]
-    for v in violations:
-        unit = UNITS.get(v.metric, "")
-        lines.append(
-            f"  [{v.metric}] {v.dest_name} ({v.target}): actual {v.actual} > "
-            f"threshold {v.threshold} {unit} ({v.source}) - compress, don't split."
-        )
+    lines = []
+    if errors:
+        lines.append("Prompt-size allowance declarations invalid:")
+        lines.extend(f"  {e}" for e in errors)
+    if violations:
+        lines.append("Prompt-size guard failed:")
+        for v in violations:
+            unit = UNITS.get(v.metric, "")
+            lines.append(
+                f"  [{v.metric}] {v.dest_name} ({v.target}): actual {v.actual} > "
+                f"threshold {v.threshold} {unit} ({v.source}) - compress, don't split."
+            )
     return "\n".join(lines)
 
 
@@ -441,13 +581,21 @@ def check(
 
     Returns:
         The full check outcome: pass/fail, every measured artifact, any
-        violations, and a formatted report.
+        violations, declaration errors, stale allowances, and a report.
     """
+    roots = list(roots)
+    declaration_errors = []
+    for root in roots:
+        _, errors = _declared_allowances(root)
+        declaration_errors.extend(errors)
     artifacts = list(iter_artifacts(roots, targets))
     violations = evaluate(artifacts)
+    stale = stale_allowance_lines(roots, artifacts)
     return CheckResult(
-        passed=not violations,
+        passed=not violations and not declaration_errors,
         artifacts=artifacts,
         violations=violations,
-        report=format_report(violations),
+        report=format_report(violations, declaration_errors),
+        declaration_errors=declaration_errors,
+        stale=stale,
     )

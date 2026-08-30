@@ -1473,6 +1473,8 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
         sys.exit(1)
     for line in parked_state_lines(size_result.artifacts):
         log("info", line)
+    for line in size_result.stale:
+        log("warn", line)
 
     all_agents: dict[str, _Agent] = {
         "cline": _Agent(name="cline", root_dir=root_dir, dirs=dirs),

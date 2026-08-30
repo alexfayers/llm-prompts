@@ -10,8 +10,10 @@ import pytest
 
 from llm_prompts.render_template import resolve_frontmatter, split_frontmatter
 from llm_prompts.size_guard import (
+    ALLOWANCES_FILENAME,
     Artifact,
     Violation,
+    _declared_allowances,
     check,
     evaluate,
     format_report,
@@ -413,6 +415,73 @@ class TestEvaluate:
         assert evaluate([artifact]) == []
 
 
+class TestEvaluateWithAllowance:
+    def test_allowance_above_final_lets_an_oversized_artifact_pass(self) -> None:
+        artifact = Artifact(
+            RULE_BYTES,
+            "claude-code",
+            "big.md",
+            FINALS[RULE_BYTES] + 1,
+            Path("big.md"),
+            allowance=FINALS[RULE_BYTES] + 1_000,
+        )
+        assert evaluate([artifact]) == []
+
+    def test_value_above_allowance_still_violates_with_allowance_as_threshold(
+        self,
+    ) -> None:
+        artifact = Artifact(
+            RULE_BYTES,
+            "claude-code",
+            "big.md",
+            FINALS[RULE_BYTES] + 2_000,
+            Path("big.md"),
+            allowance=FINALS[RULE_BYTES] + 1_000,
+        )
+        violations = evaluate([artifact])
+        assert violations == [
+            Violation(
+                RULE_BYTES,
+                "claude-code",
+                "big.md",
+                FINALS[RULE_BYTES] + 2_000,
+                FINALS[RULE_BYTES] + 1_000,
+                Path("big.md"),
+            )
+        ]
+
+    def test_allowance_replaces_active_schedule_step_ceiling(self) -> None:
+        artifact = Artifact(
+            RULE_BYTES,
+            "claude-code",
+            "a.md",
+            4_500,
+            Path("a.md"),
+            allowance=5_000,
+        )
+        schedule = Schedule(
+            steps=(ScheduleStep("W2", 4_000, frozenset({"a.md"})),),
+            active_step="W2",
+        )
+        with patch.dict(SCHEDULES, {RULE_BYTES: schedule}):
+            violations = evaluate([artifact])
+        assert violations == []
+
+    def test_allowance_below_final_tightens(self) -> None:
+        artifact = Artifact(
+            RULE_BYTES,
+            "claude-code",
+            "a.md",
+            3_000,
+            Path("a.md"),
+            allowance=2_000,
+        )
+        violations = evaluate([artifact])
+        assert violations == [
+            Violation(RULE_BYTES, "claude-code", "a.md", 3_000, 2_000, Path("a.md"))
+        ]
+
+
 class TestFormatReport:
     def test_no_violations_reports_pass(self) -> None:
         assert format_report([]) == "All prompt-size checks passed."
@@ -481,6 +550,236 @@ class TestCheck:
         assert names == {"overlay.md"}
 
 
+class TestDeclaredAllowances:
+    def test_absent_file_leaves_allowance_none(self, tmp_path: Path) -> None:
+        _make_prompts_tree(tmp_path)
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            artifacts = list(iter_artifacts([tmp_path], targets=("claude-code",)))
+
+        assert all(a.allowance is None for a in artifacts)
+
+    def test_declaration_attaches_to_named_artifact_only(self, tmp_path: Path) -> None:
+        _make_prompts_tree(tmp_path)
+        _write(
+            tmp_path / ALLOWANCES_FILENAME,
+            json.dumps({SKILL_BODY_BYTES: {"demo": 9_000}}),
+        )
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            artifacts = list(iter_artifacts([tmp_path], targets=("claude-code",)))
+
+        by_metric_name = {(a.metric, a.dest_name): a for a in artifacts}
+        assert by_metric_name[(SKILL_BODY_BYTES, "demo")].allowance == 9_000
+        assert by_metric_name[(SKILL_DESCRIPTION_CHARS, "demo")].allowance is None
+        other_skill_bodies = [
+            a
+            for a in artifacts
+            if a.metric == SKILL_BODY_BYTES and a.dest_name != "demo"
+        ]
+        assert all(a.allowance is None for a in other_skill_bodies)
+
+    def test_declaration_applies_across_every_checked_target(
+        self, tmp_path: Path
+    ) -> None:
+        _make_prompts_tree(tmp_path, targets=("claude-code", "copilot", "kiro"))
+        _write(
+            tmp_path / ALLOWANCES_FILENAME,
+            json.dumps({RULE_BYTES: {"shared-rule.md": 4_000}}),
+        )
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            artifacts = list(
+                iter_artifacts(
+                    [tmp_path], targets=("claude-code", "copilot", "kiro")
+                )
+            )
+
+        rule_bytes = [
+            a
+            for a in artifacts
+            if a.metric == RULE_BYTES and a.dest_name == "shared-rule.md"
+        ]
+        assert {a.target for a in rule_bytes} == {"claude-code", "kiro"}
+        assert all(a.allowance == 4_000 for a in rule_bytes)
+
+    def test_bool_metric_key_is_rejected_and_carries_no_allowance(
+        self, tmp_path: Path
+    ) -> None:
+        _make_prompts_tree(tmp_path)
+        _write(
+            tmp_path / ALLOWANCES_FILENAME,
+            json.dumps({FRONTMATTER_VALID: {"demo": 1}}),
+        )
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            allowances, errors = _declared_allowances(tmp_path)
+            artifacts = list(iter_artifacts([tmp_path], targets=("claude-code",)))
+
+        assert FRONTMATTER_VALID not in allowances
+        assert errors
+        assert all(
+            a.allowance is None
+            for a in artifacts
+            if a.metric == FRONTMATTER_VALID
+        )
+
+
+class TestAllowanceScoping:
+    def test_one_overlay_cannot_raise_another_overlays_limit(
+        self, tmp_path: Path
+    ) -> None:
+        own_root = tmp_path / "own"
+        overlay_a = tmp_path / "a"
+        overlay_b = tmp_path / "b"
+        _write(own_root / "claude-code" / "vars.json", json.dumps({}))
+        _write(
+            overlay_a / ALLOWANCES_FILENAME,
+            json.dumps({RULE_BYTES: {"shared-rule.md": 50_000}}),
+        )
+        _write(overlay_a / "shared" / "rules" / "unrelated.md", "# Unrelated\n")
+        _write(
+            overlay_b / "shared" / "rules" / "shared-rule.md",
+            "# Shared\n\n" + ("x " * FINALS[RULE_BYTES]),
+        )
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=own_root):
+            artifacts = list(
+                iter_artifacts([overlay_a, overlay_b], targets=("claude-code",))
+            )
+            violations = evaluate(artifacts)
+
+        b_artifact = next(
+            a
+            for a in artifacts
+            if a.metric == RULE_BYTES and a.dest_name == "shared-rule.md"
+        )
+        assert b_artifact.allowance is None
+        assert any(
+            v.metric == RULE_BYTES and v.dest_name == "shared-rule.md"
+            for v in violations
+        )
+
+    def test_one_overlay_cannot_raise_a_core_artifacts_limit(
+        self, tmp_path: Path
+    ) -> None:
+        own_root = tmp_path / "own"
+        overlay_root = tmp_path / "overlay"
+        _write(own_root / "claude-code" / "vars.json", json.dumps({}))
+        _write(
+            own_root / "shared" / "rules" / "core.md",
+            "# Core\n\n" + ("x " * FINALS[RULE_BYTES]),
+        )
+        _write(
+            overlay_root / ALLOWANCES_FILENAME,
+            json.dumps({RULE_BYTES: {"core.md": 50_000}}),
+        )
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=own_root):
+            artifacts = list(
+                iter_artifacts([own_root, overlay_root], targets=("claude-code",))
+            )
+            violations = evaluate(artifacts)
+
+        core_artifact = next(
+            a
+            for a in artifacts
+            if a.metric == RULE_BYTES and a.dest_name == "core.md"
+        )
+        assert core_artifact.allowance is None
+        assert any(
+            v.metric == RULE_BYTES and v.dest_name == "core.md" for v in violations
+        )
+
+    def test_shipped_package_declares_no_allowances(self) -> None:
+        from importlib.resources import files
+
+        own_root = Path(str(files("llm_prompts") / "prompts"))
+        assert not (own_root / ALLOWANCES_FILENAME).exists()
+
+
+class TestDeclarationErrors:
+    def test_unknown_metric_key_is_reported(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path / ALLOWANCES_FILENAME, json.dumps({"not_a_metric": {"a": 1}})
+        )
+
+        allowances, errors = _declared_allowances(tmp_path)
+
+        assert allowances == {}
+        assert any("not_a_metric" in e and str(path) in e for e in errors)
+
+    @pytest.mark.parametrize("bad_value", ["x", -1, 0, True])
+    def test_non_positive_or_non_integer_value_is_rejected(
+        self, tmp_path: Path, bad_value: object
+    ) -> None:
+        _write(
+            tmp_path / ALLOWANCES_FILENAME,
+            json.dumps({RULE_BYTES: {"a.md": bad_value}}),
+        )
+
+        allowances, errors = _declared_allowances(tmp_path)
+
+        assert allowances == {}
+        assert errors
+
+    def test_unparseable_json_is_reported_not_raised(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / ALLOWANCES_FILENAME, "{not json")
+
+        allowances, errors = _declared_allowances(tmp_path)
+
+        assert allowances == {}
+        assert any(str(path) in e for e in errors)
+
+    def test_declaration_error_fails_the_check_naming_metric_and_file(
+        self, tmp_path: Path
+    ) -> None:
+        _make_prompts_tree(tmp_path)
+        path = _write(
+            tmp_path / ALLOWANCES_FILENAME, json.dumps({"not_a_metric": {"a": 1}})
+        )
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check([tmp_path], targets=("claude-code",))
+
+        assert result.passed is False
+        assert result.declaration_errors
+        assert any(
+            "not_a_metric" in e and str(path) in e for e in result.declaration_errors
+        )
+
+
+class TestStaleAllowances:
+    def test_allowance_for_unmeasured_name_is_reported_but_check_passes(
+        self, tmp_path: Path
+    ) -> None:
+        _make_prompts_tree(tmp_path)
+        path = _write(
+            tmp_path / ALLOWANCES_FILENAME,
+            json.dumps({RULE_BYTES: {"nonexistent.md": 1_000}}),
+        )
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check([tmp_path], targets=("claude-code",))
+
+        assert result.passed is True
+        assert any(
+            "nonexistent.md" in line and str(path) in line for line in result.stale
+        )
+
+    def test_allowance_for_measured_name_is_not_stale(self, tmp_path: Path) -> None:
+        _make_prompts_tree(tmp_path)
+        _write(
+            tmp_path / ALLOWANCES_FILENAME,
+            json.dumps({RULE_BYTES: {"shared-rule.md": 1_000}}),
+        )
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check([tmp_path], targets=("claude-code",))
+
+        assert result.stale == []
+
+
 class TestParkedStateLines:
     def test_no_artifacts_over_final_reports_nothing(self) -> None:
         artifact = Artifact(RULE_BYTES, "claude-code", "a.md", 10, Path("a.md"))
@@ -497,6 +796,18 @@ class TestParkedStateLines:
         assert f"current {final + 5_000:,}" in lines[0]
         assert f"final {final:,}" in lines[0]
         assert "2 files awaiting compression" in lines[0]
+
+    def test_artifact_with_a_covering_allowance_is_not_parked(self) -> None:
+        final = FINALS[RULE_BYTES]
+        artifact = Artifact(
+            RULE_BYTES,
+            "claude-code",
+            "a.md",
+            final + 100,
+            Path("a.md"),
+            allowance=final + 1_000,
+        )
+        assert parked_state_lines([artifact]) == []
 
 
 class TestNoOwnedTemplateUsesRepoRoot:
