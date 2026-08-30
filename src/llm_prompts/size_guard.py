@@ -10,9 +10,12 @@ class of bug this guard exists to catch.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import tempfile
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from importlib.resources import files
 from pathlib import Path
 
@@ -21,6 +24,7 @@ from .install import (
     _builtin_skill_vars,
     _collect_content_srcs,
     _CopilotAgent,
+    _discover_overlay_paths,
     _excluded_targets,
     _expand_agent_variants,
     _linked_content,
@@ -598,4 +602,145 @@ def check(
         report=format_report(violations, declaration_errors),
         declaration_errors=declaration_errors,
         stale=stale,
+    )
+
+
+def _owning_root(source: Path) -> Path | None:
+    """Return the prompts root `source` lives under, or None if ungated.
+
+    Args:
+        source: Candidate source file path.
+
+    Returns:
+        This package's own root or a discovered overlay root that is an
+        ancestor of `source`, or None if `source` is under neither.
+    """
+    with contextlib.redirect_stderr(io.StringIO()):
+        overlay_paths = _discover_overlay_paths()
+    for root in (_own_root_dir(), *overlay_paths):
+        if source.is_relative_to(root):
+            return root
+    return None
+
+
+def _scoped_targets(first: str, targets: tuple[str, ...]) -> tuple[str, ...]:
+    """Return which of `targets` a source at position `first` is measured under.
+
+    A `shared` source is measured under every requested target; an
+    agent-specific source is measured only under its own target, if requested.
+
+    Args:
+        first: First path component under the owning root.
+        targets: Render targets requested by the caller.
+
+    Returns:
+        The subset of `targets` this source should be measured for.
+    """
+    if first == "shared":
+        return targets
+    return (first,) if first in targets else ()
+
+
+def _mirror(tmp: Path, rel_parts: tuple[str, ...], content: str) -> None:
+    """Write `content` into `tmp` at the position described by `rel_parts`.
+
+    Args:
+        tmp: Temporary root mirroring only one source's position.
+        rel_parts: Path components relative to the owning root.
+        content: Text to write.
+    """
+    dest = tmp.joinpath(*rel_parts)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(content, encoding="utf-8")
+
+
+def _iter_source_artifacts(
+    tmp: Path,
+    rel_parts: tuple[str, ...],
+    content: str,
+    targets: tuple[str, ...],
+    allowances: dict[str, dict[str, int]],
+) -> Iterator[Artifact]:
+    """Mirror one source file into `tmp` and yield its artifacts, per its position.
+
+    Args:
+        tmp: Temporary root mirroring only the source's position.
+        rel_parts: The source's path components relative to its owning root.
+        content: The file's hypothetical text.
+        targets: Render targets to measure.
+        allowances: The owning root's declared per-artifact ceilings.
+    """
+    if len(rel_parts) == 3 and rel_parts[1] in ("rules", "workflows"):
+        first, kind, _ = rel_parts
+        bytes_metric, lines_metric = (
+            (RULE_BYTES, RULE_LINES)
+            if kind == "rules"
+            else (WORKFLOW_BYTES, WORKFLOW_LINES)
+        )
+        _mirror(tmp, rel_parts, content)
+        for target in _scoped_targets(first, targets):
+            yield from _iter_rendered_kind_artifacts(
+                tmp, target, kind, bytes_metric, lines_metric, allowances
+            )
+    elif (
+        len(rel_parts) == 4 and rel_parts[1] == "skills" and rel_parts[3] == "SKILL.md"
+    ):
+        first = rel_parts[0]
+        _mirror(tmp, rel_parts, content)
+        for target in _scoped_targets(first, targets):
+            yield from _iter_skill_artifacts(tmp, target, allowances)
+    elif rel_parts[:2] == ("claude-code", "agents") and len(rel_parts) == 3:
+        _mirror(tmp, rel_parts, content)
+        for target in _scoped_targets("claude-code", targets):
+            yield from _iter_agent_artifacts(tmp, target, allowances)
+
+
+def check_source(
+    source: Path,
+    content: str,
+    targets: tuple[str, ...] = CHECKED_TARGETS,
+) -> CheckResult:
+    """Measure one source file as if it held `content`, without walking the corpus.
+
+    Mirrors `source` alone into a throwaway root, at the same position it
+    occupies under its real owning root, then measures that mirror with the
+    same per-kind iterators `iter_artifacts` uses. This is faithful because
+    variables are always resolved via `_own_vars_path`, from this package's
+    own prompts directory regardless of which root is being scanned - a
+    mirrored file renders byte-identically to the same file in place.
+
+    A source shadowed at install time by a higher-priority source of the same
+    name is still measured here, since resolving priority would require
+    scanning the sibling roots this function exists to avoid.
+
+    Args:
+        source: Path inside a prompts root - this package's own or an
+            overlay's.
+        content: The file's hypothetical text.
+        targets: Render targets to measure.
+
+    Returns:
+        A `CheckResult` covering only `source`'s artifacts, for `targets`. A
+        `source` that is not a gated artifact returns a passing, empty result.
+    """
+    root = _owning_root(source)
+    if root is None:
+        return CheckResult(True, [], [], format_report([]))
+    rel_parts = source.relative_to(root).parts
+    allowances, _ = _declared_allowances(root)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        artifacts = list(
+            _iter_source_artifacts(
+                Path(tmp_dir), rel_parts, content, targets, allowances
+            )
+        )
+    artifacts = [replace(a, source=source) for a in artifacts]
+
+    violations = evaluate(artifacts)
+    return CheckResult(
+        passed=not violations,
+        artifacts=artifacts,
+        violations=violations,
+        report=format_report(violations),
     )

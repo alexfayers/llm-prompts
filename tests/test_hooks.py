@@ -18,10 +18,19 @@ from llm_prompts.hooks import (
     _UPDATE_CHECK_INTERVAL,
     AutoReinstallPlugin,
     _format_user_text,
+    _looks_like_prompt_source,
     _ReinstallDebouncer,
     _strip_update_instruction,
 )
 from llm_prompts.setup import _UPDATE_INSTRUCTION
+from llm_prompts.size_guard import CHECKED_TARGETS, CheckResult, Violation
+from llm_prompts.size_limits import FINALS, RULE_BYTES
+
+
+def _write(path: Path, content: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return path
 
 
 @pytest.fixture
@@ -377,6 +386,278 @@ class TestAutoReinstallPlugin:
             parameters={"path": manifest_data["kiro"]["files"][0]},
         )
         assert plugin._installed_paths is None
+
+
+class TestPromptSizeGate:
+    """Tests for the PreToolUse prompt-size gate added by `_gate_edit`."""
+
+    def test_write_breaching_threshold_is_denied(
+        self, plugin: AutoReinstallPlugin, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "size-root"
+        for target in CHECKED_TARGETS:
+            _write(root / target / "vars.json", "{}")
+        path = root / "shared" / "rules" / "big.md"
+        content = "x" * (FINALS[RULE_BYTES] + 50) + "\n"
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=root):
+            result = plugin.on_hook(
+                "PreToolUse",
+                tool_name="Write",
+                parameters={"path": str(path), "content": content},
+            )
+
+        assert result is not None
+        assert result.block is not None
+        assert RULE_BYTES in result.block
+        assert "big.md" in result.block
+        assert str(FINALS[RULE_BYTES]) in result.block
+
+    def test_write_within_thresholds_returns_none_and_measures_once(
+        self, plugin: AutoReinstallPlugin, tmp_path: Path
+    ) -> None:
+        passing = CheckResult(passed=True, artifacts=[], violations=[], report="ok")
+        with patch(
+            "llm_prompts.size_guard.check_source", return_value=passing
+        ) as mock_check:
+            result = plugin.on_hook(
+                "PreToolUse",
+                tool_name="Write",
+                parameters={
+                    "path": str(tmp_path / "shared" / "rules" / "small.md"),
+                    "content": "fine",
+                },
+            )
+
+        assert result is None
+        mock_check.assert_called_once()
+
+    def test_edit_growing_an_already_violating_file_is_denied(
+        self, plugin: AutoReinstallPlugin, tmp_path: Path
+    ) -> None:
+        path = _write(tmp_path / "shared" / "rules" / "big.md", "old text")
+        predicted = CheckResult(
+            passed=False,
+            artifacts=[],
+            violations=[
+                Violation(RULE_BYTES, "claude-code", "big.md", 6_000, 5_000, path)
+            ],
+            report="predicted",
+        )
+        current = CheckResult(
+            passed=False,
+            artifacts=[],
+            violations=[
+                Violation(RULE_BYTES, "claude-code", "big.md", 5_500, 5_000, path)
+            ],
+            report="current",
+        )
+
+        with patch(
+            "llm_prompts.size_guard.check_source", side_effect=[predicted, current]
+        ):
+            result = plugin.on_hook(
+                "PreToolUse",
+                tool_name="Edit",
+                parameters={
+                    "path": str(path),
+                    "old_string": "old text",
+                    "new_string": "much longer new text",
+                },
+            )
+
+        assert result is not None
+        assert result.block is not None
+
+    def test_edit_shrinking_an_already_violating_file_is_allowed(
+        self, plugin: AutoReinstallPlugin, tmp_path: Path
+    ) -> None:
+        path = _write(tmp_path / "shared" / "rules" / "big.md", "old long text")
+        predicted = CheckResult(
+            passed=False,
+            artifacts=[],
+            violations=[
+                Violation(RULE_BYTES, "claude-code", "big.md", 4_800, 5_000, path)
+            ],
+            report="predicted",
+        )
+        current = CheckResult(
+            passed=False,
+            artifacts=[],
+            violations=[
+                Violation(RULE_BYTES, "claude-code", "big.md", 5_500, 5_000, path)
+            ],
+            report="current",
+        )
+
+        with patch(
+            "llm_prompts.size_guard.check_source", side_effect=[predicted, current]
+        ):
+            result = plugin.on_hook(
+                "PreToolUse",
+                tool_name="Edit",
+                parameters={
+                    "path": str(path),
+                    "old_string": "old long text",
+                    "new_string": "short",
+                },
+            )
+
+        assert result is None
+
+    def test_edit_leaving_measurement_unchanged_is_allowed(
+        self, plugin: AutoReinstallPlugin, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "size-root"
+        for target in CHECKED_TARGETS:
+            _write(root / target / "vars.json", "{}")
+        padding = "x" * (FINALS[RULE_BYTES] + 50)
+        path = _write(root / "shared" / "rules" / "big.md", "MARKER1" + padding)
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=root):
+            result = plugin.on_hook(
+                "PreToolUse",
+                tool_name="Edit",
+                parameters={
+                    "path": str(path),
+                    "old_string": "MARKER1",
+                    "new_string": "MARKER2",
+                },
+            )
+
+        assert result is None
+
+    def test_edit_with_absent_old_string_returns_none(
+        self, plugin: AutoReinstallPlugin, tmp_path: Path
+    ) -> None:
+        path = _write(tmp_path / "shared" / "rules" / "file.md", "hello world")
+        result = plugin.on_hook(
+            "PreToolUse",
+            tool_name="Edit",
+            parameters={"path": str(path), "old_string": "missing", "new_string": "x"},
+        )
+        assert result is None
+
+    def test_edit_with_duplicate_old_string_and_no_replace_all_returns_none(
+        self, plugin: AutoReinstallPlugin, tmp_path: Path
+    ) -> None:
+        path = _write(tmp_path / "shared" / "rules" / "file.md", "dup dup")
+        result = plugin.on_hook(
+            "PreToolUse",
+            tool_name="Edit",
+            parameters={"path": str(path), "old_string": "dup", "new_string": "x"},
+        )
+        assert result is None
+
+    def test_replace_in_file_is_not_gated(
+        self, plugin: AutoReinstallPlugin, tmp_path: Path
+    ) -> None:
+        result = plugin.on_hook(
+            "PreToolUse",
+            tool_name="replace_in_file",
+            parameters={"path": str(tmp_path / "file.md"), "diff": "..."},
+        )
+        assert result is None
+
+    def test_path_outside_any_prompts_root_returns_none(
+        self, plugin: AutoReinstallPlugin, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "random" / "rules" / "notes.md"
+        result = plugin.on_hook(
+            "PreToolUse",
+            tool_name="Write",
+            parameters={"path": str(path), "content": "hello"},
+        )
+        assert result is None
+
+    def test_check_source_raising_fails_open(
+        self, plugin: AutoReinstallPlugin, tmp_path: Path
+    ) -> None:
+        with patch(
+            "llm_prompts.size_guard.check_source", side_effect=RuntimeError("boom")
+        ):
+            result = plugin.on_hook(
+                "PreToolUse",
+                tool_name="Write",
+                parameters={
+                    "path": str(tmp_path / "shared" / "rules" / "x.md"),
+                    "content": "hello",
+                },
+            )
+        assert result is None
+
+    def test_no_stamp_or_pending_file_created(
+        self, plugin: AutoReinstallPlugin, tmp_path: Path
+    ) -> None:
+        stamp = plugin._debouncer._stamp
+        pending = plugin._debouncer._pending
+        passing = CheckResult(passed=True, artifacts=[], violations=[], report="ok")
+
+        with patch("llm_prompts.size_guard.check_source", return_value=passing):
+            plugin.on_hook(
+                "PreToolUse",
+                tool_name="Write",
+                parameters={
+                    "path": str(tmp_path / "shared" / "rules" / "x.md"),
+                    "content": "hello",
+                },
+            )
+
+        assert not stamp.exists()
+        assert not pending.exists()
+
+    def test_non_md_file_is_not_gated_without_reading_or_measuring(
+        self, plugin: AutoReinstallPlugin, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "shared" / "rules" / "script.py"
+        with patch("llm_prompts.size_guard.check_source") as mock_check:
+            result = plugin.on_hook(
+                "PreToolUse",
+                tool_name="Write",
+                parameters={"path": str(path), "content": "print('hi')"},
+            )
+        assert result is None
+        mock_check.assert_not_called()
+
+    def test_md_file_outside_gated_dirs_is_not_measured(
+        self, plugin: AutoReinstallPlugin, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "docs" / "notes.md"
+        with patch("llm_prompts.size_guard.check_source") as mock_check:
+            result = plugin.on_hook(
+                "PreToolUse",
+                tool_name="Write",
+                parameters={"path": str(path), "content": "hello"},
+            )
+        assert result is None
+        mock_check.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            Path("root/shared/rules/a.md"),
+            Path("root/claude-code/rules/a.md"),
+            Path("root/shared/workflows/a.md"),
+            Path("root/claude-code/workflows/a.md"),
+            Path("root/shared/skills/demo/SKILL.md"),
+            Path("root/claude-code/skills/demo/SKILL.md"),
+            Path("root/claude-code/agents/a.md"),
+        ],
+    )
+    def test_shape_filter_accepts_every_gated_shape(self, path: Path) -> None:
+        assert _looks_like_prompt_source(path)
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            Path("shared/rules/helper.py"),
+            Path("docs/notes.md"),
+            Path("README.md"),
+            Path("shared/rules.md"),
+        ],
+    )
+    def test_shape_filter_rejects_non_gated_shapes(self, path: Path) -> None:
+        assert not _looks_like_prompt_source(path)
 
 
 class TestUpdateCheckOnTaskStart:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from importlib.resources import files
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,6 +16,7 @@ from llm_prompts.size_guard import (
     Violation,
     _declared_allowances,
     check,
+    check_source,
     evaluate,
     format_report,
     iter_artifacts,
@@ -808,6 +810,144 @@ class TestParkedStateLines:
             allowance=final + 1_000,
         )
         assert parked_state_lines([artifact]) == []
+
+
+class TestCheckSource:
+    def test_oversized_shared_rule_yields_rule_bytes_violation(
+        self, tmp_path: Path
+    ) -> None:
+        _write(tmp_path / "claude-code" / "vars.json", json.dumps({}))
+        source = tmp_path / "shared" / "rules" / "big.md"
+        content = "# Big\n\n" + ("x " * FINALS[RULE_BYTES])
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check_source(source, content, targets=("claude-code",))
+
+        assert result.passed is False
+        assert any(v.metric == RULE_BYTES for v in result.violations)
+
+    def test_small_shared_rule_passes_with_bytes_and_lines_artifacts(
+        self, tmp_path: Path
+    ) -> None:
+        _write(tmp_path / "claude-code" / "vars.json", json.dumps({}))
+        source = tmp_path / "shared" / "rules" / "small.md"
+        content = "# Small\n\nJust a little text.\n"
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check_source(source, content, targets=("claude-code",))
+
+        assert result.passed is True
+        metrics = {a.metric for a in result.artifacts}
+        assert {RULE_BYTES, RULE_LINES} <= metrics
+
+    def test_unsubstituted_placeholder_is_a_violation(self, tmp_path: Path) -> None:
+        _write(tmp_path / "claude-code" / "vars.json", json.dumps({}))
+        source = tmp_path / "shared" / "rules" / "leaky.md"
+        content = "# Leaky\n\nUses {{UNDEFINED_VAR}} here.\n"
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check_source(source, content, targets=("claude-code",))
+
+        assert any(v.metric == NO_UNSUBSTITUTED_PLACEHOLDERS for v in result.violations)
+
+    def test_malformed_frontmatter_is_a_violation(self, tmp_path: Path) -> None:
+        # Agent-specific rules are linked, not rendered, so their frontmatter
+        # reaches the frontmatter-validity check unchanged.
+        source = tmp_path / "claude-code" / "rules" / "malformed.md"
+        content = (
+            "---\ndescription: >- [opus, medium effort]\n  Body line.\n---\n\nBody.\n"
+        )
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check_source(source, content, targets=("claude-code",))
+
+        assert any(v.metric == FRONTMATTER_VALID for v in result.violations)
+
+    def test_skill_description_too_long_is_a_violation(self, tmp_path: Path) -> None:
+        source = tmp_path / "shared" / "skills" / "demo-skill" / "SKILL.md"
+        long_description = "x" * (FINALS[SKILL_DESCRIPTION_CHARS] + 1)
+        content = (
+            f"---\nname: demo-skill\ndescription: {long_description}\n---\n\nBody.\n"
+        )
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check_source(source, content, targets=("claude-code",))
+
+        assert any(v.metric == SKILL_DESCRIPTION_CHARS for v in result.violations)
+
+    def test_vars_json_is_not_gated(self, tmp_path: Path) -> None:
+        source = tmp_path / "shared" / "vars.json"
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check_source(source, "{}", targets=("claude-code",))
+
+        assert result.passed is True
+        assert result.artifacts == []
+        assert result.violations == []
+        assert result.report == format_report([])
+
+    def test_root_level_file_is_not_gated(self, tmp_path: Path) -> None:
+        source = tmp_path / ALLOWANCES_FILENAME
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check_source(source, "{}", targets=("claude-code",))
+
+        assert result.passed is True
+        assert result.artifacts == []
+
+    def test_declared_allowance_raises_ceiling_so_content_passes(
+        self, tmp_path: Path
+    ) -> None:
+        _write(tmp_path / "claude-code" / "vars.json", json.dumps({}))
+        content = "# Big\n\n" + ("x " * FINALS[RULE_BYTES])
+        expected_bytes = len(content.encode())
+        _write(
+            tmp_path / ALLOWANCES_FILENAME,
+            json.dumps({RULE_BYTES: {"big.md": expected_bytes}}),
+        )
+        source = tmp_path / "shared" / "rules" / "big.md"
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check_source(source, content, targets=("claude-code",))
+
+        assert result.passed is True
+
+    def test_check_source_report_cites_the_real_source_path(
+        self, tmp_path: Path
+    ) -> None:
+        _write(tmp_path / "claude-code" / "vars.json", json.dumps({}))
+        source = tmp_path / "shared" / "rules" / "big.md"
+        content = "# Big\n\n" + ("x " * FINALS[RULE_BYTES])
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check_source(source, content, targets=("claude-code",))
+
+        assert str(source) in result.report
+        assert "tmp" not in result.report
+        assert all(v.source == source for v in result.violations)
+
+    def test_check_source_artifacts_carry_the_real_source_path(
+        self, tmp_path: Path
+    ) -> None:
+        _write(tmp_path / "claude-code" / "vars.json", json.dumps({}))
+        source = tmp_path / "shared" / "rules" / "small.md"
+        content = "# Small\n\nJust a little text.\n"
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check_source(source, content, targets=("claude-code",))
+
+        assert result.artifacts
+        assert all(a.source == source for a in result.artifacts)
+
+    def test_check_source_emits_nothing_to_stderr(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        source = Path(str(files("llm_prompts") / "prompts")) / "shared" / "rules"
+        source = source / next(source.glob("*.md")).name
+
+        check_source(source, "# Small\n\nJust a little text.\n", targets=("claude-code",))
+
+        assert capsys.readouterr().err == ""
 
 
 class TestNoOwnedTemplateUsesRepoRoot:
