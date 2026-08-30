@@ -77,10 +77,14 @@ def subject_for(sha: str) -> str:
 
 def build_sequence_script(plan: list[dict[str, str]], script_path: Path) -> None:
     """Write a GIT_SEQUENCE_EDITOR script that emits the plan's todo list."""
-    lines = [f"{entry['verb']} {entry['sha']} {subject_for(entry['sha'])}" for entry in plan]
+    lines = [
+        f"{entry['verb']} {entry['sha']} {subject_for(entry['sha'])}" for entry in plan
+    ]
     todo = "\n".join(lines) + "\n"
     script_path.write_text(
-        "#!/bin/bash\ncat > \"$1\" <<'RESCRIPT_TIDY_EOF'\n" + todo + "RESCRIPT_TIDY_EOF\n"
+        "#!/bin/bash\ncat > \"$1\" <<'RESCRIPT_TIDY_EOF'\n"
+        + todo
+        + "RESCRIPT_TIDY_EOF\n"
     )
     script_path.chmod(0o755)
 
@@ -92,7 +96,11 @@ def build_message_script(plan: list[dict[str, str]], script_path: Path) -> None:
     newline-joined queue read back line-by-line) so multi-line messages
     survive intact.
     """
-    messages = [entry["message"] for entry in plan if entry["verb"] in ("squash", "reword") and entry.get("message")]
+    messages = [
+        entry["message"]
+        for entry in plan
+        if entry["verb"] in ("squash", "reword") and entry.get("message")
+    ]
     if not messages:
         script_path.write_text("#!/bin/bash\ntrue\n")
         script_path.chmod(0o755)

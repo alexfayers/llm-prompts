@@ -704,7 +704,9 @@ class TestRunSetupForceReinstall:
         return calls
 
     def test_forced_core_skips_upgrade(self) -> None:
-        commands = [("core", ["uv", "install"], ["uv", "upgrade"], [])]
+        commands: list[tuple[str, list[str], list[str] | None, list[str]]] = [
+            ("core", ["uv", "install"], ["uv", "upgrade"], [])
+        ]
         calls = self._run(commands, {"core"})
         assert calls == [["uv", "install"]]
 
@@ -714,7 +716,9 @@ class TestRunSetupForceReinstall:
         assert calls == [["uv", "install"]]
 
     def test_unforced_core_uses_upgrade(self) -> None:
-        commands = [("core", ["uv", "install"], ["uv", "upgrade"], [])]
+        commands: list[tuple[str, list[str], list[str] | None, list[str]]] = [
+            ("core", ["uv", "install"], ["uv", "upgrade"], [])
+        ]
         calls = self._run(commands, {"other"})
         assert calls[0] == ["uv", "upgrade"]
 

@@ -288,6 +288,4 @@ class TestFormatUpdateMessage:
         ) == ["[core] update available (abc123aa -> def456bb)"]
 
     def test_falls_back_to_bare_message_without_shas(self) -> None:
-        assert setup._format_update_message("core", []) == [
-            "[core] update available"
-        ]
+        assert setup._format_update_message("core", []) == ["[core] update available"]
