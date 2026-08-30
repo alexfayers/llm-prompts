@@ -5,6 +5,7 @@
   - **Opus** - design, architecture, root-cause investigation, debugging, planning, synthesis.
   - **Sonnet** - parallel mechanical execution: an edit pattern Opus already designed, a bounded search, an already-decided step.
   - **Haiku** - the genuinely trivial: a single lookup, a one-line transform, formatting a known value.
+  - A mechanical edit applying a known exact change across several files is Haiku work. Breadth is not complexity; judgment, not file count, raises the tier.
 - A known target - a specific local file, symbol, or doc you already know - is one trivial lookup: SHOULD give it to Haiku, or read it directly when a spawn costs more. MUST NOT let "fetch a known fact" become "go find out about X".
 - MUST NOT reach for Haiku where the task involves real reasoning.
 
