@@ -25,7 +25,8 @@ from llm_prompts.size_guard import (
 from llm_prompts.size_limits import (
     AGENT_BASE_DESCRIPTION_MAX_CHARS,
     AGENT_DESCRIPTION_CHARS,
-    CORPUS_SCHEDULE,
+    COLLECTION_BYTES,
+    COLLECTION_SCHEDULE,
     FINALS,
     FRONTMATTER_VALID,
     NO_UNSUBSTITUTED_PLACEHOLDERS,
@@ -37,8 +38,8 @@ from llm_prompts.size_limits import (
     UNITS,
     WORKFLOW_BYTES,
     WORKFLOW_LINES,
-    CorpusSchedule,
-    CorpusStep,
+    CollectionSchedule,
+    CollectionStep,
     Schedule,
     ScheduleStep,
 )
@@ -170,23 +171,23 @@ class TestScheduleAllowsMultiStepMembership:
             assert step_count > 1, f"{name} should appear in more than one step"
 
 
-class TestCorpusSchedule:
+class TestCollectionSchedule:
     def test_active_threshold_returns_active_step_value(self) -> None:
-        schedule = CorpusSchedule(
-            steps=(CorpusStep("open", 200), CorpusStep("W1", 100)),
+        schedule = CollectionSchedule(
+            steps=(CollectionStep("open", 200), CollectionStep("W1", 100)),
             active_step="open",
         )
         assert schedule.active_threshold() == 200
 
     def test_unknown_active_step_raises(self) -> None:
-        schedule = CorpusSchedule(
-            steps=(CorpusStep("open", 200),), active_step="missing"
+        schedule = CollectionSchedule(
+            steps=(CollectionStep("open", 200),), active_step="missing"
         )
         with pytest.raises(KeyError):
             schedule.active_threshold()
 
-    def test_module_corpus_schedule_active_step_is_a_known_step(self) -> None:
-        assert CORPUS_SCHEDULE.active_threshold() == 425_000
+    def test_module_collection_schedule_active_step_is_a_known_step(self) -> None:
+        assert COLLECTION_SCHEDULE.active_threshold() == 425_000
 
 
 def _write(path: Path, content: str) -> Path:
@@ -552,6 +553,35 @@ class TestCheck:
         assert names == {"overlay.md"}
 
 
+class TestCheckWiresCollectionMetric:
+    def test_includes_a_collection_bytes_artifact_per_target(
+        self, tmp_path: Path
+    ) -> None:
+        _make_prompts_tree(tmp_path, targets=("claude-code", "copilot"))
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check([tmp_path], targets=("claude-code", "copilot"))
+
+        collection = {
+            a.target: a.value
+            for a in result.artifacts
+            if a.metric == COLLECTION_BYTES
+        }
+        assert set(collection) == {"claude-code", "copilot"}
+        assert all(isinstance(v, int) and v > 0 for v in collection.values())
+
+    def test_small_synthetic_tree_passes_the_open_step_ceiling(
+        self, tmp_path: Path
+    ) -> None:
+        _make_prompts_tree(tmp_path)
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check([tmp_path], targets=("claude-code",))
+
+        assert result.passed is True
+        assert not any(v.metric == COLLECTION_BYTES for v in result.violations)
+
+
 class TestDeclaredAllowances:
     def test_absent_file_leaves_allowance_none(self, tmp_path: Path) -> None:
         _make_prompts_tree(tmp_path)
@@ -810,6 +840,41 @@ class TestParkedStateLines:
             allowance=final + 1_000,
         )
         assert parked_state_lines([artifact]) == []
+
+
+class TestParkedStateReportsTheCollectionTotal:
+    def _artifact(
+        self, target: str, value: int, allowance: int | None = None
+    ) -> Artifact:
+        return Artifact(
+            COLLECTION_BYTES, target, target, value, Path("prompts"), allowance
+        )
+
+    def test_collection_total_reports_against_the_active_step(self) -> None:
+        active = COLLECTION_SCHEDULE.active_threshold()
+        lines = parked_state_lines([self._artifact("claude-code", active - 1)])
+        assert lines == [
+            (
+                f"collection_bytes claude-code current {active - 1:,} "
+                f"ceiling {active:,} ({COLLECTION_SCHEDULE.active_step})"
+            )
+        ]
+
+    def test_every_target_gets_its_own_line(self) -> None:
+        lines = parked_state_lines(
+            [self._artifact("claude-code", 10), self._artifact("kiro", 20)]
+        )
+        assert len(lines) == 2
+
+    def test_a_declared_allowance_becomes_the_reported_ceiling(self) -> None:
+        active = COLLECTION_SCHEDULE.active_threshold()
+        lines = parked_state_lines([self._artifact("kiro", 10, active + 1_000)])
+        assert f"ceiling {active + 1_000:,}" in lines[0]
+
+    def test_collection_total_is_never_reported_as_files_to_compress(self) -> None:
+        lines = parked_state_lines([self._artifact("claude-code", FINALS[RULE_BYTES])])
+        assert "awaiting compression" not in lines[0]
+        assert f"final {FINALS[COLLECTION_BYTES]:,}" not in lines[0]
 
 
 class TestCheckSource:

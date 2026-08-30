@@ -42,6 +42,8 @@ from .render_template import (
 )
 from .size_limits import (
     AGENT_DESCRIPTION_CHARS,
+    COLLECTION_BYTES,
+    COLLECTION_SCHEDULE,
     FINALS,
     FRONTMATTER_VALID,
     NO_UNSUBSTITUTED_PLACEHOLDERS,
@@ -468,6 +470,30 @@ def evaluate(artifacts: Iterable[Artifact]) -> list[Violation]:
     return violations
 
 
+def _collection_state_lines(artifacts: Iterable[Artifact]) -> list[str]:
+    """Build one visibility line per target for the collection total.
+
+    `collection_bytes` has no live final to compress towards - `FINALS` records
+    its terminal step's target - so it reports its active ceiling rather than
+    the per-file compression progress the rest of the parked-state report
+    describes.
+
+    Args:
+        artifacts: Every measured artifact from a `check()` run.
+
+    Returns:
+        One formatted line per collection artifact, in measurement order.
+    """
+    active = COLLECTION_SCHEDULE.active_threshold()
+    return [
+        f"{artifact.metric} {artifact.target} current {artifact.value:,} "
+        f"ceiling {artifact.allowance or active:,} "
+        f"({COLLECTION_SCHEDULE.active_step})"
+        for artifact in artifacts
+        if artifact.metric == COLLECTION_BYTES
+    ]
+
+
 def parked_state_lines(artifacts: Iterable[Artifact]) -> list[str]:
     """Build one visibility line per metric with artifacts still over final.
 
@@ -483,8 +509,11 @@ def parked_state_lines(artifacts: Iterable[Artifact]) -> list[str]:
     Returns:
         One formatted line per over-final metric, sorted by metric name.
     """
+    artifacts = list(artifacts)
     over_final: dict[str, list[int]] = {}
     for artifact in artifacts:
+        if artifact.metric == COLLECTION_BYTES:
+            continue
         final = FINALS.get(artifact.metric)
         if (
             final is not None
@@ -503,6 +532,7 @@ def parked_state_lines(artifacts: Iterable[Artifact]) -> list[str]:
             f"{metric} current {max(values):,} final {final:,} {unit} - "
             f"{len(values)} files awaiting compression"
         )
+    lines.extend(_collection_state_lines(artifacts))
     return lines
 
 
@@ -587,6 +617,8 @@ def check(
         The full check outcome: pass/fail, every measured artifact, any
         violations, declaration errors, stale allowances, and a report.
     """
+    from .collection_size import collection_artifacts, evaluate_collection
+
     roots = list(roots)
     declaration_errors = []
     for root in roots:
@@ -594,6 +626,9 @@ def check(
         declaration_errors.extend(errors)
     artifacts = list(iter_artifacts(roots, targets))
     violations = evaluate(artifacts)
+    collection = collection_artifacts(roots, targets)
+    artifacts.extend(collection)
+    violations.extend(evaluate_collection(collection))
     stale = stale_allowance_lines(roots, artifacts)
     return CheckResult(
         passed=not violations and not declaration_errors,
@@ -700,7 +735,7 @@ def check_source(
     content: str,
     targets: tuple[str, ...] = CHECKED_TARGETS,
 ) -> CheckResult:
-    """Measure one source file as if it held `content`, without walking the corpus.
+    """Measure one source file as if it held `content`, without walking the collection.
 
     Mirrors `source` alone into a throwaway root, at the same position it
     occupies under its real owning root, then measures that mirror with the

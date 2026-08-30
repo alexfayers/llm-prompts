@@ -306,11 +306,3 @@ COLLECTION_SCHEDULE = CollectionSchedule(
     ),
     active_step="open",
 )
-
-# Transitional aliases for the pre-rename CORPUS_* names, kept only while a
-# concurrent change holds `tests/test_prompt_sizes.py`. Remove both these and
-# that module's imports once it lands.
-CORPUS_BYTES = COLLECTION_BYTES
-CorpusStep = CollectionStep
-CorpusSchedule = CollectionSchedule
-CORPUS_SCHEDULE = COLLECTION_SCHEDULE
