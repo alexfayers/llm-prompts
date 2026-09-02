@@ -14,7 +14,7 @@ requires_env: CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
 - Main spins up the team, assigns work via the task list and checks final results. It MUST NOT do delegable work itself, and MUST stop and delegate the moment it catches itself reading a file, writing code or investigating.
 - Main MUST use only `Agent`, `SendMessage`, the `Task*` tools, and light verification - reading what a teammate produced. MUST NOT re-run a mechanical command (`git status`/`find`/a build) to double-check.
 - MUST NOT arbitrate between teammates - route the call to a named Opus delegate.
-- No exception for a quick lookup (`find`/`grep`/`ls`/status): MUST route it to a standing Haiku teammate.
+- MUST route a quick lookup (`find`/`grep`/`ls`/status) or a small edit the user wants done fast to a teammate - urgency is not an exemption.
 - No exception for a judgment-bearing skill (e.g. `refine-plan`), even via a slash command: MUST spawn a teammate to run it.
 
 ## Only surface substantive teammate updates
