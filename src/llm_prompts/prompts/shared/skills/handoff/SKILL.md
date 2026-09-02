@@ -15,6 +15,12 @@ Write to `HANDOFF.md` in the workspace root (or the directory the work lives in)
 unless the user names another location. One handoff doc at a time - overwrite a
 stale `HANDOFF.md` that is no longer relevant.
 
+- Before writing, MUST check whether `HANDOFF.md` already exists; if so, MUST
+  read it and confirm it belongs to the current effort.
+- Where it belongs to a different effort, MUST NOT overwrite it - append a new
+  section or write a differently-named file instead, and surface the collision
+  to the user.
+
 ## Two directions: writing vs. resuming
 
 This skill covers *writing* a handoff at session end. "do/resume/pick up the
@@ -73,6 +79,14 @@ Then include, in order:
 - Do not dump the diff or the play-by-play. Link the commit; summarise intent.
 - Keep it scannable: bullets, short sections.
 - Point to the plan file if one exists for the effort.
+- MUST point the resuming session at the governing rules file for the
+  workspace (if any) and at the authoritative memory entity for the effort -
+  not just at the doc itself.
+- For multi-step work, MUST instruct the resuming session to track steps with
+  the harness task tools (TaskCreate/TaskUpdate/TaskList), updating status as
+  it goes.
+- For multi-phase work, MUST carry context (or explicit references: file:line,
+  gate) for EVERY remaining phase, not only the next one.
 - After writing the doc, run the `session-end` skill for the rest of session
   close (memory persisted, commit/push status resolved, rule-file reflection)
   - except its step 5 comprehensive TODO/task review, which this skill's own
