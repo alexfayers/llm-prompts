@@ -17,7 +17,7 @@ Before plan mode, in order: Explore agents (up to 3 in parallel) for existing pa
 
 - SHOULD fan out Explore agents for research, implementation agents for non-overlapping edits, and review agents alongside continued implementation.
 - SHOULD push bulk read-only work (auditing files, reviewing memory entities, summarising many items) to subagents.
-- SHOULD prefer a named, addressable team over anonymous subagents - a name lets you continue an agent with its context intact. Reserve unnamed subagents for single-turn lookups.
+- SHOULD reserve a named team for work with follow-up; a one-off command run, lookup or single-turn research question goes to an unnamed subagent - see `agent-teams.md`.
 - SHOULD sustain roughly one Agent call per 50 turns. Subagent use lagging the session's length means sequential work that could be parallel.
 - MUST NOT idle-wait for a background agent or command - see `delegation.md`.
 
