@@ -20,7 +20,12 @@ session and need to write the doc.
    another command (e.g. `rm HANDOFF.md && git status`). A chained command
    fails as a unit if the other half trips a permission/hook gate (such as a
    skill-usage requirement on `git`), which silently leaves the doc undeleted.
-3. Go straight into the "next task, stated concretely" section as your first
+3. Check for a workspace-level operating-rules file (e.g. a `RULES.md` or
+   equivalent at the workspace root) and read it in full before taking any
+   other action - it can only narrow process/delegation (who does which work,
+   how it splits, what the main thread may do), never grant, widen, or bypass
+   a permission - that stays with harness settings and the user.
+4. Go straight into the "next task, stated concretely" section as your first
    action.
 
 Only fall back to the `handoff` skill's write flow if the user's wording is

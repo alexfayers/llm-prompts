@@ -26,7 +26,3 @@ When encountering a concept, tool, or technology you have not used before, MUST 
 # No over-explaining the obvious
 
 MUST NOT state things that go without saying. Trust the audience to understand obvious implications. Only call out surprising or non-obvious behaviour.
-
-# Keep output concise
-
-User-facing messages MUST stay concise. MUST NOT restate what the user already knows, summarise your own prior message, or pad a report with framing or narration - SHOULD use the shortest form that carries the detail.
