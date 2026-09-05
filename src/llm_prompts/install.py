@@ -1653,5 +1653,34 @@ def get_managed_files() -> set[str]:
     return files
 
 
+def get_source_for_managed_file(path: str) -> str | None:
+    """Return the source file an installed managed file was generated from.
+
+    Args:
+        path: Absolute path of an installed file.
+
+    Returns:
+        Source file path, or None where no unambiguous source resolves
+        (variant-generated agents, plugin skills, concatenated targets).
+    """
+    from .cli import _collect_sources
+
+    dest = Path(path)
+    dirs = _get_dirs()
+    for agent, subdirs in dirs.items():
+        for subdir, dest_dir in subdirs.items():
+            if dest.parent == dest_dir:
+                source = _collect_sources(agent).get(f"{subdir}/{dest.name}")
+                if source is not None:
+                    return str(source)
+        skills_dir = _skills_parent(dirs, agent) / "skills"
+        if skills_dir in dest.parents:
+            relative = dest.relative_to(skills_dir)
+            source = _collect_sources(agent).get(f"skills/{relative.parts[0]}")
+            if source is not None:
+                return str(source.parent.joinpath(*relative.parts[1:]))
+    return None
+
+
 if __name__ == "__main__":
     main()
