@@ -13,6 +13,8 @@ When the user asks to do something that is **not directly related** to the curre
 
 NOTE: You are allowed to write to files in {{PLAN_MODE}} for this use case, but prefer memory over a new file per the default above.
 
+An idea YOU raised is a suggestion until the user says go - MUST NOT act on it, and MUST NOT create a tracking task for it either. Immediate tracking applies only to work the user asked for.
+
 ## Tracking completion in an existing TODO/task-list file
 
 When working through a list of items in an existing file (a `TODO.md`, a checklist in a plan doc, a persisted task list), mark each entry done as soon as you finish it - the same way completed work is marked `resolved` in memory. Do not wait until the end of the session to update the file in one batch.
