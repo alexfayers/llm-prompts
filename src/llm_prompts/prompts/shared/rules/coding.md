@@ -35,3 +35,4 @@ copilot_apply_to: '**'
 - For any change that adds or repositions UI, you MUST render the page and look at it before claiming done - an API test verifies data, not appearance. Where a plan flagged a layout risk, MUST resolve it in the design rather than defer.
 - Before running tests, a test MUST exist for the expected behaviour.
 - When delegating test-writing, MUST state that the motivating real-world case stays out of the suite, or the delegate hardcodes it.
+- MUST NOT predict a runnable tool's output (linter, formatter, type checker, tests, compiler, `--help`) - run it and read the result.
