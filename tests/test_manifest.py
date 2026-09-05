@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,7 +13,7 @@ from llm_prompts.manifest import delete_agent, read_manifest, write_manifest
 
 
 @pytest.fixture
-def manifest_path(tmp_path: Path):
+def manifest_path(tmp_path: Path) -> Iterator[Path]:
     """Redirect the manifest to a temp file for the duration of a test."""
     path = tmp_path / "installed.json"
     with patch("llm_prompts.manifest.MANIFEST_PATH", path):

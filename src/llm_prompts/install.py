@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from .render_template import (
     find_unreplaced_variables,
@@ -20,6 +20,9 @@ from .render_template import (
     strip_gating_keys,
     substitute_variables,
 )
+
+if TYPE_CHECKING:
+    from .manifest import AgentManifest
 
 LogLevel = Literal["debug", "info", "warn", "error", "success"]
 
@@ -396,7 +399,7 @@ class _Agent:
 
     name: str
     root_dir: Path
-    dirs: dict
+    dirs: dict[str, dict[str, Path]]
 
     def vars_path(self) -> Path:
         """Return the path to the agent's variables JSON file."""
@@ -812,7 +815,8 @@ def _builtin_skill_vars(vars_path: Path) -> dict[str, str]:
     """
     if not vars_path.exists():
         return {}
-    return json.loads(_read_text(vars_path))
+    data: dict[str, str] = json.loads(_read_text(vars_path))
+    return data
 
 
 def _materialize_builtin_skill(
@@ -1327,7 +1331,7 @@ def try_install_memory_codex() -> None:
 def _cleanup_stale(
     agent_name: str,
     current_files: list[str],
-    previous_manifest: dict,
+    previous_manifest: "dict[str, AgentManifest]",
 ) -> None:
     """Remove files that were previously installed but are no longer managed.
 

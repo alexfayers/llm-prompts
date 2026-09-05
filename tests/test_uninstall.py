@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -130,7 +131,7 @@ class TestDisallowUpdateClaudeCode:
 
 
 @pytest.fixture
-def installed_home(tmp_path: Path):
+def installed_home(tmp_path: Path) -> Iterator[Path]:
     """Run `install claude-code` into a fake home with overlays/manifest redirected."""
     home = tmp_path / "home"
     home.mkdir()

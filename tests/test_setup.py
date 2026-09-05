@@ -151,9 +151,10 @@ class TestBuildCommandsRegression:
     """Regression: git-source tools infer overlays so mcp-memory folds into its targets."""
 
     def _shipped_tools(self) -> list[dict[str, object]]:
-        return tomllib.loads(setup._DEFAULT_CONFIG)["tools"]
+        tools: list[dict[str, object]] = tomllib.loads(setup._DEFAULT_CONFIG)["tools"]
+        return tools
 
-    def _canned_pyproject(self, git_url: str) -> dict | None:
+    def _canned_pyproject(self, git_url: str) -> dict[str, Any] | None:
         by_repo: dict[str, dict[str, Any]] = {
             "llm-prompts": {
                 "project": {
@@ -214,7 +215,9 @@ class TestRemoteHead:
         fake_subprocess.on("ls-remote", returncode=128)
         assert setup._remote_head("https://x/repo.git", None) is None
 
-    def test_returns_none_on_empty_output(self, fake_subprocess: FakeSubprocess) -> None:
+    def test_returns_none_on_empty_output(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
         fake_subprocess.on("ls-remote", stdout="")
         assert setup._remote_head("https://x/repo.git", "main") is None
 
@@ -235,7 +238,9 @@ class TestCommitSubjectsBetween:
             "second",
         ]
 
-    def test_returns_none_on_failure(self, fake_subprocess: FakeSubprocess, tmp_path: Path) -> None:
+    def test_returns_none_on_failure(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
         repo = tmp_path / "repo"
         fake_subprocess.on("log", "--pretty=format:%s", repo=repo, returncode=1)
         assert setup._commit_subjects_between(repo, "nope1", "nope2") is None
@@ -267,6 +272,4 @@ class TestFormatUpdateMessage:
         ) == ["[core] update available (abc123aa -> def456bb)"]
 
     def test_falls_back_to_bare_message_without_shas(self) -> None:
-        assert setup._format_update_message("core", []) == [
-            "[core] update available"
-        ]
+        assert setup._format_update_message("core", []) == ["[core] update available"]

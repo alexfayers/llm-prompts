@@ -67,7 +67,9 @@ class TestFinalsAndUnits:
 
 class TestResolveFrontmatter:
     def test_plain_single_line_values_pass_through(self) -> None:
-        lines, _ = split_frontmatter("---\nname: worker\ndescription: A thing\n---\n")
+        split = split_frontmatter("---\nname: worker\ndescription: A thing\n---\n")
+        assert split is not None
+        lines, _ = split
         assert resolve_frontmatter(lines) == {
             "name": "worker",
             "description": "A thing",
@@ -75,17 +77,23 @@ class TestResolveFrontmatter:
 
     def test_folds_block_scalar_with_spaces(self) -> None:
         content = "---\ndescription: >-\n  First line.\n  Second line.\n---\n"
-        lines, _ = split_frontmatter(content)
+        split = split_frontmatter(content)
+        assert split is not None
+        lines, _ = split
         assert resolve_frontmatter(lines) == {"description": "First line. Second line."}
 
     def test_literal_block_scalar_keeps_newlines(self) -> None:
         content = "---\nnotes: |\n  First line.\n  Second line.\n---\n"
-        lines, _ = split_frontmatter(content)
+        split = split_frontmatter(content)
+        assert split is not None
+        lines, _ = split
         assert resolve_frontmatter(lines) == {"notes": "First line.\nSecond line."}
 
     def test_block_scalar_followed_by_another_key(self) -> None:
         content = "---\ndescription: >-\n  Folded text.\ndisallowedTools: Agent\n---\n"
-        lines, _ = split_frontmatter(content)
+        split = split_frontmatter(content)
+        assert split is not None
+        lines, _ = split
         assert resolve_frontmatter(lines) == {
             "description": "Folded text.",
             "disallowedTools": "Agent",
@@ -104,7 +112,9 @@ class TestResolveFrontmatter:
             "disallowedTools: Agent\n"
             "---\n"
         )
-        lines, _ = split_frontmatter(content)
+        split = split_frontmatter(content)
+        assert split is not None
+        lines, _ = split
         resolved = resolve_frontmatter(lines)
         assert resolved is not None
         assert (
@@ -563,9 +573,7 @@ class TestCheckWiresCollectionMetric:
             result = check([tmp_path], targets=("claude-code", "copilot"))
 
         collection = {
-            a.target: a.value
-            for a in result.artifacts
-            if a.metric == COLLECTION_BYTES
+            a.target: a.value for a in result.artifacts if a.metric == COLLECTION_BYTES
         }
         assert set(collection) == {"claude-code", "copilot"}
         assert all(isinstance(v, int) and v > 0 for v in collection.values())
@@ -622,9 +630,7 @@ class TestDeclaredAllowances:
 
         with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
             artifacts = list(
-                iter_artifacts(
-                    [tmp_path], targets=("claude-code", "copilot", "kiro")
-                )
+                iter_artifacts([tmp_path], targets=("claude-code", "copilot", "kiro"))
             )
 
         rule_bytes = [
@@ -651,9 +657,7 @@ class TestDeclaredAllowances:
         assert FRONTMATTER_VALID not in allowances
         assert errors
         assert all(
-            a.allowance is None
-            for a in artifacts
-            if a.metric == FRONTMATTER_VALID
+            a.allowance is None for a in artifacts if a.metric == FRONTMATTER_VALID
         )
 
 
@@ -714,9 +718,7 @@ class TestAllowanceScoping:
             violations = evaluate(artifacts)
 
         core_artifact = next(
-            a
-            for a in artifacts
-            if a.metric == RULE_BYTES and a.dest_name == "core.md"
+            a for a in artifacts if a.metric == RULE_BYTES and a.dest_name == "core.md"
         )
         assert core_artifact.allowance is None
         assert any(
@@ -1010,7 +1012,9 @@ class TestCheckSource:
         source = Path(str(files("llm_prompts") / "prompts")) / "shared" / "rules"
         source = source / next(source.glob("*.md")).name
 
-        check_source(source, "# Small\n\nJust a little text.\n", targets=("claude-code",))
+        check_source(
+            source, "# Small\n\nJust a little text.\n", targets=("claude-code",)
+        )
 
         assert capsys.readouterr().err == ""
 

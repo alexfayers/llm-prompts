@@ -242,10 +242,10 @@ llm-prompts setup              # install all tools as editable
 llm-prompts install {agent}    # install rules/workflows/skills
 ```
 
-### Linting
+### Checks
 
 ```bash
-uv run ruff check --fix && uv run ruff format
+just    # lint, type-check, test
 ```
 
 ## Related

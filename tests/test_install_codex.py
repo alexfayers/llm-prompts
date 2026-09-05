@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -145,7 +146,7 @@ class TestCodexAgentsMdConcat:
 
 
 @pytest.fixture
-def codex_home(tmp_path: Path):
+def codex_home(tmp_path: Path) -> Iterator[Path]:
     """Run `install codex` into a fake home with overlays and manifest redirected."""
     home = tmp_path / "home"
     home.mkdir()
@@ -193,7 +194,9 @@ class TestCodexInstallLayout:
         assert (skills / "tdd").is_dir() and not (skills / "tdd").is_symlink()
         assert not (skills / "ask-codex").exists()
 
-    def test_reinstall_removes_stale_prompt(self, codex_home: Path, tmp_path: Path):
+    def test_reinstall_removes_stale_prompt(
+        self, codex_home: Path, tmp_path: Path
+    ) -> None:
         stray = codex_home / ".codex" / "prompts" / "stray.md"
         stray.write_text("stale", encoding="utf-8")
         manifest = tmp_path / "installed.json"
@@ -227,7 +230,9 @@ class TestCodexManagedDirs:
 
 
 class TestCodexDocLimit:
-    def _write(self, tmp_path: Path, config: str, agents_md_bytes: int):
+    def _write(
+        self, tmp_path: Path, config: str, agents_md_bytes: int
+    ) -> tuple[Path, Path]:
         config_path = tmp_path / "config.toml"
         config_path.write_text(config, encoding="utf-8")
         agents_md = tmp_path / "AGENTS.md"

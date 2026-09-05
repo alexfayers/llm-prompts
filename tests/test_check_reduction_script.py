@@ -45,7 +45,10 @@ def _run_main(
         pytest.raises(SystemExit) as exc,
     ):
         mod.main()
-    return exc.value.code, json.loads(capsys.readouterr().out)
+    code = exc.value.code
+    assert isinstance(code, int)
+    payload: dict[str, object] = json.loads(capsys.readouterr().out)
+    return code, payload
 
 
 class TestParseNumstat:
@@ -90,7 +93,10 @@ class TestMain:
     """Tests for the CLI entrypoint's wiring into git diff."""
 
     def test_net_negative_diff_exits_zero(
-        self, mod: ModuleType, fake_subprocess: FakeSubprocess, capsys: pytest.CaptureFixture[str]
+        self,
+        mod: ModuleType,
+        fake_subprocess: FakeSubprocess,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         fake_subprocess.on("diff", "--numstat", stdout="1\t5\tf.txt\n")
 
@@ -100,7 +106,10 @@ class TestMain:
         assert code == 0
 
     def test_net_positive_diff_exits_one(
-        self, mod: ModuleType, fake_subprocess: FakeSubprocess, capsys: pytest.CaptureFixture[str]
+        self,
+        mod: ModuleType,
+        fake_subprocess: FakeSubprocess,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         fake_subprocess.on("diff", "--numstat", stdout="20\t1\tf.txt\n")
 

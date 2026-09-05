@@ -35,14 +35,14 @@ def mod() -> ModuleType:
     return _load()
 
 
-def _assistant(tool_id: str, name: str, command: str = "") -> dict:
+def _assistant(tool_id: str, name: str, command: str = "") -> dict[str, Any]:
     tool_use: dict[str, Any] = {"type": "tool_use", "id": tool_id, "name": name}
     if name == "Bash":
         tool_use["input"] = {"command": command}
     return {"type": "assistant", "message": {"content": [tool_use]}}
 
 
-def _result(tool_id: str, *, error: bool, text: str = "ok") -> dict:
+def _result(tool_id: str, *, error: bool, text: str = "ok") -> dict[str, Any]:
     return {
         "type": "user",
         "message": {
@@ -58,7 +58,7 @@ def _result(tool_id: str, *, error: bool, text: str = "ok") -> dict:
     }
 
 
-def _session(messages: list[dict]) -> dict:
+def _session(messages: list[dict[str, Any]]) -> dict[str, Any]:
     return {"session_id": "s1", "project": "p1", "title": "t", "messages": messages}
 
 

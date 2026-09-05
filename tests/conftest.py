@@ -5,13 +5,14 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
-SideEffect = (
-    BaseException | type[BaseException] | Callable[[list[str], dict[str, Any]], Any]
-)
+SideEffectCall = Callable[
+    [list[str], dict[str, Any]], subprocess.CompletedProcess[str] | None
+]
+SideEffect = BaseException | type[BaseException] | SideEffectCall
 
 
 def _verb_tokens(argv: list[str]) -> list[str]:
@@ -147,7 +148,10 @@ class FakeSubprocess:
                 raise effect
             if isinstance(effect, type) and issubclass(effect, BaseException):
                 raise effect()
-            result = effect(argv, kwargs)
+            # isinstance(effect, type) cannot separate an exception class from a
+            # callable class, so mypy loses the callable member here.
+            call = cast(SideEffectCall, effect)
+            result = call(argv, kwargs)
             if result is not None:
                 return result
         stdout, returncode, stderr = route.next_values()

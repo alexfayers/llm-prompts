@@ -222,7 +222,11 @@ def _declared_allowances(root: Path) -> tuple[dict[str, dict[str, int]], list[st
         metric_errors = []
         resolved: dict[str, int] = {}
         for dest_name, ceiling in entries.items():
-            if isinstance(ceiling, bool) or not isinstance(ceiling, int) or ceiling <= 0:
+            if (
+                isinstance(ceiling, bool)
+                or not isinstance(ceiling, int)
+                or ceiling <= 0
+            ):
                 metric_errors.append(
                     f"{path}: '{metric}.{dest_name}' must be a positive int, "
                     f"got {ceiling!r}"

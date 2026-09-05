@@ -4,8 +4,20 @@ import argparse
 import json
 import subprocess
 import sys
+from typing import TypedDict
 
 NEUTRAL_BAND = 5
+
+EvalResult = TypedDict(
+    "EvalResult",
+    {
+        "added": int,
+        "removed": int,
+        "net": int,
+        "pass": bool,
+        "reason": str,
+    },
+)
 
 
 def run_git_diff(range_arg: str | None) -> str:
@@ -28,7 +40,7 @@ def parse_numstat(output: str) -> tuple[int, int]:
     return added, removed
 
 
-def evaluate(added: int, removed: int) -> dict:
+def evaluate(added: int, removed: int) -> EvalResult:
     """Classify a diff by net line change against the tidy-code threshold table."""
     net = added - removed
     if net < 0:

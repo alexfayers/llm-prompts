@@ -2,6 +2,7 @@
 
 import json
 import sys
+from typing import Any
 
 QUALITY = [
     "elegance",
@@ -17,7 +18,7 @@ THRESHOLD = 9.0
 EVIDENCE_THRESHOLD = 7
 
 
-def validate(data: dict) -> dict:
+def validate(data: dict[str, Any]) -> dict[str, Any]:
     """Validate scores with evidence, compute averages, and gate."""
     scores = data.get("scores", {})
     evidence = data.get("evidence", {})

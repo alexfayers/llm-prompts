@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -51,7 +52,9 @@ def _make_variant_template(
 
 
 @pytest.fixture(autouse=True)
-def _isolated_model_catalogue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def _isolated_model_catalogue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
     """Resolve models against an empty home so tests never read the real settings."""
     monkeypatch.delenv("CLAUDE_CODE_USE_BEDROCK", raising=False)
     with patch("llm_prompts.install.Path.home", return_value=tmp_path / "empty-home"):
@@ -227,7 +230,9 @@ class TestApplyVariantFrontmatterBlockScalarDescription:
             content, "architect", "opus", "medium", "claude-opus-5"
         )
 
-        frontmatter_lines, _ = split_frontmatter(result)
+        split = split_frontmatter(result)
+        assert split is not None
+        frontmatter_lines, _ = split
         parsed = yaml.safe_load("\n".join(frontmatter_lines))
         assert parsed["description"] == (
             "Opus sub-lead for the pipeline. Second line of the folded description. "
@@ -253,7 +258,9 @@ class TestApplyVariantFrontmatterBlockScalarDescription:
             content, "worker", "sonnet", "low", "claude-sonnet-5"
         )
 
-        frontmatter_lines, _ = split_frontmatter(result)
+        split = split_frontmatter(result)
+        assert split is not None
+        frontmatter_lines, _ = split
         parsed = yaml.safe_load("\n".join(frontmatter_lines))
         assert parsed["description"] == "Only line here. [sonnet, low effort]"
         assert parsed["model"] == "claude-sonnet-5"
@@ -461,7 +468,7 @@ class TestInstallAgents:
 
 
 @pytest.fixture
-def claude_home(tmp_path: Path):
+def claude_home(tmp_path: Path) -> Iterator[Path]:
     """Run `install claude-code` into a fake home with overlays/manifest redirected."""
     home = tmp_path / "home"
     home.mkdir()
@@ -538,9 +545,9 @@ class TestClaudeCodeAgentsInstallLayout:
             "architect-opus-high.md",
             "architect-opus-xhigh.md",
         ):
-            frontmatter_lines, _ = split_frontmatter(
-                (agents_dir / name).read_text(encoding="utf-8")
-            )
+            split = split_frontmatter((agents_dir / name).read_text(encoding="utf-8"))
+            assert split is not None
+            frontmatter_lines, _ = split
             parsed = yaml.safe_load("\n".join(frontmatter_lines))
             assert isinstance(parsed, dict)
             assert parsed["description"].endswith("effort]")

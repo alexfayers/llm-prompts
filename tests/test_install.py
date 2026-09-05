@@ -1013,9 +1013,7 @@ class TestPathsScoping:
         assert output.startswith('---\npaths:\n  - "**/*.py"\n---')
         assert output.endswith("\n")
 
-    def test_claude_code_emits_every_glob_in_source_order(
-        self, tmp_path: Path
-    ) -> None:
+    def test_claude_code_emits_every_glob_in_source_order(self, tmp_path: Path) -> None:
         output = self._render(
             tmp_path, "---\npaths: '**/*.py, **/*.pyi'\n---\n\n# Rule\n", "claude-code"
         )
@@ -1049,7 +1047,9 @@ class TestPathsScoping:
         assert "**/*.py" not in output
 
     def test_kiro_paths_implies_file_match_inclusion(self, tmp_path: Path) -> None:
-        output = self._render(tmp_path, "---\npaths: '**/*.py'\n---\n\n# Rule\n", "kiro")
+        output = self._render(
+            tmp_path, "---\npaths: '**/*.py'\n---\n\n# Rule\n", "kiro"
+        )
         assert "inclusion: fileMatch" in output
         assert "fileMatchPattern: '**/*.py'" in output
         assert output.endswith("\n")
@@ -1087,8 +1087,7 @@ class TestPathsScoping:
 
 class TestShippedTestingRule:
     RULE = (
-        Path(__file__).parent.parent
-        / "src/llm_prompts/prompts/shared/rules/testing.md"
+        Path(__file__).parent.parent / "src/llm_prompts/prompts/shared/rules/testing.md"
     )
 
     def _globs(self) -> list[str]:

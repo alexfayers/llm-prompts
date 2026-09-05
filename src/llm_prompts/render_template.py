@@ -253,9 +253,7 @@ def render_for_kiro(body: str, frontmatter: dict[str, str]) -> str:
         normalized body only.
     """
     patterns = _scoped_paths(frontmatter, "kiro_file_match_pattern")
-    inclusion = frontmatter.get("kiro_inclusion") or (
-        "fileMatch" if patterns else None
-    )
+    inclusion = frontmatter.get("kiro_inclusion") or ("fileMatch" if patterns else None)
     if not inclusion:
         return normalize_whitespace(body)
 

@@ -29,7 +29,8 @@ def read_manifest() -> dict[str, AgentManifest]:
         return {}
     try:
         data = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-        return data.get("agents", {})
+        agents: dict[str, AgentManifest] = data.get("agents", {})
+        return agents
     except (json.JSONDecodeError, KeyError):
         return {}
 

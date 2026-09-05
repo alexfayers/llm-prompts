@@ -228,7 +228,9 @@ class TestLocalSourceMessages:
     def test_no_git_dir(self, tmp_path: Path) -> None:
         assert _local_source_messages("core", str(tmp_path)) == []
 
-    def test_rev_list_fails(self, tmp_path: Path, fake_subprocess: FakeSubprocess) -> None:
+    def test_rev_list_fails(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
         (tmp_path / ".git").mkdir()
         fake_subprocess.on("rev-list", "--count", returncode=128)
         result = _local_source_messages("core", str(tmp_path))
@@ -246,7 +248,10 @@ class TestLocalSourceMessages:
 
 class TestPullLocalSources:
     def test_diverged_repo_is_rebased_onto_upstream(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], fake_subprocess: FakeSubprocess
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         clone = tmp_path / "clone"
         (clone / ".git").mkdir(parents=True)
@@ -269,7 +274,10 @@ class TestPullLocalSources:
         )
 
     def test_fast_forwardable_repo_is_pulled_without_rebase(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], fake_subprocess: FakeSubprocess
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         clone = tmp_path / "clone"
         (clone / ".git").mkdir(parents=True)
@@ -286,7 +294,10 @@ class TestPullLocalSources:
         assert "[core] pulled 1 new commit(s)" in capsys.readouterr().out
 
     def test_conflicting_rebase_is_aborted_and_reported(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], fake_subprocess: FakeSubprocess
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         clone = tmp_path / "clone"
         (clone / ".git").mkdir(parents=True)
@@ -312,7 +323,10 @@ class TestPullLocalSources:
         )
 
     def test_output_lines_preserve_config_order(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], fake_subprocess: FakeSubprocess
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         clones = {name: tmp_path / name for name in ("first", "second", "third")}
         for clone in clones.values():
@@ -355,7 +369,10 @@ class TestPullLocalSources:
                 assert _pull_local_sources() == {"changed"}
 
     def test_rebase_failure_lines_stay_adjacent_and_ordered(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], fake_subprocess: FakeSubprocess
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         conflict = tmp_path / "conflict"
         (conflict / ".git").mkdir(parents=True)
@@ -515,7 +532,9 @@ class TestUpdateCommandPullsPlugins:
 
 
 class TestRestartMemoryService:
-    def test_restarts_via_the_mcp_memory_binary(self, fake_subprocess: FakeSubprocess) -> None:
+    def test_restarts_via_the_mcp_memory_binary(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
         with patch("shutil.which", return_value="/usr/local/bin/mcp-memory"):
             _restart_memory_service()
 
@@ -783,7 +802,10 @@ class TestWritePyprojectStamp:
 
 class TestRunSetupForceReinstall:
     def _run(
-        self, fake_subprocess: FakeSubprocess, commands: list, force_reinstall: set[str]
+        self,
+        fake_subprocess: FakeSubprocess,
+        commands: list[tuple[str, list[str], list[str] | None, list[str]]],
+        force_reinstall: set[str],
     ) -> list[list[str]]:
         with (
             patch("llm_prompts.setup._load_config", return_value=[]),
@@ -796,17 +818,25 @@ class TestRunSetupForceReinstall:
         return fake_subprocess.commands
 
     def test_forced_core_skips_upgrade(self, fake_subprocess: FakeSubprocess) -> None:
-        commands = [("core", ["uv", "install"], ["uv", "upgrade"], [])]
+        commands: list[tuple[str, list[str], list[str] | None, list[str]]] = [
+            ("core", ["uv", "install"], ["uv", "upgrade"], [])
+        ]
         calls = self._run(fake_subprocess, commands, {"core"})
         assert calls == [["uv", "install"]]
 
-    def test_stale_overlay_forces_its_core(self, fake_subprocess: FakeSubprocess) -> None:
-        commands = [("core", ["uv", "install"], ["uv", "upgrade"], ["hooks"])]
+    def test_stale_overlay_forces_its_core(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        commands: list[tuple[str, list[str], list[str] | None, list[str]]] = [
+            ("core", ["uv", "install"], ["uv", "upgrade"], ["hooks"])
+        ]
         calls = self._run(fake_subprocess, commands, {"hooks"})
         assert calls == [["uv", "install"]]
 
     def test_unforced_core_uses_upgrade(self, fake_subprocess: FakeSubprocess) -> None:
-        commands = [("core", ["uv", "install"], ["uv", "upgrade"], [])]
+        commands: list[tuple[str, list[str], list[str] | None, list[str]]] = [
+            ("core", ["uv", "install"], ["uv", "upgrade"], [])
+        ]
         calls = self._run(fake_subprocess, commands, {"other"})
         assert calls[0] == ["uv", "upgrade"]
 

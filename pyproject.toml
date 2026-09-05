@@ -3,7 +3,7 @@ name = "llm-prompts"
 version = "0.1.0"
 description = "Cross-agent rules, workflows, and skills for LLM coding assistants"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 
 [project.scripts]
 llm-prompts = "llm_prompts.cli:main"
@@ -28,9 +28,24 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "src/llm_prompts/install.py" = ["T201"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+pythonpath = ["src"]
+addopts = ["--color=yes"]
+
+[tool.mypy]
+strict = true
+
 [dependency-groups]
 dev = [
+    "cline-hooks",
     "mypy>=1.20.2",
     "pytest>=9.0.3",
     "pyyaml>=6.0.2",
+    "ruff>=0.11.0",
+    "types-pyyaml>=6.0.12",
 ]
+
+[tool.uv.sources]
+cline-hooks = { path = "../cline-hooks", editable = true }

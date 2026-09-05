@@ -171,7 +171,7 @@ def _get_installed_commit(package_name: str) -> str | None:
             try:
                 data = json.loads(dist_info.read_text(encoding="utf-8"))
                 vcs_info = data.get("vcs_info", {})
-                commit_id = vcs_info.get("commit_id")
+                commit_id: str | None = vcs_info.get("commit_id")
                 if commit_id:
                     return commit_id
             except (OSError, json.JSONDecodeError):

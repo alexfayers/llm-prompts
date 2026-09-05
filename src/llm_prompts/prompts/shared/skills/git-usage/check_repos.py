@@ -5,8 +5,26 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import TypedDict
 
 AGENTS = ("cline", "copilot", "kiro", "claude-code", "codex")
+
+
+class RepoStatus(TypedDict, total=False):
+    """Git status entry for a single repository."""
+
+    path: str
+    uncommitted: list[str]
+    unpushed: list[str]
+    no_upstream: bool
+    error: str
+
+
+class CheckResult(TypedDict):
+    """Result of inspecting every repo in the workspace."""
+
+    repos: list[RepoStatus]
+    clean: bool
 
 
 def source_paths() -> list[str]:
@@ -58,9 +76,9 @@ def collect_repos(workspace: Path) -> list[str]:
     return list(dict.fromkeys(roots))
 
 
-def inspect_repo(repo: str) -> dict:
+def inspect_repo(repo: str) -> RepoStatus:
     """Report uncommitted changes, unpushed commits, and upstream state for one repo."""
-    entry: dict = {
+    entry: RepoStatus = {
         "path": repo,
         "uncommitted": [],
         "unpushed": [],
@@ -109,7 +127,7 @@ def inspect_repo(repo: str) -> dict:
     return entry
 
 
-def check_repos(workspace: Path) -> dict:
+def check_repos(workspace: Path) -> CheckResult:
     """Inspect every repo and return {repos, clean}; clean is true iff nothing outstanding."""
     repos = [inspect_repo(repo) for repo in collect_repos(workspace)]
     clean = all(

@@ -6,6 +6,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from typing import TypedDict
 
 MARKERS = ("TODO", "FIXME", "HACK", "XXX", "BUG")
 MARKER_RE = re.compile(r"\b(" + "|".join(MARKERS) + r")\b[:\s(-]*(.*)")
@@ -27,6 +28,24 @@ VENDOR_DIRS = frozenset(
 )
 
 
+class TodoHit(TypedDict):
+    """A single TODO/FIXME/HACK/XXX/BUG marker found in a file."""
+
+    file: str
+    line: int
+    type: str
+    task: str
+
+
+class ScanResult(TypedDict):
+    """Result of scanning a workspace for TODOs."""
+
+    root: str
+    files_scanned: int
+    todos: list[TodoHit]
+    todo_files: list[str]
+
+
 def list_files(root: Path) -> list[Path]:
     """Walk root, pruning hidden and VENDOR_DIRS directories, returning file paths."""
     files: list[Path] = []
@@ -38,10 +57,10 @@ def list_files(root: Path) -> list[Path]:
     return files
 
 
-def find_todos(root: Path) -> dict:
+def find_todos(root: Path) -> ScanResult:
     """Scan the tree; return {root, files_scanned, todos, todo_files}."""
     files = list_files(root)
-    todos: list[dict] = []
+    todos: list[TodoHit] = []
     for path in files:
         todos.extend(scan_file(path, root))
     todo_files = [str(f.relative_to(root)) for f in files if f.name == "TODO.md"]
@@ -53,10 +72,10 @@ def find_todos(root: Path) -> dict:
     }
 
 
-def scan_file(path: Path, root: Path) -> list[dict]:
+def scan_file(path: Path, root: Path) -> list[TodoHit]:
     """Return marker hits ({file, line, type, task}) for one file; [] if unreadable/binary."""
     rel = str(path.relative_to(root))
-    hits: list[dict] = []
+    hits: list[TodoHit] = []
     text = path.read_text(encoding="utf-8", errors="ignore")
     for lineno, line in enumerate(text.splitlines(), start=1):
         match = MARKER_RE.search(line)

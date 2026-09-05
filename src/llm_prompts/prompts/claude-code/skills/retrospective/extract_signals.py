@@ -7,6 +7,7 @@ import sys
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+from typing import Any, TypedDict
 
 CORRECTION_PATTERNS = re.compile(
     r"(?i)(?:^|\n)\s*(?:"
@@ -16,6 +17,26 @@ CORRECTION_PATTERNS = re.compile(
     r")",
 )
 INTERRUPTION_MARKER = "[Request interrupted by user]"
+
+
+class SessionData(TypedDict):
+    """Parsed session transcript: title, project, and raw message objects."""
+
+    path: str
+    session_id: str
+    project: str
+    title: str
+    messages: list[dict[str, Any]]
+
+
+class SessionMeta(TypedDict):
+    """Session-level aggregate metadata: turns, duration."""
+
+    session_id: str
+    project: str
+    title: str
+    turns: int
+    duration_minutes: int
 
 
 def find_recent_sessions(n: int) -> list[Path]:
@@ -28,9 +49,9 @@ def find_recent_sessions(n: int) -> list[Path]:
     return jsonl_files[:n]
 
 
-def parse_session(path: Path) -> dict:
+def parse_session(path: Path) -> SessionData:
     """Parse a single session JSONL file and extract signals."""
-    messages: list[dict] = []
+    messages: list[dict[str, Any]] = []
     title = path.stem[:12]
     project = path.parent.name
 
@@ -54,7 +75,7 @@ def parse_session(path: Path) -> dict:
     }
 
 
-def extract_corrections(session: dict) -> list[dict]:
+def extract_corrections(session: SessionData) -> list[dict[str, Any]]:
     """Find user messages that correct or redirect the agent."""
     corrections = []
     messages = session["messages"]
@@ -135,7 +156,7 @@ def _is_gate_result(content: str) -> bool:
     return isinstance(data, dict) and isinstance(data.get("pass"), bool)
 
 
-def _result_is_error(result: dict) -> bool:
+def _result_is_error(result: dict[str, Any]) -> bool:
     """Determine whether a tool_result block represents a failure."""
     content = result.get("content", "")
     if isinstance(content, list):
@@ -149,7 +170,7 @@ def _result_is_error(result: dict) -> bool:
     return "<tool_use_error>" in head or "Exit code 1" in head
 
 
-def extract_retries(session: dict) -> list[dict]:
+def extract_retries(session: SessionData) -> list[dict[str, Any]]:
     """Find tool calls that were retried after failure across the session.
 
     tool_result blocks live in separate user messages keyed by tool_use_id,
@@ -158,7 +179,7 @@ def extract_retries(session: dict) -> list[dict]:
     """
     messages = session["messages"]
 
-    results_by_id: dict[str, dict] = {}
+    results_by_id: dict[str, dict[str, Any]] = {}
     for msg in messages:
         content = msg.get("message", {}).get("content", [])
         if not isinstance(content, list):
@@ -167,7 +188,7 @@ def extract_retries(session: dict) -> list[dict]:
             if block.get("type") == "tool_result":
                 results_by_id[block.get("tool_use_id", "")] = block
 
-    runs: list[dict] = []
+    runs: list[dict[str, Any]] = []
     for msg in messages:
         if msg.get("type") != "assistant":
             continue
@@ -195,8 +216,8 @@ def extract_retries(session: dict) -> list[dict]:
                 }
             )
 
-    retries: list[dict] = []
-    fails: list[dict] = []
+    retries: list[dict[str, Any]] = []
+    fails: list[dict[str, Any]] = []
     for run in runs:
         if fails and (not run["error"] or run["key"] != fails[0]["key"]):
             if len(fails) >= 2:
@@ -228,9 +249,9 @@ def extract_retries(session: dict) -> list[dict]:
     return retries
 
 
-def extract_tool_patterns(session: dict) -> Counter:
+def extract_tool_patterns(session: SessionData) -> Counter[str]:
     """Count tool usage across the session."""
-    counter: Counter = Counter()
+    counter: Counter[str] = Counter()
     for msg in session["messages"]:
         if msg.get("type") != "assistant":
             continue
@@ -243,7 +264,7 @@ def extract_tool_patterns(session: dict) -> Counter:
     return counter
 
 
-def compute_session_meta(session: dict) -> dict:
+def compute_session_meta(session: SessionData) -> SessionMeta:
     """Compute session metadata: turns, duration."""
     messages = session["messages"]
     user_turns = sum(1 for m in messages if m.get("type") == "user")
@@ -286,10 +307,10 @@ def main() -> None:
         json.dump({"error": "No transcripts found", "sessions_analysed": 0}, sys.stdout)
         return
 
-    all_corrections: list[dict] = []
-    all_retries: list[dict] = []
-    long_sessions: list[dict] = []
-    tool_totals: Counter = Counter()
+    all_corrections: list[dict[str, Any]] = []
+    all_retries: list[dict[str, Any]] = []
+    long_sessions: list[SessionMeta] = []
+    tool_totals: Counter[str] = Counter()
 
     for path in paths:
         session = parse_session(path)

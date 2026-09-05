@@ -45,24 +45,34 @@ def _run_main(
         pytest.raises(SystemExit) as exc,
     ):
         mod.main()
-    return exc.value.code, json.loads(capsys.readouterr().out)
+    code = exc.value.code
+    assert isinstance(code, int)
+    payload: dict[str, object] = json.loads(capsys.readouterr().out)
+    return code, payload
 
 
 class TestMain:
     """Tests for the CLI entrypoint against real git repos."""
 
     def test_clean_unpushed_range_is_safe(
-        self, mod: ModuleType, fake_subprocess: FakeSubprocess, capsys: pytest.CaptureFixture[str]
+        self,
+        mod: ModuleType,
+        fake_subprocess: FakeSubprocess,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         fake_subprocess.on("status", "--porcelain", stdout="")
         fake_subprocess.on("rev-parse", "--abbrev-ref", "@{u}", stdout="origin/main\n")
         fake_subprocess.on(
             "log",
             "--reverse",
-            stdout=fake_subprocess.sha_subjects(("abc123", "first"), ("def456", "second")),
+            stdout=fake_subprocess.sha_subjects(
+                ("abc123", "first"), ("def456", "second")
+            ),
         )
         fake_subprocess.on("rev-list", "--min-parents=2", stdout="")
-        fake_subprocess.on_match(lambda argv: "^@{u}" in argv, stdout="abc123\ndef456\n")
+        fake_subprocess.on_match(
+            lambda argv: "^@{u}" in argv, stdout="abc123\ndef456\n"
+        )
         fake_subprocess.on("rev-list", stdout="abc123\ndef456\n")
 
         code, result = _run_main(mod, capsys)
@@ -74,7 +84,10 @@ class TestMain:
         assert result["working_tree_dirty"] is False
 
     def test_dirty_working_tree_is_unsafe(
-        self, mod: ModuleType, fake_subprocess: FakeSubprocess, capsys: pytest.CaptureFixture[str]
+        self,
+        mod: ModuleType,
+        fake_subprocess: FakeSubprocess,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         fake_subprocess.on("status", "--porcelain", stdout=" M a.txt\n")
         fake_subprocess.on("rev-parse", "--abbrev-ref", "@{u}", stdout="origin/main\n")
@@ -92,7 +105,10 @@ class TestMain:
         assert result["working_tree_dirty"] is True
 
     def test_merge_commit_in_range_is_unsafe(
-        self, mod: ModuleType, fake_subprocess: FakeSubprocess, capsys: pytest.CaptureFixture[str]
+        self,
+        mod: ModuleType,
+        fake_subprocess: FakeSubprocess,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         fake_subprocess.on("status", "--porcelain", stdout="")
         fake_subprocess.on("rev-parse", "--abbrev-ref", "@{u}", stdout="origin/main\n")
@@ -104,7 +120,9 @@ class TestMain:
             ),
         )
         fake_subprocess.on("rev-list", "--min-parents=2", stdout="def456\n")
-        fake_subprocess.on_match(lambda argv: "^@{u}" in argv, stdout="abc123\ndef456\n")
+        fake_subprocess.on_match(
+            lambda argv: "^@{u}" in argv, stdout="abc123\ndef456\n"
+        )
         fake_subprocess.on("rev-list", stdout="abc123\ndef456\n")
 
         code, result = _run_main(mod, capsys)
@@ -114,7 +132,10 @@ class TestMain:
         assert result["has_merge_commits"] is True
 
     def test_explicit_base_including_pushed_commit_is_unsafe(
-        self, mod: ModuleType, fake_subprocess: FakeSubprocess, capsys: pytest.CaptureFixture[str]
+        self,
+        mod: ModuleType,
+        fake_subprocess: FakeSubprocess,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         fake_subprocess.on("status", "--porcelain", stdout="")
         fake_subprocess.on(
@@ -135,17 +156,24 @@ class TestMain:
         assert result["has_pushed_commits"] is True
 
     def test_no_upstream_falls_back_to_root(
-        self, mod: ModuleType, fake_subprocess: FakeSubprocess, capsys: pytest.CaptureFixture[str]
+        self,
+        mod: ModuleType,
+        fake_subprocess: FakeSubprocess,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         fake_subprocess.on("status", "--porcelain", stdout="")
         fake_subprocess.on("rev-parse", "--abbrev-ref", "@{u}", returncode=128)
         fake_subprocess.on(
             "log",
             "--reverse",
-            stdout=fake_subprocess.sha_subjects(("abc123", "first"), ("def456", "second")),
+            stdout=fake_subprocess.sha_subjects(
+                ("abc123", "first"), ("def456", "second")
+            ),
         )
         fake_subprocess.on("rev-list", "--min-parents=2", stdout="")
-        fake_subprocess.on_match(lambda argv: "^@{u}" in argv, stdout="abc123\ndef456\n")
+        fake_subprocess.on_match(
+            lambda argv: "^@{u}" in argv, stdout="abc123\ndef456\n"
+        )
         fake_subprocess.on("rev-list", stdout="abc123\ndef456\n")
 
         code, result = _run_main(mod, capsys)
@@ -156,7 +184,10 @@ class TestMain:
         assert result["base"] == "--root"
 
     def test_no_commits_exits_with_no_resolvable_base(
-        self, mod: ModuleType, fake_subprocess: FakeSubprocess, capsys: pytest.CaptureFixture[str]
+        self,
+        mod: ModuleType,
+        fake_subprocess: FakeSubprocess,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         fake_subprocess.on("status", "--porcelain", stdout="")
         fake_subprocess.on("rev-parse", "--abbrev-ref", "@{u}", returncode=128)

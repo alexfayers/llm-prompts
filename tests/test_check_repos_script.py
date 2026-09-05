@@ -74,7 +74,9 @@ class TestInspectRepo:
         self, fake_subprocess: FakeSubprocess, mod: ModuleType, tmp_path: Path
     ) -> None:
         repo = str(tmp_path / "local")
-        fake_subprocess.on("log", "--oneline", repo=repo, stdout="abc1234 second commit\n")
+        fake_subprocess.on(
+            "log", "--oneline", repo=repo, stdout="abc1234 second commit\n"
+        )
         entry = mod.inspect_repo(repo)
         assert entry["no_upstream"] is False
         assert any("second commit" in line for line in entry["unpushed"])
@@ -123,7 +125,9 @@ class TestMain:
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        fake_subprocess.on("rev-parse", "--show-toplevel", repo=tmp_path, stdout=str(tmp_path))
+        fake_subprocess.on(
+            "rev-parse", "--show-toplevel", repo=tmp_path, stdout=str(tmp_path)
+        )
         fake_subprocess.on("status", "--porcelain", repo=tmp_path, stdout=" M a.txt\n")
         with (
             patch("sys.argv", ["check_repos", "--workspace", str(tmp_path)]),
