@@ -2,34 +2,12 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import FakeSubprocess
 
 from llm_prompts import plugins, setup
-
-
-def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", "-C", str(repo), *args],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-
-def _init_repo(repo: Path) -> None:
-    repo.mkdir(parents=True, exist_ok=True)
-    _git(repo, "init", "-q")
-    _git(repo, "config", "user.email", "test@example.com")
-    _git(repo, "config", "user.name", "Test")
-
-
-def _commit(repo: Path, filename: str, content: str, message: str) -> None:
-    (repo / filename).write_text(content)
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-qm", message)
 
 
 class TestLoadPlugins:
@@ -250,89 +228,88 @@ class TestDiscoverSkills:
 
 class TestEnsureCloned:
     def test_clones_when_missing(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_subprocess: FakeSubprocess
     ) -> None:
         upstream = tmp_path / "upstream"
-        _init_repo(upstream)
-        _commit(upstream, "SKILL.md", "# s\n", "init")
         monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
         plugin = {"name": "p", "source": f"git+file://{upstream}"}
         dest = plugins.ensure_cloned(plugin)
         assert dest is not None
-        assert (dest / ".git").is_dir()
-        assert (dest / "SKILL.md").is_file()
+        fake_subprocess.assert_sequence("clone")
+        assert fake_subprocess.commands[0] == ["git", "clone", f"file://{upstream}", str(dest)]
 
     def test_noop_when_already_cloned(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_subprocess: FakeSubprocess
     ) -> None:
-        upstream = tmp_path / "upstream"
-        _init_repo(upstream)
-        _commit(upstream, "SKILL.md", "# s\n", "init")
         monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
-        plugin = {"name": "p", "source": f"git+file://{upstream}"}
-        first = plugins.ensure_cloned(plugin)
-        assert first is not None
-        marker = first / "marker.txt"
-        marker.write_text("kept")
-        second = plugins.ensure_cloned(plugin)
-        assert second == first
-        assert marker.read_text() == "kept"
+        plugin = {"name": "p", "source": f"git+file://{tmp_path / 'upstream'}"}
+        dest = plugins._checkout_dir("p")
+        (dest / ".git").mkdir(parents=True)
+
+        result = plugins.ensure_cloned(plugin)
+
+        assert result == dest
+        assert fake_subprocess.matching("clone") == []
 
     def test_returns_none_when_clone_fails(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_subprocess: FakeSubprocess
     ) -> None:
         monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
+        fake_subprocess.on("clone", returncode=1, stderr="fatal: repository not found")
         plugin = {"name": "p", "source": f"git+file://{tmp_path / 'does-not-exist'}"}
         assert plugins.ensure_cloned(plugin) is None
 
 
 class TestPullPluginSources:
     def test_reset_hard_tracks_force_updated_upstream(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         upstream = tmp_path / "upstream"
-        _init_repo(upstream)
-        _commit(upstream, "SKILL.md", "# original\n", "init")
-
         config = tmp_path / "config.toml"
         config.write_text(
             f'[[plugins]]\nname = "p"\nsource = "git+file://{upstream}"\n'
         )
         monkeypatch.setattr(setup, "CONFIG_PATH", config)
         monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
+        dest = plugins._checkout_dir("p")
+        (dest / ".git").mkdir(parents=True)
 
-        dest = plugins.ensure_cloned(plugins._load_plugins()[0])
-        assert dest is not None
-
-        # Force-update upstream: rewrite the commit so history diverges.
-        (upstream / "SKILL.md").write_text("# rewritten\n")
-        _git(upstream, "add", "-A")
-        _git(upstream, "commit", "-q", "--amend", "-m", "rewritten")
-        new_tip = _git(upstream, "rev-parse", "HEAD").stdout.strip()
+        fake_subprocess.on("rev-parse", "--short", "HEAD", stdout=["aaaaaaa\n", "bbbbbbb\n"])
+        fake_subprocess.on("rev-parse", "--abbrev-ref", "origin/HEAD", stdout="origin/main\n")
 
         plugins.pull_plugin_sources()
 
-        local_tip = _git(dest, "rev-parse", "HEAD").stdout.strip()
-        assert local_tip == new_tip
+        fake_subprocess.assert_sequence(
+            "rev-parse --short HEAD",
+            "fetch",
+            "rev-parse --abbrev-ref",
+            "reset --hard",
+            "rev-parse --short HEAD",
+        )
+        assert "[p] updated to bbbbbbb" in capsys.readouterr().out
 
     def test_no_output_when_already_up_to_date(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         upstream = tmp_path / "upstream"
-        _init_repo(upstream)
-        _commit(upstream, "SKILL.md", "# s\n", "init")
-
         config = tmp_path / "config.toml"
         config.write_text(
             f'[[plugins]]\nname = "p"\nsource = "git+file://{upstream}"\n'
         )
         monkeypatch.setattr(setup, "CONFIG_PATH", config)
         monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
+        dest = plugins._checkout_dir("p")
+        (dest / ".git").mkdir(parents=True)
 
-        assert plugins.ensure_cloned(plugins._load_plugins()[0]) is not None
+        fake_subprocess.on("rev-parse", "--short", "HEAD", stdout="aaaaaaa\n")
         capsys.readouterr()
 
         plugins.pull_plugin_sources()
@@ -344,20 +321,19 @@ class TestPullPluginSources:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         upstream = tmp_path / "upstream"
-        _init_repo(upstream)
-        _commit(upstream, "SKILL.md", "# s\n", "init")
-
         config = tmp_path / "config.toml"
         config.write_text(
             f'[[plugins]]\nname = "p"\nsource = "git+file://{upstream}"\n'
         )
         monkeypatch.setattr(setup, "CONFIG_PATH", config)
         monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
+        dest = plugins._checkout_dir("p")
+        (dest / ".git").mkdir(parents=True)
 
-        assert plugins.ensure_cloned(plugins._load_plugins()[0]) is not None
-        _commit(upstream, "SKILL.md", "# s2\n", "second")
+        fake_subprocess.on("rev-parse", "--short", "HEAD", stdout=["aaaaaaa\n", "bbbbbbb\n"])
         capsys.readouterr()
 
         plugins.pull_plugin_sources()
@@ -369,13 +345,9 @@ class TestPullPluginSources:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         names = ["a", "b", "c"]
-        for name in names:
-            upstream = tmp_path / f"upstream-{name}"
-            _init_repo(upstream)
-            _commit(upstream, "SKILL.md", "# s\n", "init")
-
         config = tmp_path / "config.toml"
         config.write_text(
             "".join(
@@ -387,10 +359,16 @@ class TestPullPluginSources:
         monkeypatch.setattr(setup, "CONFIG_PATH", config)
         monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
 
-        for plugin in plugins._load_plugins():
-            assert plugins.ensure_cloned(plugin) is not None
         for name in names:
-            _commit(tmp_path / f"upstream-{name}", "SKILL.md", "# s2\n", "second")
+            dest = plugins._checkout_dir(name)
+            (dest / ".git").mkdir(parents=True)
+            fake_subprocess.on(
+                "rev-parse",
+                "--short",
+                "HEAD",
+                repo=dest,
+                stdout=["aaaaaaa\n", "bbbbbbb\n"],
+            )
         capsys.readouterr()
 
         plugins.pull_plugin_sources()
@@ -415,26 +393,34 @@ class TestPluginSourceMessages:
         assert "not cloned" in messages[0]
 
     def test_up_to_date_returns_empty(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_subprocess: FakeSubprocess
     ) -> None:
-        upstream = tmp_path / "upstream"
-        _init_repo(upstream)
-        _commit(upstream, "SKILL.md", "# s\n", "init")
         monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
-        plugin = {"name": "p", "source": f"git+file://{upstream}"}
-        plugins.ensure_cloned(plugin)
+        plugin = {"name": "p", "source": f"git+file://{tmp_path / 'upstream'}"}
+        dest = plugins._checkout_dir("p")
+        (dest / ".git").mkdir(parents=True)
+
+        fake_subprocess.on("rev-parse", "HEAD", stdout="aaaaaaa\n")
+        fake_subprocess.on("ls-remote", stdout="aaaaaaa\tHEAD\n")
+
         assert plugins.plugin_source_messages(plugin) == []
 
     def test_update_available_lists_commit_subjects(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_subprocess: FakeSubprocess
     ) -> None:
-        upstream = tmp_path / "upstream"
-        _init_repo(upstream)
-        _commit(upstream, "SKILL.md", "# s\n", "init")
         monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
-        plugin = {"name": "p", "source": f"git+file://{upstream}"}
-        plugins.ensure_cloned(plugin)
-        _commit(upstream, "SKILL.md", "# s2\n", "second commit subject")
+        plugin = {"name": "p", "source": f"git+file://{tmp_path / 'upstream'}"}
+        dest = plugins._checkout_dir("p")
+        (dest / ".git").mkdir(parents=True)
+
+        fake_subprocess.on("rev-parse", "HEAD", stdout="aaaaaaa\n")
+        fake_subprocess.on("ls-remote", stdout="bbbbbbb\tHEAD\n")
+        fake_subprocess.on(
+            "log",
+            "--pretty=format:%s",
+            stdout=fake_subprocess.log_lines("second commit subject"),
+        )
+
         messages = plugins.plugin_source_messages(plugin)
         assert len(messages) == 1
         assert messages[0] == (

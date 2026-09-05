@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from conftest import FakeSubprocess
 
 from llm_prompts.hooks import (
     _ANSI_COLOR,
@@ -25,6 +26,9 @@ from llm_prompts.hooks import (
 from llm_prompts.setup import _UPDATE_INSTRUCTION
 from llm_prompts.size_guard import CHECKED_TARGETS, CheckResult, Violation
 from llm_prompts.size_limits import FINALS, RULE_BYTES
+
+_UPDATE_COMMAND = ("llm-prompts", "update")
+_UPDATE_VERB = " ".join(_UPDATE_COMMAND)
 
 
 def _write(path: Path, content: str) -> Path:
@@ -164,17 +168,16 @@ class TestAutoReinstallPlugin:
             is None
         )
 
-    @patch("llm_prompts.hooks.subprocess.run")
     @patch("llm_prompts.hooks.read_manifest")
     def test_triggers_reinstall_for_managed_file(
         self,
         mock_manifest: MagicMock,
-        mock_run: MagicMock,
         manifest_data: dict[str, Any],
         tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         mock_manifest.return_value = manifest_data
-        mock_run.return_value.returncode = 0
+        fake_subprocess.on(*_UPDATE_COMMAND)
         plugin = AutoReinstallPlugin()
         plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         result = plugin.on_hook(
@@ -184,19 +187,18 @@ class TestAutoReinstallPlugin:
         )
         assert result is not None
         assert any("Auto-reinstalled" in note for note in result.notes)
-        mock_run.assert_called_once()
+        fake_subprocess.assert_sequence(_UPDATE_VERB)
 
-    @patch("llm_prompts.hooks.subprocess.run")
     @patch("llm_prompts.hooks.read_manifest")
     def test_triggers_reinstall_for_claude_code_edit(
         self,
         mock_manifest: MagicMock,
-        mock_run: MagicMock,
         manifest_data: dict[str, Any],
         tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         mock_manifest.return_value = manifest_data
-        mock_run.return_value.returncode = 0
+        fake_subprocess.on(*_UPDATE_COMMAND)
         plugin = AutoReinstallPlugin()
         plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         result = plugin.on_hook(
@@ -206,19 +208,18 @@ class TestAutoReinstallPlugin:
         )
         assert result is not None
         assert any("Auto-reinstalled" in note for note in result.notes)
-        mock_run.assert_called_once()
+        fake_subprocess.assert_sequence(_UPDATE_VERB)
 
-    @patch("llm_prompts.hooks.subprocess.run")
     @patch("llm_prompts.hooks.read_manifest")
     def test_triggers_reinstall_for_claude_code_write(
         self,
         mock_manifest: MagicMock,
-        mock_run: MagicMock,
         manifest_data: dict[str, Any],
         tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         mock_manifest.return_value = manifest_data
-        mock_run.return_value.returncode = 0
+        fake_subprocess.on(*_UPDATE_COMMAND)
         plugin = AutoReinstallPlugin()
         plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         result = plugin.on_hook(
@@ -228,20 +229,18 @@ class TestAutoReinstallPlugin:
         )
         assert result is not None
         assert any("Auto-reinstalled" in note for note in result.notes)
-        mock_run.assert_called_once()
+        fake_subprocess.assert_sequence(_UPDATE_VERB)
 
-    @patch("llm_prompts.hooks.subprocess.run")
     @patch("llm_prompts.hooks.read_manifest")
     def test_reports_failure_on_nonzero_exit(
         self,
         mock_manifest: MagicMock,
-        mock_run: MagicMock,
         manifest_data: dict[str, Any],
         tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         mock_manifest.return_value = manifest_data
-        mock_run.return_value.returncode = 1
-        mock_run.return_value.stderr = ""
+        fake_subprocess.on(*_UPDATE_COMMAND, returncode=1, stderr="")
         plugin = AutoReinstallPlugin()
         plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         result = plugin.on_hook(
@@ -252,18 +251,20 @@ class TestAutoReinstallPlugin:
         assert result is not None
         assert result.notes == ["Failed to auto-reinstall prompt files"]
 
-    @patch("llm_prompts.hooks.subprocess.run")
     @patch("llm_prompts.hooks.read_manifest")
     def test_failure_note_includes_captured_stderr(
         self,
         mock_manifest: MagicMock,
-        mock_run: MagicMock,
         manifest_data: dict[str, Any],
         tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         mock_manifest.return_value = manifest_data
-        mock_run.return_value.returncode = 1
-        mock_run.return_value.stderr = "size guard: rule.md exceeds final\n"
+        fake_subprocess.on(
+            *_UPDATE_COMMAND,
+            returncode=1,
+            stderr="size guard: rule.md exceeds final\n",
+        )
         plugin = AutoReinstallPlugin()
         plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         result = plugin.on_hook(
@@ -279,17 +280,16 @@ class TestAutoReinstallPlugin:
             ),
         ]
 
-    @patch("llm_prompts.hooks.subprocess.run")
     @patch("llm_prompts.hooks.read_manifest")
     def test_debounces_rapid_writes(
         self,
         mock_manifest: MagicMock,
-        mock_run: MagicMock,
         manifest_data: dict[str, Any],
         tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         mock_manifest.return_value = manifest_data
-        mock_run.return_value.returncode = 0
+        fake_subprocess.on(*_UPDATE_COMMAND)
         plugin = AutoReinstallPlugin()
         plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         path = manifest_data["kiro"]["files"][0]
@@ -304,17 +304,16 @@ class TestAutoReinstallPlugin:
         )
         assert result2 is None
 
-    @patch("llm_prompts.hooks.subprocess.run")
     @patch("llm_prompts.hooks.read_manifest")
     def test_flushes_debounced_write_on_later_hook(
         self,
         mock_manifest: MagicMock,
-        mock_run: MagicMock,
         manifest_data: dict[str, Any],
         tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         mock_manifest.return_value = manifest_data
-        mock_run.return_value.returncode = 0
+        fake_subprocess.on(*_UPDATE_COMMAND)
         plugin = AutoReinstallPlugin()
         plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         path = manifest_data["kiro"]["files"][0]
@@ -335,19 +334,18 @@ class TestAutoReinstallPlugin:
         )
         assert result is not None
         assert any("Auto-reinstalled" in note for note in result.notes)
-        assert mock_run.call_count == 2
+        fake_subprocess.assert_sequence(_UPDATE_VERB, _UPDATE_VERB)
 
-    @patch("llm_prompts.hooks.subprocess.run")
     @patch("llm_prompts.hooks.read_manifest")
     def test_holds_pending_flush_until_interval_elapses(
         self,
         mock_manifest: MagicMock,
-        mock_run: MagicMock,
         manifest_data: dict[str, Any],
         tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         mock_manifest.return_value = manifest_data
-        mock_run.return_value.returncode = 0
+        fake_subprocess.on(*_UPDATE_COMMAND)
         plugin = AutoReinstallPlugin()
         plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         path = manifest_data["kiro"]["files"][0]
@@ -365,19 +363,18 @@ class TestAutoReinstallPlugin:
             )
             is None
         )
-        assert mock_run.call_count == 1
+        fake_subprocess.assert_sequence(_UPDATE_VERB)
 
-    @patch("llm_prompts.hooks.subprocess.run")
     @patch("llm_prompts.hooks.read_manifest")
     def test_invalidates_cache_after_reinstall(
         self,
         mock_manifest: MagicMock,
-        mock_run: MagicMock,
         manifest_data: dict[str, Any],
         tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         mock_manifest.return_value = manifest_data
-        mock_run.return_value.returncode = 0
+        fake_subprocess.on(*_UPDATE_COMMAND)
         plugin = AutoReinstallPlugin()
         plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         plugin.on_hook(
@@ -814,18 +811,16 @@ class TestUpdateCheckOnTaskStart:
 class TestSourcePathWatching:
     """Tests that source prompt dirs are watched, not just installed manifest paths."""
 
-    @patch("llm_prompts.hooks.subprocess.run")
     @patch("llm_prompts.install._discover_overlay_paths", return_value=[])
     @patch("llm_prompts.hooks.read_manifest", return_value={})
     def test_rule_source_edit_triggers_reinstall(
         self,
         mock_manifest: MagicMock,
         mock_overlays: MagicMock,
-        mock_run: MagicMock,
         tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
     ) -> None:
-        mock_run.return_value.returncode = 0
-        mock_run.return_value.stderr = ""
+        fake_subprocess.on(*_UPDATE_COMMAND)
         source_dir = tmp_path / "prompts"
         rule_file = source_dir / "shared" / "rules" / "coding.md"
         rule_file.parent.mkdir(parents=True)
@@ -842,19 +837,17 @@ class TestSourcePathWatching:
         assert result is not None
         assert any("Auto-reinstalled" in note for note in result.notes)
 
-    @patch("llm_prompts.hooks.subprocess.run")
     @patch("llm_prompts.install._discover_overlay_paths", return_value=[])
     @patch("llm_prompts.hooks.read_manifest", return_value={})
     def test_nested_skill_source_edit_triggers_reinstall(
         self,
         mock_manifest: MagicMock,
         mock_overlays: MagicMock,
-        mock_run: MagicMock,
         tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         """A skill source, nested two levels below the rules dir, is still watched."""
-        mock_run.return_value.returncode = 0
-        mock_run.return_value.stderr = ""
+        fake_subprocess.on(*_UPDATE_COMMAND)
         source_dir = tmp_path / "prompts"
         skill_file = source_dir / "shared" / "skills" / "example-skill" / "SKILL.md"
         skill_file.parent.mkdir(parents=True)

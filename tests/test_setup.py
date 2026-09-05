@@ -9,6 +9,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from conftest import FakeSubprocess
 
 from llm_prompts import setup
 
@@ -17,29 +18,6 @@ from llm_prompts import setup
 def _clear_fetch_cache() -> None:
     """Reset the lru_cache on the real remote fetch before each test."""
     setup._fetch_remote_pyproject.cache_clear()
-
-
-def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", "-C", str(repo), *args],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-
-def _init_repo(repo: Path) -> None:
-    repo.mkdir(parents=True, exist_ok=True)
-    _git(repo, "init", "-q")
-    _git(repo, "config", "user.email", "test@example.com")
-    _git(repo, "config", "user.name", "Test")
-
-
-def _commit(repo: Path, filename: str, content: str, message: str) -> str:
-    (repo / filename).write_text(content)
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-qm", message)
-    return _git(repo, "rev-parse", "HEAD").stdout.strip()
 
 
 class TestReadPyproject:
@@ -78,25 +56,21 @@ class TestFetchRemotePyproject:
             assert setup._fetch_remote_pyproject("https://x/repo.git") is None
         assert "git not available" in capsys.readouterr().err
 
-    def test_clone_non_zero(self, capsys: pytest.CaptureFixture[str]) -> None:
-        with (
-            patch("llm_prompts.setup.shutil.which", return_value="/usr/bin/git"),
-            patch(
-                "llm_prompts.setup.subprocess.run",
-                return_value=MagicMock(returncode=1),
-            ),
-        ):
+    def test_clone_non_zero(
+        self, fake_subprocess: FakeSubprocess, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        fake_subprocess.on("clone", returncode=1)
+        with patch("llm_prompts.setup.shutil.which", return_value="/usr/bin/git"):
             assert setup._fetch_remote_pyproject("https://x/repo.git") is None
         assert "could not clone" in capsys.readouterr().err
 
-    def test_clone_timeout(self, capsys: pytest.CaptureFixture[str]) -> None:
-        with (
-            patch("llm_prompts.setup.shutil.which", return_value="/usr/bin/git"),
-            patch(
-                "llm_prompts.setup.subprocess.run",
-                side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=30),
-            ),
-        ):
+    def test_clone_timeout(
+        self, fake_subprocess: FakeSubprocess, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        fake_subprocess.on(
+            "clone", side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=30)
+        )
+        with patch("llm_prompts.setup.shutil.which", return_value="/usr/bin/git"):
             assert setup._fetch_remote_pyproject("https://x/repo.git") is None
         assert "timed out" in capsys.readouterr().err
 
@@ -216,14 +190,10 @@ class TestBuildCommandsRegression:
         assert "mcp-memory" in overlays_by_core["llm-prompts"]
         assert "mcp-memory" in overlays_by_core["cline-hooks"]
 
-    def test_fetch_cached_per_url(self) -> None:
-        counter = MagicMock(return_value=None)
-        with (
-            patch("llm_prompts.setup.shutil.which", return_value="/usr/bin/git"),
-            patch("llm_prompts.setup.subprocess.run", counter),
-        ):
+    def test_fetch_cached_per_url(self, fake_subprocess: FakeSubprocess) -> None:
+        with patch("llm_prompts.setup.shutil.which", return_value="/usr/bin/git"):
             setup._build_commands(self._shipped_tools(), "uv")
-        assert counter.call_count == 3
+        assert len(fake_subprocess.matching("clone")) == 3
 
 
 class TestRunParallelOrdered:
@@ -236,35 +206,38 @@ class TestRunParallelOrdered:
 
 
 class TestRemoteHead:
-    def test_returns_remote_sha(self) -> None:
-        with patch("llm_prompts.setup.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="deadbeef\tHEAD\n")
-            assert setup._remote_head("https://x/repo.git", None) == "deadbeef"
+    def test_returns_remote_sha(self, fake_subprocess: FakeSubprocess) -> None:
+        fake_subprocess.on("ls-remote", stdout="deadbeef\tHEAD\n")
+        assert setup._remote_head("https://x/repo.git", None) == "deadbeef"
 
-    def test_returns_none_on_failure(self) -> None:
-        with patch("llm_prompts.setup.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=128, stdout="")
-            assert setup._remote_head("https://x/repo.git", None) is None
+    def test_returns_none_on_failure(self, fake_subprocess: FakeSubprocess) -> None:
+        fake_subprocess.on("ls-remote", returncode=128)
+        assert setup._remote_head("https://x/repo.git", None) is None
 
-    def test_returns_none_on_empty_output(self) -> None:
-        with patch("llm_prompts.setup.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="")
-            assert setup._remote_head("https://x/repo.git", "main") is None
+    def test_returns_none_on_empty_output(self, fake_subprocess: FakeSubprocess) -> None:
+        fake_subprocess.on("ls-remote", stdout="")
+        assert setup._remote_head("https://x/repo.git", "main") is None
 
 
 class TestCommitSubjectsBetween:
-    def test_lists_subjects_between_shas(self, tmp_path: Path) -> None:
+    def test_lists_subjects_between_shas(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
         repo = tmp_path / "repo"
-        _init_repo(repo)
-        base = _commit(repo, "a.txt", "1\n", "base")
-        _commit(repo, "b.txt", "2\n", "second")
-        tip = _commit(repo, "c.txt", "3\n", "third")
-        assert setup._commit_subjects_between(repo, base, tip) == ["third", "second"]
+        fake_subprocess.on(
+            "log",
+            "--pretty=format:%s",
+            repo=repo,
+            stdout=fake_subprocess.log_lines("third", "second"),
+        )
+        assert setup._commit_subjects_between(repo, "base", "tip") == [
+            "third",
+            "second",
+        ]
 
-    def test_returns_none_on_failure(self, tmp_path: Path) -> None:
+    def test_returns_none_on_failure(self, fake_subprocess: FakeSubprocess, tmp_path: Path) -> None:
         repo = tmp_path / "repo"
-        _init_repo(repo)
-        _commit(repo, "a.txt", "1\n", "base")
+        fake_subprocess.on("log", "--pretty=format:%s", repo=repo, returncode=1)
         assert setup._commit_subjects_between(repo, "nope1", "nope2") is None
 
 

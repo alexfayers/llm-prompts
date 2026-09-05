@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import subprocess
-import sys
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import patch
 
 import pytest
+from conftest import FakeSubprocess
 
 _SCRIPT = (
     Path(__file__).parent.parent
@@ -35,6 +35,17 @@ def _load() -> ModuleType:
 def mod() -> ModuleType:
     """Load the check_reduction script as a module."""
     return _load()
+
+
+def _run_main(
+    mod: ModuleType, capsys: pytest.CaptureFixture[str], *args: str
+) -> tuple[int, dict[str, object]]:
+    with (
+        patch("sys.argv", ["check_reduction.py", *args]),
+        pytest.raises(SystemExit) as exc,
+    ):
+        mod.main()
+    return exc.value.code, json.loads(capsys.readouterr().out)
 
 
 class TestParseNumstat:
@@ -76,45 +87,24 @@ class TestEvaluate:
 
 
 class TestMain:
-    """Tests for the CLI entrypoint against a real git repo."""
+    """Tests for the CLI entrypoint's wiring into git diff."""
 
-    def _git(self, repo: Path, *args: str) -> None:
-        subprocess.run(
-            ["git", *args], cwd=repo, check=True, capture_output=True, text=True
-        )
+    def test_net_negative_diff_exits_zero(
+        self, mod: ModuleType, fake_subprocess: FakeSubprocess, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        fake_subprocess.on("diff", "--numstat", stdout="1\t5\tf.txt\n")
 
-    def _init_repo(self, repo: Path) -> None:
-        self._git(repo, "init")
-        self._git(repo, "config", "user.email", "test@example.com")
-        self._git(repo, "config", "user.name", "test")
-        (repo / "f.txt").write_text("a\nb\nc\nd\ne\n")
-        self._git(repo, "add", "-A")
-        self._git(repo, "commit", "-m", "init")
+        code, result = _run_main(mod, capsys)
 
-    def test_net_negative_diff_exits_zero(self, tmp_path: Path) -> None:
-        self._init_repo(tmp_path)
-        (tmp_path / "f.txt").write_text("a\n")
-        completed = subprocess.run(
-            [sys.executable, str(_SCRIPT)],
-            cwd=tmp_path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        result = json.loads(completed.stdout)
         assert result["pass"] is True
-        assert completed.returncode == 0
+        assert code == 0
 
-    def test_net_positive_diff_exits_one(self, tmp_path: Path) -> None:
-        self._init_repo(tmp_path)
-        (tmp_path / "f.txt").write_text("a\nb\nc\nd\ne\n" + "x\n" * 10)
-        completed = subprocess.run(
-            [sys.executable, str(_SCRIPT)],
-            cwd=tmp_path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        result = json.loads(completed.stdout)
+    def test_net_positive_diff_exits_one(
+        self, mod: ModuleType, fake_subprocess: FakeSubprocess, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        fake_subprocess.on("diff", "--numstat", stdout="20\t1\tf.txt\n")
+
+        code, result = _run_main(mod, capsys)
+
         assert result["pass"] is False
-        assert completed.returncode == 1
+        assert code == 1

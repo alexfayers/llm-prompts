@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from conftest import FakeSubprocess
 
 from llm_prompts.cli import (
     _check_for_updates,
@@ -31,28 +31,6 @@ from llm_prompts.setup import (
 )
 from llm_prompts.size_guard import ALLOWANCES_FILENAME, Artifact
 from llm_prompts.size_limits import FINALS, RULE_BYTES
-
-
-def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", "-C", str(repo), *args],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-
-def _init_repo(repo: Path) -> None:
-    repo.mkdir(parents=True, exist_ok=True)
-    _git(repo, "init", "-q")
-    _git(repo, "config", "user.email", "test@example.com")
-    _git(repo, "config", "user.name", "Test")
-
-
-def _commit(repo: Path, filename: str, content: str, message: str) -> None:
-    (repo / filename).write_text(content)
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-qm", message)
 
 
 class TestExtractGitUrl:
@@ -219,85 +197,62 @@ class TestRemoteSourceMessages:
 
 
 class TestLocalSourceMessages:
-    def test_has_updates_lists_commit_subjects(self, tmp_path: Path) -> None:
+    def test_has_updates_lists_commit_subjects(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
         (tmp_path / ".git").mkdir()
-        with patch("subprocess.run") as mock_run:
-            mock_run.side_effect = [
-                MagicMock(returncode=0, stdout=""),
-                MagicMock(returncode=0, stdout="3\n"),
-                MagicMock(returncode=0, stdout="Add A\nFix B\nTweak C\n"),
-            ]
-            result = _local_source_messages("core", str(tmp_path))
-            assert result == [
-                (
-                    "[core] update available:\n"
-                    "- Add A\n"
-                    "- Fix B\n"
-                    "- Tweak C\n"
-                    "Summarize these changes for the user in plain language, and flag "
-                    "anything that looks like a breaking change."
-                )
-            ]
+        fake_subprocess.on("rev-list", "--count", stdout="3\n")
+        fake_subprocess.on(
+            "log",
+            "--pretty=format:%s",
+            stdout=fake_subprocess.log_lines("Add A", "Fix B", "Tweak C"),
+        )
+        result = _local_source_messages("core", str(tmp_path))
+        assert result == [
+            (
+                "[core] update available:\n"
+                "- Add A\n"
+                "- Fix B\n"
+                "- Tweak C\n"
+                "Summarize these changes for the user in plain language, and flag "
+                "anything that looks like a breaking change."
+            )
+        ]
 
-    def test_up_to_date(self, tmp_path: Path) -> None:
+    def test_up_to_date(self, tmp_path: Path, fake_subprocess: FakeSubprocess) -> None:
         (tmp_path / ".git").mkdir()
-        with patch("subprocess.run") as mock_run:
-            mock_run.side_effect = [
-                MagicMock(returncode=0, stdout=""),
-                MagicMock(returncode=0, stdout="0\n"),
-            ]
-            result = _local_source_messages("core", str(tmp_path))
-            assert result == []
+        fake_subprocess.on("rev-list", "--count", stdout="0\n")
+        result = _local_source_messages("core", str(tmp_path))
+        assert result == []
 
     def test_no_git_dir(self, tmp_path: Path) -> None:
         assert _local_source_messages("core", str(tmp_path)) == []
 
-    def test_rev_list_fails(self, tmp_path: Path) -> None:
+    def test_rev_list_fails(self, tmp_path: Path, fake_subprocess: FakeSubprocess) -> None:
         (tmp_path / ".git").mkdir()
-        with patch("subprocess.run") as mock_run:
-            mock_run.side_effect = [
-                MagicMock(returncode=0, stdout=""),
-                MagicMock(returncode=128, stdout=""),
-            ]
-            result = _local_source_messages("core", str(tmp_path))
-            assert result == []
+        fake_subprocess.on("rev-list", "--count", returncode=128)
+        result = _local_source_messages("core", str(tmp_path))
+        assert result == []
 
-    def test_log_failure_falls_back_to_bare_message(self, tmp_path: Path) -> None:
+    def test_log_failure_falls_back_to_bare_message(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
         (tmp_path / ".git").mkdir()
-        with patch("subprocess.run") as mock_run:
-            mock_run.side_effect = [
-                MagicMock(returncode=0, stdout=""),
-                MagicMock(returncode=0, stdout="2\n"),
-                MagicMock(returncode=128, stdout=""),
-            ]
-            result = _local_source_messages("core", str(tmp_path))
-            assert result == ["[core] update available"]
+        fake_subprocess.on("rev-list", "--count", stdout="2\n")
+        fake_subprocess.on("log", "--pretty=format:%s", returncode=128)
+        result = _local_source_messages("core", str(tmp_path))
+        assert result == ["[core] update available"]
 
 
 class TestPullLocalSources:
-    def _setup_clone(self, tmp_path: Path) -> tuple[Path, Path]:
-        """Create a bare upstream and a local clone tracking it, with one commit."""
-        upstream = tmp_path / "upstream.git"
-        upstream.mkdir()
-        _git(upstream, "init", "-q", "--bare")
-        clone = tmp_path / "clone"
-        _init_repo(clone)
-        _commit(clone, "a.txt", "x\n", "init")
-        _git(clone, "remote", "add", "origin", str(upstream))
-        _git(clone, "push", "-q", "-u", "origin", "HEAD")
-        return upstream, clone
-
     def test_diverged_repo_is_rebased_onto_upstream(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], fake_subprocess: FakeSubprocess
     ) -> None:
-        upstream, clone = self._setup_clone(tmp_path)
-
-        other_clone = tmp_path / "other-clone"
-        _git(tmp_path, "clone", "-q", str(upstream), str(other_clone))
-        _commit(other_clone, "b.txt", "y\n", "upstream change")
-        _git(other_clone, "push", "-q")
-
-        _commit(clone, "c.txt", "z\n", "local change")
+        clone = tmp_path / "clone"
+        (clone / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-list", "--count", stdout="1\n")
+        fake_subprocess.on("pull", "--ff-only", returncode=1)
+        fake_subprocess.on("rebase", "--quiet", returncode=0)
 
         config = [{"name": "core", "source": str(clone)}]
         with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
@@ -305,23 +260,21 @@ class TestPullLocalSources:
             with patch("llm_prompts.setup._load_config", return_value=config):
                 _pull_local_sources()
 
-        log = _git(clone, "log", "--oneline", "-3").stdout
-        assert "local change" in log
-        assert "upstream change" in log
+        fake_subprocess.assert_sequence(
+            "fetch", "rev-list --count", "pull --ff-only", "rebase --quiet"
+        )
         assert (
             "[core] rebased local commits onto 1 new commit(s)"
             in capsys.readouterr().out
         )
 
     def test_fast_forwardable_repo_is_pulled_without_rebase(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], fake_subprocess: FakeSubprocess
     ) -> None:
-        upstream, clone = self._setup_clone(tmp_path)
-
-        other_clone = tmp_path / "other-clone"
-        _git(tmp_path, "clone", "-q", str(upstream), str(other_clone))
-        _commit(other_clone, "b.txt", "y\n", "upstream change")
-        _git(other_clone, "push", "-q")
+        clone = tmp_path / "clone"
+        (clone / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-list", "--count", stdout="1\n")
+        fake_subprocess.on("pull", "--ff-only", returncode=0)
 
         config = [{"name": "core", "source": str(clone)}]
         with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
@@ -329,21 +282,17 @@ class TestPullLocalSources:
             with patch("llm_prompts.setup._load_config", return_value=config):
                 _pull_local_sources()
 
-        log = _git(clone, "log", "--oneline", "-2").stdout
-        assert "upstream change" in log
+        assert fake_subprocess.matching("rebase") == []
         assert "[core] pulled 1 new commit(s)" in capsys.readouterr().out
 
     def test_conflicting_rebase_is_aborted_and_reported(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], fake_subprocess: FakeSubprocess
     ) -> None:
-        upstream, clone = self._setup_clone(tmp_path)
-
-        other_clone = tmp_path / "other-clone"
-        _git(tmp_path, "clone", "-q", str(upstream), str(other_clone))
-        _commit(other_clone, "a.txt", "upstream-version\n", "upstream change")
-        _git(other_clone, "push", "-q")
-
-        _commit(clone, "a.txt", "local-version\n", "local change")
+        clone = tmp_path / "clone"
+        (clone / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-list", "--count", stdout="1\n")
+        fake_subprocess.on("pull", "--ff-only", returncode=1)
+        fake_subprocess.on("rebase", "--quiet", returncode=1)
 
         config = [{"name": "core", "source": str(clone)}]
         with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
@@ -351,42 +300,28 @@ class TestPullLocalSources:
             with patch("llm_prompts.setup._load_config", return_value=config):
                 _pull_local_sources()
 
-        status = _git(clone, "status", "--porcelain=v1").stdout
-        assert status == ""
-        rebase_dirs = list((clone / ".git").glob("rebase-*"))
-        assert rebase_dirs == []
+        fake_subprocess.assert_sequence(
+            "fetch",
+            "rev-list --count",
+            "pull --ff-only",
+            "rebase --quiet",
+            "rebase --abort",
+        )
         assert "[core] 1 new commit(s) available but rebase failed" in (
             capsys.readouterr().out
         )
 
-    def _setup_ff_clone(self, tmp_path: Path, name: str) -> Path:
-        """Create a clone that is one commit behind its upstream (fast-forwardable)."""
-        upstream = tmp_path / f"{name}-upstream.git"
-        upstream.mkdir()
-        _git(upstream, "init", "-q", "--bare")
-        clone = tmp_path / f"{name}-clone"
-        _init_repo(clone)
-        _commit(clone, "a.txt", "x\n", "init")
-        _git(clone, "remote", "add", "origin", str(upstream))
-        _git(clone, "push", "-q", "-u", "origin", "HEAD")
-
-        other = tmp_path / f"{name}-other"
-        _git(tmp_path, "clone", "-q", str(upstream), str(other))
-        _commit(other, "b.txt", "y\n", "upstream change")
-        _git(other, "push", "-q")
-        return clone
-
     def test_output_lines_preserve_config_order(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], fake_subprocess: FakeSubprocess
     ) -> None:
-        first = self._setup_ff_clone(tmp_path, "first")
-        second = self._setup_ff_clone(tmp_path, "second")
-        third = self._setup_ff_clone(tmp_path, "third")
+        clones = {name: tmp_path / name for name in ("first", "second", "third")}
+        for clone in clones.values():
+            (clone / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-list", "--count", stdout="1\n")
+        fake_subprocess.on("pull", "--ff-only", returncode=0)
 
         config = [
-            {"name": "first", "source": str(first)},
-            {"name": "second", "source": str(second)},
-            {"name": "third", "source": str(third)},
+            {"name": name, "source": str(clone)} for name, clone in clones.items()
         ]
         with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
             mock_config.exists.return_value = True
@@ -400,10 +335,15 @@ class TestPullLocalSources:
         ]
 
     def test_only_sources_that_changed_are_reported_as_changed(
-        self, tmp_path: Path
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
     ) -> None:
-        changed = self._setup_ff_clone(tmp_path, "changed")
-        _, current = self._setup_clone(tmp_path)
+        changed = tmp_path / "changed"
+        (changed / ".git").mkdir(parents=True)
+        current = tmp_path / "current"
+        (current / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-list", "--count", stdout="1\n", repo=changed)
+        fake_subprocess.on("rev-list", "--count", stdout="0\n", repo=current)
+        fake_subprocess.on("pull", "--ff-only", returncode=0, repo=changed)
 
         config = [
             {"name": "changed", "source": str(changed)},
@@ -415,16 +355,16 @@ class TestPullLocalSources:
                 assert _pull_local_sources() == {"changed"}
 
     def test_rebase_failure_lines_stay_adjacent_and_ordered(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], fake_subprocess: FakeSubprocess
     ) -> None:
-        conflict_upstream, conflict = self._setup_clone(tmp_path)
-        other = tmp_path / "conflict-other"
-        _git(tmp_path, "clone", "-q", str(conflict_upstream), str(other))
-        _commit(other, "a.txt", "upstream-version\n", "upstream change")
-        _git(other, "push", "-q")
-        _commit(conflict, "a.txt", "local-version\n", "local change")
-
-        ff = self._setup_ff_clone(tmp_path, "ff")
+        conflict = tmp_path / "conflict"
+        (conflict / ".git").mkdir(parents=True)
+        ff = tmp_path / "ff"
+        (ff / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-list", "--count", stdout="1\n")
+        fake_subprocess.on("pull", "--ff-only", returncode=1, repo=conflict)
+        fake_subprocess.on("pull", "--ff-only", returncode=0, repo=ff)
+        fake_subprocess.on("rebase", "--quiet", returncode=1, repo=conflict)
 
         config = [
             {"name": "conflict", "source": str(conflict)},
@@ -575,25 +515,21 @@ class TestUpdateCommandPullsPlugins:
 
 
 class TestRestartMemoryService:
-    def test_restarts_via_the_mcp_memory_binary(self) -> None:
-        with (
-            patch("shutil.which", return_value="/usr/local/bin/mcp-memory"),
-            patch("subprocess.run") as mock_run,
-        ):
+    def test_restarts_via_the_mcp_memory_binary(self, fake_subprocess: FakeSubprocess) -> None:
+        with patch("shutil.which", return_value="/usr/local/bin/mcp-memory"):
             _restart_memory_service()
 
-        mock_run.assert_called_once_with(
-            ["/usr/local/bin/mcp-memory", "restart"], check=False
-        )
+        assert fake_subprocess.calls == [
+            (["/usr/local/bin/mcp-memory", "restart"], {"check": False})
+        ]
 
-    def test_does_nothing_when_the_binary_is_not_installed(self) -> None:
-        with (
-            patch("shutil.which", return_value=None),
-            patch("subprocess.run") as mock_run,
-        ):
+    def test_does_nothing_when_the_binary_is_not_installed(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        with patch("shutil.which", return_value=None):
             _restart_memory_service()
 
-        mock_run.assert_not_called()
+        assert fake_subprocess.calls == []
 
 
 class TestUpdateRestartsMemoryOnlyWhenItChanged:
@@ -846,37 +782,32 @@ class TestWritePyprojectStamp:
 
 
 class TestRunSetupForceReinstall:
-    def _run(self, commands: list, force_reinstall: set[str]) -> list[list[str]]:
-        calls: list[list[str]] = []
-
-        def fake_run(cmd: list[str], **_kwargs: object) -> MagicMock:
-            calls.append(cmd)
-            return MagicMock(returncode=0, stdout="", stderr="")
-
+    def _run(
+        self, fake_subprocess: FakeSubprocess, commands: list, force_reinstall: set[str]
+    ) -> list[list[str]]:
         with (
             patch("llm_prompts.setup._load_config", return_value=[]),
             patch("llm_prompts.setup._validate_paths", return_value=[]),
             patch("llm_prompts.setup._detect_installer", return_value="uv"),
             patch("llm_prompts.setup._build_commands", return_value=commands),
             patch("llm_prompts.setup.write_pyproject_stamp"),
-            patch("llm_prompts.setup.subprocess.run", side_effect=fake_run),
         ):
             run_setup(force_reinstall=force_reinstall)
-        return calls
+        return fake_subprocess.commands
 
-    def test_forced_core_skips_upgrade(self) -> None:
+    def test_forced_core_skips_upgrade(self, fake_subprocess: FakeSubprocess) -> None:
         commands = [("core", ["uv", "install"], ["uv", "upgrade"], [])]
-        calls = self._run(commands, {"core"})
+        calls = self._run(fake_subprocess, commands, {"core"})
         assert calls == [["uv", "install"]]
 
-    def test_stale_overlay_forces_its_core(self) -> None:
+    def test_stale_overlay_forces_its_core(self, fake_subprocess: FakeSubprocess) -> None:
         commands = [("core", ["uv", "install"], ["uv", "upgrade"], ["hooks"])]
-        calls = self._run(commands, {"hooks"})
+        calls = self._run(fake_subprocess, commands, {"hooks"})
         assert calls == [["uv", "install"]]
 
-    def test_unforced_core_uses_upgrade(self) -> None:
+    def test_unforced_core_uses_upgrade(self, fake_subprocess: FakeSubprocess) -> None:
         commands = [("core", ["uv", "install"], ["uv", "upgrade"], [])]
-        calls = self._run(commands, {"other"})
+        calls = self._run(fake_subprocess, commands, {"other"})
         assert calls[0] == ["uv", "upgrade"]
 
 
