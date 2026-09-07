@@ -2,6 +2,8 @@
 
 Default to memory-only TODOs (a `task/` entity, per the memory rules) rather than a TODO.md file. Only add to a TODO.md file if one already exists in the place you're working - do not create a new TODO.md file to record a TODO.
 
+A speculative aside - "we should maybe X", "can we X?" - counts as a side request: MUST capture it as a TODO and carry on with the current task.
+
 When the user asks to do something that is **not directly related** to the current task, do **not** immediately act on it. Instead:
 1. **Acknowledge** the ask explicitly so the user knows you've heard it.
 2. **Explain** that you are currently focused on something else and will do it afterwards.
