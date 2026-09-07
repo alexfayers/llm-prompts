@@ -20,13 +20,14 @@
 Every spawn prompt MUST specify:
 
 - the exact sources to check, in preference order: local checkout, then internal or official docs, then the public web only as a last resort;
+- for a delegate executing a tracked task (memory `task/`, plan slice, ticket), the decisions recorded against it - one taken after it was opened lives only there, not in the ticket body or plan doc;
 - the scope boundary - what the delegate MUST NOT go beyond;
 - for a delegate that can reach remote or live systems, that read-only is the ceiling, naming the mutating actions it MUST NOT take;
-- for lint, formatting or test conventions, the package's own config (`setup.cfg`, `pyproject.toml`, or equivalent) as the authority, and that the delegate MUST match the file it is editing - MUST NOT assert those conventions from memory or from the user's global preferences;
+- for lint/format/test conventions, the package's own config as the authority and the edited file as the pattern to match - never those conventions from memory or global preferences;
 - what to do if those sources do not answer it - report back, never silently widen the search.
-- Every spawn prompt producing code or prose MUST state the output-size constraint explicitly - minimal diff, no unrequested comments, refactors or reformatting, and a terse report. A delegate inherits no session rule, so an unstated constraint is absent.
+- Any code/prose spawn MUST state the output-size constraint - minimal diff, no unrequested comments/refactors/reformatting, terse report. An unstated constraint is absent (delegates inherit no session rule).
 
-This binds design delegates as much as research ones. Where a delegate must add a code comment, MUST state the comment policy and MUST NOT draft the prose - point at the project's convention and let each delegate write its own line.
+Binds design delegates too. For any code comment a delegate must add, state the project's comment convention and let it write its own line - MUST NOT draft the prose.
 
 ## Parallelise by default
 
