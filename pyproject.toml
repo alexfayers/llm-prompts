@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Cross-agent rules, workflows, and skills for LLM coding assistants"
 readme = "README.md"
 requires-python = ">=3.12"
+dependencies = ["platformdirs>=4.11.7"]
 
 [project.scripts]
 llm-prompts = "llm_prompts.cli:main"

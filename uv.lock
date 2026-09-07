@@ -156,6 +156,9 @@ wheels = [
 name = "llm-prompts"
 version = "0.1.0"
 source = { editable = "." }
+dependencies = [
+    { name = "platformdirs" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -168,6 +171,7 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [{ name = "platformdirs", specifier = ">=4.11.7" }]
 
 [package.metadata.requires-dev]
 dev = [
