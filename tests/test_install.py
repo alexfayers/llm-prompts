@@ -25,6 +25,7 @@ from llm_prompts.install import (
     _materialize_override_skill,
     _passes_requires_gate,
     _rendered_content,
+    get_source_for_managed_file,
 )
 from llm_prompts.install import main as install_main
 from llm_prompts.render_template import (
@@ -1119,3 +1120,73 @@ class TestShippedTestingRule:
         assert "inclusion: fileMatch" in output
         for glob in self._globs():
             assert f"'{glob}'" in output
+
+
+class TestGetSourceForManagedFile:
+    def test_resolves_managed_rule_to_its_shared_source(self, tmp_path: Path) -> None:
+        home = tmp_path / "home"
+        root = tmp_path / "root"
+        rule_src = root / "shared" / "rules"
+        rule_src.mkdir(parents=True)
+        (rule_src / "foo.md").write_text("rule body", encoding="utf-8")
+
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.cli._get_root_dir", return_value=root),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+        ):
+            dest = home / ".claude" / "rules" / "foo.md"
+            source = get_source_for_managed_file(str(dest))
+
+        assert source == str(rule_src / "foo.md")
+
+    def test_resolves_managed_skill_file_to_its_shared_source(
+        self, tmp_path: Path
+    ) -> None:
+        home = tmp_path / "home"
+        root = tmp_path / "root"
+        skill_src_dir = root / "shared" / "skills" / "my-skill"
+        skill_src_dir.mkdir(parents=True)
+        (skill_src_dir / "SKILL.md").write_text("skill body", encoding="utf-8")
+
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.cli._get_root_dir", return_value=root),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+        ):
+            dest = home / ".claude" / "skills" / "my-skill" / "SKILL.md"
+            source = get_source_for_managed_file(str(dest))
+
+        assert source == str(skill_src_dir / "SKILL.md")
+
+    def test_returns_none_for_a_path_outside_every_managed_directory(
+        self, tmp_path: Path
+    ) -> None:
+        home = tmp_path / "home"
+        root = tmp_path / "root"
+
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.cli._get_root_dir", return_value=root),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+        ):
+            dest = tmp_path / "elsewhere" / "random.md"
+            source = get_source_for_managed_file(str(dest))
+
+        assert source is None
+
+    def test_returns_none_when_destination_dir_matches_but_file_is_untracked(
+        self, tmp_path: Path
+    ) -> None:
+        home = tmp_path / "home"
+        root = tmp_path / "root"
+
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.cli._get_root_dir", return_value=root),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+        ):
+            dest = home / ".claude" / "rules" / "untracked.md"
+            source = get_source_for_managed_file(str(dest))
+
+        assert source is None
