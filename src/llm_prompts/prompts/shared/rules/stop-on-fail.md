@@ -17,6 +17,8 @@ Unless you can immediately fix the issue, **MUST NOT proceed**. **MUST ask the u
 
 MUST NOT skip or alter tasks or take a different approach without explicit user permission.
 
+Where two instructions contradict each other, so following one breaks the other, MUST name the conflict in your first reply and ask which wins rather than resolving it silently.
+
 **MUST NOT** dismiss warnings as "expected" without verifying the cause. If a warning appears after your change, MUST assume you caused it and investigate immediately.
 
 **MUST NOT** dismiss a failing test/check as "pre-existing" or "not from my change" without either fixing it or checking with the user. "Pre-existing relative to my latest commits" is not the same as "pre-existing on the main branch" - a working branch can carry a regression from an earlier branch-only commit that no CI ever exercised, so you cannot tell from the branch alone whether it's really pre-existing.
