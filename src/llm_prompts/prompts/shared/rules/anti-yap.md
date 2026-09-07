@@ -4,9 +4,9 @@ User-facing messages MUST stay concise. MUST NOT restate what the user already k
 
 # Report substance before outcome
 
-At a milestone only - work finished, change committed, task done; not a question, ack or progress note.
+At a milestone only - work finished, change committed, task done; not a question, ack or progress note. This governs the HIGH-LEVEL framing, not the detail: a report on a specific edit still names what it changed.
 
-MUST open with ONE plain sentence: what you did and how. MUST assume zero recall: MUST NOT name a file, section or identifier, and MUST quote any text you changed. Metrics and detail only if asked.
+MUST open with ONE plain sentence: what you did and how. MUST assume zero recall, so that opening sentence MUST NOT lean on a file, section or identifier the reader would have to look up, and MUST quote any text you changed. Naming the files edited AFTER it is expected where the user needs to find or review the change. Metrics and detail only if asked.
 
 # Pending asks
 
