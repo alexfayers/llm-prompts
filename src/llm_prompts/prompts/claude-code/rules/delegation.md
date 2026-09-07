@@ -24,6 +24,7 @@ Every spawn prompt, design delegates included, MUST specify:
 - for a tracked task (memory `task/`, plan slice, ticket), the decisions recorded against it - a late one lives only there, not the ticket or plan doc;
 - the scope boundary it MUST NOT cross, and for remote/live systems read-only as the ceiling, naming the mutations it MUST NOT make;
 - for lint, formatting or test conventions, the package's config (`pyproject.toml` or equivalent) as authority - MUST match the file it edits, never memory or global preferences;
+- where the prompt pins a concrete shape (signature, return type, format) and says match a sibling, MUST reconcile the two, not leave the delegate a contradiction to escalate;
 - for code or prose, the output-size limit - minimal diff, no unrequested comments, refactors or reformatting, terse report.
 - a delegate MUST be asked a question and MUST report the answer, never raw command output or verbatim file text; either belongs only in a failure, an error, or a value the asker named. Where the point is to draft an edit, the delegate MUST return the proposed new wording, not the current text.
 
