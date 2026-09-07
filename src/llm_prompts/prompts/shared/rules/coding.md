@@ -8,6 +8,7 @@ copilot_apply_to: '**'
 - MUST keep code concise but readable, and any change minimal.
 - Code MUST be self-documenting with descriptive names and minimal comments. MUST NOT add a comment that refers to the change you are making or explains why - comments describe the code, only where genuinely complex.
 - MUST add new imports at THE SAME TIME as the code that uses them.
+- When a change introduces a new environment variable, config key, or setting - or makes an existing one newly required (e.g. a boot-time validator, an unconditional code path) - MUST update its documentation in the SAME change: the example/template env file, the README/setup-doc env table, and any deploy/infra manifests that pass env through. A wiring-only change that leaves the var undocumented is incomplete.
 - Produced code MUST follow the existing style within the package.
 - MUST NOT {{TOOL_COMPLETE}} until all tasks in the focus chain are done.
 - {{ACTION_NO_NARRATE}}
