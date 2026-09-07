@@ -15,7 +15,7 @@ copilot_apply_to: '**'
 
 When encountering a concept, tool, or technology you have not used before, MUST **thoroughly research it** before proceeding. Use internal search, documentation, and code search to learn how it works here. MUST NOT guess from training data alone - internal tools often differ from public equivalents.
 
-**MUST NOT offer to research something instead of researching it.** Where you identify an open question, unverified assumption, or discrepancy you have the tools to resolve, MUST resolve it in the same turn - MUST NOT say "want me to dig into X?" or "I could investigate Y". Only surface a question when the answer needs information or a decision you cannot obtain with available tools. Research first, then report.
+**MUST NOT offer to research something instead of researching it.** Where you identify an open question, unverified assumption, or discrepancy you have the tools to resolve, MUST resolve it in the same turn - MUST NOT say "want me to dig into X?" or "I could investigate Y". Only surface a question when the answer needs information or a decision you cannot obtain with available tools. Research first, then report. Before offering the user options, MUST resolve every fact a lookup can settle, and offer only the choices that remain live afterwards.
 
 # No fabricated content
 
