@@ -337,7 +337,7 @@ def render_template(template_path: str, variables_path: str, target: str) -> str
         return render_for_kiro(body, frontmatter)
     if target == "claude-code":
         return render_for_claude_code(body, frontmatter)
-    if target == "codex":
+    if target in ("codex", "antigravity"):
         return render_for_codex(body)
     msg = f"Unknown target format: {target}"
     raise ValueError(msg)
@@ -356,7 +356,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("variables_path", help="Path to JSON file with variables.")
     parser.add_argument(
         "target",
-        choices=["cline", "copilot", "kiro", "claude-code", "codex"],
+        choices=["cline", "copilot", "kiro", "claude-code", "codex", "antigravity"],
         help="Output target format.",
     )
     return parser

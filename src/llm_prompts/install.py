@@ -128,6 +128,11 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
             "workflows": home / ".codex" / "prompts",
             "skills": home / ".codex" / "skills",
         },
+        "antigravity": {
+            "rules": home / ".gemini" / "config",
+            "workflows": home / ".gemini" / "config" / "workflows",
+            "skills": home / ".gemini" / "config" / "skills",
+        },
     }
 
 
@@ -483,6 +488,13 @@ class _CodexAgent(_Agent):
         dest_dir.mkdir(parents=True, exist_ok=True)
         _write_if_changed(dest_dir / self.AGENTS_MD, output, self.AGENTS_MD)
         return {self.AGENTS_MD}
+
+
+class _AntigravityAgent(_CodexAgent):
+    """Antigravity agent that concatenates all rules into a single AGENTS.md file."""
+
+    AGENTS_MD: ClassVar[str] = "AGENTS.md"
+
 
 
 _CODEX_DOC_LIMIT = 32768
@@ -1255,6 +1267,21 @@ def try_install_hooks_claude_code() -> None:
     subprocess.run([binary, "install", "claude-code"], check=False)
 
 
+def try_install_hooks_antigravity() -> None:
+    """Patch Antigravity hooks.json with cline-hooks entries if available."""
+    import shutil
+    import subprocess
+
+    binary = shutil.which("cline-hook")
+    if not binary:
+        log(
+            "debug",
+            "cline-hook not found on PATH, skipping Antigravity hook injection.",
+        )
+        return
+    subprocess.run([binary, "install", "antigravity"], check=False)
+
+
 def try_allow_update_claude_code() -> None:
     """Add Bash(llm-prompts update *) to Claude Code permissions.allow."""
     import json
@@ -1324,6 +1351,23 @@ def try_install_memory_codex() -> None:
         log("debug", "mcp-memory not found on PATH, skipping Codex MCP setup.")
         return
     subprocess.run([binary, "install", "codex"], check=False)
+    if not _memory_service_exists():
+        subprocess.run([binary, "setup-service"], check=False)
+
+
+def try_install_memory_antigravity() -> None:
+    """Add mcp-memory to Antigravity if available."""
+    import shutil
+    import subprocess
+
+    binary = shutil.which("mcp-memory")
+    if not binary:
+        log(
+            "debug",
+            "mcp-memory not found on PATH, skipping Antigravity MCP setup.",
+        )
+        return
+    subprocess.run([binary, "install", "antigravity"], check=False)
     if not _memory_service_exists():
         subprocess.run([binary, "setup-service"], check=False)
 
@@ -1485,6 +1529,9 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
         "kiro": _Agent(name="kiro", root_dir=root_dir, dirs=dirs),
         "claude-code": _Agent(name="claude-code", root_dir=root_dir, dirs=dirs),
         "codex": _CodexAgent(name="codex", root_dir=root_dir, dirs=dirs),
+        "antigravity": _AntigravityAgent(
+            name="antigravity", root_dir=root_dir, dirs=dirs
+        ),
     }
     targets = agent_names or list(all_agents)
 
@@ -1537,7 +1584,7 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
         skills_dir = agents_dir / "skills"
         installed_files["cline"].extend(str(skills_dir / s) for s in managed_skills)
 
-    for skill_agent in ("copilot", "kiro", "claude-code", "codex"):
+    for skill_agent in ("copilot", "kiro", "claude-code", "codex", "antigravity"):
         if skill_agent not in targets:
             continue
         skills_parent = _skills_parent(dirs, skill_agent)
@@ -1630,7 +1677,7 @@ def get_managed_dirs() -> list[Path]:
     managed.add(agents_dir / "skills")
     for key, value in dirs.items():
         for subdir, subdir_path in value.items():
-            if key == "codex" and subdir == "rules":
+            if key in ("codex", "antigravity") and subdir == "rules":
                 continue
             managed.add(subdir_path)
         if key in ("cline", "kiro", "claude-code"):
