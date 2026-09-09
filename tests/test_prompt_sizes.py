@@ -986,11 +986,18 @@ class TestCheckSource:
         source = tmp_path / "shared" / "rules" / "big.md"
         content = "# Big\n\n" + ("x " * FINALS[RULE_BYTES])
 
-        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+        with (
+            patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path),
+            patch("tempfile.TemporaryDirectory") as mock_tmp,
+        ):
+            mirror = tmp_path / "mirror_dir"
+            mirror.mkdir(parents=True, exist_ok=True)
+            mock_tmp.return_value.__enter__.return_value = str(mirror)
+            mock_tmp.return_value.__exit__.return_value = None
             result = check_source(source, content, targets=("claude-code",))
 
         assert str(source) in result.report
-        assert "tmp" not in result.report
+        assert "mirror_dir" not in result.report
         assert all(v.source == source for v in result.violations)
 
     def test_check_source_artifacts_carry_the_real_source_path(

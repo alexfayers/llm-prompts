@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from .manifest import AgentManifest
     from .size_guard import Artifact
 
-_AGENTS = ("cline", "copilot", "kiro", "claude-code", "codex")
+_AGENTS = ("cline", "copilot", "kiro", "claude-code", "codex", "antigravity")
 _MEMORY_TOOL = "mcp-memory"
 
 
@@ -427,8 +427,10 @@ def _reconfigure_agents(
         patch_kiro_agent_config,
         try_allow_update_claude_code,
         try_install_hooks,
+        try_install_hooks_antigravity,
         try_install_hooks_claude_code,
         try_install_memory,
+        try_install_memory_antigravity,
         try_install_memory_claude_code,
         try_install_memory_codex,
     )
@@ -441,6 +443,11 @@ def _reconfigure_agents(
 
     if "codex" in manifest and memory_changed:
         try_install_memory_codex()
+
+    if "antigravity" in manifest:
+        try_install_hooks_antigravity()
+        if memory_changed:
+            try_install_memory_antigravity()
 
     for entry in manifest.values():
         agent_config = entry.get("agent_config")
@@ -584,6 +591,15 @@ def main() -> None:
             from .install import try_install_memory_codex
 
             try_install_memory_codex()
+
+        if "antigravity" in agent_names:
+            from .install import (
+                try_install_hooks_antigravity,
+                try_install_memory_antigravity,
+            )
+
+            try_install_hooks_antigravity()
+            try_install_memory_antigravity()
 
         if args.agent_config:
             from .install import (
