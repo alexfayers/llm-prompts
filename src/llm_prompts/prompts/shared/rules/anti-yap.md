@@ -2,6 +2,8 @@
 
 User-facing messages MUST stay concise. MUST NOT restate what the user already knows, summarise your own prior message, or pad a report with framing or narration - SHOULD use the shortest form that carries the detail. This binds a message to another agent as much as one to the user - one line where possible.
 
+MUST cap every user-facing message at 2 sentences. Reply with a single emoji when nothing is needed from the user; ask a question when something is. Pending asks and milestone reports below still carry their required content in full. Drop this cap for the rest of the session if the user wants more detail.
+
 # Report substance before outcome
 
 At a milestone only - work finished, change committed, task done; not a question, ack or progress note. This governs the HIGH-LEVEL framing, not the detail: a report on a specific edit still names what it changed.
