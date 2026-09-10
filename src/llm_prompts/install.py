@@ -968,6 +968,10 @@ def _claude_model_catalogue() -> dict[str, str]:
     the session's default model, so ``modelOverrides`` is the only authoritative
     source there. Elsewhere ``availableModels`` names the models directly.
 
+    ``CLAUDE_CODE_USE_BEDROCK`` only reaches processes that inherit the shell
+    environment, so Bedrock is also recognised from settings keys only a Bedrock
+    install has: ``awsCredentialExport`` and a non-empty ``modelOverrides``.
+
     Returns:
         Mapping of model name to the value to request, empty when unavailable.
     """
@@ -977,7 +981,12 @@ def _claude_model_catalogue() -> dict[str, str]:
         )
     except (OSError, json.JSONDecodeError):
         return {}
-    if os.environ.get("CLAUDE_CODE_USE_BEDROCK") == "1":
+    is_bedrock = (
+        bool(settings.get("awsCredentialExport"))
+        or bool(settings.get("modelOverrides"))
+        or os.environ.get("CLAUDE_CODE_USE_BEDROCK") == "1"
+    )
+    if is_bedrock:
         overrides = settings.get("modelOverrides")
         return overrides if isinstance(overrides, dict) else {}
     available = settings.get("availableModels")

@@ -80,6 +80,10 @@ _BEDROCK_SETTINGS: dict[str, object] = {
     "availableModels": ["claude-haiku-4-5", "claude-opus-5[1m]"],
 }
 
+_NON_BEDROCK_SETTINGS: dict[str, object] = {
+    "availableModels": ["claude-haiku-4-5", "claude-opus-5[1m]"],
+}
+
 
 class TestResolveVariantModel:
     def test_bedrock_alias_becomes_mapped_id(
@@ -121,7 +125,7 @@ class TestResolveVariantModel:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("CLAUDE_CODE_USE_BEDROCK", raising=False)
-        _write_settings(tmp_path, _BEDROCK_SETTINGS)
+        _write_settings(tmp_path, _NON_BEDROCK_SETTINGS)
 
         with patch("llm_prompts.install.Path.home", return_value=tmp_path):
             catalogue = _claude_model_catalogue()
@@ -176,6 +180,66 @@ class TestResolveVariantModel:
             catalogue = _claude_model_catalogue()
 
         assert _resolve_variant_model("haiku", catalogue) == "haiku"
+
+    def test_model_overrides_signal_bedrock_without_env_var(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CLAUDE_CODE_USE_BEDROCK", raising=False)
+        _write_settings(tmp_path, _BEDROCK_SETTINGS)
+
+        with patch("llm_prompts.install.Path.home", return_value=tmp_path):
+            catalogue = _claude_model_catalogue()
+
+        assert _resolve_variant_model("haiku", catalogue) == (
+            "bedrock/claude-haiku-4-5-dated"
+        )
+        assert _resolve_variant_model("opus", catalogue) == "bedrock/claude-opus-5[1m]"
+
+    def test_credential_export_alone_signals_bedrock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CLAUDE_CODE_USE_BEDROCK", raising=False)
+        _write_settings(
+            tmp_path,
+            {
+                "awsCredentialExport": "some-credential-command",
+                "availableModels": ["claude-haiku-4-5"],
+            },
+        )
+
+        with patch("llm_prompts.install.Path.home", return_value=tmp_path):
+            catalogue = _claude_model_catalogue()
+
+        assert catalogue == {}
+        assert _resolve_variant_model("haiku", catalogue) == "haiku"
+
+    def test_empty_model_overrides_is_not_a_bedrock_signal(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CLAUDE_CODE_USE_BEDROCK", raising=False)
+        _write_settings(
+            tmp_path,
+            {"modelOverrides": {}, "availableModels": ["claude-haiku-4-5"]},
+        )
+
+        with patch("llm_prompts.install.Path.home", return_value=tmp_path):
+            catalogue = _claude_model_catalogue()
+
+        assert catalogue == {"claude-haiku-4-5": "claude-haiku-4-5"}
+
+    def test_unreadable_settings_without_env_var_returns_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CLAUDE_CODE_USE_BEDROCK", raising=False)
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text(
+            "{not json", encoding="utf-8"
+        )
+
+        with patch("llm_prompts.install.Path.home", return_value=tmp_path):
+            catalogue = _claude_model_catalogue()
+
+        assert catalogue == {}
 
 
 class TestApplyFrontmatterOverrides:
