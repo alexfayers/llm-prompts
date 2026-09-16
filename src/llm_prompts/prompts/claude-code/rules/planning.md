@@ -27,6 +27,7 @@ Before plan mode, in order: Explore agents, one per independent dimension, for e
 
 - Where an action's scope (files, commands, steps) is larger than the request implies, MUST pause and summarise it first.
 - MUST NOT assume a broad mandate from a narrow request.
+- 2+ asks: MUST `TaskCreate` one entry each before starting.
 
 ## Check feasibility before designing
 

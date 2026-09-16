@@ -269,23 +269,9 @@ SCHEDULES: dict[str, Schedule] = {
         steps=(
             ScheduleStep(
                 "D1",
-                350,
-                frozenset(
-                    {
-                        "architect-opus-medium.md",
-                        "architect-opus-high.md",
-                        "architect-opus-xhigh.md",
-                    }
-                ),
-            ),
-            ScheduleStep(
-                "D2",
                 200,
                 frozenset(
                     {
-                        "architect-opus-medium.md",
-                        "architect-opus-high.md",
-                        "architect-opus-xhigh.md",
                         "surveyor-sonnet-medium.md",
                         "surveyor-sonnet-high.md",
                         "surveyor-sonnet-low.md",
