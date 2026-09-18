@@ -26,7 +26,7 @@ Before you end the session or {{TOOL_COMPLETE}}, work through this checklist:
    - TODO: <file>:<line> - <text>
    ```
 
-   Append bracketed tags only when they apply.
+   Append bracketed tags only when they apply. Render a positive vote_score as star symbols (e.g. ★3) after the task name.
 
 5. **Hand off remaining work (conditional).** If incomplete work remains scoped to this project or directly related - unfinished `TODO.md` items, `in-progress` task entities, related `planned` tasks, or any non-`completed` shared `TaskList` item (per step 1) - run the `handoff` skill to write `HANDOFF.md`. Base it on step 4's findings, restricted to the current/related effort - do NOT trigger on the broad cross-project backlog. Skip if no such work remains, or a `HANDOFF.md` was already written this session, or arrived here from `handoff`.
 

@@ -22,7 +22,7 @@ At the start of every session, before responding to the user's first message, ch
    - planned: <task-name> - <one-line what-it-is>
    ```
 
-   Repeat per project (in-progress before planned within each). Omit the status line if a project has none.
+   Repeat per project (in-progress before planned within each). Omit the status line if a project has none. Render a positive vote_score as star symbols (e.g. ★3) after the task name.
 4. If the scan ran and nothing is in progress or planned, proceed normally without mentioning the check.
 5. Before drafting your first reply, look through the context already injected at session start for a source-update note. Where any package reports updates, summarize them in plain language and flag breaking changes in that same reply - never just say updates exist. Where none, say nothing. Applies even where the opening message names an unrelated task.
 6. Call memory tools (`read_graph`, `search_all_projects`, `search_nodes`, etc.) directly - ordinary tools in your catalog. Do NOT run a tool-discovery step to "find" or "check availability of" memory first (e.g. `list_mcp_resources`, listing servers) - that lists resources, not tools, and an empty result does not mean memory is unavailable. Only if your harness hides tool schemas behind an explicit `ToolSearch`/deferred-tools step (Claude Code), pre-load once with `select:mcp__memory__add_observations,mcp__memory__read_graph,mcp__memory__search_nodes,mcp__memory__create_entities`; otherwise just call the tools.
