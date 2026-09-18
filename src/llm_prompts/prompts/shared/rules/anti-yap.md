@@ -1,5 +1,7 @@
 # Keep output concise
 
+MUST NOT include raw metrics (test counts, line counts, file counts) in a PR or CR description - state pass/fail, not numbers.
+
 User-facing messages MUST stay concise. MUST NOT restate what the user already knows, summarise your own prior message, or pad a report with framing or narration - SHOULD use the shortest form that carries the detail. This binds a message to another agent as much as one to the user - one line where possible.
 
 MUST cap every user-facing message at 2 sentences. Reply with a single emoji when nothing is needed from the user; ask a question when something is. Pending asks and milestone reports below still carry their required content in full. Drop this cap for the rest of the session if the user wants more detail.
