@@ -13,8 +13,10 @@ from llm_prompts.cli import (
     _check_for_updates,
     _collect_sources,
     _collect_update_messages,
+    _contribute_target,
+    _contribute_targets,
+    _ContributeTarget,
     _get_installed_commit,
-    _llm_prompts_repo_path,
     _local_source_messages,
     _print_parked_state,
     _pull_local_sources,
@@ -990,13 +992,17 @@ class TestCheckSubcommand:
         mock_check.assert_called_once_with()
 
 
-class TestLlmPromptsRepoPath:
+class TestContributeTarget:
     def test_resolves_local_source_from_config(self, tmp_path: Path) -> None:
+        (tmp_path / "src" / "pkg" / "prompts").mkdir(parents=True)
         config = [{"name": "llm-prompts", "source": str(tmp_path)}]
         with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
             mock_config.exists.return_value = True
             with patch("llm_prompts.setup._load_config", return_value=config):
-                assert _llm_prompts_repo_path() == tmp_path
+                assert _contribute_target("llm-prompts") == (
+                    tmp_path,
+                    "src/pkg/prompts/",
+                )
 
     def test_exits_when_source_is_not_local(self) -> None:
         config = [{"name": "llm-prompts", "source": "git+https://example.com/x.git"}]
@@ -1006,7 +1012,7 @@ class TestLlmPromptsRepoPath:
             pytest.raises(SystemExit),
         ):
             mock_config.exists.return_value = True
-            _llm_prompts_repo_path()
+            _contribute_target("llm-prompts")
 
     def test_exits_when_no_llm_prompts_entry(self) -> None:
         config = [{"name": "other-tool", "source": "/tmp/other"}]
@@ -1016,7 +1022,138 @@ class TestLlmPromptsRepoPath:
             pytest.raises(SystemExit),
         ):
             mock_config.exists.return_value = True
-            _llm_prompts_repo_path()
+            _contribute_target("llm-prompts")
+
+    def test_exits_when_no_prompts_dir_matches(self, tmp_path: Path) -> None:
+        config = [{"name": "llm-prompts", "source": str(tmp_path)}]
+        with (
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=config),
+            pytest.raises(SystemExit),
+        ):
+            mock_config.exists.return_value = True
+            _contribute_target("llm-prompts")
+
+    def test_exits_when_multiple_prompts_dirs_match(self, tmp_path: Path) -> None:
+        (tmp_path / "src" / "pkg_one" / "prompts").mkdir(parents=True)
+        (tmp_path / "src" / "pkg_two" / "prompts").mkdir(parents=True)
+        config = [{"name": "llm-prompts", "source": str(tmp_path)}]
+        with (
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=config),
+            pytest.raises(SystemExit),
+        ):
+            mock_config.exists.return_value = True
+            _contribute_target("llm-prompts")
+
+
+class TestContributeTargets:
+    def test_skips_non_local_source(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        local_repo = tmp_path / "local"
+        (local_repo / "src" / "pkg" / "prompts").mkdir(parents=True)
+        config = [
+            {"name": "remote-tool", "source": "git+https://example.com/x.git"},
+            {"name": "local-tool", "source": str(local_repo)},
+        ]
+        fake_subprocess.on(
+            "remote", "-v", stdout="origin\thttps://github.com/user/repo.git (fetch)\n"
+        )
+        with (
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=config),
+        ):
+            mock_config.exists.return_value = True
+            targets = _contribute_targets()
+        assert targets == [
+            _ContributeTarget("local-tool", local_repo, "src/pkg/prompts/")
+        ]
+
+    def test_skips_repo_without_github_remote(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        (tmp_path / "src" / "pkg" / "prompts").mkdir(parents=True)
+        config = [{"name": "llm-prompts", "source": str(tmp_path)}]
+        fake_subprocess.on("remote", "-v", stdout="")
+        with (
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=config),
+            pytest.raises(SystemExit),
+        ):
+            mock_config.exists.return_value = True
+            _contribute_targets()
+
+    def test_skips_repo_with_no_prompts_dirs(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        config = [{"name": "llm-prompts", "source": str(tmp_path)}]
+        fake_subprocess.on(
+            "remote", "-v", stdout="origin\thttps://github.com/user/repo.git (fetch)\n"
+        )
+        with (
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=config),
+            pytest.raises(SystemExit),
+        ):
+            mock_config.exists.return_value = True
+            _contribute_targets()
+
+    def test_skips_repo_with_multiple_prompts_dirs(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        (tmp_path / "src" / "pkg_one" / "prompts").mkdir(parents=True)
+        (tmp_path / "src" / "pkg_two" / "prompts").mkdir(parents=True)
+        config = [{"name": "llm-prompts", "source": str(tmp_path)}]
+        fake_subprocess.on(
+            "remote", "-v", stdout="origin\thttps://github.com/user/repo.git (fetch)\n"
+        )
+        with (
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=config),
+            pytest.raises(SystemExit),
+        ):
+            mock_config.exists.return_value = True
+            _contribute_targets()
+
+    def test_preserves_config_order(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        repo_b = tmp_path / "b"
+        (repo_b / "src" / "pkg" / "prompts").mkdir(parents=True)
+        repo_a = tmp_path / "a"
+        (repo_a / "src" / "pkg" / "prompts").mkdir(parents=True)
+        config = [
+            {"name": "b-tool", "source": str(repo_b)},
+            {"name": "a-tool", "source": str(repo_a)},
+        ]
+        fake_subprocess.on(
+            "remote", "-v", stdout="origin\thttps://github.com/user/repo.git (fetch)\n"
+        )
+        with (
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=config),
+        ):
+            mock_config.exists.return_value = True
+            targets = _contribute_targets()
+        assert [target.name for target in targets] == ["b-tool", "a-tool"]
+
+    def test_exits_when_no_targets_qualify(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        config = [{"name": "remote-tool", "source": "git+https://example.com/x.git"}]
+        with (
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=config),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            mock_config.exists.return_value = True
+            _contribute_targets()
+        assert exc_info.value.code == 1
+        assert (
+            "No locally-cloned GitHub tool sources with a prompts directory "
+            "found in config." in capsys.readouterr().err
+        )
 
 
 class TestContributeSubcommand:
@@ -1024,18 +1161,76 @@ class TestContributeSubcommand:
         with (
             patch("sys.argv", ["llm-prompts", "contribute", "list"]),
             patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
-            patch("llm_prompts.cli._llm_prompts_repo_path", return_value=tmp_path),
-            patch("llm_prompts.contribute.run_list") as mock_list,
+            patch(
+                "llm_prompts.cli._contribute_targets",
+                return_value=[
+                    _ContributeTarget("llm-prompts", tmp_path, "src/pkg/prompts/")
+                ],
+            ),
+            patch("llm_prompts.contribute.run_list", return_value=0) as mock_list,
         ):
             main()
-        mock_list.assert_called_once_with(tmp_path, "octocat")
+        mock_list.assert_called_once_with(tmp_path, "octocat", "src/pkg/prompts/")
 
     def test_sync_apply_dispatches_to_run_sync(self, tmp_path: Path) -> None:
         with (
             patch("sys.argv", ["llm-prompts", "contribute", "sync", "--apply"]),
             patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
-            patch("llm_prompts.cli._llm_prompts_repo_path", return_value=tmp_path),
-            patch("llm_prompts.contribute.run_sync") as mock_sync,
+            patch(
+                "llm_prompts.cli._contribute_targets",
+                return_value=[
+                    _ContributeTarget("llm-prompts", tmp_path, "src/pkg/prompts/")
+                ],
+            ),
+            patch("llm_prompts.contribute.run_sync", return_value=0) as mock_sync,
         ):
             main()
-        mock_sync.assert_called_once_with(tmp_path, "octocat", True, None, None)
+        mock_sync.assert_called_once_with(
+            tmp_path, "octocat", "src/pkg/prompts/", True, None, None
+        )
+
+    def test_tool_flag_selects_configured_target(self, tmp_path: Path) -> None:
+        with (
+            patch(
+                "sys.argv",
+                ["llm-prompts", "contribute", "list", "--tool", "mcp-memory"],
+            ),
+            patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
+            patch(
+                "llm_prompts.cli._contribute_target",
+                return_value=(tmp_path, "src/pkg/prompts/"),
+            ) as mock_target,
+            patch("llm_prompts.contribute.run_list", return_value=0),
+        ):
+            main()
+        mock_target.assert_called_once_with("mcp-memory")
+
+    def test_multiple_targets_print_headers_and_aggregate_status(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        targets = [
+            _ContributeTarget("tool-a", tmp_path / "a", "src/pkg/prompts/"),
+            _ContributeTarget("tool-b", tmp_path / "b", "src/pkg/prompts/"),
+        ]
+        with (
+            patch("sys.argv", ["llm-prompts", "contribute", "list"]),
+            patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
+            patch("llm_prompts.cli._contribute_targets", return_value=targets),
+            patch("llm_prompts.contribute.run_list", side_effect=[0, 1]),
+        ):
+            status = main()
+        assert status == 1
+        out = capsys.readouterr().out
+        assert "[tool-a]" in out
+        assert "[tool-b]" in out
+
+    def test_cleanup_without_tool_errors(self) -> None:
+        with (
+            patch(
+                "sys.argv",
+                ["llm-prompts", "contribute", "sync", "--cleanup", "branch-x"],
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            main()
+        assert exc_info.value.code == 2

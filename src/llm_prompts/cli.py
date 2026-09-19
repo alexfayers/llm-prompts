@@ -12,6 +12,7 @@ from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
+from urllib.parse import urlparse
 
 from .setup import (
     _GIT_TIMEOUT,
@@ -244,27 +245,132 @@ def _local_source_messages(name: str, source: str) -> list[str]:
     return _format_update_message(name, subjects)
 
 
-def _llm_prompts_repo_path() -> Path:
-    """Resolve the llm-prompts checkout path from the configured tool source.
+def _prompts_prefix(repo: Path) -> str | None:
+    """Return the repo-relative prompts-dir prefix, if exactly one exists.
+
+    Args:
+        repo: The local repo checkout path.
 
     Returns:
-        The local path configured for the "llm-prompts" tool entry.
+        The repo-relative prompts-dir prefix (e.g. "src/llm_prompts/prompts/"),
+        trailing slash included, or None if there isn't exactly one match.
+    """
+    matches = sorted(repo.glob("src/*/prompts"))
+    if len(matches) != 1:
+        return None
+    return f"{matches[0].relative_to(repo).as_posix()}/"
+
+
+def _is_github_remote_url(url: str) -> bool:
+    """Check whether a git remote URL's host is exactly github.com.
+
+    Args:
+        url: A single remote URL, either standard (`https://`/`ssh://`) or
+            scp-like (`git@github.com:owner/repo.git`).
+
+    Returns:
+        True if the URL's host is github.com.
+    """
+    if "://" in url:
+        return urlparse(url).hostname == "github.com"
+    host = url.split("@", 1)[-1].split(":", 1)[0]
+    return host == "github.com"
+
+
+def _has_github_remote(repo: Path) -> bool:
+    """Check whether a local checkout is a git repo with a github.com remote.
+
+    Args:
+        repo: The local repo checkout path.
+
+    Returns:
+        True if `git remote -v` succeeds and lists a github.com remote.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(repo), "remote", "-v"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT,
+    )
+    return any(
+        _is_github_remote_url(line.split()[1])
+        for line in result.stdout.splitlines()
+        if len(line.split()) >= 2
+    )
+
+
+def _contribute_target(name: str) -> tuple[Path, str]:
+    """Resolve the checkout path and repo-relative prompts prefix for a configured tool.
+
+    Args:
+        name: The tool name to look up in config, e.g. "llm-prompts".
+
+    Returns:
+        The local checkout path and the repo-relative prompts-dir prefix
+        (e.g. "src/llm_prompts/prompts/"), trailing slash included.
     """
     from .setup import _expand, _is_local_path, _load_config
 
     for tool in _load_config():
-        if str(tool.get("name", "")) == "llm-prompts":
+        if str(tool.get("name", "")) == name:
             source = str(tool.get("source", ""))
             if not _is_local_path(source):
                 print(
-                    "The llm-prompts tool source is not a local path; "
+                    f"The {name} tool source is not a local path; "
                     "`contribute` requires a local checkout.",
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            return _expand(source)
-    print("No llm-prompts tool entry found in config.", file=sys.stderr)
+            repo = _expand(source)
+            prefix = _prompts_prefix(repo)
+            if prefix is None:
+                print(
+                    f"Expected exactly one src/*/prompts directory in {repo}.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            return repo, prefix
+    print(f"No {name} tool entry found in config.", file=sys.stderr)
     sys.exit(1)
+
+
+class _ContributeTarget(NamedTuple):
+    """A resolved contribute target: a configured tool's local checkout."""
+
+    name: str
+    repo: Path
+    prefix: str
+
+
+def _contribute_targets() -> list[_ContributeTarget]:
+    """Discover every locally-cloned GitHub tool source with a prompts directory.
+
+    Returns:
+        The matching targets, in config order.
+    """
+    from .setup import _expand, _is_local_path, _load_config
+
+    targets: list[_ContributeTarget] = []
+    for tool in _load_config():
+        source = str(tool.get("source", ""))
+        if not _is_local_path(source):
+            continue
+        repo = _expand(source)
+        prefix = _prompts_prefix(repo)
+        if prefix is None:
+            continue
+        if not _has_github_remote(repo):
+            continue
+        targets.append(_ContributeTarget(str(tool.get("name", "")), repo, prefix))
+    if not targets:
+        print(
+            "No locally-cloned GitHub tool sources with a prompts directory "
+            "found in config.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return targets
 
 
 class _PullOutcome(NamedTuple):
@@ -586,11 +692,21 @@ def main() -> int | None:
     contribute_sub = contribute_parser.add_subparsers(
         dest="contribute_command", required=True
     )
+    tool_parser = argparse.ArgumentParser(add_help=False)
+    tool_parser.add_argument(
+        "--tool",
+        metavar="NAME",
+        help="Only contribute to this configured tool (default: every locally-cloned tool).",
+    )
     contribute_sub.add_parser(
-        "list", help="Show every derived contribution branch and its state."
+        "list",
+        help="Show every derived contribution branch and its state.",
+        parents=[tool_parser],
     )
     sync_parser = contribute_sub.add_parser(
-        "sync", help="Rebuild derived branches from main (dry run unless --apply)."
+        "sync",
+        help="Rebuild derived branches from main (dry run unless --apply).",
+        parents=[tool_parser],
     )
     sync_parser.add_argument(
         "--apply", action="store_true", help="Actually cherry-pick and push."
@@ -605,6 +721,14 @@ def main() -> int | None:
     )
 
     args = parser.parse_args()
+
+    if (
+        args.command == "contribute"
+        and args.contribute_command == "sync"
+        and args.cleanup
+        and args.tool is None
+    ):
+        sync_parser.error("--cleanup requires --tool NAME.")
 
     if args.command == "install":
         if not args.no_update:
@@ -743,11 +867,32 @@ def main() -> int | None:
         from .contribute import run_list, run_sync
 
         login = _get_gh_login()
-        repo = _llm_prompts_repo_path()
-        if args.contribute_command == "list":
-            return run_list(repo, login)
-        elif args.contribute_command == "sync":
-            return run_sync(repo, login, args.apply, args.only, args.cleanup)
+        if args.tool is not None:
+            repo, prefix = _contribute_target(args.tool)
+            targets = [_ContributeTarget(args.tool, repo, prefix)]
+        else:
+            targets = _contribute_targets()
+        status = 0
+        for target in targets:
+            if len(targets) > 1:
+                print(f"[{target.name}]")
+            if args.contribute_command == "list":
+                status = max(status, run_list(target.repo, login, target.prefix))
+            else:
+                status = max(
+                    status,
+                    run_sync(
+                        target.repo,
+                        login,
+                        target.prefix,
+                        args.apply,
+                        args.only,
+                        args.cleanup,
+                    ),
+                )
+            if len(targets) > 1:
+                print()
+        return status
     else:
         parser.print_help()
         sys.exit(1)
