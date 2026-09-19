@@ -1,4 +1,4 @@
-@_default: lint type-check test
+@_default: lint type-check test check
 
 @_uv:
     uv -V 2> /dev/null || { echo 'Please install uv: https://docs.astral.sh/uv/getting-started/installation/'; exit 1;}
@@ -12,3 +12,6 @@ type-check: _uv
 
 test: _uv
     uv run pytest -vv --nf
+
+check: _uv
+    uv run llm-prompts check
