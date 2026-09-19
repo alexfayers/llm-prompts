@@ -214,6 +214,18 @@ def base_ref(repo: Path) -> str:
     return "upstream/main" if "upstream" in remotes else "origin/main"
 
 
+def stale_main_warning(repo: Path, base: str, remote: str) -> str | None:
+    """Warn if a commit on ``main`` is already reachable from ``base`` (e.g. squash-merged upstream)."""
+    output = _git("cherry", base, "main", repo=repo)
+    if not any(line.startswith("-") for line in output.splitlines()):
+        return None
+    return (
+        "warning: local main has commits already merged upstream that are not "
+        f"ancestors of {base} - fix with: git fetch {remote} main && "
+        f"git rebase {base}"
+    )
+
+
 def scope_commits(repo: Path, base: str) -> list[Commit]:
     """List every scope-candidate commit between base and main, oldest first."""
     log_output = _git(
@@ -293,9 +305,8 @@ def _group_diff(repo: Path, group: Group) -> str:
     return _git("diff", f"{shas[0]}^", shas[-1], repo=repo)
 
 
-def _compute(repo: Path, login: str) -> tuple[list[Group], dict[str, State]]:
+def _compute(repo: Path, login: str, base: str) -> tuple[list[Group], dict[str, State]]:
     """Compute every group and its classified sync state."""
-    base = base_ref(repo)
     commits = scope_commits(repo, base)
     groups = group_commits(commits, login)
     pushed_branches = remote_branches(repo, login)
@@ -411,8 +422,13 @@ def _print_table(rows: list[tuple[str, str, str, str]]) -> None:
 
 def run_list(repo: Path, login: str) -> int:
     """Print every group's sync state as a table; exit 0 iff nothing needs attention."""
-    fetch_base(repo, base_ref(repo).split("/", 1)[0])
-    groups, states = _compute(repo, login)
+    base = base_ref(repo)
+    remote = base.split("/", 1)[0]
+    fetch_base(repo, remote)
+    warning = stale_main_warning(repo, base, remote)
+    if warning is not None:
+        print(warning)
+    groups, states = _compute(repo, login, base)
 
     rows: list[tuple[str, str, str, str]] = []
     ok = True
@@ -454,8 +470,12 @@ def run_sync(
 ) -> int:
     """Preview or apply pending group syncs, or clean up one orphan branch."""
     base = base_ref(repo)
-    fetch_base(repo, base.split("/", 1)[0])
-    groups, states = _compute(repo, login)
+    remote = base.split("/", 1)[0]
+    fetch_base(repo, remote)
+    warning = stale_main_warning(repo, base, remote)
+    if warning is not None:
+        print(warning)
+    groups, states = _compute(repo, login, base)
 
     if cleanup is not None:
         state = states.get(cleanup)

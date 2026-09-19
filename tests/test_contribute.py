@@ -25,9 +25,11 @@ from llm_prompts.contribute import (
     open_prs,
     push_remote,
     remote_branches,
+    run_list,
     run_sync,
     scope_commits,
     slug_for,
+    stale_main_warning,
 )
 
 _IN_SCOPE = f"{PROMPTS_PREFIX}shared/skills/foo/SKILL.md"
@@ -358,6 +360,46 @@ class TestBaseRef:
         assert base_ref(tmp_path) == "origin/main"
 
 
+class TestStaleMainWarning:
+    def test_empty_cherry_output_returns_none(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        fake_subprocess.on("cherry", "origin/main", "main", stdout="")
+        assert stale_main_warning(tmp_path, "origin/main", "origin") is None
+
+    def test_plus_only_output_returns_none(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        fake_subprocess.on("cherry", "origin/main", "main", stdout="+abc123 new\n")
+        assert stale_main_warning(tmp_path, "origin/main", "origin") is None
+
+    def test_minus_line_warns_with_the_fix_command(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        fake_subprocess.on("cherry", "origin/main", "main", stdout="-abc123 old\n")
+        warning = stale_main_warning(tmp_path, "origin/main", "origin")
+        assert warning is not None
+        assert "git fetch origin main && git rebase origin/main" in warning
+
+    def test_mixed_minus_and_plus_lines_still_warns(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        fake_subprocess.on(
+            "cherry", "origin/main", "main", stdout="-abc123 old\n+def456 new\n"
+        )
+        assert stale_main_warning(tmp_path, "origin/main", "origin") is not None
+
+    def test_names_the_given_base_and_remote_not_origin(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        fake_subprocess.on("cherry", "upstream/main", "main", stdout="-abc123 old\n")
+        warning = stale_main_warning(tmp_path, "upstream/main", "upstream")
+        assert warning is not None
+        assert "upstream/main" in warning
+        assert "upstream main" in warning
+        assert "origin" not in warning
+
+
 class TestPushRemote:
     def test_admin_permission_uses_origin_without_forking(
         self, fake_subprocess: FakeSubprocess, tmp_path: Path
@@ -419,6 +461,109 @@ class TestRunSyncDryRun:
         assert fake_subprocess.matching("push", "origin", "--delete") == []
         mock_run_list.assert_not_called()
         assert result == 0
+
+
+class TestRunListStaleMainWarning:
+    def test_warns_when_a_commit_is_squash_merged(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
+        fake_subprocess.on("remote", stdout="origin\n")
+        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
+        fake_subprocess.on("gh", "pr", "list", stdout="[]")
+        fake_subprocess.on("cherry", "origin/main", "main", stdout="-abc123 old\n")
+
+        result = run_list(tmp_path, "tester")
+
+        out = capsys.readouterr().out
+        assert "git fetch origin main && git rebase origin/main" in out
+        assert result == 0
+
+    def test_no_warning_without_a_stale_cherry_line(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
+        fake_subprocess.on("remote", stdout="origin\n")
+        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
+        fake_subprocess.on("gh", "pr", "list", stdout="[]")
+
+        run_list(tmp_path, "tester")
+
+        out = capsys.readouterr().out
+        assert "git fetch" not in out
+
+    def test_fetch_happens_before_cherry(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
+        fake_subprocess.on("remote", stdout="origin\n")
+        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
+        fake_subprocess.on("gh", "pr", "list", stdout="[]")
+        fake_subprocess.on("cherry", "origin/main", "main", stdout="-abc123 old\n")
+
+        run_list(tmp_path, "tester")
+
+        verbs = fake_subprocess.verbs
+        assert verbs.index("fetch --quiet origin main") < verbs.index(
+            "cherry origin/main main"
+        )
+
+
+class TestRunSyncStaleMainWarning:
+    def test_warns_when_a_commit_is_squash_merged(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
+        fake_subprocess.on("remote", stdout="origin\n")
+        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
+        fake_subprocess.on("gh", "pr", "list", stdout="[]")
+        fake_subprocess.on("cherry", "origin/main", "main", stdout="-abc123 old\n")
+
+        run_sync(tmp_path, "tester", False, None, None)
+
+        out = capsys.readouterr().out
+        assert "git fetch origin main && git rebase origin/main" in out
+
+    def test_no_warning_without_a_stale_cherry_line(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
+        fake_subprocess.on("remote", stdout="origin\n")
+        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
+        fake_subprocess.on("gh", "pr", "list", stdout="[]")
+
+        run_sync(tmp_path, "tester", False, None, None)
+
+        out = capsys.readouterr().out
+        assert "git fetch" not in out
+
+    def test_fetch_happens_before_cherry(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
+        fake_subprocess.on("remote", stdout="origin\n")
+        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
+        fake_subprocess.on("gh", "pr", "list", stdout="[]")
+        fake_subprocess.on("cherry", "origin/main", "main", stdout="-abc123 old\n")
+
+        run_sync(tmp_path, "tester", False, None, None)
+
+        verbs = fake_subprocess.verbs
+        assert verbs.index("fetch --quiet origin main") < verbs.index(
+            "cherry origin/main main"
+        )
 
 
 class TestRunSyncApplyConflict:
