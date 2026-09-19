@@ -244,6 +244,29 @@ def _local_source_messages(name: str, source: str) -> list[str]:
     return _format_update_message(name, subjects)
 
 
+def _llm_prompts_repo_path() -> Path:
+    """Resolve the llm-prompts checkout path from the configured tool source.
+
+    Returns:
+        The local path configured for the "llm-prompts" tool entry.
+    """
+    from .setup import _expand, _is_local_path, _load_config
+
+    for tool in _load_config():
+        if str(tool.get("name", "")) == "llm-prompts":
+            source = str(tool.get("source", ""))
+            if not _is_local_path(source):
+                print(
+                    "The llm-prompts tool source is not a local path; "
+                    "`contribute` requires a local checkout.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            return _expand(source)
+    print("No llm-prompts tool entry found in config.", file=sys.stderr)
+    sys.exit(1)
+
+
 class _PullOutcome(NamedTuple):
     """The result of pulling one tool source."""
 
@@ -466,7 +489,21 @@ def _restart_memory_service() -> None:
         print("Restarted mcp-memory service.")
 
 
-def main() -> None:
+def _get_gh_login() -> str:
+    """Return the current gh CLI user's login."""
+    result = subprocess.run(
+        ["gh", "api", "user", "--jq", ".login"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        print(result.stderr, file=sys.stderr)
+        sys.exit(1)
+    return result.stdout.strip()
+
+
+def main() -> int | None:
     """Run the llm-prompts CLI."""
     parser = argparse.ArgumentParser(
         prog="llm-prompts",
@@ -542,6 +579,29 @@ def main() -> None:
     subparsers.add_parser(
         "check",
         help="Check prompt sizes against size_limits.py's thresholds.",
+    )
+    contribute_parser = subparsers.add_parser(
+        "contribute", help="Manage derived PR branches for prompt-source commits."
+    )
+    contribute_sub = contribute_parser.add_subparsers(
+        dest="contribute_command", required=True
+    )
+    contribute_sub.add_parser(
+        "list", help="Show every derived contribution branch and its state."
+    )
+    sync_parser = contribute_sub.add_parser(
+        "sync", help="Rebuild derived branches from main (dry run unless --apply)."
+    )
+    sync_parser.add_argument(
+        "--apply", action="store_true", help="Actually cherry-pick and push."
+    )
+    sync_parser.add_argument(
+        "--only", metavar="BRANCH", help="Restrict to one derived branch."
+    )
+    sync_parser.add_argument(
+        "--cleanup",
+        metavar="BRANCH",
+        help="Close the PR and delete this orphaned branch.",
     )
 
     args = parser.parse_args()
@@ -679,9 +739,19 @@ def main() -> None:
         uninstall(None if args.agent == "all" else [args.agent], verbose=args.verbose)
     elif args.command == "check":
         _run_size_check()
+    elif args.command == "contribute":
+        from .contribute import run_list, run_sync
+
+        login = _get_gh_login()
+        repo = _llm_prompts_repo_path()
+        if args.contribute_command == "list":
+            return run_list(repo, login)
+        elif args.contribute_command == "sync":
+            return run_sync(repo, login, args.apply, args.only, args.cleanup)
     else:
         parser.print_help()
         sys.exit(1)
+    return None
 
 
 if __name__ == "__main__":

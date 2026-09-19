@@ -14,6 +14,7 @@ from llm_prompts.cli import (
     _collect_sources,
     _collect_update_messages,
     _get_installed_commit,
+    _llm_prompts_repo_path,
     _local_source_messages,
     _print_parked_state,
     _pull_local_sources,
@@ -987,3 +988,54 @@ class TestCheckSubcommand:
         ):
             main()
         mock_check.assert_called_once_with()
+
+
+class TestLlmPromptsRepoPath:
+    def test_resolves_local_source_from_config(self, tmp_path: Path) -> None:
+        config = [{"name": "llm-prompts", "source": str(tmp_path)}]
+        with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
+            mock_config.exists.return_value = True
+            with patch("llm_prompts.setup._load_config", return_value=config):
+                assert _llm_prompts_repo_path() == tmp_path
+
+    def test_exits_when_source_is_not_local(self) -> None:
+        config = [{"name": "llm-prompts", "source": "git+https://example.com/x.git"}]
+        with (
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=config),
+            pytest.raises(SystemExit),
+        ):
+            mock_config.exists.return_value = True
+            _llm_prompts_repo_path()
+
+    def test_exits_when_no_llm_prompts_entry(self) -> None:
+        config = [{"name": "other-tool", "source": "/tmp/other"}]
+        with (
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=config),
+            pytest.raises(SystemExit),
+        ):
+            mock_config.exists.return_value = True
+            _llm_prompts_repo_path()
+
+
+class TestContributeSubcommand:
+    def test_list_dispatches_to_run_list(self, tmp_path: Path) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "contribute", "list"]),
+            patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
+            patch("llm_prompts.cli._llm_prompts_repo_path", return_value=tmp_path),
+            patch("llm_prompts.contribute.run_list") as mock_list,
+        ):
+            main()
+        mock_list.assert_called_once_with(tmp_path, "octocat")
+
+    def test_sync_apply_dispatches_to_run_sync(self, tmp_path: Path) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "contribute", "sync", "--apply"]),
+            patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
+            patch("llm_prompts.cli._llm_prompts_repo_path", return_value=tmp_path),
+            patch("llm_prompts.contribute.run_sync") as mock_sync,
+        ):
+            main()
+        mock_sync.assert_called_once_with(tmp_path, "octocat", True, None, None)
