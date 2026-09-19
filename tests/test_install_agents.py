@@ -547,7 +547,7 @@ def claude_home(tmp_path: Path) -> Iterator[Path]:
 
 
 class TestClaudeCodeAgentsInstallLayout:
-    def test_worker_reasoner_architect_and_surveyor_variants_installed_as_generated_files(
+    def test_worker_reasoner_coordinator_and_surveyor_variants_installed_as_generated_files(
         self, claude_home: Path
     ) -> None:
         agents_dir = claude_home / ".claude" / "agents"
@@ -562,9 +562,7 @@ class TestClaudeCodeAgentsInstallLayout:
             "reasoner-opus-medium.md",
             "reasoner-opus-high.md",
             "reasoner-opus-xhigh.md",
-            "architect-opus-medium.md",
-            "architect-opus-high.md",
-            "architect-opus-xhigh.md",
+            "coordinator-sonnet-medium.md",
             "surveyor-sonnet-low.md",
             "surveyor-sonnet-medium.md",
             "surveyor-sonnet-high.md",
@@ -576,7 +574,7 @@ class TestClaudeCodeAgentsInstallLayout:
 
         assert not (agents_dir / "worker.md").exists()
         assert not (agents_dir / "reasoner.md").exists()
-        assert not (agents_dir / "architect.md").exists()
+        assert not (agents_dir / "coordinator.md").exists()
         assert not (agents_dir / "surveyor.md").exists()
 
         _, frontmatter = parse_frontmatter(
@@ -599,15 +597,15 @@ class TestClaudeCodeAgentsInstallLayout:
         assert "Edit" in disallowed
         assert "NotebookEdit" in disallowed
 
-    def test_architect_variants_have_valid_yaml_frontmatter(
+    def test_reasoner_variants_have_valid_yaml_frontmatter(
         self, claude_home: Path
     ) -> None:
         agents_dir = claude_home / ".claude" / "agents"
 
         for name in (
-            "architect-opus-medium.md",
-            "architect-opus-high.md",
-            "architect-opus-xhigh.md",
+            "reasoner-opus-medium.md",
+            "reasoner-opus-high.md",
+            "reasoner-opus-xhigh.md",
         ):
             split = split_frontmatter((agents_dir / name).read_text(encoding="utf-8"))
             assert split is not None
@@ -646,12 +644,12 @@ class TestClaudeCodeManagedDirs:
 
 
 class TestCollectSources:
-    def test_claude_code_includes_architect_agent(self) -> None:
+    def test_claude_code_includes_coordinator_agent(self) -> None:
         from llm_prompts.cli import _collect_sources
 
         sources = _collect_sources("claude-code")
 
-        assert "agents/architect.md" in sources
+        assert "agents/coordinator.md" in sources
 
     def test_non_claude_code_agent_has_no_agents_key(self) -> None:
         from llm_prompts.cli import _collect_sources
