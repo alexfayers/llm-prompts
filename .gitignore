@@ -3,3 +3,4 @@ __pycache__/
 overlay.json
 .coverage
 coverage.xml
+htmlcov/
