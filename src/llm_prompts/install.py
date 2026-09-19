@@ -496,7 +496,6 @@ class _AntigravityAgent(_CodexAgent):
     AGENTS_MD: ClassVar[str] = "AGENTS.md"
 
 
-
 _CODEX_DOC_LIMIT = 32768
 _CODEX_DOC_LIMIT_RAISED = 65536
 
