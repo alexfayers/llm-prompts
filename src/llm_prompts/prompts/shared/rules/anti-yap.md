@@ -1,6 +1,6 @@
 # Keep output concise
 
-MUST NOT include raw metrics (test counts, line counts, file counts) in a PR or CR description - state pass/fail, not numbers.
+MUST NOT include raw metrics (test counts, line counts, file counts) or process/meta-commentary in any output - state the substance, not the process.
 
 User-facing messages MUST stay concise. MUST NOT restate what the user already knows, summarise your own prior message, or pad a report with framing or narration - SHOULD use the shortest form that carries the detail. This binds a message to another agent as much as one to the user - one line where possible.
 
