@@ -8,8 +8,6 @@
 
 ## Testing
 
-- [ ] `just` passes
-
 <!-- How this was tested - for prompt changes, note it should be reinstalled and exercised locally. -->
 
 ## Checks

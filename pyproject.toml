@@ -29,6 +29,9 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "src/llm_prompts/install.py" = ["T201"]
 
+[tool.coverage.run]
+relative_files = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
@@ -43,6 +46,7 @@ dev = [
     "cline-hooks",
     "mypy>=1.20.2",
     "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
     "pyyaml>=6.0.2",
     "ruff>=0.11.0",
     "types-pyyaml>=6.0.12",
