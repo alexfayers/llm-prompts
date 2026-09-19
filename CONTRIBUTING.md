@@ -34,7 +34,7 @@ Single-line, conventional-commit style (`feat:`, `fix:`, `docs:`, `chore:`, `ref
 For a change under `src/llm_prompts/prompts/**` (rules, skills, workflows, agents), commit straight to your local `main` and use `contribute list`/`sync` instead of a manual branch - never push a feature branch for these:
 
 - Commit the rule/skill change directly to your local `main`. This is what `llm-prompts update` installs from, so committing there lets you try the change live in your own agent session before it's even in a PR.
-- `llm-prompts contribute list` shows every unmerged `prompts/**` commit's derived branch and whether it's new, needs syncing, or already `ok`.
+- `llm-prompts contribute list` shows every unmerged `prompts/**` commit's derived branch and whether it's new, needs syncing, or already `ok`, across every locally-cloned overlay repo in your config by default - pass `--tool NAME` to narrow it to one.
 - `llm-prompts contribute sync --apply` cherry-picks each pending commit onto a fresh disposable branch (never by moving a branch pointer, which would drag in every earlier unmerged commit too) and force-pushes it. Re-running `sync` after amending/rewording the commit on `main` re-derives and re-pushes the same branch.
 - Never commit directly to a `contribute`-derived branch - the next `sync` run treats it as regenerable from `main` and overwrites it.
 - A branch whose source commit was dropped from `main` becomes an orphan; `sync --apply` deletes orphans with no open PR automatically, or clean one up manually with `sync --cleanup <branch>`.

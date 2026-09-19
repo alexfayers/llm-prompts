@@ -1,4 +1,4 @@
-"""Manage derived PR branches for this repo's own rule/skill-source commits.
+"""Manage derived PR branches for a repo's rule/skill-source commits.
 
 ``main`` is the single source of truth. A PR branch is a disposable export
 built by cherry-picking specific ``main`` commits onto a fresh branch off the
@@ -17,8 +17,6 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from .size_guard import check
-
-PROMPTS_PREFIX = "src/llm_prompts/prompts/"
 
 _COMPRESSION_PREFIX = "chore: compress "
 _CONVENTIONAL_PREFIX = re.compile(r"^[a-z]+(\([^)]*\))?!?: ", re.IGNORECASE)
@@ -106,13 +104,13 @@ def is_conventional(subject: str) -> bool:
     return bool(_CONVENTIONAL_SUBJECT.match(subject))
 
 
-def _is_in_scope_candidate(commit: Commit) -> bool:
-    return any(path.startswith(PROMPTS_PREFIX) for path in commit.paths)
+def _is_in_scope_candidate(commit: Commit, prefix: str) -> bool:
+    return any(path.startswith(prefix) for path in commit.paths)
 
 
-def _is_mixed_scope(commit: Commit) -> bool:
-    in_scope = any(path.startswith(PROMPTS_PREFIX) for path in commit.paths)
-    out_of_scope = any(not path.startswith(PROMPTS_PREFIX) for path in commit.paths)
+def _is_mixed_scope(commit: Commit, prefix: str) -> bool:
+    in_scope = any(path.startswith(prefix) for path in commit.paths)
+    out_of_scope = any(not path.startswith(prefix) for path in commit.paths)
     return in_scope and out_of_scope
 
 
@@ -139,7 +137,7 @@ def _flag_slug_collisions(groups: list[Group]) -> list[Group]:
     ]
 
 
-def group_commits(commits: Sequence[Commit], login: str) -> list[Group]:
+def group_commits(commits: Sequence[Commit], login: str, prefix: str) -> list[Group]:
     """Pair each compression commit with its following commit, else group singly.
 
     Mixed-scope commits never join a pair - each gets its own single-commit
@@ -148,7 +146,7 @@ def group_commits(commits: Sequence[Commit], login: str) -> list[Group]:
     groupable = [
         (index, commit)
         for index, commit in enumerate(commits)
-        if not _is_mixed_scope(commit)
+        if not _is_mixed_scope(commit, prefix)
     ]
 
     groups: dict[int, Group] = {
@@ -159,7 +157,7 @@ def group_commits(commits: Sequence[Commit], login: str) -> list[Group]:
             problems=("mixed-scope",),
         )
         for index, commit in enumerate(commits)
-        if _is_mixed_scope(commit)
+        if _is_mixed_scope(commit, prefix)
     }
 
     position = 0
@@ -179,7 +177,7 @@ def group_commits(commits: Sequence[Commit], login: str) -> list[Group]:
         problems: tuple[str, ...] = ()
         if next_commit.subject.startswith(_COMPRESSION_PREFIX):
             problems = ("double-compression",)
-        elif not _is_in_scope_candidate(next_commit):
+        elif not _is_in_scope_candidate(next_commit, prefix):
             problems = ("compression-pairs-out-of-scope",)
         groups[index] = _make_group((commit, next_commit), login, problems)
         position += 2
@@ -226,7 +224,7 @@ def stale_main_warning(repo: Path, base: str, remote: str) -> str | None:
     )
 
 
-def scope_commits(repo: Path, base: str) -> list[Commit]:
+def scope_commits(repo: Path, base: str, prefix: str) -> list[Commit]:
     """List every scope-candidate commit between base and main, oldest first."""
     log_output = _git(
         "log", "--format=%H%x09%s", "--reverse", f"{base}..main", repo=repo
@@ -242,7 +240,7 @@ def scope_commits(repo: Path, base: str) -> list[Commit]:
             if path
         )
         commit = Commit(sha=sha, subject=subject, paths=paths)
-        if _is_in_scope_candidate(commit):
+        if _is_in_scope_candidate(commit, prefix):
             commits.append(commit)
     return commits
 
@@ -305,10 +303,12 @@ def _group_diff(repo: Path, group: Group) -> str:
     return _git("diff", f"{shas[0]}^", shas[-1], repo=repo)
 
 
-def _compute(repo: Path, login: str, base: str) -> tuple[list[Group], dict[str, State]]:
+def _compute(
+    repo: Path, login: str, base: str, prefix: str
+) -> tuple[list[Group], dict[str, State]]:
     """Compute every group and its classified sync state."""
-    commits = scope_commits(repo, base)
-    groups = group_commits(commits, login)
+    commits = scope_commits(repo, base, prefix)
+    groups = group_commits(commits, login, prefix)
     pushed_branches = remote_branches(repo, login)
     prs = open_prs(repo)
 
@@ -346,7 +346,7 @@ def _compute(repo: Path, login: str, base: str) -> tuple[list[Group], dict[str, 
 
 
 def apply_group(
-    repo: Path, group: Group, base: str
+    repo: Path, group: Group, base: str, prefix: str
 ) -> tuple[str, tuple[str, ...], str]:
     """Cherry-pick one group's commits onto a fresh branch in a throwaway worktree.
 
@@ -379,7 +379,7 @@ def apply_group(
             message = stderr_lines[0] if stderr_lines else ""
             _git("cherry-pick", "--abort", repo=tmp_dir)
             return "conflict", paths, message
-        result = check([tmp_dir / PROMPTS_PREFIX])
+        result = check([tmp_dir / prefix])
         if not result.passed:
             return "oversize", (), result.report
         return "picked", (), ""
@@ -420,7 +420,7 @@ def _print_table(rows: list[tuple[str, str, str, str]]) -> None:
         print("  ".join(cell.ljust(widths[column]) for column, cell in enumerate(row)))
 
 
-def run_list(repo: Path, login: str) -> int:
+def run_list(repo: Path, login: str, prefix: str) -> int:
     """Print every group's sync state as a table; exit 0 iff nothing needs attention."""
     base = base_ref(repo)
     remote = base.split("/", 1)[0]
@@ -428,7 +428,7 @@ def run_list(repo: Path, login: str) -> int:
     warning = stale_main_warning(repo, base, remote)
     if warning is not None:
         print(warning)
-    groups, states = _compute(repo, login, base)
+    groups, states = _compute(repo, login, base, prefix)
 
     rows: list[tuple[str, str, str, str]] = []
     ok = True
@@ -466,7 +466,12 @@ def run_list(repo: Path, login: str) -> int:
 
 
 def run_sync(
-    repo: Path, login: str, apply: bool, only: str | None, cleanup: str | None
+    repo: Path,
+    login: str,
+    prefix: str,
+    apply: bool,
+    only: str | None,
+    cleanup: str | None,
 ) -> int:
     """Preview or apply pending group syncs, or clean up one orphan branch."""
     base = base_ref(repo)
@@ -475,7 +480,7 @@ def run_sync(
     warning = stale_main_warning(repo, base, remote)
     if warning is not None:
         print(warning)
-    groups, states = _compute(repo, login, base)
+    groups, states = _compute(repo, login, base, prefix)
 
     if cleanup is not None:
         state = states.get(cleanup)
@@ -512,7 +517,7 @@ def run_sync(
     remote = push_remote(repo)
     failure = False
     for group in targets:
-        outcome, paths, message = apply_group(repo, group, base)
+        outcome, paths, message = apply_group(repo, group, base, prefix)
         if outcome == "conflict":
             detail = f"{', '.join(paths)}: {message}"
             blockers = find_blocking_commits(groups, group, paths)
@@ -547,5 +552,5 @@ def run_sync(
                 print(f"{branch}: deleted (orphan, no PR)")
 
     print()
-    run_list(repo, login)
+    run_list(repo, login, prefix)
     return 1 if failure else 0

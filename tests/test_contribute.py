@@ -11,7 +11,6 @@ import pytest
 from conftest import FakeSubprocess
 
 from llm_prompts.contribute import (
-    PROMPTS_PREFIX,
     Commit,
     Group,
     Pr,
@@ -31,6 +30,8 @@ from llm_prompts.contribute import (
     slug_for,
     stale_main_warning,
 )
+
+PROMPTS_PREFIX = "src/llm_prompts/prompts/"
 
 _IN_SCOPE = f"{PROMPTS_PREFIX}shared/skills/foo/SKILL.md"
 _OUT_SCOPE = "docs/notes.md"
@@ -85,7 +86,7 @@ class TestGroupCommits:
     def test_compression_commit_pairs_with_the_next_commit(self) -> None:
         compress = Commit("s1", "chore: compress abc", (_IN_SCOPE,))
         content = Commit("s2", "feat: add foo skill", (_IN_SCOPE,))
-        groups = group_commits([compress, content], "tester")
+        groups = group_commits([compress, content], "tester", PROMPTS_PREFIX)
 
         assert len(groups) == 1
         assert groups[0].commits == (compress, content)
@@ -95,7 +96,7 @@ class TestGroupCommits:
 
     def test_lone_content_commit_forms_its_own_group(self) -> None:
         content = Commit("s1", "feat: add bar skill", (_IN_SCOPE,))
-        groups = group_commits([content], "tester")
+        groups = group_commits([content], "tester", PROMPTS_PREFIX)
 
         assert len(groups) == 1
         assert groups[0].commits == (content,)
@@ -104,7 +105,7 @@ class TestGroupCommits:
     def test_unpaired_compression_at_the_tip_is_flagged(self) -> None:
         content = Commit("s1", "feat: add baz skill", (_IN_SCOPE,))
         compress = Commit("s2", "chore: compress baz", (_IN_SCOPE,))
-        groups = group_commits([content, compress], "tester")
+        groups = group_commits([content, compress], "tester", PROMPTS_PREFIX)
 
         assert len(groups) == 2
         assert groups[0].commits == (content,)
@@ -115,7 +116,7 @@ class TestGroupCommits:
     def test_double_compression_is_flagged(self) -> None:
         first = Commit("s1", "chore: compress x", (_IN_SCOPE,))
         second = Commit("s2", "chore: compress y", (_IN_SCOPE,))
-        groups = group_commits([first, second], "tester")
+        groups = group_commits([first, second], "tester", PROMPTS_PREFIX)
 
         assert len(groups) == 1
         assert groups[0].commits == (first, second)
@@ -123,14 +124,14 @@ class TestGroupCommits:
 
     def test_non_conventional_subject_is_flagged(self) -> None:
         content = Commit("s1", "randomly worded commit", (_IN_SCOPE,))
-        groups = group_commits([content], "tester")
+        groups = group_commits([content], "tester", PROMPTS_PREFIX)
 
         assert "non-conventional-subject" in groups[0].problems
 
     def test_colliding_slugs_flag_both_groups(self) -> None:
         first = Commit("s1", "feat: fix bug", (_IN_SCOPE,))
         second = Commit("s2", "docs: fix bug", (_IN_SCOPE,))
-        groups = group_commits([first, second], "tester")
+        groups = group_commits([first, second], "tester", PROMPTS_PREFIX)
 
         assert len(groups) == 2
         assert groups[0].branch == groups[1].branch
@@ -140,7 +141,7 @@ class TestGroupCommits:
     def test_mixed_scope_commit_never_pairs_and_is_flagged(self) -> None:
         compress = Commit("s1", "chore: compress x", (_IN_SCOPE,))
         mixed = Commit("s2", "feat: mixed change", (_IN_SCOPE, _OUT_SCOPE))
-        groups = group_commits([compress, mixed], "tester")
+        groups = group_commits([compress, mixed], "tester", PROMPTS_PREFIX)
 
         assert len(groups) == 2
         assert groups[0].commits == (compress,)
@@ -288,7 +289,7 @@ class TestScopeCommits:
             stdout=f"{_IN_SCOPE}\n{_OUT_SCOPE}\n",
         )
 
-        commits = scope_commits(tmp_path, "origin/main")
+        commits = scope_commits(tmp_path, "origin/main", PROMPTS_PREFIX)
 
         assert [c.sha for c in commits] == ["aaa111", "ccc333"]
         assert commits[0].paths == (_IN_SCOPE,)
@@ -432,7 +433,7 @@ class TestRunSyncDryRun:
         fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
         fake_subprocess.on("gh", "pr", "list", stdout="[]")
 
-        run_sync(tmp_path, "tester", False, None, None)
+        run_sync(tmp_path, "tester", PROMPTS_PREFIX, False, None, None)
 
         assert fake_subprocess.matching("push") == []
         assert fake_subprocess.matching("cherry-pick") == []
@@ -454,7 +455,7 @@ class TestRunSyncDryRun:
         fake_subprocess.on("gh", "pr", "list", stdout="[]")
 
         with patch("llm_prompts.contribute.run_list") as mock_run_list:
-            result = run_sync(tmp_path, "tester", False, None, None)
+            result = run_sync(tmp_path, "tester", PROMPTS_PREFIX, False, None, None)
 
         out = capsys.readouterr().out
         assert "tester/orphan-branch: would delete (orphan, no PR)" in out
@@ -476,7 +477,7 @@ class TestRunListStaleMainWarning:
         fake_subprocess.on("gh", "pr", "list", stdout="[]")
         fake_subprocess.on("cherry", "origin/main", "main", stdout="-abc123 old\n")
 
-        result = run_list(tmp_path, "tester")
+        result = run_list(tmp_path, "tester", PROMPTS_PREFIX)
 
         out = capsys.readouterr().out
         assert "git fetch origin main && git rebase origin/main" in out
@@ -493,7 +494,7 @@ class TestRunListStaleMainWarning:
         fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
         fake_subprocess.on("gh", "pr", "list", stdout="[]")
 
-        run_list(tmp_path, "tester")
+        run_list(tmp_path, "tester", PROMPTS_PREFIX)
 
         out = capsys.readouterr().out
         assert "git fetch" not in out
@@ -507,7 +508,7 @@ class TestRunListStaleMainWarning:
         fake_subprocess.on("gh", "pr", "list", stdout="[]")
         fake_subprocess.on("cherry", "origin/main", "main", stdout="-abc123 old\n")
 
-        run_list(tmp_path, "tester")
+        run_list(tmp_path, "tester", PROMPTS_PREFIX)
 
         verbs = fake_subprocess.verbs
         assert verbs.index("fetch --quiet origin main") < verbs.index(
@@ -528,7 +529,7 @@ class TestRunSyncStaleMainWarning:
         fake_subprocess.on("gh", "pr", "list", stdout="[]")
         fake_subprocess.on("cherry", "origin/main", "main", stdout="-abc123 old\n")
 
-        run_sync(tmp_path, "tester", False, None, None)
+        run_sync(tmp_path, "tester", PROMPTS_PREFIX, False, None, None)
 
         out = capsys.readouterr().out
         assert "git fetch origin main && git rebase origin/main" in out
@@ -544,7 +545,7 @@ class TestRunSyncStaleMainWarning:
         fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
         fake_subprocess.on("gh", "pr", "list", stdout="[]")
 
-        run_sync(tmp_path, "tester", False, None, None)
+        run_sync(tmp_path, "tester", PROMPTS_PREFIX, False, None, None)
 
         out = capsys.readouterr().out
         assert "git fetch" not in out
@@ -558,7 +559,7 @@ class TestRunSyncStaleMainWarning:
         fake_subprocess.on("gh", "pr", "list", stdout="[]")
         fake_subprocess.on("cherry", "origin/main", "main", stdout="-abc123 old\n")
 
-        run_sync(tmp_path, "tester", False, None, None)
+        run_sync(tmp_path, "tester", PROMPTS_PREFIX, False, None, None)
 
         verbs = fake_subprocess.verbs
         assert verbs.index("fetch --quiet origin main") < verbs.index(
@@ -601,7 +602,7 @@ class TestRunSyncApplyConflict:
                 ),
             ],
         ):
-            run_sync(tmp_path, "tester", True, None, None)
+            run_sync(tmp_path, "tester", PROMPTS_PREFIX, True, None, None)
 
         out = capsys.readouterr().out
         conflict_line = next(
@@ -635,7 +636,7 @@ class TestRunSyncApplyConflict:
             "llm_prompts.contribute.apply_group",
             return_value=("conflict", (path,), "error: could not apply bbb222..."),
         ):
-            run_sync(tmp_path, "tester", True, None, None)
+            run_sync(tmp_path, "tester", PROMPTS_PREFIX, True, None, None)
 
         out = capsys.readouterr().out
         conflict_line = next(
@@ -681,7 +682,7 @@ class TestStalenessIntegration:
         branch = branch_name("tester", slug)
         group = Group((commit,), slug, branch, ())
 
-        apply_group(repo, group, "main~1")
+        apply_group(repo, group, "main~1", PROMPTS_PREFIX)
 
         branch_diff = self._git(repo, "diff", "main~1", branch)
         main_diff = self._git(repo, "diff", "main~1", "main")
@@ -747,7 +748,7 @@ class TestApplyGroupConflict:
         branch = branch_name("tester", slug)
         group = Group((commit,), slug, branch, ())
 
-        outcome, paths, message = apply_group(tmp_path, group, "alt")
+        outcome, paths, message = apply_group(tmp_path, group, "alt", PROMPTS_PREFIX)
 
         assert outcome == "conflict"
         assert paths == ("file.txt",)
@@ -764,7 +765,7 @@ class TestApplyGroupConflict:
         branch = branch_name("tester", slug)
         group = Group((commit,), slug, branch, ())
 
-        outcome, _paths, _message = apply_group(tmp_path, group, "alt")
+        outcome, _paths, _message = apply_group(tmp_path, group, "alt", PROMPTS_PREFIX)
 
         assert outcome == "conflict"
         assert fake_subprocess.matching("branch", "-D") != []
@@ -793,7 +794,9 @@ class TestApplyGroupOversize:
                 passed=False, artifacts=[], violations=[], report="too big"
             ),
         ):
-            outcome, paths, message = apply_group(tmp_path, group, "alt")
+            outcome, paths, message = apply_group(
+                tmp_path, group, "alt", PROMPTS_PREFIX
+            )
 
         assert outcome == "oversize"
         assert paths == ()
@@ -821,7 +824,9 @@ class TestApplyGroupOversize:
                 passed=True, artifacts=[], violations=[], report=""
             ),
         ):
-            outcome, paths, message = apply_group(tmp_path, group, "alt")
+            outcome, paths, message = apply_group(
+                tmp_path, group, "alt", PROMPTS_PREFIX
+            )
 
         assert outcome == "picked"
         assert paths == ()
@@ -861,7 +866,7 @@ class TestRunSyncApplyOversize:
                 ("picked", (), ""),
             ],
         ):
-            result = run_sync(tmp_path, "tester", True, None, None)
+            result = run_sync(tmp_path, "tester", PROMPTS_PREFIX, True, None, None)
 
         out = capsys.readouterr().out
         assert "size check failed" in out
@@ -895,7 +900,7 @@ class TestRunSyncApplyPickedCleanup:
             "llm_prompts.contribute.apply_group",
             return_value=("picked", (), ""),
         ):
-            result = run_sync(tmp_path, "tester", True, None, None)
+            result = run_sync(tmp_path, "tester", PROMPTS_PREFIX, True, None, None)
 
         assert result == 0
         assert fake_subprocess.matching("branch", "-D") != []
@@ -931,17 +936,17 @@ class TestRunSyncApplyListsAfter:
             ),
             patch(
                 "llm_prompts.contribute.run_list",
-                side_effect=lambda repo, login: print("LIST-CALLED") or 1,
+                side_effect=lambda repo, login, prefix: print("LIST-CALLED") or 1,
             ) as mock_run_list,
         ):
-            result = run_sync(tmp_path, "tester", True, None, None)
+            result = run_sync(tmp_path, "tester", PROMPTS_PREFIX, True, None, None)
 
         out = capsys.readouterr().out
         pushed_index = out.index("pushed")
         list_index = out.index("LIST-CALLED")
         assert pushed_index < list_index
         assert out[pushed_index:list_index].count("\n\n") >= 1
-        mock_run_list.assert_called_once_with(tmp_path, "tester")
+        mock_run_list.assert_called_once_with(tmp_path, "tester", PROMPTS_PREFIX)
         assert result == 0
 
     def test_dry_run_does_not_print_the_list(
@@ -953,7 +958,7 @@ class TestRunSyncApplyListsAfter:
         fake_subprocess.on("gh", "pr", "list", stdout="[]")
 
         with patch("llm_prompts.contribute.run_list") as mock_run_list:
-            run_sync(tmp_path, "tester", False, None, None)
+            run_sync(tmp_path, "tester", PROMPTS_PREFIX, False, None, None)
 
         mock_run_list.assert_not_called()
 
@@ -966,7 +971,9 @@ class TestRunSyncApplyListsAfter:
         fake_subprocess.on("gh", "pr", "list", stdout="[]")
 
         with patch("llm_prompts.contribute.run_list") as mock_run_list:
-            run_sync(tmp_path, "tester", True, None, "nonexistent-branch")
+            run_sync(
+                tmp_path, "tester", PROMPTS_PREFIX, True, None, "nonexistent-branch"
+            )
 
         mock_run_list.assert_not_called()
 
@@ -993,7 +1000,7 @@ class TestRunSyncApplyOrphanCleanup:
         fake_subprocess.on("push")
 
         with patch("llm_prompts.contribute.run_list", return_value=0):
-            result = run_sync(tmp_path, "tester", True, None, None)
+            result = run_sync(tmp_path, "tester", PROMPTS_PREFIX, True, None, None)
 
         out = capsys.readouterr().out
         assert "tester/orphan-branch: deleted (orphan, no PR)" in out
@@ -1035,7 +1042,7 @@ class TestRunSyncApplyOrphanCleanup:
         )
 
         with patch("llm_prompts.contribute.run_list", return_value=0):
-            result = run_sync(tmp_path, "tester", True, None, None)
+            result = run_sync(tmp_path, "tester", PROMPTS_PREFIX, True, None, None)
 
         out = capsys.readouterr().out
         assert "deleted" not in out
