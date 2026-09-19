@@ -453,6 +453,7 @@ class TestRunSyncDryRun:
             stdout="abc123\trefs/heads/tester/orphan-branch\n",
         )
         fake_subprocess.on("gh", "pr", "list", stdout="[]")
+        fake_subprocess.on("diff", "--name-only", stdout=f"{_IN_SCOPE}\n")
 
         with patch("llm_prompts.contribute.run_list") as mock_run_list:
             result = run_sync(tmp_path, "tester", PROMPTS_PREFIX, False, None, None)
@@ -461,6 +462,45 @@ class TestRunSyncDryRun:
         assert "tester/orphan-branch: would delete (orphan, no PR)" in out
         assert fake_subprocess.matching("push", "origin", "--delete") == []
         mock_run_list.assert_not_called()
+        assert result == 0
+
+
+class TestOrphanScopeFilter:
+    def test_pushed_branch_touching_only_out_of_scope_paths_is_not_orphan(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
+        fake_subprocess.on("remote", stdout="origin\n")
+        fake_subprocess.on(
+            "ls-remote",
+            "--heads",
+            "origin",
+            stdout="abc123\trefs/heads/tester/unrelated-pr\n",
+        )
+        fake_subprocess.on(
+            "gh",
+            "pr",
+            "list",
+            stdout=json.dumps(
+                [
+                    {
+                        "number": 31,
+                        "state": "OPEN",
+                        "url": "https://github.com/o/r/pull/31",
+                        "headRefName": "tester/unrelated-pr",
+                    }
+                ]
+            ),
+        )
+        fake_subprocess.on("diff", "--name-only", stdout=f"{_OUT_SCOPE}\n")
+
+        result = run_list(tmp_path, "tester", PROMPTS_PREFIX)
+
+        out = capsys.readouterr().out
+        assert "tester/unrelated-pr" not in out
         assert result == 0
 
 
@@ -998,6 +1038,7 @@ class TestRunSyncApplyOrphanCleanup:
         )
         fake_subprocess.on("gh", "pr", "list", stdout="[]")
         fake_subprocess.on("push")
+        fake_subprocess.on("diff", "--name-only", stdout=f"{_IN_SCOPE}\n")
 
         with patch("llm_prompts.contribute.run_list", return_value=0):
             result = run_sync(tmp_path, "tester", PROMPTS_PREFIX, True, None, None)
@@ -1040,6 +1081,7 @@ class TestRunSyncApplyOrphanCleanup:
                 ]
             ),
         )
+        fake_subprocess.on("diff", "--name-only", stdout=f"{_IN_SCOPE}\n")
 
         with patch("llm_prompts.contribute.run_list", return_value=0):
             result = run_sync(tmp_path, "tester", PROMPTS_PREFIX, True, None, None)

@@ -298,6 +298,13 @@ def _branch_diff(repo: Path, base: str, remote_ref: str) -> str:
     return _git("diff", f"{base}...{remote_ref}", repo=repo)
 
 
+def _branch_in_scope(repo: Path, base: str, remote_ref: str, prefix: str) -> bool:
+    paths = _git(
+        "diff", "--name-only", f"{base}...{remote_ref}", repo=repo
+    ).splitlines()
+    return any(path.startswith(prefix) for path in paths)
+
+
 def _group_diff(repo: Path, group: Group) -> str:
     shas = [commit.sha for commit in group.commits]
     return _git("diff", f"{shas[0]}^", shas[-1], repo=repo)
@@ -338,6 +345,9 @@ def _compute(
         )
 
     for branch in sorted(pushed_branches - expected_branches):
+        remote_ref = f"origin/{branch}"
+        if not _branch_in_scope(repo, base, remote_ref, prefix):
+            continue
         states[branch] = classify(
             None, branch, pushed_branches, prs.get(branch), (), "", (), ""
         )
