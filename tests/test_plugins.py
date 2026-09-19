@@ -334,6 +334,39 @@ class TestPullPluginSources:
 
         assert capsys.readouterr().out == ""
 
+    def test_reports_fetch_failure_instead_of_silently_skipping(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        fake_subprocess: FakeSubprocess,
+    ) -> None:
+        upstream = tmp_path / "upstream"
+        config = tmp_path / "config.toml"
+        config.write_text(
+            f'[[plugins]]\nname = "p"\nsource = "git+file://{upstream}"\n'
+        )
+        monkeypatch.setattr(setup, "CONFIG_PATH", config)
+        monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
+        dest = plugins._checkout_dir("p")
+        (dest / ".git").mkdir(parents=True)
+
+        fake_subprocess.on("rev-parse", "--short", "HEAD", stdout="aaaaaaa\n")
+        fake_subprocess.on(
+            "fetch", returncode=128, stderr="fatal: unable to create '.../main.lock'"
+        )
+        capsys.readouterr()
+
+        plugins.pull_plugin_sources()
+
+        out = capsys.readouterr().out
+        assert "[p] fetch failed" in out
+        assert "main.lock" in out
+        fake_subprocess.assert_sequence(
+            "rev-parse --short HEAD",
+            "fetch",
+        )
+
     def test_prints_update_message_when_tip_changes(
         self,
         tmp_path: Path,

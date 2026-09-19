@@ -213,12 +213,16 @@ def _pull_one_plugin_source(plugin: dict[str, Any]) -> list[str]:
         timeout=_GIT_TIMEOUT,
     ).stdout.strip()
 
-    subprocess.run(
+    fetch = subprocess.run(
         ["git", "-C", str(checkout), "fetch", "--quiet"],
         check=False,
         capture_output=True,
+        text=True,
         timeout=_GIT_TIMEOUT,
     )
+    if fetch.returncode != 0:
+        return [f"[{name}] fetch failed: {fetch.stderr.strip()}"]
+
     target = _reset_target(checkout, plugin.get("ref"))
     reset = subprocess.run(
         ["git", "-C", str(checkout), "reset", "--hard", target, "--quiet"],
