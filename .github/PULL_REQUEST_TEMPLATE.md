@@ -8,7 +8,7 @@
 
 ## Testing
 
-<!-- How this was tested - for prompt changes, note it should be reinstalled and exercised locally. -->
+<!-- How this was tested (e.g. `just` passes, ran with prompt change for x days, etc). For prompt changes, note it should be reinstalled and exercised locally. -->
 
 ## Checks
 
