@@ -16,7 +16,7 @@ Before adding a rule, MUST check it would still read correctly in an unrelated r
 
 Run `llm-prompts source {{AGENT}}` to see the source file paths for all installed rules, workflows, and skills.
 
-After editing any source file, run `llm-prompts update` to reinstall.
+After editing any source file, run `llm-prompts update` to reinstall. MUST use the installed `llm-prompts` (PATH), never `uv run llm-prompts` - it can miss overlays and delete their installed files.
 
 For initial setup or full reinstall of all tools and overlays, use `llm-prompts setup`. Config is at `~/.config/llm-prompts/config.toml` - run `llm-prompts setup --init` to create it.
 
