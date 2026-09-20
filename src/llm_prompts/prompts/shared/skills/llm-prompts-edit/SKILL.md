@@ -46,4 +46,4 @@ Decision order for touching this repo's own rule/skill/workflow/agent sources.
 - Commit the change right after making it. Do not leave it uncommitted.
 - If an unpushed commit already changes the same rule or skill, fix that commit up instead of making a new one.
 - Keep a compression edit in its own commit, separate from the content change - easier to review.
-- To open the change as a PR: @pr.md
+- To open the change as a PR: `llm-prompts-contribute` skill.
