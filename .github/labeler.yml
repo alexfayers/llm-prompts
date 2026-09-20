@@ -1,0 +1,29 @@
+rules:
+  - changed-files:
+      - any-glob-to-any-file: 'src/llm_prompts/prompts/*/rules/**'
+
+skills:
+  - changed-files:
+      - any-glob-to-any-file: 'src/llm_prompts/prompts/*/skills/**'
+
+workflows:
+  - changed-files:
+      - any-glob-to-any-file: 'src/llm_prompts/prompts/*/workflows/**'
+
+agents:
+  - changed-files:
+      - any-glob-to-any-file: 'src/llm_prompts/prompts/*/agents/**'
+
+tooling:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/llm_prompts/**/*.py'
+          - 'pyproject.toml'
+          - 'justfile'
+          - 'install.sh'
+          - 'uv.lock'
+          - '.github/**'
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file: 'tests/**'

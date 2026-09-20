@@ -1,0 +1,22 @@
+name: PR automation
+
+on:
+  workflow_call:
+    secrets:
+      PROJECTS_TOKEN:
+        required: true
+
+concurrency:
+  group: project-automation-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  automate:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: alexfayers/llm-prompts/.github/actions/pr-automation@main
+        with:
+          projects-token: ${{ secrets.PROJECTS_TOKEN }}
+          github-token: ${{ github.token }}
