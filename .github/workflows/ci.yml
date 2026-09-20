@@ -63,3 +63,11 @@ jobs:
           script: |
             const { check } = require('./.github/scripts/check-pr-template.js')
             await check({ github, context, core })
+
+  pr-automation-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - run: node --test .github/actions/pr-automation/*.test.js

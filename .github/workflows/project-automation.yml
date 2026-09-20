@@ -1,0 +1,19 @@
+name: Project automation
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, converted_to_draft, edited, closed, synchronize]
+  pull_request_review:
+    types: [submitted]
+
+concurrency:
+  group: project-automation-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  automate:
+    permissions:
+      pull-requests: write
+    uses: alexfayers/llm-prompts/.github/workflows/pr-automation.yml@main
+    secrets:
+      PROJECTS_TOKEN: ${{ secrets.PROJECTS_TOKEN }}

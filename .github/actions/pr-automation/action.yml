@@ -1,0 +1,43 @@
+name: PR automation
+description: Sync PR status onto the llm-prompts ecosystem project board, apply a type label from the PR title, and apply path-based area labels.
+inputs:
+  projects-token:
+    description: Token with access to the target GitHub Project, used only for the status-sync GraphQL calls.
+    required: true
+  github-token:
+    description: Token used for labeling the PR and reading repo contents.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Sync project status
+      if: |
+        (github.event_name == 'pull_request_target' && contains(fromJSON('["opened", "reopened", "converted_to_draft", "ready_for_review", "closed"]'), github.event.action)) ||
+        (github.event_name == 'pull_request_review' && github.event.action == 'submitted')
+      uses: actions/github-script@v9
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      with:
+        github-token: ${{ inputs.projects-token }}
+        script: |
+          const { sync } = require(`${process.env.ACTION_PATH}/sync-project-status.js`)
+          await sync({ github, context, core })
+
+    - name: Label PR by type
+      if: |
+        github.event_name == 'pull_request_target' &&
+        contains(fromJSON('["opened", "reopened", "edited"]'), github.event.action)
+      uses: actions/github-script@v9
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const { label } = require(`${process.env.ACTION_PATH}/label-pr.js`)
+          await label({ github, context, core })
+
+    - name: Label PR by area
+      uses: actions/labeler@v7
+      with:
+        repo-token: ${{ inputs.github-token }}
+        sync-labels: true
