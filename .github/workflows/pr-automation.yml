@@ -6,10 +6,6 @@ on:
       PROJECTS_TOKEN:
         required: true
 
-concurrency:
-  group: project-automation-${{ github.event.pull_request.number }}
-  cancel-in-progress: false
-
 jobs:
   automate:
     runs-on: ubuntu-latest
