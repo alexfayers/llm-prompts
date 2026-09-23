@@ -62,11 +62,6 @@ class TestAntigravityInstallLayout:
         assert agents_md.is_file()
         assert not (antigravity_home / ".gemini" / "config" / "rules").exists()
 
-    def test_workflows_land_as_workflow_files(self, antigravity_home: Path) -> None:
-        workflows = antigravity_home / ".gemini" / "config" / "workflows"
-        assert (workflows / "simplify.md").is_file()
-        assert (workflows / "word-god.md").is_file()
-
     def test_skills_materialize_into_antigravity_skills(
         self, antigravity_home: Path
     ) -> None:
@@ -80,6 +75,7 @@ class TestAntigravityInstallLayout:
         self, antigravity_home: Path, tmp_path: Path
     ) -> None:
         stray = antigravity_home / ".gemini" / "config" / "workflows" / "stray.md"
+        stray.parent.mkdir(parents=True)
         stray.write_text("stale", encoding="utf-8")
         manifest = tmp_path / "installed.json"
         import json
@@ -99,13 +95,10 @@ class TestAntigravityInstallLayout:
 
 
 class TestAntigravityManagedDirs:
-    def test_includes_workflows_and_skills_not_bare_gemini_config(
-        self, tmp_path: Path
-    ) -> None:
+    def test_includes_skills_not_bare_gemini_config(self, tmp_path: Path) -> None:
         home = tmp_path / "home"
         with patch("llm_prompts.install.Path.home", return_value=home):
             managed = set(get_managed_dirs())
 
-        assert home / ".gemini" / "config" / "workflows" in managed
         assert home / ".gemini" / "config" / "skills" in managed
         assert home / ".gemini" / "config" not in managed

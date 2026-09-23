@@ -70,13 +70,6 @@ class TestPiInstallLayout:
         assert (agent_dir / "AGENTS.md").is_file()
         assert not (agent_dir / "rules").exists()
 
-    def test_workflows_land_as_prompt_templates(self, pi_home: Path) -> None:
-        prompts = pi_home / ".pi" / "agent" / "prompts"
-        assert (prompts / "simplify.md").is_file()
-        assert (
-            not (prompts / "simplify.md").read_text(encoding="utf-8").startswith("---")
-        )
-
     def test_skills_materialize_into_pi_skills(self, pi_home: Path) -> None:
         skills = pi_home / ".pi" / "agent" / "skills"
         assert (skills / "tdd" / "SKILL.md").is_file()
@@ -86,6 +79,7 @@ class TestPiInstallLayout:
         self, pi_home: Path, tmp_path: Path
     ) -> None:
         stray = pi_home / ".pi" / "agent" / "prompts" / "stray.md"
+        stray.parent.mkdir(parents=True)
         stray.write_text("stale", encoding="utf-8")
         manifest = tmp_path / "installed.json"
         data = json.loads(manifest.read_text(encoding="utf-8"))
@@ -109,12 +103,12 @@ class TestPiAgentDirOverride:
         _install(home, tmp_path / "installed.json")
 
         assert (agent_dir / "AGENTS.md").is_file()
-        assert (agent_dir / "prompts" / "simplify.md").is_file()
+        assert (agent_dir / "skills" / "tdd" / "SKILL.md").is_file()
         assert not (home / ".pi").exists()
 
 
 class TestPiManagedDirs:
-    def test_includes_prompts_and_skills_not_bare_agent_dir(
+    def test_includes_skills_not_bare_agent_dir(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
@@ -123,7 +117,6 @@ class TestPiManagedDirs:
             managed = set(get_managed_dirs())
 
         agent_dir = home / ".pi" / "agent"
-        assert agent_dir / "prompts" in managed
         assert agent_dir / "skills" in managed
         assert agent_dir not in managed
 

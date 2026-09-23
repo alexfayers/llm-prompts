@@ -33,11 +33,11 @@ llm-prompts update    # pull tool/plugin sources, refresh packages, reinstall fo
 
 Rules are markdown files that steer agent behaviour. They are always active during a session - the agent reads them as part of its system prompt. Examples: coding style guidelines, git commit conventions, banned phrasing.
 
-Rules are installed to agent-specific directories (e.g. `~/.kiro/steering/` for Kiro, `~/Documents/Cline/Rules/` for Cline, `~/.claude/rules/` for Claude Code). Codex, Antigravity, and Pi have no rules directory, so all rules are concatenated into a single `AGENTS.md` (e.g. `~/.codex/AGENTS.md`, `~/.pi/agent/AGENTS.md`). For Pi, workflows become prompt templates in `~/.pi/agent/prompts/`, everything installs under `$PI_CODING_AGENT_DIR` where set, and [cline-hooks](https://github.com/alexfayers/cline-hooks) is wired in as a pi extension. Pi packages (extensions) declared in `prompts/pi/settings.json` - core and overlays alike - are merged into `~/.pi/agent/settings.json`, where pi installs them on startup; the default ships [pi-mcp-adapter](https://www.npmjs.com/package/pi-mcp-adapter) for MCP support, and `mcp-memory install pi` registers the memory servers with it. Packages you add yourself are left alone.
+Rules are installed to agent-specific directories (e.g. `~/.kiro/steering/` for Kiro, `~/Documents/Cline/Rules/` for Cline, `~/.claude/rules/` for Claude Code). Codex, Antigravity, and Pi have no rules directory, so all rules are concatenated into a single `AGENTS.md` (e.g. `~/.codex/AGENTS.md`, `~/.pi/agent/AGENTS.md`). For Pi, everything installs under `$PI_CODING_AGENT_DIR` where set, and [cline-hooks](https://github.com/alexfayers/cline-hooks) is wired in as a pi extension. Pi packages (extensions) declared in `prompts/pi/settings.json` - core and overlays alike - are merged into `~/.pi/agent/settings.json`, where pi installs them on startup; the default ships [pi-mcp-adapter](https://www.npmjs.com/package/pi-mcp-adapter) for MCP support, and `mcp-memory install pi` registers the memory servers with it. Packages you add yourself are left alone.
 
 ### Workflows
 
-Workflows are markdown files that define multi-step procedures the agent can follow. Unlike rules (which are always active), workflows are loaded on demand when the agent needs to perform a specific task. Examples: pre-implementation checklist, confidence scoring, oncall investigation.
+Workflows are markdown files that define multi-step procedures the agent can follow. Unlike rules (which are always active), workflows are loaded on demand when the agent needs to perform a specific task. Examples: pre-implementation checklist, confidence scoring, oncall investigation. Workflows are installed for Cline only; every other agent gets rules and skills.
 
 ### Skills
 
@@ -45,7 +45,7 @@ Skills are directories containing a `SKILL.md` file that the agent reads before 
 
 ### Agents
 
-Agents are Claude Code custom subagent definitions - single markdown files with YAML frontmatter (`name`, `description`, `model`, etc.) that define a specialised subagent. They are Claude-Code-specific: only Claude Code has a `~/.claude/agents/` subagent concept, so they are installed only for the `claude-code` target (unlike rules, workflows, and skills, which span multiple agents). Agents are installed as symlinks, so edits to the source are picked up immediately.
+Agents are Claude Code custom subagent definitions - single markdown files with YAML frontmatter (`name`, `description`, `model`, etc.) that define a specialised subagent. They are Claude-Code-specific: only Claude Code has a `~/.claude/agents/` subagent concept, so they are installed only for the `claude-code` target (unlike rules and skills, which span multiple agents). Agents are installed as symlinks, so edits to the source are picked up immediately.
 
 ### Templates
 
