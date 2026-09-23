@@ -18,4 +18,4 @@ llm-prompts setup --init >/dev/null 2>&1 || true
 
 echo ""
 echo "Done! Edit ~/.config/llm-prompts/config.toml to customise, then run:"
-echo "  llm-prompts install {agent}    # kiro, cline, copilot, or all"
+echo "  llm-prompts install {agent}    # kiro, cline, copilot, claude-code, codex, antigravity, pi, or all"

@@ -95,6 +95,16 @@ def _vscode_user_dir() -> Path:
     return home / ".config" / "Code" / "User"
 
 
+def _pi_agent_dir() -> Path:
+    """Return pi's config directory.
+
+    Returns:
+        ``$PI_CODING_AGENT_DIR`` where set, else ``~/.pi/agent``.
+    """
+    override = os.environ.get("PI_CODING_AGENT_DIR")
+    return Path(override).expanduser() if override else Path.home() / ".pi" / "agent"
+
+
 def _get_dirs() -> dict[str, dict[str, Path]]:
     """Build destination directories used during installation.
 
@@ -104,6 +114,7 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
     home = Path.home()
     cline_merged = home / ".cline_merged"
     vscode_user = _vscode_user_dir()
+    pi_agent = _pi_agent_dir()
     return {
         "cline": {
             "rules": cline_merged / "rules",
@@ -132,6 +143,11 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
             "rules": home / ".gemini" / "config",
             "workflows": home / ".gemini" / "config" / "workflows",
             "skills": home / ".gemini" / "config" / "skills",
+        },
+        "pi": {
+            "rules": pi_agent,
+            "workflows": pi_agent / "prompts",
+            "skills": pi_agent / "skills",
         },
     }
 
@@ -492,6 +508,12 @@ class _CodexAgent(_Agent):
 
 class _AntigravityAgent(_CodexAgent):
     """Antigravity agent that concatenates all rules into a single AGENTS.md file."""
+
+    AGENTS_MD: ClassVar[str] = "AGENTS.md"
+
+
+class _PiAgent(_CodexAgent):
+    """Pi agent that concatenates all rules into its global AGENTS.md file."""
 
     AGENTS_MD: ClassVar[str] = "AGENTS.md"
 
@@ -1290,6 +1312,68 @@ def try_install_hooks_antigravity() -> None:
     subprocess.run([binary, "install", "antigravity"], check=False)
 
 
+def _package_source(entry: str | dict[str, Any]) -> str:
+    """Return a pi ``packages`` entry's source, whether string or object form."""
+    return entry if isinstance(entry, str) else str(entry.get("source", ""))
+
+
+def _pi_packages(fragments: list[Path]) -> list[str]:
+    """Collect the pi packages declared by every ``pi/settings.json`` fragment.
+
+    Args:
+        fragments: Candidate fragment paths, core first, then overlays.
+
+    Returns:
+        Package sources in declaration order, without duplicates.
+    """
+    packages: list[str] = []
+    for fragment in fragments:
+        if not fragment.is_file():
+            continue
+        for source in json.loads(_read_text(fragment)).get("packages", []):
+            if source not in packages:
+                packages.append(source)
+    return packages
+
+
+def _sync_pi_packages(wanted: list[str], previous: list[str]) -> None:
+    """Make pi's global settings list exactly the managed packages in ``wanted``.
+
+    Packages the user added themselves are left alone; a package llm-prompts
+    managed before but no longer declares is removed.
+
+    Args:
+        wanted: Package sources llm-prompts now declares.
+        previous: Package sources llm-prompts managed at the last install.
+    """
+    settings_path = _pi_agent_dir() / "settings.json"
+    settings: dict[str, Any] = (
+        json.loads(_read_text(settings_path)) if settings_path.exists() else {}
+    )
+    current: list[str | dict[str, Any]] = settings.get("packages", [])
+    stale = set(previous) - set(wanted)
+    packages = [entry for entry in current if _package_source(entry) not in stale]
+    present = {_package_source(entry) for entry in packages}
+    packages.extend(source for source in wanted if source not in present)
+    if packages == current:
+        return
+    settings["packages"] = packages
+    _write_text(settings_path, json.dumps(settings, indent=2) + "\n")
+    log("success", f"[pi] Updated packages in {settings_path}.")
+
+
+def try_install_hooks_pi() -> None:
+    """Write the cline-hooks bridge extension for pi if available."""
+    import shutil
+    import subprocess
+
+    binary = shutil.which("cline-hook")
+    if not binary:
+        log("debug", "cline-hook not found on PATH, skipping Pi hook injection.")
+        return
+    subprocess.run([binary, "install", "pi"], check=False)
+
+
 def try_allow_update_claude_code() -> None:
     """Add Bash(llm-prompts update *) to Claude Code permissions.allow."""
     import json
@@ -1376,6 +1460,20 @@ def try_install_memory_antigravity() -> None:
         )
         return
     subprocess.run([binary, "install", "antigravity"], check=False)
+    if not _memory_service_exists():
+        subprocess.run([binary, "setup-service"], check=False)
+
+
+def try_install_memory_pi() -> None:
+    """Add mcp-memory to pi's MCP config if available."""
+    import shutil
+    import subprocess
+
+    binary = shutil.which("mcp-memory")
+    if not binary:
+        log("debug", "mcp-memory not found on PATH, skipping Pi MCP setup.")
+        return
+    subprocess.run([binary, "install", "pi"], check=False)
     if not _memory_service_exists():
         subprocess.run([binary, "setup-service"], check=False)
 
@@ -1500,6 +1598,8 @@ def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) ->
             _unpatch_kiro_agent_config(agent_config)
         if name == "claude-code":
             _disallow_update_claude_code()
+        if name == "pi":
+            _sync_pi_packages([], entry.get("packages", []))
         delete_agent(name)
         log("success", f"[{name}] Uninstalled.")
 
@@ -1540,6 +1640,7 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
         "antigravity": _AntigravityAgent(
             name="antigravity", root_dir=root_dir, dirs=dirs
         ),
+        "pi": _PiAgent(name="pi", root_dir=root_dir, dirs=dirs),
     }
     targets = agent_names or list(all_agents)
 
@@ -1592,7 +1693,14 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
         skills_dir = agents_dir / "skills"
         installed_files["cline"].extend(str(skills_dir / s) for s in managed_skills)
 
-    for skill_agent in ("copilot", "kiro", "claude-code", "codex", "antigravity"):
+    for skill_agent in (
+        "copilot",
+        "kiro",
+        "claude-code",
+        "codex",
+        "antigravity",
+        "pi",
+    ):
         if skill_agent not in targets:
             continue
         skills_parent = _skills_parent(dirs, skill_agent)
@@ -1665,9 +1773,22 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
     from .manifest import read_manifest, write_manifest
 
     previous_manifest = read_manifest()
+    pi_packages: list[str] | None = None
+    if "pi" in targets:
+        pi_packages = _pi_packages(
+            [root_dir / "pi" / "settings.json"]
+            + [d / "pi" / "settings.json" for d in overlay_dirs]
+        )
+        _sync_pi_packages(
+            pi_packages, previous_manifest.get("pi", {}).get("packages", [])
+        )
     for name in targets:
         _cleanup_stale(name, installed_files[name], previous_manifest)
-        write_manifest(name, installed_files[name])
+        write_manifest(
+            name,
+            installed_files[name],
+            packages=pi_packages if name == "pi" else None,
+        )
 
 
 def get_managed_dirs() -> list[Path]:
@@ -1685,7 +1806,7 @@ def get_managed_dirs() -> list[Path]:
     managed.add(agents_dir / "skills")
     for key, value in dirs.items():
         for subdir, subdir_path in value.items():
-            if key in ("codex", "antigravity") and subdir == "rules":
+            if key in ("codex", "antigravity", "pi") and subdir == "rules":
                 continue
             managed.add(subdir_path)
         if key in ("cline", "kiro", "claude-code"):

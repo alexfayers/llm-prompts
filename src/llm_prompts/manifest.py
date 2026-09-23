@@ -16,6 +16,7 @@ class AgentManifest(TypedDict, total=False):
 
     files: list[str]
     agent_config: str
+    packages: list[str]
     installed_at: str
 
 
@@ -40,6 +41,7 @@ def write_manifest(
     files: list[str],
     *,
     agent_config: str | None = None,
+    packages: list[str] | None = None,
 ) -> None:
     """Write or update the manifest for an agent.
 
@@ -47,6 +49,7 @@ def write_manifest(
         agent_name: Agent that was installed.
         files: List of installed file paths.
         agent_config: Path to agent config that was patched, if any.
+        packages: Agent packages llm-prompts manages in the agent's settings, if any.
     """
     agents = read_manifest()
 
@@ -56,6 +59,8 @@ def write_manifest(
     }
     if agent_config:
         entry["agent_config"] = agent_config
+    if packages is not None:
+        entry["packages"] = packages
 
     agents[agent_name] = entry
 
