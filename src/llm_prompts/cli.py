@@ -42,7 +42,7 @@ def _collect_sources(agent: str) -> dict[str, Path]:
     take priority over shared sources, and agent-specific sources are
     added if they don't exist in shared.
     """
-    from .install import _discover_overlay_paths
+    from .install import _discover_overlay_paths, content_subdirs
 
     root = _get_root_dir()
 
@@ -51,7 +51,7 @@ def _collect_sources(agent: str) -> dict[str, Path]:
 
     sources: dict[str, Path] = {}
 
-    for subdir in ("rules", "workflows"):
+    for subdir in content_subdirs(agent):
         # Overlay sources (highest priority)
         for overlay_dir in overlay_dirs:
             overlay_src = overlay_dir / "shared" / subdir

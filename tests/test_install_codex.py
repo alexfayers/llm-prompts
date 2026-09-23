@@ -166,11 +166,6 @@ class TestCodexInstallLayout:
         assert agents_md.is_file()
         assert not (codex_home / ".codex" / "rules").exists()
 
-    def test_workflows_land_as_prompt_files(self, codex_home: Path) -> None:
-        prompts = codex_home / ".codex" / "prompts"
-        assert (prompts / "simplify.md").is_file()
-        assert (prompts / "word-god.md").is_file()
-
     def test_skills_materialize_into_codex_skills(self, codex_home: Path) -> None:
         skills = codex_home / ".codex" / "skills"
         assert (skills / "tdd").is_dir() and not (skills / "tdd").is_symlink()
@@ -198,6 +193,7 @@ class TestCodexInstallLayout:
         self, codex_home: Path, tmp_path: Path
     ) -> None:
         stray = codex_home / ".codex" / "prompts" / "stray.md"
+        stray.parent.mkdir(parents=True)
         stray.write_text("stale", encoding="utf-8")
         manifest = tmp_path / "installed.json"
         import json
@@ -217,14 +213,11 @@ class TestCodexInstallLayout:
 
 
 class TestCodexManagedDirs:
-    def test_includes_prompts_and_skills_not_bare_codex_home(
-        self, tmp_path: Path
-    ) -> None:
+    def test_includes_skills_not_bare_codex_home(self, tmp_path: Path) -> None:
         home = tmp_path / "home"
         with patch("llm_prompts.install.Path.home", return_value=home):
             managed = set(get_managed_dirs())
 
-        assert home / ".codex" / "prompts" in managed
         assert home / ".codex" / "skills" in managed
         assert home / ".codex" not in managed
 

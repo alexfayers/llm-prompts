@@ -77,24 +77,6 @@ def log(level: LogLevel, message: str) -> None:
         print(f"{_PLAIN_SYMBOLS[level]} {message}", file=sys.stderr)
 
 
-def _vscode_user_dir() -> Path:
-    """Return the VS Code user directory for the current platform.
-
-    Returns:
-        Path to the VS Code user directory.
-    """
-    home = Path.home()
-    vscode_server = home / ".vscode-server"
-    if vscode_server.is_dir():
-        return vscode_server / "data" / "User"
-
-    if sys.platform == "win32":
-        return Path(os.environ["APPDATA"]) / "Code" / "User"
-    if sys.platform == "darwin":
-        return home / "Library" / "Application Support" / "Code" / "User"
-    return home / ".config" / "Code" / "User"
-
-
 def _pi_agent_dir() -> Path:
     """Return pi's config directory.
 
@@ -113,7 +95,6 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
     """
     home = Path.home()
     cline_merged = home / ".cline_merged"
-    vscode_user = _vscode_user_dir()
     pi_agent = _pi_agent_dir()
     return {
         "cline": {
@@ -122,34 +103,40 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
         },
         "copilot": {
             "rules": home / ".copilot" / "instructions",
-            "workflows": vscode_user / "prompts",
             "skills": home / ".copilot" / "skills",
         },
         "kiro": {
             "rules": home / ".kiro" / "steering",
-            "workflows": home / ".kiro" / "prompts",
         },
         "claude-code": {
             "rules": home / ".claude" / "rules",
-            "workflows": home / ".claude" / "commands",
             "agents": home / ".claude" / "agents",
         },
         "codex": {
             "rules": home / ".codex",
-            "workflows": home / ".codex" / "prompts",
             "skills": home / ".codex" / "skills",
         },
         "antigravity": {
             "rules": home / ".gemini" / "config",
-            "workflows": home / ".gemini" / "config" / "workflows",
             "skills": home / ".gemini" / "config" / "skills",
         },
         "pi": {
             "rules": pi_agent,
-            "workflows": pi_agent / "prompts",
             "skills": pi_agent / "skills",
         },
     }
+
+
+def content_subdirs(agent_name: str) -> list[str]:
+    """Return the rules/workflows content subdirs installed for an agent.
+
+    Args:
+        agent_name: Agent name.
+
+    Returns:
+        ``rules``, plus ``workflows`` for the agents that install workflows.
+    """
+    return [s for s in ("rules", "workflows") if s in _get_dirs()[agent_name]]
 
 
 def _skills_parent(dirs: dict[str, dict[str, Path]], agent: str) -> Path:
@@ -1737,7 +1724,7 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
 
     for name in targets:
         agent = all_agents[name]
-        for subdir in ["rules", "workflows"]:
+        for subdir in content_subdirs(name):
             overlay_srcs = [d / "shared" / subdir for d in overlay_dirs]
             overlay_agent_srcs = [d / agent.name / subdir for d in overlay_dirs]
             shared_src = root_dir / "shared" / subdir

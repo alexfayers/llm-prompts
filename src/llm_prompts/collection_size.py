@@ -22,6 +22,7 @@ from .install import (
     _read_text,
     _rendered_content,
     _resolve_priority_sources,
+    content_subdirs,
 )
 from .render_template import parse_frontmatter, substitute_variables
 from .size_guard import (
@@ -168,8 +169,10 @@ def collection_artifacts(
             COLLECTION_BYTES,
             target,
             target,
-            _rendered_kind_bytes(root, overlays, target, "rules")
-            + _rendered_kind_bytes(root, overlays, target, "workflows")
+            sum(
+                _rendered_kind_bytes(root, overlays, target, subdir)
+                for subdir in content_subdirs(target)
+            )
             + _skill_bytes(root, overlays, target)
             + _agent_bytes(root, overlays, target),
             root,
