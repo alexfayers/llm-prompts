@@ -2,7 +2,7 @@
 
 Cross-agent rules, workflows, skills, and agents for LLM coding assistants.
 
-Supports [Cline](https://github.com/cline/cline), [GitHub Copilot](https://github.com/features/copilot), [Kiro](https://kiro.dev), [Claude Code](https://code.claude.com), and [Codex](https://openai.com/codex/).
+Supports [Cline](https://github.com/cline/cline), [GitHub Copilot](https://github.com/features/copilot), [Kiro](https://kiro.dev), [Claude Code](https://code.claude.com), [Codex](https://openai.com/codex/), and [Pi](https://github.com/badlogic/pi-mono).
 
 ## Quick start
 
@@ -14,7 +14,7 @@ This installs [uv](https://docs.astral.sh/uv/) (if needed), installs llm-prompts
 
 ```bash
 # Edit ~/.config/llm-prompts/config.toml to add your overlay packages, then:
-llm-prompts install {agent}    # kiro, cline, copilot, claude-code, codex, or all
+llm-prompts install {agent}    # kiro, cline, copilot, claude-code, codex, antigravity, pi, or all
 ```
 
 The first `install` bootstraps everything: when your config has any remote (git URL) `[[tools]]` entries, `install` automatically runs `setup` first to install/upgrade those packages, then installs rules/workflows/skills for the target agent(s). Pass `--no-update` to skip the automatic `setup`.
@@ -33,7 +33,7 @@ llm-prompts update    # pull tool/plugin sources, refresh packages, reinstall fo
 
 Rules are markdown files that steer agent behaviour. They are always active during a session - the agent reads them as part of its system prompt. Examples: coding style guidelines, git commit conventions, banned phrasing.
 
-Rules are installed to agent-specific directories (e.g. `~/.kiro/steering/` for Kiro, `~/Documents/Cline/Rules/` for Cline, `~/.claude/rules/` for Claude Code). Codex has no rules directory, so all rules are concatenated into a single `~/.codex/AGENTS.md`.
+Rules are installed to agent-specific directories (e.g. `~/.kiro/steering/` for Kiro, `~/Documents/Cline/Rules/` for Cline, `~/.claude/rules/` for Claude Code). Codex, Antigravity, and Pi have no rules directory, so all rules are concatenated into a single `AGENTS.md` (e.g. `~/.codex/AGENTS.md`, `~/.pi/agent/AGENTS.md`). For Pi, workflows become prompt templates in `~/.pi/agent/prompts/`, everything installs under `$PI_CODING_AGENT_DIR` where set, and [cline-hooks](https://github.com/alexfayers/cline-hooks) is wired in as a pi extension. Pi packages (extensions) declared in `prompts/pi/settings.json` - core and overlays alike - are merged into `~/.pi/agent/settings.json`, where pi installs them on startup; the default ships [pi-mcp-adapter](https://www.npmjs.com/package/pi-mcp-adapter) for MCP support, and `mcp-memory install pi` registers the memory servers with it. Packages you add yourself are left alone.
 
 ### Workflows
 
@@ -134,6 +134,7 @@ src/my_package/prompts/
   cline/rules/          # cline-only rules
   kiro/rules/           # kiro-only rules
   claude-code/agents/   # claude-code-only subagents
+  pi/settings.json      # pi packages to add to ~/.pi/agent/settings.json
 ```
 
 ## Kiro agent setup

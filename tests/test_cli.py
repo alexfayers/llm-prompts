@@ -625,7 +625,11 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("sys.argv", ["llm-prompts", "update"]),
             patch(
                 "llm_prompts.manifest.read_manifest",
-                return_value={"claude-code": {"files": []}, "codex": {"files": []}},
+                return_value={
+                    "claude-code": {"files": []},
+                    "codex": {"files": []},
+                    "pi": {"files": []},
+                },
             ),
             patch("llm_prompts.cli._pull_local_sources", return_value=changed),
             patch("llm_prompts.setup.has_remote_sources", return_value=False),
@@ -639,6 +643,8 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.install.try_install_memory_claude_code") as memory,
             patch("llm_prompts.install.try_allow_update_claude_code") as allow,
             patch("llm_prompts.install.try_install_memory_codex") as codex,
+            patch("llm_prompts.install.try_install_hooks_pi") as pi_hooks,
+            patch("llm_prompts.install.try_install_memory_pi") as pi_memory,
             patch("llm_prompts.cli._auto_migrate_memory_db") as migrate,
         ):
             main()
@@ -647,6 +653,8 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             "memory": memory,
             "allow": allow,
             "codex": codex,
+            "pi_hooks": pi_hooks,
+            "pi_memory": pi_memory,
             "migrate": migrate,
         }
 
@@ -659,17 +667,20 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
         mocks = self._run_update({"cline-hooks"})
         mocks["hooks"].assert_called_once_with()
         mocks["allow"].assert_called_once_with()
+        mocks["pi_hooks"].assert_called_once_with()
 
     def test_memory_config_and_db_wait_for_a_memory_change(self) -> None:
         mocks = self._run_update({"cline-hooks"})
         mocks["memory"].assert_not_called()
         mocks["codex"].assert_not_called()
+        mocks["pi_memory"].assert_not_called()
         mocks["migrate"].assert_not_called()
 
     def test_a_memory_change_reconfigures_memory_and_migrates_the_db(self) -> None:
         mocks = self._run_update({"mcp-memory"})
         mocks["memory"].assert_called_once_with()
         mocks["codex"].assert_called_once_with()
+        mocks["pi_memory"].assert_called_once_with()
         mocks["migrate"].assert_called_once_with()
 
 
