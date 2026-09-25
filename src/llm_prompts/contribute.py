@@ -58,6 +58,7 @@ class State(NamedTuple):
     pushed: bool
     pr: Pr | None
     stale: bool
+    regressed: bool
 
 
 def _git(*args: str, repo: Path) -> str:
@@ -194,11 +195,19 @@ def classify(
     branch_diff: str,
     group_subjects: tuple[str, ...],
     group_diff: str,
+    branch_ahead: bool,
 ) -> State:
     """Classify one branch's sync state from pre-fetched git/gh facts."""
     pushed = branch in remote_branches
     stale = not (branch_subjects == group_subjects and branch_diff == group_diff)
-    return State(group=group, branch=branch, pushed=pushed, pr=pr, stale=stale)
+    return State(
+        group=group,
+        branch=branch,
+        pushed=pushed,
+        pr=pr,
+        stale=stale,
+        regressed=branch_ahead,
+    )
 
 
 def fetch_base(repo: Path, remote: str) -> None:
@@ -221,6 +230,33 @@ def stale_main_warning(repo: Path, base: str, remote: str) -> str | None:
         "warning: local main has commits already merged upstream that are not "
         f"ancestors of {base} - fix with: git fetch {remote} main && "
         f"git rebase {base}"
+    )
+
+
+def _recovery_command(state: State, base: str, prefix: str) -> str:
+    """Build the command restoring one regressed branch's content onto main."""
+    if state.group is None:
+        return f"git cherry-pick {base}..origin/{state.branch}"
+    return (
+        f"git restore -p --source=origin/{state.branch} --staged --worktree"
+        f" -- {prefix} && git commit --fixup={state.group.commits[-1].sha[:7]}"
+        f" && GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash {base}"
+    )
+
+
+def regression_warning(states: dict[str, State], base: str, prefix: str) -> str | None:
+    """Warn if a pushed branch holds content main lacks, so syncing would drop it."""
+    lines = [
+        f"  {branch}: {_recovery_command(state, base, prefix)}"
+        for branch, state in sorted(states.items())
+        if state.regressed
+    ]
+    if not lines:
+        return None
+    return (
+        "warning: these pushed branches hold content local main no longer has, so "
+        "syncing would drop it - recover with the commands below, then re-run "
+        "sync --apply:\n" + "\n".join(lines)
     )
 
 
@@ -310,6 +346,15 @@ def _group_diff(repo: Path, group: Group) -> str:
     return _git("diff", f"{shas[0]}^", shas[-1], repo=repo)
 
 
+def _branch_ahead(repo: Path, reference: str, remote_ref: str) -> bool:
+    """Return whether ``remote_ref`` holds content ``reference`` lacks."""
+    diff = _git("diff", reference, remote_ref, repo=repo)
+    return any(
+        line.startswith("+") and not line.startswith("+++")
+        for line in diff.splitlines()
+    )
+
+
 def _compute(
     repo: Path, login: str, base: str, prefix: str
 ) -> tuple[list[Group], dict[str, State]]:
@@ -331,8 +376,11 @@ def _compute(
             remote_ref = f"origin/{branch}"
             branch_subjects = _branch_subjects(repo, base, remote_ref)
             branch_diff = _branch_diff(repo, base, remote_ref)
+            branch_ahead = branch_diff != group_diff and _branch_ahead(
+                repo, group.commits[-1].sha, remote_ref
+            )
         else:
-            branch_subjects, branch_diff = (), ""
+            branch_subjects, branch_diff, branch_ahead = (), "", False
         states[branch] = classify(
             group,
             branch,
@@ -342,6 +390,7 @@ def _compute(
             branch_diff,
             group_subjects,
             group_diff,
+            branch_ahead,
         )
 
     for branch in sorted(pushed_branches - expected_branches):
@@ -349,7 +398,15 @@ def _compute(
         if not _branch_in_scope(repo, base, remote_ref, prefix):
             continue
         states[branch] = classify(
-            None, branch, pushed_branches, prs.get(branch), (), "", (), ""
+            None,
+            branch,
+            pushed_branches,
+            prs.get(branch),
+            (),
+            "",
+            (),
+            "",
+            _branch_ahead(repo, "main", remote_ref),
         )
 
     return groups, states
@@ -416,9 +473,12 @@ def find_blocking_commits(
 
 def _state_label(state: State) -> str:
     if state.group is None:
-        return f"orphan ({state.pr.state.lower()})" if state.pr else "orphan (no PR)"
+        label = "regressed orphan" if state.regressed else "orphan"
+        return f"{label} ({state.pr.state.lower()})" if state.pr else f"{label} (no PR)"
     if not state.pushed:
         return "new (no PR)"
+    if state.regressed:
+        return "regressed"
     return "needs-sync" if state.stale else "ok"
 
 
@@ -462,6 +522,10 @@ def run_list(repo: Path, login: str, prefix: str) -> int:
 
     _print_table(rows)
 
+    warning = regression_warning(states, base, prefix)
+    if warning is not None:
+        print(warning)
+
     problem_groups = [group for group in groups if group.problems]
     if problem_groups:
         ok = False
@@ -491,11 +555,17 @@ def run_sync(
     if warning is not None:
         print(warning)
     groups, states = _compute(repo, login, base, prefix)
+    regression = regression_warning(states, base, prefix)
+    if regression is not None:
+        print(regression)
 
     if cleanup is not None:
         state = states.get(cleanup)
         if state is None or state.group is not None:
             print(f"{cleanup} is not an orphan branch; refusing to clean up")
+            return 1
+        if state.regressed:
+            print(f"{cleanup} holds content main lacks; refusing to clean up")
             return 1
         if state.pr is not None:
             _gh_json("pr", "close", str(state.pr.number), repo=repo)
@@ -507,6 +577,7 @@ def run_sync(
         for group in groups
         if not group.problems
         and (not states[group.branch].pushed or states[group.branch].stale)
+        and not states[group.branch].regressed
     ]
     if only is not None:
         targets = [group for group in targets if group.branch == only]
@@ -520,12 +591,12 @@ def run_sync(
             print(f"git push --force-with-lease <remote> {group.branch}")
         if only is None:
             for branch, state in states.items():
-                if state.group is None and state.pr is None:
+                if state.group is None and state.pr is None and not state.regressed:
                     print(f"{branch}: would delete (orphan, no PR)")
-        return 0
+        return 1 if regression is not None else 0
 
     remote = push_remote(repo)
-    failure = False
+    failure = regression is not None
     for group in targets:
         outcome, paths, message = apply_group(repo, group, base, prefix)
         if outcome == "conflict":
@@ -557,7 +628,7 @@ def run_sync(
 
     if only is None:
         for branch, state in states.items():
-            if state.group is None and state.pr is None:
+            if state.group is None and state.pr is None and not state.regressed:
                 _git("push", "origin", "--delete", branch, repo=repo)
                 print(f"{branch}: deleted (orphan, no PR)")
 
