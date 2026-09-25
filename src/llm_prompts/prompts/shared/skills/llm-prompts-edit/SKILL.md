@@ -32,7 +32,7 @@ Decision order for touching this repo's own rule/skill/workflow/agent sources.
 
 ## 5. Write
 
-- RFC 2119 bullets only; no filler or justification.
+- RFC 2119 bullets only; no filler or justification. MUST/MUST NOT for absolute requirements; SHOULD/SHOULD NOT for defaults overridable with good reason; MAY for free choices.
 - A skill is a directory: SKILL.md plus optional scripts. Prefer a script or hook over prose wherever the step is checkable or computable exactly.
 - New skill: `src/llm_prompts/prompts/shared/skills/<name>/SKILL.md`, `name` = directory, `description` states what + when. Directory scan registers it.
 
