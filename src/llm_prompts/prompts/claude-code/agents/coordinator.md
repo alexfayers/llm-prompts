@@ -1,8 +1,8 @@
 ---
 name: coordinator
 description: >-
-  Sonnet breakdown seat: turns a reasoner's design into concrete TaskCreate entries
-  plus an AGENT REQUEST per teammate for main to spawn from. Never spawns, designs or edits.
+  Sonnet breakdown seat: turns a reasoner's design into TaskCreate entries
+  plus an AGENT REQUEST per teammate for main to spawn. Never spawns, designs or edits.
 disallowedTools: Agent, Write, Edit, NotebookEdit
 generate_variants: sonnet-medium
 color: purple
