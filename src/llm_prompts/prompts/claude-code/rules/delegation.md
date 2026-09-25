@@ -8,13 +8,13 @@
   - **Haiku** - trivial work: a lookup, a known exact change, a known shell recipe. Judgment, not file count, sets the tier - never where reasoning is involved.
 - A known target (file, symbol, doc you know) is a trivial lookup: SHOULD go to Haiku, or read it yourself if cheaper; MUST NOT let it become "go find out about X". Exception: agent-teams.md's delegate-first default overrules this when a team is active.
 - A spawn commits that dimension: MUST NOT resume reads on it or re-read its report - `SendMessage` instead.
-- Design/editor agents MUST NOT run tests; main holds that gate.
+- Design/editor agents MUST NOT run tests.
 
 ## Who holds `Agent`
 
-- MUST use only named tiers - `reasoner` (Opus, holds `Agent`), `worker` (mechanical), `surveyor` (read-only), `coordinator` (breakdown); never `general-purpose`.
+- MUST use only named tiers - `reasoner` (Opus, holds `Agent`), `worker` (mechanical), `surveyor` (read-only), `coordinator` (breakdown, `Explore`-only `Agent`); never `general-purpose`.
 - `Explore`/`Plan` inherit no rules: their prompt MUST carry every binding constraint; SHOULD prefer `Explore` over `surveyor` for a bounded read-only search.
-- Only main spawns a NAMED teammate; roster is flat. `reasoner` MAY fan out unnamed subagents (may recurse); else report to `coordinator`, raising the AGENT REQUEST.
+- Only main spawns a NAMED teammate; roster is flat. `reasoner` MAY fan out unnamed subagents (may recurse), `coordinator` unnamed `Explore` only; else report to `coordinator`, raising the AGENT REQUEST.
 
 ## Spawn prompt contract
 

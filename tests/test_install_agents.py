@@ -562,7 +562,7 @@ class TestClaudeCodeAgentsInstallLayout:
             "reasoner-opus-medium.md",
             "reasoner-opus-high.md",
             "reasoner-opus-xhigh.md",
-            "coordinator-sonnet-medium.md",
+            "coordinator-sonnet-low.md",
             "surveyor-sonnet-low.md",
             "surveyor-sonnet-medium.md",
             "surveyor-sonnet-high.md",
