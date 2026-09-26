@@ -476,14 +476,16 @@ class TestUpdateCommandPullsPlugins:
             patch("llm_prompts.setup.has_remote_sources", return_value=False),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup") as mock_setup,
-            patch("llm_prompts.install.main"),
+            patch("llm_prompts.install.main") as mock_install,
             patch("llm_prompts.cli._restart_memory_service"),
             patch("llm_prompts.plugins.pull_plugin_sources") as mock_pull,
+            patch("llm_prompts.size_guard.snapshot_sources", return_value={}),
         ):
             main()
 
         mock_pull.assert_called_once_with()
         mock_setup.assert_not_called()
+        mock_install.assert_called_once_with(["kiro"], size_baseline={})
 
     def test_update_runs_setup_with_stale_tools(self) -> None:
         with (
