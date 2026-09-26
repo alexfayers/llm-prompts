@@ -847,6 +847,9 @@ def main() -> int | None:
             )
             sys.exit(1)
 
+        from .size_guard import snapshot_sources
+
+        size_baseline = snapshot_sources(_size_guard_roots())
         changed_sources = _pull_local_sources()
 
         from .plugins import pull_plugin_sources
@@ -862,7 +865,7 @@ def main() -> int | None:
 
         from .install import main as install_main
 
-        install_main(list(manifest))
+        install_main(list(manifest), size_baseline=size_baseline)
 
         memory_changed = _MEMORY_TOOL in changed_sources
         if changed_sources:

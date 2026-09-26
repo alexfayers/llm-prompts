@@ -11,6 +11,7 @@ class of bug this guard exists to catch.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import tempfile
@@ -605,6 +606,51 @@ def format_report(violations: list[Violation], errors: list[str] | None = None) 
                 f"threshold {v.threshold} {unit} ({v.source}) - compress, don't split."
             )
     return "\n".join(lines)
+
+
+def snapshot_sources(roots: Iterable[Path]) -> dict[Path, str]:
+    """Hash every file under `roots`, to later tell which sources changed.
+
+    Args:
+        roots: Prompts directories to scan.
+
+    Returns:
+        A SHA-256 digest per resolved file path.
+    """
+    return {
+        path.resolve(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for root in roots
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
+def split_by_change(
+    violations: list[Violation], baseline: dict[Path, str] | None
+) -> tuple[list[Violation], list[Violation]]:
+    """Split violations by whether their source changed since `baseline`.
+
+    Args:
+        violations: Violations from a `check()` run.
+        baseline: A `snapshot_sources` result taken before the change, or
+            None to treat every violation as unchanged.
+
+    Returns:
+        The violations whose source is unchanged, then those whose source was
+        added or modified. A directory source (collection totals) never counts
+        as changed.
+    """
+    if baseline is None:
+        return violations, []
+    unchanged: list[Violation] = []
+    changed: list[Violation] = []
+    for v in violations:
+        path = v.source.resolve()
+        current = (
+            hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+        )
+        (changed if current != baseline.get(path) else unchanged).append(v)
+    return unchanged, changed
 
 
 def check(

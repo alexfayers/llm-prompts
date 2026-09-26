@@ -1591,12 +1591,19 @@ def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) ->
         log("success", f"[{name}] Uninstalled.")
 
 
-def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None:
+def main(
+    agent_names: list[str] | None = None,
+    *,
+    verbose: bool = False,
+    size_baseline: dict[Path, str] | None = None,
+) -> None:
     """Run the installation workflow.
 
     Args:
         agent_names: Agents to install for. None means all.
         verbose: Show debug-level output.
+        size_baseline: A `size_guard.snapshot_sources` taken before pulling
+            sources; violations in files changed since then only warn.
     """
     global _verbose
     _verbose = verbose
@@ -1606,13 +1613,26 @@ def main(agent_names: list[str] | None = None, *, verbose: bool = False) -> None
     overlay_dirs = _discover_overlay_paths()
 
     from .size_guard import check as run_size_check
-    from .size_guard import parked_state_lines
+    from .size_guard import format_report, parked_state_lines, split_by_change
 
     size_result = run_size_check([root_dir, *overlay_dirs])
-    if not size_result.passed:
-        for line in size_result.report.splitlines():
+    if size_result.declaration_errors:
+        for line in format_report([], size_result.declaration_errors).splitlines():
             log("error", line)
         sys.exit(1)
+    blocking, pulled = split_by_change(size_result.violations, size_baseline)
+    if blocking:
+        for line in format_report(blocking).splitlines():
+            log("error", line)
+        sys.exit(1)
+    if pulled:
+        for line in format_report(pulled).splitlines():
+            log("warn", line)
+        log(
+            "warn",
+            "Installing anyway as these changed in this update; run "
+            "`llm-prompts check` once they are compressed.",
+        )
     for line in parked_state_lines(size_result.artifacts):
         log("info", line)
     for line in size_result.stale:
