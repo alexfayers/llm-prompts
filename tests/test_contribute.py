@@ -167,6 +167,7 @@ class TestClassify:
             "diff-a",
             ("feat: add foo skill",),
             "diff-a",
+            False,
         )
         assert state.stale is False
         assert state.pushed is True
@@ -182,6 +183,7 @@ class TestClassify:
             "diff-a",
             ("feat: add foo skill",),
             "diff-b",
+            False,
         )
         assert state.stale is True
 
@@ -196,6 +198,7 @@ class TestClassify:
             "diff-a",
             ("feat: add foo skill",),
             "diff-a",
+            False,
         )
         assert state.stale is True
 
@@ -210,6 +213,7 @@ class TestClassify:
             "diff-a",
             (),
             "",
+            False,
         )
         assert state.pushed is False
         assert state.pr is None
@@ -226,6 +230,7 @@ class TestClassify:
             "diff-a",
             ("feat: add foo skill",),
             "diff-a",
+            False,
         )
         assert state.pushed is True
         assert state.stale is False
@@ -242,6 +247,7 @@ class TestClassify:
             "",
             (),
             "",
+            False,
         )
         assert state.group is None
         assert state.pr == pr
@@ -258,6 +264,7 @@ class TestClassify:
             "",
             (),
             "",
+            False,
         )
         assert state.group is None
         assert state.pr == pr
@@ -737,6 +744,7 @@ class TestStalenessIntegration:
             main_diff,
             (commit.subject,),
             branch_diff,
+            False,
         )
         assert fresh_state.stale is False
 
@@ -753,6 +761,7 @@ class TestStalenessIntegration:
             reworded_diff,
             (commit.subject,),
             branch_diff,
+            False,
         )
         assert stale_state.stale is True
 
@@ -1115,3 +1124,184 @@ class TestFindBlockingCommits:
         blockers = find_blocking_commits(groups, target_group, ("shared/bar.md",))
 
         assert blockers == []
+
+
+class TestRegressionCheck:
+    def _register_regressed_group(
+        self, fake_subprocess: FakeSubprocess, *, ahead_diff: str
+    ) -> None:
+        fake_subprocess.on(
+            "log",
+            "--format=%H%x09%s",
+            stdout=fake_subprocess.sha_subjects(("aaa111", "feat: add foo skill")),
+        )
+        fake_subprocess.on_match(
+            lambda argv: "show" in argv, stdout=f"{PROMPTS_PREFIX}foo.md\n"
+        )
+        fake_subprocess.on("remote", stdout="origin\n")
+        fake_subprocess.on(
+            "ls-remote",
+            "--heads",
+            "origin",
+            stdout="abc123\trefs/heads/tester/add-foo-skill\n",
+        )
+        fake_subprocess.on("gh", "pr", "list", stdout="[]")
+        fake_subprocess.on("diff", "aaa111^", "aaa111", stdout="group-diff\n")
+        fake_subprocess.on(
+            "log", "--format=%s", "--reverse", stdout="feat: add foo skill\n"
+        )
+        fake_subprocess.on(
+            "diff", "origin/main...origin/tester/add-foo-skill", stdout="branch-diff\n"
+        )
+        fake_subprocess.on(
+            "diff", "aaa111", "origin/tester/add-foo-skill", stdout=ahead_diff
+        )
+
+    def test_group_branch_regressed_is_labelled_warned_and_excluded(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        self._register_regressed_group(fake_subprocess, ahead_diff="+new line\n")
+
+        list_result = run_list(tmp_path, "tester", PROMPTS_PREFIX)
+        out = capsys.readouterr().out
+        assert "regressed" in out
+        assert "tester/add-foo-skill" in out
+        assert (
+            "git restore -p --source=origin/tester/add-foo-skill --staged --worktree"
+            in out
+        )
+        assert "--fixup=aaa111" in out
+        assert "--autosquash origin/main" in out
+        assert list_result == 1
+
+        sync_result = run_sync(tmp_path, "tester", PROMPTS_PREFIX, False, None, None)
+        out = capsys.readouterr().out
+        assert "git switch -c tester/add-foo-skill" not in out
+        assert "tester/add-foo-skill" in out
+        assert sync_result == 1
+
+    def test_reword_only_staleness_skips_the_extra_diff_call(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        fake_subprocess.on(
+            "log",
+            "--format=%H%x09%s",
+            stdout=fake_subprocess.sha_subjects(("aaa111", "feat: add foo skill v2")),
+        )
+        fake_subprocess.on_match(
+            lambda argv: "show" in argv, stdout=f"{PROMPTS_PREFIX}foo.md\n"
+        )
+        fake_subprocess.on("remote", stdout="origin\n")
+        fake_subprocess.on(
+            "ls-remote",
+            "--heads",
+            "origin",
+            stdout="abc123\trefs/heads/tester/add-foo-skill-v2\n",
+        )
+        fake_subprocess.on("gh", "pr", "list", stdout="[]")
+        fake_subprocess.on("diff", "aaa111^", "aaa111", stdout="same-diff\n")
+        fake_subprocess.on(
+            "log", "--format=%s", "--reverse", stdout="feat: add foo skill\n"
+        )
+        fake_subprocess.on(
+            "diff",
+            "origin/main...origin/tester/add-foo-skill-v2",
+            stdout="same-diff\n",
+        )
+
+        run_list(tmp_path, "tester", PROMPTS_PREFIX)
+
+        out = capsys.readouterr().out
+        assert "needs-sync" in out
+        assert "regressed" not in out
+        assert (
+            fake_subprocess.matching("diff", "aaa111", "origin/tester/add-foo-skill-v2")
+            == []
+        )
+
+    def test_pure_deletion_diff_is_not_regressed(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        self._register_regressed_group(
+            fake_subprocess, ahead_diff="--- a/file\n+++ b/file\n-old line\n"
+        )
+
+        result = run_list(tmp_path, "tester", PROMPTS_PREFIX)
+
+        out = capsys.readouterr().out
+        assert "needs-sync" in out
+        assert "regressed" not in out
+        assert result == 1
+
+    def test_regressed_orphan_branch_is_not_auto_deleted(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
+        fake_subprocess.on("remote", stdout="origin\n")
+        fake_subprocess.on(
+            "gh", "repo", "view", stdout=json.dumps({"viewerPermission": "ADMIN"})
+        )
+        fake_subprocess.on(
+            "ls-remote",
+            "--heads",
+            "origin",
+            stdout="abc123\trefs/heads/tester/orphan-branch\n",
+        )
+        fake_subprocess.on("gh", "pr", "list", stdout="[]")
+        fake_subprocess.on("diff", "--name-only", stdout=f"{_IN_SCOPE}\n")
+        fake_subprocess.on(
+            "diff", "main", "origin/tester/orphan-branch", stdout="+new line\n"
+        )
+
+        with patch("llm_prompts.contribute.run_list", return_value=0):
+            result = run_sync(tmp_path, "tester", PROMPTS_PREFIX, True, None, None)
+
+        out = capsys.readouterr().out
+        assert "deleted" not in out
+        assert "git cherry-pick origin/main..origin/tester/orphan-branch" in out
+        assert "restore" not in out
+        assert result == 1
+        assert fake_subprocess.matching("push", "origin", "--delete") == []
+
+    def test_cleanup_of_regressed_branch_is_refused(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
+        fake_subprocess.on("remote", stdout="origin\n")
+        fake_subprocess.on(
+            "ls-remote",
+            "--heads",
+            "origin",
+            stdout="abc123\trefs/heads/tester/orphan-branch\n",
+        )
+        fake_subprocess.on("gh", "pr", "list", stdout="[]")
+        fake_subprocess.on("diff", "--name-only", stdout=f"{_IN_SCOPE}\n")
+        fake_subprocess.on(
+            "diff", "main", "origin/tester/orphan-branch", stdout="+new line\n"
+        )
+
+        result = run_sync(
+            tmp_path, "tester", PROMPTS_PREFIX, True, None, "tester/orphan-branch"
+        )
+
+        out = capsys.readouterr().out
+        assert (
+            "tester/orphan-branch holds content main lacks; refusing to clean up" in out
+        )
+        assert result == 1
+        assert fake_subprocess.matching("push", "origin", "--delete") == []
