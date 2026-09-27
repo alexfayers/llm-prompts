@@ -2,6 +2,7 @@
 
 import argparse
 import re
+import subprocess
 import sys
 from collections.abc import Callable
 from itertools import combinations
@@ -17,9 +18,10 @@ SECTION_ORDER = [
     "Scope",
     "Nodes",
     "Constraints",
+    "Checks",
     "Later",
 ]
-FRONT_MATTER_RE = re.compile(r"\A---\n(.*?\n)---\n", re.DOTALL)
+FRONT_MATTER_RE = re.compile(r"\A---\n((?:.*\n)*?)---\n")
 STAGES: dict[str, str] = {"todo": "", "testing": "testing", "done": "done"}
 
 
@@ -60,16 +62,26 @@ def plan_path(base: Path) -> Path:
 
 def links_summary(depends: list[str], scope: list[str]) -> str:
     """Format a depends/scope summary."""
-    return f"depends: {', '.join(depends)}; scope: {', '.join(scope)}"
+    lines = link_lines(depends, scope)
+    return f" ({'; '.join(lines)})" if lines else ""
+
+
+def link_lines(depends: list[str], scope: list[str]) -> list[str]:
+    """Format non-empty depends/scope front-matter lines."""
+    return [
+        f"{key}: {', '.join(values)}"
+        for key, values in (("depends", depends), ("scope", scope))
+        if values
+    ]
 
 
 def render_node_file(depends: list[str], scope: list[str], body: str) -> str:
     """Render a node file."""
-
-    def line(key: str, values: list[str]) -> str:
-        return f"{key}: {', '.join(values)}" if values else f"{key}:"
-
-    return f"---\n{line('depends', depends)}\n{line('scope', scope)}\n---\n{body}"
+    return (
+        "---\n"
+        + "".join(f"{ln}\n" for ln in link_lines(depends, scope))
+        + f"---\n{body}"
+    )
 
 
 def match_front_matter(text: str) -> re.Match[str]:
@@ -92,13 +104,31 @@ def parse_node_file(text: str) -> tuple[dict[str, list[str]], str]:
     return front, text[match.end() :]
 
 
+def replace_front_lines(text: str, keys: set[str], new_lines: list[str]) -> str:
+    """Replace the front-matter lines for keys."""
+    match = match_front_matter(text)
+    kept = [
+        ln
+        for ln in match.group(1).splitlines()
+        if ln.partition(":")[0].strip() not in keys
+    ]
+    return (
+        text[: match.start(1)]
+        + "".join(f"{ln}\n" for ln in [*kept, *new_lines])
+        + text[match.end(1) :]
+    )
+
+
 def update_failed_line(text: str, reason: str | None) -> str:
     """Add, update, or remove the failed front-matter line."""
-    match = match_front_matter(text)
-    lines = [ln for ln in match.group(1).splitlines() if not ln.startswith("failed:")]
-    if reason is not None:
-        lines.append(f"failed: {reason}")
-    return text[: match.start(1)] + "\n".join(lines) + "\n" + text[match.end(1) :]
+    return replace_front_lines(
+        text, {"failed"}, [] if reason is None else [f"failed: {reason}"]
+    )
+
+
+def set_links(text: str, depends: list[str], scope: list[str]) -> str:
+    """Replace the depends/scope front-matter lines."""
+    return replace_front_lines(text, {"depends", "scope"}, link_lines(depends, scope))
 
 
 def find_node_path(base: Path, node_id: str) -> Path:
@@ -219,6 +249,16 @@ def render_waves(nodes: Nodes) -> str:
     return "\n\n".join(blocks)
 
 
+def mermaid_id(node_id: str) -> str:
+    """Mermaid-safe node id (hyphens can trigger reserved-word parsing, e.g. 'end')."""
+    return node_id.replace("-", "_")
+
+
+def mermaid_node(node_id: str) -> str:
+    """Mermaid node declaration: a safe id labelled with the original name."""
+    return f'{mermaid_id(node_id)}["{node_id}"]'
+
+
 def plan_sections(nodes: Nodes) -> dict[str, str]:
     """Render generated sections."""
     referenced = {dep for node in nodes.values() for dep in node["depends"]}
@@ -226,19 +266,22 @@ def plan_sections(nodes: Nodes) -> dict[str, str]:
     for node_id in sorted(nodes):
         depends = nodes[node_id]["depends"]
         if depends:
-            graph.extend(f"{dep} --> {node_id}" for dep in sorted(depends))
+            graph.extend(
+                f"{mermaid_node(dep)} --> {mermaid_node(node_id)}"
+                for dep in sorted(depends)
+            )
         elif node_id not in referenced:
-            graph.append(node_id)
+            graph.append(mermaid_node(node_id))
     done_ids = sorted(node_id for node_id in nodes if nodes[node_id]["stage"] == "done")
     if done_ids:
         graph.append("classDef done fill:#9f9,stroke:#393")
-        graph.extend(f"{node_id}:::done" for node_id in done_ids)
+        graph.extend(f"{mermaid_id(node_id)}:::done" for node_id in done_ids)
     testing_ids = sorted(
         node_id for node_id in nodes if nodes[node_id]["stage"] == "testing"
     )
     if testing_ids:
         graph.append("classDef testing fill:#ff9,stroke:#993")
-        graph.extend(f"{node_id}:::testing" for node_id in testing_ids)
+        graph.extend(f"{mermaid_id(node_id)}:::testing" for node_id in testing_ids)
     graph.append("```")
     return {
         "Graph": "\n".join(graph),
@@ -269,13 +312,38 @@ def parse_sections(text: str) -> dict[str, str]:
     return sections
 
 
+def parse_checks(body: str) -> list[str]:
+    """Parse a Checks section body into shell commands."""
+    return [
+        line[2:].strip().strip("`")
+        for line in body.splitlines()
+        if line.startswith("- ")
+    ]
+
+
+def node_test_command(text: str) -> str | None:
+    """Read a node's plan-time test command from front matter, or None."""
+    match = match_front_matter(text)
+    for fm_line in match.group(1).splitlines():
+        key, _, value = fm_line.partition(":")
+        if key.strip() == "test":
+            return value.strip()
+    return None
+
+
+def render_sections(sections: dict[str, str]) -> str:
+    """Render present sections in SECTION_ORDER, joined by blank lines."""
+    blocks = [
+        f"## {name}" + (f"\n\n{sections[name]}" if sections[name] else "")
+        for name in SECTION_ORDER
+        if name in sections
+    ]
+    return "\n\n".join(blocks)
+
+
 def render_plan(title: str, sections: dict[str, str]) -> str:
     """Render PLAN.md."""
-    blocks = [f"# {title}"]
-    for name in SECTION_ORDER:
-        body = sections.get(name, "")
-        blocks.append(f"## {name}" + (f"\n\n{body}" if body else ""))
-    return "\n\n".join(blocks) + "\n"
+    return "\n\n".join([f"# {title}", render_sections(sections)]) + "\n"
 
 
 def require_plan(base: Path) -> None:
@@ -332,7 +400,7 @@ def cmd_add(base: Path, name: str, depends: list[str], scope: list[str]) -> None
     body = f"# {name}\n\n## In\n\n## Out\n\n## Accept\n"
     path.write_text(render_node_file(depends, scope, body))
     regenerate_plan(base, nodes)
-    print(f"added {path} ({links_summary(depends, scope)})")
+    print(f"added {path}{links_summary(depends, scope)}")
 
 
 def edit_links(
@@ -342,7 +410,7 @@ def edit_links(
     require_plan(base)
     nodes = load_nodes(base)
     path = find_node_path(base, node_id)
-    front, body = parse_node_file(path.read_text())
+    front, _ = parse_node_file(path.read_text())
     if add:
         new_depends = merge_unique(front["depends"], depends)
         new_scope = merge_unique(front["scope"], scope)
@@ -355,9 +423,9 @@ def edit_links(
         "stage": nodes[node_id]["stage"],
     }
     validate_or_raise(nodes)
-    path.write_text(render_node_file(new_depends, new_scope, body))
+    path.write_text(set_links(path.read_text(), new_depends, new_scope))
     regenerate_plan(base, nodes)
-    print(f"{node_id} {links_summary(new_depends, new_scope)}")
+    print(f"{node_id}{links_summary(new_depends, new_scope)}")
 
 
 def move_node(
@@ -399,21 +467,108 @@ def cmd_fail(base: Path, node_id: str, reason: str) -> None:
     path.write_text(update_failed_line(path.read_text(), reason))
 
 
+def cmd_set_test(base: Path, node_id: str, command: str) -> None:
+    """Set a node's plan-time test command."""
+    require_known_node(base, node_id)
+    if "\n" in command:
+        raise FocusError("test command must be one line")
+    path = find_node_path(base, node_id)
+    path.write_text(
+        replace_front_lines(path.read_text(), {"test"}, [f"test: {command}"])
+    )
+    print(f"{node_id} test: {command}")
+
+
+def cmd_check(base: Path, node_id: str) -> None:
+    """Run a node's test command and the plan's Checks, then pass or fail it."""
+    nodes = require_known_node(base, node_id)
+    if nodes[node_id]["stage"] != "testing":
+        raise FocusError(f"'{node_id}' is not in nodes/{STAGES['testing']}")
+    command = node_test_command(find_node_path(base, node_id).read_text())
+    if command is None:
+        raise FocusError(f"'{node_id}' has no test command")
+    checks = parse_checks(parse_sections(plan_path(base).read_text()).get("Checks", ""))
+    for cmd in [command, *checks]:
+        print(f"$ {cmd}", flush=True)
+        result = subprocess.run(cmd, shell=True, check=False)
+        if result.returncode != 0:
+            cmd_fail(base, node_id, f"`{cmd}` exited {result.returncode}")
+            sys.exit(1)
+    cmd_pass(base, node_id)
+
+
+def cmd_remove(base: Path, node_id: str) -> None:
+    """Remove a node."""
+    nodes = require_known_node(base, node_id)
+    dependents = sorted(
+        other for other, node in nodes.items() if node_id in node["depends"]
+    )
+    if dependents:
+        raise FocusError(
+            f"cannot remove '{node_id}': depended on by {', '.join(dependents)}"
+        )
+    find_node_path(base, node_id).unlink()
+    del nodes[node_id]
+    regenerate_plan(base, nodes)
+    print(f"removed {node_id}")
+
+
+def cmd_rename(base: Path, node_id: str, name: str) -> None:
+    """Rename a node, updating its dependents."""
+    nodes = require_known_node(base, node_id)
+    new_id = slugify(name)
+    if new_id in nodes:
+        raise FocusError(f"node '{new_id}' already exists")
+    for other_id, node in nodes.items():
+        if node_id in node["depends"]:
+            node["depends"] = [
+                new_id if dep == node_id else dep for dep in node["depends"]
+            ]
+            path = node_path(base, other_id, node["stage"])
+            path.write_text(set_links(path.read_text(), node["depends"], node["scope"]))
+    nodes[new_id] = nodes.pop(node_id)
+    old_path = node_path(base, node_id, nodes[new_id]["stage"])
+    new_path = node_path(base, new_id, nodes[new_id]["stage"])
+    new_path.write_text(
+        re.sub(
+            r"^# .*$", f"# {name}", old_path.read_text(), count=1, flags=re.MULTILINE
+        )
+    )
+    old_path.unlink()
+    regenerate_plan(base, nodes)
+    print(f"renamed {node_id} -> {new_id}")
+
+
+def plan_without_nodes(base: Path) -> dict[str, str]:
+    """Parse PLAN.md's sections, excluding Nodes."""
+    sections = parse_sections(plan_path(base).read_text())
+    sections.pop("Nodes", None)
+    return sections
+
+
+def node_section(base: Path, node_id: str, name: str) -> str:
+    """Read a named section from a node's file body."""
+    _, body = parse_node_file(find_node_path(base, node_id).read_text())
+    return parse_sections(body).get(name, "")
+
+
 def cmd_show(base: Path, node_id: str) -> None:
     """Print a node brief."""
     nodes = require_known_node(base, node_id)
-    sections = parse_sections(plan_path(base).read_text())
-    sections.pop("Nodes", None)
-    print(render_plan(base.name, sections), end="")
+    print(render_plan(base.name, plan_without_nodes(base)), end="")
     print(find_node_path(base, node_id).read_text(), end="")
     for dep_id in nodes[node_id]["depends"]:
-        _, dep_body = parse_node_file(find_node_path(base, dep_id).read_text())
-        print(f"## {dep_id}\n\n{parse_sections(dep_body).get('Out', '')}")
+        print(f"## {dep_id}\n\n{node_section(base, dep_id, 'Out')}")
 
 
 def cmd_ready(base: Path, node_id: str) -> None:
     """Report whether a node is ready."""
     nodes = require_known_node(base, node_id)
+    if node_test_command(find_node_path(base, node_id).read_text()) is None:
+        raise FocusError(f"'{node_id}' has no test command")
+    checks = parse_checks(parse_sections(plan_path(base).read_text()).get("Checks", ""))
+    if not checks:
+        raise FocusError("plan has no Checks")
     waiting = [d for d in nodes[node_id]["depends"] if nodes[d]["stage"] != "done"]
     if waiting:
         print(f"waiting on: {', '.join(waiting)}")
@@ -425,6 +580,39 @@ def cmd_waves(base: Path) -> None:
     """Print nodes grouped by wave."""
     require_plan(base)
     print(render_waves(load_nodes(base)))
+
+
+COMMENT_INTRO = (
+    "This change was planned with the eagle-vision skill, then built node by "
+    "node from that plan. The eagle-vision plan and each node's acceptance "
+    "criteria are below."
+)
+
+
+def details(summary: str, body: str) -> str:
+    """Wrap body in a collapsible <details> block."""
+    return f"<details><summary>{summary}</summary>\n\n{body}\n\n</details>"
+
+
+def cmd_comment(base: Path) -> None:
+    """Print a PR comment with the plan and each node's acceptance criteria."""
+    require_plan(base)
+    nodes = load_nodes(base)
+    waves = compute_waves(nodes)
+    order = sorted(nodes, key=lambda n: (waves[n], n))
+    accept = "\n\n".join(
+        f"### {node_id}\n\n{node_section(base, node_id, 'Accept')}" for node_id in order
+    )
+    print(
+        "\n\n".join(
+            [
+                "## Eagle-vision plan",
+                COMMENT_INTRO,
+                details("Eagle-vision plan", render_sections(plan_without_nodes(base))),
+                details("Eagle-vision acceptance criteria per node", accept),
+            ]
+        )
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -455,14 +643,29 @@ def build_parser() -> argparse.ArgumentParser:
         link_parser.add_argument("id")
         add_links(link_parser)
 
+    add_cmd("remove", "Remove a node with no dependents").add_argument("id")
+    rename_parser = add_cmd("rename", "Rename a node")
+    rename_parser.add_argument("id")
+    rename_parser.add_argument("name")
+
     add_cmd("built", "Mark a node built, awaiting acceptance tests").add_argument("id")
     add_cmd("pass", "Mark a node's acceptance tests passing").add_argument("id")
     fail_parser = add_cmd("fail", "Mark a node's acceptance tests failing")
     fail_parser.add_argument("id")
     fail_parser.add_argument("reason")
+    set_test_parser = add_cmd("set-test", "Set a node's plan-time test command")
+    set_test_parser.add_argument("id")
+    set_test_parser.add_argument("command")
+    add_cmd(
+        "check", "Run a node's test command and the plan's Checks, then pass or fail it"
+    ).add_argument("id")
     add_cmd("show", "Show a node and its dependencies").add_argument("id")
     add_cmd("ready", "Check whether a node is ready").add_argument("id")
     add_cmd("waves", "Print nodes grouped by wave")
+    add_cmd(
+        "comment",
+        "Print a PR comment with the plan and each node's acceptance criteria",
+    )
 
     return parser
 
@@ -472,12 +675,17 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], None]] = {
     "add": lambda a: cmd_add(a.dir, a.name, a.depends, a.scope),
     "link": lambda a: edit_links(a.dir, a.id, a.depends, a.scope, add=True),
     "unlink": lambda a: edit_links(a.dir, a.id, a.depends, a.scope, add=False),
+    "remove": lambda a: cmd_remove(a.dir, a.id),
+    "rename": lambda a: cmd_rename(a.dir, a.id, a.name),
     "built": lambda a: cmd_built(a.dir, a.id),
     "pass": lambda a: cmd_pass(a.dir, a.id),
     "fail": lambda a: cmd_fail(a.dir, a.id, a.reason),
+    "set-test": lambda a: cmd_set_test(a.dir, a.id, a.command),
+    "check": lambda a: cmd_check(a.dir, a.id),
     "show": lambda a: cmd_show(a.dir, a.id),
     "ready": lambda a: cmd_ready(a.dir, a.id),
     "waves": lambda a: cmd_waves(a.dir),
+    "comment": lambda a: cmd_comment(a.dir),
 }
 
 

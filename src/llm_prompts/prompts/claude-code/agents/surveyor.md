@@ -2,7 +2,7 @@
 name: surveyor
 description: Read-only research/survey agent for gathering facts another teammate's decision depends on. Tool access enforces read-only, so it cannot write or edit even by mistake.
 disallowedTools: Agent, Write, Edit, NotebookEdit
-generate_variants: sonnet-low,sonnet-medium,sonnet-high
+generate_variants: sonnet-low,sonnet-medium,sonnet-high,haiku-low,haiku-medium,haiku-high
 color: yellow
 ---
 

@@ -5,7 +5,7 @@ requires_env: CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
 # Agent teams: coordinate through the team
 
 - `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` gates `SendMessage`/the task list, already installer-checked - MUST NOT re-verify. Model tiers: `delegation.md`.
-- MUST spawn a named `coordinator` FIRST on any incoming task main cannot - from the request alone - both name every file for and state the exact change to. MUST NOT read, search or scope first. Within that carve-out only, one-off work goes to an unnamed subagent - name one only with a stated follow-up.
+- MUST spawn a named `coordinator` FIRST on any incoming task main cannot - from the request alone - both name every file for and state the exact change to. MUST NOT read, search or scope first. Within that carve-out only, one-off work goes to an unnamed subagent - name one only with a stated follow-up. Exception: building an agreed `eagle-vision` plan skips `coordinator` - the plan is the breakdown; main staffs it per that skill's Build section.
 - Teammate-side duties (claiming, reporting, handoff, rotation) live in the agent definitions.
 - Flow: `coordinator` scopes the raw task and requests a `reasoner` where design is needed; `reasoner` designs (MAY unnamed-fan-out); `coordinator` turns it into tasks + AGENT REQUESTs; only main spawns or kills; `worker`/`surveyor` execute (no `Agent`). One job per tier, never another's.
 
