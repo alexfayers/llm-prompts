@@ -430,6 +430,8 @@ class _Agent:
         shared_src: Path,
         overlay_srcs: list[Path],
         overlay_agent_srcs: list[Path],
+        skip_set: frozenset[Path] = frozenset(),
+        previous_manifest: "dict[str, AgentManifest] | None" = None,
     ) -> set[str]:
         """Install rule content, returning the destination filenames written.
 
@@ -437,12 +439,20 @@ class _Agent:
             shared_src: Base shared rules source directory.
             overlay_srcs: Overlay shared rules directories in priority order.
             overlay_agent_srcs: Overlay agent-specific rules directories.
+            skip_set: Resolved source paths to leave untouched.
+            previous_manifest: The manifest from the previous installation.
 
         Returns:
             Set of destination filenames that were installed.
         """
         return _install_content(
-            self, "rules", shared_src, overlay_srcs, overlay_agent_srcs
+            self,
+            "rules",
+            shared_src,
+            overlay_srcs,
+            overlay_agent_srcs,
+            skip_set,
+            previous_manifest,
         )
 
 
@@ -468,28 +478,51 @@ class _CodexAgent(_Agent):
         shared_src: Path,
         overlay_srcs: list[Path],
         overlay_agent_srcs: list[Path],
+        skip_set: frozenset[Path] = frozenset(),
+        previous_manifest: "dict[str, AgentManifest] | None" = None,
     ) -> set[str]:
+        from .manifest import read_rendered_rule, write_rendered_rules
+
         dest_dir = self.dest_dir("rules")
         vars_path = self.vars_path()
+        dest = dest_dir / self.AGENTS_MD
 
         log("info", f"[{self.name}] Installing rules...")
         collected = _collect_content_srcs(
             self, "rules", shared_src, overlay_srcs, overlay_agent_srcs
         )
 
-        bodies: list[str] = []
-        for _, src in sorted((name, src) for name, src, _ in collected):
+        rules: dict[str, str] = {}
+        held_back: list[str] = []
+        for name, src in sorted((name, src) for name, src, _ in collected):
+            if src.resolve() in skip_set:
+                cached = read_rendered_rule(self.name, name)
+                if cached is None:
+                    held_back.append(name)
+                    continue
+                rules[name] = cached
+                continue
             try:
-                bodies.append(render_template(str(src), str(vars_path), self.name))
+                rules[name] = render_template(str(src), str(vars_path), self.name)
             except Exception as e:
                 log("error", f"Failed to render rules/{src.name}: {e}")
 
-        output = normalize_whitespace("\n\n".join(bodies))
+        for name in held_back:
+            log(
+                "warn",
+                f"[{self.name}] Held back {self.AGENTS_MD}: "
+                f"rules/{name} skipped with no cached copy",
+            )
+        if held_back and dest.exists():
+            return {self.AGENTS_MD}
+
+        output = normalize_whitespace("\n\n".join(rules.values()))
         for var in find_unreplaced_variables(output):
             log("warn", f"Unreplaced variable '{{{{{var}}}}}' in {self.AGENTS_MD}")
 
         dest_dir.mkdir(parents=True, exist_ok=True)
-        _write_if_changed(dest_dir / self.AGENTS_MD, output, self.AGENTS_MD)
+        _write_if_changed(dest, output, self.AGENTS_MD)
+        write_rendered_rules(self.name, rules)
         return {self.AGENTS_MD}
 
 
@@ -630,6 +663,8 @@ def _install_content(
     shared_src: Path,
     overlay_srcs: list[Path],
     overlay_agent_srcs: list[Path],
+    skip_set: frozenset[Path] = frozenset(),
+    previous_manifest: "dict[str, AgentManifest] | None" = None,
 ) -> set[str]:
     """Install shared and agent-specific content for one agent and content type.
 
@@ -639,10 +674,13 @@ def _install_content(
         shared_src: Base shared source directory.
         overlay_srcs: Overlay shared source directories in priority order (first wins).
         overlay_agent_srcs: Overlay agent-specific source directories in priority order.
+        skip_set: Resolved source paths to leave untouched.
+        previous_manifest: The manifest from the previous installation.
 
     Returns:
         Set of destination filenames that were installed.
     """
+    previous_manifest = previous_manifest if previous_manifest is not None else {}
     dest_dir = agent.dest_dir(subdir)
     vars_path = agent.vars_path()
     target = agent.name
@@ -653,15 +691,23 @@ def _install_content(
     collected = _collect_content_srcs(
         agent, subdir, shared_src, overlay_srcs, overlay_agent_srcs
     )
+    managed: set[str] = set()
     for name, src, agent_specific in collected:
+        if src.resolve() in skip_set:
+            if _carry_forward(
+                target, dest_dir / name, f"{subdir}/{name}", previous_manifest
+            ):
+                managed.add(name)
+            continue
         if agent_specific:
             _install_linked(src, dest_dir / name, f"{subdir}/{name}")
         else:
             _install_rendered(
                 src, dest_dir / name, vars_path, target, f"{subdir}/{name}"
             )
+        managed.add(name)
 
-    return {name for name, _, _ in collected}
+    return managed
 
 
 def _resolve_priority_sources(
@@ -840,7 +886,13 @@ def _builtin_skill_vars(vars_path: Path) -> dict[str, str]:
 
 
 def _materialize_builtin_skill(
-    source: Path, dest: Path, vars_path: Path, managed: set[str]
+    source: Path,
+    dest: Path,
+    vars_path: Path,
+    managed: set[str],
+    agent_name: str = "",
+    skip_set: frozenset[Path] = frozenset(),
+    previous_manifest: "dict[str, AgentManifest] | None" = None,
 ) -> None:
     """Install a built-in/overlay skill as a real directory with variables substituted.
 
@@ -853,8 +905,17 @@ def _materialize_builtin_skill(
         dest: Destination skill directory.
         vars_path: Variables JSON path for the target agent.
         managed: Set to accumulate the installed destination name into.
+        agent_name: Target agent name, used for the size-guard skip decision.
+        skip_set: Resolved source paths to leave untouched.
+        previous_manifest: The manifest from the previous installation.
     """
-    raw = _read_text(source / "SKILL.md")
+    previous_manifest = previous_manifest if previous_manifest is not None else {}
+    skill_md = source / "SKILL.md"
+    if skill_md.resolve() in skip_set:
+        if _carry_forward(agent_name, dest, f"skill {dest.name}", previous_manifest):
+            managed.add(dest.name)
+        return
+    raw = _read_text(skill_md)
     substituted = substitute_variables(raw, _builtin_skill_vars(vars_path))
     for var in find_unreplaced_variables(substituted):
         log("warn", f"Unreplaced variable '{{{{{var}}}}}' in skill '{source.name}'")
@@ -862,7 +923,12 @@ def _materialize_builtin_skill(
 
 
 def _install_skills(
-    candidate_dirs: list[Path], skills_parent: Path, agent_name: str, vars_path: Path
+    candidate_dirs: list[Path],
+    skills_parent: Path,
+    agent_name: str,
+    vars_path: Path,
+    skip_set: frozenset[Path] = frozenset(),
+    previous_manifest: "dict[str, AgentManifest] | None" = None,
 ) -> set[str]:
     """Install skills as materialized directories, overlay overriding base on collision.
 
@@ -873,6 +939,8 @@ def _install_skills(
         agent_name: Target agent name, used to apply the requires-gate and
             ``exclude_targets`` checks.
         vars_path: Variables JSON path for the target agent.
+        skip_set: Resolved source paths to leave untouched.
+        previous_manifest: The manifest from the previous installation.
 
     Returns:
         Set of installed skill names.
@@ -906,7 +974,15 @@ def _install_skills(
         gate,
     )
     for name, src in resolved:
-        _materialize_builtin_skill(src, dest_root / name, vars_path, managed)
+        _materialize_builtin_skill(
+            src,
+            dest_root / name,
+            vars_path,
+            managed,
+            agent_name,
+            skip_set,
+            previous_manifest,
+        )
     return managed
 
 
@@ -1148,7 +1224,12 @@ def _expand_agent_variants(src_path: Path) -> list[tuple[str, str]]:
     return generated
 
 
-def _install_agents(candidate_dirs: list[Path], agents_dir: Path) -> set[str]:
+def _install_agents(
+    candidate_dirs: list[Path],
+    agents_dir: Path,
+    skip_set: frozenset[Path] = frozenset(),
+    previous_manifest: "dict[str, AgentManifest] | None" = None,
+) -> set[str]:
     """Install Claude Code subagent definitions as symlinks or generated variants.
 
     Overlay dirs override base on filename collision (first wins). A source
@@ -1159,10 +1240,13 @@ def _install_agents(candidate_dirs: list[Path], agents_dir: Path) -> set[str]:
     Args:
         candidate_dirs: Source agent directories in priority order (first wins).
         agents_dir: Destination agents directory (e.g. ~/.claude/agents).
+        skip_set: Resolved source paths to leave untouched.
+        previous_manifest: The manifest from the previous installation.
 
     Returns:
         Set of installed agent filenames.
     """
+    previous_manifest = previous_manifest if previous_manifest is not None else {}
     log("info", "[claude-code] Installing agents...")
     managed: set[str] = set()
     resolved = _resolve_priority_sources(
@@ -1172,7 +1256,31 @@ def _install_agents(candidate_dirs: list[Path], agents_dir: Path) -> set[str]:
     )
     for name, src in resolved:
         _, frontmatter = parse_frontmatter(_read_text(src))
-        if "generate_variants" in frontmatter:
+        has_variants = "generate_variants" in frontmatter
+        if src.resolve() in skip_set:
+            previous_files = previous_manifest.get("claude-code", {}).get("files", [])
+            if has_variants:
+                prefix = f"{src.stem}-"
+                for filepath in previous_files:
+                    prev_path = Path(filepath)
+                    if (
+                        prev_path.parent == agents_dir
+                        and prev_path.name.startswith(prefix)
+                        and prev_path.name.endswith(".md")
+                        and _carry_forward(
+                            "claude-code",
+                            prev_path,
+                            f"agent {prev_path.name}",
+                            previous_manifest,
+                        )
+                    ):
+                        managed.add(prev_path.name)
+            elif _carry_forward(
+                "claude-code", agents_dir / name, f"agent {name}", previous_manifest
+            ):
+                managed.add(name)
+            continue
+        if has_variants:
             for gen_name, gen_content in _expand_agent_variants(src):
                 _write_if_changed(
                     agents_dir / gen_name, gen_content, f"agent {gen_name}"
@@ -1465,6 +1573,31 @@ def try_install_memory_pi() -> None:
         subprocess.run([binary, "setup-service"], check=False)
 
 
+def _carry_forward(
+    agent_name: str,
+    dest: Path,
+    label: str,
+    previous_manifest: "dict[str, AgentManifest]",
+) -> bool:
+    """Decide whether a size-guard-skipped destination stays managed.
+
+    Args:
+        agent_name: Agent the destination belongs to.
+        dest: Destination path that was skipped.
+        label: Human-readable label for the skipped prompt.
+        previous_manifest: The manifest from the previous installation.
+
+    Returns:
+        Whether ``dest`` was installed last time and should stay managed.
+    """
+    previous_files = set(previous_manifest.get(agent_name, {}).get("files", []))
+    if str(dest) in previous_files:
+        log("warn", f"[{agent_name}] Kept previous {label}: size guard violation")
+        return True
+    log("warn", f"[{agent_name}] Not installed {label}: size guard violation")
+    return False
+
+
 def _cleanup_stale(
     agent_name: str,
     current_files: list[str],
@@ -1568,7 +1701,7 @@ def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) ->
     """
     global _verbose
     _verbose = verbose
-    from .manifest import delete_agent, read_manifest
+    from .manifest import delete_agent, delete_rendered_rules, read_manifest
 
     manifest = read_manifest()
     targets = agent_names or list(manifest)
@@ -1578,6 +1711,7 @@ def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) ->
             log("warn", f"[{name}] not installed; nothing to remove.")
             continue
         _remove_manifest_files(name, entry.get("files", []))
+        delete_rendered_rules(name)
         if name == "cline":
             _remove_cline_symlinks()
         agent_config = entry.get("agent_config")
@@ -1596,7 +1730,7 @@ def main(
     *,
     verbose: bool = False,
     size_baseline: dict[Path, str] | None = None,
-) -> None:
+) -> bool:
     """Run the installation workflow.
 
     Args:
@@ -1604,6 +1738,10 @@ def main(
         verbose: Show debug-level output.
         size_baseline: A `size_guard.snapshot_sources` taken before pulling
             sources; violations in files changed since then only warn.
+
+    Returns:
+        Whether any prompt was skipped or any agent frozen due to a size
+        guard violation.
     """
     global _verbose
     _verbose = verbose
@@ -1612,8 +1750,14 @@ def main(
 
     overlay_dirs = _discover_overlay_paths()
 
+    from .manifest import read_manifest
     from .size_guard import check as run_size_check
-    from .size_guard import format_report, parked_state_lines, split_by_change
+    from .size_guard import (
+        format_report,
+        parked_state_lines,
+        resolve_skip_set,
+        split_by_change,
+    )
 
     size_result = run_size_check([root_dir, *overlay_dirs])
     if size_result.declaration_errors:
@@ -1621,10 +1765,13 @@ def main(
             log("error", line)
         sys.exit(1)
     blocking, pulled = split_by_change(size_result.violations, size_baseline)
+    skip_by_agent, frozen_agents = resolve_skip_set(blocking)
+    previous_manifest = read_manifest()
     if blocking:
         for line in format_report(blocking).splitlines():
             log("error", line)
-        sys.exit(1)
+    for name in sorted(frozen_agents):
+        log("error", f"[{name}] Frozen: collection_bytes size guard violation")
     if pulled:
         for line in format_report(pulled).splitlines():
             log("warn", line)
@@ -1652,6 +1799,9 @@ def main(
     targets = agent_names or list(all_agents)
 
     installed_files: dict[str, list[str]] = {name: [] for name in targets}
+    for name in frozen_agents & set(targets):
+        installed_files[name] = list(previous_manifest.get(name, {}).get("files", []))
+    active_targets = [name for name in targets if name not in frozen_agents]
 
     from .plugins import (
         _load_plugins,
@@ -1683,14 +1833,19 @@ def main(
             }
             plugin_skill_pairs.append((name, src, overrides))
 
-    if "cline" in targets:
+    if "cline" in active_targets:
         agents_dir, _ = _get_cline_extra_dirs()
         cline_skill_dirs = [
             *(d / "shared" / "skills" for d in overlay_dirs),
             root_dir / "shared" / "skills",
         ]
         managed_skills = _install_skills(
-            cline_skill_dirs, agents_dir, "cline", all_agents["cline"].vars_path()
+            cline_skill_dirs,
+            agents_dir,
+            "cline",
+            all_agents["cline"].vars_path(),
+            skip_by_agent.get("cline", frozenset()),
+            previous_manifest,
         )
         plugin_managed = _install_plugin_skills(
             plugin_skill_pairs, agents_dir, "cline", managed_skills
@@ -1708,7 +1863,7 @@ def main(
         "antigravity",
         "pi",
     ):
-        if skill_agent not in targets:
+        if skill_agent not in active_targets:
             continue
         skills_parent = _skills_parent(dirs, skill_agent)
         skill_dirs = [
@@ -1718,7 +1873,12 @@ def main(
             *(d / skill_agent / "skills" for d in overlay_dirs),
         ]
         managed = _install_skills(
-            skill_dirs, skills_parent, skill_agent, all_agents[skill_agent].vars_path()
+            skill_dirs,
+            skills_parent,
+            skill_agent,
+            all_agents[skill_agent].vars_path(),
+            skip_by_agent.get(skill_agent, frozenset()),
+            previous_manifest,
         )
         plugin_managed = _install_plugin_skills(
             plugin_skill_pairs, skills_parent, skill_agent, managed
@@ -1730,27 +1890,37 @@ def main(
         skills_dir = skills_parent / "skills"
         installed_files[skill_agent].extend(str(skills_dir / s) for s in managed)
 
-    if "claude-code" in targets:
+    if "claude-code" in active_targets:
         agents_dest = dirs["claude-code"]["agents"]
         agent_dirs = [
             *(d / "claude-code" / "agents" for d in overlay_dirs),
             root_dir / "claude-code" / "agents",
         ]
-        managed_agents = _install_agents(agent_dirs, agents_dest)
+        managed_agents = _install_agents(
+            agent_dirs,
+            agents_dest,
+            skip_by_agent.get("claude-code", frozenset()),
+            previous_manifest,
+        )
         _check_unmanaged(agents_dest, managed_agents, "claude-code agents")
         installed_files["claude-code"].extend(
             str(agents_dest / a) for a in managed_agents
         )
 
-    for name in targets:
+    for name in active_targets:
         agent = all_agents[name]
+        agent_skip_set = skip_by_agent.get(name, frozenset())
         for subdir in content_subdirs(name):
             overlay_srcs = [d / "shared" / subdir for d in overlay_dirs]
             overlay_agent_srcs = [d / agent.name / subdir for d in overlay_dirs]
             shared_src = root_dir / "shared" / subdir
             if subdir == "rules":
                 installed = agent.install_rules(
-                    shared_src, overlay_srcs, overlay_agent_srcs
+                    shared_src,
+                    overlay_srcs,
+                    overlay_agent_srcs,
+                    agent_skip_set,
+                    previous_manifest,
                 )
             else:
                 installed = _install_content(
@@ -1759,29 +1929,30 @@ def main(
                     shared_src=shared_src,
                     overlay_srcs=overlay_srcs,
                     overlay_agent_srcs=overlay_agent_srcs,
+                    skip_set=agent_skip_set,
+                    previous_manifest=previous_manifest,
                 )
             dest_dir = agent.dest_dir(subdir)
             if not (isinstance(agent, _CodexAgent) and subdir == "rules"):
                 _check_unmanaged(dest_dir, installed, f"{agent.name} {subdir}")
             installed_files[name].extend(str(dest_dir / f) for f in installed)
 
-    if "codex" in targets:
+    if "codex" in active_targets:
         _ensure_codex_doc_limit(
             dirs["codex"]["rules"] / "config.toml",
             dirs["codex"]["rules"] / _CodexAgent.AGENTS_MD,
         )
 
-    if "cline" in targets:
+    if "cline" in active_targets:
         log("info", "[cline] Symlinking rules and workflows...")
         _, cline_symlinks = _get_cline_extra_dirs()
         for subdir, symlink_dest in cline_symlinks.items():
             _symlink_dir(dirs["cline"][subdir], symlink_dest)
 
-    from .manifest import read_manifest, write_manifest
+    from .manifest import write_manifest
 
-    previous_manifest = read_manifest()
     pi_packages: list[str] | None = None
-    if "pi" in targets:
+    if "pi" in active_targets:
         pi_packages = _pi_packages(
             [root_dir / "pi" / "settings.json"]
             + [d / "pi" / "settings.json" for d in overlay_dirs]
@@ -1796,6 +1967,13 @@ def main(
             installed_files[name],
             packages=pi_packages if name == "pi" else None,
         )
+
+    all_skipped: frozenset[Path] = frozenset().union(*skip_by_agent.values())
+    for source in sorted(all_skipped):
+        display = source.parent.name if source.name == "SKILL.md" else source.name
+        log("error", f"Skipped installing {display}: size guard violation")
+
+    return bool(all_skipped) or bool(frozen_agents)
 
 
 def get_managed_dirs() -> list[Path]:

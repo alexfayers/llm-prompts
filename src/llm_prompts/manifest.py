@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import UTC, datetime
 from typing import TypedDict
 
 from .setup import _CONFIG_DIR
 
 MANIFEST_PATH = _CONFIG_DIR / "installed.json"
+RENDERED_RULES_DIR = _CONFIG_DIR / "rendered-rules"
 
 
 class AgentManifest(TypedDict, total=False):
@@ -86,3 +88,44 @@ def delete_agent(agent_name: str) -> None:
         json.dumps({"agents": agents}, indent=2) + "\n",
         encoding="utf-8",
     )
+
+
+def read_rendered_rule(agent_name: str, name: str) -> str | None:
+    """Read a rule's cached rendered text for an agent.
+
+    Args:
+        agent_name: Agent the rule was rendered for.
+        name: Rule's destination name.
+
+    Returns:
+        The cached rendered text, or None if not cached.
+    """
+    path = RENDERED_RULES_DIR / agent_name / name
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8")
+
+
+def write_rendered_rules(agent_name: str, rules: dict[str, str]) -> None:
+    """Replace an agent's entire cached rule set.
+
+    Args:
+        agent_name: Agent to cache rendered rules for.
+        rules: Mapping of rule destination name to rendered text.
+    """
+    delete_rendered_rules(agent_name)
+    agent_dir = RENDERED_RULES_DIR / agent_name
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    for name, text in rules.items():
+        (agent_dir / name).write_text(text, encoding="utf-8")
+
+
+def delete_rendered_rules(agent_name: str) -> None:
+    """Delete an agent's entire cached rule set.
+
+    Args:
+        agent_name: Agent whose cached rules to delete.
+    """
+    agent_dir = RENDERED_RULES_DIR / agent_name
+    if agent_dir.exists():
+        shutil.rmtree(agent_dir)

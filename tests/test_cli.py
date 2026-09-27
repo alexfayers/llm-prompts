@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from conftest import FakeSubprocess
+from conftest import FakeSubprocess, run_capturing_exit
 
 from llm_prompts.cli import (
     _check_for_updates,
@@ -476,7 +476,7 @@ class TestUpdateCommandPullsPlugins:
             patch("llm_prompts.setup.has_remote_sources", return_value=False),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup") as mock_setup,
-            patch("llm_prompts.install.main") as mock_install,
+            patch("llm_prompts.install.main", return_value=frozenset()) as mock_install,
             patch("llm_prompts.cli._restart_memory_service"),
             patch("llm_prompts.plugins.pull_plugin_sources") as mock_pull,
             patch("llm_prompts.size_guard.snapshot_sources", return_value={}),
@@ -502,7 +502,7 @@ class TestUpdateCommandPullsPlugins:
                 return_value={"cline-hooks"},
             ),
             patch("llm_prompts.setup.run_setup") as mock_setup,
-            patch("llm_prompts.install.main"),
+            patch("llm_prompts.install.main", return_value=frozenset()),
             patch("llm_prompts.cli._restart_memory_service"),
             patch("llm_prompts.plugins.pull_plugin_sources"),
         ):
@@ -526,7 +526,7 @@ class TestUpdateCommandPullsPlugins:
                 return_value={"cline-hooks"},
             ),
             patch("llm_prompts.setup.run_setup") as mock_setup,
-            patch("llm_prompts.install.main"),
+            patch("llm_prompts.install.main", return_value=frozenset()),
             patch("llm_prompts.cli._restart_memory_service"),
             patch("llm_prompts.plugins.pull_plugin_sources"),
         ):
@@ -573,7 +573,7 @@ class TestUpdateRestartsMemoryOnlyWhenItChanged:
             patch("llm_prompts.setup.has_remote_sources", return_value=False),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup"),
-            patch("llm_prompts.install.main"),
+            patch("llm_prompts.install.main", return_value=frozenset()),
             patch("llm_prompts.cli._auto_migrate_memory_db") as mock_migrate,
             patch("llm_prompts.cli._restart_memory_service") as mock_restart,
             patch("llm_prompts.plugins.pull_plugin_sources"),
@@ -601,7 +601,7 @@ class TestUpdateRestartsMemoryOnlyWhenItChanged:
             patch("llm_prompts.setup.has_remote_sources", return_value=True),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup"),
-            patch("llm_prompts.install.main"),
+            patch("llm_prompts.install.main", return_value=frozenset()),
             patch(
                 "llm_prompts.cli._get_installed_commit",
                 side_effect=["oldcommit", "newcommit"],
@@ -637,7 +637,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.setup.has_remote_sources", return_value=False),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup"),
-            patch("llm_prompts.install.main"),
+            patch("llm_prompts.install.main", return_value=frozenset()),
             patch("llm_prompts.cli._get_installed_commit", return_value=None),
             patch("llm_prompts.cli._restart_memory_service"),
             patch("llm_prompts.plugins.pull_plugin_sources"),
@@ -684,6 +684,92 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
         mocks["codex"].assert_called_once_with()
         mocks["pi_memory"].assert_called_once_with()
         mocks["migrate"].assert_called_once_with()
+
+
+class TestInstallSizeGuardSkipExitCode:
+    def _run_install(
+        self, size_guard_failed: bool
+    ) -> tuple[int | str | None, dict[str, MagicMock]]:
+        with (
+            patch(
+                "sys.argv",
+                ["llm-prompts", "install", "claude-code", "--no-update"],
+            ),
+            patch("llm_prompts.install.main", return_value=size_guard_failed),
+            patch("llm_prompts.install.try_install_hooks_claude_code") as hooks,
+            patch("llm_prompts.install.try_install_memory_claude_code") as memory,
+            patch("llm_prompts.install.try_allow_update_claude_code") as allow,
+        ):
+            result = run_capturing_exit(main)
+        return result, {"hooks": hooks, "memory": memory, "allow": allow}
+
+    def test_skip_exits_with_code_1(self) -> None:
+        exit_code, _ = self._run_install(True)
+        assert exit_code == 1
+
+    def test_skip_still_runs_post_install_steps(self) -> None:
+        exit_code, mocks = self._run_install(True)
+        assert exit_code == 1
+        mocks["hooks"].assert_called_once_with()
+        mocks["memory"].assert_called_once_with()
+        mocks["allow"].assert_called_once_with()
+
+    def test_no_skip_exits_with_code_0(self) -> None:
+        exit_code, _ = self._run_install(False)
+        assert exit_code in (0, None)
+
+
+class TestUpdateSizeGuardSkipExitCode:
+    def _run_update(
+        self, size_guard_failed: bool, changed: set[str]
+    ) -> tuple[int | str | None, dict[str, MagicMock]]:
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={"claude-code": {"files": []}, "pi": {"files": []}},
+            ),
+            patch("llm_prompts.cli._pull_local_sources", return_value=changed),
+            patch("llm_prompts.setup.has_remote_sources", return_value=False),
+            patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+            patch("llm_prompts.setup.run_setup"),
+            patch("llm_prompts.install.main", return_value=size_guard_failed),
+            patch("llm_prompts.cli._get_installed_commit", return_value=None),
+            patch("llm_prompts.cli._restart_memory_service"),
+            patch("llm_prompts.plugins.pull_plugin_sources"),
+            patch("llm_prompts.install.try_install_hooks_claude_code") as hooks,
+            patch("llm_prompts.install.try_install_memory_claude_code") as memory,
+            patch("llm_prompts.install.try_allow_update_claude_code") as allow,
+            patch("llm_prompts.install.try_install_memory_codex") as codex,
+            patch("llm_prompts.install.try_install_hooks_pi") as pi_hooks,
+            patch("llm_prompts.install.try_install_memory_pi") as pi_memory,
+            patch("llm_prompts.cli._auto_migrate_memory_db") as migrate,
+        ):
+            result = run_capturing_exit(main)
+        return result, {
+            "hooks": hooks,
+            "memory": memory,
+            "allow": allow,
+            "codex": codex,
+            "pi_hooks": pi_hooks,
+            "pi_memory": pi_memory,
+            "migrate": migrate,
+        }
+
+    def test_skip_exits_with_code_1(self) -> None:
+        exit_code, _ = self._run_update(True, set())
+        assert exit_code == 1
+
+    def test_skip_still_runs_post_install_steps(self) -> None:
+        exit_code, mocks = self._run_update(True, {"cline-hooks"})
+        assert exit_code == 1
+        mocks["hooks"].assert_called_once_with()
+        mocks["allow"].assert_called_once_with()
+        mocks["pi_hooks"].assert_called_once_with()
+
+    def test_no_skip_exits_with_code_0(self) -> None:
+        exit_code, _ = self._run_update(False, set())
+        assert exit_code in (0, None)
 
 
 class TestCollectSourcesOverlayPrecedence:

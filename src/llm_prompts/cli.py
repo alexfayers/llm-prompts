@@ -765,7 +765,7 @@ def main() -> int | None:
         from .install import main as install_main
 
         agent_names = list(_AGENTS) if args.agent == "all" else [args.agent]
-        install_main(agent_names, verbose=args.verbose)
+        size_guard_failed = install_main(agent_names, verbose=args.verbose)
 
         if "claude-code" in agent_names:
             from .install import (
@@ -817,6 +817,9 @@ def main() -> int | None:
                     existing.get("files", []),
                     agent_config=args.agent_config,
                 )
+
+        if size_guard_failed:
+            sys.exit(1)
     elif args.command == "source":
         _print_sources(args.agent)
     elif args.command == "setup":
@@ -865,7 +868,7 @@ def main() -> int | None:
 
         from .install import main as install_main
 
-        install_main(list(manifest), size_baseline=size_baseline)
+        size_guard_failed = install_main(list(manifest), size_baseline=size_baseline)
 
         memory_changed = _MEMORY_TOOL in changed_sources
         if changed_sources:
@@ -873,6 +876,9 @@ def main() -> int | None:
         if memory_changed:
             _auto_migrate_memory_db()
             _restart_memory_service()
+
+        if size_guard_failed:
+            sys.exit(1)
     elif args.command == "uninstall":
         from .install import uninstall
 
