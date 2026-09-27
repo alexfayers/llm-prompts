@@ -6,7 +6,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -34,6 +34,7 @@ from llm_prompts.render_template import (
     split_frontmatter,
     strip_gating_keys,
 )
+from llm_prompts.size_guard import Violation
 
 
 def _make_rule(directory: Path, name: str, body: str = "body") -> Path:
@@ -670,6 +671,82 @@ class TestMainRunsSizeGuard:
             install_main(["claude-code"])
 
         assert not (home / ".claude" / "skills").exists()
+
+    @staticmethod
+    def _violation(source: Path) -> Violation:
+        return Violation(
+            metric="rule_bytes",
+            target="claude-code",
+            dest_name=source.name,
+            actual=99_999,
+            threshold=5_000,
+            source=source,
+        )
+
+    def _install_with_baseline(
+        self, tmp_path: Path, violations: list[Violation], baseline: dict[Path, str]
+    ) -> tuple[Path, MagicMock]:
+        from llm_prompts.size_guard import CheckResult
+
+        home = tmp_path / "home"
+        home.mkdir()
+        failing_result = CheckResult(
+            passed=False, artifacts=[], violations=violations, report="failed"
+        )
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.manifest.MANIFEST_PATH", tmp_path / "installed.json"),
+            patch("llm_prompts.size_guard.check", return_value=failing_result),
+            patch("llm_prompts.install.log") as mock_log,
+        ):
+            install_main(["claude-code"], size_baseline=baseline)
+        return home, mock_log
+
+    def test_violation_in_updated_file_warns_and_installs(self, tmp_path: Path) -> None:
+        from llm_prompts.size_guard import snapshot_sources
+
+        src = tmp_path / "src"
+        src.mkdir()
+        rule_b = src / "b.md"
+        rule_b.write_text("old", encoding="utf-8")
+        baseline = snapshot_sources([src])
+        rule_b.write_text("new and oversized", encoding="utf-8")
+
+        home, mock_log = self._install_with_baseline(
+            tmp_path, [self._violation(rule_b)], baseline
+        )
+
+        assert (home / ".claude" / "skills").exists()
+        levels = {call.args[0] for call in mock_log.call_args_list}
+        assert "error" not in levels
+        logged_warn = [
+            call.args[1] for call in mock_log.call_args_list if call.args[0] == "warn"
+        ]
+        assert any("b.md" in line for line in logged_warn)
+
+    def test_violation_in_untouched_file_aborts_despite_other_update(
+        self, tmp_path: Path
+    ) -> None:
+        from llm_prompts.size_guard import snapshot_sources
+
+        src = tmp_path / "src"
+        src.mkdir()
+        rule_a = src / "a.md"
+        rule_b = src / "b.md"
+        rule_a.write_text("oversized all along", encoding="utf-8")
+        rule_b.write_text("old", encoding="utf-8")
+        baseline = snapshot_sources([src])
+        rule_b.write_text("new and oversized", encoding="utf-8")
+
+        with pytest.raises(SystemExit):
+            self._install_with_baseline(
+                tmp_path,
+                [self._violation(rule_a), self._violation(rule_b)],
+                baseline,
+            )
+
+        assert not (tmp_path / "home" / ".claude" / "skills").exists()
 
     def test_size_check_passes_for_own_prompts_dir(self, tmp_path: Path) -> None:
         home = tmp_path / "home"
