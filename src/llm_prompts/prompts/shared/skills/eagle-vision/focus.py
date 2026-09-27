@@ -19,7 +19,7 @@ SECTION_ORDER = [
     "Constraints",
     "Later",
 ]
-FRONT_MATTER_RE = re.compile(r"\A---\n(.*?\n)---\n", re.DOTALL)
+FRONT_MATTER_RE = re.compile(r"\A---\n((?:.*\n)*?)---\n")
 STAGES: dict[str, str] = {"todo": "", "testing": "testing", "done": "done"}
 
 
@@ -60,16 +60,26 @@ def plan_path(base: Path) -> Path:
 
 def links_summary(depends: list[str], scope: list[str]) -> str:
     """Format a depends/scope summary."""
-    return f"depends: {', '.join(depends)}; scope: {', '.join(scope)}"
+    lines = link_lines(depends, scope)
+    return f" ({'; '.join(lines)})" if lines else ""
+
+
+def link_lines(depends: list[str], scope: list[str]) -> list[str]:
+    """Format non-empty depends/scope front-matter lines."""
+    return [
+        f"{key}: {', '.join(values)}"
+        for key, values in (("depends", depends), ("scope", scope))
+        if values
+    ]
 
 
 def render_node_file(depends: list[str], scope: list[str], body: str) -> str:
     """Render a node file."""
-
-    def line(key: str, values: list[str]) -> str:
-        return f"{key}: {', '.join(values)}" if values else f"{key}:"
-
-    return f"---\n{line('depends', depends)}\n{line('scope', scope)}\n---\n{body}"
+    return (
+        "---\n"
+        + "".join(f"{ln}\n" for ln in link_lines(depends, scope))
+        + f"---\n{body}"
+    )
 
 
 def match_front_matter(text: str) -> re.Match[str]:
@@ -92,13 +102,31 @@ def parse_node_file(text: str) -> tuple[dict[str, list[str]], str]:
     return front, text[match.end() :]
 
 
+def replace_front_lines(text: str, keys: set[str], new_lines: list[str]) -> str:
+    """Replace the front-matter lines for keys."""
+    match = match_front_matter(text)
+    kept = [
+        ln
+        for ln in match.group(1).splitlines()
+        if ln.partition(":")[0].strip() not in keys
+    ]
+    return (
+        text[: match.start(1)]
+        + "".join(f"{ln}\n" for ln in [*kept, *new_lines])
+        + text[match.end(1) :]
+    )
+
+
 def update_failed_line(text: str, reason: str | None) -> str:
     """Add, update, or remove the failed front-matter line."""
-    match = match_front_matter(text)
-    lines = [ln for ln in match.group(1).splitlines() if not ln.startswith("failed:")]
-    if reason is not None:
-        lines.append(f"failed: {reason}")
-    return text[: match.start(1)] + "\n".join(lines) + "\n" + text[match.end(1) :]
+    return replace_front_lines(
+        text, {"failed"}, [] if reason is None else [f"failed: {reason}"]
+    )
+
+
+def set_links(text: str, depends: list[str], scope: list[str]) -> str:
+    """Replace the depends/scope front-matter lines."""
+    return replace_front_lines(text, {"depends", "scope"}, link_lines(depends, scope))
 
 
 def find_node_path(base: Path, node_id: str) -> Path:
@@ -332,7 +360,7 @@ def cmd_add(base: Path, name: str, depends: list[str], scope: list[str]) -> None
     body = f"# {name}\n\n## In\n\n## Out\n\n## Accept\n"
     path.write_text(render_node_file(depends, scope, body))
     regenerate_plan(base, nodes)
-    print(f"added {path} ({links_summary(depends, scope)})")
+    print(f"added {path}{links_summary(depends, scope)}")
 
 
 def edit_links(
@@ -342,7 +370,7 @@ def edit_links(
     require_plan(base)
     nodes = load_nodes(base)
     path = find_node_path(base, node_id)
-    front, body = parse_node_file(path.read_text())
+    front, _ = parse_node_file(path.read_text())
     if add:
         new_depends = merge_unique(front["depends"], depends)
         new_scope = merge_unique(front["scope"], scope)
@@ -355,9 +383,9 @@ def edit_links(
         "stage": nodes[node_id]["stage"],
     }
     validate_or_raise(nodes)
-    path.write_text(render_node_file(new_depends, new_scope, body))
+    path.write_text(set_links(path.read_text(), new_depends, new_scope))
     regenerate_plan(base, nodes)
-    print(f"{node_id} {links_summary(new_depends, new_scope)}")
+    print(f"{node_id}{links_summary(new_depends, new_scope)}")
 
 
 def move_node(
@@ -397,6 +425,48 @@ def cmd_fail(base: Path, node_id: str, reason: str) -> None:
     move_node(base, node_id, "testing", "todo", "fail", reason)
     path = node_path(base, node_id, "todo")
     path.write_text(update_failed_line(path.read_text(), reason))
+
+
+def cmd_remove(base: Path, node_id: str) -> None:
+    """Remove a node."""
+    nodes = require_known_node(base, node_id)
+    dependents = sorted(
+        other for other, node in nodes.items() if node_id in node["depends"]
+    )
+    if dependents:
+        raise FocusError(
+            f"cannot remove '{node_id}': depended on by {', '.join(dependents)}"
+        )
+    find_node_path(base, node_id).unlink()
+    del nodes[node_id]
+    regenerate_plan(base, nodes)
+    print(f"removed {node_id}")
+
+
+def cmd_rename(base: Path, node_id: str, name: str) -> None:
+    """Rename a node, updating its dependents."""
+    nodes = require_known_node(base, node_id)
+    new_id = slugify(name)
+    if new_id in nodes:
+        raise FocusError(f"node '{new_id}' already exists")
+    for other_id, node in nodes.items():
+        if node_id in node["depends"]:
+            node["depends"] = [
+                new_id if dep == node_id else dep for dep in node["depends"]
+            ]
+            path = node_path(base, other_id, node["stage"])
+            path.write_text(set_links(path.read_text(), node["depends"], node["scope"]))
+    nodes[new_id] = nodes.pop(node_id)
+    old_path = node_path(base, node_id, nodes[new_id]["stage"])
+    new_path = node_path(base, new_id, nodes[new_id]["stage"])
+    new_path.write_text(
+        re.sub(
+            r"^# .*$", f"# {name}", old_path.read_text(), count=1, flags=re.MULTILINE
+        )
+    )
+    old_path.unlink()
+    regenerate_plan(base, nodes)
+    print(f"renamed {node_id} -> {new_id}")
 
 
 def cmd_show(base: Path, node_id: str) -> None:
@@ -455,6 +525,11 @@ def build_parser() -> argparse.ArgumentParser:
         link_parser.add_argument("id")
         add_links(link_parser)
 
+    add_cmd("remove", "Remove a node with no dependents").add_argument("id")
+    rename_parser = add_cmd("rename", "Rename a node")
+    rename_parser.add_argument("id")
+    rename_parser.add_argument("name")
+
     add_cmd("built", "Mark a node built, awaiting acceptance tests").add_argument("id")
     add_cmd("pass", "Mark a node's acceptance tests passing").add_argument("id")
     fail_parser = add_cmd("fail", "Mark a node's acceptance tests failing")
@@ -472,6 +547,8 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], None]] = {
     "add": lambda a: cmd_add(a.dir, a.name, a.depends, a.scope),
     "link": lambda a: edit_links(a.dir, a.id, a.depends, a.scope, add=True),
     "unlink": lambda a: edit_links(a.dir, a.id, a.depends, a.scope, add=False),
+    "remove": lambda a: cmd_remove(a.dir, a.id),
+    "rename": lambda a: cmd_rename(a.dir, a.id, a.name),
     "built": lambda a: cmd_built(a.dir, a.id),
     "pass": lambda a: cmd_pass(a.dir, a.id),
     "fail": lambda a: cmd_fail(a.dir, a.id, a.reason),

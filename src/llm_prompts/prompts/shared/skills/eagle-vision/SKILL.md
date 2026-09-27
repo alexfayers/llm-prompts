@@ -5,69 +5,68 @@ description: Break a problem into an implementation graph, layer by layer, until
 
 # Eagle Vision
 
-Output: an implementation graph - nodes with defined inputs, outputs, scope and acceptance criteria, designed to be built in parallel. This skill decides what each node must do, not how - implementation is deferred to the agents building it.
+Output: an implementation graph - nodes with defined inputs, outputs, scope and acceptance criteria, built in parallel. Decide what each node must do; its builders decide how.
 
 ## 1. Research
 
-- Where the problem needs it, SHOULD run read-only agents in parallel, one per independent area (docs, codebase, related repos).
-- SHOULD verify, with a quick experiment, only claims that would change the plan if wrong and are fast to check.
+- Where needed, SHOULD run read-only agents in parallel, one per independent area (docs, codebase, related repos).
+- SHOULD verify with a quick experiment only plan-changing claims that are fast to check.
 
 ## 2. Direction
 
-- Skip where the user already has an approach.
-- Otherwise SHOULD have 2+ design agents each work from a different angle, then merge them into proposed approaches with a recommendation.
-- The user chooses one of the proposed approaches before layer 1 starts.
+- Unless the user has an approach, SHOULD have 2+ design agents work from different angles, merged into proposed approaches with a recommendation; the user picks one before layer 1.
 
 ## 3. Plan in layers
 
-One layer at a time, each agreed with the user and written to its `PLAN.md` section before going deeper. MUST NOT go deeper than the current layer until asked. The current layer is the first empty section.
+The current layer is the first empty `PLAN.md` section.
 
 1. Goal
 2. Approach
 3. Components
-4. Interfaces - data shapes, signatures, formats and usage; no code
-5. Graph - nodes, dependencies, what builds in parallel
-6. Scope - what each node owns (files, database objects, doc sections - any `/`-separated path)
-7. Nodes - acceptance criteria per node
+4. Interfaces - only what crosses a component boundary: entry functions and shared data shapes, with formats and usage; no internal helpers, field lists, per-case mechanics or code
+5. Graph - nodes, dependencies and each node's scope (files, database objects, doc sections - any `/`-separated path); overlapping scope limits real parallelism
+6. Nodes - acceptance criteria, one node at a time
 
-- Every decision put to the user MUST come with at least one suggested answer.
-- MUST NOT ask more than 3 decisions at a time; hold the rest until the user answers that batch.
-- MUST NOT dump the whole plan on the user - show only the current layer or what changed. Show the full plan only when asked.
-- MUST be strict about scope creep: when the user raises a tangent, acknowledge it, record it under "Later", and return to the current layer. If it would change the current plan, raise it as a decision instead.
+- MUST agree a layer's content with the user before writing it to any plan file; MUST NOT start the next layer until the user says "next".
+- MUST explain each item in plain words, not bare paths or names; show only the current layer or what changed - the full plan only when asked.
+- MUST show Graph and Nodes from `focus.py` output, never retyped; MUST first check every scope path names a real file or symbol.
+- Every decision MUST use AskUserQuestion with a recommended option, max 3 per call, rest held. Text just before the call is hidden - put the content in the question or option preview, or show it in an earlier turn.
+- Each message MUST open with progress: layer or node, elapsed time (`date`), time left - baseline Goal 1m, Approach 13m, Components 1m, Interfaces 8m, Graph 13m, 5m per node, autonomy check 13m, scaled by pace so far.
+- MUST be strict about scope creep: log a tangent under "Later" and return; raise it as a decision if it changes the plan.
 - At each layer, question anything unused or unnecessary; keep it simple.
 
 ## 4. Graph shape
 
-- Shared interfaces first; every other node depends only on them. Integration, an end-to-end check and docs come last.
-- Break everything into the smallest single-job nodes - offer parallel work at every point.
-- A node's acceptance tests and its implementation SHOULD be separate tasks, built in parallel.
-- Keep shared logic and case-specific logic in separate nodes.
+- Shared interfaces first; every other node depends only on them. Integration, an end-to-end check and docs last.
+- Smallest single-job nodes - offer parallel work at every point.
+- A node's acceptance tests and implementation SHOULD be separate tasks, built in parallel.
+- Keep shared and case-specific logic in separate nodes.
 
 ## 5. Acceptance criteria
 
-- The final behaviour a node must have: what it accepts as input and what it must output.
-- Bullets, each one concrete and checkable.
-- They are the node's only tests - write no others.
+A node's only tests - write no others. Each criterion:
+
+- MUST be a plain "if X, then Y" test of final behaviour and purpose, not mechanism; mark concrete names as examples "(e.g. ...)", dropping them once wording is precise.
+- MUST check one thing - split compound ones.
+- MUST stand alone: name its subject (no bare "it"/"this"), define vague verbs, no filler or relative time ("now", "as today") - state the outcome.
+- MUST NOT repeat another node's criterion, or check log lines or other nodes; an end-to-end node checks user journeys through the real command.
+- SHOULD be 5-6 per node, MUST NOT exceed 8.
+- Review each node's criteria alone: one AskUserQuestion keep/change/drop question per criterion, 4 per call.
 
 ## 6. Plan directory
 
-Manage it with `focus.py` - every command takes the plan directory first (`python3 "<base-dir>/focus.py" <command> <dir> ...`):
+Manage it with `focus.py`, plan directory first (`python3 "<base-dir>/focus.py" <command> <dir> ...`):
 
-- `init`, `add "<name>" [--depends ...] [--scope ...]`, `link`/`unlink <node> [--depends ...] [--scope ...]`: change the plan.
-- `built <node>`: implemented, awaiting its acceptance tests. `pass <node>` / `fail <node> "<one-sentence reason>"`: tests passed (done) or failed (back to to-do, reason kept for the implementer). Only passing tests mark a node done.
-- `show <node>`: everything an agent needs to build that node.
-- `ready <node>`: whether a node's dependencies are done.
-- `waves`: build order and progress - done, testing, ready and waiting nodes.
-
+- `init`, `add "<name>" [--depends ...] [--scope ...]`, `link`/`unlink <node> [--depends ...] [--scope ...]`, `remove <node>`, `rename <node> "<name>"`: change the plan.
+- `built <node>`: awaiting tests. `pass <node>` / `fail <node> "<one-sentence reason>"`: done, or back to to-do with the reason kept. Only passing tests mark a node done.
+- `show <node>`: everything an agent needs to build that node. `ready <node>`: whether its dependencies are done. `waves`: build order and progress.
 - `PLAN.md` also holds Constraints (rules the build must follow, verified facts) and Later.
-- Fill section contents by editing the files directly; never hand-edit the Graph, Scope or Nodes sections or a node's frontmatter - `focus.py` generates them.
-- The script's output confirms each change; don't re-read files to check.
-- Each node MUST be self-contained.
-- Only what a fresh session needs - no reasoning or history.
+- Fill sections by editing files directly; never hand-edit the generated Graph, Scope and Nodes sections or node frontmatter - `focus.py` output confirms each change; don't re-read.
+- Each node MUST be self-contained: only what a fresh session needs, no reasoning or history.
 
 ## 7. Autonomy check
 
-- MUST have fresh read-only agents answer: "could agents finish this with no human?" - flagging only real contradictions or user-only decisions, not details an implementer can decide.
-- SHOULD use lightweight agents - if they can follow it, the plan is clear.
-- Best: one agent per node, via `focus.py show`. Acceptable: one agent for the whole plan per pass.
+- MUST run one fresh `worker-haiku-low` agent per node (not a `model` override), told it is read-only, using only `focus.py show <node>` plus Grep and offset-limited Read of code - never `PLAN.md`.
+- Ask: "if every dependency were built to plan, could an agent build this node with no human?" Reply a bare YES; only a NO gives reasons.
+- Not blockers: unbuilt dependency code or tests, files the node creates, exact signatures, call patterns and other details an implementer decides. Blockers: contradictions, missing interfaces, user-only decisions.
 - Fix what they find; ask the user anything only they can decide; repeat until every agent answers YES.
