@@ -27,7 +27,7 @@ One layer at a time, each agreed with the user and written to its `PLAN.md` sect
 3. Components
 4. Interfaces - data shapes, signatures, formats and usage; no code
 5. Graph - nodes, dependencies, what builds in parallel
-6. Scope - what each node owns
+6. Scope - what each node owns (files, database objects, doc sections - any `/`-separated path)
 7. Nodes - acceptance criteria per node
 
 - Every decision put to the user MUST come with at least one suggested answer.
@@ -40,23 +40,24 @@ One layer at a time, each agreed with the user and written to its `PLAN.md` sect
 
 - Shared interfaces first; every other node depends only on them. Integration, an end-to-end check and docs come last.
 - Break everything into the smallest single-job nodes - offer parallel work at every point.
-- A node's acceptance tests and its implementation are separate tasks, built in parallel.
+- A node's acceptance tests and its implementation SHOULD be separate tasks, built in parallel.
 - Keep shared logic and case-specific logic in separate nodes.
 
 ## 5. Acceptance criteria
 
 - The final behaviour a node must have: what it accepts as input and what it must output.
 - Bullets, each one concrete and checkable.
-- They are the node's only tests.
+- They are the node's only tests - write no others.
 
 ## 6. Plan directory
 
 Manage it with `focus.py` - every command takes the plan directory first (`python3 "<base-dir>/focus.py" <command> <dir> ...`):
 
-- `init`, `add "<name>" [--depends ...] [--scope ...]`, `link`/`unlink <node> [--depends ...] [--scope ...]`, `done <node>`: change the plan.
+- `init`, `add "<name>" [--depends ...] [--scope ...]`, `link`/`unlink <node> [--depends ...] [--scope ...]`: change the plan.
+- `built <node>`: implemented, awaiting its acceptance tests. `pass <node>` / `fail <node> "<one-sentence reason>"`: tests passed (done) or failed (back to to-do, reason kept for the implementer). Only passing tests mark a node done.
 - `show <node>`: everything an agent needs to build that node.
 - `ready <node>`: whether a node's dependencies are done.
-- `waves`: build order and progress - done, ready and waiting nodes.
+- `waves`: build order and progress - done, testing, ready and waiting nodes.
 
 - `PLAN.md` also holds Constraints (rules the build must follow, verified facts) and Later.
 - Fill section contents by editing the files directly; never hand-edit the Graph, Scope or Nodes sections or a node's frontmatter - `focus.py` generates them.
