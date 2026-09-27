@@ -19,11 +19,11 @@ These rules MUST override others.
 - A fix for an earlier unpushed non-HEAD commit MUST fold in immediately via `git-tidy` (`--fixup=`/`--squash=` + autosquash rebase) - MUST NOT stand alone for later tidying.
 - "Related" also covers same-topic-different-angle - MUST fold a same-goal commit in immediately even without fixing a bug. `--squash=<target>` when directly correcting it (keeps both messages); `--fixup=<target>` for another angle (keeps the better message).
 - Before amending, MUST check `git -P log --oneline @{u}..HEAD`. Empty output means HEAD is already pushed - MUST NOT amend; make a new commit instead.
-- Exception: a branch backing your own unreviewed GitHub pull request, for a same-logical-change fix - amend and force-push with `--force-with-lease` instead of stacking a new commit. This exception applies to GitHub PRs only, not general unpushed-commit amending.
+- Exception: a branch backing your own unreviewed GitHub pull request, for a same-logical-change fix - amend and force-push with `--force-with-lease` instead of stacking a new commit; GitHub PRs only, not general unpushed-commit amending.
 - MUST NOT amend a commit backing an already-approved CR/review, even unpushed - new work gets its own commit and CR. MUST ask if unsure.
 - If using a focus chain, the last task MUST be committing the changes.
 - MUST keep history linear - MUST NOT create a merge commit. MUST fold one branch into another via `git rebase` or fast-forward; `git merge` only for an already-pushed/shared branch you can't rewrite. MUST rebase away an accidental unpushed merge commit.
-- MUST resolve conflicts with `git checkout <ref> -- <file>`, MUST NOT `--ours`/`--theirs` - `--ours` = base in `git rebase` but current branch in `git merge`. Naming the ref (e.g. `origin/main`) is unambiguous.
+- MUST resolve conflicts with `git checkout <ref> -- <file>`, MUST NOT `--ours`/`--theirs` - `--ours` = base in `git rebase` but current branch in `git merge`. Name the ref (e.g. `origin/main`) instead.
 
 Before making a commit, MUST tell the user: "I am following the predefined git rules".
 
