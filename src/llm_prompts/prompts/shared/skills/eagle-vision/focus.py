@@ -20,6 +20,7 @@ SECTION_ORDER = [
     "Later",
 ]
 FRONT_MATTER_RE = re.compile(r"\A---\n(.*?\n)---\n", re.DOTALL)
+STAGES: dict[str, str] = {"todo": "", "testing": "testing", "done": "done"}
 
 
 class FocusError(Exception):
@@ -36,8 +37,7 @@ class Node(TypedDict):
 
     depends: list[str]
     scope: list[str]
-    done: bool
-    testing: bool
+    stage: str
 
 
 Nodes = dict[str, Node]
@@ -46,6 +46,21 @@ Nodes = dict[str, Node]
 def slugify(name: str) -> str:
     """Slug a node name."""
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def node_path(base: Path, node_id: str, stage: str) -> Path:
+    """Path to a node's file for a stage."""
+    return base / "nodes" / STAGES[stage] / f"{node_id}.md"
+
+
+def plan_path(base: Path) -> Path:
+    """Path to PLAN.md."""
+    return base / "PLAN.md"
+
+
+def links_summary(depends: list[str], scope: list[str]) -> str:
+    """Format a depends/scope summary."""
+    return f"depends: {', '.join(depends)}; scope: {', '.join(scope)}"
 
 
 def render_node_file(depends: list[str], scope: list[str], body: str) -> str:
@@ -57,11 +72,17 @@ def render_node_file(depends: list[str], scope: list[str], body: str) -> str:
     return f"---\n{line('depends', depends)}\n{line('scope', scope)}\n---\n{body}"
 
 
-def parse_node_file(text: str) -> tuple[dict[str, list[str]], str]:
-    """Parse a node file."""
+def match_front_matter(text: str) -> re.Match[str]:
+    """Match a node file's front matter, or raise."""
     match = FRONT_MATTER_RE.match(text)
     if not match:
         raise FocusError("malformed node file: missing front matter")
+    return match
+
+
+def parse_node_file(text: str) -> tuple[dict[str, list[str]], str]:
+    """Parse a node file."""
+    match = match_front_matter(text)
     front: dict[str, list[str]] = {"depends": [], "scope": []}
     for fm_line in match.group(1).splitlines():
         key, _, value = fm_line.partition(":")
@@ -73,9 +94,7 @@ def parse_node_file(text: str) -> tuple[dict[str, list[str]], str]:
 
 def update_failed_line(text: str, reason: str | None) -> str:
     """Add, update, or remove the failed front-matter line."""
-    match = FRONT_MATTER_RE.match(text)
-    if not match:
-        raise FocusError("malformed node file: missing front matter")
+    match = match_front_matter(text)
     lines = [ln for ln in match.group(1).splitlines() if not ln.startswith("failed:")]
     if reason is not None:
         lines.append(f"failed: {reason}")
@@ -84,8 +103,8 @@ def update_failed_line(text: str, reason: str | None) -> str:
 
 def find_node_path(base: Path, node_id: str) -> Path:
     """Find a node's file."""
-    for folder in ("nodes", "nodes/testing", "nodes/done"):
-        path = base / folder / f"{node_id}.md"
+    for stage in STAGES:
+        path = node_path(base, node_id, stage)
         if path.exists():
             return path
     raise FocusError(f"unknown node '{node_id}'")
@@ -94,18 +113,14 @@ def find_node_path(base: Path, node_id: str) -> Path:
 def load_nodes(base: Path) -> Nodes:
     """Load all nodes."""
     nodes: Nodes = {}
-    for done, testing, folder in (
-        (False, False, base / "nodes"),
-        (False, True, base / "nodes" / "testing"),
-        (True, False, base / "nodes" / "done"),
-    ):
+    for stage, suffix in STAGES.items():
+        folder = base / "nodes" / suffix
         for path in sorted(folder.glob("*.md")):
             front, _ = parse_node_file(path.read_text())
             nodes[path.stem] = {
                 "depends": front["depends"],
                 "scope": front["scope"],
-                "done": done,
-                "testing": testing,
+                "stage": stage,
             }
     return nodes
 
@@ -193,12 +208,12 @@ def render_waves(nodes: Nodes) -> str:
         lines = [f"### Wave {wave_num}"]
         for node_id in by_wave[wave_num]:
             node = nodes[node_id]
-            if node["done"]:
+            if node["stage"] == "done":
                 lines.append(f"- [x] {node_id}")
-            elif node["testing"]:
+            elif node["stage"] == "testing":
                 lines.append(f"- [ ] {node_id} (testing)")
             else:
-                ready = all(nodes[d]["done"] for d in node["depends"])
+                ready = all(nodes[d]["stage"] == "done" for d in node["depends"])
                 lines.append(f"- [ ] {node_id}" + (" (ready)" if ready else ""))
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
@@ -214,11 +229,13 @@ def plan_sections(nodes: Nodes) -> dict[str, str]:
             graph.extend(f"{dep} --> {node_id}" for dep in sorted(depends))
         elif node_id not in referenced:
             graph.append(node_id)
-    done_ids = sorted(node_id for node_id in nodes if nodes[node_id]["done"])
+    done_ids = sorted(node_id for node_id in nodes if nodes[node_id]["stage"] == "done")
     if done_ids:
         graph.append("classDef done fill:#9f9,stroke:#393")
         graph.extend(f"{node_id}:::done" for node_id in done_ids)
-    testing_ids = sorted(node_id for node_id in nodes if nodes[node_id]["testing"])
+    testing_ids = sorted(
+        node_id for node_id in nodes if nodes[node_id]["stage"] == "testing"
+    )
     if testing_ids:
         graph.append("classDef testing fill:#ff9,stroke:#993")
         graph.extend(f"{node_id}:::testing" for node_id in testing_ids)
@@ -263,16 +280,25 @@ def render_plan(title: str, sections: dict[str, str]) -> str:
 
 def require_plan(base: Path) -> None:
     """Require a plan directory."""
-    if not (base / "PLAN.md").is_file():
+    if not plan_path(base).is_file():
         raise FocusError(f"no PLAN.md found in {base}")
+
+
+def require_known_node(base: Path, node_id: str) -> Nodes:
+    """Require a plan directory and that the node exists, returning all nodes."""
+    require_plan(base)
+    nodes = load_nodes(base)
+    if node_id not in nodes:
+        raise FocusError(f"unknown node '{node_id}'")
+    return nodes
 
 
 def regenerate_plan(base: Path, nodes: Nodes) -> None:
     """Regenerate PLAN.md."""
-    plan_path = base / "PLAN.md"
-    sections = parse_sections(plan_path.read_text())
+    path = plan_path(base)
+    sections = parse_sections(path.read_text())
     sections.update(plan_sections(nodes))
-    plan_path.write_text(render_plan(base.name, sections))
+    path.write_text(render_plan(base.name, sections))
 
 
 def merge_unique(existing: list[str], additions: list[str]) -> list[str]:
@@ -286,10 +312,10 @@ def cmd_init(base: Path) -> None:
     """Create a plan."""
     if base.exists():
         raise FocusError(f"{base} already exists")
-    (base / "nodes" / "testing").mkdir(parents=True)
-    (base / "nodes" / "done").mkdir(parents=True)
+    (base / "nodes" / STAGES["testing"]).mkdir(parents=True)
+    (base / "nodes" / STAGES["done"]).mkdir(parents=True)
     sections = {name: "" for name in SECTION_ORDER} | plan_sections({})
-    (base / "PLAN.md").write_text(render_plan(base.name, sections))
+    plan_path(base).write_text(render_plan(base.name, sections))
     print(f"created {base}")
 
 
@@ -297,24 +323,16 @@ def cmd_add(base: Path, name: str, depends: list[str], scope: list[str]) -> None
     """Add a node."""
     require_plan(base)
     node_id = slugify(name)
-    path = base / "nodes" / f"{node_id}.md"
-    if path.exists() or any(
-        (base / "nodes" / folder / f"{node_id}.md").exists()
-        for folder in ("testing", "done")
-    ):
+    path = node_path(base, node_id, "todo")
+    if any(node_path(base, node_id, stage).exists() for stage in STAGES):
         raise FocusError(f"node '{node_id}' already exists")
     nodes = load_nodes(base)
-    nodes[node_id] = {
-        "depends": depends,
-        "scope": scope,
-        "done": False,
-        "testing": False,
-    }
+    nodes[node_id] = {"depends": depends, "scope": scope, "stage": "todo"}
     validate_or_raise(nodes)
     body = f"# {name}\n\n## In\n\n## Out\n\n## Accept\n"
     path.write_text(render_node_file(depends, scope, body))
     regenerate_plan(base, nodes)
-    print(f"added {path} (depends: {', '.join(depends)}; scope: {', '.join(scope)})")
+    print(f"added {path} ({links_summary(depends, scope)})")
 
 
 def edit_links(
@@ -334,67 +352,57 @@ def edit_links(
     nodes[node_id] = {
         "depends": new_depends,
         "scope": new_scope,
-        "done": nodes[node_id]["done"],
-        "testing": nodes[node_id]["testing"],
+        "stage": nodes[node_id]["stage"],
     }
     validate_or_raise(nodes)
     path.write_text(render_node_file(new_depends, new_scope, body))
     regenerate_plan(base, nodes)
-    print(f"{node_id} depends: {', '.join(new_depends)}; scope: {', '.join(new_scope)}")
+    print(f"{node_id} {links_summary(new_depends, new_scope)}")
 
 
 def move_node(
     base: Path,
     node_id: str,
-    src: str,
-    dst: str,
-    done: bool,
-    testing: bool,
+    src_stage: str,
+    dst_stage: str,
     verb: str,
     note: str = "",
 ) -> None:
     """Move a node between stages."""
-    require_plan(base)
-    nodes = load_nodes(base)
-    if node_id not in nodes:
-        raise FocusError(f"unknown node '{node_id}'")
-    src_path = base / "nodes" / src / f"{node_id}.md"
+    nodes = require_known_node(base, node_id)
+    src_path = node_path(base, node_id, src_stage)
     if not src_path.exists():
-        raise FocusError(f"'{node_id}' is not in nodes/{src}")
-    nodes[node_id]["done"] = done
-    nodes[node_id]["testing"] = testing
+        raise FocusError(f"'{node_id}' is not in nodes/{STAGES[src_stage]}")
+    nodes[node_id]["stage"] = dst_stage
     validate_or_raise(nodes)
-    src_path.rename(base / "nodes" / dst / f"{node_id}.md")
+    src_path.rename(node_path(base, node_id, dst_stage))
     regenerate_plan(base, nodes)
     print(f"{verb} {node_id}" + (f": {note}" if note else ""))
 
 
 def cmd_built(base: Path, node_id: str) -> None:
     """Mark a node built, awaiting acceptance tests."""
-    move_node(base, node_id, "", "testing", False, True, "built")
-    path = base / "nodes" / "testing" / f"{node_id}.md"
+    move_node(base, node_id, "todo", "testing", "built")
+    path = node_path(base, node_id, "testing")
     path.write_text(update_failed_line(path.read_text(), None))
 
 
 def cmd_pass(base: Path, node_id: str) -> None:
     """Mark a node's acceptance tests passing."""
-    move_node(base, node_id, "testing", "done", True, False, "pass")
+    move_node(base, node_id, "testing", "done", "pass")
 
 
 def cmd_fail(base: Path, node_id: str, reason: str) -> None:
     """Mark a node's acceptance tests failing."""
-    move_node(base, node_id, "testing", "", False, False, "fail", reason)
-    path = base / "nodes" / f"{node_id}.md"
+    move_node(base, node_id, "testing", "todo", "fail", reason)
+    path = node_path(base, node_id, "todo")
     path.write_text(update_failed_line(path.read_text(), reason))
 
 
 def cmd_show(base: Path, node_id: str) -> None:
     """Print a node brief."""
-    require_plan(base)
-    nodes = load_nodes(base)
-    if node_id not in nodes:
-        raise FocusError(f"unknown node '{node_id}'")
-    sections = parse_sections((base / "PLAN.md").read_text())
+    nodes = require_known_node(base, node_id)
+    sections = parse_sections(plan_path(base).read_text())
     sections.pop("Nodes", None)
     print(render_plan(base.name, sections), end="")
     print(find_node_path(base, node_id).read_text(), end="")
@@ -405,11 +413,8 @@ def cmd_show(base: Path, node_id: str) -> None:
 
 def cmd_ready(base: Path, node_id: str) -> None:
     """Report whether a node is ready."""
-    require_plan(base)
-    nodes = load_nodes(base)
-    if node_id not in nodes:
-        raise FocusError(f"unknown node '{node_id}'")
-    waiting = [d for d in nodes[node_id]["depends"] if not nodes[d]["done"]]
+    nodes = require_known_node(base, node_id)
+    waiting = [d for d in nodes[node_id]["depends"] if nodes[d]["stage"] != "done"]
     if waiting:
         print(f"waiting on: {', '.join(waiting)}")
         sys.exit(1)
