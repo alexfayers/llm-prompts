@@ -35,3 +35,4 @@ cline-hooks and mcp-memory each carry their own prompts tree (rules, skills, wor
 - Follow the target repo's `.github/PULL_REQUEST_TEMPLATE.md` structure (What/Why/Testing/Checks - the Checks bullet differs per repo).
 - Title: conventional-commit format (`type: subject`).
 - Description: bullet points, not paragraphs. State WHAT and WHY, not HOW. No restating the diff, no process commentary.
+- Planned with eagle-vision (you built it from a plan directory, or the user names one): once the PR is open, post the plan as a separate comment - `python3 "<base-dir>/../eagle-vision/focus.py" comment <dir> | gh pr comment <pr-url> --body-file -`. Post it once, never in the description.
