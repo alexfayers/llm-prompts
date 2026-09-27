@@ -13,6 +13,7 @@
 | src/llm\_prompts/manifest.py                                                  |       37 |        3 |     92% | 35-36, 61 |
 | src/llm\_prompts/plugins.py                                                   |      153 |       16 |     90% |39, 126-127, 131-132, 148-160, 176, 206, 235, 282, 292, 355, 359 |
 | src/llm\_prompts/prompts/claude-code/skills/retrospective/extract\_signals.py |      181 |       97 |     46% |44-49, 54-69, 80-124, 186, 197, 200, 209, 254-264, 269-286, 297-332, 336 |
+| src/llm\_prompts/prompts/shared/skills/eagle-vision/focus.py                  |      391 |       20 |     95% |91, 140, 168, 174, 182, 196, 199-201, 205-207, 211, 352, 382, 396, 443, 581-582, 704 |
 | src/llm\_prompts/prompts/shared/skills/git-tidy/inspect\_range.py             |       57 |        3 |     95% |59-60, 106 |
 | src/llm\_prompts/prompts/shared/skills/git-tidy/rewrite\_range.py             |       64 |        4 |     94% |56, 64, 67, 168 |
 | src/llm\_prompts/prompts/shared/skills/git-usage/check\_repos.py              |       67 |       12 |     82% |41-42, 44, 63, 73-75, 95-96, 124-125, 159 |
@@ -29,6 +30,7 @@
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
 | tests/test\_conftest.py                                                       |       36 |        0 |    100% |           |
 | tests/test\_contribute.py                                                     |      583 |        0 |    100% |           |
+| tests/test\_focus.py                                                          |      412 |        0 |    100% |           |
 | tests/test\_hooks.py                                                          |      373 |        0 |    100% |           |
 | tests/test\_inspect\_range\_script.py                                         |       89 |        0 |    100% |           |
 | tests/test\_install.py                                                        |      639 |        0 |    100% |           |
@@ -44,7 +46,7 @@
 | tests/test\_setup.py                                                          |      142 |        0 |    100% |           |
 | tests/test\_todos\_script.py                                                  |       87 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      118 |        0 |    100% |           |
-| **TOTAL**                                                                     | **7729** |  **591** | **92%** |           |
+| **TOTAL**                                                                     | **8532** |  **611** | **93%** |           |
 
 
 ## Setup coverage badge
