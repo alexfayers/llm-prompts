@@ -653,6 +653,32 @@ def split_by_change(
     return unchanged, changed
 
 
+def resolve_skip_set(
+    violations: Iterable[Violation],
+) -> tuple[dict[str, frozenset[Path]], frozenset[str]]:
+    """Split blocking violations into a per-target skip set and frozen agents.
+
+    Args:
+        violations: Blocking (unchanged-source) violations from a `check()`
+            run, e.g. `split_by_change`'s first element.
+
+    Returns:
+        Each violating target's set of resolved `Violation.source` paths
+        (`collection_bytes` violations contribute none), and the target of
+        every `collection_bytes` violation.
+    """
+    skip_sets: dict[str, set[Path]] = {}
+    frozen_agents: set[str] = set()
+    for v in violations:
+        if v.metric == COLLECTION_BYTES:
+            frozen_agents.add(v.target)
+        else:
+            skip_sets.setdefault(v.target, set()).add(v.source.resolve())
+    return {target: frozenset(paths) for target, paths in skip_sets.items()}, frozenset(
+        frozen_agents
+    )
+
+
 def check(
     roots: Iterable[Path],
     targets: tuple[str, ...] = CHECKED_TARGETS,

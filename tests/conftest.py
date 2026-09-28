@@ -196,3 +196,11 @@ def fake_subprocess(monkeypatch: pytest.MonkeyPatch) -> FakeSubprocess:
     fake = FakeSubprocess()
     monkeypatch.setattr(subprocess, "run", fake.run)
     return fake
+
+
+def run_capturing_exit(func: Callable[[], int | None]) -> int | str | None:
+    """Call `func`, returning its result or, on SystemExit, its exit code."""
+    try:
+        return func()
+    except SystemExit as exc:
+        return exc.code

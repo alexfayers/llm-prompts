@@ -16,6 +16,7 @@ from llm_prompts.install import (
     get_managed_dirs,
 )
 from llm_prompts.install import main as install_main
+from llm_prompts.manifest import read_rendered_rule, write_rendered_rules
 from llm_prompts.render_template import render_template
 
 
@@ -143,6 +144,119 @@ class TestCodexAgentsMdConcat:
         assert content.index("coding body") < content.index("planning body")
         assert content.endswith("\n")
         assert "\n\n\n" not in content
+
+
+@pytest.fixture
+def rendered_rules_dir(tmp_path: Path) -> Iterator[Path]:
+    """Redirect the rendered-rule cache to a temp directory for the duration of a test."""
+    path = tmp_path / "rendered-rules"
+    with patch("llm_prompts.manifest.RENDERED_RULES_DIR", path):
+        yield path
+
+
+class TestCodexAgentsMdSkip(TestCodexAgentsMdConcat):
+    """Skip-set-aware AGENTS.md rendering, reusing the concat fixture's `_build`."""
+
+    def _install(
+        self, agent: _CodexAgent, shared: Path, skip_set: frozenset[Path] = frozenset()
+    ) -> set[str]:
+        """Call install_rules with the fixed empty overlay lists, varying only skip_set."""
+        return agent.install_rules(
+            shared_src=shared,
+            overlay_srcs=[],
+            overlay_agent_srcs=[],
+            skip_set=skip_set,
+        )
+
+    def test_no_skip_contains_latest_text_of_every_rule(
+        self, rendered_rules_dir: Path, tmp_path: Path
+    ) -> None:
+        agent = self._build(tmp_path)
+        shared = agent.root_dir / "shared" / "rules"
+
+        self._install(agent, shared)
+
+        content = (tmp_path / "home" / ".codex" / "AGENTS.md").read_text(
+            encoding="utf-8"
+        )
+        assert "canary body" in content
+        assert "coding body" in content
+        assert "planning body" in content
+
+    def test_no_skip_cache_holds_every_rules_written_text(
+        self, rendered_rules_dir: Path, tmp_path: Path
+    ) -> None:
+        agent = self._build(tmp_path)
+        shared = agent.root_dir / "shared" / "rules"
+
+        self._install(agent, shared)
+
+        assert "canary body" in (read_rendered_rule("codex", "000-canary.md") or "")
+        assert "coding body" in (read_rendered_rule("codex", "coding.md") or "")
+        assert "planning body" in (read_rendered_rule("codex", "planning.md") or "")
+
+    def test_skipped_rule_with_cached_text_uses_cached_text(
+        self, rendered_rules_dir: Path, tmp_path: Path
+    ) -> None:
+        agent = self._build(tmp_path)
+        shared = agent.root_dir / "shared" / "rules"
+        coding_src = shared / "coding.md"
+        write_rendered_rules("codex", {"coding.md": "old cached coding text"})
+
+        self._install(agent, shared, skip_set=frozenset({coding_src.resolve()}))
+
+        content = (tmp_path / "home" / ".codex" / "AGENTS.md").read_text(
+            encoding="utf-8"
+        )
+        assert "old cached coding text" in content
+        assert "coding body" not in content
+
+    def test_skipping_one_rule_still_updates_others(
+        self, rendered_rules_dir: Path, tmp_path: Path
+    ) -> None:
+        agent = self._build(tmp_path)
+        shared = agent.root_dir / "shared" / "rules"
+        coding_src = shared / "coding.md"
+        write_rendered_rules("codex", {"coding.md": "old cached coding text"})
+
+        self._install(agent, shared, skip_set=frozenset({coding_src.resolve()}))
+
+        content = (tmp_path / "home" / ".codex" / "AGENTS.md").read_text(
+            encoding="utf-8"
+        )
+        assert "canary body" in content
+        assert "planning body" in content
+
+    def test_skipped_rule_without_cache_leaves_existing_file_unchanged(
+        self, rendered_rules_dir: Path, tmp_path: Path
+    ) -> None:
+        agent = self._build(tmp_path)
+        shared = agent.root_dir / "shared" / "rules"
+        coding_src = shared / "coding.md"
+        agents_md = tmp_path / "home" / ".codex" / "AGENTS.md"
+        agents_md.parent.mkdir(parents=True, exist_ok=True)
+        existing = "previously installed content, unrelated to current sources\n"
+        agents_md.write_text(existing, encoding="utf-8")
+
+        self._install(agent, shared, skip_set=frozenset({coding_src.resolve()}))
+
+        assert agents_md.read_text(encoding="utf-8") == existing
+
+    def test_skipped_rule_without_cache_and_no_existing_file_writes_without_it(
+        self, rendered_rules_dir: Path, tmp_path: Path
+    ) -> None:
+        agent = self._build(tmp_path)
+        shared = agent.root_dir / "shared" / "rules"
+        coding_src = shared / "coding.md"
+        agents_md = tmp_path / "home" / ".codex" / "AGENTS.md"
+
+        self._install(agent, shared, skip_set=frozenset({coding_src.resolve()}))
+
+        assert agents_md.is_file()
+        content = agents_md.read_text(encoding="utf-8")
+        assert "coding body" not in content
+        assert "canary body" in content
+        assert "planning body" in content
 
 
 @pytest.fixture

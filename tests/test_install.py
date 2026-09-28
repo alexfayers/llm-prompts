@@ -6,16 +6,24 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from conftest import run_capturing_exit
 
 from llm_prompts.install import (
     _GATING_FRONTMATTER_KEYS,
     _Agent,
+    _carry_forward,
+    _cleanup_stale,
     _collect_content_srcs,
     _env_var_set,
     _excluded_targets,
+    _get_cline_extra_dirs,
+    _get_dirs,
+    _install_agents,
+    _install_content,
     _install_linked,
     _install_plugin_skills,
     _install_rendered,
@@ -28,6 +36,7 @@ from llm_prompts.install import (
     get_source_for_managed_file,
 )
 from llm_prompts.install import main as install_main
+from llm_prompts.manifest import AgentManifest
 from llm_prompts.render_template import (
     render_template,
     resolve_frontmatter,
@@ -35,6 +44,7 @@ from llm_prompts.render_template import (
     strip_gating_keys,
 )
 from llm_prompts.size_guard import Violation
+from llm_prompts.size_limits import AGENT_DESCRIPTION_CHARS, FINALS
 
 
 def _make_rule(directory: Path, name: str, body: str = "body") -> Path:
@@ -641,24 +651,18 @@ class TestMainValidatesPlugins:
 
 
 class TestMainRunsSizeGuard:
-    def test_size_violation_exits_before_touching_disk(self, tmp_path: Path) -> None:
-        from llm_prompts.size_guard import CheckResult, Violation
+    def test_single_violation_does_not_block_other_installs(
+        self, tmp_path: Path
+    ) -> None:
+        from llm_prompts.size_guard import CheckResult
 
         home = tmp_path / "home"
         home.mkdir()
         manifest = tmp_path / "installed.json"
-        violation = Violation(
-            metric="rule_bytes",
-            target="claude-code",
-            dest_name="coding.md",
-            actual=99_999,
-            threshold=5_000,
-            source=tmp_path / "coding.md",
-        )
         failing_result = CheckResult(
             passed=False,
             artifacts=[],
-            violations=[violation],
+            violations=[self._violation(tmp_path / "coding.md")],
             report="Prompt-size guard failed:\n  [rule_bytes] coding.md ...",
         )
         with (
@@ -666,11 +670,273 @@ class TestMainRunsSizeGuard:
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
             patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
             patch("llm_prompts.size_guard.check", return_value=failing_result),
-            pytest.raises(SystemExit),
         ):
             install_main(["claude-code"])
 
-        assert not (home / ".claude" / "skills").exists()
+        assert (home / ".claude" / "skills").exists()
+
+    def test_collection_violation_freezes_only_that_agent(self, tmp_path: Path) -> None:
+        from llm_prompts.size_guard import CheckResult, Violation
+        from llm_prompts.size_limits import COLLECTION_BYTES
+
+        home = tmp_path / "home"
+        home.mkdir()
+        manifest = tmp_path / "installed.json"
+        violation = Violation(
+            metric=COLLECTION_BYTES,
+            target="claude-code",
+            dest_name="claude-code",
+            actual=999_999,
+            threshold=50_000,
+            source=tmp_path / "claude-code",
+        )
+        failing_result = CheckResult(
+            passed=False, artifacts=[], violations=[violation], report="failed"
+        )
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+            patch("llm_prompts.size_guard.check", return_value=failing_result),
+        ):
+            dirs = _get_dirs()
+            install_main(["claude-code", "cline"])
+
+        assert not dirs["claude-code"]["rules"].exists()
+        assert dirs["cline"]["rules"].exists()
+
+    def test_frozen_agent_logged_at_error_level(self, tmp_path: Path) -> None:
+        from llm_prompts.size_guard import CheckResult, Violation
+        from llm_prompts.size_limits import COLLECTION_BYTES
+
+        home = tmp_path / "home"
+        home.mkdir()
+        manifest = tmp_path / "installed.json"
+        violation = Violation(
+            metric=COLLECTION_BYTES,
+            target="claude-code",
+            dest_name="claude-code",
+            actual=999_999,
+            threshold=50_000,
+            source=tmp_path / "claude-code",
+        )
+        failing_result = CheckResult(
+            passed=False, artifacts=[], violations=[violation], report="failed"
+        )
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+            patch("llm_prompts.size_guard.check", return_value=failing_result),
+            patch("llm_prompts.install.log") as mock_log,
+        ):
+            install_main(["claude-code"])
+
+        logged_error = [
+            call.args[1] for call in mock_log.call_args_list if call.args[0] == "error"
+        ]
+        assert any("claude-code" in line for line in logged_error)
+
+    def test_frozen_agent_makes_result_truthy(self, tmp_path: Path) -> None:
+        from llm_prompts.size_guard import CheckResult, Violation
+        from llm_prompts.size_limits import COLLECTION_BYTES
+
+        home = tmp_path / "home"
+        home.mkdir()
+        manifest = tmp_path / "installed.json"
+        violation = Violation(
+            metric=COLLECTION_BYTES,
+            target="claude-code",
+            dest_name="claude-code",
+            actual=999_999,
+            threshold=50_000,
+            source=tmp_path / "claude-code",
+        )
+        failing_result = CheckResult(
+            passed=False, artifacts=[], violations=[violation], report="failed"
+        )
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+            patch("llm_prompts.size_guard.check", return_value=failing_result),
+        ):
+            result = install_main(["claude-code"])
+
+        assert result is True
+
+    def test_blocking_violation_report_logged_at_error_level(
+        self, tmp_path: Path
+    ) -> None:
+        from llm_prompts.size_guard import CheckResult, format_report
+
+        home = tmp_path / "home"
+        home.mkdir()
+        manifest = tmp_path / "installed.json"
+        violation = self._violation(tmp_path / "a.md")
+        failing_result = CheckResult(
+            passed=False, artifacts=[], violations=[violation], report="failed"
+        )
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+            patch("llm_prompts.size_guard.check", return_value=failing_result),
+            patch("llm_prompts.install.log") as mock_log,
+        ):
+            install_main(["claude-code"])
+
+        logged_error = [
+            call.args[1] for call in mock_log.call_args_list if call.args[0] == "error"
+        ]
+        for line in format_report([violation]).splitlines():
+            assert line in logged_error
+
+    def test_skipped_skill_logs_directory_name_not_skill_md(
+        self, tmp_path: Path
+    ) -> None:
+        from llm_prompts.size_guard import CheckResult, Violation
+        from llm_prompts.size_limits import SKILL_BODY_BYTES
+
+        home = tmp_path / "home"
+        home.mkdir()
+        manifest = tmp_path / "installed.json"
+        skill_src = tmp_path / "skills" / "big-skill" / "SKILL.md"
+        skill_src.parent.mkdir(parents=True)
+        skill_src.write_text("Body\n", encoding="utf-8")
+        violation = Violation(
+            metric=SKILL_BODY_BYTES,
+            target="claude-code",
+            dest_name="big-skill",
+            actual=99_999,
+            threshold=5_000,
+            source=skill_src,
+        )
+        failing_result = CheckResult(
+            passed=False, artifacts=[], violations=[violation], report="failed"
+        )
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+            patch("llm_prompts.size_guard.check", return_value=failing_result),
+            patch("llm_prompts.install.log") as mock_log,
+        ):
+            install_main(["claude-code"])
+
+        logged_error = [
+            call.args[1] for call in mock_log.call_args_list if call.args[0] == "error"
+        ]
+        assert any(
+            "big-skill" in line and "SKILL.md" not in line for line in logged_error
+        )
+
+    def test_violation_for_one_target_leaves_other_targets_installed(
+        self, tmp_path: Path
+    ) -> None:
+        from llm_prompts.size_guard import CheckResult, Violation
+
+        home = tmp_path / "home"
+        home.mkdir()
+        manifest = tmp_path / "installed.json"
+        overlay_root = tmp_path / "overlay"
+        rule_src = _make_rule(
+            overlay_root / "shared" / "rules", "shared.md", "new content"
+        )
+        violation = Violation(
+            metric="rule_bytes",
+            target="claude-code",
+            dest_name="shared.md",
+            actual=99_999,
+            threshold=5_000,
+            source=rule_src,
+        )
+        failing_result = CheckResult(
+            passed=False, artifacts=[], violations=[violation], report="failed"
+        )
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch(
+                "llm_prompts.install._discover_overlay_paths",
+                return_value=[overlay_root],
+            ),
+            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+            patch("llm_prompts.size_guard.check", return_value=failing_result),
+        ):
+            dirs = _get_dirs()
+            install_main(["claude-code", "kiro"])
+
+        assert not (dirs["claude-code"]["rules"] / "shared.md").exists()
+        assert "new content" in (dirs["kiro"]["rules"] / "shared.md").read_text(
+            encoding="utf-8"
+        )
+
+    def test_skipped_prompt_logged_and_returned(self, tmp_path: Path) -> None:
+        from llm_prompts.size_guard import CheckResult
+
+        home = tmp_path / "home"
+        home.mkdir()
+        manifest = tmp_path / "installed.json"
+        violation_source = tmp_path / "a.md"
+        failing_result = CheckResult(
+            passed=False,
+            artifacts=[],
+            violations=[self._violation(violation_source)],
+            report="failed",
+        )
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+            patch("llm_prompts.size_guard.check", return_value=failing_result),
+            patch("llm_prompts.install.log") as mock_log,
+        ):
+            skipped = install_main(["claude-code"])
+
+        assert skipped is True
+        logged_error = [
+            call.args[1] for call in mock_log.call_args_list if call.args[0] == "error"
+        ]
+        assert any(violation_source.name in line for line in logged_error)
+
+    def test_skipped_prompt_stays_carried_forward_across_repeated_runs(
+        self, tmp_path: Path
+    ) -> None:
+        from llm_prompts.manifest import read_manifest, write_manifest
+        from llm_prompts.size_guard import CheckResult
+
+        home = tmp_path / "home"
+        home.mkdir()
+        manifest = tmp_path / "installed.json"
+        overlay_root = tmp_path / "overlay"
+        rule_src = _make_rule(
+            overlay_root / "shared" / "rules", "synthetic-carry.md", "new content"
+        )
+        failing_result = CheckResult(
+            passed=False,
+            artifacts=[],
+            violations=[self._violation(rule_src)],
+            report="failed",
+        )
+
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch(
+                "llm_prompts.install._discover_overlay_paths",
+                return_value=[overlay_root],
+            ),
+            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+            patch("llm_prompts.size_guard.check", return_value=failing_result),
+        ):
+            dest = _get_dirs()["claude-code"]["rules"] / "synthetic-carry.md"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text("old content", encoding="utf-8")
+            write_manifest("claude-code", [str(dest)])
+
+            for _ in range(2):
+                install_main(["claude-code"])
+                assert dest.read_text(encoding="utf-8") == "old content"
+                assert str(dest) in read_manifest()["claude-code"]["files"]
 
     @staticmethod
     def _violation(source: Path) -> Violation:
@@ -725,7 +991,7 @@ class TestMainRunsSizeGuard:
         ]
         assert any("b.md" in line for line in logged_warn)
 
-    def test_violation_in_untouched_file_aborts_despite_other_update(
+    def test_untouched_violation_skips_while_pulled_violation_still_installs(
         self, tmp_path: Path
     ) -> None:
         from llm_prompts.size_guard import snapshot_sources
@@ -739,14 +1005,17 @@ class TestMainRunsSizeGuard:
         baseline = snapshot_sources([src])
         rule_b.write_text("new and oversized", encoding="utf-8")
 
-        with pytest.raises(SystemExit):
-            self._install_with_baseline(
-                tmp_path,
-                [self._violation(rule_a), self._violation(rule_b)],
-                baseline,
-            )
+        home, mock_log = self._install_with_baseline(
+            tmp_path,
+            [self._violation(rule_a), self._violation(rule_b)],
+            baseline,
+        )
 
-        assert not (tmp_path / "home" / ".claude" / "skills").exists()
+        assert (home / ".claude" / "skills").exists()
+        logged_warn = [
+            call.args[1] for call in mock_log.call_args_list if call.args[0] == "warn"
+        ]
+        assert any("b.md" in line for line in logged_warn)
 
     def test_size_check_passes_for_own_prompts_dir(self, tmp_path: Path) -> None:
         home = tmp_path / "home"
@@ -861,6 +1130,281 @@ class TestMainRunsSizeGuard:
             call.args[1] for call in mock_log.call_args_list if call.args[0] == "warn"
         ]
         assert any("is stale" in line for line in logged_warn)
+
+
+class TestCarryForward:
+    def test_kept_when_previously_installed(self, tmp_path: Path) -> None:
+        dest = tmp_path / "dest.md"
+        previous_manifest: dict[str, AgentManifest] = {
+            "test-agent": {"files": [str(dest)]}
+        }
+
+        kept = _carry_forward("test-agent", dest, "synthetic label", previous_manifest)
+
+        assert kept is True
+
+    def test_kept_logs_expected_message(self) -> None:
+        dest = Path("/tmp/dest.md")
+        previous_manifest: dict[str, AgentManifest] = {
+            "test-agent": {"files": [str(dest)]}
+        }
+
+        with patch("llm_prompts.install.log") as mock_log:
+            _carry_forward("test-agent", dest, "synthetic label", previous_manifest)
+
+        logged_warn = [
+            call.args[1] for call in mock_log.call_args_list if call.args[0] == "warn"
+        ]
+        assert any(
+            "[test-agent] Kept previous synthetic label: size guard violation" in line
+            for line in logged_warn
+        )
+
+    def test_not_installed_when_not_previously_installed(self, tmp_path: Path) -> None:
+        dest = tmp_path / "dest.md"
+        previous_manifest: dict[str, AgentManifest] = {"test-agent": {"files": []}}
+
+        kept = _carry_forward("test-agent", dest, "synthetic label", previous_manifest)
+
+        assert kept is False
+
+    def test_not_installed_logs_expected_message(self) -> None:
+        dest = Path("/tmp/dest.md")
+        previous_manifest: dict[str, AgentManifest] = {"test-agent": {"files": []}}
+
+        with patch("llm_prompts.install.log") as mock_log:
+            _carry_forward("test-agent", dest, "synthetic label", previous_manifest)
+
+        logged_warn = [
+            call.args[1] for call in mock_log.call_args_list if call.args[0] == "warn"
+        ]
+        assert any(
+            "[test-agent] Not installed synthetic label: size guard violation" in line
+            for line in logged_warn
+        )
+
+    def test_no_filesystem_mutation(self, tmp_path: Path) -> None:
+        dest = tmp_path / "dest.md"
+        previous_manifest: dict[str, AgentManifest] = {
+            "test-agent": {"files": [str(dest)]}
+        }
+        before = set(tmp_path.iterdir())
+
+        _carry_forward("test-agent", dest, "synthetic label", previous_manifest)
+
+        assert set(tmp_path.iterdir()) == before
+        assert not dest.exists()
+
+
+class TestInstallContentSkipSet:
+    def test_skipped_rule_left_unchanged(self, tmp_path: Path) -> None:
+        root = tmp_path / "prompts"
+        shared = root / "shared" / "rules"
+        rule_src = _make_rule(shared, "a.md", "new content")
+        dest_dir = tmp_path / "dest" / "rules"
+        dest_dir.mkdir(parents=True)
+        dest = dest_dir / "a.md"
+        dest.write_text("old content", encoding="utf-8")
+        agent = _Agent(
+            name="claude-code", root_dir=root, dirs={"claude-code": {"rules": dest_dir}}
+        )
+
+        agent.install_rules(
+            shared,
+            [],
+            [],
+            skip_set=frozenset({rule_src.resolve()}),
+            previous_manifest={},
+        )
+
+        assert dest.read_text(encoding="utf-8") == "old content"
+
+    def test_skipped_workflow_left_unchanged(self, tmp_path: Path) -> None:
+        root = tmp_path / "prompts"
+        shared = root / "shared" / "workflows"
+        workflow_src = _make_rule(shared, "a.md", "new content")
+        dest_dir = tmp_path / "dest" / "workflows"
+        dest_dir.mkdir(parents=True)
+        dest = dest_dir / "a.md"
+        dest.write_text("old content", encoding="utf-8")
+        agent = _Agent(
+            name="claude-code",
+            root_dir=root,
+            dirs={"claude-code": {"workflows": dest_dir}},
+        )
+
+        _install_content(
+            agent,
+            "workflows",
+            shared,
+            [],
+            [],
+            skip_set=frozenset({workflow_src.resolve()}),
+            previous_manifest={},
+        )
+
+        assert dest.read_text(encoding="utf-8") == "old content"
+
+    def test_skipped_agent_specific_source_left_as_is(self, tmp_path: Path) -> None:
+        root = tmp_path / "prompts"
+        shared = root / "shared" / "rules"
+        shared.mkdir(parents=True)
+        specific_src = _make_rule(
+            root / "claude-code" / "rules", "specific.md", "new specific"
+        )
+        dest_dir = tmp_path / "dest" / "rules"
+        dest_dir.mkdir(parents=True)
+        dest = dest_dir / "specific.md"
+        dest.write_text("old specific", encoding="utf-8")
+        agent = _Agent(
+            name="claude-code", root_dir=root, dirs={"claude-code": {"rules": dest_dir}}
+        )
+
+        _install_content(
+            agent,
+            "rules",
+            shared,
+            [],
+            [],
+            skip_set=frozenset({specific_src.resolve()}),
+            previous_manifest={},
+        )
+
+        assert dest.read_text(encoding="utf-8") == "old specific"
+
+    def test_kept_prompt_is_carried_into_managed_set_and_survives_cleanup(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "prompts"
+        shared = root / "shared" / "rules"
+        rule_src = _make_rule(shared, "a.md", "new content")
+        dest_dir = tmp_path / "dest" / "rules"
+        dest_dir.mkdir(parents=True)
+        dest = dest_dir / "a.md"
+        dest.write_text("old content", encoding="utf-8")
+        agent = _Agent(
+            name="claude-code", root_dir=root, dirs={"claude-code": {"rules": dest_dir}}
+        )
+        previous_manifest: dict[str, AgentManifest] = {
+            "claude-code": {"files": [str(dest)]}
+        }
+
+        managed = agent.install_rules(
+            shared,
+            [],
+            [],
+            skip_set=frozenset({rule_src.resolve()}),
+            previous_manifest=previous_manifest,
+        )
+
+        assert "a.md" in managed
+
+        _cleanup_stale(
+            "claude-code",
+            [str(dest_dir / name) for name in managed],
+            previous_manifest,
+        )
+        assert dest.exists()
+
+    def test_skipped_prompt_never_installed_stays_uninstalled(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "prompts"
+        shared = root / "shared" / "rules"
+        rule_src = _make_rule(shared, "a.md", "new content")
+        dest_dir = tmp_path / "dest" / "rules"
+        agent = _Agent(
+            name="claude-code", root_dir=root, dirs={"claude-code": {"rules": dest_dir}}
+        )
+
+        managed = agent.install_rules(
+            shared,
+            [],
+            [],
+            skip_set=frozenset({rule_src.resolve()}),
+            previous_manifest={"claude-code": {"files": []}},
+        )
+
+        assert "a.md" not in managed
+        assert not (dest_dir / "a.md").exists()
+
+    def test_non_skipped_prompt_installs_current_version(self, tmp_path: Path) -> None:
+        root = tmp_path / "prompts"
+        shared = root / "shared" / "rules"
+        _make_rule(shared, "a.md", "current content")
+        dest_dir = tmp_path / "dest" / "rules"
+        agent = _Agent(
+            name="claude-code", root_dir=root, dirs={"claude-code": {"rules": dest_dir}}
+        )
+        agent.vars_path().parent.mkdir(parents=True)
+        agent.vars_path().write_text("{}", encoding="utf-8")
+
+        managed = agent.install_rules(
+            shared, [], [], skip_set=frozenset(), previous_manifest={}
+        )
+
+        assert "a.md" in managed
+        assert "current content" in (dest_dir / "a.md").read_text(encoding="utf-8")
+
+
+class TestInstallSkillsSkipSet:
+    def test_skipped_skill_folder_left_unchanged(self, tmp_path: Path) -> None:
+        skills_src = tmp_path / "skills_src"
+        skill_dir = skills_src / "my-skill"
+        skill_dir.mkdir(parents=True)
+        skill_md = skill_dir / "SKILL.md"
+        skill_md.write_text("# New\n", encoding="utf-8")
+        agents_dir = tmp_path / "agents"
+        installed_skill_dir = agents_dir / "skills" / "my-skill"
+        installed_skill_dir.mkdir(parents=True)
+        (installed_skill_dir / "SKILL.md").write_text("# Old\n", encoding="utf-8")
+        vars_path = tmp_path / "vars.json"
+
+        managed = _install_skills(
+            [skills_src],
+            agents_dir,
+            "test-agent",
+            vars_path,
+            skip_set=frozenset({skill_md.resolve()}),
+            previous_manifest={"test-agent": {"files": [str(installed_skill_dir)]}},
+        )
+
+        assert (installed_skill_dir / "SKILL.md").read_text(
+            encoding="utf-8"
+        ) == "# Old\n"
+        assert "my-skill" in managed
+
+
+class TestInstallAgentsSkipSet:
+    def test_skipped_agent_all_variants_left_unchanged(self, tmp_path: Path) -> None:
+        agents_src = tmp_path / "agents_src"
+        agents_src.mkdir(parents=True)
+        agent_src = agents_src / "reasoner.md"
+        agent_src.write_text(
+            "---\ngenerate_variants: sonnet-high,sonnet-medium\n---\n\nNew body\n",
+            encoding="utf-8",
+        )
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir(parents=True)
+        variant_high = agents_dir / "reasoner-sonnet-high.md"
+        variant_medium = agents_dir / "reasoner-sonnet-medium.md"
+        variant_high.write_text("OLD VARIANT high", encoding="utf-8")
+        variant_medium.write_text("OLD VARIANT medium", encoding="utf-8")
+        previous_manifest: dict[str, AgentManifest] = {
+            "claude-code": {"files": [str(variant_high), str(variant_medium)]}
+        }
+
+        managed = _install_agents(
+            [agents_src],
+            agents_dir,
+            skip_set=frozenset({agent_src.resolve()}),
+            previous_manifest=previous_manifest,
+        )
+
+        assert variant_high.read_text(encoding="utf-8") == "OLD VARIANT high"
+        assert variant_medium.read_text(encoding="utf-8") == "OLD VARIANT medium"
+        assert "reasoner-sonnet-high.md" in managed
+        assert "reasoner-sonnet-medium.md" in managed
 
 
 _NON_GATING_FRONTMATTER = (
@@ -1267,3 +1811,145 @@ class TestGetSourceForManagedFile:
             source = get_source_for_managed_file(str(dest))
 
         assert source is None
+
+
+class TestSkipFailingPrompt:
+    """End-to-end: a real `llm-prompts update` skips only the over-limit prompt."""
+
+    _OVERSIZED_DESCRIPTION = "x" * (FINALS[AGENT_DESCRIPTION_CHARS] + 50)
+    _SHORT_DESCRIPTION = "A short synthetic agent description."
+
+    def _write_sources(self, overlay_root: Path, agent_description: str) -> None:
+        _make_rule(overlay_root / "shared" / "rules", "synthetic-rule.md", "new rule")
+        skill_src = overlay_root / "shared" / "skills" / "synthetic-skill"
+        skill_src.mkdir(parents=True, exist_ok=True)
+        (skill_src / "SKILL.md").write_text("# Skill\nnew skill\n", encoding="utf-8")
+        agent_src = overlay_root / "claude-code" / "agents"
+        agent_src.mkdir(parents=True, exist_ok=True)
+        (agent_src / "synthetic-agent.md").write_text(
+            f"---\ndescription: {agent_description}\n---\nAgent body.\n",
+            encoding="utf-8",
+        )
+
+    def _seed_previous_install(self, home: Path) -> dict[str, Path]:
+        """Write a prior install's dest files and manifest for two agents."""
+        from llm_prompts.manifest import write_manifest
+
+        dirs = _get_dirs()
+        cline_agents_dir, _ = _get_cline_extra_dirs()
+        dest = {
+            "cline_rule": dirs["cline"]["rules"] / "synthetic-rule.md",
+            "claude_rule": dirs["claude-code"]["rules"] / "synthetic-rule.md",
+            "cline_skill": cline_agents_dir / "skills" / "synthetic-skill",
+            "claude_skill": home / ".claude" / "skills" / "synthetic-skill",
+            "claude_agent": dirs["claude-code"]["agents"] / "synthetic-agent.md",
+        }
+        for key in ("cline_rule", "claude_rule"):
+            dest[key].parent.mkdir(parents=True, exist_ok=True)
+            dest[key].write_text("old rule", encoding="utf-8")
+        for key in ("cline_skill", "claude_skill"):
+            dest[key].mkdir(parents=True, exist_ok=True)
+            (dest[key] / "SKILL.md").write_text(
+                "# Skill\nold skill\n", encoding="utf-8"
+            )
+        dest["claude_agent"].parent.mkdir(parents=True, exist_ok=True)
+        dest["claude_agent"].write_text("old agent", encoding="utf-8")
+
+        write_manifest("cline", [str(dest["cline_rule"]), str(dest["cline_skill"])])
+        write_manifest(
+            "claude-code",
+            [
+                str(dest["claude_rule"]),
+                str(dest["claude_skill"]),
+                str(dest["claude_agent"]),
+            ],
+        )
+        return dest
+
+    def _run_update(self) -> int | str | None:
+        from llm_prompts.cli import main as cli_main
+
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch("llm_prompts.cli._pull_local_sources", return_value=set()),
+            patch("llm_prompts.setup.has_remote_sources", return_value=False),
+            patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+            patch("llm_prompts.setup.run_setup"),
+            patch("llm_prompts.cli._get_installed_commit", return_value=None),
+            patch("llm_prompts.cli._restart_memory_service"),
+            patch("llm_prompts.cli._auto_migrate_memory_db"),
+            patch("llm_prompts.plugins.pull_plugin_sources"),
+        ):
+            return run_capturing_exit(cli_main)
+
+    def _run_first_update(self, tmp_path: Path) -> dict[str, Any]:
+        """Seed a previous install, then run `update` with the agent over-limit."""
+        home = tmp_path / "home"
+        home.mkdir()
+        overlay_root = tmp_path / "overlay"
+        manifest_path = tmp_path / "installed.json"
+
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch(
+                "llm_prompts.install._discover_overlay_paths",
+                return_value=[overlay_root],
+            ),
+            patch("llm_prompts.manifest.MANIFEST_PATH", manifest_path),
+        ):
+            self._write_sources(overlay_root, self._OVERSIZED_DESCRIPTION)
+            dest = self._seed_previous_install(home)
+            exit_code = self._run_update()
+
+        return {
+            "home": home,
+            "overlay_root": overlay_root,
+            "manifest_path": manifest_path,
+            "dest": dest,
+            "exit_code": exit_code,
+        }
+
+    def test_over_limit_prompt_present_updates_every_other_prompt(
+        self, tmp_path: Path
+    ) -> None:
+        state = self._run_first_update(tmp_path)
+        dest = state["dest"]
+
+        assert dest["cline_rule"].read_text(encoding="utf-8").strip() == "new rule"
+        assert dest["claude_rule"].read_text(encoding="utf-8").strip() == "new rule"
+        assert (dest["cline_skill"] / "SKILL.md").read_text(
+            encoding="utf-8"
+        ) == "# Skill\nnew skill\n"
+        assert (dest["claude_skill"] / "SKILL.md").read_text(
+            encoding="utf-8"
+        ) == "# Skill\nnew skill\n"
+
+    def test_over_limit_prompt_stays_at_its_old_version(self, tmp_path: Path) -> None:
+        state = self._run_first_update(tmp_path)
+        dest = state["dest"]
+
+        assert dest["claude_agent"].read_text(encoding="utf-8") == "old agent"
+        assert state["exit_code"] == 1
+
+    def test_bringing_the_prompt_under_the_limit_updates_it_on_the_next_run(
+        self, tmp_path: Path
+    ) -> None:
+        state = self._run_first_update(tmp_path)
+        dest = state["dest"]
+        overlay_root = state["overlay_root"]
+
+        with (
+            patch("llm_prompts.install.Path.home", return_value=state["home"]),
+            patch(
+                "llm_prompts.install._discover_overlay_paths",
+                return_value=[overlay_root],
+            ),
+            patch("llm_prompts.manifest.MANIFEST_PATH", state["manifest_path"]),
+        ):
+            self._write_sources(overlay_root, self._SHORT_DESCRIPTION)
+            exit_code = self._run_update()
+
+        assert exit_code in (0, None)
+        assert dest["claude_agent"].read_text(encoding="utf-8") == (
+            f"---\ndescription: {self._SHORT_DESCRIPTION}\n---\nAgent body.\n"
+        )
