@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">96 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">95<span class="text"> run</span></button>
+            <span class="text">101 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">100<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">1<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_a44f0ac069e85531_test_check_reduction_script_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.1">coverage.py v7.16.1</a>,
-            created at 2026-09-28 17:55 +0000
+            created at 2026-09-28 18:30 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -278,6 +278,14 @@
     <p class="run"><span class="n"><a id="t196" href="#t196">196</a></span><span class="t">    <span class="nam">fake</span> <span class="op">=</span> <span class="nam">FakeSubprocess</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t197" href="#t197">197</a></span><span class="t">    <span class="nam">monkeypatch</span><span class="op">.</span><span class="nam">setattr</span><span class="op">(</span><span class="nam">subprocess</span><span class="op">,</span> <span class="str">&quot;run&quot;</span><span class="op">,</span> <span class="nam">fake</span><span class="op">.</span><span class="nam">run</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t198" href="#t198">198</a></span><span class="t">    <span class="key">return</span> <span class="nam">fake</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t199" href="#t199">199</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t200" href="#t200">200</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t201" href="#t201">201</a></span><span class="t"><span class="key">def</span> <span class="nam">run_capturing_exit</span><span class="op">(</span><span class="nam">func</span><span class="op">:</span> <span class="nam">Callable</span><span class="op">[</span><span class="op">[</span><span class="op">]</span><span class="op">,</span> <span class="nam">int</span> <span class="op">|</span> <span class="key">None</span><span class="op">]</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">int</span> <span class="op">|</span> <span class="nam">str</span> <span class="op">|</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t202" href="#t202">202</a></span><span class="t">    <span class="str">&quot;&quot;&quot;Call `func`, returning its result or, on SystemExit, its exit code.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t203" href="#t203">203</a></span><span class="t">    <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t204" href="#t204">204</a></span><span class="t">        <span class="key">return</span> <span class="nam">func</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t205" href="#t205">205</a></span><span class="t">    <span class="key">except</span> <span class="nam">SystemExit</span> <span class="key">as</span> <span class="nam">exc</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t206" href="#t206">206</a></span><span class="t">        <span class="key">return</span> <span class="nam">exc</span><span class="op">.</span><span class="nam">code</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -287,7 +295,7 @@
             <a class="nav" href="z_a44f0ac069e85531_test_check_reduction_script_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.1">coverage.py v7.16.1</a>,
-            created at 2026-09-28 17:55 +0000
+            created at 2026-09-28 18:30 +0000
         </p>
     </div>
 </footer>
