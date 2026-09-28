@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 _AGENTS = ("cline", "copilot", "kiro", "claude-code", "codex", "antigravity", "pi")
 _MEMORY_TOOL = "mcp-memory"
+_RUN_SETUP_TRACKED_TOOLS = (_MEMORY_TOOL, "cline-hooks")
 
 
 def _get_root_dir() -> Path:
@@ -856,12 +857,15 @@ def main() -> int | None:
 
         pull_plugin_sources()
 
-        memory_commit = _get_installed_commit(_MEMORY_TOOL)
+        commits_before_setup = {
+            name: _get_installed_commit(name) for name in _RUN_SETUP_TRACKED_TOOLS
+        }
         stale = detect_stale_local_tools()
         if CONFIG_PATH.exists() and (has_remote_sources() or stale):
             run_setup(force_reinstall=stale or None)
-        if _get_installed_commit(_MEMORY_TOOL) != memory_commit:
-            changed_sources.add(_MEMORY_TOOL)
+        for name in _RUN_SETUP_TRACKED_TOOLS:
+            if _get_installed_commit(name) != commits_before_setup[name]:
+                changed_sources.add(name)
 
         from .install import main as install_main
 

@@ -604,7 +604,7 @@ class TestUpdateRestartsMemoryOnlyWhenItChanged:
             patch("llm_prompts.install.main"),
             patch(
                 "llm_prompts.cli._get_installed_commit",
-                side_effect=["oldcommit", "newcommit"],
+                side_effect=["oldcommit", "hookscommit", "newcommit", "hookscommit"],
             ),
             patch("llm_prompts.cli._auto_migrate_memory_db"),
             patch("llm_prompts.cli._restart_memory_service") as mock_restart,
@@ -684,6 +684,97 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
         mocks["codex"].assert_called_once_with()
         mocks["pi_memory"].assert_called_once_with()
         mocks["migrate"].assert_called_once_with()
+
+    def test_a_cline_hooks_reinstall_via_run_setup_reconfigures_agents_but_not_memory(
+        self,
+    ) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={
+                    "claude-code": {"files": []},
+                    "codex": {"files": []},
+                    "pi": {"files": []},
+                },
+            ),
+            patch("llm_prompts.cli._pull_local_sources", return_value=set()),
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.has_remote_sources", return_value=True),
+            patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+            patch("llm_prompts.setup.run_setup"),
+            patch("llm_prompts.install.main"),
+            patch(
+                "llm_prompts.cli._get_installed_commit",
+                side_effect=["memcommit", "oldhooks", "memcommit", "newhooks"],
+            ),
+            patch("llm_prompts.plugins.pull_plugin_sources"),
+            patch("llm_prompts.install.try_install_hooks_claude_code") as hooks,
+            patch("llm_prompts.install.try_install_memory_claude_code") as memory,
+            patch("llm_prompts.install.try_allow_update_claude_code") as allow,
+            patch("llm_prompts.install.try_install_memory_codex") as codex,
+            patch("llm_prompts.install.try_install_hooks_pi") as pi_hooks,
+            patch("llm_prompts.install.try_install_memory_pi") as pi_memory,
+            patch("llm_prompts.cli._auto_migrate_memory_db") as migrate,
+            patch("llm_prompts.cli._restart_memory_service") as restart,
+        ):
+            mock_config.exists.return_value = True
+            main()
+
+        hooks.assert_called_once_with()
+        allow.assert_called_once_with()
+        pi_hooks.assert_called_once_with()
+        memory.assert_not_called()
+        codex.assert_not_called()
+        pi_memory.assert_not_called()
+        migrate.assert_not_called()
+        restart.assert_not_called()
+
+    def test_no_installed_commit_change_via_run_setup_skips_reconfigure(self) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={
+                    "claude-code": {"files": []},
+                    "codex": {"files": []},
+                    "pi": {"files": []},
+                },
+            ),
+            patch("llm_prompts.cli._pull_local_sources", return_value=set()),
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.has_remote_sources", return_value=True),
+            patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+            patch("llm_prompts.setup.run_setup"),
+            patch("llm_prompts.install.main"),
+            patch(
+                "llm_prompts.cli._get_installed_commit",
+                side_effect=["memcommit", "hookscommit", "memcommit", "hookscommit"],
+            ),
+            patch("llm_prompts.plugins.pull_plugin_sources"),
+            patch("llm_prompts.install.try_install_hooks_claude_code") as hooks,
+            patch("llm_prompts.install.try_install_memory_claude_code") as memory,
+            patch("llm_prompts.install.try_allow_update_claude_code") as allow,
+            patch("llm_prompts.install.try_install_memory_codex") as codex,
+            patch("llm_prompts.install.try_install_hooks_pi") as pi_hooks,
+            patch("llm_prompts.install.try_install_memory_pi") as pi_memory,
+            patch("llm_prompts.cli._auto_migrate_memory_db") as migrate,
+            patch("llm_prompts.cli._restart_memory_service") as restart,
+        ):
+            mock_config.exists.return_value = True
+            main()
+
+        for mock in (
+            hooks,
+            memory,
+            allow,
+            codex,
+            pi_hooks,
+            pi_memory,
+            migrate,
+            restart,
+        ):
+            mock.assert_not_called()
 
 
 class TestCollectSourcesOverlayPrecedence:
