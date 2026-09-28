@@ -703,7 +703,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.setup.has_remote_sources", return_value=True),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup"),
-            patch("llm_prompts.install.main"),
+            patch("llm_prompts.install.main", return_value=False),
             patch(
                 "llm_prompts.cli._get_installed_commit",
                 side_effect=["memcommit", "oldhooks", "memcommit", "newhooks"],
@@ -746,7 +746,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.setup.has_remote_sources", return_value=True),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup"),
-            patch("llm_prompts.install.main"),
+            patch("llm_prompts.install.main", return_value=False),
             patch(
                 "llm_prompts.cli._get_installed_commit",
                 side_effect=["memcommit", "hookscommit", "memcommit", "hookscommit"],
