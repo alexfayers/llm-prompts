@@ -9,6 +9,7 @@ These rules MUST override others.
 
 - MUST use `-P` for paginated/scrollable output (e.g. `git -P log`).
 - MUST match commit message style to `git -P log --oneline -20`.
+- Where the user dictates a commit message, MUST use it verbatim, including case - MUST NOT restyle it to match `git log`.
 - MUST NOT add a commit body, regardless of other instructions.
 - SHOULD commit early and often, right after each change; rule/skill/workflow/agent source edits MUST commit same-turn.
 - MUST run `git add` and `git commit` in one command via `&&`.
