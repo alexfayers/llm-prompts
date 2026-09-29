@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
+
+from llm_prompts.batching import batch_branch
+from llm_prompts.contribute import Pr
 
 SideEffectCall = Callable[
     [list[str], dict[str, Any]], subprocess.CompletedProcess[str] | None
@@ -77,6 +82,7 @@ class FakeSubprocess:
         self.strict = False
         self._routes: list[_Route] = []
         self._match_routes: list[_Route] = []
+        self._lock = threading.RLock()
 
     @property
     def verbs(self) -> list[str]:
@@ -135,31 +141,32 @@ class FakeSubprocess:
 
     def run(self, argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         """Replace subprocess.run: record the call and resolve a canned response."""
-        self.commands.append(list(argv))
-        self.calls.append((list(argv), dict(kwargs)))
-        route = self._resolve(argv)
-        if route is None:
-            if self.strict:
-                raise AssertionError(f"fake_subprocess: unrouted command {argv!r}")
-            return subprocess.CompletedProcess(argv, 0, "", "")
-        if route.side_effect is not None:
-            effect = route.side_effect
-            if isinstance(effect, BaseException):
-                raise effect
-            if isinstance(effect, type) and issubclass(effect, BaseException):
-                raise effect()
-            # isinstance(effect, type) cannot separate an exception class from a
-            # callable class, so mypy loses the callable member here.
-            call = cast(SideEffectCall, effect)
-            result = call(argv, kwargs)
-            if result is not None:
-                return result
-        stdout, returncode, stderr = route.next_values()
-        if kwargs.get("check") and returncode != 0:
-            raise subprocess.CalledProcessError(
-                returncode, argv, output=stdout, stderr=stderr
-            )
-        return subprocess.CompletedProcess(argv, returncode, stdout, stderr)
+        with self._lock:
+            self.commands.append(list(argv))
+            self.calls.append((list(argv), dict(kwargs)))
+            route = self._resolve(argv)
+            if route is None:
+                if self.strict:
+                    raise AssertionError(f"fake_subprocess: unrouted command {argv!r}")
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            if route.side_effect is not None:
+                effect = route.side_effect
+                if isinstance(effect, BaseException):
+                    raise effect
+                if isinstance(effect, type) and issubclass(effect, BaseException):
+                    raise effect()
+                # isinstance(effect, type) cannot separate an exception class from a
+                # callable class, so mypy loses the callable member here.
+                call = cast(SideEffectCall, effect)
+                result = call(argv, kwargs)
+                if result is not None:
+                    return result
+            stdout, returncode, stderr = route.next_values()
+            if kwargs.get("check") and returncode != 0:
+                raise subprocess.CalledProcessError(
+                    returncode, argv, output=stdout, stderr=stderr
+                )
+            return subprocess.CompletedProcess(argv, returncode, stdout, stderr)
 
     def matching(self, *tokens: str) -> list[list[str]]:
         """Return recorded argvs whose verb tokens start with tokens."""
@@ -189,6 +196,10 @@ class FakeSubprocess:
         """Return git log --format=%h%x09%s style output for the given (sha, subject) pairs."""
         return "".join(f"{sha}\t{subject}\n" for sha, subject in pairs)
 
+    def sha_dated_subjects(self, *triples: tuple[str, str, str]) -> str:
+        """Return git log --format=%H%x09%aI%x09%s output for (sha, subject, date) triples."""
+        return "".join(f"{sha}\t{date}\t{subject}\n" for sha, subject, date in triples)
+
 
 @pytest.fixture
 def fake_subprocess(monkeypatch: pytest.MonkeyPatch) -> FakeSubprocess:
@@ -204,3 +215,437 @@ def run_capturing_exit(func: Callable[[], int | None]) -> int | str | None:
         return func()
     except SystemExit as exc:
         return exc.code
+
+
+_DEFAULT_AUTHORED_DATE = "2024-01-01T00:00:00+00:00"
+
+
+def _log_predicate(
+    range_suffix: str, field_count: int = 2
+) -> Callable[[list[str]], bool]:
+    fmt = "%H%x09%aI%x09%s" if field_count == 3 else "%H%x09%s"
+
+    def predicate(argv: list[str]) -> bool:
+        tokens = _verb_tokens(argv)
+        return (
+            len(tokens) == 4
+            and tokens[:3] == ["log", f"--format={fmt}", "--reverse"]
+            and tokens[3].endswith(range_suffix)
+        )
+
+    return predicate
+
+
+def _dated(
+    commits: Sequence[tuple[str, str]], dates: dict[str, str] | None
+) -> list[tuple[str, str, str]]:
+    dates = dates or {}
+    return [
+        (sha, subject, dates.get(sha, _DEFAULT_AUTHORED_DATE))
+        for sha, subject in commits
+    ]
+
+
+def _commit_items(
+    commits: Sequence[tuple[str, str]], dates: dict[str, str] | None
+) -> list[dict[str, str]]:
+    return [
+        {
+            "oid": sha,
+            "messageHeadline": subject,
+            "messageBody": "",
+            "authoredDate": date,
+        }
+        for sha, subject, date in _dated(commits, dates)
+    ]
+
+
+class ContributeRemote:
+    """Fakes the git/gh commands `inventory()` issues, built on `FakeSubprocess`.
+
+    `login` is fixed to `"tester"`. Registers, and keeps live as more commits/PRs
+    are added:
+
+    - `git fetch --quiet --prune origin +refs/heads/tester/*:refs/remotes/origin/tester/*`
+      - a no-op success, run before branches are read.
+    - `git ls-remote --heads origin refs/heads/tester/*` - every registered branch.
+    - `gh pr list --author @me --state all --json ...` - the same call `all_prs`
+      makes, listing every registered PR.
+    - `gh pr list --state open --author @me --json ...,isDraft,reviewDecision,commits` -
+      every registered open PR, without its commits; `review` sets a PR's
+      draft flag and review decision.
+    - `gh pr view <number> --json commits` - one open PR's branch commits.
+    - `gh pr list --state merged --author @me --json number,headRefName,title` -
+      every merged PR, without its commits.
+    - `gh pr view <number> --json commits` - one merged PR's own pre-merge
+      commits, each carrying an `authoredDate`; `fail_pr_view` makes it error.
+    - `git log --format=%H%x09%aI%x09%s --reverse <range>` for main (also
+      carrying each commit's authored date) and `git log --format=%H%x09%s
+      --reverse <range>` for each branch, matched by the range's `..main` or
+      `..origin/<branch>` suffix so the caller's exact base ref does not matter.
+    - `git show --pretty=format:%x00%H --name-only <sha>...` for every main
+      commit's paths, in one call.
+    - `git show -U0 <sha>...`, returning fake diff text containing the literal
+      sha, for every registered commit - feed that text as `git patch-id
+      --stable`'s `input` to get back `f"{ContributeRemote.patch_id(sha)} {sha}"`.
+    """
+
+    login = "tester"
+
+    def __init__(self, fake: FakeSubprocess) -> None:
+        """Wire fetch, ls-remote, `gh pr list/view` and `git patch-id` onto `fake`."""
+        self.fake = fake
+        self._heads: list[str] = []
+        self._pr_items: list[dict[str, Any]] = []
+        self._merged_items: list[dict[str, Any]] = []
+        self._merged_commits: dict[int, list[dict[str, str]]] = {}
+        self._failing_views: set[int] = set()
+        self._known_shas: set[str] = set()
+        self._branch_commits: dict[str, list[dict[str, str]]] = {}
+        self._pr_extra_commits: dict[int, list[dict[str, str]]] = {}
+        self._reviews: dict[int, tuple[bool, str]] = {}
+        self._paths: dict[str, Sequence[str]] = {}
+        self._register_fetch()
+        self._register_ls_remote()
+        self._register_pr_list()
+        self._register_open_pr_list()
+        self._register_merged_pr_list()
+        self._register_merged_pr_view()
+        self._register_patch_id()
+        self._register_shows()
+
+    @staticmethod
+    def patch_id(sha: str) -> str:
+        """Return the deterministic fake patch-id for a commit sha."""
+        return f"patchid-{sha}"
+
+    def main(
+        self,
+        *commits: tuple[str, str],
+        dates: dict[str, str] | None = None,
+        paths: dict[str, Sequence[str]] | None = None,
+    ) -> None:
+        """Register local main's (sha, subject) commits, oldest first.
+
+        `dates` maps sha to its ``%aI`` authored date; unlisted shas default to
+        `_DEFAULT_AUTHORED_DATE`. `paths` maps sha to the files it touches;
+        unlisted shas touch an in-scope SKILL.md.
+        """
+        self._paths.update(paths or {})
+        self._known_shas.update(sha for sha, _ in commits)
+        self.fake.on_match(
+            _log_predicate("..main", field_count=3),
+            stdout=self.fake.sha_dated_subjects(*_dated(commits, dates)),
+        )
+        self._register_diffs(commits)
+
+    def managed(
+        self,
+        slug: str,
+        commits: Sequence[tuple[str, str]],
+        pr: Pr | None = None,
+    ) -> str:
+        """Register an open (or no-PR) managed batch branch; return its branch name."""
+        branch = batch_branch(self.login, slug)
+        self._register_branch(branch, commits, pr)
+        return branch
+
+    def merged(
+        self,
+        slug: str,
+        number: int,
+        commits: Sequence[tuple[str, str]],
+        dates: dict[str, str] | None = None,
+    ) -> str:
+        """Register a merged managed PR - its branch is gone (deleteBranchOnMerge)."""
+        return self._register_merged_pr(
+            batch_branch(self.login, slug), number, commits, dates
+        )
+
+    def merged_legacy(
+        self,
+        branch: str,
+        number: int,
+        commits: Sequence[tuple[str, str]],
+        dates: dict[str, str] | None = None,
+    ) -> str:
+        """Register a merged legacy PR - its branch is gone (deleteBranchOnMerge)."""
+        return self._register_merged_pr(branch, number, commits, dates)
+
+    def _register_merged_pr(
+        self,
+        branch: str,
+        number: int,
+        commits: Sequence[tuple[str, str]],
+        dates: dict[str, str] | None = None,
+    ) -> str:
+        pr = Pr(number, "MERGED", f"https://github.com/o/r/pull/{number}")
+        self._known_shas.update(sha for sha, _ in commits)
+        self._pr_items.append(self._pr_item(branch, pr))
+        title = (
+            commits[0][1]
+            if len(commits) == 1
+            else branch.rpartition("/")[2].replace("-", " ")
+        )
+        self._merged_items.append(
+            {"number": number, "headRefName": branch, "title": title}
+        )
+        self._register_merged_commits(number, commits, dates)
+        self._register_diffs(commits)
+        return branch
+
+    def closed(self, slug: str, number: int, commits: Sequence[tuple[str, str]]) -> str:
+        """Register a closed (unmerged) managed PR; its branch is still on the remote."""
+        branch = batch_branch(self.login, slug)
+        pr = Pr(number, "CLOSED", f"https://github.com/o/r/pull/{number}")
+        self._register_branch(branch, commits, pr)
+        return branch
+
+    def unmanaged_pr(
+        self,
+        branch: str,
+        number: int,
+        commits: Sequence[tuple[str, str]],
+        dates: dict[str, str] | None = None,
+    ) -> str:
+        """Register an open PR on a branch outside the managed prefix."""
+        pr = Pr(number, "OPEN", f"https://github.com/o/r/pull/{number}")
+        self._register_branch(branch, commits, pr, dates)
+        return branch
+
+    def pr_extra_commits(
+        self,
+        number: int,
+        commits: Sequence[tuple[str, str]],
+        dates: dict[str, str] | None = None,
+    ) -> None:
+        """Add commits to an open PR's `gh pr view` that its branch log lacks."""
+        self._pr_extra_commits[number] = _commit_items(commits, dates)
+
+    def review(self, number: int, *, draft: bool = False, decision: str = "") -> None:
+        """Set an open PR's draft flag and ``reviewDecision``."""
+        self._reviews[number] = (draft, decision)
+
+    def legacy(self, branch: str, pr: Pr | None = None) -> str:
+        """Register a legacy `<login>/<slug>` branch (no commits) on the remote."""
+        self._register_branch(branch, (), pr)
+        return branch
+
+    def _pr_item(self, branch: str, pr: Pr) -> dict[str, Any]:
+        return {
+            "number": pr.number,
+            "state": pr.state,
+            "url": pr.url,
+            "headRefName": branch,
+        }
+
+    def _register_branch(
+        self,
+        branch: str,
+        commits: Sequence[tuple[str, str]],
+        pr: Pr | None,
+        dates: dict[str, str] | None = None,
+    ) -> None:
+        self._heads.append(branch)
+        self._branch_commits[branch] = _commit_items(commits, dates)
+        self._known_shas.update(sha for sha, _ in commits)
+        self.fake.on_match(
+            _log_predicate(f"..origin/{branch}"),
+            stdout=self.fake.sha_subjects(*commits),
+        )
+        self._register_diffs(commits)
+        if pr is not None:
+            self._pr_items.append(self._pr_item(branch, pr))
+
+    def _register_diffs(self, commits: Sequence[tuple[str, str]]) -> None:
+        for sha, _ in commits:
+            self.fake.on(
+                "log", "-1", "--format=%aI", sha, stdout="2020-01-01T00:00:00+00:00\n"
+            )
+
+    def _register_shows(self) -> None:
+        def names(
+            argv: list[str], kwargs: dict[str, Any]
+        ) -> subprocess.CompletedProcess[str]:
+            shas = argv[argv.index("--name-only") + 1 :]
+            stdout = "".join(
+                f"\x00{sha}\n"
+                + "".join(
+                    f"{path}\n"
+                    for path in self._paths.get(
+                        sha, ["src/llm_prompts/prompts/shared/skills/foo/SKILL.md"]
+                    )
+                )
+                for sha in shas
+            )
+            return subprocess.CompletedProcess(argv, 0, stdout, "")
+
+        def diffs(
+            argv: list[str], kwargs: dict[str, Any]
+        ) -> subprocess.CompletedProcess[str]:
+            shas = argv[argv.index("-U0") + 1 :]
+            stdout = "".join(f"commit {sha}\nfake diff {sha}\n" for sha in shas)
+            return subprocess.CompletedProcess(argv, 0, stdout, "")
+
+        self.fake.on("show", "--pretty=format:%x00%H", "--name-only", side_effect=names)
+        self.fake.on("show", "-U0", side_effect=diffs)
+
+    def _register_fetch(self) -> None:
+        self.fake.on(
+            "fetch",
+            "--quiet",
+            "--prune",
+            "origin",
+            f"+refs/heads/{self.login}/*:refs/remotes/origin/{self.login}/*",
+        )
+
+    def _register_merged_commits(
+        self,
+        number: int,
+        commits: Sequence[tuple[str, str]],
+        dates: dict[str, str] | None = None,
+    ) -> None:
+        self._merged_commits[number] = _commit_items(commits, dates)
+
+    def fail_pr_view(self, number: int) -> None:
+        """Make `gh pr view <number>` exit non-zero."""
+        self._failing_views.add(number)
+
+    def truncate_headline(
+        self, number: int, sha: str, headline: str, body: str
+    ) -> None:
+        """Override a registered merged PR's single commit with a truncated headline.
+
+        Simulates GitHub truncating `messageHeadline`, with the remainder of the
+        subject moved to `messageBody`'s first line.
+        """
+        self._merged_commits[number] = [
+            {
+                "oid": sha,
+                "messageHeadline": headline,
+                "messageBody": body,
+                "authoredDate": _DEFAULT_AUTHORED_DATE,
+            }
+        ]
+
+    def _register_ls_remote(self) -> None:
+        def side_effect(
+            argv: list[str], kwargs: dict[str, Any]
+        ) -> subprocess.CompletedProcess[str]:
+            lines = [f"deadbeef\trefs/heads/{branch}" for branch in self._heads]
+            return subprocess.CompletedProcess(argv, 0, "\n".join(lines), "")
+
+        self.fake.on(
+            "ls-remote",
+            "--heads",
+            "origin",
+            f"refs/heads/{self.login}/*",
+            side_effect=side_effect,
+        )
+
+    def _register_pr_list(self) -> None:
+        def side_effect(
+            argv: list[str], kwargs: dict[str, Any]
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(argv, 0, json.dumps(self._pr_items), "")
+
+        self.fake.on(
+            "gh",
+            "pr",
+            "list",
+            "--author",
+            "@me",
+            "--state",
+            "all",
+            "--json",
+            "number,state,url,headRefName",
+            side_effect=side_effect,
+        )
+
+    def _register_open_pr_list(self) -> None:
+        def side_effect(
+            argv: list[str], kwargs: dict[str, Any]
+        ) -> subprocess.CompletedProcess[str]:
+            items = [
+                {
+                    **item,
+                    "isDraft": self._reviews.get(item["number"], (False, ""))[0],
+                    "reviewDecision": self._reviews.get(item["number"], (False, ""))[1],
+                }
+                for item in self._pr_items
+                if item["state"] == "OPEN"
+            ]
+            return subprocess.CompletedProcess(argv, 0, json.dumps(items), "")
+
+        self.fake.on(
+            "gh",
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--author",
+            "@me",
+            "--json",
+            "number,state,url,headRefName,isDraft,reviewDecision",
+            side_effect=side_effect,
+        )
+
+    def _register_merged_pr_list(self) -> None:
+        def side_effect(
+            argv: list[str], kwargs: dict[str, Any]
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                argv, 0, json.dumps(self._merged_items), ""
+            )
+
+        self.fake.on(
+            "gh",
+            "pr",
+            "list",
+            "--state",
+            "merged",
+            "--author",
+            "@me",
+            "--json",
+            "number,headRefName,title",
+            side_effect=side_effect,
+        )
+
+    def _open_pr_commits(self, number: int) -> list[dict[str, str]]:
+        branch = next(
+            item["headRefName"] for item in self._pr_items if item["number"] == number
+        )
+        return self._branch_commits[branch] + self._pr_extra_commits.get(number, [])
+
+    def _register_merged_pr_view(self) -> None:
+        def side_effect(
+            argv: list[str], kwargs: dict[str, Any]
+        ) -> subprocess.CompletedProcess[str]:
+            number = int(argv[3])
+            if number in self._failing_views:
+                raise subprocess.CalledProcessError(1, argv, stderr="boom")
+            commits = {
+                "commits": self._merged_commits.get(number)
+                or self._open_pr_commits(number)
+            }
+            return subprocess.CompletedProcess(argv, 0, json.dumps(commits), "")
+
+        self.fake.on("gh", "pr", "view", side_effect=side_effect)
+
+    def _register_patch_id(self) -> None:
+        def side_effect(
+            argv: list[str], kwargs: dict[str, Any]
+        ) -> subprocess.CompletedProcess[str]:
+            diff = kwargs.get("input") or ""
+            lines = [
+                f"{self.patch_id(sha)} {sha}" for sha in self._known_shas if sha in diff
+            ]
+            return subprocess.CompletedProcess(argv, 0, "\n".join(lines), "")
+
+        self.fake.on("patch-id", "--stable", side_effect=side_effect)
+
+
+@pytest.fixture
+def contribute_remote(fake_subprocess: FakeSubprocess) -> ContributeRemote:
+    """Return a `ContributeRemote` wired onto `fake_subprocess`."""
+    return ContributeRemote(fake_subprocess)

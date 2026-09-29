@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, wait
 from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -727,6 +728,13 @@ def main() -> int | None:
         metavar="BRANCH",
         help="Close the PR and delete this orphaned branch.",
     )
+    sync_parser.add_argument(
+        "--commit",
+        dest="commits",
+        action="append",
+        metavar="SHA",
+        help="Sync only the batches holding this commit; repeatable.",
+    )
 
     args = parser.parse_args()
 
@@ -737,6 +745,14 @@ def main() -> int | None:
         and args.tool is None
     ):
         sync_parser.error("--cleanup requires --tool NAME.")
+
+    if (
+        args.command == "contribute"
+        and args.contribute_command == "sync"
+        and args.commits
+        and (args.only or args.cleanup)
+    ):
+        sync_parser.error("--commit cannot be combined with --only or --cleanup.")
 
     if args.command == "install":
         if not args.no_update:
@@ -892,32 +908,47 @@ def main() -> int | None:
     elif args.command == "contribute":
         from .contribute import run_list, run_sync
 
-        login = _get_gh_login()
         if args.tool is not None:
             repo, prefix = _contribute_target(args.tool)
             targets = [_ContributeTarget(args.tool, repo, prefix)]
         else:
             targets = _contribute_targets()
+        if args.contribute_command == "sync" and args.commits and len(targets) > 1:
+            sync_parser.error("--commit requires --tool NAME.")
+        login = _get_gh_login()
         status = 0
-        for target in targets:
-            if len(targets) > 1:
-                print(f"[{target.name}]")
+        with ThreadPoolExecutor() as pool:
+            runs = []
             if args.contribute_command == "list":
-                status = max(status, run_list(target.repo, login, target.prefix))
-            else:
-                status = max(
-                    status,
-                    run_sync(
-                        target.repo,
-                        login,
-                        target.prefix,
-                        args.apply,
-                        args.only,
-                        args.cleanup,
-                    ),
-                )
-            if len(targets) > 1:
-                print()
+                for target in targets:
+                    buffer = io.StringIO()
+                    future = pool.submit(
+                        run_list, target.repo, login, target.prefix, buffer
+                    )
+                    runs.append((buffer, future))
+            for index, target in enumerate(targets):
+                if len(targets) > 1:
+                    print(f"[{target.name}]")
+                if args.contribute_command == "list":
+                    buffer, future = runs[index]
+                    wait((future,))
+                    print(buffer.getvalue(), end="")
+                    status = max(status, future.result())
+                else:
+                    status = max(
+                        status,
+                        run_sync(
+                            target.repo,
+                            login,
+                            target.prefix,
+                            args.apply,
+                            args.only,
+                            args.cleanup,
+                            args.commits or (),
+                        ),
+                    )
+                if len(targets) > 1:
+                    print()
         return status
     else:
         parser.print_help()

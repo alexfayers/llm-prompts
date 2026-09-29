@@ -12,10 +12,12 @@ Covers llm-prompts, cline-hooks, and mcp-memory - siblings with the same PR temp
 cline-hooks and mcp-memory each carry their own prompts tree (rules, skills, workflows, agents) feeding the same distributed collection as llm-prompts' own - all three go through `llm-prompts contribute`, never a manual branch:
 
 - Commit straight to that repo's local `main`.
-- `llm-prompts contribute list` - shows every unmerged commit's derived branch and status (new/needs sync/ok) across configured overlay repos; `--tool NAME` narrows to one.
-- `llm-prompts contribute sync --apply` - cherry-picks each pending commit onto a fresh disposable branch and force-pushes it. Re-run after amending/rewording the commit on `main` to re-derive.
-- MUST NOT commit directly to a `contribute`-derived branch - the next `sync` overwrites it as regenerable from `main`.
-- An orphan branch (source commit dropped from `main`) is auto-deleted by `sync --apply` if it has no open PR, or clean up manually with `sync --cleanup <branch>`.
+- `llm-prompts contribute list` - shows every unmerged commit's batch branch and status (new/current/stale/regressed/in another PR) across configured overlay repos; `--tool NAME` narrows to one.
+- Pending commits are grouped into batches of up to 5, appended in order to the newest open `<login>/contribute/<slug>` branch with room; a full or merged batch starts a new one.
+- `llm-prompts contribute sync --apply` - a batch whose commits are all current gets new ones cherry-picked on top and pushed normally; a batch with an amended or missing commit is rebuilt from `main` and pushed with `--force-with-lease`.
+- `llm-prompts contribute sync --commit SHA` (repeatable) - syncs only the batches holding those commits, appending to the newest open batch with room or starting a new one; everything else stays local.
+- A commit already in another of your open PRs is skipped and listed as in that PR.
+- MUST NOT commit directly to a batch branch - `sync` may rebuild it as regenerable from `main` and overwrite it.
 
 ## Everything else
 

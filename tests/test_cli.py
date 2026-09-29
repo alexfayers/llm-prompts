@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from typing import TextIO
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 from conftest import FakeSubprocess, run_capturing_exit
@@ -1360,7 +1362,7 @@ class TestContributeSubcommand:
             patch("llm_prompts.contribute.run_list", return_value=0) as mock_list,
         ):
             main()
-        mock_list.assert_called_once_with(tmp_path, "octocat", "src/pkg/prompts/")
+        mock_list.assert_called_once_with(tmp_path, "octocat", "src/pkg/prompts/", ANY)
 
     def test_sync_apply_dispatches_to_run_sync(self, tmp_path: Path) -> None:
         with (
@@ -1376,7 +1378,7 @@ class TestContributeSubcommand:
         ):
             main()
         mock_sync.assert_called_once_with(
-            tmp_path, "octocat", "src/pkg/prompts/", True, None, None
+            tmp_path, "octocat", "src/pkg/prompts/", True, None, None, ()
         )
 
     def test_tool_flag_selects_configured_target(self, tmp_path: Path) -> None:
@@ -1414,6 +1416,38 @@ class TestContributeSubcommand:
         assert "[tool-a]" in out
         assert "[tool-b]" in out
 
+    def test_multiple_targets_print_in_target_order_when_the_first_finishes_last(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        targets = [
+            _ContributeTarget("tool-a", tmp_path / "a", "src/pkg/prompts/"),
+            _ContributeTarget("tool-b", tmp_path / "b", "src/pkg/prompts/"),
+        ]
+        second_done = threading.Event()
+
+        def fake_list(repo: Path, login: str, prefix: str, out: TextIO) -> int:
+            if repo.name == "a":
+                assert second_done.wait(timeout=5)
+            print(f"listing {repo.name}", file=out)
+            if repo.name == "b":
+                second_done.set()
+            return 0
+
+        with (
+            patch("sys.argv", ["llm-prompts", "contribute", "list"]),
+            patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
+            patch("llm_prompts.cli._contribute_targets", return_value=targets),
+            patch("llm_prompts.contribute.run_list", side_effect=fake_list),
+        ):
+            assert main() == 0
+        out = capsys.readouterr().out
+        assert (
+            out.index("[tool-a]")
+            < out.index("listing a")
+            < out.index("[tool-b]")
+            < out.index("listing b")
+        )
+
     def test_cleanup_without_tool_errors(self) -> None:
         with (
             patch(
@@ -1424,3 +1458,75 @@ class TestContributeSubcommand:
         ):
             main()
         assert exc_info.value.code == 2
+
+    def test_repeated_commit_flags_reach_run_sync(self, tmp_path: Path) -> None:
+        with (
+            patch(
+                "sys.argv",
+                [
+                    "llm-prompts",
+                    "contribute",
+                    "sync",
+                    "--commit",
+                    "abc",
+                    "--commit",
+                    "def",
+                ],
+            ),
+            patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
+            patch(
+                "llm_prompts.cli._contribute_targets",
+                return_value=[
+                    _ContributeTarget("llm-prompts", tmp_path, "src/pkg/prompts/")
+                ],
+            ),
+            patch("llm_prompts.contribute.run_sync", return_value=0) as mock_sync,
+        ):
+            main()
+        assert mock_sync.call_args.args[-1] == ["abc", "def"]
+
+    @pytest.mark.parametrize(
+        "other", [["--only", "branch-x"], ["--cleanup", "branch-x"]]
+    )
+    def test_commit_cannot_combine_with_only_or_cleanup(
+        self, other: list[str], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch(
+                "sys.argv",
+                [
+                    "llm-prompts",
+                    "contribute",
+                    "sync",
+                    "--tool",
+                    "x",
+                    "--commit",
+                    "abc",
+                    *other,
+                ],
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            main()
+        assert exc_info.value.code == 2
+        assert "--commit cannot be combined" in capsys.readouterr().err
+
+    def test_commit_with_several_targets_requires_tool(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        targets = [
+            _ContributeTarget("tool-a", tmp_path / "a", "src/pkg/prompts/"),
+            _ContributeTarget("tool-b", tmp_path / "b", "src/pkg/prompts/"),
+        ]
+        with (
+            patch("sys.argv", ["llm-prompts", "contribute", "sync", "--commit", "abc"]),
+            patch("llm_prompts.cli._get_gh_login") as mock_login,
+            patch("llm_prompts.cli._contribute_targets", return_value=targets),
+            patch("llm_prompts.contribute.run_sync", return_value=0) as mock_sync,
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            main()
+        assert exc_info.value.code == 2
+        assert "--commit requires --tool NAME." in capsys.readouterr().err
+        mock_login.assert_not_called()
+        mock_sync.assert_not_called()
