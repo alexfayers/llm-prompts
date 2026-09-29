@@ -11,6 +11,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
+from .colors import Color, paint
 from .render_template import (
     find_unreplaced_variables,
     normalize_whitespace,
@@ -36,12 +37,12 @@ _GATING_FRONTMATTER_KEYS = {
     "generate_variants",
 }
 
-_COLORS: dict[LogLevel, str] = {
-    "debug": "\033[0;90m",
-    "info": "\033[0;37m",
-    "warn": "\033[0;33m",
-    "error": "\033[0;31m",
-    "success": "\033[0;32m",
+_COLORS: dict[LogLevel, Color] = {
+    "debug": "grey",
+    "info": "white",
+    "warn": "yellow",
+    "error": "red",
+    "success": "green",
 }
 _SYMBOLS: dict[LogLevel, str] = {
     "debug": "[.]",
@@ -72,7 +73,7 @@ def log(level: LogLevel, message: str) -> None:
     if level == "debug" and not _verbose:
         return
     if sys.stderr.isatty():
-        print(f"{_COLORS[level]}{_SYMBOLS[level]} {message}\033[0;0m", file=sys.stderr)
+        print(paint(f"{_SYMBOLS[level]} {message}", _COLORS[level]), file=sys.stderr)
     else:
         print(f"{_PLAIN_SYMBOLS[level]} {message}", file=sys.stderr)
 

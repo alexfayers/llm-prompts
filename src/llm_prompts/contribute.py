@@ -11,11 +11,26 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple, TextIO
 
+from .batching import (
+    Batch,
+    BatchPlan,
+    SelectionError,
+    append_groups,
+    is_managed,
+    match_commits,
+    pending_plans,
+    regression_warning,
+    select_groups,
+)
+from .listing import classify, pr_only_warning, render
 from .size_guard import check
 
 _COMPRESSION_PREFIX = "chore: compress "
@@ -31,6 +46,8 @@ class Commit(NamedTuple):
     sha: str
     subject: str
     paths: tuple[str, ...]
+    patch_id: str = ""
+    authored_date: str = ""
 
 
 class Group(NamedTuple):
@@ -50,15 +67,37 @@ class Pr(NamedTuple):
     url: str
 
 
-class State(NamedTuple):
-    """The classified sync state of one group/branch."""
+class OpenPr(NamedTuple):
+    """An open GitHub pull request with its review state and commits."""
 
-    group: Group | None
+    pr: Pr
     branch: str
-    pushed: bool
-    pr: Pr | None
-    stale: bool
-    regressed: bool
+    is_draft: bool
+    review_decision: str
+    commits: tuple[Commit, ...]
+
+
+class Inventory(NamedTuple):
+    """Remote batch and PR state needed to plan and report on pending commits."""
+
+    batches: tuple[Batch, ...]
+    done: frozenset[str]
+    merged_prs: dict[str, tuple[int, str]]
+    unmanaged: dict[str, Pr]
+    legacy_orphans: tuple[str, ...]
+    legacy_regressed: tuple[Batch, ...] = ()
+    past_slugs: frozenset[str] = frozenset()
+    skipped_prs: frozenset[int] = frozenset()
+    commits: tuple[Commit, ...] = ()
+
+
+class ApplyResult(NamedTuple):
+    """Outcome of applying one batch plan to its branch."""
+
+    outcome: Literal["picked", "conflict", "oversize"]
+    mode: Literal["append", "rebuild", "new"]
+    paths: tuple[str, ...]
+    message: str
 
 
 def _git(*args: str, repo: Path) -> str:
@@ -186,30 +225,6 @@ def group_commits(commits: Sequence[Commit], login: str, prefix: str) -> list[Gr
     return _flag_slug_collisions([groups[index] for index in sorted(groups)])
 
 
-def classify(
-    group: Group | None,
-    branch: str,
-    remote_branches: set[str],
-    pr: Pr | None,
-    branch_subjects: tuple[str, ...],
-    branch_diff: str,
-    group_subjects: tuple[str, ...],
-    group_diff: str,
-    branch_ahead: bool,
-) -> State:
-    """Classify one branch's sync state from pre-fetched git/gh facts."""
-    pushed = branch in remote_branches
-    stale = not (branch_subjects == group_subjects and branch_diff == group_diff)
-    return State(
-        group=group,
-        branch=branch,
-        pushed=pushed,
-        pr=pr,
-        stale=stale,
-        regressed=branch_ahead,
-    )
-
-
 def fetch_base(repo: Path, remote: str) -> None:
     """Fetch ``main`` from ``remote`` so the base ref is up to date."""
     _git("fetch", "--quiet", remote, "main", repo=repo)
@@ -233,52 +248,43 @@ def stale_main_warning(repo: Path, base: str, remote: str) -> str | None:
     )
 
 
-def _recovery_command(state: State, base: str, prefix: str) -> str:
-    """Build the command restoring one regressed branch's content onto main."""
-    if state.group is None:
-        return f"git cherry-pick {base}..origin/{state.branch}"
-    return (
-        f"git restore -p --source=origin/{state.branch} --staged --worktree"
-        f" -- {prefix} && git commit --fixup={state.group.commits[-1].sha[:7]}"
-        f" && GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash {base}"
-    )
-
-
-def regression_warning(states: dict[str, State], base: str, prefix: str) -> str | None:
-    """Warn if a pushed branch holds content main lacks, so syncing would drop it."""
-    lines = [
-        f"  {branch}: {_recovery_command(state, base, prefix)}"
-        for branch, state in sorted(states.items())
-        if state.regressed
-    ]
-    if not lines:
-        return None
-    return (
-        "warning: these pushed branches hold content local main no longer has, so "
-        "syncing would drop it - recover with the commands below, then re-run "
-        "sync --apply:\n" + "\n".join(lines)
-    )
-
-
-def scope_commits(repo: Path, base: str, prefix: str) -> list[Commit]:
-    """List every scope-candidate commit between base and main, oldest first."""
+def log_commits(repo: Path, base: str) -> list[Commit]:
+    """List every commit between base and main with its paths, oldest first."""
     log_output = _git(
-        "log", "--format=%H%x09%s", "--reverse", f"{base}..main", repo=repo
+        "log", "--format=%H%x09%aI%x09%s", "--reverse", f"{base}..main", repo=repo
     )
-    commits = []
+    rows = []
     for line in log_output.splitlines():
-        sha, _, subject = line.partition("\t")
-        paths = tuple(
-            path
-            for path in _git(
-                "show", "--pretty=format:", "--name-only", sha, repo=repo
-            ).splitlines()
-            if path
+        sha, _, rest = line.partition("\t")
+        authored_date, _, subject = rest.partition("\t")
+        rows.append((sha, authored_date, subject))
+    paths_by_sha = _paths_by_sha(repo, [sha for sha, _, _ in rows])
+    return [
+        Commit(
+            sha=sha,
+            subject=subject,
+            paths=paths_by_sha.get(sha, ()),
+            authored_date=authored_date,
         )
-        commit = Commit(sha=sha, subject=subject, paths=paths)
-        if _is_in_scope_candidate(commit, prefix):
-            commits.append(commit)
-    return commits
+        for sha, authored_date, subject in rows
+    ]
+
+
+def _paths_by_sha(repo: Path, shas: Sequence[str]) -> dict[str, tuple[str, ...]]:
+    """Map each of ``shas`` to the paths it touches, from a single ``git show``."""
+    if not shas:
+        return {}
+    output = _git("show", "--pretty=format:%x00%H", "--name-only", *shas, repo=repo)
+    paths_by_sha = {}
+    for chunk in output.split("\x00")[1:]:
+        sha, *lines = chunk.splitlines()
+        paths_by_sha[sha] = tuple(line for line in lines if line)
+    return paths_by_sha
+
+
+def scope_commits(commits: Sequence[Commit], prefix: str) -> list[Commit]:
+    """Keep the scope-candidate commits of ``commits``, in order."""
+    return [commit for commit in commits if _is_in_scope_candidate(commit, prefix)]
 
 
 def remote_branches(repo: Path, login: str) -> set[str]:
@@ -292,8 +298,13 @@ def remote_branches(repo: Path, login: str) -> set[str]:
     return branches
 
 
-def open_prs(repo: Path) -> dict[str, Pr]:
-    """Fetch every PR (any state) authored by the current gh user, keyed by branch."""
+def all_prs(repo: Path) -> list[tuple[str, Pr]]:
+    """Fetch every PR (any state) authored by the current gh user, as (branch, Pr) pairs.
+
+    Unlike a dict keyed by branch, this keeps every PR when GitHub reports more
+    than one for the same branch name (e.g. an earlier closed PR alongside a
+    later one that reused the branch).
+    """
     items = _gh_json(
         "pr",
         "list",
@@ -303,12 +314,87 @@ def open_prs(repo: Path) -> dict[str, Pr]:
         "all",
         "--json",
         "number,state,url,headRefName",
+        "--limit",
+        "1000",
         repo=repo,
     )
-    return {
-        item["headRefName"]: Pr(item["number"], item["state"], item["url"])
+    return [
+        (item["headRefName"], Pr(item["number"], item["state"], item["url"]))
         for item in items
-    }
+    ]
+
+
+def _pr_recency(pr: Pr) -> tuple[int, int]:
+    """Sort key for picking one PR per branch: OPEN first, then MERGED, then newest."""
+    rank = {"OPEN": 0, "MERGED": 1}.get(pr.state, 2)
+    return (rank, -pr.number)
+
+
+def _prs_by_branch(pairs: list[tuple[str, Pr]]) -> dict[str, Pr]:
+    """Pick one PR per branch: an OPEN one if any, else MERGED, else the newest."""
+    grouped: dict[str, list[Pr]] = {}
+    for branch, pr in pairs:
+        grouped.setdefault(branch, []).append(pr)
+    return {branch: min(prs, key=_pr_recency) for branch, prs in grouped.items()}
+
+
+def _pr_commits_or_none(repo: Path, number: int) -> tuple[Commit, ...] | None:
+    """Fetch a PR's commits, or ``None`` when the fetch fails."""
+    try:
+        return _pr_commits(repo, number)
+    except (subprocess.CalledProcessError, json.JSONDecodeError):
+        return None
+
+
+def _pr_commits(repo: Path, number: int) -> tuple[Commit, ...]:
+    """Fetch a PR's own commits via ``gh pr view``."""
+    view = _gh_json("pr", "view", str(number), "--json", "commits", repo=repo)
+    return tuple(
+        Commit(
+            sha=commit["oid"],
+            subject=_rejoin_headline(commit["messageHeadline"], commit["messageBody"]),
+            paths=(),
+            authored_date=commit["authoredDate"],
+        )
+        for commit in view["commits"]
+    )
+
+
+def open_prs(repo: Path) -> tuple[list[OpenPr], frozenset[int]]:
+    """Fetch every open PR authored by the current gh user, plus the numbers whose commits could not be fetched."""
+    items = _gh_json(
+        "pr",
+        "list",
+        "--state",
+        "open",
+        "--author",
+        "@me",
+        "--json",
+        "number,state,url,headRefName,isDraft,reviewDecision",
+        "--limit",
+        "1000",
+        repo=repo,
+    )
+    prs: list[OpenPr] = []
+    skipped: set[int] = set()
+    with ThreadPoolExecutor() as pool:
+        fetched = list(
+            pool.map(lambda item: _pr_commits_or_none(repo, item["number"]), items)
+        )
+    for item, commits in zip(items, fetched, strict=True):
+        if commits is None:
+            skipped.add(item["number"])
+            commits = ()
+        prs.append(
+            OpenPr(
+                pr=Pr(item["number"], item["state"], item["url"]),
+                branch=item["headRefName"],
+                is_draft=item["isDraft"],
+                review_decision=item["reviewDecision"] or "",
+                commits=commits,
+            )
+        )
+    return prs, frozenset(skipped)
 
 
 def current_login(repo: Path) -> str:
@@ -325,15 +411,6 @@ def push_remote(repo: Path) -> str:
     return "origin"
 
 
-def _branch_subjects(repo: Path, base: str, remote_ref: str) -> tuple[str, ...]:
-    output = _git("log", "--format=%s", "--reverse", f"{base}..{remote_ref}", repo=repo)
-    return tuple(output.splitlines()) if output else ()
-
-
-def _branch_diff(repo: Path, base: str, remote_ref: str) -> str:
-    return _git("diff", f"{base}...{remote_ref}", repo=repo)
-
-
 def _branch_in_scope(repo: Path, base: str, remote_ref: str, prefix: str) -> bool:
     paths = _git(
         "diff", "--name-only", f"{base}...{remote_ref}", repo=repo
@@ -341,101 +418,299 @@ def _branch_in_scope(repo: Path, base: str, remote_ref: str, prefix: str) -> boo
     return any(path.startswith(prefix) for path in paths)
 
 
-def _group_diff(repo: Path, group: Group) -> str:
-    shas = [commit.sha for commit in group.commits]
-    return _git("diff", f"{shas[0]}^", shas[-1], repo=repo)
+def _patch_ids(repo: Path, shas: Sequence[str]) -> dict[str, str]:
+    """Map each of ``shas`` to its stable patch-id, computed from its own diff with no context."""
+    if not shas:
+        return {}
+    diff = _git("show", "-U0", *shas, repo=repo)
+    result = subprocess.run(
+        ["git", "patch-id", "--stable"],
+        cwd=repo,
+        input=diff,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return {
+        sha: patch_id
+        for patch_id, sha in (line.split() for line in result.stdout.splitlines())
+    }
 
 
-def _branch_ahead(repo: Path, reference: str, remote_ref: str) -> bool:
-    """Return whether ``remote_ref`` holds content ``reference`` lacks."""
-    diff = _git("diff", reference, remote_ref, repo=repo)
-    return any(
-        line.startswith("+") and not line.startswith("+++")
-        for line in diff.splitlines()
+def _branch_commits(repo: Path, base: str, branch: str) -> tuple[Commit, ...]:
+    """List a pushed branch's commits ahead of ``base``, with their patch-ids."""
+    log_output = _git(
+        "log", "--format=%H%x09%s", "--reverse", f"{base}..origin/{branch}", repo=repo
+    )
+    rows = [line.partition("\t") for line in log_output.splitlines()]
+    patch_ids = _patch_ids(repo, [sha for sha, _, _ in rows])
+    return tuple(
+        Commit(sha=sha, subject=subject, paths=(), patch_id=patch_ids.get(sha, ""))
+        for sha, _, subject in rows
     )
 
 
-def _compute(
-    repo: Path, login: str, base: str, prefix: str
-) -> tuple[list[Group], dict[str, State]]:
-    """Compute every group and its classified sync state."""
-    commits = scope_commits(repo, base, prefix)
-    groups = group_commits(commits, login, prefix)
-    pushed_branches = remote_branches(repo, login)
-    prs = open_prs(repo)
+_ELLIPSIS = "\u2026"
 
-    states: dict[str, State] = {}
-    expected_branches = {group.branch for group in groups if not group.problems}
-    for group in groups:
-        if group.problems:
+
+def _rejoin_headline(headline: str, body: str) -> str:
+    """Reassemble a GitHub-truncated headline using its commit body's first line.
+
+    GitHub truncates a long ``messageHeadline`` with a trailing ellipsis, moving
+    the rest of the subject to ``messageBody``'s first line, prefixed with the
+    same ellipsis character.
+    """
+    body_first_line = body.splitlines()[0] if body else ""
+    if headline.endswith(_ELLIPSIS) and body_first_line.startswith(_ELLIPSIS):
+        return headline[:-1] + body_first_line[1:]
+    return headline
+
+
+def skipped_prs_warning(skipped: Collection[int]) -> str | None:
+    """Warn that merged PRs could not be fetched, so their commits may be re-proposed."""
+    if not skipped:
+        return None
+    numbers = ", ".join(f"#{number}" for number in sorted(skipped))
+    return (
+        f"warning: could not fetch merged PR {numbers} - their commits may be "
+        "reported as pending until the fetch succeeds"
+    )
+
+
+def _merged_pr_commits(
+    repo: Path, subjects: Collection[str]
+) -> tuple[list[tuple[int, str, list[Commit]]], frozenset[int]]:
+    """List the pre-merge commits of merged PRs that could match one of ``subjects``.
+
+    A merged PR is fetched only when its title (a single-commit PR's subject) or
+    its branch slug (a multi-commit batch's first subject) matches, and the
+    number of one whose fetch fails is returned alongside the commits.
+    """
+    slugs = {slug_for(subject) for subject in subjects}
+    items = _gh_json(
+        "pr",
+        "list",
+        "--state",
+        "merged",
+        "--author",
+        "@me",
+        "--json",
+        "number,headRefName,title",
+        "--limit",
+        "1000",
+        repo=repo,
+    )
+    merged: list[tuple[int, str, list[Commit]]] = []
+    skipped: set[int] = set()
+    matching = [
+        item
+        for item in items
+        if item["title"] in subjects or item["headRefName"].rpartition("/")[2] in slugs
+    ]
+    with ThreadPoolExecutor() as pool:
+        fetched = list(
+            pool.map(lambda item: _pr_commits_or_none(repo, item["number"]), matching)
+        )
+    for item, pr_commits in zip(matching, fetched, strict=True):
+        if pr_commits is None:
+            skipped.add(item["number"])
             continue
-        branch = group.branch
-        group_subjects = tuple(commit.subject for commit in group.commits)
-        group_diff = _group_diff(repo, group)
-        if branch in pushed_branches:
-            remote_ref = f"origin/{branch}"
-            branch_subjects = _branch_subjects(repo, base, remote_ref)
-            branch_diff = _branch_diff(repo, base, remote_ref)
-            branch_ahead = branch_diff != group_diff and _branch_ahead(
-                repo, group.commits[-1].sha, remote_ref
+        merged.append((item["number"], item["headRefName"], list(pr_commits)))
+    return merged, frozenset(skipped)
+
+
+def _first_commit_author_date(repo: Path, sha: str) -> datetime:
+    """Return `sha`'s author date, for chronological no-PR batch ordering.
+
+    A rebuild resets a batch tip's committer date to the rebuild time, so the
+    branch's first commit's author date is used instead - cherry-pick
+    preserves author dates across rebuilds.
+    """
+    return datetime.fromisoformat(_git("log", "-1", "--format=%aI", sha, repo=repo))
+
+
+def _same_instant(a: str, b: str) -> bool:
+    """Return whether two ISO 8601 datetime strings denote the same instant."""
+    return (
+        bool(a) and bool(b) and datetime.fromisoformat(a) == datetime.fromisoformat(b)
+    )
+
+
+def _same_commit(a: Commit, b: Commit) -> bool:
+    """Return whether two commits share a subject and authored instant."""
+    return a.subject == b.subject and _same_instant(a.authored_date, b.authored_date)
+
+
+def _open_pr_by_sha(
+    commits: Sequence[Commit], prs: Sequence[OpenPr]
+) -> dict[str, OpenPr]:
+    """Map each commit to the first open PR holding a same-subject, same-instant commit."""
+    by_sha: dict[str, OpenPr] = {}
+    for commit in commits:
+        for open_pr in prs:
+            if any(_same_commit(pr_commit, commit) for pr_commit in open_pr.commits):
+                by_sha[commit.sha] = open_pr
+                break
+    return by_sha
+
+
+def _pr_only_commits(
+    commits: Sequence[Commit], prs: Sequence[OpenPr], login: str
+) -> dict[int, tuple[Commit, ...]]:
+    """Map each unmanaged open PR to its commits that no local commit matches."""
+    by_number: dict[int, tuple[Commit, ...]] = {}
+    for open_pr in prs:
+        if is_managed(open_pr.branch, login):
+            continue
+        missing = tuple(
+            pr_commit
+            for pr_commit in open_pr.commits
+            if not any(_same_commit(pr_commit, commit) for commit in commits)
+        )
+        if missing:
+            by_number[open_pr.pr.number] = missing
+    return by_number
+
+
+def inventory(repo: Path, login: str, base: str, prefix: str) -> Inventory:
+    """Build the remote batch/PR state needed to plan and report on pending commits."""
+    commits = log_commits(repo, base)
+    scoped = scope_commits(commits, prefix)
+    with ThreadPoolExecutor() as pool:
+        merged_future = pool.submit(
+            _merged_pr_commits, repo, {commit.subject for commit in scoped}
+        )
+        all_prs_future = pool.submit(all_prs, repo)
+        _git(
+            "fetch",
+            "--quiet",
+            "--prune",
+            "origin",
+            f"+refs/heads/{login}/*:refs/remotes/origin/{login}/*",
+            repo=repo,
+        )
+        pushed_future = pool.submit(remote_branches, repo, login)
+        patch_ids = _patch_ids(repo, [commit.sha for commit in scoped])
+        main_commits = tuple(
+            commit._replace(patch_id=patch_ids.get(commit.sha, "")) for commit in scoped
+        )
+        subject_counts: dict[str, int] = {}
+        by_subject: dict[str, Commit] = {}
+        for commit in main_commits:
+            subject_counts[commit.subject] = subject_counts.get(commit.subject, 0) + 1
+            by_subject[commit.subject] = commit
+        merged_pr_commits, skipped_prs = merged_future.result()
+        all_pr_pairs = all_prs_future.result()
+        pushed = pushed_future.result()
+
+    prs_by_branch = _prs_by_branch(all_pr_pairs)
+    branches = pushed | {
+        branch
+        for branch, pr in prs_by_branch.items()
+        if is_managed(branch, login) or pr.state == "MERGED"
+    }
+
+    batches: list[Batch] = []
+    done: set[str] = set()
+    merged_by_sha: dict[str, tuple[int, str]] = {}
+    unmanaged: dict[str, Pr] = {}
+    legacy_orphans: list[str] = []
+    legacy_regressed: list[Batch] = []
+    past_slugs: set[str] = set()
+
+    for number, head_branch, merged_commits in merged_pr_commits:
+        for pr_commit in merged_commits:
+            main_commit = by_subject.get(pr_commit.subject)
+            if (
+                main_commit is not None
+                and subject_counts.get(pr_commit.subject) == 1
+                and _same_instant(main_commit.authored_date, pr_commit.authored_date)
+            ):
+                done.add(main_commit.sha)
+                merged_by_sha[main_commit.sha] = (number, head_branch)
+
+    for branch in sorted(branches):
+        pr = prs_by_branch.get(branch)
+        managed = is_managed(branch, login)
+        slug = branch.removeprefix(f"{login}/contribute/") if managed else ""
+
+        if pr is not None and pr.state == "MERGED":
+            if managed:
+                past_slugs.add(slug)
+            continue
+
+        if managed and pr is not None and pr.state != "OPEN":
+            past_slugs.add(slug)
+            continue
+
+        if managed:
+            branch_commits = _branch_commits(repo, base, branch)
+            match = match_commits(branch_commits, main_commits)
+            batches.append(Batch(branch, slug, pr, branch_commits, match))
+            continue
+
+        if pr is not None and pr.state == "OPEN":
+            branch_commits = _branch_commits(repo, base, branch)
+            match = match_commits(branch_commits, main_commits)
+            for main_commit in match.owned.values():
+                unmanaged[main_commit.sha] = pr
+            continue
+
+        if pr is None and _branch_in_scope(repo, base, f"origin/{branch}", prefix):
+            branch_commits = _branch_commits(repo, base, branch)
+            match = match_commits(branch_commits, main_commits)
+            if match.unmatched:
+                legacy_regressed.append(Batch(branch, "", None, branch_commits, match))
+            else:
+                legacy_orphans.append(branch)
+
+    batches.sort(
+        key=lambda batch: (
+            (float(batch.pr.number), "")
+            if batch.pr
+            else (
+                float("inf"),
+                _first_commit_author_date(repo, batch.commits[0].sha)
+                if batch.commits
+                else datetime.max.replace(tzinfo=UTC),
             )
-        else:
-            branch_subjects, branch_diff, branch_ahead = (), "", False
-        states[branch] = classify(
-            group,
-            branch,
-            pushed_branches,
-            prs.get(branch),
-            branch_subjects,
-            branch_diff,
-            group_subjects,
-            group_diff,
-            branch_ahead,
         )
-
-    for branch in sorted(pushed_branches - expected_branches):
-        remote_ref = f"origin/{branch}"
-        if not _branch_in_scope(repo, base, remote_ref, prefix):
-            continue
-        states[branch] = classify(
-            None,
-            branch,
-            pushed_branches,
-            prs.get(branch),
-            (),
-            "",
-            (),
-            "",
-            _branch_ahead(repo, "main", remote_ref),
-        )
-
-    return groups, states
+    )
+    return Inventory(
+        batches=tuple(batches),
+        done=frozenset(done),
+        merged_prs=merged_by_sha,
+        unmanaged=unmanaged,
+        legacy_orphans=tuple(legacy_orphans),
+        legacy_regressed=tuple(legacy_regressed),
+        past_slugs=frozenset(past_slugs),
+        skipped_prs=skipped_prs,
+        commits=tuple(commits),
+    )
 
 
-def apply_group(
-    repo: Path, group: Group, base: str, prefix: str
-) -> tuple[str, tuple[str, ...], str]:
-    """Cherry-pick one group's commits onto a fresh branch in a throwaway worktree.
+def _cherry_pick_onto(
+    repo: Path,
+    branch: str,
+    start: str,
+    commits: tuple[Commit, ...],
+    prefix: str,
+    mode: Literal["append", "rebuild", "new"],
+) -> ApplyResult:
+    """Cherry-pick ``commits`` onto a fresh ``branch`` starting from ``start``.
 
-    Deletes any pre-existing local branch of the same name first, so a group can
+    Deletes any pre-existing local branch of the same name first, so a batch can
     be re-applied after an earlier successful or conflicting run without the
     ``switch -c`` failing because that branch already exists.
-
-    Returns ``("picked", (), "")`` on success, ``("conflict", paths, message)``
-    on a failed cherry-pick, where ``paths`` are the conflicting file(s) and
-    ``message`` is git's own error message, or ``("oversize", (), report)`` if
-    the cherry-picked branch's prompts tree fails the size guard, where
-    ``report`` is the check's report string. Pushing the resulting branch is
-    the caller's responsibility.
     """
-    if _git("branch", "--list", group.branch, repo=repo).strip():
-        _git("branch", "-D", group.branch, repo=repo)
+    if _git("branch", "--list", branch, repo=repo).strip():
+        _git("branch", "-D", branch, repo=repo)
     tmp_dir = Path(tempfile.mkdtemp())
     try:
-        _git("worktree", "add", "--detach", str(tmp_dir), base, repo=repo)
-        _git("switch", "-c", group.branch, base, repo=tmp_dir)
+        _git("worktree", "add", "--detach", str(tmp_dir), start, repo=repo)
+        _git("switch", "-c", branch, start, repo=tmp_dir)
         try:
-            _git("cherry-pick", *(commit.sha for commit in group.commits), repo=tmp_dir)
+            _git("cherry-pick", *(commit.sha for commit in commits), repo=tmp_dir)
         except subprocess.CalledProcessError as error:
             paths = tuple(
                 _git(
@@ -445,13 +720,50 @@ def apply_group(
             stderr_lines = [line for line in error.stderr.splitlines() if line.strip()]
             message = stderr_lines[0] if stderr_lines else ""
             _git("cherry-pick", "--abort", repo=tmp_dir)
-            return "conflict", paths, message
+            return ApplyResult(
+                outcome="conflict", mode=mode, paths=paths, message=message
+            )
         result = check([tmp_dir / prefix])
         if not result.passed:
-            return "oversize", (), result.report
-        return "picked", (), ""
+            return ApplyResult(
+                outcome="oversize", mode=mode, paths=(), message=result.report
+            )
+        return ApplyResult(outcome="picked", mode=mode, paths=(), message="")
     finally:
         _git("worktree", "remove", "--force", str(tmp_dir), repo=repo)
+
+
+def apply_batch(
+    repo: Path, plan: BatchPlan, base: str, prefix: str, batch: Batch | None = None
+) -> ApplyResult:
+    """Apply a batch plan's groups onto its branch in a throwaway worktree.
+
+    ``append`` starts from ``origin/<branch>``, keeping that branch's existing
+    commits and cherry-picking only the groups from ``plan.groups`` not
+    already present on it (per ``batch``, required for this mode); ``rebuild``
+    and ``new`` start fresh from ``base`` and cherry-pick every one of
+    ``plan.groups``' commits in order. An ``append`` whose cherry-pick
+    conflicts falls back to a rebuild from ``base``, reporting
+    ``mode="rebuild"``.
+
+    Pushing the resulting branch is the caller's responsibility: plainly for an
+    ``append`` result, ``--force-with-lease`` otherwise.
+    """
+    all_commits = tuple(commit for group in plan.groups for commit in group.commits)
+    if plan.mode == "append":
+        if batch is None:
+            raise ValueError("append plan requires its existing batch")
+        new_groups = append_groups(plan, batch)
+        new_commits = tuple(commit for group in new_groups for commit in group.commits)
+        result = _cherry_pick_onto(
+            repo, plan.branch, f"origin/{plan.branch}", new_commits, prefix, "append"
+        )
+        if result.outcome == "conflict":
+            return _cherry_pick_onto(
+                repo, plan.branch, base, all_commits, prefix, "rebuild"
+            )
+        return result
+    return _cherry_pick_onto(repo, plan.branch, base, all_commits, prefix, plan.mode)
 
 
 def find_blocking_commits(
@@ -471,72 +783,59 @@ def find_blocking_commits(
     return blockers
 
 
-def _state_label(state: State) -> str:
-    if state.group is None:
-        label = "regressed orphan" if state.regressed else "orphan"
-        return f"{label} ({state.pr.state.lower()})" if state.pr else f"{label} (no PR)"
-    if not state.pushed:
-        return "new (no PR)"
-    if state.regressed:
-        return "regressed"
-    return "needs-sync" if state.stale else "ok"
+def _print_warning(warning: str, out: TextIO | None = None) -> None:
+    for line in warning.splitlines():
+        print(f"  {line}", file=out)
 
 
-def _print_table(rows: list[tuple[str, str, str, str]]) -> None:
-    headers = ("BRANCH", "COMMITS", "PR", "STATE")
-    all_rows = [headers, *rows]
-    widths = [max(len(row[column]) for row in all_rows) for column in range(4)]
-    for row in all_rows:
-        print("  ".join(cell.ljust(widths[column]) for column, cell in enumerate(row)))
-
-
-def run_list(repo: Path, login: str, prefix: str) -> int:
-    """Print every group's sync state as a table; exit 0 iff nothing needs attention."""
+def run_list(repo: Path, login: str, prefix: str, out: TextIO | None = None) -> int:
+    """Print pending commits grouped by stage; exit 0 iff nothing needs sync or is a problem."""
     base = base_ref(repo)
     remote = base.split("/", 1)[0]
-    fetch_base(repo, remote)
-    warning = stale_main_warning(repo, base, remote)
+    with ThreadPoolExecutor() as pool:
+        open_prs_future = pool.submit(open_prs, repo)
+        fetch_base(repo, remote)
+        warning = stale_main_warning(repo, base, remote)
+        if warning is not None:
+            _print_warning(warning, out)
+
+        inv = inventory(repo, login, base, prefix)
+        prs, skipped_open = open_prs_future.result()
+    commits = inv.commits
+    in_scope = scope_commits(commits, prefix)
+    code_only = {
+        commit.sha for commit in commits if not _is_in_scope_candidate(commit, prefix)
+    }
+    groups = group_commits(in_scope, login, prefix)
+    plans = pending_plans(groups, inv, login)
+    entries, problems = classify(
+        commits,
+        groups,
+        plans,
+        inv,
+        prs,
+        _open_pr_by_sha(commits, prs),
+        code_only,
+        _pr_only_commits(commits, prs, login),
+    )
+
+    for line in render(entries, problems, sys.stdout.isatty()):
+        print(line, file=out)
+
+    warning = regression_warning(inv.batches + inv.legacy_regressed)
     if warning is not None:
-        print(warning)
-    groups, states = _compute(repo, login, base, prefix)
+        _print_warning(warning, out)
 
-    rows: list[tuple[str, str, str, str]] = []
-    ok = True
-    for group in groups:
-        if group.problems:
-            continue
-        state = states[group.branch]
-        label = _state_label(state)
-        pr_text = f"#{state.pr.number}" if state.pr else "-"
-        rows.append((group.branch, str(len(group.commits)), pr_text, label))
-        if label not in ("ok", "new (no PR)"):
-            ok = False
+    pr_only = pr_only_warning(entries)
+    if pr_only is not None:
+        _print_warning(pr_only, out)
 
-    for branch, state in states.items():
-        if state.group is not None:
-            continue
-        label = _state_label(state)
-        pr_text = f"#{state.pr.number}" if state.pr else "-"
-        rows.append((branch, "-", pr_text, label))
-        ok = False
-
-    _print_table(rows)
-
-    warning = regression_warning(states, base, prefix)
+    warning = skipped_prs_warning(inv.skipped_prs | skipped_open)
     if warning is not None:
-        print(warning)
+        _print_warning(warning, out)
 
-    problem_groups = [group for group in groups if group.problems]
-    if problem_groups:
-        ok = False
-        print("problems:")
-        for group in problem_groups:
-            for commit in group.commits:
-                print(
-                    f"  {commit.sha[:7]} {commit.subject} [{','.join(group.problems)}]"
-                )
-
-    return 0 if ok else 1
+    needs_sync = any(entry.stage == "needs sync" for entry in entries)
+    return 1 if needs_sync or problems or pr_only else 0
 
 
 def run_sync(
@@ -546,91 +845,111 @@ def run_sync(
     apply: bool,
     only: str | None,
     cleanup: str | None,
+    commits: Sequence[str] = (),
 ) -> int:
-    """Preview or apply pending group syncs, or clean up one orphan branch."""
+    """Preview or apply pending batch plans, or clean up one legacy orphan branch."""
     base = base_ref(repo)
     remote = base.split("/", 1)[0]
     fetch_base(repo, remote)
     warning = stale_main_warning(repo, base, remote)
     if warning is not None:
         print(warning)
-    groups, states = _compute(repo, login, base, prefix)
-    regression = regression_warning(states, base, prefix)
+
+    inv = inventory(repo, login, base, prefix)
+    batches_by_branch = {batch.branch: batch for batch in inv.batches}
+    regression = regression_warning(inv.batches + inv.legacy_regressed)
     if regression is not None:
         print(regression)
 
+    skipped = skipped_prs_warning(inv.skipped_prs)
+    if skipped is not None:
+        print(skipped)
+        return 1
+
     if cleanup is not None:
-        state = states.get(cleanup)
-        if state is None or state.group is not None:
-            print(f"{cleanup} is not an orphan branch; refusing to clean up")
+        if cleanup not in inv.legacy_orphans:
+            print(f"{cleanup} is not a legacy orphan branch; refusing to clean up")
             return 1
-        if state.regressed:
-            print(f"{cleanup} holds content main lacks; refusing to clean up")
-            return 1
-        if state.pr is not None:
-            _gh_json("pr", "close", str(state.pr.number), repo=repo)
         _git("push", "origin", "--delete", cleanup, repo=repo)
         return 0
 
-    targets = [
-        group
-        for group in groups
-        if not group.problems
-        and (not states[group.branch].pushed or states[group.branch].stale)
-        and not states[group.branch].regressed
-    ]
+    groups = group_commits(scope_commits(inv.commits, prefix), login, prefix)
+    selected = None
+    if commits:
+        try:
+            selected = select_groups(commits, groups, inv)
+        except SelectionError as error:
+            print("\n".join(error.lines))
+            return 1
+    scoped = only is not None or bool(commits)
+    plans = pending_plans(groups, inv, login, selected)
     if only is not None:
-        targets = [group for group in targets if group.branch == only]
+        plans = [plan for plan in plans if plan.branch == only]
 
     if not apply:
-        for group in targets:
-            shas = " ".join(commit.sha for commit in group.commits)
-            print(f"git worktree add --detach <tmp-dir> {base}")
-            print(f"git switch -c {group.branch} {base}")
+        for plan in plans:
+            pick_groups = plan.groups
+            batch = batches_by_branch.get(plan.branch)
+            if plan.mode == "append" and batch is not None:
+                pick_groups = append_groups(plan, batch)
+            shas = " ".join(
+                commit.sha for group in pick_groups for commit in group.commits
+            )
+            start = f"origin/{plan.branch}" if plan.mode == "append" else base
+            print(f"git worktree add --detach <tmp-dir> {start}")
+            print(f"git switch -c {plan.branch} {start}")
             print(f"git cherry-pick {shas}")
-            print(f"git push --force-with-lease <remote> {group.branch}")
-        if only is None:
-            for branch, state in states.items():
-                if state.group is None and state.pr is None and not state.regressed:
-                    print(f"{branch}: would delete (orphan, no PR)")
+            if plan.mode == "append":
+                print(f"git push <remote> {plan.branch}")
+            else:
+                print(f"git push --force-with-lease <remote> {plan.branch}")
+        if not scoped:
+            for branch in inv.legacy_orphans:
+                print(f"{branch}: would delete (orphan, no PR)")
         return 1 if regression is not None else 0
 
     remote = push_remote(repo)
     failure = regression is not None
-    for group in targets:
-        outcome, paths, message = apply_group(repo, group, base, prefix)
-        if outcome == "conflict":
-            detail = f"{', '.join(paths)}: {message}"
-            blockers = find_blocking_commits(groups, group, paths)
-            if blockers:
-                names = ", ".join(
-                    f'{commit.sha[:7]} "{commit.subject}"' for commit in blockers
-                )
-                detail += (
-                    f" - depends on unmerged commit(s) {names}; squash them"
-                    " together on main"
-                )
-            print(f"{group.branch}: conflict ({detail})")
+    for plan in plans:
+        result = apply_batch(
+            repo, plan, base, prefix, batches_by_branch.get(plan.branch)
+        )
+        if result.outcome == "conflict":
+            detail = f"{', '.join(result.paths)}: {result.message}"
+            print(f"{plan.branch}: conflict ({detail})")
+            if commits:
+                picked = {c.sha for g in plan.groups for c in g.commits}
+                blockers = {
+                    b.sha: b
+                    for g in plan.groups
+                    for b in find_blocking_commits(groups, g, result.paths)
+                    if b.sha not in picked and b.sha not in inv.done
+                }
+                if blockers:
+                    listed = ", ".join(
+                        f"{b.sha} {b.subject}" for b in blockers.values()
+                    )
+                    print(f"  blocked by earlier unselected commits: {listed}")
             failure = True
             continue
-        if outcome == "oversize":
-            print(f"{group.branch}: size check failed\n{message}")
+        if result.outcome == "oversize":
+            print(f"{plan.branch}: size check failed\n{result.message}")
             failure = True
             continue
+        force = () if result.mode == "append" else ("--force-with-lease",)
         try:
-            _git("push", "--force-with-lease", remote, group.branch, repo=repo)
+            _git("push", *force, remote, plan.branch, repo=repo)
         except subprocess.CalledProcessError:
-            print(f"{group.branch}: rejected")
+            print(f"{plan.branch}: rejected")
             failure = True
             continue
-        _git("branch", "-D", group.branch, repo=repo)
-        print(f"{group.branch}: pushed")
+        _git("branch", "-D", plan.branch, repo=repo)
+        print(f"{plan.branch}: pushed")
 
-    if only is None:
-        for branch, state in states.items():
-            if state.group is None and state.pr is None and not state.regressed:
-                _git("push", "origin", "--delete", branch, repo=repo)
-                print(f"{branch}: deleted (orphan, no PR)")
+    if not scoped:
+        for branch in inv.legacy_orphans:
+            _git("push", "origin", "--delete", branch, repo=repo)
+            print(f"{branch}: deleted (orphan, no PR)")
 
     print()
     run_list(repo, login, prefix)

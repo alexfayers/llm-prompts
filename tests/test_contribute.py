@@ -2,26 +2,31 @@
 
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 from pathlib import Path
+from typing import Any, Literal
 from unittest.mock import patch
 
 import pytest
-from conftest import FakeSubprocess
+from conftest import ContributeRemote, FakeSubprocess
 
+from llm_prompts.batching import Batch, BatchPlan, Match, batch_branch
 from llm_prompts.contribute import (
+    ApplyResult,
     Commit,
     Group,
     Pr,
-    apply_group,
+    all_prs,
+    apply_batch,
     base_ref,
     branch_name,
-    classify,
     find_blocking_commits,
     group_commits,
+    inventory,
     is_conventional,
-    open_prs,
+    log_commits,
     push_remote,
     remote_branches,
     run_list,
@@ -30,11 +35,30 @@ from llm_prompts.contribute import (
     slug_for,
     stale_main_warning,
 )
+from llm_prompts.size_guard import CheckResult
 
 PROMPTS_PREFIX = "src/llm_prompts/prompts/"
 
 _IN_SCOPE = f"{PROMPTS_PREFIX}shared/skills/foo/SKILL.md"
 _OUT_SCOPE = "docs/notes.md"
+
+
+def _passing_check() -> CheckResult:
+    return CheckResult(passed=True, artifacts=[], violations=[], report="")
+
+
+def _stub_cherry_pick(fake_subprocess: FakeSubprocess) -> None:
+    fake_subprocess.on("branch", "--list", stdout="")
+    fake_subprocess.on("worktree", "add")
+    fake_subprocess.on("switch", "-c")
+    fake_subprocess.on("cherry-pick")
+    fake_subprocess.on("worktree", "remove")
+
+
+def _plan(
+    branch: str, group: Group, mode: Literal["append", "rebuild", "new"]
+) -> BatchPlan:
+    return BatchPlan(branch=branch, slug="foo", pr=None, groups=(group,), mode=mode)
 
 
 class TestSlugFor:
@@ -150,157 +174,158 @@ class TestGroupCommits:
         assert "mixed-scope" in groups[1].problems
 
 
-class TestClassify:
-    def _group(self, subject: str = "feat: add foo skill") -> Group:
-        commit = Commit("s1", subject, (_IN_SCOPE,))
-        slug = slug_for(subject)
-        return Group((commit,), slug, branch_name("tester", slug), ())
-
-    def test_matching_subjects_and_diff_is_not_stale(self) -> None:
-        group = self._group()
-        state = classify(
-            group,
-            group.branch,
-            {group.branch},
-            None,
-            ("feat: add foo skill",),
-            "diff-a",
-            ("feat: add foo skill",),
-            "diff-a",
-            False,
-        )
-        assert state.stale is False
-        assert state.pushed is True
-
-    def test_differing_diff_is_stale(self) -> None:
-        group = self._group()
-        state = classify(
-            group,
-            group.branch,
-            {group.branch},
-            None,
-            ("feat: add foo skill",),
-            "diff-a",
-            ("feat: add foo skill",),
-            "diff-b",
-            False,
-        )
-        assert state.stale is True
-
-    def test_differing_subjects_is_stale(self) -> None:
-        group = self._group()
-        state = classify(
-            group,
-            group.branch,
-            {group.branch},
-            None,
-            ("feat: add foo skill v2",),
-            "diff-a",
-            ("feat: add foo skill",),
-            "diff-a",
-            False,
-        )
-        assert state.stale is True
-
-    def test_branch_not_on_remote_is_new(self) -> None:
-        group = self._group()
-        state = classify(
-            group,
-            group.branch,
-            set(),
-            None,
-            ("feat: add foo skill",),
-            "diff-a",
-            (),
-            "",
-            False,
-        )
-        assert state.pushed is False
-        assert state.pr is None
-
-    def test_open_pr_and_current_content_is_ok(self) -> None:
-        group = self._group()
-        pr = Pr(12, "OPEN", "https://github.com/o/r/pull/12")
-        state = classify(
-            group,
-            group.branch,
-            {group.branch},
-            pr,
-            ("feat: add foo skill",),
-            "diff-a",
-            ("feat: add foo skill",),
-            "diff-a",
-            False,
-        )
-        assert state.pushed is True
-        assert state.stale is False
-        assert state.pr == pr
-
-    def test_no_group_with_open_pr_is_orphan(self) -> None:
-        pr = Pr(12, "OPEN", "https://github.com/o/r/pull/12")
-        state = classify(
-            None,
-            "tester/removed-skill",
-            {"tester/removed-skill"},
-            pr,
-            (),
-            "",
-            (),
-            "",
-            False,
-        )
-        assert state.group is None
-        assert state.pr == pr
-
-    @pytest.mark.parametrize("pr_state", ["MERGED", "CLOSED"])
-    def test_no_group_with_merged_or_closed_pr_is_orphan(self, pr_state: str) -> None:
-        pr = Pr(9, pr_state, "https://github.com/o/r/pull/9")
-        state = classify(
-            None,
-            "tester/old-fix",
-            {"tester/old-fix"},
-            pr,
-            (),
-            "",
-            (),
-            "",
-            False,
-        )
-        assert state.group is None
-        assert state.pr == pr
-
-
 class TestScopeCommits:
-    def test_excludes_out_of_scope_and_includes_mixed_scope(
-        self, fake_subprocess: FakeSubprocess, tmp_path: Path
-    ) -> None:
+    def test_excludes_out_of_scope_and_includes_mixed_scope(self) -> None:
+        commits = [
+            Commit("aaa111", "feat: add foo skill", (_IN_SCOPE,)),
+            Commit("bbb222", "docs: unrelated notes", (_OUT_SCOPE,)),
+            Commit("ccc333", "fix(rules): mixed change", (_IN_SCOPE, _OUT_SCOPE)),
+        ]
+
+        assert scope_commits(commits, PROMPTS_PREFIX) == [commits[0], commits[2]]
+
+
+class TestLogCommits:
+    def _log(self, fake_subprocess: FakeSubprocess) -> None:
         fake_subprocess.on(
             "log",
-            "--format=%H%x09%s",
-            stdout=fake_subprocess.sha_subjects(
-                ("aaa111", "feat: add foo skill"),
-                ("bbb222", "docs: unrelated notes"),
-                ("ccc333", "fix(rules): mixed change"),
+            "--format=%H%x09%aI%x09%s",
+            stdout=fake_subprocess.sha_dated_subjects(
+                ("aaa111", "feat: add foo skill", "2024-01-01T00:00:00+00:00"),
+                ("bbb222", "chore: empty", "2024-01-02T00:00:00+00:00"),
+                ("ccc333", "fix: two paths", "2024-01-03T00:00:00+00:00"),
             ),
         )
-        fake_subprocess.on_match(
-            lambda argv: "show" in argv and "aaa111" in argv,
-            stdout=f"{_IN_SCOPE}\n",
-        )
-        fake_subprocess.on_match(
-            lambda argv: "show" in argv and "bbb222" in argv,
-            stdout=f"{_OUT_SCOPE}\n",
-        )
-        fake_subprocess.on_match(
-            lambda argv: "show" in argv and "ccc333" in argv,
-            stdout=f"{_IN_SCOPE}\n{_OUT_SCOPE}\n",
+
+    def test_reads_every_commits_paths_in_one_show(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        self._log(fake_subprocess)
+        fake_subprocess.on(
+            "show",
+            "--pretty=format:%x00%H",
+            "--name-only",
+            stdout=f"\x00aaa111\n{_IN_SCOPE}\n\n\x00bbb222\n\x00ccc333\n{_IN_SCOPE}\n{_OUT_SCOPE}\n",
         )
 
-        commits = scope_commits(tmp_path, "origin/main", PROMPTS_PREFIX)
+        commits = log_commits(tmp_path, "origin/main")
 
-        assert [c.sha for c in commits] == ["aaa111", "ccc333"]
-        assert commits[0].paths == (_IN_SCOPE,)
-        assert commits[1].paths == (_IN_SCOPE, _OUT_SCOPE)
+        assert [c.sha for c in commits] == ["aaa111", "bbb222", "ccc333"]
+        assert [c.paths for c in commits] == [
+            (_IN_SCOPE,),
+            (),
+            (_IN_SCOPE, _OUT_SCOPE),
+        ]
+        assert len(fake_subprocess.matching("show")) == 1
+        assert fake_subprocess.matching("show")[0][-3:] == [
+            "aaa111",
+            "bbb222",
+            "ccc333",
+        ]
+
+    def test_commit_missing_from_show_output_has_no_paths(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        self._log(fake_subprocess)
+        fake_subprocess.on(
+            "show",
+            "--pretty=format:%x00%H",
+            "--name-only",
+            stdout=f"\x00aaa111\n{_IN_SCOPE}\n",
+        )
+
+        commits = log_commits(tmp_path, "origin/main")
+
+        assert [c.paths for c in commits] == [(_IN_SCOPE,), (), ()]
+
+    def test_no_commits_makes_no_show_call(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        fake_subprocess.on("log", "--format=%H%x09%aI%x09%s", stdout="")
+
+        assert log_commits(tmp_path, "origin/main") == []
+        assert fake_subprocess.matching("show") == []
+
+
+class TestPatchIds:
+    def test_no_shas_makes_no_call(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        from llm_prompts.contribute import _patch_ids
+
+        assert _patch_ids(tmp_path, []) == {}
+        assert fake_subprocess.commands == []
+
+    def test_maps_each_sha_with_one_show_and_one_patch_id_call(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        from llm_prompts.contribute import _patch_ids
+
+        contribute_remote.main(("m1", "feat: one"), ("m2", "feat: two"))
+        fake = contribute_remote.fake
+
+        ids = _patch_ids(tmp_path, ["m1", "m2"])
+
+        assert ids == {
+            "m1": ContributeRemote.patch_id("m1"),
+            "m2": ContributeRemote.patch_id("m2"),
+        }
+        assert len(fake.matching("show", "-U0")) == 1
+        assert len(fake.matching("patch-id", "--stable")) == 1
+
+
+class TestPatchIdIgnoresSurroundingContext:
+    """Exercises real git, since a fake diff can't show context sensitivity."""
+
+    def _git(self, tmp_path: Path, *args: str) -> str:
+        return subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "commit.gpgsign=false",
+                *args,
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+    def test_patch_id_matches_the_same_change_applied_with_different_context(
+        self, tmp_path: Path
+    ) -> None:
+        file_path = tmp_path / "file.txt"
+        file_path.write_text("".join(f"line{n}\n" for n in range(1, 10)))
+        self._git(tmp_path, "init", "-q")
+        self._git(tmp_path, "add", "file.txt")
+        self._git(tmp_path, "commit", "-q", "-m", "chore: base")
+        base_sha = self._git(tmp_path, "rev-parse", "HEAD")
+
+        lines = file_path.read_text().splitlines()
+        lines[1] = "line2-changed"
+        file_path.write_text("\n".join(lines) + "\n")
+        self._git(tmp_path, "commit", "-q", "-am", "chore: change context")
+
+        lines = file_path.read_text().splitlines()
+        lines[4] = "line5-changed"
+        file_path.write_text("\n".join(lines) + "\n")
+        self._git(tmp_path, "commit", "-q", "-am", "feat: change target")
+        main_sha = self._git(tmp_path, "rev-parse", "HEAD")
+
+        self._git(tmp_path, "checkout", "-q", base_sha)
+        self._git(tmp_path, "cherry-pick", main_sha)
+        branch_sha = self._git(tmp_path, "rev-parse", "HEAD")
+
+        from llm_prompts.contribute import _patch_ids
+
+        patch_ids = _patch_ids(tmp_path, [main_sha, branch_sha])
+
+        assert patch_ids[main_sha] != ""
+        assert patch_ids[main_sha] == patch_ids[branch_sha]
 
 
 class TestRemoteBranches:
@@ -321,7 +346,7 @@ class TestRemoteBranches:
 
 
 class TestOpenPrs:
-    def test_parses_prs_keyed_by_branch(
+    def test_keeps_both_prs_sharing_a_branch_name(
         self, fake_subprocess: FakeSubprocess, tmp_path: Path
     ) -> None:
         fake_subprocess.on(
@@ -340,18 +365,437 @@ class TestOpenPrs:
                         "number": 9,
                         "state": "MERGED",
                         "url": "https://github.com/o/r/pull/9",
-                        "headRefName": "tester/old-fix",
+                        "headRefName": "tester/add-foo-skill",
                     },
                 ]
             ),
         )
-        result = open_prs(tmp_path)
-        assert result == {
-            "tester/add-foo-skill": Pr(12, "OPEN", "https://github.com/o/r/pull/12"),
-            "tester/old-fix": Pr(9, "MERGED", "https://github.com/o/r/pull/9"),
-        }
-        _, kwargs = fake_subprocess.calls[-1]
-        assert kwargs["cwd"] == tmp_path
+        result = all_prs(tmp_path)
+        assert result == [
+            ("tester/add-foo-skill", Pr(12, "OPEN", "https://github.com/o/r/pull/12")),
+            ("tester/add-foo-skill", Pr(9, "MERGED", "https://github.com/o/r/pull/9")),
+        ]
+
+    def test_requests_a_high_limit_so_old_prs_are_not_truncated(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        fake_subprocess.on("gh", "pr", "list", stdout="[]")
+
+        all_prs(tmp_path)
+
+        call = fake_subprocess.matching("gh", "pr", "list")[0]
+        assert "--limit" in call
+        limit = int(call[call.index("--limit") + 1])
+        assert limit >= 100
+
+
+class TestPrsByBranch:
+    def test_open_pr_wins_over_an_older_merged_pr_reusing_the_branch(self) -> None:
+        from llm_prompts.contribute import _prs_by_branch
+
+        open_pr = Pr(12, "OPEN", "https://github.com/o/r/pull/12")
+        merged_pr = Pr(9, "MERGED", "https://github.com/o/r/pull/9")
+
+        result = _prs_by_branch(
+            [("tester/add-foo", open_pr), ("tester/add-foo", merged_pr)]
+        )
+
+        assert result == {"tester/add-foo": open_pr}
+
+    def test_merged_pr_wins_over_a_closed_pr_when_no_pr_is_open(self) -> None:
+        from llm_prompts.contribute import _prs_by_branch
+
+        merged_pr = Pr(9, "MERGED", "https://github.com/o/r/pull/9")
+        closed_pr = Pr(12, "CLOSED", "https://github.com/o/r/pull/12")
+
+        result = _prs_by_branch(
+            [("tester/add-foo", merged_pr), ("tester/add-foo", closed_pr)]
+        )
+
+        assert result == {"tester/add-foo": merged_pr}
+
+    def test_highest_number_wins_among_only_closed_prs(self) -> None:
+        from llm_prompts.contribute import _prs_by_branch
+
+        older_closed = Pr(9, "CLOSED", "https://github.com/o/r/pull/9")
+        newer_closed = Pr(12, "CLOSED", "https://github.com/o/r/pull/12")
+
+        result = _prs_by_branch(
+            [("tester/add-foo", older_closed), ("tester/add-foo", newer_closed)]
+        )
+
+        assert result == {"tester/add-foo": newer_closed}
+
+
+class TestContributeRemote:
+    def test_merged_pr_reports_state_and_commits(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        branch = contribute_remote.merged("fix-x", 12, [("m1", "fix: bug")])
+
+        prs = dict(all_prs(tmp_path))
+        assert prs[branch].state == "MERGED"
+
+        listed = json.loads(
+            subprocess.run(
+                [
+                    "gh",
+                    "pr",
+                    "list",
+                    "--state",
+                    "merged",
+                    "--author",
+                    "@me",
+                    "--json",
+                    "number,headRefName,title",
+                ],
+                cwd=tmp_path,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+        )
+        assert listed == [{"number": 12, "headRefName": branch, "title": "fix: bug"}]
+
+        viewed = json.loads(
+            subprocess.run(
+                ["gh", "pr", "view", "12", "--json", "commits"],
+                cwd=tmp_path,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+        )
+        assert viewed["commits"] == [
+            {
+                "oid": "m1",
+                "messageHeadline": "fix: bug",
+                "messageBody": "",
+                "authoredDate": "2024-01-01T00:00:00+00:00",
+            }
+        ]
+
+
+class TestInventory:
+    def test_managed_branch_with_open_pr_returns_batch_carrying_pr(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        pr = Pr(5, "OPEN", "https://github.com/o/r/pull/5")
+        contribute_remote.managed("add-foo", [("m1", "feat: add foo")], pr=pr)
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert [batch.pr for batch in inv.batches] == [pr]
+
+    def test_managed_branch_with_no_pr_returns_batch_with_no_pr(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.managed("add-foo", [("m1", "feat: add foo")])
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert [batch.pr for batch in inv.batches] == [None]
+
+    def test_two_managed_batches_are_ordered_oldest_first(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        newer_pr = Pr(9, "OPEN", "https://github.com/o/r/pull/9")
+        older_pr = Pr(3, "OPEN", "https://github.com/o/r/pull/3")
+        contribute_remote.managed("b-batch", [("m2", "feat: b")], pr=newer_pr)
+        contribute_remote.managed("a-batch", [("m1", "feat: a")], pr=older_pr)
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert [batch.slug for batch in inv.batches] == ["a-batch", "b-batch"]
+
+    def test_merged_pr_records_its_number_and_branch_against_the_main_commit(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        branch = contribute_remote.merged("add-foo", 7, [("c1", "feat: add foo")])
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.merged_prs == {"m1": (7, branch)}
+
+    def test_merged_pr_unique_subject_match_marks_main_commit_done(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.merged("add-foo", 7, [("c1", "feat: add foo")])
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.done == frozenset({"m1"})
+        assert inv.past_slugs == frozenset({"add-foo"})
+
+    def test_merged_pr_truncated_headline_still_matches_main_commit_done(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        subject = "feat: add a very long allowlist entry for the frobnicator service"
+        contribute_remote.main(("m1", subject))
+        contribute_remote.merged("add-foo", 7, [("c1", subject)])
+        contribute_remote.truncate_headline(
+            7, "c1", subject[:40] + "\u2026", "\u2026" + subject[40:]
+        )
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.done == frozenset({"m1"})
+        assert inv.past_slugs == frozenset({"add-foo"})
+
+    def test_merged_legacy_pr_unique_subject_match_marks_main_commit_done(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.merged_legacy("tester/add-foo", 7, [("c1", "feat: add foo")])
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.done == frozenset({"m1"})
+        assert inv.past_slugs == frozenset()
+
+    def test_legacy_branch_merged_pr_with_later_open_pr_still_marks_commit_done(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.merged_legacy("tester/add-foo", 7, [("c1", "feat: add foo")])
+        contribute_remote.legacy(
+            "tester/add-foo", pr=Pr(9, "OPEN", "https://github.com/o/r/pull/9")
+        )
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.done == frozenset({"m1"})
+
+    def test_branch_with_two_merged_prs_marks_commits_from_both_done(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"), ("m2", "feat: add bar"))
+        contribute_remote.merged_legacy("tester/add-foo", 7, [("c1", "feat: add foo")])
+        contribute_remote.merged_legacy("tester/add-foo", 8, [("c2", "feat: add bar")])
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.done == frozenset({"m1", "m2"})
+
+    def test_merged_pr_commits_come_from_per_pr_view(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.merged("add-foo", 7, [("c1", "feat: add foo")])
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.done == frozenset({"m1"})
+        views = contribute_remote.fake.matching("gh", "pr", "view")
+        assert len(views) == 1
+        assert "7" in views[0]
+
+    def test_two_merged_prs_each_viewed_and_both_marked_done(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"), ("m2", "feat: add bar"))
+        contribute_remote.merged("add-foo", 7, [("c1", "feat: add foo")])
+        contribute_remote.merged("add-bar", 8, [("c2", "feat: add bar")])
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.done == frozenset({"m1", "m2"})
+        assert len(contribute_remote.fake.matching("gh", "pr", "view")) == 2
+
+    def test_failed_pr_view_is_skipped_and_other_prs_still_marked_done(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"), ("m2", "feat: add bar"))
+        contribute_remote.merged("add-foo", 7, [("c1", "feat: add foo")])
+        contribute_remote.merged("add-bar", 8, [("c2", "feat: add bar")])
+        contribute_remote.fail_pr_view(7)
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.done == frozenset({"m2"})
+
+    def test_failed_pr_view_records_the_pr_number_as_skipped(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"), ("m2", "feat: add bar"))
+        contribute_remote.merged("add-foo", 7, [("c1", "feat: add foo")])
+        contribute_remote.merged("add-bar", 8, [("c2", "feat: add bar")])
+        contribute_remote.fail_pr_view(7)
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.skipped_prs == frozenset({7})
+
+    def test_merged_pr_matching_no_pending_subject_is_not_viewed(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.merged("add-foo", 7, [("c1", "feat: add foo")])
+        contribute_remote.merged("unrelated", 9, [("c9", "chore: unrelated")])
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.done == frozenset({"m1"})
+        views = contribute_remote.fake.matching("gh", "pr", "view")
+        assert [argv for argv in views if "9" in argv] == []
+        assert len(views) == 1
+
+    def test_merged_pr_discovered_by_list_call_marks_matching_commit_done(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        date = "2024-03-15T12:00:00+00:00"
+        contribute_remote.main(
+            ("m1", "feat: add foo"), ("m2", "feat: add bar"), dates={"m1": date}
+        )
+        contribute_remote.merged(
+            "add-foo",
+            7,
+            [("c1", "feat: add foo"), ("c2", "feat: add bar")],
+            dates={"c1": date, "c2": "2024-06-01T00:00:00+00:00"},
+        )
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.done == frozenset({"m1"})
+
+    def test_merged_pr_headref_without_login_prefix_still_marks_commit_done(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.merged_legacy(
+            "add-foo-no-prefix", 7, [("c1", "feat: add foo")]
+        )
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.done == frozenset({"m1"})
+
+    def test_subject_match_with_different_authored_date_is_not_done(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.merged_legacy(
+            "tester/add-foo",
+            7,
+            [("c1", "feat: add foo")],
+            dates={"c1": "2024-06-01T00:00:00+00:00"},
+        )
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.done == frozenset()
+
+    def test_subject_match_with_same_authored_date_is_done(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        date = "2024-03-15T12:00:00+00:00"
+        contribute_remote.main(("m1", "feat: add foo"), dates={"m1": date})
+        contribute_remote.merged_legacy(
+            "tester/add-foo", 7, [("c1", "feat: add foo")], dates={"c1": date}
+        )
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.done == frozenset({"m1"})
+
+    def test_closed_pr_contributes_nothing_to_done_or_batches(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.closed("add-foo", 8, [("c1", "feat: add foo")])
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.done == frozenset()
+        assert inv.batches == ()
+        assert inv.past_slugs == frozenset({"add-foo"})
+
+    def test_unmanaged_open_pr_maps_pending_commit_to_pr(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        pr = Pr(82, "OPEN", "https://github.com/o/r/pull/82")
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.unmanaged_pr("someone/add-foo", 82, [("m1", "feat: add foo")])
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.unmanaged == {"m1": pr}
+
+    def test_no_pr_batch_with_no_commits_ahead_of_base_sorts_last(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: one"))
+        with_commits = contribute_remote.managed("has-commits", [("m1", "feat: one")])
+        contribute_remote.fake.on_match(
+            lambda argv: "--format=%aI" in argv and argv[-1] == "m1",
+            stdout="2024-01-01T00:00:00+00:00\n",
+        )
+        empty_branch = contribute_remote.managed("empty-batch", [])
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert [batch.branch for batch in inv.batches] == [with_commits, empty_branch]
+
+    def test_legacy_branch_with_only_closed_pr_leaves_commit_pending(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.legacy(
+            "someone/add-foo", pr=Pr(8, "CLOSED", "https://github.com/o/r/pull/8")
+        )
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.done == frozenset()
+        assert inv.unmanaged == {}
+        assert inv.batches == ()
+        assert inv.legacy_orphans == ()
 
 
 class TestBaseRef:
@@ -432,338 +876,1303 @@ class TestPushRemote:
 
 
 class TestRunSyncDryRun:
-    def test_dry_run_never_pushes_or_cherry_picks(
-        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    def test_dry_run_never_pushes_or_deletes_branches(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
     ) -> None:
-        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
+        contribute_remote.main(("aaa111", "feat: add foo skill"))
+        contribute_remote.legacy("tester/orphan-branch")
+        contribute_remote.fake.on("diff", "--name-only", stdout=f"{_IN_SCOPE}\n")
 
-        run_sync(tmp_path, "tester", PROMPTS_PREFIX, False, None, None)
+        run_sync(tmp_path, contribute_remote.login, PROMPTS_PREFIX, False, None, None)
 
-        assert fake_subprocess.matching("push") == []
-        assert fake_subprocess.matching("cherry-pick") == []
+        assert contribute_remote.fake.matching("push") == []
+        assert contribute_remote.fake.matching("cherry-pick") == []
 
-    def test_dry_run_previews_orphan_cleanup(
+    def test_append_plan_lists_only_the_new_groups_shas(
         self,
-        fake_subprocess: FakeSubprocess,
+        contribute_remote: ContributeRemote,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on(
-            "ls-remote",
-            "--heads",
-            "origin",
-            stdout="abc123\trefs/heads/tester/orphan-branch\n",
-        )
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
-        fake_subprocess.on("diff", "--name-only", stdout=f"{_IN_SCOPE}\n")
+        existing = [("b1", "feat: add foo"), ("b2", "feat: add bar")]
+        contribute_remote.main(*existing, ("m3", "feat: add baz"))
+        contribute_remote.managed("add-foo", existing)
 
-        with patch("llm_prompts.contribute.run_list") as mock_run_list:
-            result = run_sync(tmp_path, "tester", PROMPTS_PREFIX, False, None, None)
+        run_sync(tmp_path, contribute_remote.login, PROMPTS_PREFIX, False, None, None)
 
         out = capsys.readouterr().out
-        assert "tester/orphan-branch: would delete (orphan, no PR)" in out
-        assert fake_subprocess.matching("push", "origin", "--delete") == []
-        mock_run_list.assert_not_called()
-        assert result == 0
+        cherry_pick_line = next(
+            line for line in out.splitlines() if line.startswith("git cherry-pick")
+        )
+        assert cherry_pick_line == "git cherry-pick m3"
+
+    def test_commits_limits_the_preview_to_the_selected_batch_and_skips_orphans(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"), ("m2", "feat: add bar"))
+        contribute_remote.legacy("tester/orphan-branch")
+        contribute_remote.fake.on("diff", "--name-only", stdout=f"{_IN_SCOPE}\n")
+
+        run_sync(
+            tmp_path,
+            contribute_remote.login,
+            PROMPTS_PREFIX,
+            False,
+            None,
+            None,
+            ("m2",),
+        )
+
+        out = capsys.readouterr().out
+        assert "git cherry-pick m2" in out
+        assert "m1" not in out
+        assert "would delete" not in out
+
+    def test_unknown_commit_lists_the_problem_and_plans_nothing(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+
+        result = run_sync(
+            tmp_path,
+            contribute_remote.login,
+            PROMPTS_PREFIX,
+            True,
+            None,
+            None,
+            ("zzz",),
+        )
+
+        assert result == 1
+        assert "zzz: not a local commit" in capsys.readouterr().out
+        assert contribute_remote.fake.matching("push") == []
+
+    def test_skipped_pr_view_refuses_dry_run_before_any_mutation(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.merged("add-foo", 7, [("c1", "feat: add foo")])
+        contribute_remote.fail_pr_view(7)
+
+        result = run_sync(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX, False, None, None
+        )
+
+        assert "warning" in capsys.readouterr().out
+        assert result != 0
+        assert contribute_remote.fake.matching("push") == []
+        assert contribute_remote.fake.matching("gh", "pr", "create") == []
+        assert contribute_remote.fake.matching("gh", "pr", "edit") == []
+
+
+class TestRunSyncGroupsBeforeDroppingDoneCommits:
+    def test_a_compression_pairs_content_commit_is_not_replanned_when_its_pair_is_done(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(
+            ("c1", "chore: compress notes"), ("c2", "feat: add foo skill")
+        )
+        contribute_remote.merged("old-slug", 5, [("c1", "chore: compress notes")])
+
+        run_sync(tmp_path, contribute_remote.login, PROMPTS_PREFIX, False, None, None)
+
+        out = capsys.readouterr().out
+        assert "c2" not in out
 
 
 class TestOrphanScopeFilter:
-    def test_pushed_branch_touching_only_out_of_scope_paths_is_not_orphan(
-        self,
-        fake_subprocess: FakeSubprocess,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
+    def test_legacy_branch_with_in_scope_changes_and_no_pr_is_orphan(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
     ) -> None:
-        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on(
-            "ls-remote",
-            "--heads",
-            "origin",
-            stdout="abc123\trefs/heads/tester/unrelated-pr\n",
+        branch = contribute_remote.legacy("tester/old-fix")
+        contribute_remote.fake.on("diff", "--name-only", stdout=f"{_IN_SCOPE}\n")
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
         )
-        fake_subprocess.on(
-            "gh",
-            "pr",
-            "list",
-            stdout=json.dumps(
-                [
-                    {
-                        "number": 31,
-                        "state": "OPEN",
-                        "url": "https://github.com/o/r/pull/31",
-                        "headRefName": "tester/unrelated-pr",
-                    }
-                ]
+
+        assert inv.legacy_orphans == (branch,)
+
+    def test_legacy_branch_with_a_pr_is_not_orphan(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        pr = Pr(31, "OPEN", "https://github.com/o/r/pull/31")
+        contribute_remote.legacy("tester/old-fix", pr=pr)
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.legacy_orphans == ()
+
+    def test_legacy_branch_with_a_commit_not_on_main_is_not_orphan(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        branch = contribute_remote.legacy("tester/old-fix")
+        contribute_remote.fake.on("diff", "--name-only", stdout=f"{_IN_SCOPE}\n")
+        contribute_remote.fake.on(
+            "show", "-U0", "b1", stdout="commit b1\nfake diff b1\n"
+        )
+        contribute_remote.fake.on_match(
+            lambda argv: (
+                "--format=%H%x09%s" in argv and argv[-1].endswith(f"..origin/{branch}")
             ),
+            stdout=contribute_remote.fake.sha_subjects(("b1", "feat: unmerged change")),
         )
-        fake_subprocess.on("diff", "--name-only", stdout=f"{_OUT_SCOPE}\n")
 
-        result = run_list(tmp_path, "tester", PROMPTS_PREFIX)
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
 
-        out = capsys.readouterr().out
-        assert "tester/unrelated-pr" not in out
-        assert result == 0
+        assert inv.legacy_orphans == ()
+
+    def test_legacy_branch_with_commits_already_on_main_is_still_orphan(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        branch = contribute_remote.legacy("tester/old-fix")
+        contribute_remote.fake.on("diff", "--name-only", stdout=f"{_IN_SCOPE}\n")
+        contribute_remote.fake.on_match(
+            lambda argv: (
+                "--format=%H%x09%s" in argv and argv[-1].endswith(f"..origin/{branch}")
+            ),
+            stdout=contribute_remote.fake.sha_subjects(("m1", "feat: add foo")),
+        )
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.legacy_orphans == (branch,)
+
+
+class TestInventoryFetchesBeforeReadingBranches:
+    def test_fetches_the_logins_refs_before_listing_branches(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.managed("add-foo", [("m1", "feat: add foo")])
+
+        inventory(tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX)
+
+        fetch_calls = contribute_remote.fake.matching("fetch")
+        assert fetch_calls != []
+        expected_refspec = (
+            f"+refs/heads/{contribute_remote.login}/*:"
+            f"refs/remotes/origin/{contribute_remote.login}/*"
+        )
+        assert expected_refspec in fetch_calls[0]
+
+        ls_remote_calls = contribute_remote.fake.matching("ls-remote")
+        assert ls_remote_calls != []
+        commands = contribute_remote.fake.commands
+        assert commands.index(fetch_calls[0]) < commands.index(ls_remote_calls[0])
+
+
+class TestInventoryFetchSurvivesForcePush:
+    """Exercises real git: rebuilds force-push their batch branch, so a stale
+    local tracking ref is a non-fast-forward update that a `+`-less fetch
+    refspec would reject.
+    """
+
+    def _git(self, cwd: Path, *args: str) -> str:
+        return subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+    def test_fetch_survives_a_force_pushed_managed_branch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        origin = tmp_path / "origin.git"
+        repo = tmp_path / "repo"
+        self._git(tmp_path, "init", "--bare", "-q", str(origin))
+        self._git(tmp_path, "init", "-q", "-b", "main", str(repo))
+        self._git(repo, "config", "user.email", "test@example.com")
+        self._git(repo, "config", "user.name", "Test")
+        self._git(repo, "config", "commit.gpgsign", "false")
+        (repo / "base.txt").write_text("base\n")
+        self._git(repo, "add", "base.txt")
+        self._git(repo, "commit", "-q", "-m", "chore: base")
+        self._git(repo, "remote", "add", "origin", str(origin))
+        self._git(repo, "push", "-q", "origin", "main")
+        base_sha = self._git(repo, "rev-parse", "main")
+
+        branch = batch_branch("tester", "foo")
+
+        (repo / "old.txt").write_text("old\n")
+        self._git(repo, "add", "old.txt")
+        self._git(repo, "commit", "-q", "-m", "feat: old batch")
+        old_sha = self._git(repo, "rev-parse", "HEAD")
+        self._git(repo, "push", "-q", "origin", f"HEAD:refs/heads/{branch}")
+        self._git(repo, "update-ref", f"refs/remotes/origin/{branch}", old_sha)
+        self._git(repo, "reset", "-q", "--hard", base_sha)
+
+        (repo / "new.txt").write_text("new\n")
+        self._git(repo, "add", "new.txt")
+        self._git(repo, "commit", "-q", "-m", "feat: rebuilt batch")
+        new_sha = self._git(repo, "rev-parse", "HEAD")
+        self._git(repo, "push", "-q", "--force", "origin", f"HEAD:refs/heads/{branch}")
+        self._git(repo, "reset", "-q", "--hard", base_sha)
+
+        real_run = subprocess.run
+
+        def fake_run(
+            argv: list[str], **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            if argv[0] == "gh":
+                return subprocess.CompletedProcess(argv, 0, "[]", "")
+            return real_run(argv, **kwargs)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        inventory(repo, "tester", "main", PROMPTS_PREFIX)
+
+        updated_sha = self._git(repo, "rev-parse", f"refs/remotes/origin/{branch}")
+        assert updated_sha == new_sha
+        assert updated_sha != old_sha
+
+
+class TestInventoryBatchOrdering:
+    def test_no_pr_batches_are_ordered_by_first_commit_author_date(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(
+            ("m1", "feat: one"), ("m1b", "feat: one-b"), ("m2", "feat: two")
+        )
+        older_branch = contribute_remote.managed(
+            "zzz-slug", [("m1", "feat: one"), ("m1b", "feat: one-b")]
+        )
+        newer_branch = contribute_remote.managed("aaa-slug", [("m2", "feat: two")])
+        contribute_remote.fake.on_match(
+            lambda argv: "--format=%aI" in argv and argv[-1] == "m1",
+            stdout="2021-06-01T23:00:00+09:00\n",
+        )
+        contribute_remote.fake.on_match(
+            lambda argv: "--format=%aI" in argv and argv[-1] == "m2",
+            stdout="2021-06-01T10:00:00-05:00\n",
+        )
+        # Simulates a rebuild's reset tip committer date; ordering ignores it.
+        contribute_remote.fake.on_match(
+            lambda argv: "--format=%cI" in argv and argv[-1] == "m1b",
+            stdout="2024-01-01T00:00:00+00:00\n",
+        )
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert [batch.branch for batch in inv.batches] == [older_branch, newer_branch]
 
 
 class TestRunListStaleMainWarning:
     def test_warns_when_a_commit_is_squash_merged(
         self,
-        fake_subprocess: FakeSubprocess,
+        contribute_remote: ContributeRemote,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
-        fake_subprocess.on("cherry", "origin/main", "main", stdout="-abc123 old\n")
+        contribute_remote.main()
+        contribute_remote.fake.on("remote", stdout="origin\n")
+        contribute_remote.fake.on(
+            "cherry", "origin/main", "main", stdout="-abc123 old\n"
+        )
 
-        result = run_list(tmp_path, "tester", PROMPTS_PREFIX)
+        result = run_list(tmp_path, contribute_remote.login, PROMPTS_PREFIX)
 
         out = capsys.readouterr().out
         assert "git fetch origin main && git rebase origin/main" in out
+        assert any(line.startswith("  warning:") for line in out.splitlines())
         assert result == 0
 
-    def test_no_warning_without_a_stale_cherry_line(
+
+class TestRunListOut:
+    def test_writes_to_the_given_stream_and_not_stdout(
         self,
-        fake_subprocess: FakeSubprocess,
+        contribute_remote: ContributeRemote,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
+        contribute_remote.main(("m1", "feat: add foo"))
+        buf = io.StringIO()
 
-        run_list(tmp_path, "tester", PROMPTS_PREFIX)
+        result = run_list(tmp_path, contribute_remote.login, PROMPTS_PREFIX, buf)
 
-        out = capsys.readouterr().out
-        assert "git fetch" not in out
+        assert "  local only:" in buf.getvalue()
+        assert capsys.readouterr().out == ""
+        assert result == 0
 
-    def test_fetch_happens_before_cherry(
-        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+
+class TestRunList:
+    def _list(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> tuple[int, str]:
+        result = run_list(tmp_path, contribute_remote.login, PROMPTS_PREFIX)
+        return result, capsys.readouterr().out
+
+    def test_lists_every_pending_commit_regardless_of_a_sync_selection(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
-        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
-        fake_subprocess.on("cherry", "origin/main", "main", stdout="-abc123 old\n")
+        contribute_remote.main(
+            ("m1", "feat: add foo"), ("m2", "feat: add bar"), ("m3", "feat: add baz")
+        )
 
-        run_list(tmp_path, "tester", PROMPTS_PREFIX)
+        result, out = self._list(contribute_remote, tmp_path, capsys)
 
-        verbs = fake_subprocess.verbs
-        assert verbs.index("fetch --quiet origin main") < verbs.index(
-            "cherry origin/main main"
+        assert result == 0
+        assert all(f"feat: add {name}" in out for name in ("foo", "bar", "baz"))
+
+    def test_current_batch_with_open_pr_waits_for_review(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        pr = Pr(5, "OPEN", "https://github.com/o/r/pull/5")
+        contribute_remote.main(("m1", "feat: add foo"))
+        branch = contribute_remote.managed("add-foo", [("m1", "feat: add foo")], pr=pr)
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert "  waiting for review:" in out
+        assert f"    [#5 - needs review] {branch}" in out
+        assert result == 0
+
+    def test_pending_commit_in_unmanaged_pr_shown_under_its_pr(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.unmanaged_pr("someone/add-foo", 82, [("m1", "feat: add foo")])
+
+        _, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert "    [#82 - needs review] someone/add-foo" in out
+
+    def test_mixed_scope_commit_in_unmanaged_pr_is_manual_not_a_problem(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(
+            ("m1", "feat: mixed change"), paths={"m1": (_IN_SCOPE, _OUT_SCOPE)}
+        )
+        contribute_remote.unmanaged_pr(
+            "someone/mixed", 82, [("m1", "feat: mixed change")]
+        )
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert "    [manual PR] [#82 - needs review] someone/mixed" in out
+        assert "      m1 feat: mixed change [rule + code]" in out
+        assert "problems:" not in out
+        assert result == 0
+
+    def test_pending_commit_with_no_batch_or_pr_is_local_only_new(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert "  local only:" in out
+        assert f"    [new] {batch_branch(contribute_remote.login, 'add-foo')}" in out
+        assert result == 0
+
+    def test_merged_pr_commit_shown_as_merged_not_local_only(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        branch = contribute_remote.merged("add-foo", 7, [("c1", "feat: add foo")])
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert "  merged:" in out
+        assert f"    [#7] {branch}" in out
+        assert "local only:" not in out
+        assert result == 0
+
+    def test_regressed_batch_needs_sync_and_returns_exit_code_one(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.managed("add-foo", [("b1", "feat: add foo")])
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert "  needs sync:" in out
+        assert "[regressed]" in out
+        assert result == 1
+
+    def test_amended_batch_needs_sync_as_stale_and_returns_exit_code_one(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m2", "feat: add foo"))
+        branch = contribute_remote.managed("add-foo", [("b1", "feat: add foo")])
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert "  needs sync:" in out
+        assert f"    [stale] {branch}" in out
+        assert result == 1
+
+    def test_pushed_batch_without_a_pr_needs_a_pr(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        branch = contribute_remote.managed("add-foo", [("m1", "feat: add foo")])
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert out == f"  needs PR:\n    {branch}\n      m1 feat: add foo\n"
+        assert result == 0
+
+    @pytest.mark.parametrize(
+        ("draft", "decision", "heading", "label"),
+        [
+            (True, "", "draft", "#5"),
+            (False, "CHANGES_REQUESTED", "changes requested", "#5"),
+            (False, "APPROVED", "approved", "#5"),
+            (False, "REVIEW_REQUIRED", "waiting for review", "#5 - needs review"),
+        ],
+    )
+    def test_open_pr_stage_follows_its_review_state(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        draft: bool,
+        decision: str,
+        heading: str,
+        label: str,
+    ) -> None:
+        pr = Pr(5, "OPEN", "https://github.com/o/r/pull/5")
+        contribute_remote.main(("m1", "feat: add foo"))
+        branch = contribute_remote.managed("add-foo", [("m1", "feat: add foo")], pr=pr)
+        contribute_remote.review(5, draft=draft, decision=decision)
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert f"  {heading}:" in out
+        assert f"    [{label}] {branch}" in out
+        assert result == 0
+
+    def test_unmanaged_pr_with_two_commits_has_one_header(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        commits = [("m1", "feat: add foo"), ("m2", "feat: add bar")]
+        contribute_remote.main(*commits)
+        contribute_remote.unmanaged_pr("someone/add-foo", 82, commits)
+
+        _, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert out == (
+            "  waiting for review:\n"
+            "    [#82 - needs review] someone/add-foo\n"
+            "      m1 feat: add foo\n"
+            "      m2 feat: add bar\n"
+        )
+
+    def test_unmanaged_pr_commit_missing_from_main_is_flagged(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        commits = [("m1", "feat: add foo")]
+        contribute_remote.main(*commits)
+        contribute_remote.unmanaged_pr("someone/add-foo", 82, commits)
+        contribute_remote.pr_extra_commits(82, [("p2", "fix: tidy foo")])
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert out == (
+            "  waiting for review:\n"
+            "    [#82 - needs review] someone/add-foo\n"
+            "      m1 feat: add foo\n"
+            "      p2 fix: tidy foo [not on main]\n"
+            "  warning: these open PRs hold commits local main does not have - "
+            "cherry-pick them onto main:\n"
+            "    someone/add-foo: git cherry-pick p2\n"
+        )
+        assert result == 1
+
+    def test_rebased_unmanaged_pr_commit_counts_as_on_main(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"), ("m2", "feat: add bar"))
+        contribute_remote.unmanaged_pr(
+            "someone/add-foo", 82, [("p1", "feat: add foo"), ("p2", "feat: add bar")]
+        )
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert "not on main" not in out
+        assert result == 0
+
+    def test_pr_commit_with_same_subject_but_new_date_is_flagged(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        commits = [("m1", "feat: add foo")]
+        contribute_remote.main(*commits)
+        contribute_remote.unmanaged_pr("someone/add-foo", 82, commits)
+        contribute_remote.pr_extra_commits(
+            82, [("p2", "feat: add foo")], dates={"p2": "2024-02-01T00:00:00+00:00"}
+        )
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert "      p2 feat: add foo [not on main]" in out.splitlines()
+        assert result == 1
+
+    def test_pr_sharing_no_commit_with_main_stays_unlisted(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.unmanaged_pr("someone/other", 83, [("p1", "fix: other")])
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert "someone/other" not in out
+        assert "p1" not in out
+        assert result == 0
+
+    def test_regressed_managed_batch_is_not_also_flagged_as_not_on_main(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("b1", "feat: add foo"))
+        branch = contribute_remote.managed(
+            "add-foo",
+            [("b1", "feat: add foo"), ("b2", "feat: add lost")],
+            pr=Pr(5, "OPEN", "u"),
+        )
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert f"    [regressed] [#5 - needs review] {branch}" in out.splitlines()
+        assert "not on main" not in out
+        assert result == 1
+
+    def test_seven_pending_commits_preview_as_two_new_batches(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        commits = [(f"m{i}", f"feat: add thing{i}") for i in range(1, 8)]
+        contribute_remote.main(*commits)
+        first = batch_branch(contribute_remote.login, slug_for(commits[0][1]))
+        second = batch_branch(contribute_remote.login, slug_for(commits[5][1]))
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        lines = [f"      {sha} {subject}" for sha, subject in commits]
+        assert out.splitlines() == [
+            "  local only:",
+            f"    [new] {first}",
+            *lines[:5],
+            f"    [new] {second}",
+            *lines[5:],
+        ]
+        assert result == 0
+
+    def test_new_commit_beside_a_current_batch_shows_what_sync_adds(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        existing = [("b1", "feat: add foo"), ("b2", "feat: add bar")]
+        contribute_remote.main(*existing, ("m3", "feat: add baz"))
+        branch = contribute_remote.managed("add-foo", existing)
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert out == (
+            "  local only:\n"
+            f"    [adds 1] {branch}\n"
+            "      b1 feat: add foo\n"
+            "      b2 feat: add bar\n"
+            "      m3 feat: add baz\n"
+        )
+        assert result == 0
+
+    def test_code_only_commit_in_a_pr_is_a_manual_pr_under_that_pr(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "docs: note"), paths={"m1": (_OUT_SCOPE,)})
+        contribute_remote.unmanaged_pr("someone/notes", 82, [("p1", "docs: note")])
+
+        _, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert out == (
+            "  waiting for review:\n"
+            "    [manual PR] [#82 - needs review] someone/notes\n"
+            "      m1 docs: note [code]\n"
+        )
+
+    def test_code_only_commit_without_a_pr_needs_a_manual_pr(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "docs: note"), paths={"m1": (_OUT_SCOPE,)})
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert out == "  needs PR:\n    [manual PR]\n      m1 docs: note [code]\n"
+        assert result == 0
+
+    def test_code_only_commit_with_a_different_authored_date_is_not_matched(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "docs: note"), paths={"m1": (_OUT_SCOPE,)})
+        contribute_remote.unmanaged_pr(
+            "someone/notes",
+            82,
+            [("p1", "docs: note")],
+            dates={"p1": "2024-02-02T00:00:00+00:00"},
+        )
+
+        _, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert "  needs PR:" in out
+        assert "[#82" not in out
+
+    def test_two_code_only_commits_in_one_pr_share_a_header(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(
+            ("m1", "docs: note one"),
+            ("m2", "docs: note two"),
+            paths={"m1": (_OUT_SCOPE,), "m2": (_OUT_SCOPE,)},
+        )
+        contribute_remote.unmanaged_pr(
+            "someone/notes", 82, [("p1", "docs: note one"), ("p2", "docs: note two")]
+        )
+
+        _, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert out.count("[#82 - needs review]") == 1
+        assert "      m1 docs: note one [code]" in out
+        assert "      m2 docs: note two [code]" in out
+
+    def test_mixed_scope_commit_without_a_pr_needs_a_manual_pr(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(
+            ("m1", "feat: mixed change"), paths={"m1": (_IN_SCOPE, _OUT_SCOPE)}
+        )
+
+        _, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert out == (
+            "  needs PR:\n    [manual PR]\n      m1 feat: mixed change [rule + code]\n"
+        )
+
+    def test_nothing_pending_says_so(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main()
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert out == "  no pending changes\n"
+        assert result == 0
+
+    def test_stages_lay_out_in_order_with_manual_commits_after_local_only(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(
+            ("m1", "feat: add foo"),
+            ("m2", "docs: note thing"),
+            ("m3", "feat: mixed change"),
+            paths={"m2": (_OUT_SCOPE,), "m3": (_IN_SCOPE, _OUT_SCOPE)},
+        )
+
+        _, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert out == (
+            "  local only:\n"
+            "    [new] tester/contribute/add-foo\n"
+            "      m1 feat: add foo\n"
+            "  needs PR:\n"
+            "    [manual PR]\n"
+            "      m2 docs: note thing [code]\n"
+            "      m3 feat: mixed change [rule + code]\n"
+        )
+
+    def test_non_conventional_commit_listed_as_a_problem_and_fails(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "add foo"))
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert "  problems:" in out
+        assert "    m1 add foo [non-conventional-subject]" in out
+        assert result == 1
+
+    def test_piped_output_has_no_color_codes(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+
+        _, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert "  local only:" in out
+        assert "\033" not in out
+
+    def test_queries_open_prs_once(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+
+        self._list(contribute_remote, tmp_path, capsys)
+
+        open_lists = contribute_remote.fake.matching(
+            "gh", "pr", "list", "--state", "open"
+        )
+        assert len(open_lists) == 1
+
+    def test_skipped_pr_view_warns_naming_the_pr_and_keeps_exit_code(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.merged("add-foo", 7, [("c1", "feat: add foo")])
+        contribute_remote.fail_pr_view(7)
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert "warning" in out
+        assert "#7" in out
+        assert result == 0
+
+    def test_open_pr_commits_come_from_pr_view_and_a_failed_view_warns(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.unmanaged_pr("someone/add-foo", 82, [("m1", "feat: add foo")])
+        contribute_remote.fail_pr_view(82)
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert contribute_remote.fake.matching("gh", "pr", "view", "82")
+        assert "warning" in out
+        assert "#82" in out
+        assert result == 0
+
+
+class TestRunSyncDoesNotQueryOpenPrs:
+    def test_dry_run_never_lists_open_prs(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+
+        run_sync(tmp_path, contribute_remote.login, PROMPTS_PREFIX, False, None, None)
+
+        assert (
+            contribute_remote.fake.matching("gh", "pr", "list", "--state", "open") == []
         )
 
 
 class TestRunSyncStaleMainWarning:
-    def test_warns_when_a_commit_is_squash_merged(
-        self,
-        fake_subprocess: FakeSubprocess,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
+    def test_regressed_batch_is_neither_rebuilt_nor_pushed(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
     ) -> None:
-        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
-        fake_subprocess.on("cherry", "origin/main", "main", stdout="-abc123 old\n")
-
-        run_sync(tmp_path, "tester", PROMPTS_PREFIX, False, None, None)
-
-        out = capsys.readouterr().out
-        assert "git fetch origin main && git rebase origin/main" in out
-
-    def test_no_warning_without_a_stale_cherry_line(
-        self,
-        fake_subprocess: FakeSubprocess,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
-
-        run_sync(tmp_path, "tester", PROMPTS_PREFIX, False, None, None)
-
-        out = capsys.readouterr().out
-        assert "git fetch" not in out
-
-    def test_fetch_happens_before_cherry(
-        self, fake_subprocess: FakeSubprocess, tmp_path: Path
-    ) -> None:
-        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
-        fake_subprocess.on("cherry", "origin/main", "main", stdout="-abc123 old\n")
-
-        run_sync(tmp_path, "tester", PROMPTS_PREFIX, False, None, None)
-
-        verbs = fake_subprocess.verbs
-        assert verbs.index("fetch --quiet origin main") < verbs.index(
-            "cherry origin/main main"
+        contribute_remote.managed("foo", [("b1", "feat: foo")])
+        contribute_remote.fake.on(
+            "gh", "repo", "view", stdout=json.dumps({"viewerPermission": "ADMIN"})
         )
+
+        with (
+            patch("llm_prompts.contribute.apply_batch") as mock_apply_batch,
+            patch("llm_prompts.contribute.run_list", return_value=0),
+        ):
+            result = run_sync(
+                tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
+            )
+
+        mock_apply_batch.assert_not_called()
+        assert contribute_remote.fake.matching("push", "--force-with-lease") == []
+        assert result == 1
 
 
 class TestRunSyncApplyConflict:
-    def test_conflict_names_the_blocking_commit(
+    def test_conflict_pushes_nothing_for_that_batch_and_fails(
         self,
-        fake_subprocess: FakeSubprocess,
+        contribute_remote: ContributeRemote,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        path = f"{PROMPTS_PREFIX}shared/skills/foo/SKILL.md"
-        fake_subprocess.on(
-            "log",
-            "--format=%H%x09%s",
-            stdout=fake_subprocess.sha_subjects(
-                ("aaa111", "feat: add foo skill"),
-                ("bbb222", "feat: tweak foo again"),
-            ),
-        )
-        fake_subprocess.on_match(lambda argv: "show" in argv, stdout=f"{path}\n")
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
-        fake_subprocess.on(
+        contribute_remote.main(("aaa111", "feat: add foo skill"))
+        contribute_remote.fake.on(
             "gh", "repo", "view", stdout=json.dumps({"viewerPermission": "ADMIN"})
         )
 
-        with patch(
-            "llm_prompts.contribute.apply_group",
-            side_effect=[
-                ("picked", (), ""),
-                (
-                    "conflict",
-                    (path,),
-                    "error: could not apply bbb222... feat: tweak foo again",
+        with (
+            patch(
+                "llm_prompts.contribute.apply_batch",
+                return_value=ApplyResult(
+                    outcome="conflict",
+                    mode="new",
+                    paths=("foo.md",),
+                    message="error: could not apply aaa111...",
                 ),
-            ],
+            ),
+            patch("llm_prompts.contribute.run_list", return_value=0),
         ):
-            run_sync(tmp_path, "tester", PROMPTS_PREFIX, True, None, None)
+            result = run_sync(
+                tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
+            )
 
         out = capsys.readouterr().out
-        conflict_line = next(
-            line for line in out.splitlines() if "tweak-foo-again" in line
-        )
-        assert "conflict" in conflict_line
-        assert "depends on unmerged commit(s) aaa111" in conflict_line
-        assert "feat: add foo skill" in conflict_line
+        assert "conflict" in out
+        assert result == 1
+        assert contribute_remote.fake.matching("push") == []
 
-    def test_conflict_without_a_blocker_has_no_suggestion(
+
+class TestRunSyncApplyCommitsConflict:
+    def test_conflict_names_earlier_unselected_commits_touching_the_same_paths(
         self,
-        fake_subprocess: FakeSubprocess,
+        contribute_remote: ContributeRemote,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        path = f"{PROMPTS_PREFIX}shared/skills/foo/SKILL.md"
-        fake_subprocess.on(
-            "log",
-            "--format=%H%x09%s",
-            stdout=fake_subprocess.sha_subjects(("bbb222", "feat: tweak foo again")),
+        shared = f"{PROMPTS_PREFIX}shared/rules/foo.md"
+        contribute_remote.main(
+            ("m1", "feat: add foo"),
+            ("m2", "feat: tweak foo"),
+            paths={"m1": [shared], "m2": [shared]},
         )
-        fake_subprocess.on_match(lambda argv: "show" in argv, stdout=f"{path}\n")
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
-        fake_subprocess.on(
+        contribute_remote.fake.on(
             "gh", "repo", "view", stdout=json.dumps({"viewerPermission": "ADMIN"})
         )
 
-        with patch(
-            "llm_prompts.contribute.apply_group",
-            return_value=("conflict", (path,), "error: could not apply bbb222..."),
+        with (
+            patch(
+                "llm_prompts.contribute.apply_batch",
+                return_value=ApplyResult(
+                    outcome="conflict", mode="new", paths=(shared,), message="error"
+                ),
+            ),
+            patch("llm_prompts.contribute.run_list", return_value=0),
         ):
-            run_sync(tmp_path, "tester", PROMPTS_PREFIX, True, None, None)
+            result = run_sync(
+                tmp_path,
+                contribute_remote.login,
+                PROMPTS_PREFIX,
+                True,
+                None,
+                None,
+                ("m2",),
+            )
 
         out = capsys.readouterr().out
-        conflict_line = next(
-            line for line in out.splitlines() if "tweak-foo-again" in line
+        assert "blocked by earlier unselected commits: m1 feat: add foo" in out
+        assert result == 1
+
+
+class TestRunSyncApplySkippedPrView:
+    def test_skipped_pr_view_refuses_before_any_push_or_pr_call(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.merged("add-foo", 7, [("c1", "feat: add foo")])
+        contribute_remote.fail_pr_view(7)
+        contribute_remote.fake.on(
+            "gh", "repo", "view", stdout=json.dumps({"viewerPermission": "ADMIN"})
         )
-        assert "conflict" in conflict_line
-        assert "depends on" not in conflict_line
+
+        with patch("llm_prompts.contribute.apply_batch") as mock_apply_batch:
+            result = run_sync(
+                tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
+            )
+
+        assert "#7" in capsys.readouterr().out
+        assert result != 0
+        mock_apply_batch.assert_not_called()
+        assert contribute_remote.fake.matching("push") == []
+        assert contribute_remote.fake.matching("gh", "pr", "create") == []
+        assert contribute_remote.fake.matching("gh", "pr", "edit") == []
 
 
-class TestStalenessIntegration:
-    """Exercise the staleness mechanism against a real git repo, no network."""
+class TestBatchingEndToEnd:
+    """Drive real user journeys through run_sync/run_list against a faked remote."""
 
-    def _git(self, repo: Path, *args: str) -> str:
-        result = subprocess.run(
-            ["git", "-C", str(repo), *args],
-            capture_output=True,
-            text=True,
-            check=True,
+    def _allow_apply(self, contribute_remote: ContributeRemote) -> None:
+        contribute_remote.fake.on(
+            "gh", "repo", "view", stdout=json.dumps({"viewerPermission": "ADMIN"})
         )
-        return result.stdout
+        contribute_remote.fake.on("branch", "--list", stdout="")
+        contribute_remote.fake.on("worktree", "add")
+        contribute_remote.fake.on("switch", "-c")
+        contribute_remote.fake.on("cherry-pick")
+        contribute_remote.fake.on("worktree", "remove")
+        contribute_remote.fake.on("push")
+        contribute_remote.fake.on("branch", "-D")
 
-    def test_reword_of_source_commit_flips_staleness(self, tmp_path: Path) -> None:
-        repo = tmp_path
-        self._git(repo, "init", "-q", "-b", "main")
-        self._git(repo, "config", "user.email", "a@b.c")
-        self._git(repo, "config", "user.name", "Test")
-        (repo / "README.md").write_text("base\n")
-        self._git(repo, "add", ".")
-        self._git(repo, "commit", "-q", "-m", "chore: base")
+    def test_three_pending_commits_land_in_one_current_batch(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        commits = [
+            ("m1", "feat: add foo"),
+            ("m2", "feat: add bar"),
+            ("m3", "feat: add baz"),
+        ]
+        contribute_remote.main(*commits)
+        self._allow_apply(contribute_remote)
 
-        skill_dir = (
-            repo / "src" / "llm_prompts" / "prompts" / "shared" / "skills" / "demo"
+        apply_result = run_sync(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
         )
-        skill_dir.mkdir(parents=True)
-        (skill_dir / "SKILL.md").write_text("hello\n")
-        self._git(repo, "add", ".")
-        self._git(repo, "commit", "-q", "-m", "feat: add demo skill")
-        main_sha = self._git(repo, "rev-parse", "HEAD").strip()
-        rel_path = str((skill_dir / "SKILL.md").relative_to(repo))
+        assert apply_result == 0
 
-        commit = Commit(main_sha, "feat: add demo skill", (rel_path,))
-        slug = slug_for(commit.subject)
-        branch = branch_name("tester", slug)
-        group = Group((commit,), slug, branch, ())
+        branch = contribute_remote.managed("add-foo", commits)
+        capsys.readouterr()
+        list_result = run_list(tmp_path, contribute_remote.login, PROMPTS_PREFIX)
 
-        apply_group(repo, group, "main~1", PROMPTS_PREFIX)
+        out = capsys.readouterr().out
+        assert "  needs PR:" in out
+        assert f"\n    {branch}\n" in out
+        assert list_result == 0
 
-        branch_diff = self._git(repo, "diff", "main~1", branch)
-        main_diff = self._git(repo, "diff", "main~1", "main")
-        assert branch_diff == main_diff
+    def test_new_commit_appends_to_existing_batch_without_force(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        existing = [("b1", "feat: add foo"), ("b2", "feat: add bar")]
+        contribute_remote.main(*existing, ("m3", "feat: add baz"))
+        contribute_remote.managed("add-foo", existing)
+        self._allow_apply(contribute_remote)
 
-        fresh_state = classify(
-            group,
-            branch,
-            {branch},
-            None,
-            (commit.subject,),
-            main_diff,
-            (commit.subject,),
-            branch_diff,
-            False,
+        result = run_sync(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
         )
-        assert fresh_state.stale is False
 
-        self._git(repo, "commit", "--amend", "-q", "-m", "feat: add demo skill v2")
-        reworded_diff = self._git(repo, "diff", "main~1", "main")
-        assert reworded_diff == main_diff
+        assert result == 0
+        push_call = contribute_remote.fake.matching("push")[0]
+        assert "--force-with-lease" not in push_call
+        branch = batch_branch(contribute_remote.login, "add-foo")
+        assert branch in push_call
 
-        stale_state = classify(
-            group,
-            branch,
-            {branch},
-            None,
-            ("feat: add demo skill v2",),
-            reworded_diff,
-            (commit.subject,),
-            branch_diff,
-            False,
+    def test_six_pending_groups_split_into_batches_of_five_and_one(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        commits = [(f"m{i}", f"feat: add thing{i}") for i in range(1, 7)]
+        contribute_remote.main(*commits)
+        self._allow_apply(contribute_remote)
+
+        result = run_sync(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
         )
-        assert stale_state.stale is True
+        assert result == 0
+
+        first_branch = contribute_remote.managed("add-thing1", commits[:5])
+        second_branch = contribute_remote.managed("add-thing6", commits[5:])
+        capsys.readouterr()
+        run_list(tmp_path, contribute_remote.login, PROMPTS_PREFIX)
+
+        lines = capsys.readouterr().out.splitlines()
+        first_at = lines.index(f"    {first_branch}")
+        second_at = lines.index(f"    {second_branch}")
+        assert lines[first_at + 1 : second_at] == [
+            f"      {sha} {subject}" for sha, subject in commits[:5]
+        ]
+        assert lines[second_at + 1 :] == [
+            f"      {sha} {subject}" for sha, subject in commits[5:]
+        ]
+
+    def test_new_commit_after_merge_starts_new_batch_without_repushing_merged(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"), ("m2", "feat: add bar"))
+        contribute_remote.merged("add-foo", 10, [("c1", "feat: add foo")])
+        self._allow_apply(contribute_remote)
+
+        result = run_sync(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
+        )
+
+        assert result == 0
+        pushed_branches = [call[-1] for call in contribute_remote.fake.matching("push")]
+        old_branch = batch_branch(contribute_remote.login, "add-foo")
+        new_branch = batch_branch(contribute_remote.login, "add-bar")
+        assert old_branch not in pushed_branches
+        assert new_branch in pushed_branches
+
+    def test_amended_commit_rebuilds_batch_with_force_and_shows_current(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m2", "feat: add foo"))
+        contribute_remote.managed("add-foo", [("b1", "feat: add foo")])
+        self._allow_apply(contribute_remote)
+
+        result = run_sync(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
+        )
+
+        assert result == 0
+        push_call = contribute_remote.fake.matching("push")[0]
+        assert "--force-with-lease" in push_call
+
+        contribute_remote.managed("add-foo", [("m2", "feat: add foo")])
+        capsys.readouterr()
+        list_result = run_list(tmp_path, contribute_remote.login, PROMPTS_PREFIX)
+
+        out = capsys.readouterr().out
+        assert "  needs PR:" in out
+        assert "needs sync" not in out
+        assert list_result == 0
+
+    def test_commit_already_in_unmanaged_pr_is_excluded_and_shown_as_in_pr(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.unmanaged_pr("someone/add-foo", 82, [("m1", "feat: add foo")])
+        self._allow_apply(contribute_remote)
+
+        result = run_sync(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
+        )
+
+        assert contribute_remote.fake.matching("cherry-pick") == []
+        assert contribute_remote.fake.matching("push") == []
+        assert result == 0
+
+        capsys.readouterr()
+        run_list(tmp_path, contribute_remote.login, PROMPTS_PREFIX)
+        out = capsys.readouterr().out
+        assert "    [#82 - needs review] someone/add-foo" in out
+
+
+class TestApplyBatch:
+    def test_append_keeps_existing_shas_and_adds_only_new_commits(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        _stub_cherry_pick(fake_subprocess)
+
+        branch = "tester/contribute/foo"
+        new_commit = Commit("bbb222", "feat: new change", (f"{PROMPTS_PREFIX}bar.md",))
+        group = Group((new_commit,), "foo", branch, ())
+        plan = _plan(branch, group, "append")
+        batch = Batch(branch, "foo", None, (), Match({}, frozenset(), ()))
+
+        with patch("llm_prompts.contribute.check", return_value=_passing_check()):
+            result = apply_batch(tmp_path, plan, "alt", PROMPTS_PREFIX, batch)
+
+        assert result.outcome == "picked"
+        assert result.mode == "append"
+        worktree_call = fake_subprocess.matching("worktree", "add")[0]
+        assert worktree_call[-1] == f"origin/{branch}"
+        cherry_pick_shas = [
+            sha for call in fake_subprocess.matching("cherry-pick") for sha in call[4:]
+        ]
+        assert cherry_pick_shas == ["bbb222"]
+
+    def test_append_excludes_groups_the_batch_already_owns(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        _stub_cherry_pick(fake_subprocess)
+
+        branch = "tester/contribute/foo"
+        owned_commit = Commit("aaa111", "feat: a", (f"{PROMPTS_PREFIX}a.md",))
+        new_commit = Commit("bbb222", "feat: new change", (f"{PROMPTS_PREFIX}bar.md",))
+        owned_group = Group((owned_commit,), "a", branch, ())
+        new_group = Group((new_commit,), "foo", branch, ())
+        plan = BatchPlan(
+            branch=branch,
+            slug="foo",
+            pr=None,
+            groups=(owned_group, new_group),
+            mode="append",
+        )
+        branch_commit = Commit("ccc333", "feat: a", ())
+        match = Match(owned={"ccc333": owned_commit}, amended=frozenset(), unmatched=())
+        batch = Batch(branch, "foo", None, (branch_commit,), match)
+
+        with patch("llm_prompts.contribute.check", return_value=_passing_check()):
+            result = apply_batch(tmp_path, plan, "alt", PROMPTS_PREFIX, batch)
+
+        assert result.outcome == "picked"
+        cherry_pick_shas = [
+            sha for call in fake_subprocess.matching("cherry-pick") for sha in call[4:]
+        ]
+        assert cherry_pick_shas == ["bbb222"]
+
+    def test_rebuild_is_base_plus_every_groups_commits_in_order(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        _stub_cherry_pick(fake_subprocess)
+
+        branch = "tester/contribute/foo"
+        commit_a = Commit("aaa111", "feat: a", (f"{PROMPTS_PREFIX}a.md",))
+        commit_b = Commit("bbb222", "feat: b", (f"{PROMPTS_PREFIX}b.md",))
+        group_a = Group((commit_a,), "a", branch, ())
+        group_b = Group((commit_b,), "b", branch, ())
+        plan = BatchPlan(
+            branch=branch,
+            slug="foo",
+            pr=None,
+            groups=(group_a, group_b),
+            mode="rebuild",
+        )
+
+        with patch("llm_prompts.contribute.check", return_value=_passing_check()):
+            result = apply_batch(tmp_path, plan, "alt", PROMPTS_PREFIX)
+
+        assert result.outcome == "picked"
+        assert result.mode == "rebuild"
+        worktree_call = fake_subprocess.matching("worktree", "add")[0]
+        assert worktree_call[-1] == "alt"
+        cherry_pick_shas = [
+            sha for call in fake_subprocess.matching("cherry-pick") for sha in call[4:]
+        ]
+        assert cherry_pick_shas == ["aaa111", "bbb222"]
+
+    def test_new_is_base_plus_the_plans_groups(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        _stub_cherry_pick(fake_subprocess)
+
+        branch = "tester/contribute/foo"
+        commit = Commit("aaa111", "feat: a", (f"{PROMPTS_PREFIX}a.md",))
+        group = Group((commit,), "foo", branch, ())
+        plan = _plan(branch, group, "new")
+
+        with patch("llm_prompts.contribute.check", return_value=_passing_check()):
+            result = apply_batch(tmp_path, plan, "alt", PROMPTS_PREFIX)
+
+        assert result.outcome == "picked"
+        assert result.mode == "new"
+        worktree_call = fake_subprocess.matching("worktree", "add")[0]
+        assert worktree_call[-1] == "alt"
+        cherry_pick_shas = [
+            sha for call in fake_subprocess.matching("cherry-pick") for sha in call[4:]
+        ]
+        assert cherry_pick_shas == ["aaa111"]
+
+    def test_existing_local_branch_of_the_same_name_still_succeeds(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        branch = "tester/contribute/foo"
+        fake_subprocess.on("branch", "--list", stdout=f"{branch}\n")
+        fake_subprocess.on("branch", "-D")
+        fake_subprocess.on("worktree", "add")
+        fake_subprocess.on("switch", "-c")
+        fake_subprocess.on("cherry-pick")
+        fake_subprocess.on("worktree", "remove")
+
+        commit = Commit("aaa111", "feat: a", (f"{PROMPTS_PREFIX}a.md",))
+        group = Group((commit,), "foo", branch, ())
+        plan = _plan(branch, group, "new")
+
+        with patch("llm_prompts.contribute.check", return_value=_passing_check()):
+            result = apply_batch(tmp_path, plan, "alt", PROMPTS_PREFIX)
+
+        assert result.outcome == "picked"
+        assert fake_subprocess.matching("branch", "-D") != []
 
 
 class TestApplyGroupConflict:
@@ -771,7 +2180,9 @@ class TestApplyGroupConflict:
         self, fake_subprocess: FakeSubprocess, *, branch_exists: bool
     ) -> None:
         fake_subprocess.on(
-            "branch", "--list", stdout="alexfayers/tweak-foo\n" if branch_exists else ""
+            "branch",
+            "--list",
+            stdout="tester/contribute/foo\n" if branch_exists else "",
         )
         fake_subprocess.on("branch", "-D")
         fake_subprocess.on(
@@ -787,55 +2198,69 @@ class TestApplyGroupConflict:
             "diff", "--name-only", "--diff-filter=U", stdout="file.txt\n"
         )
 
-    def test_conflicting_cherry_pick_returns_detail(
+    def test_rebuild_conflict_returns_conflict_with_paths_and_message(
         self, fake_subprocess: FakeSubprocess, tmp_path: Path
     ) -> None:
         self._register_conflicting_cherry_pick(fake_subprocess, branch_exists=False)
 
         commit = Commit("aaa111", "feat: main change", ("file.txt",))
-        slug = slug_for(commit.subject)
-        branch = branch_name("tester", slug)
-        group = Group((commit,), slug, branch, ())
+        branch = "tester/contribute/foo"
+        group = Group((commit,), "foo", branch, ())
+        plan = _plan(branch, group, "rebuild")
 
-        outcome, paths, message = apply_group(tmp_path, group, "alt", PROMPTS_PREFIX)
+        result = apply_batch(tmp_path, plan, "alt", PROMPTS_PREFIX)
 
-        assert outcome == "conflict"
-        assert paths == ("file.txt",)
-        assert message == "error: could not apply aaa111... feat: main change"
-        assert fake_subprocess.matching("branch", "-D") == []
+        assert result.outcome == "conflict"
+        assert result.mode == "rebuild"
+        assert result.paths == ("file.txt",)
+        assert result.message == "error: could not apply aaa111... feat: main change"
 
-    def test_stale_branch_is_deleted_before_reapplying(
+    def test_append_conflict_falls_back_to_rebuild(
         self, fake_subprocess: FakeSubprocess, tmp_path: Path
     ) -> None:
-        self._register_conflicting_cherry_pick(fake_subprocess, branch_exists=True)
+        fake_subprocess.on("branch", "--list", stdout="")
+        fake_subprocess.on("branch", "-D")
+        fake_subprocess.on("worktree", "add")
+        fake_subprocess.on("switch", "-c")
+        fake_subprocess.on(
+            "cherry-pick",
+            returncode=[1, 0],
+            stderr=["error: could not apply bbb222... feat: new change\n", ""],
+        )
+        fake_subprocess.on("cherry-pick", "--abort")
+        fake_subprocess.on(
+            "diff", "--name-only", "--diff-filter=U", stdout="file.txt\n"
+        )
+        fake_subprocess.on("worktree", "remove")
 
-        commit = Commit("aaa111", "feat: main change", ("file.txt",))
-        slug = slug_for(commit.subject)
-        branch = branch_name("tester", slug)
-        group = Group((commit,), slug, branch, ())
+        commit = Commit("bbb222", "feat: new change", (f"{PROMPTS_PREFIX}bar.md",))
+        branch = "tester/contribute/foo"
+        group = Group((commit,), "foo", branch, ())
+        plan = _plan(branch, group, "append")
+        batch = Batch(branch, "foo", None, (), Match({}, frozenset(), ()))
 
-        outcome, _paths, _message = apply_group(tmp_path, group, "alt", PROMPTS_PREFIX)
+        with patch("llm_prompts.contribute.check", return_value=_passing_check()):
+            result = apply_batch(tmp_path, plan, "alt", PROMPTS_PREFIX, batch)
 
-        assert outcome == "conflict"
-        assert fake_subprocess.matching("branch", "-D") != []
+        assert result.outcome == "picked"
+        assert result.mode == "rebuild"
+        abort_call = fake_subprocess.matching("cherry-pick", "--abort")[0]
+        abort_index = fake_subprocess.commands.index(abort_call)
+        assert any(
+            "alt" in call for call in fake_subprocess.commands[abort_index + 1 :]
+        )
 
 
 class TestApplyGroupOversize:
     def test_failed_size_check_returns_its_report(
         self, fake_subprocess: FakeSubprocess, tmp_path: Path
     ) -> None:
-        fake_subprocess.on("branch", "--list", stdout="")
-        fake_subprocess.on("worktree", "add")
-        fake_subprocess.on("switch", "-c")
-        fake_subprocess.on("cherry-pick")
-        fake_subprocess.on("worktree", "remove")
+        _stub_cherry_pick(fake_subprocess)
 
         commit = Commit("aaa111", "feat: main change", (f"{PROMPTS_PREFIX}foo.md",))
-        slug = slug_for(commit.subject)
-        branch = branch_name("tester", slug)
-        group = Group((commit,), slug, branch, ())
-
-        from llm_prompts.size_guard import CheckResult
+        branch = "tester/contribute/foo"
+        group = Group((commit,), "foo", branch, ())
+        plan = _plan(branch, group, "new")
 
         with patch(
             "llm_prompts.contribute.check",
@@ -843,262 +2268,223 @@ class TestApplyGroupOversize:
                 passed=False, artifacts=[], violations=[], report="too big"
             ),
         ):
-            outcome, paths, message = apply_group(
-                tmp_path, group, "alt", PROMPTS_PREFIX
-            )
+            result = apply_batch(tmp_path, plan, "alt", PROMPTS_PREFIX)
 
-        assert outcome == "oversize"
-        assert paths == ()
-        assert message == "too big"
-
-    def test_passed_size_check_returns_picked(
-        self, fake_subprocess: FakeSubprocess, tmp_path: Path
-    ) -> None:
-        fake_subprocess.on("branch", "--list", stdout="")
-        fake_subprocess.on("worktree", "add")
-        fake_subprocess.on("switch", "-c")
-        fake_subprocess.on("cherry-pick")
-        fake_subprocess.on("worktree", "remove")
-
-        commit = Commit("aaa111", "feat: main change", (f"{PROMPTS_PREFIX}foo.md",))
-        slug = slug_for(commit.subject)
-        branch = branch_name("tester", slug)
-        group = Group((commit,), slug, branch, ())
-
-        from llm_prompts.size_guard import CheckResult
-
-        with patch(
-            "llm_prompts.contribute.check",
-            return_value=CheckResult(
-                passed=True, artifacts=[], violations=[], report=""
-            ),
-        ):
-            outcome, paths, message = apply_group(
-                tmp_path, group, "alt", PROMPTS_PREFIX
-            )
-
-        assert outcome == "picked"
-        assert paths == ()
-        assert message == ""
-
-
-class TestRunSyncApplyOversize:
-    def test_oversize_is_reported_and_not_pushed_but_others_still_push(
-        self,
-        fake_subprocess: FakeSubprocess,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        fake_subprocess.on(
-            "log",
-            "--format=%H%x09%s",
-            stdout=fake_subprocess.sha_subjects(
-                ("aaa111", "feat: add foo skill"),
-                ("bbb222", "feat: add bar skill"),
-            ),
-        )
-        fake_subprocess.on_match(
-            lambda argv: "show" in argv, stdout=f"{PROMPTS_PREFIX}foo.md\n"
-        )
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
-        fake_subprocess.on(
-            "gh", "repo", "view", stdout=json.dumps({"viewerPermission": "ADMIN"})
-        )
-        fake_subprocess.on("push")
-
-        with patch(
-            "llm_prompts.contribute.apply_group",
-            side_effect=[
-                ("oversize", (), "too big"),
-                ("picked", (), ""),
-            ],
-        ):
-            result = run_sync(tmp_path, "tester", PROMPTS_PREFIX, True, None, None)
-
-        out = capsys.readouterr().out
-        assert "size check failed" in out
-        assert "too big" in out
-        assert result == 1
-        assert len(fake_subprocess.matching("push", "--force-with-lease")) == 1
+        assert result.outcome == "oversize"
+        assert result.paths == ()
+        assert result.message == "too big"
 
 
 class TestRunSyncApplyPickedCleanup:
-    def test_successful_push_deletes_the_local_branch(
-        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    def test_append_plan_pushes_without_force(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
     ) -> None:
-        fake_subprocess.on(
-            "log",
-            "--format=%H%x09%s",
-            stdout=fake_subprocess.sha_subjects(("aaa111", "feat: add foo skill")),
-        )
-        fake_subprocess.on_match(
-            lambda argv: "show" in argv, stdout=f"{PROMPTS_PREFIX}foo.md\n"
-        )
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
-        fake_subprocess.on(
+        contribute_remote.main(("aaa111", "feat: add foo skill"))
+        contribute_remote.fake.on(
             "gh", "repo", "view", stdout=json.dumps({"viewerPermission": "ADMIN"})
         )
-        fake_subprocess.on("push")
-        fake_subprocess.on("branch", "-D")
-
-        with patch(
-            "llm_prompts.contribute.apply_group",
-            return_value=("picked", (), ""),
-        ):
-            result = run_sync(tmp_path, "tester", PROMPTS_PREFIX, True, None, None)
-
-        assert result == 0
-        assert fake_subprocess.matching("branch", "-D") != []
-
-
-class TestRunSyncApplyListsAfter:
-    def test_apply_prints_list_after_syncing_without_affecting_exit_code(
-        self,
-        fake_subprocess: FakeSubprocess,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        fake_subprocess.on(
-            "log",
-            "--format=%H%x09%s",
-            stdout=fake_subprocess.sha_subjects(("aaa111", "feat: add foo skill")),
-        )
-        fake_subprocess.on_match(
-            lambda argv: "show" in argv, stdout=f"{PROMPTS_PREFIX}foo.md\n"
-        )
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
-        fake_subprocess.on(
-            "gh", "repo", "view", stdout=json.dumps({"viewerPermission": "ADMIN"})
-        )
-        fake_subprocess.on("push")
+        contribute_remote.fake.on("push")
+        contribute_remote.fake.on("branch", "-D")
 
         with (
             patch(
-                "llm_prompts.contribute.apply_group",
-                return_value=("picked", (), ""),
+                "llm_prompts.contribute.apply_batch",
+                return_value=ApplyResult(
+                    outcome="picked", mode="append", paths=(), message=""
+                ),
             ),
-            patch(
-                "llm_prompts.contribute.run_list",
-                side_effect=lambda repo, login, prefix: print("LIST-CALLED") or 1,
-            ) as mock_run_list,
+            patch("llm_prompts.contribute.run_list", return_value=0),
         ):
-            result = run_sync(tmp_path, "tester", PROMPTS_PREFIX, True, None, None)
-
-        out = capsys.readouterr().out
-        pushed_index = out.index("pushed")
-        list_index = out.index("LIST-CALLED")
-        assert pushed_index < list_index
-        assert out[pushed_index:list_index].count("\n\n") >= 1
-        mock_run_list.assert_called_once_with(tmp_path, "tester", PROMPTS_PREFIX)
-        assert result == 0
-
-    def test_dry_run_does_not_print_the_list(
-        self, fake_subprocess: FakeSubprocess, tmp_path: Path
-    ) -> None:
-        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
-
-        with patch("llm_prompts.contribute.run_list") as mock_run_list:
-            run_sync(tmp_path, "tester", PROMPTS_PREFIX, False, None, None)
-
-        mock_run_list.assert_not_called()
-
-    def test_cleanup_does_not_print_the_list(
-        self, fake_subprocess: FakeSubprocess, tmp_path: Path
-    ) -> None:
-        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on("ls-remote", "--heads", "origin", stdout="")
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
-
-        with patch("llm_prompts.contribute.run_list") as mock_run_list:
-            run_sync(
-                tmp_path, "tester", PROMPTS_PREFIX, True, None, "nonexistent-branch"
+            result = run_sync(
+                tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
             )
 
-        mock_run_list.assert_not_called()
+        assert result == 0
+        push_call = contribute_remote.fake.matching("push")[0]
+        assert "--force-with-lease" not in push_call
+
+    def test_rebuild_or_new_plan_pushes_with_force_with_lease(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("aaa111", "feat: add foo skill"))
+        contribute_remote.fake.on(
+            "gh", "repo", "view", stdout=json.dumps({"viewerPermission": "ADMIN"})
+        )
+        contribute_remote.fake.on("push")
+        contribute_remote.fake.on("branch", "-D")
+
+        with (
+            patch(
+                "llm_prompts.contribute.apply_batch",
+                return_value=ApplyResult(
+                    outcome="picked", mode="new", paths=(), message=""
+                ),
+            ),
+            patch("llm_prompts.contribute.run_list", return_value=0),
+        ):
+            result = run_sync(
+                tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
+            )
+
+        assert result == 0
+        push_call = contribute_remote.fake.matching("push")[0]
+        assert "--force-with-lease" in push_call
+
+
+class TestRunSyncApplyListsAfter:
+    def test_only_applies_just_the_named_batch(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1a", "feat: existing"), ("m2a", "feat: other"))
+        first = contribute_remote.managed("existing-batch", [("b1", "feat: existing")])
+        second = contribute_remote.managed("other-batch", [("b2", "feat: other")])
+        contribute_remote.fake.on(
+            "gh", "repo", "view", stdout=json.dumps({"viewerPermission": "ADMIN"})
+        )
+        contribute_remote.fake.on("push")
+        contribute_remote.fake.on("branch", "-D")
+
+        with (
+            patch(
+                "llm_prompts.contribute.apply_batch",
+                return_value=ApplyResult(
+                    outcome="picked", mode="rebuild", paths=(), message=""
+                ),
+            ) as mock_apply_batch,
+            patch("llm_prompts.contribute.run_list", return_value=0),
+        ):
+            run_sync(
+                tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, first, None
+            )
+
+        applied_branches = [
+            call.args[1].branch for call in mock_apply_batch.call_args_list
+        ]
+        assert applied_branches == [first]
+        assert not any(
+            second in call for call in contribute_remote.fake.matching("push")
+        )
+
+
+class TestRunSyncApplyCommits:
+    def test_commits_pushes_only_the_selected_batch_and_keeps_orphans(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"), ("m2", "feat: add bar"))
+        contribute_remote.legacy("tester/orphan-branch")
+        contribute_remote.fake.on("diff", "--name-only", stdout=f"{_IN_SCOPE}\n")
+        contribute_remote.fake.on(
+            "gh", "repo", "view", stdout=json.dumps({"viewerPermission": "ADMIN"})
+        )
+        contribute_remote.fake.on("push")
+        contribute_remote.fake.on("branch", "-D")
+
+        with (
+            patch(
+                "llm_prompts.contribute.apply_batch",
+                return_value=ApplyResult(
+                    outcome="picked", mode="new", paths=(), message=""
+                ),
+            ) as mock_apply_batch,
+            patch("llm_prompts.contribute.run_list", return_value=0),
+        ):
+            run_sync(
+                tmp_path,
+                contribute_remote.login,
+                PROMPTS_PREFIX,
+                True,
+                None,
+                None,
+                ("m2",),
+            )
+
+        applied = [call.args[1] for call in mock_apply_batch.call_args_list]
+        assert [
+            commit.sha
+            for plan in applied
+            for group in plan.groups
+            for commit in group.commits
+        ] == ["m2"]
+        assert contribute_remote.fake.matching("push", "origin", "--delete") == []
 
 
 class TestRunSyncApplyOrphanCleanup:
-    def test_deletes_orphan_branch_with_no_pr(
+    def test_apply_deletes_a_legacy_orphan_with_no_pr(
         self,
-        fake_subprocess: FakeSubprocess,
+        contribute_remote: ContributeRemote,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on(
+        contribute_remote.legacy("tester/orphan-branch")
+        contribute_remote.fake.on("diff", "--name-only", stdout=f"{_IN_SCOPE}\n")
+        contribute_remote.fake.on(
             "gh", "repo", "view", stdout=json.dumps({"viewerPermission": "ADMIN"})
         )
-        fake_subprocess.on(
-            "ls-remote",
-            "--heads",
-            "origin",
-            stdout="abc123\trefs/heads/tester/orphan-branch\n",
-        )
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
-        fake_subprocess.on("push")
-        fake_subprocess.on("diff", "--name-only", stdout=f"{_IN_SCOPE}\n")
+        contribute_remote.fake.on("push")
 
         with patch("llm_prompts.contribute.run_list", return_value=0):
-            result = run_sync(tmp_path, "tester", PROMPTS_PREFIX, True, None, None)
+            result = run_sync(
+                tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
+            )
 
         out = capsys.readouterr().out
         assert "tester/orphan-branch: deleted (orphan, no PR)" in out
         assert result == 0
-        delete_calls = fake_subprocess.matching("push", "origin", "--delete")
+        delete_calls = contribute_remote.fake.matching("push", "origin", "--delete")
         assert any("tester/orphan-branch" in call for call in delete_calls)
 
-    def test_leaves_orphan_branch_with_a_pr_untouched(
+    def test_apply_does_not_delete_a_legacy_branch_with_a_commit_not_on_main(
         self,
-        fake_subprocess: FakeSubprocess,
+        contribute_remote: ContributeRemote,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on(
+        contribute_remote.main(("m1", "feat: add foo"))
+        branch = contribute_remote.legacy("tester/old-fix")
+        contribute_remote.fake.on("diff", "--name-only", stdout=f"{_IN_SCOPE}\n")
+        contribute_remote.fake.on(
+            "show", "-U0", "b1", stdout="commit b1\nfake diff b1\n"
+        )
+        contribute_remote.fake.on_match(
+            lambda argv: (
+                "--format=%H%x09%s" in argv and argv[-1].endswith(f"..origin/{branch}")
+            ),
+            stdout=contribute_remote.fake.sha_subjects(("b1", "feat: unmerged change")),
+        )
+        contribute_remote.fake.on(
             "gh", "repo", "view", stdout=json.dumps({"viewerPermission": "ADMIN"})
         )
-        fake_subprocess.on(
-            "ls-remote",
-            "--heads",
-            "origin",
-            stdout="abc123\trefs/heads/tester/orphan-branch\n",
-        )
-        fake_subprocess.on(
-            "gh",
-            "pr",
-            "list",
-            stdout=json.dumps(
-                [
-                    {
-                        "number": 5,
-                        "state": "OPEN",
-                        "url": "https://github.com/o/r/pull/5",
-                        "headRefName": "tester/orphan-branch",
-                    }
-                ]
-            ),
-        )
-        fake_subprocess.on("diff", "--name-only", stdout=f"{_IN_SCOPE}\n")
+        contribute_remote.fake.on("push")
 
         with patch("llm_prompts.contribute.run_list", return_value=0):
-            result = run_sync(tmp_path, "tester", PROMPTS_PREFIX, True, None, None)
+            run_sync(
+                tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
+            )
+
+        assert contribute_remote.fake.matching("push", "origin", "--delete") == []
+
+    def test_cleanup_of_a_legacy_branch_with_a_pr_is_refused(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        pr = Pr(31, "OPEN", "https://github.com/o/r/pull/31")
+        contribute_remote.legacy("tester/old-fix", pr=pr)
+
+        result = run_sync(
+            tmp_path,
+            contribute_remote.login,
+            PROMPTS_PREFIX,
+            True,
+            None,
+            "tester/old-fix",
+        )
 
         out = capsys.readouterr().out
-        assert "deleted" not in out
-        assert result == 0
-        assert fake_subprocess.matching("push", "origin", "--delete") == []
+        assert "refusing to clean up" in out
+        assert result == 1
+        assert contribute_remote.fake.matching("push", "origin", "--delete") == []
 
 
 class TestFindBlockingCommits:
@@ -1124,184 +2510,3 @@ class TestFindBlockingCommits:
         blockers = find_blocking_commits(groups, target_group, ("shared/bar.md",))
 
         assert blockers == []
-
-
-class TestRegressionCheck:
-    def _register_regressed_group(
-        self, fake_subprocess: FakeSubprocess, *, ahead_diff: str
-    ) -> None:
-        fake_subprocess.on(
-            "log",
-            "--format=%H%x09%s",
-            stdout=fake_subprocess.sha_subjects(("aaa111", "feat: add foo skill")),
-        )
-        fake_subprocess.on_match(
-            lambda argv: "show" in argv, stdout=f"{PROMPTS_PREFIX}foo.md\n"
-        )
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on(
-            "ls-remote",
-            "--heads",
-            "origin",
-            stdout="abc123\trefs/heads/tester/add-foo-skill\n",
-        )
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
-        fake_subprocess.on("diff", "aaa111^", "aaa111", stdout="group-diff\n")
-        fake_subprocess.on(
-            "log", "--format=%s", "--reverse", stdout="feat: add foo skill\n"
-        )
-        fake_subprocess.on(
-            "diff", "origin/main...origin/tester/add-foo-skill", stdout="branch-diff\n"
-        )
-        fake_subprocess.on(
-            "diff", "aaa111", "origin/tester/add-foo-skill", stdout=ahead_diff
-        )
-
-    def test_group_branch_regressed_is_labelled_warned_and_excluded(
-        self,
-        fake_subprocess: FakeSubprocess,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        self._register_regressed_group(fake_subprocess, ahead_diff="+new line\n")
-
-        list_result = run_list(tmp_path, "tester", PROMPTS_PREFIX)
-        out = capsys.readouterr().out
-        assert "regressed" in out
-        assert "tester/add-foo-skill" in out
-        assert (
-            "git restore -p --source=origin/tester/add-foo-skill --staged --worktree"
-            in out
-        )
-        assert "--fixup=aaa111" in out
-        assert "--autosquash origin/main" in out
-        assert list_result == 1
-
-        sync_result = run_sync(tmp_path, "tester", PROMPTS_PREFIX, False, None, None)
-        out = capsys.readouterr().out
-        assert "git switch -c tester/add-foo-skill" not in out
-        assert "tester/add-foo-skill" in out
-        assert sync_result == 1
-
-    def test_reword_only_staleness_skips_the_extra_diff_call(
-        self,
-        fake_subprocess: FakeSubprocess,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        fake_subprocess.on(
-            "log",
-            "--format=%H%x09%s",
-            stdout=fake_subprocess.sha_subjects(("aaa111", "feat: add foo skill v2")),
-        )
-        fake_subprocess.on_match(
-            lambda argv: "show" in argv, stdout=f"{PROMPTS_PREFIX}foo.md\n"
-        )
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on(
-            "ls-remote",
-            "--heads",
-            "origin",
-            stdout="abc123\trefs/heads/tester/add-foo-skill-v2\n",
-        )
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
-        fake_subprocess.on("diff", "aaa111^", "aaa111", stdout="same-diff\n")
-        fake_subprocess.on(
-            "log", "--format=%s", "--reverse", stdout="feat: add foo skill\n"
-        )
-        fake_subprocess.on(
-            "diff",
-            "origin/main...origin/tester/add-foo-skill-v2",
-            stdout="same-diff\n",
-        )
-
-        run_list(tmp_path, "tester", PROMPTS_PREFIX)
-
-        out = capsys.readouterr().out
-        assert "needs-sync" in out
-        assert "regressed" not in out
-        assert (
-            fake_subprocess.matching("diff", "aaa111", "origin/tester/add-foo-skill-v2")
-            == []
-        )
-
-    def test_pure_deletion_diff_is_not_regressed(
-        self,
-        fake_subprocess: FakeSubprocess,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        self._register_regressed_group(
-            fake_subprocess, ahead_diff="--- a/file\n+++ b/file\n-old line\n"
-        )
-
-        result = run_list(tmp_path, "tester", PROMPTS_PREFIX)
-
-        out = capsys.readouterr().out
-        assert "needs-sync" in out
-        assert "regressed" not in out
-        assert result == 1
-
-    def test_regressed_orphan_branch_is_not_auto_deleted(
-        self,
-        fake_subprocess: FakeSubprocess,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on(
-            "gh", "repo", "view", stdout=json.dumps({"viewerPermission": "ADMIN"})
-        )
-        fake_subprocess.on(
-            "ls-remote",
-            "--heads",
-            "origin",
-            stdout="abc123\trefs/heads/tester/orphan-branch\n",
-        )
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
-        fake_subprocess.on("diff", "--name-only", stdout=f"{_IN_SCOPE}\n")
-        fake_subprocess.on(
-            "diff", "main", "origin/tester/orphan-branch", stdout="+new line\n"
-        )
-
-        with patch("llm_prompts.contribute.run_list", return_value=0):
-            result = run_sync(tmp_path, "tester", PROMPTS_PREFIX, True, None, None)
-
-        out = capsys.readouterr().out
-        assert "deleted" not in out
-        assert "git cherry-pick origin/main..origin/tester/orphan-branch" in out
-        assert "restore" not in out
-        assert result == 1
-        assert fake_subprocess.matching("push", "origin", "--delete") == []
-
-    def test_cleanup_of_regressed_branch_is_refused(
-        self,
-        fake_subprocess: FakeSubprocess,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        fake_subprocess.on("log", "--format=%H%x09%s", stdout="")
-        fake_subprocess.on("remote", stdout="origin\n")
-        fake_subprocess.on(
-            "ls-remote",
-            "--heads",
-            "origin",
-            stdout="abc123\trefs/heads/tester/orphan-branch\n",
-        )
-        fake_subprocess.on("gh", "pr", "list", stdout="[]")
-        fake_subprocess.on("diff", "--name-only", stdout=f"{_IN_SCOPE}\n")
-        fake_subprocess.on(
-            "diff", "main", "origin/tester/orphan-branch", stdout="+new line\n"
-        )
-
-        result = run_sync(
-            tmp_path, "tester", PROMPTS_PREFIX, True, None, "tester/orphan-branch"
-        )
-
-        out = capsys.readouterr().out
-        assert (
-            "tester/orphan-branch holds content main lacks; refusing to clean up" in out
-        )
-        assert result == 1
-        assert fake_subprocess.matching("push", "origin", "--delete") == []
