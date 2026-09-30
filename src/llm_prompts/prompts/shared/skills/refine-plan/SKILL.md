@@ -57,7 +57,11 @@ If the validator disputes any score, MUST lower it and re-run the script. MAY sk
 ## 4. Gate and iterate
 
 - **`pass: false`**: MUST improve the plan to address below-threshold categories, re-score ALL categories, and re-run the script. MUST NOT ask the user before improving. MUST repeat until the gate passes.
-- **`pass: true`**: MUST present the scores and plan to the user.
+- **`pass: true`**: MUST present the scores, then the plan in this layout:
+  - `#` heading naming the outcome, then one line of why.
+  - `## What happens`: numbered plain-word steps.
+  - `## Commits`: only where the plan commits - one item per logical change per `git.md`, saying whether pushed.
+  - `## Check`: one line naming how success is verified.
 
 If you cannot reach a passing score after deep investigation, {{TOOL_ASK}}.
 
