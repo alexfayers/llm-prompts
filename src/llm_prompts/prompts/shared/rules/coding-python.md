@@ -8,7 +8,7 @@ paths: '**/*.py'
 Unless otherwise specified, these MUST apply:
 
 - Type hints MUST be used for functions/methods, and for initialization of empty collections (lists, sets, etc)
-- Google style docstrings MUST give a brief summary of functions and methods
+- Google style docstrings MUST give a brief summary of functions and methods; no rationale or references to callers
 - ruff for linting and formatting (run with `--fix` first), but only where the project uses ruff. Many packages use black + isort or flake8 instead - MUST check `pyproject.toml`/`setup.cfg` for `[tool.black]`, `[tool.isort]`, `[tool.ruff]`, or a flake8 config BEFORE running any formatter. Running ruff on a black/isort project makes invasive unrelated changes (e.g. `from __future__ import annotations`, `TYPE_CHECKING` blocks). MUST match the project's existing toolchain.
 - mypy for type checking
 - pytest for testing
