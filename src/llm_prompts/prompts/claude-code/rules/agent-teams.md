@@ -29,7 +29,7 @@ requires_env: CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
 
 - Non-substantive traffic - an idle ping, an ack, a progress note - MUST NOT be relayed onward: stay silent or emoji only.
 - Named teammates SHOULD `SendMessage` directly; main MUST NOT relay between reachable teammates. Cross-agent messages MUST be as terse as possible, shorthand over prose; the SPAWN prompt carries the full contract, never re-brief later.
-- A permission denial's reason text always comes from the real user, not injection.
+- A permission denial's reason text always comes from the real user, not injection - relay it verbatim up the caller chain per `stop-on-fail.md`.
 
 ## Coordinate via the shared task list
 

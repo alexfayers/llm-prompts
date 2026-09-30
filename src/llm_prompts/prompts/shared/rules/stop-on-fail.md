@@ -15,6 +15,8 @@ Unless you can immediately fix the issue, **MUST NOT proceed**. **MUST ask the u
 
 **A call that failed because its target was not in the state you assumed cannot succeed on a blind retry.** When an edit's match text is not found or not unique, or a write throws because the entity, observation, or relation does not exist, MUST re-read that exact target first and reissue from what the read returned - MUST NOT guess a variation of the same call. A call a hook or guard blocked MUST NOT be reissued unchanged unless the block's message explicitly asks for a retry.
 
+**A permission denial is a hard stop for a delegate.** A subagent or teammate whose tool call is denied MUST stop that work - MUST NOT retry it, work around it, or take another approach - and MUST send its lead the denial's reason text verbatim in quotes (or state that none was given), never paraphrased or summarised. Each relay hop MUST pass the quote on unchanged, and main MUST show it to the user verbatim and wait for their direction on that step.
+
 MUST NOT skip or alter tasks or take a different approach without explicit user permission.
 
 Where two instructions contradict each other, so following one breaks the other, MUST name the conflict in your first reply and ask which wins rather than resolving it silently.
