@@ -488,3 +488,42 @@ class TestPluginSourceMessages:
             "Summarize these changes for the user in plain language, and flag "
             "anything that looks like a breaking change."
         )
+
+    @pytest.fixture
+    def outdated_plugin(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_subprocess: FakeSubprocess,
+    ) -> dict[str, str]:
+        monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
+        (plugins._checkout_dir("p") / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-parse", "HEAD", stdout="aaaaaaa\n")
+        fake_subprocess.on("ls-remote", stdout="bbbbbbb\tHEAD\n")
+        return {"name": "p", "source": f"git+file://{tmp_path / 'upstream'}"}
+
+    def test_no_commits_touching_installed_files_reports_nothing(
+        self, outdated_plugin: dict[str, str], fake_subprocess: FakeSubprocess
+    ) -> None:
+        fake_subprocess.on("log", "--pretty=format:%s", stdout="")
+
+        assert plugins.plugin_source_messages(outdated_plugin) == []
+
+    def test_log_is_limited_to_installed_skill_paths(
+        self, outdated_plugin: dict[str, str], fake_subprocess: FakeSubprocess
+    ) -> None:
+        plugins.plugin_source_messages(outdated_plugin)
+
+        (log,) = fake_subprocess.matching("log")
+        assert log[log.index("--") + 1 :] == ["skills", "SKILL.md"]
+
+    def test_log_is_limited_to_the_configured_skill_subset(
+        self, outdated_plugin: dict[str, str], fake_subprocess: FakeSubprocess
+    ) -> None:
+        plugins.plugin_source_messages({**outdated_plugin, "skills": ["alpha"]})
+
+        (log,) = fake_subprocess.matching("log")
+        assert log[log.index("--") + 1 :] == [
+            ":(glob)skills/**/alpha/**",
+            "SKILL.md",
+        ]

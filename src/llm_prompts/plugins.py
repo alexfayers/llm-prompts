@@ -20,6 +20,8 @@ from .setup import (
 )
 
 _PLUGIN_DIR = _CONFIG_DIR / "plugin-sources"
+_SKILLS_DIR = "skills"
+_SKILL_FILE = "SKILL.md"
 
 
 def _load_plugins() -> list[dict[str, Any]]:
@@ -302,8 +304,26 @@ def plugin_source_messages(plugin: dict[str, Any]) -> list[str]:
         capture_output=True,
         timeout=_GIT_TIMEOUT,
     )
-    subjects = _commit_subjects_between(checkout, local_sha, "FETCH_HEAD")
+    subjects = _commit_subjects_between(
+        checkout, local_sha, "FETCH_HEAD", _installed_pathspecs(plugin.get("skills"))
+    )
+    if subjects == []:
+        return []
     return _format_update_message(name, subjects, local_sha, remote_sha)
+
+
+def _installed_pathspecs(subset: list[str] | None) -> list[str]:
+    """Return git pathspecs covering the plugin files that get installed.
+
+    Args:
+        subset: Optional list of skill names to keep; ``None`` or empty keeps all.
+
+    Returns:
+        Pathspecs suitable for ``git log -- <pathspec>...``.
+    """
+    if not subset:
+        return [_SKILLS_DIR, _SKILL_FILE]
+    return [f":(glob){_SKILLS_DIR}/**/{name}/**" for name in subset] + [_SKILL_FILE]
 
 
 _IGNORED_COMPONENTS = ("commands", "agents", "hooks", ".mcp.json", ".lsp.json")
@@ -331,7 +351,7 @@ def discover_skills(checkout: Path, subset: list[str] | None) -> list[tuple[str,
     seen_files: set[Path] = set()
 
     def add(name: str, skill_dir: Path) -> None:
-        resolved = (skill_dir / "SKILL.md").resolve()
+        resolved = (skill_dir / _SKILL_FILE).resolve()
         if name in seen_names:
             if resolved not in seen_files:
                 log(
@@ -343,12 +363,12 @@ def discover_skills(checkout: Path, subset: list[str] | None) -> list[tuple[str,
         seen_files.add(resolved)
         skills.append((name, skill_dir))
 
-    skills_dir = checkout / "skills"
+    skills_dir = checkout / _SKILLS_DIR
     if skills_dir.is_dir():
-        for skill_file in sorted(skills_dir.rglob("SKILL.md")):
+        for skill_file in sorted(skills_dir.rglob(_SKILL_FILE)):
             add(skill_file.parent.name, skill_file.parent)
 
-    if not skills and (checkout / "SKILL.md").is_file():
+    if not skills and (checkout / _SKILL_FILE).is_file():
         add(checkout.name, checkout)
 
     if not skills:
