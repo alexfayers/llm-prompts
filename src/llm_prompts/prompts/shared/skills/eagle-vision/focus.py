@@ -7,7 +7,7 @@ import sys
 from collections.abc import Callable
 from itertools import combinations
 from pathlib import Path
-from typing import TypedDict
+from typing import NoReturn, TypedDict
 
 SECTION_ORDER = [
     "Goal",
@@ -23,6 +23,7 @@ SECTION_ORDER = [
 ]
 FRONT_MATTER_RE = re.compile(r"\A---\n((?:.*\n)*?)---\n")
 STAGES: dict[str, str] = {"todo": "", "testing": "testing", "done": "done"}
+LINK_KEYS = ("depends", "scope", "inputs", "outputs", "deletes")
 
 
 class FocusError(Exception):
@@ -39,10 +40,14 @@ class Node(TypedDict):
 
     depends: list[str]
     scope: list[str]
+    inputs: list[str]
+    outputs: list[str]
+    deletes: list[str]
     stage: str
 
 
 Nodes = dict[str, Node]
+Links = dict[str, list[str]]
 
 
 def slugify(name: str) -> str:
@@ -60,28 +65,20 @@ def plan_path(base: Path) -> Path:
     return base / "PLAN.md"
 
 
-def links_summary(depends: list[str], scope: list[str]) -> str:
-    """Format a depends/scope summary."""
-    lines = link_lines(depends, scope)
+def links_summary(links: Links) -> str:
+    """Format a links summary."""
+    lines = link_lines(links)
     return f" ({'; '.join(lines)})" if lines else ""
 
 
-def link_lines(depends: list[str], scope: list[str]) -> list[str]:
-    """Format non-empty depends/scope front-matter lines."""
-    return [
-        f"{key}: {', '.join(values)}"
-        for key, values in (("depends", depends), ("scope", scope))
-        if values
-    ]
+def link_lines(links: Links) -> list[str]:
+    """Format non-empty link front-matter lines."""
+    return [f"{key}: {', '.join(links[key])}" for key in LINK_KEYS if links.get(key)]
 
 
-def render_node_file(depends: list[str], scope: list[str], body: str) -> str:
+def render_node_file(links: Links, body: str) -> str:
     """Render a node file."""
-    return (
-        "---\n"
-        + "".join(f"{ln}\n" for ln in link_lines(depends, scope))
-        + f"---\n{body}"
-    )
+    return "---\n" + "".join(f"{ln}\n" for ln in link_lines(links)) + f"---\n{body}"
 
 
 def match_front_matter(text: str) -> re.Match[str]:
@@ -92,10 +89,10 @@ def match_front_matter(text: str) -> re.Match[str]:
     return match
 
 
-def parse_node_file(text: str) -> tuple[dict[str, list[str]], str]:
+def parse_node_file(text: str) -> tuple[Links, str]:
     """Parse a node file."""
     match = match_front_matter(text)
-    front: dict[str, list[str]] = {"depends": [], "scope": []}
+    front: Links = {key: [] for key in LINK_KEYS}
     for fm_line in match.group(1).splitlines():
         key, _, value = fm_line.partition(":")
         key = key.strip()
@@ -126,9 +123,9 @@ def update_failed_line(text: str, reason: str | None) -> str:
     )
 
 
-def set_links(text: str, depends: list[str], scope: list[str]) -> str:
-    """Replace the depends/scope front-matter lines."""
-    return replace_front_lines(text, {"depends", "scope"}, link_lines(depends, scope))
+def set_links(text: str, links: Links) -> str:
+    """Replace the link front-matter lines."""
+    return replace_front_lines(text, set(LINK_KEYS), link_lines(links))
 
 
 def find_node_path(base: Path, node_id: str) -> Path:
@@ -147,11 +144,7 @@ def load_nodes(base: Path) -> Nodes:
         folder = base / "nodes" / suffix
         for path in sorted(folder.glob("*.md")):
             front, _ = parse_node_file(path.read_text())
-            nodes[path.stem] = {
-                "depends": front["depends"],
-                "scope": front["scope"],
-                "stage": stage,
-            }
+            nodes[path.stem] = make_node(front, stage)
     return nodes
 
 
@@ -183,6 +176,13 @@ def find_cycle(nodes: Nodes) -> list[str] | None:
     return None
 
 
+def scope_overlaps(a: str, b: str) -> bool:
+    """Whether two scope entries overlap."""
+    parts_a, parts_b = a.rstrip("/").split("/"), b.rstrip("/").split("/")
+    shorter, longer = sorted((parts_a, parts_b), key=len)
+    return longer[: len(shorter)] == shorter
+
+
 def validate_or_raise(nodes: Nodes) -> None:
     """Validate the graph."""
     problems = [
@@ -195,15 +195,10 @@ def validate_or_raise(nodes: Nodes) -> None:
     if cycle:
         problems.append(f"dependency cycle: {' -> '.join(cycle)}")
 
-    def overlaps(a: str, b: str) -> bool:
-        parts_a, parts_b = a.rstrip("/").split("/"), b.rstrip("/").split("/")
-        shorter, longer = sorted((parts_a, parts_b), key=len)
-        return longer[: len(shorter)] == shorter
-
     for (id_a, node_a), (id_b, node_b) in combinations(nodes.items(), 2):
         for entry_a in node_a["scope"]:
             for entry_b in node_b["scope"]:
-                if overlaps(entry_a, entry_b):
+                if scope_overlaps(entry_a, entry_b):
                     problems.append(
                         f"scope overlap: {id_a} '{entry_a}' and {id_b} '{entry_b}'"
                     )
@@ -369,11 +364,138 @@ def regenerate_plan(base: Path, nodes: Nodes) -> None:
     path.write_text(render_plan(base.name, sections))
 
 
+def make_node(links: Links, stage: str) -> Node:
+    """Build a node, treating missing link keys as empty."""
+    return Node(
+        depends=links.get("depends", []),
+        scope=links.get("scope", []),
+        inputs=links.get("inputs", []),
+        outputs=links.get("outputs", []),
+        deletes=links.get("deletes", []),
+        stage=stage,
+    )
+
+
+def node_links(node: Node) -> Links:
+    """A node's links."""
+    return {key: node[key] for key in LINK_KEYS}  # type: ignore[literal-required]
+
+
 def merge_unique(existing: list[str], additions: list[str]) -> list[str]:
     """Append new items."""
     result = list(existing)
     result.extend(item for item in additions if item not in result)
     return result
+
+
+def interface_id(name: str) -> str:
+    """Node id of the interface node for an output name."""
+    return f"interface-{slugify(name)}"
+
+
+def join_edges(nodes: Nodes) -> list[str]:
+    """Add interface nodes and ordering edges for outputs, inputs and deletes."""
+    producers: dict[str, list[str]] = {}
+    for node_id, node in nodes.items():
+        for name in node["outputs"]:
+            if node_id != interface_id(name):
+                producers.setdefault(name, []).append(node_id)
+    duplicates = [
+        f"'{name}': output of {', '.join(ids)}"
+        for name, ids in producers.items()
+        if len(ids) > 1
+    ]
+    if duplicates:
+        raise FocusError(problems=duplicates)
+    consumers: dict[str, list[str]] = {}
+    for node_id, node in nodes.items():
+        for name in node["inputs"]:
+            consumers.setdefault(name, []).append(node_id)
+    lines: list[str] = []
+
+    def add_edges(
+        node_id: str, new_deps: list[str], verb: str, reason: str = ""
+    ) -> None:
+        added = [
+            dep
+            for dep in new_deps
+            if dep != node_id and dep not in nodes[node_id]["depends"]
+        ]
+        nodes[node_id]["depends"] = merge_unique(nodes[node_id]["depends"], added)
+        lines.extend(f"{node_id} {verb} {dep}{reason}" for dep in added)
+
+    for name, (producer,) in producers.items():
+        others = [c for c in consumers.get(name, []) if c != producer]
+        if not others:
+            continue
+        if interface_id(name) not in nodes:
+            nodes[interface_id(name)] = make_node({"outputs": [name]}, "todo")
+        for node_id in [producer, *others]:
+            add_edges(node_id, [interface_id(name)], "depends on")
+    for node_id, node in list(nodes.items()):
+        for name in node["deletes"]:
+            add_edges(
+                node_id,
+                consumers.get(name, []),
+                "after",
+                f" (deletes '{name}')",
+            )
+    return lines
+
+
+def cmd_join(base: Path) -> None:
+    """Join outputs, inputs and deletes into interface nodes and ordering edges."""
+    require_plan(base)
+    nodes = load_nodes(base)
+    before = {node_id: node_links(node) for node_id, node in nodes.items()}
+    lines = join_edges(nodes)
+    validate_or_raise(nodes)
+    for node_id, node in nodes.items():
+        links = node_links(node)
+        if node_id not in before:
+            body = (
+                f"# Interface: {node['outputs'][0]}\n\n## In\n\n## Out\n\n## Accept\n"
+            )
+            node_path(base, node_id, "todo").write_text(render_node_file(links, body))
+        elif links != before[node_id]:
+            path = find_node_path(base, node_id)
+            path.write_text(set_links(path.read_text(), links))
+    regenerate_plan(base, nodes)
+    print("\n".join(lines) or "nothing to join")
+
+
+def outside_scope(paths: list[str], scope: list[str]) -> list[str]:
+    """Sorted paths that overlap no scope entry."""
+    return sorted(
+        path
+        for path in paths
+        if not any(scope_overlaps(path, entry) for entry in scope)
+    )
+
+
+def run_git(cwd: Path, *args: str) -> list[str]:
+    """Run git in cwd, returning its output lines."""
+    try:
+        result = subprocess.run(
+            ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+        )
+    except subprocess.CalledProcessError as exc:
+        raise FocusError(exc.stderr.strip()) from exc
+    return result.stdout.splitlines()
+
+
+def changed_files(base: Path, git_base: str) -> list[str]:
+    """Files changed since the merge-base with git_base, outside the plan dir."""
+    (top,) = run_git(Path.cwd(), "rev-parse", "--show-toplevel")
+    (merge_base,) = run_git(Path(top), "merge-base", git_base, "HEAD")
+    paths = [
+        *run_git(Path(top), "diff", "--name-only", merge_base),
+        *run_git(
+            Path(top), "ls-files", "--others", "--exclude-standard", "--full-name"
+        ),
+    ]
+    plan_dir = base.resolve()
+    return [p for p in paths if not (Path(top) / p).resolve().is_relative_to(plan_dir)]
 
 
 def cmd_init(base: Path) -> None:
@@ -387,7 +509,7 @@ def cmd_init(base: Path) -> None:
     print(f"created {base}")
 
 
-def cmd_add(base: Path, name: str, depends: list[str], scope: list[str]) -> None:
+def cmd_add(base: Path, name: str, links: Links) -> None:
     """Add a node."""
     require_plan(base)
     node_id = slugify(name)
@@ -395,37 +517,31 @@ def cmd_add(base: Path, name: str, depends: list[str], scope: list[str]) -> None
     if any(node_path(base, node_id, stage).exists() for stage in STAGES):
         raise FocusError(f"node '{node_id}' already exists")
     nodes = load_nodes(base)
-    nodes[node_id] = {"depends": depends, "scope": scope, "stage": "todo"}
+    nodes[node_id] = make_node(links, "todo")
     validate_or_raise(nodes)
     body = f"# {name}\n\n## In\n\n## Out\n\n## Accept\n"
-    path.write_text(render_node_file(depends, scope, body))
+    path.write_text(render_node_file(links, body))
     regenerate_plan(base, nodes)
-    print(f"added {path}{links_summary(depends, scope)}")
+    print(f"added {path}{links_summary(links)}")
 
 
-def edit_links(
-    base: Path, node_id: str, depends: list[str], scope: list[str], add: bool
-) -> None:
+def edit_links(base: Path, node_id: str, links: Links, add: bool) -> None:
     """Link or unlink a node."""
     require_plan(base)
     nodes = load_nodes(base)
     path = find_node_path(base, node_id)
     front, _ = parse_node_file(path.read_text())
-    if add:
-        new_depends = merge_unique(front["depends"], depends)
-        new_scope = merge_unique(front["scope"], scope)
-    else:
-        new_depends = [d for d in front["depends"] if d not in depends]
-        new_scope = [s for s in front["scope"] if s not in scope]
-    nodes[node_id] = {
-        "depends": new_depends,
-        "scope": new_scope,
-        "stage": nodes[node_id]["stage"],
+    new_links = {
+        key: merge_unique(front[key], links.get(key, []))
+        if add
+        else [v for v in front[key] if v not in links.get(key, [])]
+        for key in LINK_KEYS
     }
+    nodes[node_id] = make_node(new_links, nodes[node_id]["stage"])
     validate_or_raise(nodes)
-    path.write_text(set_links(path.read_text(), new_depends, new_scope))
+    path.write_text(set_links(path.read_text(), new_links))
     regenerate_plan(base, nodes)
-    print(f"{node_id}{links_summary(new_depends, new_scope)}")
+    print(f"{node_id}{links_summary(new_links)}")
 
 
 def move_node(
@@ -467,6 +583,12 @@ def cmd_fail(base: Path, node_id: str, reason: str) -> None:
     path.write_text(update_failed_line(path.read_text(), reason))
 
 
+def fail_and_exit(base: Path, node_id: str, reason: str) -> NoReturn:
+    """Fail a node, then exit 1."""
+    cmd_fail(base, node_id, reason)
+    sys.exit(1)
+
+
 def cmd_set_test(base: Path, node_id: str, command: str) -> None:
     """Set a node's plan-time test command."""
     require_known_node(base, node_id)
@@ -479,7 +601,7 @@ def cmd_set_test(base: Path, node_id: str, command: str) -> None:
     print(f"{node_id} test: {command}")
 
 
-def cmd_check(base: Path, node_id: str) -> None:
+def cmd_check(base: Path, node_id: str, git_base: str | None = None) -> None:
     """Run a node's test command and the plan's Checks, then pass or fail it."""
     nodes = require_known_node(base, node_id)
     if nodes[node_id]["stage"] != "testing":
@@ -487,13 +609,16 @@ def cmd_check(base: Path, node_id: str) -> None:
     command = node_test_command(find_node_path(base, node_id).read_text())
     if command is None:
         raise FocusError(f"'{node_id}' has no test command")
+    if git_base:
+        outside = outside_scope(changed_files(base, git_base), nodes[node_id]["scope"])
+        if outside:
+            fail_and_exit(base, node_id, f"outside scope: {', '.join(outside)}")
     checks = parse_checks(parse_sections(plan_path(base).read_text()).get("Checks", ""))
     for cmd in [command, *checks]:
         print(f"$ {cmd}", flush=True)
         result = subprocess.run(cmd, shell=True, check=False)
         if result.returncode != 0:
-            cmd_fail(base, node_id, f"`{cmd}` exited {result.returncode}")
-            sys.exit(1)
+            fail_and_exit(base, node_id, f"`{cmd}` exited {result.returncode}")
     cmd_pass(base, node_id)
 
 
@@ -525,7 +650,7 @@ def cmd_rename(base: Path, node_id: str, name: str) -> None:
                 new_id if dep == node_id else dep for dep in node["depends"]
             ]
             path = node_path(base, other_id, node["stage"])
-            path.write_text(set_links(path.read_text(), node["depends"], node["scope"]))
+            path.write_text(set_links(path.read_text(), node_links(node)))
     nodes[new_id] = nodes.pop(node_id)
     old_path = node_path(base, node_id, nodes[new_id]["stage"])
     new_path = node_path(base, new_id, nodes[new_id]["stage"])
@@ -626,40 +751,57 @@ def build_parser() -> argparse.ArgumentParser:
         return sub
 
     def add_links(sub: argparse.ArgumentParser) -> None:
-        sub.add_argument("--depends", nargs="*", default=[])
-        sub.add_argument("--scope", nargs="*", default=[])
+        for key in LINK_KEYS:
+            sub.add_argument(f"--{key}", nargs="*", default=[])
 
     add_cmd("init", "Create a new plan directory")
 
-    add_parser = add_cmd("add", "Add a new node")
+    add_parser = add_cmd(
+        "add",
+        "Add a node; --depends/--scope/--inputs/--outputs/--deletes set its links (--deletes: old outputs it removes)",
+    )
     add_parser.add_argument("name")
     add_links(add_parser)
 
     for command, help_text in (
-        ("link", "Add dependencies/scope to a node"),
-        ("unlink", "Remove dependencies/scope from a node"),
+        ("link", "Add links to a node"),
+        ("unlink", "Remove links from a node"),
     ):
         link_parser = add_cmd(command, help_text)
         link_parser.add_argument("id")
         add_links(link_parser)
 
+    add_cmd(
+        "join",
+        "Add an interface node per output others input, which producer and consumers depend on, and order each deleter after the deleted output's consumers",
+    )
     add_cmd("remove", "Remove a node with no dependents").add_argument("id")
     rename_parser = add_cmd("rename", "Rename a node")
     rename_parser.add_argument("id")
     rename_parser.add_argument("name")
 
-    add_cmd("built", "Mark a node built, awaiting acceptance tests").add_argument("id")
+    add_cmd("built", "Mark a node built, awaiting check").add_argument("id")
     add_cmd("pass", "Mark a node's acceptance tests passing").add_argument("id")
-    fail_parser = add_cmd("fail", "Mark a node's acceptance tests failing")
+    fail_parser = add_cmd(
+        "fail",
+        "Send a node back to to-do with a one-sentence reason; re-run built after fixing",
+    )
     fail_parser.add_argument("id")
     fail_parser.add_argument("reason")
-    set_test_parser = add_cmd("set-test", "Set a node's plan-time test command")
+    set_test_parser = add_cmd(
+        "set-test", "Set a node's one-line test command, with its criteria"
+    )
     set_test_parser.add_argument("id")
-    set_test_parser.add_argument("command")
+    set_test_parser.add_argument("test_command")
+    check_parser = add_cmd(
+        "check",
+        "Fail changes outside scope since --base, run the node's test and the plan's Checks, then pass or fail it",
+    )
+    check_parser.add_argument("id")
+    check_parser.add_argument("--base", default=None)
     add_cmd(
-        "check", "Run a node's test command and the plan's Checks, then pass or fail it"
+        "show", "Print all a builder needs: plan, node, dependencies' Out"
     ).add_argument("id")
-    add_cmd("show", "Show a node and its dependencies").add_argument("id")
     add_cmd("ready", "Check whether a node is ready").add_argument("id")
     add_cmd("waves", "Print nodes grouped by wave")
     add_cmd(
@@ -670,18 +812,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def links_arg(args: argparse.Namespace) -> Links:
+    """Links given on the command line."""
+    return {key: getattr(args, key) for key in LINK_KEYS}
+
+
 COMMANDS: dict[str, Callable[[argparse.Namespace], None]] = {
     "init": lambda a: cmd_init(a.dir),
-    "add": lambda a: cmd_add(a.dir, a.name, a.depends, a.scope),
-    "link": lambda a: edit_links(a.dir, a.id, a.depends, a.scope, add=True),
-    "unlink": lambda a: edit_links(a.dir, a.id, a.depends, a.scope, add=False),
+    "add": lambda a: cmd_add(a.dir, a.name, links_arg(a)),
+    "link": lambda a: edit_links(a.dir, a.id, links_arg(a), add=True),
+    "unlink": lambda a: edit_links(a.dir, a.id, links_arg(a), add=False),
+    "join": lambda a: cmd_join(a.dir),
     "remove": lambda a: cmd_remove(a.dir, a.id),
     "rename": lambda a: cmd_rename(a.dir, a.id, a.name),
     "built": lambda a: cmd_built(a.dir, a.id),
     "pass": lambda a: cmd_pass(a.dir, a.id),
     "fail": lambda a: cmd_fail(a.dir, a.id, a.reason),
-    "set-test": lambda a: cmd_set_test(a.dir, a.id, a.command),
-    "check": lambda a: cmd_check(a.dir, a.id),
+    "set-test": lambda a: cmd_set_test(a.dir, a.id, a.test_command),
+    "check": lambda a: cmd_check(a.dir, a.id, a.base),
     "show": lambda a: cmd_show(a.dir, a.id),
     "ready": lambda a: cmd_ready(a.dir, a.id),
     "waves": lambda a: cmd_waves(a.dir),
