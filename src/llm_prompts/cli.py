@@ -9,7 +9,6 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, wait
 from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -906,50 +905,25 @@ def main() -> int | None:
     elif args.command == "check":
         _run_size_check()
     elif args.command == "contribute":
-        from .contribute import run_list, run_sync
+        from .contribute import list_targets, sync_targets
 
         if args.tool is not None:
             repo, prefix = _contribute_target(args.tool)
             targets = [_ContributeTarget(args.tool, repo, prefix)]
         else:
             targets = _contribute_targets()
-        if args.contribute_command == "sync" and args.commits and len(targets) > 1:
-            sync_parser.error("--commit requires --tool NAME.")
         login = _get_gh_login()
-        status = 0
-        with ThreadPoolExecutor() as pool:
-            runs = []
-            if args.contribute_command == "list":
-                for target in targets:
-                    buffer = io.StringIO()
-                    future = pool.submit(
-                        run_list, target.repo, login, target.prefix, buffer
-                    )
-                    runs.append((buffer, future))
-            for index, target in enumerate(targets):
-                if len(targets) > 1:
-                    print(f"[{target.name}]")
-                if args.contribute_command == "list":
-                    buffer, future = runs[index]
-                    wait((future,))
-                    print(buffer.getvalue(), end="")
-                    status = max(status, future.result())
-                else:
-                    status = max(
-                        status,
-                        run_sync(
-                            target.repo,
-                            login,
-                            target.prefix,
-                            args.apply,
-                            args.only,
-                            args.cleanup,
-                            args.commits or (),
-                        ),
-                    )
-                if len(targets) > 1:
-                    print()
-        return status
+        if args.contribute_command == "list":
+            return list_targets(targets, login, _contribute_targets)
+        return sync_targets(
+            targets,
+            login,
+            args.apply,
+            args.only,
+            args.cleanup,
+            args.commits or (),
+            _contribute_targets,
+        )
     else:
         parser.print_help()
         sys.exit(1)

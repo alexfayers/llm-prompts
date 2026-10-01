@@ -6,7 +6,7 @@ commit's stage and lays the result out from data it is handed.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import TYPE_CHECKING, Literal, NamedTuple, get_args
 
 from .batching import append_groups, batch_status
@@ -15,6 +15,7 @@ from .colors import Color, paint
 if TYPE_CHECKING:
     from .batching import Batch, BatchPlan
     from .contribute import Commit, Group, Inventory, OpenPr
+    from .links import Note
 
 Stage = Literal[
     "needs sync",
@@ -126,7 +127,7 @@ def classify(
     inv: Inventory,
     open_prs: Sequence[OpenPr],
     pr_by_sha: dict[str, OpenPr],
-    code_only: set[str],
+    code_only: Collection[str],
     pr_only: dict[int, tuple[Commit, ...]],
 ) -> tuple[list[Entry], list[Group]]:
     """Sort pending commits into stage entries; also return groups with unshown commits."""
@@ -242,9 +243,15 @@ def pr_only_warning(entries: Sequence[Entry]) -> str | None:
 
 
 def render(
-    entries: Sequence[Entry], problems: Sequence[Group], color: bool
+    entries: Sequence[Entry],
+    problems: Sequence[Group],
+    color: bool,
+    notes: Mapping[str, Sequence[Note]] | None = None,
 ) -> list[str]:
-    """Lay out entries under their stage headings, then any problem commits."""
+    """Lay out entries under their stage headings, then any problem commits.
+
+    `notes` maps commit shas to dependency lines shown under the commit.
+    """
     if not entries and not problems:
         return ["  no pending changes"]
     lines: list[str] = []
@@ -265,6 +272,16 @@ def render(
             for commit, suffix in entry.lines:
                 line = f"      {commit.sha[:7]} {commit.subject}"
                 lines.append(f"{line} [{suffix}]" if suffix else line)
+                for note in (notes or {}).get(commit.sha, ()):
+                    text = f"-> {note.text}"
+                    lines.append(
+                        "        "
+                        + (
+                            paint(text, "red" if note.urgent else "yellow")
+                            if color
+                            else text
+                        )
+                    )
     if problems:
         lines.append("  problems:")
         for group in problems:
