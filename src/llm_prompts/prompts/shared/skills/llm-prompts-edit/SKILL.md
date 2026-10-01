@@ -26,6 +26,7 @@ Decision order for touching this repo's own rule/skill/workflow/agent sources.
 ## 4. Dedup
 
 - Find the real source file first with `llm-prompts source <agent>` (e.g. `claude-code`) - never guess a path.
+- MUST scope prompt-rule audits and edits to the files listed in ~/.config/llm-prompts/installed.json, not every agent subdirectory under prompts/.
 - MUST grep the rule AND skill sources for existing coverage - sharpen the most specific match in place, not a second overlapping instruction.
 - MUST check you did not already make this edit earlier in the session.
 - Smallest edit that fixes the case - one sentence, not a new file.
