@@ -13,9 +13,11 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Collection, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal, NamedTuple, TextIO
 
@@ -38,6 +40,14 @@ _CONVENTIONAL_PREFIX = re.compile(r"^[a-z]+(\([^)]*\))?!?: ", re.IGNORECASE)
 _CONVENTIONAL_SUBJECT = re.compile(r"^[a-z]+(\([^)]*\))?!?: .+", re.IGNORECASE)
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 _SLUG_MAX_LEN = 50
+_TRANSIENT_FAILURE = re.compile(
+    r"could not resolve host|unable to access|failed to connect|connection reset"
+    r"|connection refused|connection timed out|operation timed out|timeout|early eof"
+    r"|rpc failed|tls handshake|http 5|502|503|504",
+    re.IGNORECASE,
+)
+_NETWORK_ATTEMPTS = 3
+_RETRY_DELAY_SECONDS = 1.0
 
 
 class Commit(NamedTuple):
@@ -111,16 +121,30 @@ def _git(*args: str, repo: Path) -> str:
     return completed.stdout.strip()
 
 
+def _run_with_retries(argv: list[str], cwd: Path) -> str:
+    """Run a network command in ``cwd`` and return its stdout, retrying transient failures with backoff."""
+    run = partial(
+        subprocess.run, argv, cwd=cwd, capture_output=True, text=True, check=True
+    )
+    for attempt in range(1, _NETWORK_ATTEMPTS):
+        try:
+            return run().stdout
+        except subprocess.CalledProcessError as error:
+            if not _TRANSIENT_FAILURE.search(error.stderr or ""):
+                raise
+            time.sleep(_RETRY_DELAY_SECONDS * attempt)
+    return run().stdout
+
+
+def _git_network(*args: str, repo: Path) -> str:
+    """Run a git command that contacts a remote against ``repo`` and return its stripped stdout."""
+    return _run_with_retries(["git", "-C", str(repo), *args], repo).strip()
+
+
 def _gh_json(*args: str, repo: Path) -> Any:
     """Run a ``gh`` command against ``repo`` and parse its stdout as JSON, if any."""
-    completed = subprocess.run(
-        ["gh", *args],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return json.loads(completed.stdout) if completed.stdout.strip() else None
+    stdout = _run_with_retries(["gh", *args], repo)
+    return json.loads(stdout) if stdout.strip() else None
 
 
 def slug_for(subject: str) -> str:
@@ -227,7 +251,7 @@ def group_commits(commits: Sequence[Commit], login: str, prefix: str) -> list[Gr
 
 def fetch_base(repo: Path, remote: str) -> None:
     """Fetch ``main`` from ``remote`` so the base ref is up to date."""
-    _git("fetch", "--quiet", remote, "main", repo=repo)
+    _git_network("fetch", "--quiet", remote, "main", repo=repo)
 
 
 def base_ref(repo: Path) -> str:
@@ -289,7 +313,9 @@ def scope_commits(commits: Sequence[Commit], prefix: str) -> list[Commit]:
 
 def remote_branches(repo: Path, login: str) -> set[str]:
     """List this login's PR branches that already exist on origin."""
-    output = _git("ls-remote", "--heads", "origin", f"refs/heads/{login}/*", repo=repo)
+    output = _git_network(
+        "ls-remote", "--heads", "origin", f"refs/heads/{login}/*", repo=repo
+    )
     branches = set()
     for line in output.splitlines():
         _, _, ref = line.partition("\t")
@@ -581,7 +607,7 @@ def inventory(repo: Path, login: str, base: str, prefix: str) -> Inventory:
             _merged_pr_commits, repo, {commit.subject for commit in scoped}
         )
         all_prs_future = pool.submit(all_prs, repo)
-        _git(
+        _git_network(
             "fetch",
             "--quiet",
             "--prune",
@@ -870,7 +896,7 @@ def run_sync(
         if cleanup not in inv.legacy_orphans:
             print(f"{cleanup} is not a legacy orphan branch; refusing to clean up")
             return 1
-        _git("push", "origin", "--delete", cleanup, repo=repo)
+        _git_network("push", "origin", "--delete", cleanup, repo=repo)
         return 0
 
     groups = group_commits(scope_commits(inv.commits, prefix), login, prefix)
@@ -938,7 +964,7 @@ def run_sync(
             continue
         force = () if result.mode == "append" else ("--force-with-lease",)
         try:
-            _git("push", *force, remote, plan.branch, repo=repo)
+            _git_network("push", *force, remote, plan.branch, repo=repo)
         except subprocess.CalledProcessError:
             print(f"{plan.branch}: rejected")
             failure = True
@@ -948,7 +974,7 @@ def run_sync(
 
     if not scoped:
         for branch in inv.legacy_orphans:
-            _git("push", "origin", "--delete", branch, repo=repo)
+            _git_network("push", "origin", "--delete", branch, repo=repo)
             print(f"{branch}: deleted (orphan, no PR)")
 
     print()
