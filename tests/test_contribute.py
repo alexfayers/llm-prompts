@@ -12,8 +12,14 @@ from unittest.mock import patch
 import pytest
 from conftest import ContributeRemote, FakeSubprocess
 
-from llm_prompts import contribute
-from llm_prompts.batching import Batch, BatchPlan, Match, batch_branch
+from llm_prompts import contribute, links
+from llm_prompts.batching import (
+    Batch,
+    BatchPlan,
+    Match,
+    batch_branch,
+    pending_plans,
+)
 from llm_prompts.contribute import (
     ApplyResult,
     Commit,
@@ -29,6 +35,7 @@ from llm_prompts.contribute import (
     inventory,
     is_conventional,
     log_commits,
+    open_prs,
     push_remote,
     remote_branches,
     run_list,
@@ -421,6 +428,97 @@ class TestOpenPrs:
         )
 
         assert all_prs(tmp_path) == []
+
+
+class TestManualShas:
+    def test_code_only_and_mixed_scope_commits_are_manual(self) -> None:
+        rule = Commit("r1", "feat: add foo", (_IN_SCOPE,))
+        code = Commit("c1", "fix: code", (_OUT_SCOPE,))
+        mixed = Commit("m1", "feat: both", (_IN_SCOPE, _OUT_SCOPE))
+
+        result = contribute._manual_shas([rule, code, mixed], PROMPTS_PREFIX)
+
+        assert result == frozenset({"c1", "m1"})
+
+
+class TestCollectReportProbe:
+    KEY = ("fix: code", "2024-01-01T00:00:00+00:00")
+
+    def _remote(self, contribute_remote: ContributeRemote) -> None:
+        contribute_remote.main(("c1", "fix: code"), paths={"c1": (_OUT_SCOPE,)})
+
+    def test_code_only_commit_with_a_remote_ref_is_pushed_without_a_pr(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        self._remote(contribute_remote)
+        contribute_remote.fake.on(
+            "branch", "-r", "--contains", "c1", stdout="origin/feature\n"
+        )
+
+        report = contribute.collect_report(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX, frozenset({self.KEY})
+        )
+
+        assert report.statuses[self.KEY] == links.Status("needs PR", None, None)
+
+    def test_code_only_commit_with_no_remote_ref_is_local_only(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        self._remote(contribute_remote)
+        contribute_remote.fake.on("branch", "-r", "--contains", "c1", stdout="\n")
+
+        report = contribute.collect_report(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX, frozenset({self.KEY})
+        )
+
+        assert report.statuses[self.KEY] == links.Status("local only", None, None)
+
+    def test_default_probe_makes_no_remote_ref_call(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        self._remote(contribute_remote)
+
+        contribute.collect_report(tmp_path, contribute_remote.login, PROMPTS_PREFIX)
+
+        assert contribute_remote.fake.matching("branch") == []
+
+
+class TestOpenPrBody:
+    def test_null_body_maps_to_empty_and_a_real_body_is_kept(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.unmanaged_pr("someone/a", 1, [("c1", "feat: a")])
+        contribute_remote.unmanaged_pr("someone/b", 2, [("c2", "feat: b")])
+        contribute_remote.body(2, "Depends on https://x/pull/9")
+        contribute_remote.fake.on(
+            "gh",
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--author",
+            "@me",
+            "--json",
+            "number,state,url,headRefName,isDraft,reviewDecision,body",
+            stdout=json.dumps(
+                [
+                    {
+                        "number": number,
+                        "state": "OPEN",
+                        "url": f"https://x/pull/{number}",
+                        "headRefName": f"someone/{number}",
+                        "isDraft": False,
+                        "reviewDecision": "",
+                        "body": body,
+                    }
+                    for number, body in ((1, None), (2, "Depends on https://x/pull/9"))
+                ]
+            ),
+        )
+
+        prs, _ = open_prs(tmp_path)
+
+        assert [pr.body for pr in prs] == ["", "Depends on https://x/pull/9"]
 
 
 class TestPrsByBranch:
@@ -2597,3 +2695,721 @@ class TestFindBlockingCommits:
         blockers = find_blocking_commits(groups, target_group, ("shared/bar.md",))
 
         assert blockers == []
+
+
+def _report(exit: int = 0, warnings: list[str] | None = None) -> contribute.Report:
+    return contribute.Report(None, [], [], warnings or [], exit, {}, {})
+
+
+def test_list_targets_prints_headers_in_order_and_returns_max_status(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    targets = [("alpha", Path("/repo-a"), "feat"), ("beta", Path("/repo-b"), "fix")]
+
+    def fake_collect(repo: Path, login: str, prefix: str) -> contribute.Report:
+        return _report(int(repo == Path("/repo-b")), [f"listed {repo}"])
+
+    with patch("llm_prompts.contribute.collect_report", side_effect=fake_collect):
+        status = contribute.list_targets(targets, "someone")
+
+    assert status == 1
+    assert capsys.readouterr().out == (
+        "[alpha]\n  no pending changes\n  listed /repo-a\n\n"
+        "[beta]\n  no pending changes\n  listed /repo-b\n\n"
+    )
+
+
+def test_sync_targets_runs_each_target_in_order_and_returns_max_status(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    targets = [("alpha", Path("/repo-a"), "feat"), ("beta", Path("/repo-b"), "fix")]
+    seen: list[Path] = []
+
+    def fake_sync(repo: Path, *args: Any) -> int:
+        seen.append(repo)
+        return 2 if repo == Path("/repo-a") else 0
+
+    with patch("llm_prompts.contribute.run_sync", side_effect=fake_sync) as mock_sync:
+        status = contribute.sync_targets(targets, "someone", True, "only", None)
+
+    assert status == 2
+    assert seen == [Path("/repo-a"), Path("/repo-b")]
+    assert mock_sync.call_args.args[1:] == ("someone", "fix", True, "only", None, ())
+    assert capsys.readouterr().out == "[alpha]\n\n[beta]\n\n"
+
+
+def _link_file(path: Path, dependent: Commit, dependency: Commit) -> None:
+    links.save_links(
+        path,
+        (
+            links.Link(
+                "beta",
+                dependent.subject,
+                dependent.authored_date,
+                "alpha",
+                dependency.subject,
+                dependency.authored_date,
+            ),
+        ),
+    )
+
+
+ALPHA_COMMIT = Commit("a1", "feat: add alpha thing", (_IN_SCOPE,), "", "2026-01-01")
+BETA_COMMIT = Commit("b1", "feat: add beta thing", (_IN_SCOPE,), "", "2026-01-02")
+CODE_COMMIT = Commit("c1", "fix: code change", ("src/app.py",), "", "2026-01-03")
+TWO_TARGETS = [
+    ("alpha", Path("/tmp/alpha"), PROMPTS_PREFIX),
+    ("beta", Path("/tmp/beta"), PROMPTS_PREFIX),
+]
+
+
+class TestCollectReportStatuses:
+    DATE = "2024-01-01T00:00:00+00:00"
+
+    def _statuses(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> dict[tuple[str, str], links.Status]:
+        return contribute.collect_report(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX
+        ).statuses
+
+    def test_commit_in_a_reviewed_batch_carries_stage_url_and_branch(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        pr = Pr(5, "OPEN", "https://github.com/o/r/pull/5")
+        contribute_remote.main(("m1", "feat: add foo"))
+        branch = contribute_remote.managed("add-foo", [("m1", "feat: add foo")], pr=pr)
+
+        assert self._statuses(contribute_remote, tmp_path) == {
+            ("feat: add foo", self.DATE): links.Status(
+                "waiting for review", pr.url, branch
+            )
+        }
+
+    def test_unpushed_commit_is_local_only_without_a_url(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+
+        assert self._statuses(contribute_remote, tmp_path) == {
+            ("feat: add foo", self.DATE): links.Status(
+                "local only", None, "tester/contribute/add-foo"
+            )
+        }
+
+    def test_merged_commit_is_absent(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.merged("add-foo", 9, [("c1", "feat: add foo")])
+
+        assert self._statuses(contribute_remote, tmp_path) == {}
+
+
+class TestRunSyncHeld:
+    def _preview(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        held: dict[str, str] | None,
+        commits: tuple[str, ...] = (),
+    ) -> str:
+        with patch("sys.stdout", new_callable=io.StringIO) as out:
+            run_sync(
+                tmp_path,
+                contribute_remote.login,
+                PROMPTS_PREFIX,
+                False,
+                None,
+                None,
+                commits,
+                held,
+            )
+        return out.getvalue()
+
+    def test_held_commit_is_listed_and_left_out_of_the_plan(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"), ("m2", "feat: add bar"))
+
+        out = self._preview(
+            contribute_remote, tmp_path, {"m1": "alpha: dep is local only"}
+        )
+
+        assert "m1: held while alpha: dep is local only" in out
+        assert "git cherry-pick m2" in out
+        assert "cherry-pick m1" not in out
+
+    def test_any_held_commit_holds_its_whole_group(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("c1", "chore: compress foo"), ("c2", "feat: add foo"))
+
+        out = self._preview(
+            contribute_remote, tmp_path, {"c2": "alpha: dep is local only"}
+        )
+
+        assert "c1: held while alpha: dep is local only" in out
+        assert "c2: held while alpha: dep is local only" in out
+        assert "cherry-pick" not in out
+
+    def test_group_already_owned_by_a_batch_is_never_held(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.managed("add-foo", [("m1", "feat: add foo")])
+
+        out = self._preview(
+            contribute_remote, tmp_path, {"m1": "alpha: dep is local only"}
+        )
+
+        assert "held while" not in out
+
+    def test_nothing_held_leaves_the_selection_unset(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+
+        with patch(
+            "llm_prompts.contribute.pending_plans", wraps=pending_plans
+        ) as mock_plans:
+            self._preview(contribute_remote, tmp_path, None)
+
+        assert mock_plans.call_args.args[3] is None
+
+    def test_held_commits_are_removed_from_an_explicit_selection(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"), ("m2", "feat: add bar"))
+
+        with patch(
+            "llm_prompts.contribute.pending_plans", wraps=pending_plans
+        ) as mock_plans:
+            self._preview(
+                contribute_remote, tmp_path, {"m1": "alpha: dep"}, ("m1", "m2")
+            )
+
+        assert mock_plans.call_args.args[3] == frozenset({"m2"})
+
+
+class TestSyncTargetsLinks:
+    def _patched(
+        self,
+        dependency_statuses: dict[tuple[str, str], links.Status] | None = None,
+        beta_commits: list[Commit] | None = None,
+    ) -> Any:
+        commits = {"alpha": [ALPHA_COMMIT], "beta": beta_commits or [BETA_COMMIT]}
+        return (
+            patch("llm_prompts.contribute.base_ref", return_value="origin/main"),
+            patch(
+                "llm_prompts.contribute.log_commits",
+                side_effect=lambda repo, base: commits[repo.name],
+            ),
+            patch(
+                "llm_prompts.contribute.collect_report",
+                return_value=_report_with(dependency_statuses or {}),
+            ),
+        )
+
+    def test_cross_repo_commits_resolve_per_repo_and_the_dependency_runs_first(
+        self, isolated_links_path: Path
+    ) -> None:
+        order: list[tuple[str, Any]] = []
+
+        def record_sync(repo: Any, *args: Any) -> int:
+            order.append((repo.name, args[-1]))
+            return 0
+
+        base, log, report = self._patched()
+        with (
+            base,
+            log,
+            report,
+            patch(
+                "llm_prompts.contribute.run_sync",
+                side_effect=record_sync,
+            ),
+        ):
+            status = contribute.sync_targets(
+                list(reversed(TWO_TARGETS)), "me", False, None, None, ("a1", "b1")
+            )
+
+        assert status == 0
+        assert order == [("alpha", ["a1"]), ("beta", ["b1"])]
+
+    def test_code_only_dependent_is_linked_but_never_synced(
+        self, isolated_links_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        base, log, report = self._patched(beta_commits=[CODE_COMMIT])
+        with (
+            base,
+            log,
+            report,
+            patch("llm_prompts.contribute.run_sync", return_value=0) as mock_sync,
+        ):
+            contribute.sync_targets(TWO_TARGETS, "me", True, None, None, ("a1", "c1"))
+
+        assert [call.args[0].name for call in mock_sync.call_args_list] == ["alpha"]
+        assert links.load_links(isolated_links_path) == (
+            links.Link(
+                "beta",
+                CODE_COMMIT.subject,
+                CODE_COMMIT.authored_date,
+                "alpha",
+                ALPHA_COMMIT.subject,
+                ALPHA_COMMIT.authored_date,
+            ),
+        )
+        assert (
+            "c1: code-only, open its PR by hand (llm-prompts-contribute skill)"
+            in capsys.readouterr().out
+        )
+
+    def test_mixed_target_syncs_only_its_in_scope_commits(
+        self, isolated_links_path: Path
+    ) -> None:
+        base, log, report = self._patched(beta_commits=[BETA_COMMIT, CODE_COMMIT])
+        with (
+            base,
+            log,
+            report,
+            patch("llm_prompts.contribute.run_sync", return_value=0) as mock_sync,
+        ):
+            contribute.sync_targets(
+                TWO_TARGETS, "me", False, None, None, ("a1", "b1", "c1")
+            )
+
+        assert mock_sync.call_args_list[1].args[-1] == ["b1"]
+
+    @pytest.mark.parametrize(
+        ("values", "message"),
+        [
+            (("zzz",), "zzz: not a local commit ahead of the base branch"),
+            (("", "a1"), "empty commit value"),
+        ],
+    )
+    def test_unresolvable_commit_prints_the_problem_and_runs_nothing(
+        self,
+        values: tuple[str, ...],
+        message: str,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        base, log, report = self._patched()
+        with base, log, report, patch("llm_prompts.contribute.run_sync") as mock_sync:
+            status = contribute.sync_targets(
+                TWO_TARGETS, "me", True, None, None, values
+            )
+
+        assert status == 1
+        assert message in capsys.readouterr().out
+        mock_sync.assert_not_called()
+
+    def test_dry_run_writes_no_links_and_apply_writes_them_before_any_sync(
+        self, isolated_links_path: Path
+    ) -> None:
+        existed_at_sync: list[bool] = []
+
+        def record_sync(*args: Any) -> int:
+            existed_at_sync.append(isolated_links_path.exists())
+            return 0
+
+        base, log, report = self._patched()
+        with (
+            base,
+            log,
+            report,
+            patch(
+                "llm_prompts.contribute.run_sync",
+                side_effect=record_sync,
+            ),
+        ):
+            contribute.sync_targets(TWO_TARGETS, "me", False, None, None, ("a1", "b1"))
+            assert not isolated_links_path.exists()
+            contribute.sync_targets(TWO_TARGETS, "me", True, None, None, ("a1", "b1"))
+
+        assert existed_at_sync == [False, False, True, True]
+        assert links.load_links(isolated_links_path) == (
+            links.Link(
+                "beta",
+                BETA_COMMIT.subject,
+                BETA_COMMIT.authored_date,
+                "alpha",
+                ALPHA_COMMIT.subject,
+                ALPHA_COMMIT.authored_date,
+            ),
+        )
+
+    def test_dependent_is_held_while_the_dependency_is_unpushed_and_later_syncs_too(
+        self, isolated_links_path: Path
+    ) -> None:
+        _link_file(isolated_links_path, BETA_COMMIT, ALPHA_COMMIT)
+        unpushed = {
+            (ALPHA_COMMIT.subject, ALPHA_COMMIT.authored_date): links.Status(
+                "local only", None, "tester/contribute/add-alpha-thing"
+            )
+        }
+        base, log, report = self._patched(unpushed)
+        with (
+            base,
+            log,
+            report,
+            patch("llm_prompts.contribute.run_sync", return_value=0) as mock_sync,
+        ):
+            contribute.sync_targets(TWO_TARGETS, "me", True, None, None)
+
+        beta_call = mock_sync.call_args_list[1]
+        assert beta_call.args[-1] == {
+            "b1": "alpha: feat: add alpha thing is local only"
+        }
+
+    def test_dependent_is_released_once_the_dependency_is_pushed(
+        self, isolated_links_path: Path
+    ) -> None:
+        _link_file(isolated_links_path, BETA_COMMIT, ALPHA_COMMIT)
+        base, log, report = self._patched({})
+        with (
+            base,
+            log,
+            report,
+            patch("llm_prompts.contribute.run_sync", return_value=0) as mock_sync,
+        ):
+            contribute.sync_targets(TWO_TARGETS, "me", True, None, None)
+
+        assert mock_sync.call_args_list[1].args[-1] == ()
+
+    def test_link_cycle_aborts_before_any_sync(
+        self, isolated_links_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        links.save_links(
+            isolated_links_path,
+            (
+                links.Link(
+                    "alpha",
+                    ALPHA_COMMIT.subject,
+                    ALPHA_COMMIT.authored_date,
+                    "beta",
+                    BETA_COMMIT.subject,
+                    BETA_COMMIT.authored_date,
+                ),
+            ),
+        )
+        base, log, report = self._patched()
+        with base, log, report, patch("llm_prompts.contribute.run_sync") as mock_sync:
+            status = contribute.sync_targets(
+                TWO_TARGETS, "me", True, None, None, ("a1", "b1")
+            )
+
+        assert status == 1
+        assert "depend on itself" in capsys.readouterr().out
+        mock_sync.assert_not_called()
+
+
+def _report_with(statuses: dict[tuple[str, str], links.Status]) -> contribute.Report:
+    return contribute.Report(None, [], [], [], 0, statuses, {})
+
+
+class TestListTargetsLinks:
+    def test_single_target_list_also_reads_its_dependency_repo_and_writes_nothing(
+        self, isolated_links_path: Path
+    ) -> None:
+        _link_file(isolated_links_path, BETA_COMMIT, ALPHA_COMMIT)
+        before = isolated_links_path.read_text(encoding="utf-8")
+        with patch(
+            "llm_prompts.contribute.collect_report", return_value=_report_with({})
+        ) as mock_collect:
+            contribute.list_targets([TWO_TARGETS[1]], "me", lambda: TWO_TARGETS)
+
+        assert {call.args[0] for call in mock_collect.call_args_list} == {
+            Path("/tmp/alpha"),
+            Path("/tmp/beta"),
+        }
+        assert isolated_links_path.read_text(encoding="utf-8") == before
+
+
+class TestCrossRepoSync:
+    def _remotes(
+        self, fake: FakeSubprocess, tmp_path: Path
+    ) -> tuple[ContributeRemote, ContributeRemote]:
+        alpha_dir, beta_dir = tmp_path / "alpha", tmp_path / "beta"
+        alpha = ContributeRemote(fake, repo=alpha_dir)
+        beta = ContributeRemote(fake, repo=beta_dir)
+        alpha.main(("a1", ALPHA_COMMIT.subject))
+        beta.main(("b1", BETA_COMMIT.subject))
+        for remote in (alpha, beta):
+            remote.fake.on(
+                "gh", "repo", "view", stdout=json.dumps({"viewerPermission": "ADMIN"})
+            )
+            remote.fake.on("branch", "-D")
+        return alpha, beta
+
+    def _run(self, fake: FakeSubprocess, tmp_path: Path) -> tuple[int, list[str]]:
+        targets = [
+            ("beta", tmp_path / "beta", PROMPTS_PREFIX),
+            ("alpha", tmp_path / "alpha", PROMPTS_PREFIX),
+        ]
+        picked = ApplyResult(outcome="picked", mode="new", paths=(), message="")
+        with (
+            patch("llm_prompts.contribute.apply_batch", return_value=picked),
+            patch("llm_prompts.contribute.run_list", return_value=0),
+        ):
+            status = contribute.sync_targets(
+                targets, "tester", True, None, None, ("a1", "b1")
+            )
+        pushed_repos = [Path(argv[2]).name for argv in fake.matching("push")]
+        return status, pushed_repos
+
+    def test_dependency_is_pushed_before_the_dependent(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        alpha, beta = self._remotes(fake_subprocess, tmp_path)
+
+        def register_pushed_branch(argv: list[str], kwargs: dict[str, Any]) -> None:
+            alpha.managed("add-alpha-thing", [("a1", ALPHA_COMMIT.subject)])
+
+        alpha.fake.on("push", side_effect=register_pushed_branch)
+        beta.fake.on("push")
+
+        status, pushed_repos = self._run(fake_subprocess, tmp_path)
+
+        assert status == 0
+        assert pushed_repos == ["alpha", "beta"]
+
+    def test_dependent_stays_held_when_the_dependency_push_is_rejected(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        alpha, beta = self._remotes(fake_subprocess, tmp_path)
+        alpha.fake.on("push", returncode=1)
+        beta.fake.on("push")
+
+        status, pushed_repos = self._run(fake_subprocess, tmp_path)
+
+        assert status == 1
+        assert pushed_repos == ["alpha"]
+
+    def test_list_shows_the_dependency_pr_url_beside_the_dependent_commit(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        isolated_links_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        alpha, _ = self._remotes(fake_subprocess, tmp_path)
+        pr = Pr(5, "OPEN", "https://github.com/o/r/pull/5")
+        alpha.managed("add-alpha-thing", [("a1", ALPHA_COMMIT.subject)], pr=pr)
+        date = "2024-01-01T00:00:00+00:00"
+        _link_file(
+            isolated_links_path,
+            BETA_COMMIT._replace(authored_date=date),
+            ALPHA_COMMIT._replace(authored_date=date),
+        )
+        targets = [
+            ("alpha", tmp_path / "alpha", PROMPTS_PREFIX),
+            ("beta", tmp_path / "beta", PROMPTS_PREFIX),
+        ]
+
+        contribute.list_targets(targets, "tester")
+
+        out = capsys.readouterr().out
+        assert f"b1 feat: add beta thing\n        -> depends on {pr.url}\n" in out
+        assert out.count("depends on") == 1
+
+    def _list_with_dependent_pr_body(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        isolated_links_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        body: str,
+    ) -> str:
+        alpha, beta = self._remotes(fake_subprocess, tmp_path)
+        alpha_pr = Pr(5, "OPEN", "https://github.com/o/r/pull/5")
+        alpha.managed("add-alpha-thing", [("a1", ALPHA_COMMIT.subject)], pr=alpha_pr)
+        beta.managed(
+            "add-beta-thing",
+            [("b1", BETA_COMMIT.subject)],
+            pr=Pr(6, "OPEN", "https://github.com/o/r/pull/6"),
+        )
+        beta.body(6, body)
+        date = "2024-01-01T00:00:00+00:00"
+        _link_file(
+            isolated_links_path,
+            BETA_COMMIT._replace(authored_date=date),
+            ALPHA_COMMIT._replace(authored_date=date),
+        )
+
+        contribute.list_targets(
+            [("beta", tmp_path / "beta", PROMPTS_PREFIX)],
+            "tester",
+            lambda: [("alpha", tmp_path / "alpha", PROMPTS_PREFIX)],
+        )
+
+        return capsys.readouterr().out
+
+    def test_list_flags_a_dependency_url_missing_from_the_dependent_pr_body(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        isolated_links_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        out = self._list_with_dependent_pr_body(
+            fake_subprocess, tmp_path, isolated_links_path, capsys, ""
+        )
+
+        assert "-> depends on https://github.com/o/r/pull/5 - missing from PR" in out
+
+    def test_list_does_not_flag_a_dependency_url_present_in_the_dependent_pr_body(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        isolated_links_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        out = self._list_with_dependent_pr_body(
+            fake_subprocess,
+            tmp_path,
+            isolated_links_path,
+            capsys,
+            "Depends on https://github.com/o/r/pull/5",
+        )
+
+        assert "-> depends on https://github.com/o/r/pull/5\n" in out
+        assert "missing from PR" not in out
+
+    def _code_only_alpha(self, fake_subprocess: FakeSubprocess, tmp_path: Path) -> Any:
+        alpha, beta = self._remotes(fake_subprocess, tmp_path)
+        alpha.main(("a1", ALPHA_COMMIT.subject), paths={"a1": (_OUT_SCOPE,)})
+        return alpha, beta
+
+    def _link_beta_to_alpha(self, path: Path) -> None:
+        date = "2024-01-01T00:00:00+00:00"
+        _link_file(
+            path,
+            BETA_COMMIT._replace(authored_date=date),
+            ALPHA_COMMIT._replace(authored_date=date),
+        )
+
+    def _two_targets(self, tmp_path: Path) -> list[contribute.Target]:
+        return [
+            ("alpha", tmp_path / "alpha", PROMPTS_PREFIX),
+            ("beta", tmp_path / "beta", PROMPTS_PREFIX),
+        ]
+
+    def test_code_only_dependency_without_a_remote_ref_holds_the_dependent(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        isolated_links_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        alpha, _ = self._code_only_alpha(fake_subprocess, tmp_path)
+        alpha.fake.on("branch", "-r", "--contains", "a1", stdout="")
+        self._link_beta_to_alpha(isolated_links_path)
+
+        contribute.sync_targets(
+            self._two_targets(tmp_path), "tester", False, None, None
+        )
+
+        assert (
+            "b1: held while alpha: feat: add alpha thing is local only"
+            in capsys.readouterr().out
+        )
+
+    def test_code_only_dependency_on_a_remote_branch_does_not_hold_and_lists_no_pr_yet(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        isolated_links_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        alpha, _ = self._code_only_alpha(fake_subprocess, tmp_path)
+        alpha.fake.on("branch", "-r", "--contains", "a1", stdout="origin/feature\n")
+        self._link_beta_to_alpha(isolated_links_path)
+        targets = self._two_targets(tmp_path)
+
+        contribute.sync_targets(targets, "tester", False, None, None)
+        contribute.list_targets(targets, "tester")
+
+        out = capsys.readouterr().out
+        assert "held while" not in out
+        assert "b1 feat: add beta thing\n        -> depends on alpha: no PR yet" in out
+
+    def test_code_only_dependency_with_a_pr_shows_its_url_and_the_missing_flag(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        isolated_links_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        alpha, beta = self._code_only_alpha(fake_subprocess, tmp_path)
+        alpha.unmanaged_pr("someone/alpha", 5, [("a1", ALPHA_COMMIT.subject)])
+        beta.managed(
+            "add-beta-thing",
+            [("b1", BETA_COMMIT.subject)],
+            pr=Pr(6, "OPEN", "https://github.com/o/r/pull/6"),
+        )
+        self._link_beta_to_alpha(isolated_links_path)
+
+        contribute.list_targets(self._two_targets(tmp_path), "tester")
+
+        assert (
+            "-> depends on https://github.com/o/r/pull/5 - missing from PR"
+            in capsys.readouterr().out
+        )
+
+    def test_manual_pr_dependent_line_shows_the_dependency_url(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        isolated_links_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        alpha, beta = self._remotes(fake_subprocess, tmp_path)
+        beta.main(("b1", BETA_COMMIT.subject), paths={"b1": (_OUT_SCOPE,)})
+        alpha.managed(
+            "add-alpha-thing",
+            [("a1", ALPHA_COMMIT.subject)],
+            pr=Pr(5, "OPEN", "https://github.com/o/r/pull/5"),
+        )
+        self._link_beta_to_alpha(isolated_links_path)
+
+        contribute.list_targets(self._two_targets(tmp_path), "tester")
+
+        assert (
+            "b1 feat: add beta thing [code]\n        -> depends on https://github.com/o/r/pull/5"
+            in capsys.readouterr().out
+        )
+
+    def test_rewritten_sha_error_names_the_commit_that_replaced_it(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        alpha, _ = self._remotes(fake_subprocess, tmp_path)
+        date = "2024-01-01T00:00:00+00:00"
+        alpha.fake.on(
+            "show",
+            "-s",
+            "--format=%aI%x09%s",
+            "old1234",
+            stdout=f"{date}\t{ALPHA_COMMIT.subject}\n",
+        )
+
+        status = contribute.sync_targets(
+            [
+                ("alpha", tmp_path / "alpha", PROMPTS_PREFIX),
+                ("beta", tmp_path / "beta", PROMPTS_PREFIX),
+            ],
+            "tester",
+            False,
+            None,
+            None,
+            ("old1234", "b1"),
+        )
+
+        assert status == 1
+        assert (
+            "old1234: rewritten - alpha main now has a1 feat: add alpha thing"
+            in capsys.readouterr().out
+        )

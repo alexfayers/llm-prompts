@@ -29,11 +29,11 @@ def _verb_tokens(argv: list[str]) -> list[str]:
     return tokens
 
 
-def _matches_repo(argv: list[str], repo: str | Path | None) -> bool:
+def _matches_repo(argv: list[str], repo: str | Path | None, cwd: Any = None) -> bool:
     if repo is None:
         return True
     repo_str = str(repo)
-    return any(
+    return (cwd is not None and str(cwd) == repo_str) or any(
         tok == "-C" and argv[i + 1] == repo_str for i, tok in enumerate(argv[:-1])
     )
 
@@ -118,12 +118,12 @@ class FakeSubprocess:
             _Route(None, predicate, stdout, returncode, stderr, repo, side_effect)
         )
 
-    def _resolve(self, argv: list[str]) -> _Route | None:
+    def _resolve(self, argv: list[str], cwd: Any = None) -> _Route | None:
         for route in reversed(self._match_routes):
             if (
                 route.predicate is not None
                 and route.predicate(argv)
-                and _matches_repo(argv, route.repo)
+                and _matches_repo(argv, route.repo, cwd)
             ):
                 return route
         verb = _verb_tokens(argv)
@@ -133,7 +133,7 @@ class FakeSubprocess:
             ok = (
                 len(tokens) <= len(verb)
                 and verb[: len(tokens)] == tokens
-                and _matches_repo(argv, route.repo)
+                and _matches_repo(argv, route.repo, cwd)
             )
             if ok and len(tokens) >= best_len:
                 best, best_len = route, len(tokens)
@@ -144,7 +144,7 @@ class FakeSubprocess:
         with self._lock:
             self.commands.append(list(argv))
             self.calls.append((list(argv), dict(kwargs)))
-            route = self._resolve(argv)
+            route = self._resolve(argv, kwargs.get("cwd"))
             if route is None:
                 if self.strict:
                     raise AssertionError(f"fake_subprocess: unrouted command {argv!r}")
@@ -260,10 +260,29 @@ def _commit_items(
     ]
 
 
+class _ScopedFake:
+    """Forwards route registration to a `FakeSubprocess`, pinned to one repo."""
+
+    def __init__(self, fake: FakeSubprocess, repo: str | Path) -> None:
+        self._fake = fake
+        self._repo = repo
+
+    def on(self, *tokens: str, **kwargs: Any) -> None:
+        self._fake.on(*tokens, repo=self._repo, **kwargs)
+
+    def on_match(self, predicate: Callable[[list[str]], bool], **kwargs: Any) -> None:
+        self._fake.on_match(predicate, repo=self._repo, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._fake, name)
+
+
 class ContributeRemote:
     """Fakes the git/gh commands `inventory()` issues, built on `FakeSubprocess`.
 
-    `login` is fixed to `"tester"`. Registers, and keeps live as more commits/PRs
+    `login` is fixed to `"tester"`. With `repo`, every route (including ones
+    registered later through `fake`) matches only calls made for that repo, so
+    several remotes can share one `FakeSubprocess`. Registers, and keeps live as more commits/PRs
     are added:
 
     - `git fetch --quiet --prune origin +refs/heads/tester/*:refs/remotes/origin/tester/*`
@@ -271,7 +290,7 @@ class ContributeRemote:
     - `git ls-remote --heads origin refs/heads/tester/*` - every registered branch.
     - `gh pr list --author @me --state all --json ...` - the same call `all_prs`
       makes, listing every registered PR.
-    - `gh pr list --state open --author @me --json ...,isDraft,reviewDecision,commits` -
+    - `gh pr list --state open --author @me --json ...,isDraft,reviewDecision,body,commits` -
       every registered open PR, without its commits; `review` sets a PR's
       draft flag and review decision.
     - `gh pr view <number> --json commits` - one open PR's branch commits.
@@ -292,9 +311,11 @@ class ContributeRemote:
 
     login = "tester"
 
-    def __init__(self, fake: FakeSubprocess) -> None:
+    def __init__(self, fake: FakeSubprocess, repo: str | Path | None = None) -> None:
         """Wire fetch, ls-remote, `gh pr list/view` and `git patch-id` onto `fake`."""
-        self.fake = fake
+        self.fake = (
+            fake if repo is None else cast(FakeSubprocess, _ScopedFake(fake, repo))
+        )
         self._heads: list[str] = []
         self._pr_items: list[dict[str, Any]] = []
         self._merged_items: list[dict[str, Any]] = []
@@ -304,6 +325,7 @@ class ContributeRemote:
         self._branch_commits: dict[str, list[dict[str, str]]] = {}
         self._pr_extra_commits: dict[int, list[dict[str, str]]] = {}
         self._reviews: dict[int, tuple[bool, str]] = {}
+        self._bodies: dict[int, str] = {}
         self._paths: dict[str, Sequence[str]] = {}
         self._register_fetch()
         self._register_ls_remote()
@@ -425,6 +447,10 @@ class ContributeRemote:
     def review(self, number: int, *, draft: bool = False, decision: str = "") -> None:
         """Set an open PR's draft flag and ``reviewDecision``."""
         self._reviews[number] = (draft, decision)
+
+    def body(self, number: int, text: str) -> None:
+        """Set an open PR's body."""
+        self._bodies[number] = text
 
     def legacy(self, branch: str, pr: Pr | None = None) -> str:
         """Register a legacy `<login>/<slug>` branch (no commits) on the remote."""
@@ -571,6 +597,7 @@ class ContributeRemote:
                     **item,
                     "isDraft": self._reviews.get(item["number"], (False, ""))[0],
                     "reviewDecision": self._reviews.get(item["number"], (False, ""))[1],
+                    "body": self._bodies.get(item["number"], ""),
                 }
                 for item in self._pr_items
                 if item["state"] == "OPEN"
@@ -586,7 +613,7 @@ class ContributeRemote:
             "--author",
             "@me",
             "--json",
-            "number,state,url,headRefName,isDraft,reviewDecision",
+            "number,state,url,headRefName,isDraft,reviewDecision,body",
             side_effect=side_effect,
         )
 
@@ -649,3 +676,13 @@ class ContributeRemote:
 def contribute_remote(fake_subprocess: FakeSubprocess) -> ContributeRemote:
     """Return a `ContributeRemote` wired onto `fake_subprocess`."""
     return ContributeRemote(fake_subprocess)
+
+
+@pytest.fixture(autouse=True)
+def isolated_links_path(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Point the persisted cross-repo links file at a per-test temporary path."""
+    path = tmp_path_factory.mktemp("links") / "contribute-links.json"
+    monkeypatch.setattr("llm_prompts.links.LINKS_PATH", path)
+    return path

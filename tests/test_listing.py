@@ -6,6 +6,7 @@ import pytest
 
 from llm_prompts.colors import paint
 from llm_prompts.contribute import Commit, Group, OpenPr, Pr
+from llm_prompts.links import Note
 from llm_prompts.listing import Entry, render, review_state
 
 
@@ -58,6 +59,44 @@ class TestRender:
             "    [manual PR]",
             "      fedcba9 docs: note bar [code]",
         ]
+
+    def test_notes_go_on_their_own_line_under_the_commit(self) -> None:
+        lines = render(
+            self._entries(), [], False, {"abcdef123": (Note("depends on url", False),)}
+        )
+
+        assert lines[2:4] == [
+            "      abcdef1 feat: add foo",
+            "        -> depends on url",
+        ]
+
+    def test_notes_follow_the_commit_suffix(self) -> None:
+        lines = render(
+            self._entries(), [], False, {"fedcba987": (Note("depends on url", False),)}
+        )
+
+        assert lines[-2:] == [
+            "      fedcba9 docs: note bar [code]",
+            "        -> depends on url",
+        ]
+
+    def test_notes_for_other_commits_change_nothing(self) -> None:
+        assert render(
+            self._entries(), [], False, {"other": (Note("x", False),)}
+        ) == render(self._entries(), [], False)
+
+    def test_paints_notes_yellow_or_red_when_urgent_with_color_on(self) -> None:
+        notes = {"abcdef123": (Note("a", False), Note("b", True))}
+
+        out = "\n".join(render(self._entries(), [], True, notes))
+
+        assert f"        {paint('-> a', 'yellow')}" in out
+        assert f"        {paint('-> b', 'red')}" in out
+
+    def test_notes_carry_no_escape_codes_when_color_is_off(self) -> None:
+        notes = {"abcdef123": (Note("b", True),)}
+
+        assert "\033" not in "\n".join(render(self._entries(), [], False, notes))
 
     def test_prints_nothing_pending_when_there_is_nothing_to_show(self) -> None:
         assert render([], [], False) == ["  no pending changes"]

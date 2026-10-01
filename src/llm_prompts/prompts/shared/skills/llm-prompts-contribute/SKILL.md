@@ -16,6 +16,8 @@ cline-hooks and mcp-memory each carry their own prompts tree (rules, skills, wor
 - Pending commits are grouped into batches of up to 5, appended in order to the newest open `<login>/contribute/<slug>` branch with room; a full or merged batch starts a new one.
 - `llm-prompts contribute sync --apply` - a batch whose commits are all current gets new ones cherry-picked on top and pushed normally; a batch with an amended or missing commit is rebuilt from `main` and pushed with `--force-with-lease`.
 - `llm-prompts contribute sync --commit SHA` (repeatable) - syncs only the batches holding those commits, appending to the newest open batch with room or starting a new one; everything else stays local.
+- `sync --commit A --commit B` naming commits in different repos links them: the first named is the dependency; its repo syncs first, and the dependent's batch stays local until the dependency is pushed.
+- `list` prints each linked commit's dependency on its own line, `-> depends on <pr url>` (or `<tool>: unpushed`/`no PR yet`), red when it blocks; paste the url into the dependent PR's What section as `Depends on <url>`.
 - A commit already in another of your open PRs is skipped and listed as in that PR.
 - MUST NOT commit directly to a batch branch - `sync` may rebuild it as regenerable from `main` and overwrite it.
 

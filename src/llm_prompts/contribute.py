@@ -14,13 +14,14 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
-from functools import partial
+from functools import cache, partial
 from pathlib import Path
 from typing import Any, Literal, NamedTuple, TextIO
 
+from . import links
 from .batching import (
     Batch,
     BatchPlan,
@@ -32,7 +33,7 @@ from .batching import (
     regression_warning,
     select_groups,
 )
-from .listing import classify, pr_only_warning, render
+from .listing import Entry, classify, pr_only_warning, render
 from .size_guard import check
 
 _COMPRESSION_PREFIX = "chore: compress "
@@ -85,6 +86,7 @@ class OpenPr(NamedTuple):
     is_draft: bool
     review_decision: str
     commits: tuple[Commit, ...]
+    body: str = ""
 
 
 class Inventory(NamedTuple):
@@ -176,6 +178,15 @@ def _is_mixed_scope(commit: Commit, prefix: str) -> bool:
     in_scope = any(path.startswith(prefix) for path in commit.paths)
     out_of_scope = any(not path.startswith(prefix) for path in commit.paths)
     return in_scope and out_of_scope
+
+
+def _manual_shas(commits: Sequence[Commit], prefix: str) -> frozenset[str]:
+    """Return the shas of commits whose PR is opened by hand: code-only or mixed-scope."""
+    return frozenset(
+        commit.sha
+        for commit in commits
+        if not _is_in_scope_candidate(commit, prefix) or _is_mixed_scope(commit, prefix)
+    )
 
 
 def _make_group(
@@ -396,7 +407,7 @@ def open_prs(repo: Path) -> tuple[list[OpenPr], frozenset[int]]:
         "--author",
         "@me",
         "--json",
-        "number,state,url,headRefName,isDraft,reviewDecision",
+        "number,state,url,headRefName,isDraft,reviewDecision,body",
         "--limit",
         "1000",
         repo=repo,
@@ -418,6 +429,7 @@ def open_prs(repo: Path) -> tuple[list[OpenPr], frozenset[int]]:
                 is_draft=item["isDraft"],
                 review_decision=item["reviewDecision"] or "",
                 commits=commits,
+                body=item.get("body") or "",
             )
         )
     return prs, frozenset(skipped)
@@ -814,24 +826,81 @@ def _print_warning(warning: str, out: TextIO | None = None) -> None:
         print(f"  {line}", file=out)
 
 
-def run_list(repo: Path, login: str, prefix: str, out: TextIO | None = None) -> int:
-    """Print pending commits grouped by stage; exit 0 iff nothing needs sync or is a problem."""
+Target = tuple[str, Path, str]
+
+
+class Report(NamedTuple):
+    stale_warning: str | None
+    entries: list[Entry]
+    problems: list[Group]
+    warnings: list[str]
+    exit: int
+    statuses: dict[tuple[str, str], links.Status]
+    pr_bodies: dict[str, str]
+
+
+def _pending_statuses(
+    entries: Sequence[Entry], inv: Inventory, prs: Sequence[OpenPr]
+) -> dict[tuple[str, str], links.Status]:
+    """Map each pending commit's (subject, authored date) to its stage, PR url and branch."""
+    urls = {batch.branch: batch.pr.url for batch in inv.batches if batch.pr}
+    urls.update({open_pr.branch: open_pr.pr.url for open_pr in prs})
+    return {
+        (commit.subject, commit.authored_date): links.Status(
+            entry.stage, urls.get(entry.branch), entry.branch or None
+        )
+        for entry in entries
+        if entry.stage != "merged"
+        for commit, _ in entry.lines
+    }
+
+
+def _probed_statuses(
+    repo: Path,
+    commits: Sequence[Commit],
+    manual: Collection[str],
+    statuses: dict[tuple[str, str], links.Status],
+    probe: Collection[tuple[str, str]],
+) -> dict[tuple[str, str], links.Status]:
+    """Mark probed code-only commits with no PR as local only when no remote branch holds them.
+
+    Identity is the exact sha, so a rebased copy on the remote reads as unpushed, and
+    remote refs are only as fresh as the last fetch.
+    """
+    unpushed = {
+        key: links.Status("local only", None, None)
+        for commit in commits
+        if commit.sha in manual
+        and (key := (commit.subject, commit.authored_date)) in probe
+        and statuses.get(key) == links.Status("needs PR", None, None)
+        and not _git("branch", "-r", "--contains", commit.sha, repo=repo)
+    }
+    return {**statuses, **unpushed}
+
+
+def collect_report(
+    repo: Path,
+    login: str,
+    prefix: str,
+    probe: Collection[tuple[str, str]] = frozenset(),
+) -> Report:
+    """Gather pending commits, classify them, and compute warnings and exit code.
+
+    `probe` names (subject, authored date) keys of code-only commits to check against
+    remote branches when they have no PR.
+    """
     base = base_ref(repo)
     remote = base.split("/", 1)[0]
     with ThreadPoolExecutor() as pool:
         open_prs_future = pool.submit(open_prs, repo)
         fetch_base(repo, remote)
-        warning = stale_main_warning(repo, base, remote)
-        if warning is not None:
-            _print_warning(warning, out)
+        stale_warning = stale_main_warning(repo, base, remote)
 
         inv = inventory(repo, login, base, prefix)
         prs, skipped_open = open_prs_future.result()
     commits = inv.commits
     in_scope = scope_commits(commits, prefix)
-    code_only = {
-        commit.sha for commit in commits if not _is_in_scope_candidate(commit, prefix)
-    }
+    code_only = _manual_shas(commits, prefix)
     groups = group_commits(in_scope, login, prefix)
     plans = pending_plans(groups, inv, login)
     entries, problems = classify(
@@ -845,23 +914,64 @@ def run_list(repo: Path, login: str, prefix: str, out: TextIO | None = None) -> 
         _pr_only_commits(commits, prs, login),
     )
 
-    for line in render(entries, problems, sys.stdout.isatty()):
-        print(line, file=out)
-
-    warning = regression_warning(inv.batches + inv.legacy_regressed)
-    if warning is not None:
-        _print_warning(warning, out)
-
     pr_only = pr_only_warning(entries)
-    if pr_only is not None:
-        _print_warning(pr_only, out)
+    warnings = [
+        warning
+        for warning in (
+            regression_warning(inv.batches + inv.legacy_regressed),
+            pr_only,
+            skipped_prs_warning(inv.skipped_prs | skipped_open),
+        )
+        if warning is not None
+    ]
+    needs_sync = any(entry.stage == "needs sync" for entry in entries)
+    return Report(
+        stale_warning,
+        entries,
+        problems,
+        warnings,
+        int(needs_sync or bool(problems or pr_only)),
+        _probed_statuses(
+            repo, commits, code_only, _pending_statuses(entries, inv, prs), probe
+        ),
+        {open_pr.branch: open_pr.body for open_pr in prs},
+    )
 
-    warning = skipped_prs_warning(inv.skipped_prs | skipped_open)
-    if warning is not None:
+
+def _print_report(
+    report: Report,
+    out: TextIO | None = None,
+    notes: Mapping[str, Sequence[links.Note]] | None = None,
+) -> None:
+    if report.stale_warning is not None:
+        _print_warning(report.stale_warning, out)
+    for line in render(report.entries, report.problems, sys.stdout.isatty(), notes):
+        print(line, file=out)
+    for warning in report.warnings:
         _print_warning(warning, out)
 
-    needs_sync = any(entry.stage == "needs sync" for entry in entries)
-    return 1 if needs_sync or problems or pr_only else 0
+
+def run_list(repo: Path, login: str, prefix: str, out: TextIO | None = None) -> int:
+    """Print pending commits grouped by stage; exit 0 iff nothing needs sync or is a problem."""
+    report = collect_report(repo, login, prefix)
+    _print_report(report, out)
+    return report.exit
+
+
+def _held_reasons(
+    groups: Sequence[Group], inv: Inventory, held: dict[str, str]
+) -> dict[str, str]:
+    """Expand `held` to the shas of each unowned group that holds a held commit."""
+    owned = {
+        commit.sha for batch in inv.batches for commit in batch.match.owned.values()
+    }
+    reasons: dict[str, str] = {}
+    for group in groups:
+        shas = [commit.sha for commit in group.commits]
+        reason = next((held[sha] for sha in shas if sha in held), None)
+        if reason is not None and not owned.intersection(shas):
+            reasons.update(dict.fromkeys(shas, reason))
+    return reasons
 
 
 def run_sync(
@@ -872,8 +982,13 @@ def run_sync(
     only: str | None,
     cleanup: str | None,
     commits: Sequence[str] = (),
+    held: dict[str, str] | None = None,
 ) -> int:
-    """Preview or apply pending batch plans, or clean up one legacy orphan branch."""
+    """Preview or apply pending batch plans, or clean up one legacy orphan branch.
+
+    `held` maps commit shas to the unpushed dependency they wait on; each held
+    commit's whole group is left out unless a batch already owns it.
+    """
     base = base_ref(repo)
     remote = base.split("/", 1)[0]
     fetch_base(repo, remote)
@@ -907,12 +1022,21 @@ def run_sync(
         except SelectionError as error:
             print("\n".join(error.lines))
             return 1
+    held_reasons = _held_reasons(groups, inv, held or {})
+    if held_reasons:
+        selected = (
+            frozenset(commit.sha for group in groups for commit in group.commits)
+            if selected is None
+            else selected
+        ) - held_reasons.keys()
     scoped = only is not None or bool(commits)
     plans = pending_plans(groups, inv, login, selected)
     if only is not None:
         plans = [plan for plan in plans if plan.branch == only]
 
     if not apply:
+        for sha, reason in held_reasons.items():
+            print(f"{sha}: held while {reason}")
         for plan in plans:
             pick_groups = plan.groups
             batch = batches_by_branch.get(plan.branch)
@@ -980,3 +1104,282 @@ def run_sync(
     print()
     run_list(repo, login, prefix)
     return 1 if failure else 0
+
+
+def _target_lookup(
+    targets: Sequence[Target], configured: Callable[[], Sequence[Target]] | None
+) -> tuple[Callable[[str], Target | None], Callable[[], set[str]]]:
+    """Build lookups of a target by name and of every configured name; `configured` loads lazily."""
+    every = cache(configured) if configured is not None else lambda: ()
+
+    def find(name: str) -> Target | None:
+        return next((t for t in targets if t[0] == name), None) or next(
+            (t for t in every() if t[0] == name), None
+        )
+
+    return find, lambda: {t[0] for t in [*targets, *every()]}
+
+
+def list_targets(
+    targets: Sequence[Target],
+    login: str,
+    configured: Callable[[], Sequence[Target]] | None = None,
+) -> int:
+    """Report every target in parallel, along with the repos its links depend on, and print each in order."""
+    find, configured_names = _target_lookup(targets, configured)
+    names = [name for name, _, _ in targets]
+    stored = [
+        link
+        for link in links.load_links(links.LINKS_PATH)
+        if link.dependent_tool in names
+    ]
+    dependencies = {link.dependency_tool for link in stored}
+    needed = [
+        *targets,
+        *filter(None, (find(n) for n in sorted(dependencies - set(names)))),
+    ]
+    with ThreadPoolExecutor() as pool:
+        futures = {
+            name: pool.submit(
+                collect_report,
+                repo,
+                login,
+                prefix,
+                *([keys] if (keys := _dependency_keys(stored, name)) else []),
+            )
+            for name, repo, prefix in needed
+        }
+        reports = {name: future.result() for name, future in futures.items()}
+    statuses = {name: report.statuses for name, report in reports.items()}
+    annotations = links.annotate(
+        links.prune(
+            stored, {n: set(s) for n, s in statuses.items()}, configured_names()
+        )
+        if stored
+        else (),
+        statuses,
+    )
+    status = 0
+    for name in names:
+        if len(targets) > 1:
+            print(f"[{name}]")
+        report = reports[name]
+        notes = {
+            commit.sha: text
+            for entry in report.entries
+            for commit, _ in entry.lines
+            if (
+                text := links.describe(
+                    annotations.get((name, commit.subject, commit.authored_date), ()),
+                    report.pr_bodies.get(entry.branch) if entry.branch else None,
+                )
+            )
+        }
+        _print_report(report, notes=notes)
+        status = max(status, report.exit)
+        if len(targets) > 1:
+            print()
+    return status
+
+
+def _dependency_keys(
+    linked: Sequence[links.Link], tool: str
+) -> frozenset[tuple[str, str]]:
+    """Return the (subject, authored date) keys of `tool`'s commits that `linked` depends on."""
+    return frozenset(
+        (link.dependency_subject, link.dependency_date)
+        for link in linked
+        if link.dependency_tool == tool
+    )
+
+
+def _rewritten_commits(
+    values: Sequence[str],
+    commits_by_tool: dict[str, list[Commit]],
+    find: Callable[[str], Target | None],
+) -> dict[str, tuple[str, Commit]]:
+    """Map each value that names an amended commit to the repo and commit that replaced it.
+
+    An amended commit keeps its subject and authored date, so its old sha still
+    resolves locally and is matched on those.
+    """
+    rewritten: dict[str, tuple[str, Commit]] = {}
+    for value in dict.fromkeys(values):
+        for tool, commits in commits_by_tool.items():
+            target = find(tool)
+            if target is None or not value.strip():
+                continue
+            shown = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(target[1]),
+                    "show",
+                    "-s",
+                    "--format=%aI%x09%s",
+                    value,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            date, _, subject = shown.stdout.strip().partition("\t")
+            match = next(
+                (c for c in commits if (c.subject, c.authored_date) == (subject, date)),
+                None,
+            )
+            if shown.returncode == 0 and match is not None:
+                rewritten[value] = (tool, match)
+    return rewritten
+
+
+def _held_commits(
+    name: str,
+    dependencies: Sequence[links.Link],
+    find: Callable[[str], Target | None],
+    login: str,
+    local_commits: Sequence[Commit],
+) -> dict[str, str]:
+    """Map the shas of `name`'s commits waiting on an unpushed dependency to that dependency."""
+    status_by_tool = {}
+    for tool in {link.dependency_tool for link in dependencies}:
+        target = find(tool)
+        if target is not None:
+            status_by_tool[tool] = collect_report(
+                target[1], login, target[2], _dependency_keys(dependencies, tool)
+            ).statuses
+    annotations = links.annotate(dependencies, status_by_tool)
+    reasons = {
+        key: next(
+            f"{a.dependency_tool}: {a.dependency_subject} is {a.stage}"
+            for a in annotations[key]
+            if a.stage in links.HELD_STAGES
+        )
+        for key in links.holds(dependencies, status_by_tool)
+    }
+    return {
+        commit.sha: reasons[(name, commit.subject, commit.authored_date)]
+        for commit in local_commits
+        if (name, commit.subject, commit.authored_date) in reasons
+    }
+
+
+def sync_targets(
+    targets: Sequence[Target],
+    login: str,
+    apply: bool,
+    only: str | None,
+    cleanup: str | None,
+    commits: Sequence[str] = (),
+    configured: Callable[[], Sequence[Target]] | None = None,
+) -> int:
+    """Sync every target, dependency repos first, holding commits whose linked dependency is unpushed.
+
+    `--commit` values across several targets are resolved to their repos and
+    link later repos' commits to earlier ones; `--apply` saves the links
+    before any push.
+    """
+    find, configured_names = _target_lookup(targets, configured)
+    names = [name for name, _, _ in targets]
+    by_name = {target[0]: target for target in targets}
+    ahead: dict[str, list[Commit]] = {}
+
+    def local_commits(name: str) -> list[Commit]:
+        if name not in ahead:
+            target = find(name)
+            assert target is not None
+            ahead[name] = log_commits(target[1], base_ref(target[1]))
+        return ahead[name]
+
+    stored = links.load_links(links.LINKS_PATH)
+    linked = stored
+    selection: dict[str, list[str]] | None = None
+    commit_of: dict[str, tuple[str, Commit]] = {}
+    try:
+        if len(targets) > 1 and commits:
+            by_tool = {name: local_commits(name) for name in names}
+            try:
+                selection = links.resolve_commits(commits, by_tool)
+            except SelectionError:
+                selection = links.resolve_commits(
+                    commits, by_tool, _rewritten_commits(commits, by_tool, find)
+                )
+            commit_of = {
+                value: (tool, commit)
+                for tool, values in selection.items()
+                for value in values
+                for commit in local_commits(tool)
+                if commit.sha.startswith(value.strip().lower())
+            }
+            linked = links.add_links(
+                stored,
+                links.derive_links(
+                    [
+                        (tool, commit.subject, commit.authored_date)
+                        for tool, commit in (
+                            commit_of[v] for v in dict.fromkeys(commits)
+                        )
+                    ]
+                ),
+            )
+        ordered = links.order_targets(names, linked)
+    except SelectionError as error:
+        print("\n".join(error.lines))
+        return 1
+
+    if linked:
+        known = configured_names()
+        linked = links.prune(
+            linked,
+            {
+                tool: {(c.subject, c.authored_date) for c in local_commits(tool)}
+                for link in linked
+                for tool in (link.dependent_tool, link.dependency_tool)
+                if tool in known
+            },
+            known,
+        )
+        if apply and linked != stored:
+            links.save_links(links.LINKS_PATH, linked)
+
+    status = 0
+    for name in ordered:
+        if selection is not None and name not in selection:
+            continue
+        _, repo, prefix = by_name[name]
+        own_commits = commits
+        manual_commits: list[Commit] = []
+        if selection is not None:
+            manual = _manual_shas(local_commits(name), prefix)
+            own_commits = [
+                v for v in selection[name] if commit_of[v][1].sha not in manual
+            ]
+            manual_commits = [
+                commit_of[v][1]
+                for v in selection[name]
+                if commit_of[v][1].sha in manual
+            ]
+        dependencies = [link for link in linked if link.dependent_tool == name]
+        held = (
+            _held_commits(name, dependencies, find, login, local_commits(name))
+            if dependencies
+            else {}
+        )
+        extra_held = (held,) if held else ()
+        if len(targets) > 1:
+            print(f"[{name}]")
+        for commit in manual_commits:
+            print(
+                f"{commit.sha[:7]}: code-only, open its PR by hand "
+                "(llm-prompts-contribute skill)"
+            )
+        if selection is None or own_commits:
+            status = max(
+                status,
+                run_sync(
+                    repo, login, prefix, apply, only, cleanup, own_commits, *extra_held
+                ),
+            )
+        if len(targets) > 1:
+            print()
+    return status
