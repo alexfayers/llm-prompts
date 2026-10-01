@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 from conftest import ContributeRemote, FakeSubprocess
 
+from llm_prompts import contribute
 from llm_prompts.batching import Batch, BatchPlan, Match, batch_branch
 from llm_prompts.contribute import (
     ApplyResult,
@@ -22,6 +23,7 @@ from llm_prompts.contribute import (
     apply_batch,
     base_ref,
     branch_name,
+    fetch_base,
     find_blocking_commits,
     group_commits,
     inventory,
@@ -41,6 +43,12 @@ PROMPTS_PREFIX = "src/llm_prompts/prompts/"
 
 _IN_SCOPE = f"{PROMPTS_PREFIX}shared/skills/foo/SKILL.md"
 _OUT_SCOPE = "docs/notes.md"
+
+
+@pytest.fixture(autouse=True)
+def _no_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Retry network calls without waiting between attempts."""
+    monkeypatch.setattr(contribute, "_RETRY_DELAY_SECONDS", 0)
 
 
 def _passing_check() -> CheckResult:
@@ -344,6 +352,18 @@ class TestRemoteBranches:
         result = remote_branches(tmp_path, "tester")
         assert result == {"tester/add-foo-skill", "tester/fix-bar"}
 
+    def test_retries_a_transient_connection_failure(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        fake_subprocess.on(
+            "ls-remote",
+            stdout=["", "aaa111\trefs/heads/tester/fix-bar\n"],
+            returncode=[128, 0],
+            stderr=["fatal: unable to access: Couldn't connect to server\n", ""],
+        )
+
+        assert remote_branches(tmp_path, "tester") == {"tester/fix-bar"}
+
 
 class TestOpenPrs:
     def test_keeps_both_prs_sharing_a_branch_name(
@@ -387,6 +407,20 @@ class TestOpenPrs:
         assert "--limit" in call
         limit = int(call[call.index("--limit") + 1])
         assert limit >= 100
+
+    def test_retries_a_transient_gh_failure(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        fake_subprocess.on(
+            "gh",
+            "pr",
+            "list",
+            stdout=["", "[]"],
+            returncode=[1, 0],
+            stderr=["HTTP 502: Bad Gateway\n", ""],
+        )
+
+        assert all_prs(tmp_path) == []
 
 
 class TestPrsByBranch:
@@ -810,6 +844,35 @@ class TestBaseRef:
     ) -> None:
         fake_subprocess.on("remote", stdout="origin\n")
         assert base_ref(tmp_path) == "origin/main"
+
+
+class TestFetchBase:
+    def test_retries_a_transient_connection_failure(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        fake_subprocess.on(
+            "fetch",
+            returncode=[128, 0],
+            stderr=["fatal: unable to access: Couldn't connect to server\n", ""],
+        )
+
+        fetch_base(tmp_path, "origin")
+
+        assert len(fake_subprocess.matching("fetch")) == 2
+
+    def test_does_not_retry_a_non_transient_failure(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        fake_subprocess.on(
+            "fetch",
+            returncode=1,
+            stderr="fatal: couldn't find remote ref main\n",
+        )
+
+        with pytest.raises(subprocess.CalledProcessError):
+            fetch_base(tmp_path, "origin")
+
+        assert len(fake_subprocess.matching("fetch")) == 1
 
 
 class TestStaleMainWarning:
@@ -2432,6 +2495,30 @@ class TestRunSyncApplyOrphanCleanup:
         assert result == 0
         delete_calls = contribute_remote.fake.matching("push", "origin", "--delete")
         assert any("tester/orphan-branch" in call for call in delete_calls)
+
+    def test_apply_retries_a_transient_push_failure(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+    ) -> None:
+        contribute_remote.legacy("tester/orphan-branch")
+        contribute_remote.fake.on("diff", "--name-only", stdout=f"{_IN_SCOPE}\n")
+        contribute_remote.fake.on(
+            "gh", "repo", "view", stdout=json.dumps({"viewerPermission": "ADMIN"})
+        )
+        contribute_remote.fake.on(
+            "push",
+            returncode=[128, 0],
+            stderr=["fatal: unable to access: Couldn't connect to server\n", ""],
+        )
+
+        with patch("llm_prompts.contribute.run_list", return_value=0):
+            result = run_sync(
+                tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
+            )
+
+        assert result == 0
+        assert len(contribute_remote.fake.matching("push", "origin", "--delete")) == 2
 
     def test_apply_does_not_delete_a_legacy_branch_with_a_commit_not_on_main(
         self,
