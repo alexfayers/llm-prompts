@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -40,6 +41,14 @@ _COMPRESSION_PREFIX = "chore: compress "
 _CONVENTIONAL_PREFIX = re.compile(r"^[a-z]+(\([^)]*\))?!?: ", re.IGNORECASE)
 _CONVENTIONAL_SUBJECT = re.compile(r"^[a-z]+(\([^)]*\))?!?: .+", re.IGNORECASE)
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
+_GENERATED_PREFIXES = ("- ", "Depends on ")
+_WHAT_HEADING = re.compile(r"^## What\n", re.MULTILINE)
+_HEADING = re.compile(r"^## ", re.MULTILINE)
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+_BLANK_LINES = re.compile(r"\n{3,}")
+_PR_SECTION_MAX_LINES = 3
+_PR_TEMPLATE_PATH = ".github/PULL_REQUEST_TEMPLATE.md"
+_FALLBACK_TEMPLATE = "## What\n\n## Why\n\n## Testing\n"
 _SLUG_MAX_LEN = 50
 _TRANSIENT_FAILURE = re.compile(
     r"could not resolve host|unable to access|failed to connect|connection reset"
@@ -440,13 +449,188 @@ def current_login(repo: Path) -> str:
     return str(_gh_json("api", "user", "--jq", ".login", repo=repo)).strip()
 
 
-def push_remote(repo: Path) -> str:
-    """Return the remote to push PR branches to, forking first if write access is lacking."""
+def push_remote(repo: Path) -> tuple[str, bool]:
+    """Return the remote to push PR branches to and whether it is a fork, forking first if write access is lacking."""
     view = _gh_json("repo", "view", "--json", "viewerPermission", repo=repo)
     if view.get("viewerPermission") in ("WRITE", "MAINTAIN", "ADMIN"):
-        return "origin"
+        return "origin", False
     _gh_json("repo", "fork", "--remote", repo=repo)
-    return "origin"
+    return "origin", True
+
+
+def pr_title(commits: Sequence[Commit]) -> str:
+    """Return the first commit's subject, noting how many further commits the PR carries."""
+    extra = len(commits) - 1
+    return commits[0].subject + (f" (+{extra} more)" if extra else "")
+
+
+def pr_template(repo: Path, base: str) -> str:
+    """Return the PR template committed on ``base``, or a minimal one when it has none."""
+    try:
+        return _git("show", f"{base}:{_PR_TEMPLATE_PATH}", repo=repo)
+    except subprocess.CalledProcessError:
+        return _FALLBACK_TEMPLATE
+
+
+def _what_lines(commits: Sequence[Commit], depends_on: Sequence[str] = ()) -> list[str]:
+    """Return the What section's generated lines: dependency links, then the capped subject bullets."""
+    subjects = [f"- {commit.subject}" for commit in commits]
+    if len(subjects) > _PR_SECTION_MAX_LINES:
+        kept = _PR_SECTION_MAX_LINES - 1
+        subjects = [*subjects[:kept], f"- +{len(subjects) - kept} more (see Commits)"]
+    return [*(f"Depends on {url}" for url in depends_on), *subjects]
+
+
+def pr_body(
+    template: str, commits: Sequence[Commit], depends_on: Sequence[str] = ()
+) -> str:
+    """Return ``template`` without placeholder comments and with the What lines under its What heading."""
+    lines = "\n".join(_what_lines(commits, depends_on))
+    template = _BLANK_LINES.sub("\n\n", _HTML_COMMENT.sub("", template))
+    body, found = _WHAT_HEADING.subn(lambda m: f"{m[0]}\n{lines}\n", template, 1)
+    return body if found else f"## What\n\n{lines}\n\n{template}"
+
+
+def rewrite_what(
+    body: str, commits: Sequence[Commit], depends_on: Sequence[str] = ()
+) -> str:
+    """Return ``body`` with the generated lines of its What section rebuilt and all else kept."""
+    lines = _what_lines(commits, depends_on)
+    heading = _WHAT_HEADING.search(body)
+    if heading is None:
+        return "## What\n\n" + "\n".join(lines) + f"\n\n{body}"
+    following = _HEADING.search(body, heading.end())
+    end = following.start() if following else len(body)
+    section = body[heading.end() : end]
+    old = section.lstrip("\n").split("\n")
+    generated = next(
+        (i for i, line in enumerate(old) if not line.startswith(_GENERATED_PREFIXES)),
+        len(old),
+    )
+    stale = {f"Depends on {url}" for url in depends_on}
+    prose = "\n".join(line for line in old[generated:] if line not in stale).strip("\n")
+    trailing = section[len(section.rstrip("\n")) :]
+    rebuilt = "\n" + "\n".join(lines) + (f"\n\n{prose}" if prose else "") + trailing
+    return body[: heading.end()] + rebuilt + body[end:]
+
+
+def open_draft_pr(repo: Path, base: str, head: str, title: str, body: str) -> str:
+    """Open a draft PR against ``base`` from ``head`` and return its URL."""
+    argv = ["gh", "pr", "create", "--draft", "--base", base.split("/", 1)[1]]
+    argv += ["--head", head, "--title", title, "--body", body]
+    return _run_with_retries(argv, repo).strip()
+
+
+def _pr_targets(
+    planned: dict[str, tuple[Commit, ...]],
+    batches_by_branch: dict[str, Batch],
+    plans: Sequence[BatchPlan],
+    scoped: bool,
+) -> dict[str, tuple[Commit, ...]]:
+    """Return the commits of each branch that needs a PR opened, keyed by branch."""
+    targets = {
+        branch: commits
+        for branch, commits in planned.items()
+        if (batch := batches_by_branch.get(branch)) is None or batch.pr is None
+    }
+    if not scoped:
+        planned_branches = {plan.branch for plan in plans}
+        targets |= {
+            batch.branch: batch.commits
+            for batch in batches_by_branch.values()
+            if batch.pr is None and batch.branch not in planned_branches
+        }
+    return targets
+
+
+def _pr_command(base: str, branch: str, commits: Sequence[Commit]) -> str:
+    """Return the ``gh pr create`` command a dry run would show for ``branch``."""
+    title = shlex.quote(pr_title(commits))
+    base_branch = base.split("/", 1)[1]
+    return f"gh pr create --draft --base {base_branch} --head {branch} --title {title}"
+
+
+def _branch_depends(
+    commits: Sequence[Commit], depends_on: dict[str, tuple[str, ...]]
+) -> tuple[str, ...]:
+    """Return the dependency PR urls of ``commits`` in commit order, without repeats."""
+    return tuple(
+        dict.fromkeys(
+            url for commit in commits for url in depends_on.get(commit.sha, ())
+        )
+    )
+
+
+def _first_stderr_line(error: subprocess.CalledProcessError) -> str:
+    """Return the first line of a failed command's stderr."""
+    return (error.stderr or "").strip().split("\n")[0]
+
+
+def _pr_body_text(repo: Path, number: int) -> str:
+    """Return the body of PR ``number``."""
+    view = _gh_json("pr", "view", str(number), "--json", "body", repo=repo)
+    return view["body"] or ""
+
+
+def edit_pr_body(repo: Path, number: int, body: str) -> None:
+    """Replace the body of PR ``number``."""
+    _run_with_retries(["gh", "pr", "edit", str(number), "--body", body], repo)
+
+
+def _refresh_pr_whats(
+    repo: Path, targets: dict[str, tuple[Pr, tuple[Commit, ...], tuple[str, ...]]]
+) -> bool:
+    """Rebuild the What section of each target's open PR, print what changed and return whether any failed."""
+
+    def refresh_one(
+        item: tuple[str, tuple[Pr, tuple[Commit, ...], tuple[str, ...]]],
+    ) -> str | None:
+        branch, (pr, commits, depends_on) = item
+        try:
+            body = _pr_body_text(repo, pr.number)
+            rewritten = rewrite_what(body, commits, depends_on)
+            if rewritten == body:
+                return None
+            edit_pr_body(repo, pr.number, rewritten)
+        except subprocess.CalledProcessError as error:
+            return f"{branch}: PR What not updated ({_first_stderr_line(error)})"
+        return f"{branch}: updated PR What {pr.url}"
+
+    with ThreadPoolExecutor() as executor:
+        lines = [line for line in executor.map(refresh_one, targets.items()) if line]
+    if lines:
+        print("\n".join(lines))
+    return any("PR What not updated" in line for line in lines)
+
+
+def _open_draft_prs(
+    repo: Path,
+    base: str,
+    head_owner: str,
+    targets: dict[str, tuple[Commit, ...]],
+    depends_on: dict[str, tuple[str, ...]],
+) -> bool:
+    """Open a draft PR per target branch, print each outcome and return whether any failed."""
+    template = pr_template(repo, base)
+
+    def open_one(item: tuple[str, tuple[Commit, ...]]) -> str:
+        branch, commits = item
+        try:
+            url = open_draft_pr(
+                repo,
+                base,
+                f"{head_owner}{branch}",
+                pr_title(commits),
+                pr_body(template, commits, _branch_depends(commits, depends_on)),
+            )
+        except subprocess.CalledProcessError as error:
+            return f"{branch}: PR not opened ({_first_stderr_line(error)})"
+        return f"{branch}: opened draft PR {url}"
+
+    with ThreadPoolExecutor() as executor:
+        lines = list(executor.map(open_one, targets.items()))
+    print("\n".join(lines))
+    return any("PR not opened" in line for line in lines)
 
 
 def _branch_in_scope(repo: Path, base: str, remote_ref: str, prefix: str) -> bool:
@@ -958,6 +1142,11 @@ def run_list(repo: Path, login: str, prefix: str, out: TextIO | None = None) -> 
     return report.exit
 
 
+def _plan_commits(plan: BatchPlan) -> tuple[Commit, ...]:
+    """Return every commit across ``plan``'s groups."""
+    return tuple(commit for group in plan.groups for commit in group.commits)
+
+
 def _held_reasons(
     groups: Sequence[Group], inv: Inventory, held: dict[str, str]
 ) -> dict[str, str]:
@@ -983,6 +1172,7 @@ def run_sync(
     cleanup: str | None,
     commits: Sequence[str] = (),
     held: dict[str, str] | None = None,
+    depends_on: dict[str, tuple[str, ...]] | None = None,
 ) -> int:
     """Preview or apply pending batch plans, or clean up one legacy orphan branch.
 
@@ -1037,6 +1227,12 @@ def run_sync(
     if not apply:
         for sha, reason in held_reasons.items():
             print(f"{sha}: held while {reason}")
+        dry_run_targets = _pr_targets(
+            {plan.branch: _plan_commits(plan) for plan in plans},
+            batches_by_branch,
+            plans,
+            scoped,
+        )
         for plan in plans:
             pick_groups = plan.groups
             batch = batches_by_branch.get(plan.branch)
@@ -1053,13 +1249,24 @@ def run_sync(
                 print(f"git push <remote> {plan.branch}")
             else:
                 print(f"git push --force-with-lease <remote> {plan.branch}")
+            if batch is not None and batch.pr is not None:
+                print(
+                    f"gh pr edit {batch.pr.number} --body "
+                    f"<What rebuilt from {len(_plan_commits(plan))} commits>"
+                )
+            if plan.branch in dry_run_targets:
+                print(_pr_command(base, plan.branch, dry_run_targets.pop(plan.branch)))
+        for branch, branch_commits in dry_run_targets.items():
+            print(_pr_command(base, branch, branch_commits))
         if not scoped:
             for branch in inv.legacy_orphans:
                 print(f"{branch}: would delete (orphan, no PR)")
         return 1 if regression is not None else 0
 
-    remote = push_remote(repo)
+    remote, forked = push_remote(repo)
     failure = regression is not None
+    pushed: dict[str, tuple[Commit, ...]] = {}
+    depends = depends_on or {}
     for plan in plans:
         result = apply_batch(
             repo, plan, base, prefix, batches_by_branch.get(plan.branch)
@@ -1095,6 +1302,19 @@ def run_sync(
             continue
         _git("branch", "-D", plan.branch, repo=repo)
         print(f"{plan.branch}: pushed")
+        pushed[plan.branch] = _plan_commits(plan)
+
+    targets = _pr_targets(pushed, batches_by_branch, plans, scoped)
+    if targets:
+        head_owner = f"{login}:" if forked else ""
+        failure |= _open_draft_prs(repo, base, head_owner, targets, depends)
+    refreshes = {
+        branch: (batch.pr, commits, _branch_depends(commits, depends))
+        for branch, commits in pushed.items()
+        if (batch := batches_by_branch.get(branch)) and batch.pr
+    }
+    if refreshes:
+        failure |= _refresh_pr_whats(repo, refreshes)
 
     if not scoped:
         for branch in inv.legacy_orphans:
@@ -1239,8 +1459,8 @@ def _held_commits(
     find: Callable[[str], Target | None],
     login: str,
     local_commits: Sequence[Commit],
-) -> dict[str, str]:
-    """Map the shas of `name`'s commits waiting on an unpushed dependency to that dependency."""
+) -> tuple[dict[str, str], dict[str, tuple[str, ...]]]:
+    """Return `name`'s commits waiting on an unpushed dependency, and the PR urls each depends on, both by sha."""
     status_by_tool = {}
     for tool in {link.dependency_tool for link in dependencies}:
         target = find(tool)
@@ -1257,11 +1477,27 @@ def _held_commits(
         )
         for key in links.holds(dependencies, status_by_tool)
     }
-    return {
+    held = {
         commit.sha: reasons[(name, commit.subject, commit.authored_date)]
         for commit in local_commits
         if (name, commit.subject, commit.authored_date) in reasons
     }
+    depends_on = {
+        commit.sha: urls
+        for commit in local_commits
+        if (
+            urls := tuple(
+                dict.fromkeys(
+                    a.url
+                    for a in annotations.get(
+                        (name, commit.subject, commit.authored_date), ()
+                    )
+                    if a.url
+                )
+            )
+        )
+    }
+    return held, depends_on
 
 
 def sync_targets(
@@ -1360,12 +1596,12 @@ def sync_targets(
                 if commit_of[v][1].sha in manual
             ]
         dependencies = [link for link in linked if link.dependent_tool == name]
-        held = (
+        held, depends_on = (
             _held_commits(name, dependencies, find, login, local_commits(name))
             if dependencies
-            else {}
+            else ({}, {})
         )
-        extra_held = (held,) if held else ()
+        extra_args = (held, depends_on) if depends_on else (held,) if held else ()
         if len(targets) > 1:
             print(f"[{name}]")
         for commit in manual_commits:
@@ -1377,7 +1613,7 @@ def sync_targets(
             status = max(
                 status,
                 run_sync(
-                    repo, login, prefix, apply, only, cleanup, own_commits, *extra_held
+                    repo, login, prefix, apply, only, cleanup, own_commits, *extra_args
                 ),
             )
         if len(targets) > 1:
