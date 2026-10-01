@@ -14,10 +14,10 @@ cline-hooks and mcp-memory each carry their own prompts tree (rules, skills, wor
 - Commit straight to that repo's local `main`.
 - `llm-prompts contribute list` - shows every unmerged commit's batch branch and status (new/current/stale/regressed/in another PR) across configured overlay repos; `--tool NAME` narrows to one.
 - Pending commits are grouped into batches of up to 5, appended in order to the newest open `<login>/contribute/<slug>` branch with room; a full or merged batch starts a new one.
-- `llm-prompts contribute sync --apply` - a batch whose commits are all current gets new ones cherry-picked on top and pushed normally; a batch with an amended or missing commit is rebuilt from `main` and pushed with `--force-with-lease`.
+- `llm-prompts contribute sync --apply` - a batch whose commits are all current gets new ones cherry-picked on top and pushed normally; a batch with an amended or missing commit is rebuilt from `main` and pushed with `--force-with-lease`. It also opens a draft PR, no reviewers, for each pushed batch branch lacking an open PR; the body follows the target repo's template with What listing the batch's commit subjects.
 - `llm-prompts contribute sync --commit SHA` (repeatable) - syncs only the batches holding those commits, appending to the newest open batch with room or starting a new one; everything else stays local.
 - `sync --commit A --commit B` naming commits in different repos links them: the first named is the dependency; its repo syncs first, and the dependent's batch stays local until the dependency is pushed.
-- `list` prints each linked commit's dependency on its own line, `-> depends on <pr url>` (or `<tool>: unpushed`/`no PR yet`), red when it blocks; paste the url into the dependent PR's What section as `Depends on <url>`.
+- `list` prints each linked commit's dependency on its own line, `-> depends on <pr url>` (or `<tool>: unpushed`/`no PR yet`), red when it blocks; sync writes it into the `What` section as `Depends on <url>`, and rewrites only the `What` section when a batch's commits change.
 - A commit already in another of your open PRs is skipped and listed as in that PR.
 - MUST NOT commit directly to a batch branch - `sync` may rebuild it as regenerable from `main` and overwrite it.
 
@@ -37,6 +37,7 @@ cline-hooks and mcp-memory each carry their own prompts tree (rules, skills, wor
 ## PR content
 
 - Follow the target repo's `.github/PULL_REQUEST_TEMPLATE.md` structure (What/Why/Testing/Checks - the Checks bullet differs per repo).
+- Right after `sync` opens a PR, MUST fill Why and Testing via `gh pr edit <url> --body-file -`, at most 3 bullets per section, fewer where possible, each one short line not restating the title - Why gives the reasoning, merging related commits into one bullet; Testing is usually 1 bullet. Commits carry no body, so sync cannot write Why. Descriptions MUST be very easy for reluctant reviewers to understand, with clear reasoning.
 - Title: conventional-commit format (`type: subject`).
 - Description: bullet points, not paragraphs. State WHAT and WHY, not HOW. No restating the diff, no process commentary.
 - Planned with eagle-vision (you built it from a plan directory, or the user names one): once the PR is open, post the plan as a separate comment - `python3 "<base-dir>/../eagle-vision/focus.py" comment <dir> | gh pr comment <pr-url> --body-file -`. Post it once, never in the description.

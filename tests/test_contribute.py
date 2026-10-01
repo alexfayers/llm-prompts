@@ -36,8 +36,12 @@ from llm_prompts.contribute import (
     is_conventional,
     log_commits,
     open_prs,
+    pr_body,
+    pr_template,
+    pr_title,
     push_remote,
     remote_branches,
+    rewrite_what,
     run_list,
     run_sync,
     scope_commits,
@@ -1021,7 +1025,7 @@ class TestPushRemote:
             "gh", "repo", "view", stdout=json.dumps({"viewerPermission": "ADMIN"})
         )
         result = push_remote(tmp_path)
-        assert result == "origin"
+        assert result == ("origin", False)
         assert fake_subprocess.matching("gh", "repo", "fork") == []
 
     def test_read_permission_forks_before_using_origin(
@@ -1032,7 +1036,7 @@ class TestPushRemote:
         )
         fake_subprocess.on("gh", "repo", "fork", "--remote")
         result = push_remote(tmp_path)
-        assert result == "origin"
+        assert result == ("origin", True)
         assert fake_subprocess.matching("gh", "repo", "fork") != []
 
 
@@ -3077,6 +3081,30 @@ class TestSyncTargetsLinks:
 
         assert mock_sync.call_args_list[1].args[-1] == ()
 
+    def test_dependent_sync_receives_the_urls_of_its_open_dependencies(
+        self, isolated_links_path: Path
+    ) -> None:
+        _link_file(isolated_links_path, BETA_COMMIT, ALPHA_COMMIT)
+        opened = {
+            (ALPHA_COMMIT.subject, ALPHA_COMMIT.authored_date): links.Status(
+                "in review", "https://example.test/pr/1", "tester/contribute/add-alpha"
+            )
+        }
+        base, log, report = self._patched(opened)
+        with (
+            base,
+            log,
+            report,
+            patch("llm_prompts.contribute.run_sync", return_value=0) as mock_sync,
+        ):
+            contribute.sync_targets(TWO_TARGETS, "me", True, None, None)
+
+        assert mock_sync.call_args_list[1].args[-2:] == (
+            {},
+            {"b1": ("https://example.test/pr/1",)},
+        )
+        assert mock_sync.call_args_list[0].args[-1] == ()
+
     def test_link_cycle_aborts_before_any_sync(
         self, isolated_links_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -3413,3 +3441,416 @@ class TestCrossRepoSync:
             "old1234: rewritten - alpha main now has a1 feat: add alpha thing"
             in capsys.readouterr().out
         )
+
+
+class TestPrTitle:
+    def test_single_commit_uses_its_subject(self) -> None:
+        assert pr_title([Commit("a1", "feat: add foo", ())]) == "feat: add foo"
+
+    def test_extra_commits_are_counted(self) -> None:
+        commits = [
+            Commit("a1", "feat: add foo", ()),
+            Commit("a2", "feat: add bar", ()),
+            Commit("a3", "feat: add baz", ()),
+        ]
+        assert pr_title(commits) == "feat: add foo (+2 more)"
+
+
+_TEMPLATE = (
+    "## What\n\n<!-- What changed. -->\n\n"
+    "## Why\n\n<!-- Why it changed. -->\n\n"
+    "## Testing\n\n<!-- How tested. -->\n\n"
+    "## Checks\n\n- [ ] Within budget\n"
+)
+
+
+class TestPrBody:
+    def test_commit_subjects_listed_directly_under_what(self) -> None:
+        commits = [Commit("a1", "feat: add foo", ()), Commit("a2", "fix: bar", ())]
+        assert pr_body(_TEMPLATE, commits) == (
+            "## What\n\n- feat: add foo\n- fix: bar\n\n"
+            "## Why\n\n## Testing\n\n## Checks\n\n- [ ] Within budget\n"
+        )
+
+    def test_placeholder_comments_are_removed_and_the_rest_kept(self) -> None:
+        body = pr_body(_TEMPLATE, [Commit("a1", "feat: add foo", ())])
+        assert "<!--" not in body
+        for kept in ("## Why", "## Testing", "## Checks", "- [ ] Within budget"):
+            assert kept in body
+
+    def test_template_without_what_heading_gets_one_prepended(self) -> None:
+        commits = [Commit("a1", "feat: add foo", ())]
+        template = "## Why\n\n<!-- Why. -->\n"
+        assert pr_body(template, commits) == "## What\n\n- feat: add foo\n\n## Why\n\n"
+
+    def test_what_section_is_capped_with_a_count_of_the_rest(self) -> None:
+        commits = [Commit(f"a{i}", f"feat: add thing{i}", ()) for i in range(1, 6)]
+        subjects = "\n".join(f"- feat: add thing{i}" for i in range(1, 3))
+        body = pr_body(_TEMPLATE, commits)
+        assert body.startswith(
+            f"## What\n\n{subjects}\n- +3 more (see Commits)\n\n## Why"
+        )
+
+    def test_depends_on_lines_precede_the_bullets_and_are_not_capped(self) -> None:
+        commits = [Commit(f"a{i}", f"feat: add thing{i}", ()) for i in range(1, 6)]
+        body = pr_body(_TEMPLATE, commits, ["https://example.test/pr/1"])
+        assert body.startswith(
+            "## What\n\nDepends on https://example.test/pr/1\n"
+            "- feat: add thing1\n- feat: add thing2\n"
+            "- +3 more (see Commits)\n\n## Why"
+        )
+
+
+_EDITED_BODY = (
+    "## What\n\n- feat: add foo\n\n"
+    "## Why\n\nBecause of reasons.\n\n"
+    "## Testing\n\nRan it.\n\n"
+    "## Checks\n\n- [x] Within budget\n"
+)
+
+
+class TestRewriteWhat:
+    def test_generated_run_is_replaced_and_other_sections_are_untouched(
+        self,
+    ) -> None:
+        commits = [Commit("a1", "feat: add foo", ()), Commit("a2", "fix: bar", ())]
+        assert rewrite_what(_EDITED_BODY, commits) == _EDITED_BODY.replace(
+            "- feat: add foo\n", "- feat: add foo\n- fix: bar\n", 1
+        )
+
+    def test_user_prose_is_kept_and_pasted_duplicate_depends_line_dropped(
+        self,
+    ) -> None:
+        commits = [Commit("a1", "feat: add foo", ())]
+        body = (
+            "## What\n\n- feat: add foo\n\nSee the thread.\n"
+            "Depends on https://example.test/pr/1\n"
+            "Depends on https://example.test/pr/2\n\n## Why\n\nx\n"
+        )
+        assert rewrite_what(body, commits, ["https://example.test/pr/1"]) == (
+            "## What\n\nDepends on https://example.test/pr/1\n- feat: add foo\n\n"
+            "See the thread.\nDepends on https://example.test/pr/2\n\n## Why\n\nx\n"
+        )
+
+    def test_missing_what_heading_is_prepended(self) -> None:
+        commits = [Commit("a1", "feat: add foo", ())]
+        assert rewrite_what("## Why\n\nx\n", commits) == (
+            "## What\n\n- feat: add foo\n\n## Why\n\nx\n"
+        )
+
+    def test_rewriting_twice_changes_nothing(self) -> None:
+        commits = [Commit("a1", "feat: add foo", ()), Commit("a2", "fix: bar", ())]
+        once = rewrite_what(_EDITED_BODY, commits, ["https://example.test/pr/1"])
+        assert rewrite_what(once, commits, ["https://example.test/pr/1"]) == once
+
+
+class TestPrTemplate:
+    def test_reads_template_from_base_ref(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        fake_subprocess.on("show", stdout=_TEMPLATE)
+        assert pr_template(tmp_path, "origin/main") == _TEMPLATE.strip()
+        show_call = fake_subprocess.matching("show")[0]
+        assert "origin/main:.github/PULL_REQUEST_TEMPLATE.md" in show_call
+
+    def test_falls_back_when_base_has_no_template(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        fake_subprocess.on("show", returncode=128)
+        assert (
+            pr_template(tmp_path, "origin/main") == "## What\n\n## Why\n\n## Testing\n"
+        )
+
+
+class TestRunSyncDraftPr:
+    def _allow_apply(
+        self, contribute_remote: ContributeRemote, permission: str = "ADMIN"
+    ) -> None:
+        fake = contribute_remote.fake
+        fake.on(
+            "gh", "repo", "view", stdout=json.dumps({"viewerPermission": permission})
+        )
+        fake.on("gh", "repo", "fork")
+        fake.on("show", stdout=_TEMPLATE)
+        fake.on("branch", "--list", stdout="")
+        fake.on("worktree", "add")
+        fake.on("switch", "-c")
+        fake.on("cherry-pick")
+        fake.on("worktree", "remove")
+        fake.on("push")
+        fake.on("branch", "-D")
+        fake.on("gh", "pr", "create", stdout="https://example.test/pr/1\n")
+
+    def test_new_batch_opens_a_draft_pr_without_reviewers(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        commits = [("m1", "feat: add foo"), ("m2", "feat: add bar")]
+        contribute_remote.main(*commits)
+        self._allow_apply(contribute_remote)
+
+        result = run_sync(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
+        )
+
+        branch = batch_branch(contribute_remote.login, "add-foo")
+        create = contribute_remote.fake.matching("gh", "pr", "create")
+        assert result == 0
+        assert len(create) == 1
+        argv = create[0]
+        assert "--draft" in argv
+        assert argv[argv.index("--base") + 1] == "main"
+        assert argv[argv.index("--head") + 1] == branch
+        assert argv[argv.index("--title") + 1] == "feat: add foo (+1 more)"
+        body = argv[argv.index("--body") + 1]
+        assert "- feat: add foo\n- feat: add bar" in body
+        assert "--reviewer" not in argv
+        assert f"{branch}: opened draft PR https://example.test/pr/1" in (
+            capsys.readouterr().out
+        )
+
+    def test_batch_with_an_open_pr_is_not_opened_again(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        self._existing_pr_batch(contribute_remote, _EDITED_BODY)
+
+        result = run_sync(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
+        )
+
+        assert result == 0
+        assert contribute_remote.fake.matching("gh", "pr", "create") == []
+
+    def test_forked_push_opens_the_pr_from_the_fork_owner(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        self._allow_apply(contribute_remote, permission="READ")
+
+        run_sync(tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None)
+
+        argv = contribute_remote.fake.matching("gh", "pr", "create")[0]
+        branch = batch_branch(contribute_remote.login, "add-foo")
+        assert argv[argv.index("--head") + 1] == f"{contribute_remote.login}:{branch}"
+
+    def test_failed_pr_creation_is_reported_and_later_branches_still_open(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        commits = [(f"m{i}", f"feat: add thing{i}") for i in range(1, 7)]
+        contribute_remote.main(*commits)
+        self._allow_apply(contribute_remote)
+        first_branch = batch_branch(contribute_remote.login, "add-thing1")
+        contribute_remote.fake.on_match(
+            lambda argv: argv[:3] == ["gh", "pr", "create"] and first_branch in argv,
+            returncode=1,
+            stderr="validation failed\nmore detail",
+        )
+
+        result = run_sync(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
+        )
+
+        out = capsys.readouterr().out
+        assert result == 1
+        assert f"{first_branch}: PR not opened (validation failed)" in out
+        assert "opened draft PR https://example.test/pr/1" in out
+        assert len(contribute_remote.fake.matching("gh", "pr", "create")) == 2
+
+    def test_rejected_push_does_not_attempt_pr_creation(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        self._allow_apply(contribute_remote)
+        contribute_remote.fake.on("push", returncode=1, stderr="rejected")
+
+        result = run_sync(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
+        )
+
+        assert result == 1
+        assert contribute_remote.fake.matching("gh", "pr", "create") == []
+
+    def test_pushed_batch_without_a_pr_is_opened_only_when_unscoped(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        commits = [("m1", "feat: add foo")]
+        contribute_remote.main(*commits)
+        branch = contribute_remote.managed("add-foo", commits)
+        self._allow_apply(contribute_remote)
+
+        run_sync(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, "elsewhere", None
+        )
+        assert contribute_remote.fake.matching("gh", "pr", "create") == []
+
+        run_sync(tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None)
+        argv = contribute_remote.fake.matching("gh", "pr", "create")[0]
+        assert argv[argv.index("--head") + 1] == branch
+
+    def test_dry_run_prints_the_pr_command_without_calling_gh(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        self._allow_apply(contribute_remote)
+
+        run_sync(tmp_path, contribute_remote.login, PROMPTS_PREFIX, False, None, None)
+
+        branch = batch_branch(contribute_remote.login, "add-foo")
+        assert (
+            f"gh pr create --draft --base main --head {branch} --title 'feat: add foo'"
+            in capsys.readouterr().out
+        )
+        assert contribute_remote.fake.matching("gh", "pr", "create") == []
+        assert contribute_remote.fake.matching("gh", "repo", "view") == []
+
+    def _existing_pr_batch(self, contribute_remote: ContributeRemote, body: str) -> str:
+        existing = [("b1", "feat: add foo")]
+        contribute_remote.main(*existing, ("m2", "feat: add bar"))
+        branch = contribute_remote.managed(
+            "add-foo", existing, pr=Pr(9, "OPEN", "https://example.test/pr/9")
+        )
+        self._allow_apply(contribute_remote)
+        contribute_remote.fake.on_match(
+            lambda argv: argv[:4] == ["gh", "pr", "view", "9"] and "body" in argv,
+            stdout=json.dumps({"body": body}),
+        )
+        contribute_remote.fake.on("gh", "pr", "edit")
+        return branch
+
+    def test_pushing_to_a_batch_with_an_open_pr_rewrites_its_what_section(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        branch = self._existing_pr_batch(contribute_remote, _EDITED_BODY)
+
+        result = run_sync(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
+        )
+
+        edit = contribute_remote.fake.matching("gh", "pr", "edit")
+        assert result == 0
+        assert len(edit) == 1
+        assert edit[0][edit[0].index("--body") + 1] == _EDITED_BODY.replace(
+            "- feat: add foo\n", "- feat: add foo\n- feat: add bar\n", 1
+        )
+        assert edit[0][3] == "9"
+        assert f"{branch}: updated PR What https://example.test/pr/9" in (
+            capsys.readouterr().out
+        )
+
+    def test_body_already_current_is_left_alone(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        current = _EDITED_BODY.replace(
+            "- feat: add foo\n", "- feat: add foo\n- feat: add bar\n", 1
+        )
+        self._existing_pr_batch(contribute_remote, current)
+
+        run_sync(tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None)
+
+        assert contribute_remote.fake.matching("gh", "pr", "edit") == []
+        assert "PR What" not in capsys.readouterr().out
+
+    @pytest.mark.parametrize("failing", ["view", "edit"])
+    def test_failed_body_refresh_is_reported_and_fails_the_run(
+        self,
+        failing: str,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        branch = self._existing_pr_batch(contribute_remote, _EDITED_BODY)
+        contribute_remote.fake.on_match(
+            lambda argv: argv[:3] == ["gh", "pr", failing],
+            returncode=1,
+            stderr="no access\nmore detail",
+        )
+
+        result = run_sync(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
+        )
+
+        assert result == 1
+        assert f"{branch}: PR What not updated (no access)" in capsys.readouterr().out
+
+    def test_rejected_push_leaves_the_pr_body_alone(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        self._existing_pr_batch(contribute_remote, _EDITED_BODY)
+        contribute_remote.fake.on("push", returncode=1, stderr="rejected")
+
+        run_sync(tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None)
+
+        assert contribute_remote.fake.matching("gh", "pr", "edit") == []
+        assert not [
+            call
+            for call in contribute_remote.fake.commands
+            if call[:3] == ["gh", "pr", "view"] and "body" in call
+        ]
+
+    def test_dry_run_prints_the_pr_edit_command_without_calling_gh(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        self._existing_pr_batch(contribute_remote, _EDITED_BODY)
+
+        run_sync(tmp_path, contribute_remote.login, PROMPTS_PREFIX, False, None, None)
+
+        assert "gh pr edit 9 --body <What rebuilt from 2 commits>" in (
+            capsys.readouterr().out
+        )
+        assert contribute_remote.fake.matching("gh", "pr", "edit") == []
+
+    def test_dependency_urls_are_written_into_a_rewritten_body(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        self._existing_pr_batch(contribute_remote, _EDITED_BODY)
+        url = "https://example.test/pr/1"
+
+        run_sync(
+            tmp_path,
+            contribute_remote.login,
+            PROMPTS_PREFIX,
+            True,
+            None,
+            None,
+            depends_on={"m2": (url,)},
+        )
+
+        edit = contribute_remote.fake.matching("gh", "pr", "edit")[0]
+        assert f"## What\n\nDepends on {url}\n- feat: add foo" in edit[-1]
+
+    def test_dependency_urls_are_written_into_an_opened_body(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        self._allow_apply(contribute_remote)
+        url = "https://example.test/pr/1"
+
+        run_sync(
+            tmp_path,
+            contribute_remote.login,
+            PROMPTS_PREFIX,
+            True,
+            None,
+            None,
+            depends_on={"m1": (url,)},
+        )
+
+        argv = contribute_remote.fake.matching("gh", "pr", "create")[0]
+        assert f"## What\n\nDepends on {url}\n- feat: add foo" in argv[-1]
