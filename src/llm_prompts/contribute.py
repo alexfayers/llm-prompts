@@ -96,6 +96,8 @@ class OpenPr(NamedTuple):
     review_decision: str
     commits: tuple[Commit, ...]
     body: str = ""
+    head_sha: str = ""
+    base_branch: str = ""
 
 
 class Inventory(NamedTuple):
@@ -416,7 +418,7 @@ def open_prs(repo: Path) -> tuple[list[OpenPr], frozenset[int]]:
         "--author",
         "@me",
         "--json",
-        "number,state,url,headRefName,isDraft,reviewDecision,body",
+        "number,state,url,headRefName,isDraft,reviewDecision,body,headRefOid,baseRefName",
         "--limit",
         "1000",
         repo=repo,
@@ -439,6 +441,8 @@ def open_prs(repo: Path) -> tuple[list[OpenPr], frozenset[int]]:
                 review_decision=item["reviewDecision"] or "",
                 commits=commits,
                 body=item.get("body") or "",
+                head_sha=item.get("headRefOid") or "",
+                base_branch=item.get("baseRefName") or "",
             )
         )
     return prs, frozenset(skipped)
@@ -561,6 +565,32 @@ def _branch_depends(
     )
 
 
+def _contains(repo: Path, ancestor: str, sha: str) -> bool:
+    """Return whether ``sha`` has ``ancestor`` in its history."""
+    try:
+        _git("merge-base", "--is-ancestor", ancestor, sha, repo=repo)
+    except subprocess.CalledProcessError as error:
+        if error.returncode == 1:
+            return False
+        raise
+    return True
+
+
+def behind_prs(
+    repo: Path, base: str, remote: str, prs: Sequence[OpenPr]
+) -> list[OpenPr]:
+    """Return the PRs targeting ``main`` whose head lacks ``base``, oldest number first."""
+    candidates = [pr for pr in prs if pr.head_sha and pr.base_branch == "main"]
+    if candidates:
+        _git_network(
+            "fetch", "--quiet", remote, *(pr.head_sha for pr in candidates), repo=repo
+        )
+    return sorted(
+        (pr for pr in candidates if not _contains(repo, base, pr.head_sha)),
+        key=lambda pr: pr.pr.number,
+    )
+
+
 def _first_stderr_line(error: subprocess.CalledProcessError) -> str:
     """Return the first line of a failed command's stderr."""
     return (error.stderr or "").strip().split("\n")[0]
@@ -575,6 +605,11 @@ def _pr_body_text(repo: Path, number: int) -> str:
 def edit_pr_body(repo: Path, number: int, body: str) -> None:
     """Replace the body of PR ``number``."""
     _run_with_retries(["gh", "pr", "edit", str(number), "--body", body], repo)
+
+
+def update_pr_branch(repo: Path, number: int) -> None:
+    """Rebase PR ``number``'s branch onto its base."""
+    _run_with_retries(["gh", "pr", "update-branch", str(number), "--rebase"], repo)
 
 
 def _refresh_pr_whats(
@@ -662,7 +697,12 @@ def _patch_ids(repo: Path, shas: Sequence[str]) -> dict[str, str]:
 def _branch_commits(repo: Path, base: str, branch: str) -> tuple[Commit, ...]:
     """List a pushed branch's commits ahead of ``base``, with their patch-ids."""
     log_output = _git(
-        "log", "--format=%H%x09%s", "--reverse", f"{base}..origin/{branch}", repo=repo
+        "log",
+        "--format=%H%x09%s",
+        "--reverse",
+        "--no-merges",
+        f"{base}..origin/{branch}",
+        repo=repo,
     )
     rows = [line.partition("\t") for line in log_output.splitlines()]
     patch_ids = _patch_ids(repo, [sha for sha, _, _ in rows])
@@ -696,6 +736,17 @@ def skipped_prs_warning(skipped: Collection[int]) -> str | None:
     return (
         f"warning: could not fetch merged PR {numbers} - their commits may be "
         "reported as pending until the fetch succeeds"
+    )
+
+
+def behind_warning(behind: Sequence[OpenPr]) -> str | None:
+    """Warn that open PRs are behind main and name the command that updates them."""
+    if not behind:
+        return None
+    lines = [f"  #{pr.pr.number} {pr.branch}" for pr in behind]
+    return (
+        "warning: these PRs are behind main and must be updated before merging - "
+        "run: llm-prompts contribute update --apply\n" + "\n".join(lines)
     )
 
 
@@ -1099,12 +1150,20 @@ def collect_report(
     )
 
     pr_only = pr_only_warning(entries)
+    try:
+        behind = behind_warning(behind_prs(repo, base, remote, prs))
+    except subprocess.CalledProcessError as error:
+        behind = (
+            "warning: could not check which PRs are behind main "
+            f"({_first_stderr_line(error)})"
+        )
     warnings = [
         warning
         for warning in (
             regression_warning(inv.batches + inv.legacy_regressed),
             pr_only,
             skipped_prs_warning(inv.skipped_prs | skipped_open),
+            behind,
         )
         if warning is not None
     ]
@@ -1324,6 +1383,58 @@ def run_sync(
     print()
     run_list(repo, login, prefix)
     return 1 if failure else 0
+
+
+def run_update(repo: Path, apply: bool, numbers: Collection[int] = ()) -> int:
+    """Rebase the open PRs that are behind main onto it, or print the commands when not applying."""
+    base = base_ref(repo)
+    remote = base.split("/", 1)[0]
+    fetch_base(repo, remote)
+    prs, _ = open_prs(repo)
+    behind = behind_prs(repo, base, remote, prs)
+    if numbers:
+        open_numbers = {open_pr.pr.number for open_pr in prs}
+        behind_numbers = {open_pr.pr.number for open_pr in behind}
+        for number in sorted(set(numbers) - open_numbers):
+            print(f"#{number}: not one of your open PRs")
+        for number in sorted(set(numbers) & open_numbers - behind_numbers):
+            print(f"#{number}: already up to date with main")
+        if set(numbers) - open_numbers:
+            return 1
+        behind = [open_pr for open_pr in behind if open_pr.pr.number in numbers]
+    if not behind:
+        print("nothing behind main")
+        return 0
+    if not apply:
+        for open_pr in behind:
+            print(f"gh pr update-branch {open_pr.pr.number} --rebase")
+        return 0
+
+    def update_one(open_pr: OpenPr) -> str:
+        try:
+            update_pr_branch(repo, open_pr.pr.number)
+        except subprocess.CalledProcessError as error:
+            return f"{open_pr.branch}: not updated ({_first_stderr_line(error)})"
+        return f"{open_pr.branch}: rebased onto main {open_pr.pr.url}"
+
+    with ThreadPoolExecutor() as pool:
+        lines = list(pool.map(update_one, behind))
+    print("\n".join(lines))
+    return int(any("not updated" in line for line in lines))
+
+
+def update_targets(
+    targets: Sequence[Target], apply: bool, numbers: Collection[int] = ()
+) -> int:
+    """Update each target's behind PRs in order and return the highest status."""
+    status = 0
+    for name, repo, _ in targets:
+        if len(targets) > 1:
+            print(f"[{name}]")
+        status = max(status, run_update(repo, apply, numbers))
+        if len(targets) > 1:
+            print()
+    return status
 
 
 def _target_lookup(

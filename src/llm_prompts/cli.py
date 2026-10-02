@@ -735,7 +735,34 @@ def main() -> int | None:
         help="Sync only the batches holding this commit; repeatable.",
     )
 
+    update_parser = contribute_sub.add_parser(
+        "update",
+        help="Rebase your open PRs that are behind main onto it (dry run unless --apply).",
+        parents=[tool_parser],
+    )
+    update_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually run gh pr update-branch --rebase.",
+    )
+    update_parser.add_argument(
+        "--pr",
+        dest="numbers",
+        action="append",
+        type=int,
+        metavar="NUMBER",
+        help="Only update this PR; repeatable.",
+    )
+
     args = parser.parse_args()
+
+    if (
+        args.command == "contribute"
+        and args.contribute_command == "update"
+        and args.numbers
+        and args.tool is None
+    ):
+        update_parser.error("--pr requires --tool NAME.")
 
     if (
         args.command == "contribute"
@@ -905,7 +932,7 @@ def main() -> int | None:
     elif args.command == "check":
         _run_size_check()
     elif args.command == "contribute":
-        from .contribute import list_targets, sync_targets
+        from .contribute import list_targets, sync_targets, update_targets
 
         if args.tool is not None:
             repo, prefix = _contribute_target(args.tool)
@@ -915,6 +942,8 @@ def main() -> int | None:
         login = _get_gh_login()
         if args.contribute_command == "list":
             return list_targets(targets, login, _contribute_targets)
+        if args.contribute_command == "update":
+            return update_targets(targets, args.apply, args.numbers or ())
         return sync_targets(
             targets,
             login,

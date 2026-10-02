@@ -226,7 +226,7 @@ def _log_predicate(
     fmt = "%H%x09%aI%x09%s" if field_count == 3 else "%H%x09%s"
 
     def predicate(argv: list[str]) -> bool:
-        tokens = _verb_tokens(argv)
+        tokens = [t for t in _verb_tokens(argv) if t != "--no-merges"]
         return (
             len(tokens) == 4
             and tokens[:3] == ["log", f"--format={fmt}", "--reverse"]
@@ -326,6 +326,7 @@ class ContributeRemote:
         self._pr_extra_commits: dict[int, list[dict[str, str]]] = {}
         self._reviews: dict[int, tuple[bool, str]] = {}
         self._bodies: dict[int, str] = {}
+        self._pr_heads: dict[int, tuple[str, str]] = {}
         self._paths: dict[str, Sequence[str]] = {}
         self._register_fetch()
         self._register_ls_remote()
@@ -447,6 +448,10 @@ class ContributeRemote:
     def review(self, number: int, *, draft: bool = False, decision: str = "") -> None:
         """Set an open PR's draft flag and ``reviewDecision``."""
         self._reviews[number] = (draft, decision)
+
+    def head(self, number: int, sha: str, base: str = "main") -> None:
+        """Set an open PR's head commit and base branch."""
+        self._pr_heads[number] = (sha, base)
 
     def body(self, number: int, text: str) -> None:
         """Set an open PR's body."""
@@ -598,6 +603,14 @@ class ContributeRemote:
                     "isDraft": self._reviews.get(item["number"], (False, ""))[0],
                     "reviewDecision": self._reviews.get(item["number"], (False, ""))[1],
                     "body": self._bodies.get(item["number"], ""),
+                    **(
+                        {
+                            "headRefOid": self._pr_heads[item["number"]][0],
+                            "baseRefName": self._pr_heads[item["number"]][1],
+                        }
+                        if item["number"] in self._pr_heads
+                        else {}
+                    ),
                 }
                 for item in self._pr_items
                 if item["state"] == "OPEN"
@@ -613,7 +626,7 @@ class ContributeRemote:
             "--author",
             "@me",
             "--json",
-            "number,state,url,headRefName,isDraft,reviewDecision,body",
+            "number,state,url,headRefName,isDraft,reviewDecision,body,headRefOid,baseRefName",
             side_effect=side_effect,
         )
 

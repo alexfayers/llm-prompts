@@ -1469,6 +1469,47 @@ class TestContributeSubcommand:
             main()
         assert exc_info.value.code == 2
 
+    def test_update_pr_without_tool_errors(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "contribute", "update", "--pr", "3"]),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            main()
+        assert exc_info.value.code == 2
+        assert "--pr requires --tool NAME." in capsys.readouterr().err
+
+    def test_update_reaches_update_targets(self, tmp_path: Path) -> None:
+        targets = [_ContributeTarget("tool-a", tmp_path / "a", "src/pkg/prompts/")]
+        with (
+            patch("sys.argv", ["llm-prompts", "contribute", "update", "--apply"]),
+            patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
+            patch("llm_prompts.cli._contribute_targets", return_value=targets),
+            patch("llm_prompts.contribute.update_targets", return_value=0) as mock,
+        ):
+            assert main() == 0
+        mock.assert_called_once_with(targets, True, ())
+
+    def test_update_repeated_pr_flags_reach_update_targets(
+        self, tmp_path: Path
+    ) -> None:
+        with (
+            patch(
+                "sys.argv",
+                ["llm-prompts", "contribute", "update", "--tool", "tool-a"]
+                + ["--pr", "3", "--pr", "4"],
+            ),
+            patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
+            patch(
+                "llm_prompts.cli._contribute_target",
+                return_value=(tmp_path, "src/pkg/prompts/"),
+            ),
+            patch("llm_prompts.contribute.update_targets", return_value=0) as mock,
+        ):
+            assert main() == 0
+        assert mock.call_args.args[1:] == (False, [3, 4])
+
     def test_repeated_commit_flags_reach_run_sync(self, tmp_path: Path) -> None:
         with (
             patch(
