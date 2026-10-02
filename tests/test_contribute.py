@@ -10,9 +10,9 @@ from typing import Any, Literal
 from unittest.mock import patch
 
 import pytest
-from conftest import ContributeRemote, FakeSubprocess
+from conftest import ContributeRemote, FakeGitHub, FakeSubprocess, http_error
 
-from llm_prompts import contribute, links
+from llm_prompts import contribute, github_api, links
 from llm_prompts.batching import (
     Batch,
     BatchPlan,
@@ -60,6 +60,14 @@ _OUT_SCOPE = "docs/notes.md"
 def _no_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
     """Retry network calls without waiting between attempts."""
     monkeypatch.setattr(contribute, "_RETRY_DELAY_SECONDS", 0)
+
+
+@pytest.fixture(autouse=True)
+def _gh_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default to a host with gh installed, and start with no cached GitHub lookups."""
+    monkeypatch.setattr(contribute, "_gh_installed", lambda: True)
+    for cached in (github_api.token, github_api.login, github_api.base_repo):
+        cached.cache_clear()
 
 
 def _passing_check() -> CheckResult:
@@ -4207,3 +4215,235 @@ class TestRunSyncDraftPr:
 
         argv = contribute_remote.fake.matching("gh", "pr", "create")[0]
         assert f"## What\n\nDepends on {url}\n- feat: add foo" in argv[-1]
+
+
+class TestWithoutGh:
+    """The same operations through the GitHub API when gh is not installed."""
+
+    @pytest.fixture(autouse=True)
+    def _no_gh(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(contribute, "_gh_installed", lambda: False)
+
+    @pytest.fixture
+    def repo(self, fake_github: FakeGitHub, fake_subprocess: FakeSubprocess) -> None:
+        fake_subprocess.on("remote", "get-url", "upstream", returncode=2)
+        fake_subprocess.on(
+            "remote", "get-url", "origin", stdout="git@github.com:octo/widgets.git\n"
+        )
+        fake_github.on_graphql(
+            "viewer { login", {"data": {"viewer": {"login": "tester"}}}
+        )
+
+    @staticmethod
+    def _search(*nodes: dict[str, Any]) -> dict[str, Any]:
+        page_info = {"hasNextPage": False, "endCursor": None}
+        return {"data": {"search": {"pageInfo": page_info, "nodes": list(nodes)}}}
+
+    def test_all_prs_lists_through_search(
+        self, fake_github: FakeGitHub, repo: None, tmp_path: Path
+    ) -> None:
+        node: dict[str, Any] = {
+            "number": 12,
+            "state": "OPEN",
+            "url": "https://github.com/octo/widgets/pull/12",
+            "headRefName": "tester/add-foo-skill",
+        }
+        fake_github.on_graphql("search(", self._search(node))
+
+        assert all_prs(tmp_path) == [
+            ("tester/add-foo-skill", Pr(12, "OPEN", node["url"]))
+        ]
+        assert fake_github.graphql_variables("search(")[0]["q"] == (
+            "repo:octo/widgets is:pr author:tester"
+        )
+
+    def test_open_prs_carry_head_and_base_and_commits(
+        self, fake_github: FakeGitHub, repo: None, tmp_path: Path
+    ) -> None:
+        node = {
+            "number": 3,
+            "state": "OPEN",
+            "url": "u",
+            "headRefName": "tester/x",
+            "isDraft": True,
+            "reviewDecision": None,
+            "body": "b",
+            "headRefOid": "abc",
+            "baseRefName": "main",
+        }
+        commit = {
+            "oid": "c1",
+            "messageHeadline": "feat: x",
+            "messageBody": "",
+            "authoredDate": "2024-01-01T00:00:00+00:00",
+        }
+        fake_github.on_graphql("search(", self._search(node))
+        fake_github.on_graphql(
+            "pullRequest(",
+            {
+                "data": {
+                    "repository": {
+                        "pullRequest": {"commits": {"nodes": [{"commit": commit}]}}
+                    }
+                }
+            },
+        )
+
+        prs, skipped = open_prs(tmp_path)
+
+        assert skipped == frozenset()
+        assert (prs[0].head_sha, prs[0].base_branch, prs[0].review_decision) == (
+            "abc",
+            "main",
+            "",
+        )
+        assert [c.sha for c in prs[0].commits] == ["c1"]
+        assert "is:open" in fake_github.graphql_variables("search(")[0]["q"]
+
+    def test_merged_pr_commits_match_on_title(
+        self, fake_github: FakeGitHub, repo: None, tmp_path: Path
+    ) -> None:
+        node = {"number": 5, "headRefName": "tester/other", "title": "feat: x"}
+        commit = {
+            "oid": "c1",
+            "messageHeadline": "feat: x",
+            "messageBody": "",
+            "authoredDate": "2024-01-01T00:00:00+00:00",
+        }
+        fake_github.on_graphql("search(", self._search(node))
+        fake_github.on_graphql(
+            "pullRequest(",
+            {
+                "data": {
+                    "repository": {
+                        "pullRequest": {"commits": {"nodes": [{"commit": commit}]}}
+                    }
+                }
+            },
+        )
+
+        merged, skipped = contribute._merged_pr_commits(tmp_path, {"feat: x"})
+
+        assert skipped == frozenset()
+        assert [(number, branch) for number, branch, _ in merged] == [
+            (5, "tester/other")
+        ]
+
+    def test_retries_a_transient_failure(
+        self, fake_github: FakeGitHub, repo: None, tmp_path: Path
+    ) -> None:
+        fake_github.on_graphql(
+            "search(", http_error(502, "Bad Gateway"), self._search()
+        )
+
+        assert all_prs(tmp_path) == []
+        assert len(fake_github.graphql_variables("search(")) == 2
+
+    @pytest.mark.parametrize("permission", ["WRITE", "MAINTAIN", "ADMIN"])
+    def test_push_access_uses_origin_directly(
+        self, fake_github: FakeGitHub, repo: None, tmp_path: Path, permission: str
+    ) -> None:
+        fake_github.on_graphql(
+            "viewerPermission",
+            {"data": {"repository": {"viewerPermission": permission}}},
+        )
+
+        assert push_remote(tmp_path) == ("origin", False)
+
+    def test_read_access_with_upstream_pushes_to_the_fork(
+        self, fake_github: FakeGitHub, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        fake_subprocess.on(
+            "remote", "get-url", "upstream", stdout="git@github.com:octo/widgets.git\n"
+        )
+        fake_github.on_graphql(
+            "viewerPermission", {"data": {"repository": {"viewerPermission": "READ"}}}
+        )
+
+        assert push_remote(tmp_path) == ("origin", True)
+
+    def test_read_access_without_upstream_asks_for_a_fork(
+        self, fake_github: FakeGitHub, repo: None, tmp_path: Path
+    ) -> None:
+        fake_github.on_graphql(
+            "viewerPermission", {"data": {"repository": {"viewerPermission": "READ"}}}
+        )
+
+        with pytest.raises(SystemExit, match=r"octo/widgets.*git remote rename origin"):
+            push_remote(tmp_path)
+
+    def test_open_draft_pr_posts_to_the_base_branch(
+        self, fake_github: FakeGitHub, repo: None, tmp_path: Path
+    ) -> None:
+        fake_github.on("POST", "/repos/octo/widgets/pulls", {"html_url": "https://x/9"})
+
+        url = contribute.open_draft_pr(tmp_path, "origin/main", "me:topic", "t", "b")
+
+        assert url == "https://x/9"
+        assert fake_github.requests[-1][2] == {
+            "base": "main",
+            "head": "me:topic",
+            "title": "t",
+            "body": "b",
+            "draft": True,
+        }
+
+    def test_edit_pr_body_patches(
+        self, fake_github: FakeGitHub, repo: None, tmp_path: Path
+    ) -> None:
+        fake_github.on("PATCH", "/repos/octo/widgets/pulls/4", {})
+
+        contribute.edit_pr_body(tmp_path, 4, "new")
+
+        assert fake_github.requests[-1][2] == {"body": "new"}
+
+    def test_update_pr_branch_rebases(
+        self, fake_github: FakeGitHub, repo: None, tmp_path: Path
+    ) -> None:
+        fake_github.on_graphql(
+            "pullRequest(", {"data": {"repository": {"pullRequest": {"id": "PR_1"}}}}
+        )
+        fake_github.on_graphql("updatePullRequestBranch", {"data": {}})
+
+        contribute.update_pr_branch(tmp_path, 4)
+
+        assert "updateMethod: REBASE" in fake_github.requests[-1][2]["query"]
+
+    def test_sync_apply_runs_without_invoking_gh(
+        self,
+        contribute_remote: ContributeRemote,
+        fake_github: FakeGitHub,
+        tmp_path: Path,
+    ) -> None:
+        fake = contribute_remote.fake
+        fake.on("remote", "get-url", "upstream", returncode=2)
+        fake.on(
+            "remote", "get-url", "origin", stdout="git@github.com:octo/widgets.git\n"
+        )
+        fake_github.on_graphql(
+            "viewer { login", {"data": {"viewer": {"login": "tester"}}}
+        )
+        fake_github.on_graphql("search(", self._search())
+        fake_github.on_graphql(
+            "viewerPermission", {"data": {"repository": {"viewerPermission": "ADMIN"}}}
+        )
+        fake_github.on("POST", "/repos/octo/widgets/pulls", {"html_url": "https://x/1"})
+        for route in (
+            ("branch", "--list"),
+            ("worktree", "add"),
+            ("switch", "-c"),
+            ("cherry-pick",),
+            ("worktree", "remove"),
+            ("push",),
+            ("branch", "-D"),
+        ):
+            fake.on(*route)
+        contribute_remote.main(("m1", "feat: add foo"))
+
+        result = run_sync(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None
+        )
+
+        assert result == 0
+        assert not [argv for argv in fake.commands if argv[0] == "gh"]
+        assert any(method == "POST" for method, *_ in fake_github.requests)

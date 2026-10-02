@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
 from pathlib import Path
 from unittest.mock import ANY, MagicMock, patch
@@ -10,6 +11,7 @@ from unittest.mock import ANY, MagicMock, patch
 import pytest
 from conftest import FakeSubprocess, run_capturing_exit
 
+from llm_prompts import cli
 from llm_prompts.cli import (
     _check_for_updates,
     _collect_sources,
@@ -1579,3 +1581,28 @@ class TestContributeSubcommand:
         mock_sync.assert_called_once_with(
             targets, "octocat", False, None, None, ["abc"], ANY
         )
+
+
+class TestGetGhLoginWithoutGh:
+    def test_delegates_to_the_github_api(self) -> None:
+        with (
+            patch("llm_prompts.cli.shutil.which", return_value=None),
+            patch("llm_prompts.cli.github_api.login", return_value="octocat"),
+        ):
+            assert cli._get_gh_login() == "octocat"
+
+    def test_api_failure_exits_with_its_stderr(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        error = subprocess.CalledProcessError(
+            1, ["GET", "/x"], stderr="HTTP 401: Bad credentials"
+        )
+        with (
+            patch("llm_prompts.cli.shutil.which", return_value=None),
+            patch("llm_prompts.cli.github_api.login", side_effect=error),
+            pytest.raises(SystemExit) as caught,
+        ):
+            cli._get_gh_login()
+
+        assert caught.value.code == 1
+        assert "HTTP 401: Bad credentials" in capsys.readouterr().err
