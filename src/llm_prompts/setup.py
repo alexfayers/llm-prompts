@@ -124,7 +124,7 @@ def _remote_head(git_url: str, ref: str | None) -> str | None:
 
 
 def _commit_subjects_between(
-    repo: Path, from_sha: str, to_sha: str
+    repo: Path, from_sha: str, to_sha: str, paths: list[str] | None = None
 ) -> list[str] | None:
     """Return the commit subjects in ``from_sha..to_sha`` within a local repo.
 
@@ -132,12 +132,22 @@ def _commit_subjects_between(
         repo: A local git checkout to run ``git log`` against.
         from_sha: The exclusive lower-bound commit.
         to_sha: The inclusive upper-bound commit.
+        paths: Optional git pathspecs; only commits touching them are listed.
 
     Returns:
         The subject lines newest-first, or ``None`` if the log command fails.
     """
+    pathspec = ["--", *paths] if paths else []
     result = subprocess.run(
-        ["git", "-C", str(repo), "log", "--pretty=format:%s", f"{from_sha}..{to_sha}"],
+        [
+            "git",
+            "-C",
+            str(repo),
+            "log",
+            "--pretty=format:%s",
+            f"{from_sha}..{to_sha}",
+            *pathspec,
+        ],
         capture_output=True,
         text=True,
         check=False,
