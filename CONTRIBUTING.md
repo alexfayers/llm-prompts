@@ -38,6 +38,7 @@ For a change under `src/llm_prompts/prompts/**` (rules, skills, workflows, agent
 - Pending commits are grouped into batches of up to 5 and appended, in order, to the newest open `<login>/contribute/<slug>` branch with room; once that batch is full or merged, a new one starts.
 - `llm-prompts contribute sync --apply` pushes each batch: one whose commits are all still current gets the new ones cherry-picked on top and pushed normally; one with an amended or missing commit is rebuilt from `main` and pushed with `--force-with-lease`.
 - `llm-prompts contribute sync --commit SHA` (repeatable) syncs only the batches holding those commits: it appends to the newest open batch with room, otherwise starts a new one, and leaves everything else local.
+- Repos merge by squash only and require PRs up to date with `main`; `llm-prompts contribute list` warns about any of your open PRs (batch or hand-made) that are behind, and `llm-prompts contribute update --apply` rebases each onto `main` with `gh pr update-branch --rebase` (dry run without `--apply`; `--tool NAME --pr N` for one PR). Rebasing keeps batch commit matching intact; never update with a merge commit.
 - A commit already in one of your other open PRs is skipped and shown in `list` as already in that PR.
 - Never commit directly to a batch branch - `sync` treats it as regenerable from `main` and may overwrite it.
 - A regressed batch (holding a commit matching nothing on `main`) gets a recovery hint that cherry-picks just the missing commits back on top.

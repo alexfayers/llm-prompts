@@ -503,7 +503,7 @@ class TestOpenPrBody:
             "--author",
             "@me",
             "--json",
-            "number,state,url,headRefName,isDraft,reviewDecision,body",
+            "number,state,url,headRefName,isDraft,reviewDecision,body,headRefOid,baseRefName",
             stdout=json.dumps(
                 [
                     {
@@ -523,6 +523,325 @@ class TestOpenPrBody:
         prs, _ = open_prs(tmp_path)
 
         assert [pr.body for pr in prs] == ["", "Depends on https://x/pull/9"]
+
+
+class TestOpenPrHeads:
+    JSON_FIELDS = (
+        "number,state,url,headRefName,isDraft,reviewDecision,body,"
+        "headRefOid,baseRefName"
+    )
+
+    def _list(self, fake: FakeSubprocess, extra: dict[str, Any]) -> None:
+        fake.on(
+            "gh",
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--author",
+            "@me",
+            "--json",
+            self.JSON_FIELDS,
+            stdout=json.dumps(
+                [
+                    {
+                        "number": 1,
+                        "state": "OPEN",
+                        "url": "https://x/pull/1",
+                        "headRefName": "someone/a",
+                        "isDraft": False,
+                        "reviewDecision": "",
+                        **extra,
+                    }
+                ]
+            ),
+        )
+        fake.on("gh", "pr", "view", stdout=json.dumps({"commits": []}))
+
+    def test_reads_head_sha_and_base_branch(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        self._list(fake_subprocess, {"headRefOid": "abc", "baseRefName": "main"})
+
+        prs, _ = open_prs(tmp_path)
+
+        assert (prs[0].head_sha, prs[0].base_branch) == ("abc", "main")
+
+    def test_missing_head_sha_and_base_branch_map_to_empty(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        self._list(fake_subprocess, {"headRefOid": None})
+
+        prs, _ = open_prs(tmp_path)
+
+        assert (prs[0].head_sha, prs[0].base_branch) == ("", "")
+
+
+def _open_pr(
+    number: int, head_sha: str = "", base_branch: str = "main"
+) -> contribute.OpenPr:
+    return contribute.OpenPr(
+        pr=Pr(number, "OPEN", f"https://github.com/octo/widgets/pull/{number}"),
+        branch=f"someone/pr-{number}",
+        is_draft=False,
+        review_decision="",
+        commits=(),
+        head_sha=head_sha,
+        base_branch=base_branch,
+    )
+
+
+class TestBehindPrs:
+    def _ancestry(self, fake: FakeSubprocess, *, current: set[str]) -> None:
+        def side_effect(
+            argv: list[str], kwargs: dict[str, Any]
+        ) -> subprocess.CompletedProcess[str] | None:
+            if argv[-1] not in current:
+                raise subprocess.CalledProcessError(1, argv, stderr="")
+            return None
+
+        fake.on("merge-base", "--is-ancestor", side_effect=side_effect)
+
+    def test_lists_prs_whose_head_lacks_base_ordered_by_number(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        self._ancestry(fake_subprocess, current={"s2"})
+        prs = [_open_pr(9, "s9"), _open_pr(2, "s2"), _open_pr(5, "s5")]
+
+        behind = contribute.behind_prs(tmp_path, "origin/main", "origin", prs)
+
+        assert [open_pr.pr.number for open_pr in behind] == [5, 9]
+
+    def test_fetches_every_candidate_head_in_one_call(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        self._ancestry(fake_subprocess, current=set())
+
+        contribute.behind_prs(
+            tmp_path, "origin/main", "origin", [_open_pr(1, "s1"), _open_pr(2, "s2")]
+        )
+
+        fetches = fake_subprocess.matching("fetch")
+        assert len(fetches) == 1
+        assert fetches[0][-4:] == ["--quiet", "origin", "s1", "s2"]
+
+    def test_skips_prs_not_based_on_main_and_fetches_nothing_without_candidates(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        prs = [_open_pr(1, "s1", "release"), _open_pr(2, "")]
+
+        behind = contribute.behind_prs(tmp_path, "origin/main", "origin", prs)
+
+        assert behind == []
+        assert fake_subprocess.commands == []
+
+    def test_unexpected_git_failure_propagates(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        fake_subprocess.on(
+            "merge-base", "--is-ancestor", returncode=128, stderr="fatal: bad object"
+        )
+
+        with pytest.raises(subprocess.CalledProcessError):
+            contribute.behind_prs(
+                tmp_path, "origin/main", "origin", [_open_pr(1, "s1")]
+            )
+
+
+class TestBehindWarning:
+    def test_no_warning_when_nothing_is_behind(self) -> None:
+        assert contribute.behind_warning([]) is None
+
+    def test_names_the_fix_and_each_behind_pr(self) -> None:
+        warning = contribute.behind_warning([_open_pr(4), _open_pr(7)])
+
+        assert warning == (
+            "warning: these PRs are behind main and must be updated before "
+            "merging - run: llm-prompts contribute update --apply\n"
+            "  #4 someone/pr-4\n"
+            "  #7 someone/pr-7"
+        )
+
+
+class TestCollectReportBehind:
+    def _behind_pr(self, contribute_remote: ContributeRemote) -> None:
+        contribute_remote.main()
+        contribute_remote.unmanaged_pr("someone/a", 3, [("c1", "feat: a")])
+        contribute_remote.head(3, "s3")
+
+    def test_warns_about_a_behind_pr_without_changing_the_exit_code(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        self._behind_pr(contribute_remote)
+        contribute_remote.fake.on("merge-base", "--is-ancestor", returncode=1)
+
+        report = contribute.collect_report(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX
+        )
+
+        assert any("behind main" in w and "#3 someone/a" in w for w in report.warnings)
+        assert report.exit == 0
+
+    def test_up_to_date_pr_adds_no_warning(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        self._behind_pr(contribute_remote)
+
+        report = contribute.collect_report(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX
+        )
+
+        assert not any("behind main" in w for w in report.warnings)
+
+    def test_failed_fetch_warns_that_behind_prs_could_not_be_checked(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        self._behind_pr(contribute_remote)
+        contribute_remote.fake.on(
+            "fetch", "--quiet", "origin", "s3", returncode=128, stderr="no route\n"
+        )
+
+        report = contribute.collect_report(
+            tmp_path, contribute_remote.login, PROMPTS_PREFIX
+        )
+
+        assert (
+            "warning: could not check which PRs are behind main (no route)"
+            in report.warnings
+        )
+
+
+class TestRunUpdate:
+    def _behind(
+        self, contribute_remote: ContributeRemote, *numbers: int, current: int = 0
+    ) -> None:
+        contribute_remote.main()
+        for number in (*numbers, *([current] if current else [])):
+            contribute_remote.unmanaged_pr(f"someone/{number}", number, [])
+            contribute_remote.head(number, f"s{number}")
+
+        def side_effect(
+            argv: list[str], kwargs: dict[str, Any]
+        ) -> subprocess.CompletedProcess[str] | None:
+            if argv[-1] == f"s{current}":
+                return None
+            raise subprocess.CalledProcessError(1, argv, stderr="")
+
+        contribute_remote.fake.on(
+            "merge-base", "--is-ancestor", side_effect=side_effect
+        )
+
+    def _run(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        apply: bool,
+        numbers: tuple[int, ...] = (),
+    ) -> tuple[int, str]:
+        status = contribute.run_update(tmp_path, apply, numbers)
+        return status, capsys.readouterr().out
+
+    def test_dry_run_prints_the_command_and_updates_nothing(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        self._behind(contribute_remote, 3)
+
+        status, out = self._run(contribute_remote, tmp_path, capsys, False)
+
+        assert status == 0
+        assert "gh pr update-branch 3 --rebase" in out
+        assert contribute_remote.fake.matching("gh", "pr", "update-branch") == []
+
+    def test_apply_rebases_each_behind_pr(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        self._behind(contribute_remote, 3, 4, current=5)
+
+        status, out = self._run(contribute_remote, tmp_path, capsys, True)
+
+        updates = contribute_remote.fake.matching("gh", "pr", "update-branch")
+        assert sorted(argv[3] for argv in updates) == ["3", "4"]
+        assert all(argv[-1] == "--rebase" for argv in updates)
+        assert "someone/3: rebased onto main https://github.com/o/r/pull/3" in out
+        assert status == 0
+
+    def test_one_failure_is_reported_while_the_others_still_run(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        self._behind(contribute_remote, 3, 4)
+        contribute_remote.fake.on(
+            "gh", "pr", "update-branch", "3", returncode=1, stderr="conflict\n"
+        )
+
+        status, out = self._run(contribute_remote, tmp_path, capsys, True)
+
+        assert "someone/3: not updated (conflict)" in out
+        assert "someone/4: rebased onto main" in out
+        assert status == 1
+
+    def test_unknown_pr_number_fails(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        self._behind(contribute_remote, 3)
+
+        status, out = self._run(contribute_remote, tmp_path, capsys, True, (99,))
+
+        assert "#99: not one of your open PRs" in out
+        assert contribute_remote.fake.matching("gh", "pr", "update-branch") == []
+        assert status == 1
+
+    def test_named_pr_that_is_current_is_reported_up_to_date(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        self._behind(contribute_remote, 3, current=5)
+
+        status, out = self._run(contribute_remote, tmp_path, capsys, True, (5,))
+
+        assert "#5: already up to date with main" in out
+        assert contribute_remote.fake.matching("gh", "pr", "update-branch") == []
+        assert status == 0
+
+    def test_named_pr_restricts_the_update(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        self._behind(contribute_remote, 3, 4)
+
+        self._run(contribute_remote, tmp_path, capsys, True, (4,))
+
+        updates = contribute_remote.fake.matching("gh", "pr", "update-branch")
+        assert [argv[3] for argv in updates] == ["4"]
+
+    def test_nothing_behind_says_so(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        self._behind(contribute_remote, current=5)
+
+        status, out = self._run(contribute_remote, tmp_path, capsys, True)
+
+        assert "nothing behind main" in out
+        assert status == 0
 
 
 class TestPrsByBranch:
@@ -624,6 +943,21 @@ class TestInventory:
         )
 
         assert [batch.pr for batch in inv.batches] == [pr]
+
+    def test_branch_log_excludes_merge_commits(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        branch = contribute_remote.managed("add-foo", [("m1", "feat: add foo")])
+
+        inventory(tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX)
+
+        branch_logs = [
+            argv
+            for argv in contribute_remote.fake.matching("log")
+            if argv[-1].endswith(f"..origin/{branch}")
+        ]
+        assert branch_logs
+        assert all("--no-merges" in argv for argv in branch_logs)
 
     def test_managed_branch_with_no_pr_returns_batch_with_no_pr(
         self, contribute_remote: ContributeRemote, tmp_path: Path
@@ -2721,6 +3055,25 @@ def test_list_targets_prints_headers_in_order_and_returns_max_status(
         "[alpha]\n  no pending changes\n  listed /repo-a\n\n"
         "[beta]\n  no pending changes\n  listed /repo-b\n\n"
     )
+
+
+def test_update_targets_runs_each_target_in_order_and_returns_max_status(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    targets = [("alpha", Path("/repo-a"), "feat"), ("beta", Path("/repo-b"), "fix")]
+    seen: list[Path] = []
+
+    def fake_update(repo: Path, *args: Any) -> int:
+        seen.append(repo)
+        return 1 if repo == Path("/repo-a") else 0
+
+    with patch("llm_prompts.contribute.run_update", side_effect=fake_update) as mock:
+        status = contribute.update_targets(targets, True, (3,))
+
+    assert status == 1
+    assert seen == [Path("/repo-a"), Path("/repo-b")]
+    assert mock.call_args.args[1:] == (True, (3,))
+    assert capsys.readouterr().out == "[alpha]\n\n[beta]\n\n"
 
 
 def test_sync_targets_runs_each_target_in_order_and_returns_max_status(
