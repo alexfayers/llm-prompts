@@ -17,7 +17,7 @@ uv sync
 just    # lint, type-check, test (see justfile for the individual commands)
 ```
 
-Runs `ruff check --fix`, `ruff format`, `mypy` (strict), and `pytest` via `uv run`. Run all of these before opening a PR - there's no CI workflow yet, so this is the only gate.
+Runs `ruff check --fix`, `ruff format`, `mypy` (strict), and `pytest` via `uv run`. Run all of these before opening a PR - CI runs lint, type-check, and test on every push and PR.
 
 ## Prompt file size budgets
 
@@ -54,3 +54,4 @@ For everything else, push your own branch and open a PR against `main` as usual.
 - Description as bullet points, not paragraphs.
 - State WHAT changed and WHY, not HOW.
 - No restating the diff, no process commentary, no filler.
+- List a PR that must merge first as a `Depends on <PR URL>` line; the `check-dependencies` check fails until it merges and re-checks when that PR closes.
