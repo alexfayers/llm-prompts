@@ -14,15 +14,16 @@ At the start of every session, before responding to the user's first message, ch
    - **Generic:** run `search_all_projects(query="task", projects=["global", "<repo-name>"], expand_groups=True, entityType="task", status=["in-progress", "planned"], max_observation_chars=0)`. `expand_groups=True` resolves group siblings server-side (no separate `get_group_members` call); the `status` list ORs both states. Results come back grouped by project. `read_graph` only returns 10 recent entities from one project and misses other scopes - not a substitute here.
      To scan every project, omit `projects`/`expand_groups` (status list still applies). Reserve this for an explicit "what's outstanding everywhere?" ask.
    - **Specific:** skip this scan - the "Before starting a task" memory ritual already searches entities relevant to the ask, including always-search items (e.g. `user-preferences`), regardless of this check.
-3. If the scan ran, present it in this exact structure - one line per task, no narrative prose, ALL results, no truncation. Each line MUST include a short description from the single observation `max_observation_chars=0` returned - a bare task name is not enough. If an entity has no observations, say `<task-name> - (no description recorded)` rather than omitting the line:
+3. If the scan ran, present it as ONE markdown table, no narrative prose, ALL results, no truncation - one row per task, grouped by project, in-progress before planned. Fill "What it is" from the observation the scan already returned, only where the task name doesn't already say it - never fetch more for it:
 
    ```
-   **<project>**
-   - in-progress: <task-name> - <one-line what-it-is> - <one-line status/next-step, or omit if none>
-   - planned: <task-name> - <one-line what-it-is>
+   | Project | Status | Task | What it is |
+   |---|---|---|---|
+   | <project> | in-progress | <task-name> | <what-it-is> - <status/next-step, or omit if none> |
+   | <project> | planned | <task-name> | <what-it-is> |
    ```
 
-   Repeat per project (in-progress before planned within each). Omit the status line if a project has none. Render a positive vote_score as star symbols (e.g. ★3) after the task name.
+   Render a positive vote_score as star symbols (e.g. ★3) after the task name.
 4. If the scan ran and nothing is in progress or planned, proceed normally without mentioning the check.
 5. Before drafting your first reply, look through the context already injected at session start for a source-update note. Where any package reports updates, summarize them in plain language and flag breaking changes in that same reply - never just say updates exist. Where none, say nothing. Applies even where the opening message names an unrelated task.
 6. Call memory tools (`read_graph`, `search_all_projects`, `search_nodes`, etc.) directly - ordinary tools in your catalog. Do NOT run a tool-discovery step to "find" or "check availability of" memory first (e.g. `list_mcp_resources`, listing servers) - that lists resources, not tools, and an empty result does not mean memory is unavailable. Only if your harness hides tool schemas behind an explicit `ToolSearch`/deferred-tools step (Claude Code), pre-load once with `select:mcp__memory__add_observations,mcp__memory__read_graph,mcp__memory__search_nodes,mcp__memory__create_entities`; otherwise just call the tools.

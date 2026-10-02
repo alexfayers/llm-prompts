@@ -17,13 +17,14 @@ Before you end the session or {{TOOL_COMPLETE}}, work through this checklist:
    - `search_nodes` with query "TODO" on each touched project's entity and related entities.
    - Search memory for planned/in-progress tasks in each touched project and `global`, using `max_observation_chars=0` (single highest-voted observation per entity).
 
-   Present as a flat structured list, not narrative prose - one line per item, grouped by project, in-progress before planned within each group. Every task line MUST include a short description from the `max_observation_chars=0` observation - a bare task name is not enough. No observations at all: say so (`<task-name> - (no description recorded)`) rather than omitting it. Omit a project's block entirely if empty, and omit any empty category line within a shown block:
+   Present as ONE markdown table, not prose or bullets - one row per item, grouped by project, in-progress before planned, then TODOs. Fill "What it is" from the observation the scan already returned, only where the task name doesn't already say it - never fetch more for it. Omit projects with nothing:
 
    ```
-   **<project>**
-   - in-progress: <task-name> - <one-line what-it-is> - <one-line status/next-step>
-   - planned: <task-name> - <one-line what-it-is> [- unblocked by this session] [- blocks: <other-task>]
-   - TODO: <file>:<line> - <text>
+   | Project | Status | Task | What it is |
+   |---|---|---|---|
+   | <project> | in-progress | <task-name> | <what-it-is> - <status/next-step> |
+   | <project> | planned | <task-name> | <what-it-is> [- unblocked by this session] [- blocks: <other-task>] |
+   | <project> | TODO | <file>:<line> | <text> |
    ```
 
    Append bracketed tags only when they apply. Render a positive vote_score as star symbols (e.g. ★3) after the task name.
