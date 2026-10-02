@@ -11,3 +11,4 @@ paths: '**/test_*.py, **/conftest.py, **/*_test.*, **/*.test.*, **/*.spec.*, **/
 - MUST NOT duplicate behaviour in a test definition - always test the live code.
 - MUST NOT couple a test to dynamic external state (live service status, registries, dates) - derive expectations from the same source of truth the code reads, and assert the invariant, not a snapshot.
 - Keep the real-world case that motivated a change OUT of the test suite - reproduce it with a generic synthetic fixture the test builds itself (neutral names, a temp directory).
+- MUST extend existing tests or patterns where they exist, rather than writing new ones.
