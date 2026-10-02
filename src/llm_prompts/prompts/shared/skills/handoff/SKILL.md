@@ -72,6 +72,10 @@ Then include, in order:
 - Do not push to get uncommitted work committed before writing the handoff,
   unless the user asks. Capture the tree as-is, dirty or not, and note what is
   uncommitted and where it lives.
+- Before writing, MUST `SendMessage` each running delegate to reach a commit or
+  checkpoint and report its state, and MUST wait for that report before
+  `TaskStop`. A handoff request is not an instruction to stop in-flight work.
+  The doc and the reply MUST name every delegate stopped and what state it left.
 - **Memory first, doc second.** Durable facts (decisions, outcomes, learnings,
   task status) MUST already be in the memory graph before you write the
   handoff - the doc only points at it. If not yet persisted, do so now (see
