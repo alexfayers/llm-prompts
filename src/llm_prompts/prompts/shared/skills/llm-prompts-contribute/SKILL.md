@@ -25,6 +25,7 @@ cline-hooks and mcp-memory each carry their own prompts tree (rules, skills, wor
 ## Everything else
 
 - `llm-prompts contribute` works without gh given a GH_TOKEN or GITHUB_TOKEN.
+- Marking a contribute PR ready for review enables squash auto-merge.
 - Push your own branch, open a PR against `main`.
 - Check push access first: `gh repo view --json viewerPermission`.
   - `WRITE`/`MAINTAIN`/`ADMIN`: `git push -u origin <branch>` then `gh pr create --fill`.
