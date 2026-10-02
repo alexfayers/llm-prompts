@@ -25,6 +25,7 @@ copilot_apply_to: '**'
 - In committed files, MUST NOT name specific collaborators or hardcode user-specific values (aliases, account IDs, stack names) - use a placeholder like `<account-id>`.
 - In a globally-distributed instruction or doc, MUST NOT assert behaviour depending on the reader's local config ("this command is auto-approved"). State the action, not the local consequence.
 - Before writing new tooling to check something, MUST check whether an existing tool already does it.
+- SHOULD NOT hardcode a concurrency limit (worker/thread/process pool size) to today's observed hardware (e.g. a measured core count) - let the OS/runtime scheduler be the actual cap, since co-tenant load is usually idle and hardware can be upgraded later.
 
 # Testing guidelines
 
