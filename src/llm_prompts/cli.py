@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import urlparse
 
+from . import github_api
 from .setup import (
     _GIT_TIMEOUT,
     _extract_git_url,
@@ -604,7 +605,13 @@ def _restart_memory_service() -> None:
 
 
 def _get_gh_login() -> str:
-    """Return the current gh CLI user's login."""
+    """Return the current GitHub user's login, through gh or the GitHub API."""
+    if shutil.which("gh") is None:
+        try:
+            return github_api.login()
+        except subprocess.CalledProcessError as error:
+            print(error.stderr, file=sys.stderr)
+            sys.exit(1)
     result = subprocess.run(
         ["gh", "api", "user", "--jq", ".login"],
         capture_output=True,

@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import threading
+import urllib.error
 from collections.abc import Callable, Sequence
+from email.message import Message
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Self, cast
 
 import pytest
 
+from llm_prompts import github_api
 from llm_prompts.batching import batch_branch
 from llm_prompts.contribute import Pr
 
@@ -699,3 +703,80 @@ def isolated_links_path(
     path = tmp_path_factory.mktemp("links") / "contribute-links.json"
     monkeypatch.setattr("llm_prompts.links.LINKS_PATH", path)
     return path
+
+
+class FakeGitHub:
+    """Fake `github_api.urlopen`, routed by REST (method, path) or GraphQL query substring."""
+
+    def __init__(self) -> None:
+        """Start with no routes and no recorded requests."""
+        self.requests: list[tuple[str, str, Any, dict[str, str]]] = []
+        self._routes: list[tuple[str, str, list[Any]]] = []
+
+    def on(self, method: str, path: str, *responses: Any) -> None:
+        """Queue responses (bodies or exceptions) for a REST call; the last one repeats."""
+        self._routes.append((method, path, list(responses)))
+
+    def on_graphql(self, query_part: str, *responses: Any) -> None:
+        """Queue responses for GraphQL calls whose query contains `query_part`."""
+        self.on("POST", f"/graphql:{query_part}", *responses)
+
+    def graphql_variables(self, query_part: str) -> list[dict[str, Any]]:
+        """Return the variables of every recorded GraphQL call containing `query_part`."""
+        return [
+            body["variables"]
+            for _, path, body, _ in self.requests
+            if path == "/graphql" and query_part in body["query"]
+        ]
+
+    def __call__(self, request: Any, timeout: float | None = None) -> Any:
+        """Replace `urlopen`: record the request and answer from the first matching route."""
+        path = request.full_url.removeprefix("https://api.github.com")
+        body = json.loads(request.data) if request.data else None
+        headers = {key.lower(): value for key, value in request.header_items()}
+        self.requests.append((request.get_method(), path, body, headers))
+        key = path if body is None or "query" not in body else None
+        for method, route, responses in self._routes:
+            if method != request.get_method():
+                continue
+            if route.startswith("/graphql:") and body and "query" in body:
+                matched = route.removeprefix("/graphql:") in body["query"]
+            else:
+                matched = route == key
+            if matched:
+                response = responses.pop(0) if len(responses) > 1 else responses[0]
+                if isinstance(response, BaseException):
+                    raise response
+                return _FakeResponse(response)
+        raise AssertionError(f"fake_github: unrouted {request.get_method()} {path}")
+
+
+class _FakeResponse:
+    def __init__(self, body: Any) -> None:
+        self._body = body
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return json.dumps(self._body).encode()
+
+
+def http_error(code: int, message: str) -> urllib.error.HTTPError:
+    """Build the HTTPError urlopen raises for a JSON error body."""
+    body = io.BytesIO(json.dumps({"message": message}).encode())
+    return urllib.error.HTTPError(
+        "https://api.github.com", code, message, Message(), body
+    )
+
+
+@pytest.fixture
+def fake_github(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
+    """Patch github_api.urlopen with a FakeGitHub and provide a token."""
+    fake = FakeGitHub()
+    monkeypatch.setattr(github_api, "urlopen", fake)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+    return fake

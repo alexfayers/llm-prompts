@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,7 +23,7 @@ from functools import cache, partial
 from pathlib import Path
 from typing import Any, Literal, NamedTuple, TextIO
 
-from . import links
+from . import github_api, links
 from .batching import (
     Batch,
     BatchPlan,
@@ -134,19 +135,27 @@ def _git(*args: str, repo: Path) -> str:
     return completed.stdout.strip()
 
 
-def _run_with_retries(argv: list[str], cwd: Path) -> str:
-    """Run a network command in ``cwd`` and return its stdout, retrying transient failures with backoff."""
-    run = partial(
-        subprocess.run, argv, cwd=cwd, capture_output=True, text=True, check=True
-    )
+def _with_retries[T](call: Callable[[], T]) -> T:
+    """Run a network call and return its result, retrying transient failures with backoff."""
     for attempt in range(1, _NETWORK_ATTEMPTS):
         try:
-            return run().stdout
+            return call()
         except subprocess.CalledProcessError as error:
             if not _TRANSIENT_FAILURE.search(error.stderr or ""):
                 raise
             time.sleep(_RETRY_DELAY_SECONDS * attempt)
-    return run().stdout
+    return call()
+
+
+def _run_with_retries(argv: list[str], cwd: Path) -> str:
+    """Run a network command in ``cwd`` and return its stdout, retrying transient failures with backoff."""
+    return _with_retries(
+        lambda: (
+            subprocess.run(
+                argv, cwd=cwd, capture_output=True, text=True, check=True
+            ).stdout
+        )
+    )
 
 
 def _git_network(*args: str, repo: Path) -> str:
@@ -158,6 +167,46 @@ def _gh_json(*args: str, repo: Path) -> Any:
     """Run a ``gh`` command against ``repo`` and parse its stdout as JSON, if any."""
     stdout = _run_with_retries(["gh", *args], repo)
     return json.loads(stdout) if stdout.strip() else None
+
+
+def _gh_installed() -> bool:
+    """Return whether the gh CLI is on PATH."""
+    return shutil.which("gh") is not None
+
+
+_API_PR_QUALIFIERS = {"all": "", "open": "is:open", "merged": "is:merged"}
+
+
+def _pr_list(repo: Path, state: str, fields: str) -> list[Any]:
+    """List the current user's PRs in ``state`` with ``fields``, through gh or the GitHub API."""
+    if _gh_installed():
+        author_state = (
+            ["--author", "@me", "--state", state]
+            if state == "all"
+            else ["--state", state, "--author", "@me"]
+        )
+        return list(
+            _gh_json(
+                "pr",
+                "list",
+                *author_state,
+                "--json",
+                fields,
+                "--limit",
+                "1000",
+                repo=repo,
+            )
+        )
+    return _with_retries(
+        partial(github_api.pr_list, repo, _API_PR_QUALIFIERS[state], fields.split(","))
+    )
+
+
+def _pr_view(repo: Path, number: int, fields: str) -> Any:
+    """Fetch ``fields`` of PR ``number``, through gh or the GitHub API."""
+    if _gh_installed():
+        return _gh_json("pr", "view", str(number), "--json", fields, repo=repo)
+    return _with_retries(partial(github_api.pr_view, repo, number, fields.split(",")))
 
 
 def slug_for(subject: str) -> str:
@@ -353,19 +402,7 @@ def all_prs(repo: Path) -> list[tuple[str, Pr]]:
     than one for the same branch name (e.g. an earlier closed PR alongside a
     later one that reused the branch).
     """
-    items = _gh_json(
-        "pr",
-        "list",
-        "--author",
-        "@me",
-        "--state",
-        "all",
-        "--json",
-        "number,state,url,headRefName",
-        "--limit",
-        "1000",
-        repo=repo,
-    )
+    items = _pr_list(repo, "all", "number,state,url,headRefName")
     return [
         (item["headRefName"], Pr(item["number"], item["state"], item["url"]))
         for item in items
@@ -396,7 +433,7 @@ def _pr_commits_or_none(repo: Path, number: int) -> tuple[Commit, ...] | None:
 
 def _pr_commits(repo: Path, number: int) -> tuple[Commit, ...]:
     """Fetch a PR's own commits via ``gh pr view``."""
-    view = _gh_json("pr", "view", str(number), "--json", "commits", repo=repo)
+    view = _pr_view(repo, number, "commits")
     return tuple(
         Commit(
             sha=commit["oid"],
@@ -410,18 +447,10 @@ def _pr_commits(repo: Path, number: int) -> tuple[Commit, ...]:
 
 def open_prs(repo: Path) -> tuple[list[OpenPr], frozenset[int]]:
     """Fetch every open PR authored by the current gh user, plus the numbers whose commits could not be fetched."""
-    items = _gh_json(
-        "pr",
-        "list",
-        "--state",
+    items = _pr_list(
+        repo,
         "open",
-        "--author",
-        "@me",
-        "--json",
         "number,state,url,headRefName,isDraft,reviewDecision,body,headRefOid,baseRefName",
-        "--limit",
-        "1000",
-        repo=repo,
     )
     prs: list[OpenPr] = []
     skipped: set[int] = set()
@@ -448,17 +477,24 @@ def open_prs(repo: Path) -> tuple[list[OpenPr], frozenset[int]]:
     return prs, frozenset(skipped)
 
 
-def current_login(repo: Path) -> str:
-    """Return the current gh user's login."""
-    return str(_gh_json("api", "user", "--jq", ".login", repo=repo)).strip()
-
-
 def push_remote(repo: Path) -> tuple[str, bool]:
     """Return the remote to push PR branches to and whether it is a fork, forking first if write access is lacking."""
-    view = _gh_json("repo", "view", "--json", "viewerPermission", repo=repo)
-    if view.get("viewerPermission") in ("WRITE", "MAINTAIN", "ADMIN"):
+    if _gh_installed():
+        view = _gh_json("repo", "view", "--json", "viewerPermission", repo=repo)
+        permission = view.get("viewerPermission")
+    else:
+        permission = _with_retries(partial(github_api.viewer_permission, repo))
+    if permission in ("WRITE", "MAINTAIN", "ADMIN"):
         return "origin", False
-    _gh_json("repo", "fork", "--remote", repo=repo)
+    if _gh_installed():
+        _gh_json("repo", "fork", "--remote", repo=repo)
+    elif not github_api.has_upstream(repo):
+        owner, name = github_api.base_repo(repo)
+        raise SystemExit(
+            f"No push access to {owner}/{name} and gh is not installed: fork it on GitHub, "
+            "run `git remote rename origin upstream` and `git remote add origin <fork-url>`, "
+            "then rerun."
+        )
     return "origin", True
 
 
@@ -520,7 +556,12 @@ def rewrite_what(
 
 def open_draft_pr(repo: Path, base: str, head: str, title: str, body: str) -> str:
     """Open a draft PR against ``base`` from ``head`` and return its URL."""
-    argv = ["gh", "pr", "create", "--draft", "--base", base.split("/", 1)[1]]
+    branch = base.split("/", 1)[1]
+    if not _gh_installed():
+        return _with_retries(
+            partial(github_api.create_draft_pr, repo, branch, head, title, body)
+        )
+    argv = ["gh", "pr", "create", "--draft", "--base", branch]
     argv += ["--head", head, "--title", title, "--body", body]
     return _run_with_retries(argv, repo).strip()
 
@@ -598,18 +639,24 @@ def _first_stderr_line(error: subprocess.CalledProcessError) -> str:
 
 def _pr_body_text(repo: Path, number: int) -> str:
     """Return the body of PR ``number``."""
-    view = _gh_json("pr", "view", str(number), "--json", "body", repo=repo)
+    view = _pr_view(repo, number, "body")
     return view["body"] or ""
 
 
 def edit_pr_body(repo: Path, number: int, body: str) -> None:
     """Replace the body of PR ``number``."""
-    _run_with_retries(["gh", "pr", "edit", str(number), "--body", body], repo)
+    if _gh_installed():
+        _run_with_retries(["gh", "pr", "edit", str(number), "--body", body], repo)
+    else:
+        _with_retries(partial(github_api.edit_pr_body, repo, number, body))
 
 
 def update_pr_branch(repo: Path, number: int) -> None:
     """Rebase PR ``number``'s branch onto its base."""
-    _run_with_retries(["gh", "pr", "update-branch", str(number), "--rebase"], repo)
+    if _gh_installed():
+        _run_with_retries(["gh", "pr", "update-branch", str(number), "--rebase"], repo)
+    else:
+        _with_retries(partial(github_api.update_pr_branch, repo, number))
 
 
 def _refresh_pr_whats(
@@ -760,19 +807,7 @@ def _merged_pr_commits(
     number of one whose fetch fails is returned alongside the commits.
     """
     slugs = {slug_for(subject) for subject in subjects}
-    items = _gh_json(
-        "pr",
-        "list",
-        "--state",
-        "merged",
-        "--author",
-        "@me",
-        "--json",
-        "number,headRefName,title",
-        "--limit",
-        "1000",
-        repo=repo,
-    )
+    items = _pr_list(repo, "merged", "number,headRefName,title")
     merged: list[tuple[int, str, list[Commit]]] = []
     skipped: set[int] = set()
     matching = [
