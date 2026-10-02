@@ -13,7 +13,7 @@ runs:
     - name: Sync project status
       if: |
         (github.event_name == 'pull_request_target' && contains(fromJSON('["opened", "reopened", "converted_to_draft", "ready_for_review", "closed"]'), github.event.action)) ||
-        (github.event_name == 'pull_request_review' && github.event.action == 'submitted')
+        (github.event_name == 'pull_request_review' && github.event.action == 'submitted' && inputs.projects-token != '')
       uses: actions/github-script@v9
       env:
         ACTION_PATH: ${{ github.action_path }}
