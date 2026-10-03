@@ -37,7 +37,7 @@ requires_env: CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
 
 ## Stopping and persistence - `TaskList` dies with the session
 
-- `TaskStop` a teammate once its task is done with nothing queued - not later, unless same-role work looms.
+- `TaskStop` a teammate once its task is done with nothing queued - not later, unless same-role work looms; a handoff or context limit is not 'done' - checkpoint first via `SendMessage`.
 - MUST NOT stop a producer on its idle ping alone - wait for the consumer to confirm input.
 - Spawn a fresh replacement for a member reporting high context - don't run it degraded.
 - A stopped teammate can still leave unclaimed items: ending a lead session, run `TaskList` and home every open item - memory, plus `handoff`/`session-end` if work remains.
