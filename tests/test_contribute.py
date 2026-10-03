@@ -46,6 +46,7 @@ from llm_prompts.contribute import (
     run_sync,
     scope_commits,
     slug_for,
+    squash_pr_number,
     stale_main_warning,
 )
 from llm_prompts.size_guard import CheckResult
@@ -86,6 +87,20 @@ def _plan(
     branch: str, group: Group, mode: Literal["append", "rebuild", "new"]
 ) -> BatchPlan:
     return BatchPlan(branch=branch, slug="foo", pr=None, groups=(group,), mode=mode)
+
+
+class TestSquashPrNumber:
+    @pytest.mark.parametrize(
+        ("subject", "expected"),
+        [
+            ("feat: x (#39)", 39),
+            ("feat: x", None),
+            ("feat (#3) x", None),
+            ("x (#39) ", None),
+        ],
+    )
+    def test_trailing_pr_number(self, subject: str, expected: int | None) -> None:
+        assert squash_pr_number(subject) == expected
 
 
 class TestSlugFor:
@@ -1017,6 +1032,23 @@ class TestInventory:
         assert inv.done == frozenset({"m1"})
         assert inv.past_slugs == frozenset({"add-foo"})
 
+    def test_merged_pr_matching_no_title_or_branch_is_fetched_by_upstream_squash_number(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.merged(
+            "unrelated-name", 7, [("c1", "feat: add foo"), ("c2", "feat: add bar")]
+        )
+        contribute_remote.fake.on(
+            "log", "--format=%s", "main..origin/main", stdout="feat: squashed (#7)\n"
+        )
+
+        inv = inventory(
+            tmp_path, contribute_remote.login, "origin/main", PROMPTS_PREFIX
+        )
+
+        assert inv.done == frozenset({"m1"})
+
     def test_merged_pr_truncated_headline_still_matches_main_commit_done(
         self, contribute_remote: ContributeRemote, tmp_path: Path
     ) -> None:
@@ -1324,21 +1356,21 @@ class TestStaleMainWarning:
         self, fake_subprocess: FakeSubprocess, tmp_path: Path
     ) -> None:
         fake_subprocess.on("cherry", "origin/main", "main", stdout="")
-        assert stale_main_warning(tmp_path, "origin/main", "origin") is None
+        assert stale_main_warning(tmp_path, "origin/main") is None
 
     def test_plus_only_output_returns_none(
         self, fake_subprocess: FakeSubprocess, tmp_path: Path
     ) -> None:
         fake_subprocess.on("cherry", "origin/main", "main", stdout="+abc123 new\n")
-        assert stale_main_warning(tmp_path, "origin/main", "origin") is None
+        assert stale_main_warning(tmp_path, "origin/main") is None
 
     def test_minus_line_warns_with_the_fix_command(
         self, fake_subprocess: FakeSubprocess, tmp_path: Path
     ) -> None:
         fake_subprocess.on("cherry", "origin/main", "main", stdout="-abc123 old\n")
-        warning = stale_main_warning(tmp_path, "origin/main", "origin")
+        warning = stale_main_warning(tmp_path, "origin/main")
         assert warning is not None
-        assert "git fetch origin main && git rebase origin/main" in warning
+        assert "fix with: llm-prompts update" in warning
 
     def test_mixed_minus_and_plus_lines_still_warns(
         self, fake_subprocess: FakeSubprocess, tmp_path: Path
@@ -1346,16 +1378,15 @@ class TestStaleMainWarning:
         fake_subprocess.on(
             "cherry", "origin/main", "main", stdout="-abc123 old\n+def456 new\n"
         )
-        assert stale_main_warning(tmp_path, "origin/main", "origin") is not None
+        assert stale_main_warning(tmp_path, "origin/main") is not None
 
-    def test_names_the_given_base_and_remote_not_origin(
+    def test_names_the_given_base_not_origin(
         self, fake_subprocess: FakeSubprocess, tmp_path: Path
     ) -> None:
         fake_subprocess.on("cherry", "upstream/main", "main", stdout="-abc123 old\n")
-        warning = stale_main_warning(tmp_path, "upstream/main", "upstream")
+        warning = stale_main_warning(tmp_path, "upstream/main")
         assert warning is not None
         assert "upstream/main" in warning
-        assert "upstream main" in warning
         assert "origin" not in warning
 
 
@@ -1703,7 +1734,7 @@ class TestRunListStaleMainWarning:
         result = run_list(tmp_path, contribute_remote.login, PROMPTS_PREFIX)
 
         out = capsys.readouterr().out
-        assert "git fetch origin main && git rebase origin/main" in out
+        assert "fix with: llm-prompts update" in out
         assert any(line.startswith("  warning:") for line in out.splitlines())
         assert result == 0
 
@@ -4322,7 +4353,7 @@ class TestWithoutGh:
             },
         )
 
-        merged, skipped = contribute._merged_pr_commits(tmp_path, {"feat: x"})
+        merged, skipped = contribute._merged_pr_commits(tmp_path, {"feat: x"}, set())
 
         assert skipped == frozenset()
         assert [(number, branch) for number, branch, _ in merged] == [

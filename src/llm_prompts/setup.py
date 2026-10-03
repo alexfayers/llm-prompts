@@ -17,7 +17,7 @@ from typing import Any
 
 _CONFIG_DIR = Path.home() / ".config" / "llm-prompts"
 CONFIG_PATH = _CONFIG_DIR / "config.toml"
-_GIT_TIMEOUT = 30
+GIT_TIMEOUT = 30
 
 _DEFAULT_CONFIG = """\
 # llm-prompts setup configuration
@@ -116,7 +116,7 @@ def _remote_head(git_url: str, ref: str | None) -> str | None:
         capture_output=True,
         text=True,
         check=False,
-        timeout=_GIT_TIMEOUT,
+        timeout=GIT_TIMEOUT,
     )
     if result.returncode != 0 or not result.stdout.strip():
         return None
@@ -151,7 +151,7 @@ def _commit_subjects_between(
         capture_output=True,
         text=True,
         check=False,
-        timeout=_GIT_TIMEOUT,
+        timeout=GIT_TIMEOUT,
     )
     if result.returncode != 0:
         return None
@@ -188,7 +188,7 @@ def _remote_commit_subjects(
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=_GIT_TIMEOUT,
+                timeout=GIT_TIMEOUT,
             )
             if result.returncode != 0:
                 print(
@@ -238,7 +238,7 @@ def _fetch_remote_pyproject(git_url: str) -> dict[str, Any] | None:
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=_GIT_TIMEOUT,
+                timeout=GIT_TIMEOUT,
             )
             if result.returncode != 0:
                 print(
