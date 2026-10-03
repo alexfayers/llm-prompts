@@ -7,6 +7,8 @@ description: Open a PR in llm-prompts, cline-hooks, or mcp-memory - `llm-prompts
 
 Covers llm-prompts, cline-hooks, and mcp-memory - siblings with the same PR template shape and conventions. Read the TARGET repo's own CONTRIBUTING.md and `.github/PULL_REQUEST_TEMPLATE.md`; never assume another repo's copy applies.
 
+- MUST open every PR as a draft (`gh pr create --draft`), and MUST NOT request reviewers unless the user asks.
+
 ## Rule/skill/workflow/agent sources (any repo's `**/prompts/**`)
 
 cline-hooks and mcp-memory each carry their own prompts tree (rules, skills, workflows, agents) feeding the same distributed collection as llm-prompts' own - all three go through `llm-prompts contribute`, never a manual branch:

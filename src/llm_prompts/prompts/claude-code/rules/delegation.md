@@ -31,7 +31,7 @@ Every spawn prompt, design delegates included, MUST specify:
 - for a shell-restricted delegate: name Read/Grep/Glob for investigation, plus exactly which command it MAY still run despite the restriction - an unstated need never authorizes Bash.
 - a delegate MUST be asked a question, report the answer - never raw output or verbatim file text - only in a failure, error, or a named value. A drafted edit returns new wording, not current text.
 
-For a code comment, state policy/convention, not draft prose - unless it names an in-repo exemplar (beats "no comments"); check first.
+For a code comment, state policy/convention, not draft prose.
 
 - A design/planning prompt MUST route full output to implementers, plus a few lines to main: what changes, what it buys, the risk - no steps/files/rationale. MUST NOT make it main's deliverable.
 
