@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -39,37 +40,55 @@ class TestRenderNodeFile:
     """Tests for rendering a node file's front matter."""
 
     def test_omits_empty_depends_and_scope_lines(self, mod: ModuleType) -> None:
-        text = mod.render_node_file([], [], "body\n")
+        text = mod.render_node_file({}, "body\n")
         assert text == "---\n---\nbody\n"
 
     def test_includes_only_non_empty_lines(self, mod: ModuleType) -> None:
-        text = mod.render_node_file(["a"], [], "body\n")
+        text = mod.render_node_file({"depends": ["a"]}, "body\n")
         assert text == "---\ndepends: a\n---\nbody\n"
 
     def test_includes_both_lines_when_present(self, mod: ModuleType) -> None:
-        text = mod.render_node_file(["a"], ["s/"], "body\n")
+        text = mod.render_node_file({"depends": ["a"], "scope": ["s/"]}, "body\n")
         assert text == "---\ndepends: a\nscope: s/\n---\nbody\n"
 
     def test_empty_front_matter_round_trips_through_parse(
         self, mod: ModuleType
     ) -> None:
-        text = mod.render_node_file([], [], "body\n")
+        text = mod.render_node_file({}, "body\n")
         front, body = mod.parse_node_file(text)
-        assert front == {"depends": [], "scope": []}
+        assert front == {key: [] for key in mod.LINK_KEYS}
         assert body == "body\n"
+
+    def test_includes_inputs_outputs_deletes_in_key_order(
+        self, mod: ModuleType
+    ) -> None:
+        links = {"deletes": ["d"], "outputs": ["o"], "inputs": ["i"], "depends": ["a"]}
+        text = mod.render_node_file(links, "body\n")
+        assert text == "---\ndepends: a\ninputs: i\noutputs: o\ndeletes: d\n---\nbody\n"
+        front, _ = mod.parse_node_file(text)
+        assert front == {
+            **{key: [] for key in mod.LINK_KEYS},
+            "depends": ["a"],
+            "inputs": ["i"],
+            "outputs": ["o"],
+            "deletes": ["d"],
+        }
 
 
 class TestLinksSummary:
     """Tests for the console depends/scope summary."""
 
     def test_empty_summary_is_blank(self, mod: ModuleType) -> None:
-        assert mod.links_summary([], []) == ""
+        assert mod.links_summary({}) == ""
 
     def test_depends_only(self, mod: ModuleType) -> None:
-        assert mod.links_summary(["a"], []) == " (depends: a)"
+        assert mod.links_summary({"depends": ["a"]}) == " (depends: a)"
 
     def test_both_present(self, mod: ModuleType) -> None:
-        assert mod.links_summary(["a"], ["s/"]) == " (depends: a; scope: s/)"
+        assert (
+            mod.links_summary({"depends": ["a"], "scope": ["s/"]})
+            == " (depends: a; scope: s/)"
+        )
 
 
 class TestAdd:
@@ -81,7 +100,7 @@ class TestAdd:
         base = tmp_path / "plan"
         mod.cmd_init(base)
         capsys.readouterr()
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         out = capsys.readouterr().out
         path = mod.node_path(base, "widget", "todo")
         assert out == f"added {path}\n"
@@ -92,9 +111,9 @@ class TestAdd:
     ) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "base", [], [])
+        mod.cmd_add(base, "base", {})
         capsys.readouterr()
-        mod.cmd_add(base, "widget", ["base"], ["widget/"])
+        mod.cmd_add(base, "widget", {"depends": ["base"], "scope": ["widget/"]})
         out = capsys.readouterr().out
         path = mod.node_path(base, "widget", "todo")
         assert out == f"added {path} (depends: base; scope: widget/)\n"
@@ -108,27 +127,27 @@ class TestEditLinks:
     ) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "widget", [], ["widget/"])
+        mod.cmd_add(base, "widget", {"scope": ["widget/"]})
         capsys.readouterr()
-        mod.edit_links(base, "widget", [], ["widget/"], add=False)
+        mod.edit_links(base, "widget", {"scope": ["widget/"]}, add=False)
         out = capsys.readouterr().out
         assert out == "widget\n"
         front, _ = mod.parse_node_file(
             mod.node_path(base, "widget", "todo").read_text()
         )
-        assert front == {"depends": [], "scope": []}
+        assert front == {key: [] for key in mod.LINK_KEYS}
 
     def test_link_preserves_failed_line(
         self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "helper", [], [])
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "helper", {})
+        mod.cmd_add(base, "widget", {})
         mod.cmd_built(base, "widget")
         mod.cmd_fail(base, "widget", "why")
         capsys.readouterr()
-        mod.edit_links(base, "widget", ["helper"], [], add=True)
+        mod.edit_links(base, "widget", {"depends": ["helper"]}, add=True)
         text = mod.node_path(base, "widget", "todo").read_text()
         assert "failed: why" in text
         assert "depends: helper" in text
@@ -140,7 +159,7 @@ class TestRemove:
     def test_removes_node_file(self, mod: ModuleType, tmp_path: Path) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         mod.cmd_remove(base, "widget")
         assert not mod.node_path(base, "widget", "todo").exists()
         assert "widget" not in mod.load_nodes(base)
@@ -148,8 +167,8 @@ class TestRemove:
     def test_refuses_with_dependents(self, mod: ModuleType, tmp_path: Path) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "base", [], [])
-        mod.cmd_add(base, "widget", ["base"], [])
+        mod.cmd_add(base, "base", {})
+        mod.cmd_add(base, "widget", {"depends": ["base"]})
         with pytest.raises(mod.FocusError, match="depended on by widget"):
             mod.cmd_remove(base, "base")
         assert mod.node_path(base, "base", "todo").exists()
@@ -163,7 +182,7 @@ class TestRemove:
     def test_removes_a_done_node(self, mod: ModuleType, tmp_path: Path) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         mod.cmd_built(base, "widget")
         mod.cmd_pass(base, "widget")
         mod.cmd_remove(base, "widget")
@@ -176,7 +195,7 @@ class TestRename:
     def test_renames_node_file(self, mod: ModuleType, tmp_path: Path) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         mod.cmd_rename(base, "widget", "gadget")
         assert not mod.node_path(base, "widget", "todo").exists()
         new_path = mod.node_path(base, "gadget", "todo")
@@ -188,9 +207,9 @@ class TestRename:
     ) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "widget", [], [])
-        mod.cmd_add(base, "other", [], [])
-        mod.cmd_add(base, "gizmo", ["widget", "other"], [])
+        mod.cmd_add(base, "widget", {})
+        mod.cmd_add(base, "other", {})
+        mod.cmd_add(base, "gizmo", {"depends": ["widget", "other"]})
         mod.cmd_built(base, "gizmo")
         mod.cmd_fail(base, "gizmo", "why")
         mod.cmd_rename(base, "widget", "gadget")
@@ -201,7 +220,7 @@ class TestRename:
     def test_plan_graph_shows_new_id(self, mod: ModuleType, tmp_path: Path) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         mod.cmd_rename(base, "widget", "gadget")
         plan = mod.plan_path(base).read_text()
         assert "gadget" in plan
@@ -210,8 +229,8 @@ class TestRename:
     def test_target_exists_raises(self, mod: ModuleType, tmp_path: Path) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "widget", [], [])
-        mod.cmd_add(base, "gadget", [], [])
+        mod.cmd_add(base, "widget", {})
+        mod.cmd_add(base, "gadget", {})
         with pytest.raises(mod.FocusError, match="node 'gadget' already exists"):
             mod.cmd_rename(base, "widget", "gadget")
 
@@ -224,7 +243,7 @@ class TestRename:
     def test_rename_to_same_name_raises(self, mod: ModuleType, tmp_path: Path) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         with pytest.raises(mod.FocusError, match="node 'widget' already exists"):
             mod.cmd_rename(base, "widget", "widget")
 
@@ -237,7 +256,7 @@ class TestGraph:
     ) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "end-to-end", [], [])
+        mod.cmd_add(base, "end-to-end", {})
         graph = mod.parse_sections(mod.plan_path(base).read_text())["Graph"]
         assert 'end_to_end["end-to-end"]' in graph
         assert "end-to-end" not in graph.replace('end_to_end["end-to-end"]', "")
@@ -247,8 +266,8 @@ class TestGraph:
     ) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "end-to-end", [], [])
-        mod.cmd_add(base, "widget", ["end-to-end"], [])
+        mod.cmd_add(base, "end-to-end", {})
+        mod.cmd_add(base, "widget", {"depends": ["end-to-end"]})
         graph = mod.parse_sections(mod.plan_path(base).read_text())["Graph"]
         assert 'end_to_end["end-to-end"] --> widget["widget"]' in graph
 
@@ -257,7 +276,7 @@ class TestGraph:
     ) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "end-to-end", [], [])
+        mod.cmd_add(base, "end-to-end", {})
         mod.cmd_built(base, "end-to-end")
         mod.cmd_pass(base, "end-to-end")
         graph = mod.parse_sections(mod.plan_path(base).read_text())["Graph"]
@@ -296,7 +315,7 @@ class TestChecksSection:
         sections = mod.parse_sections(plan.read_text())
         sections["Checks"] = "- pytest\n- ruff check"
         plan.write_text(mod.render_plan(base.name, sections))
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         assert "- pytest" in mod.plan_path(base).read_text()
 
 
@@ -304,7 +323,7 @@ class TestNodeTestCommand:
     """Tests for reading a node's test command from front matter."""
 
     def test_returns_none_when_absent(self, mod: ModuleType) -> None:
-        text = mod.render_node_file([], [], "body\n")
+        text = mod.render_node_file({}, "body\n")
         assert mod.node_test_command(text) is None
 
     def test_returns_value_when_present(self, mod: ModuleType) -> None:
@@ -320,7 +339,7 @@ class TestSetTest:
     ) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         capsys.readouterr()
         mod.cmd_set_test(base, "widget", "pytest -k widget")
         out = capsys.readouterr().out
@@ -331,7 +350,7 @@ class TestSetTest:
     def test_rejects_multiline_command(self, mod: ModuleType, tmp_path: Path) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         with pytest.raises(mod.FocusError, match="test command must be one line"):
             mod.cmd_set_test(base, "widget", "a\nb")
 
@@ -342,20 +361,36 @@ class TestSetTest:
             mod.cmd_set_test(base, "nope", "pytest")
 
 
+class TestOutsideScope:
+    """Tests for filtering changed paths by a node's scope."""
+
+    def test_path_under_dir_scope_is_inside(self, mod: ModuleType) -> None:
+        assert mod.outside_scope(["src/a.py"], ["src/"]) == []
+
+    def test_path_whose_section_is_the_scope_is_inside(self, mod: ModuleType) -> None:
+        assert mod.outside_scope(["doc.md"], ["doc.md/Setup"]) == []
+
+    def test_unrelated_paths_are_outside_and_sorted(self, mod: ModuleType) -> None:
+        assert mod.outside_scope(["z.py", "src/a.py", "b.py"], ["src/"]) == [
+            "b.py",
+            "z.py",
+        ]
+
+
 class TestCheck:
     """Tests for the check command."""
 
     def test_requires_testing_stage(self, mod: ModuleType, tmp_path: Path) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         with pytest.raises(mod.FocusError, match="'widget' is not in nodes/testing"):
             mod.cmd_check(base, "widget")
 
     def test_requires_test_command(self, mod: ModuleType, tmp_path: Path) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         mod.cmd_built(base, "widget")
         with pytest.raises(mod.FocusError, match="'widget' has no test command"):
             mod.cmd_check(base, "widget")
@@ -365,7 +400,7 @@ class TestCheck:
     ) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         mod.cmd_built(base, "widget")
         mod.cmd_set_test(base, "widget", "true")
         capsys.readouterr()
@@ -379,7 +414,7 @@ class TestCheck:
     ) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         mod.cmd_built(base, "widget")
         mod.cmd_set_test(base, "widget", "false")
         with pytest.raises(SystemExit) as exc_info:
@@ -397,13 +432,70 @@ class TestCheck:
         sections = mod.parse_sections(plan.read_text())
         sections["Checks"] = "- true"
         plan.write_text(mod.render_plan(base.name, sections))
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         mod.cmd_built(base, "widget")
         mod.cmd_set_test(base, "widget", "true")
         capsys.readouterr()
         mod.cmd_check(base, "widget")
         out = capsys.readouterr().out
         assert out == "$ true\n$ true\npass widget\n"
+
+
+@pytest.fixture
+def git_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A git repo with one commit, as the working directory."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for key in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{key}_NAME", "t")
+        monkeypatch.setenv(f"GIT_{key}_EMAIL", "t@example.com")
+    monkeypatch.chdir(repo)
+    (repo / "README.md").write_text("hi\n")
+    for args in (["init", "-q"], ["add", "."], ["commit", "-q", "-m", "init"]):
+        subprocess.run(["git", *args], cwd=repo, check=True)
+    return repo
+
+
+class TestCheckBase:
+    """Tests for the check command's --base scope gate."""
+
+    def _built_widget(self, mod: ModuleType, repo: Path) -> Path:
+        base = repo / "plan"
+        mod.cmd_init(base)
+        mod.cmd_add(base, "widget", {"scope": ["src/"]})
+        mod.cmd_built(base, "widget")
+        mod.cmd_set_test(base, "widget", "true")
+        return base
+
+    def test_out_of_scope_change_fails_node(
+        self, mod: ModuleType, git_repo: Path
+    ) -> None:
+        base = self._built_widget(mod, git_repo)
+        (git_repo / "stray.py").write_text("x\n")
+        with pytest.raises(SystemExit) as exc_info:
+            mod.cmd_check(base, "widget", "HEAD")
+        assert exc_info.value.code == 1
+        text = mod.node_path(base, "widget", "todo").read_text()
+        assert "failed: outside scope: stray.py" in text
+
+    def test_in_scope_change_passes(self, mod: ModuleType, git_repo: Path) -> None:
+        base = self._built_widget(mod, git_repo)
+        (git_repo / "src").mkdir()
+        (git_repo / "src" / "a.py").write_text("x\n")
+        mod.cmd_check(base, "widget", "HEAD")
+        assert mod.node_path(base, "widget", "done").exists()
+
+    def test_plan_dir_changes_are_ignored(
+        self, mod: ModuleType, git_repo: Path
+    ) -> None:
+        base = self._built_widget(mod, git_repo)
+        mod.cmd_check(base, "widget", "HEAD")
+        assert mod.node_path(base, "widget", "done").exists()
+
+    def test_bad_base_raises(self, mod: ModuleType, git_repo: Path) -> None:
+        base = self._built_widget(mod, git_repo)
+        with pytest.raises(mod.FocusError):
+            mod.cmd_check(base, "widget", "no-such-ref")
 
 
 class TestReady:
@@ -416,14 +508,14 @@ class TestReady:
         sections = mod.parse_sections(plan.read_text())
         sections["Checks"] = "- true"
         plan.write_text(mod.render_plan(base.name, sections))
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         with pytest.raises(mod.FocusError, match="'widget' has no test command"):
             mod.cmd_ready(base, "widget")
 
     def test_requires_plan_checks(self, mod: ModuleType, tmp_path: Path) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         mod.cmd_set_test(base, "widget", "true")
         with pytest.raises(mod.FocusError, match="plan has no Checks"):
             mod.cmd_ready(base, "widget")
@@ -437,8 +529,8 @@ class TestReady:
         sections = mod.parse_sections(plan.read_text())
         sections["Checks"] = "- true"
         plan.write_text(mod.render_plan(base.name, sections))
-        mod.cmd_add(base, "gadget", [], [])
-        mod.cmd_add(base, "widget", ["gadget"], [])
+        mod.cmd_add(base, "gadget", {})
+        mod.cmd_add(base, "widget", {"depends": ["gadget"]})
         mod.cmd_set_test(base, "widget", "true")
         capsys.readouterr()
         with pytest.raises(SystemExit) as exc_info:
@@ -455,7 +547,7 @@ class TestReady:
         sections = mod.parse_sections(plan.read_text())
         sections["Checks"] = "- true"
         plan.write_text(mod.render_plan(base.name, sections))
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         mod.cmd_set_test(base, "widget", "true")
         capsys.readouterr()
         mod.cmd_ready(base, "widget")
@@ -474,7 +566,7 @@ class TestShow:
         sections = mod.parse_sections(plan.read_text())
         sections["Checks"] = "- pytest"
         plan.write_text(mod.render_plan(base.name, sections))
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         capsys.readouterr()
         mod.cmd_show(base, "widget")
         out = capsys.readouterr().out
@@ -489,7 +581,7 @@ class TestComment:
     ) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         capsys.readouterr()
         mod.cmd_comment(base)
         out = capsys.readouterr().out
@@ -505,7 +597,7 @@ class TestComment:
         sections["Goal"] = "do the thing"
         sections["Checks"] = "- pytest"
         plan.write_text(mod.render_plan(base.name, sections))
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         capsys.readouterr()
         mod.cmd_comment(base)
         out = capsys.readouterr().out
@@ -520,8 +612,8 @@ class TestComment:
     ) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "base", [], [])
-        mod.cmd_add(base, "zeta", ["base"], [])
+        mod.cmd_add(base, "base", {})
+        mod.cmd_add(base, "zeta", {"depends": ["base"]})
         base_path = mod.node_path(base, "base", "todo")
         base_path.write_text(
             base_path.read_text().replace("## Accept\n", "## Accept\n\n- base check\n")
@@ -542,13 +634,82 @@ class TestComment:
     ) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "base", [], [])
-        mod.cmd_add(base, "widget", ["base"], [])
+        mod.cmd_add(base, "base", {})
+        mod.cmd_add(base, "widget", {"depends": ["base"]})
         capsys.readouterr()
         mod.cmd_show(base, "widget")
         out = capsys.readouterr().out
         assert out.startswith(f"# {base.name}\n\n## Goal")
         assert "## base" in out
+
+
+class TestJoin:
+    """Tests for the join command."""
+
+    def _plan(self, mod: ModuleType, tmp_path: Path) -> Path:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        mod.cmd_add(base, "maker", {"outputs": ["Thing"]})
+        mod.cmd_add(base, "user", {"inputs": ["Thing"]})
+        return base
+
+    def test_shared_output_gets_interface_node_both_depend_on(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        base = self._plan(mod, tmp_path)
+        capsys.readouterr()
+        mod.cmd_join(base)
+        nodes = mod.load_nodes(base)
+        assert nodes["interface-thing"]["outputs"] == ["Thing"]
+        assert nodes["maker"]["depends"] == ["interface-thing"]
+        assert nodes["user"]["depends"] == ["interface-thing"]
+        assert capsys.readouterr().out == (
+            "maker depends on interface-thing\nuser depends on interface-thing\n"
+        )
+
+    def test_existing_depends_edge_is_kept(
+        self, mod: ModuleType, tmp_path: Path
+    ) -> None:
+        base = self._plan(mod, tmp_path)
+        mod.edit_links(base, "user", {"depends": ["maker"]}, add=True)
+        mod.cmd_join(base)
+        assert mod.load_nodes(base)["user"]["depends"] == ["maker", "interface-thing"]
+
+    def test_rerun_prints_nothing_to_join(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        base = self._plan(mod, tmp_path)
+        mod.cmd_join(base)
+        capsys.readouterr()
+        mod.cmd_join(base)
+        assert capsys.readouterr().out == "nothing to join\n"
+
+    def test_duplicate_producer_errors(self, mod: ModuleType, tmp_path: Path) -> None:
+        base = self._plan(mod, tmp_path)
+        mod.cmd_add(base, "rival", {"outputs": ["Thing"]})
+        with pytest.raises(mod.FocusError) as exc_info:
+            mod.cmd_join(base)
+        assert exc_info.value.problems == ["'Thing': output of maker, rival"]
+
+    def test_deleter_depends_on_each_consumer(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        base = self._plan(mod, tmp_path)
+        mod.cmd_add(base, "cleaner", {"deletes": ["Thing"]})
+        capsys.readouterr()
+        mod.cmd_join(base)
+        assert mod.load_nodes(base)["cleaner"]["depends"] == ["user"]
+        assert "cleaner after user (deletes 'Thing')\n" in capsys.readouterr().out
+
+    def test_consumer_depending_on_deleter_is_a_cycle(
+        self, mod: ModuleType, tmp_path: Path
+    ) -> None:
+        base = self._plan(mod, tmp_path)
+        mod.cmd_add(base, "cleaner", {"deletes": ["Thing"]})
+        mod.edit_links(base, "user", {"depends": ["cleaner"]}, add=True)
+        with pytest.raises(mod.FocusError) as exc_info:
+            mod.cmd_join(base)
+        assert any("dependency cycle" in p for p in exc_info.value.problems)
 
 
 class TestCli:
@@ -563,7 +724,7 @@ class TestCli:
     ) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         monkeypatch.setattr(sys, "argv", ["focus", "remove", str(base), "widget"])
         mod.main()
         assert not mod.node_path(base, "widget", "todo").exists()
@@ -577,12 +738,24 @@ class TestCli:
     ) -> None:
         base = tmp_path / "plan"
         mod.cmd_init(base)
-        mod.cmd_add(base, "widget", [], [])
+        mod.cmd_add(base, "widget", {})
         monkeypatch.setattr(
             sys, "argv", ["focus", "rename", str(base), "widget", "gadget"]
         )
         mod.main()
         assert mod.node_path(base, "gadget", "todo").exists()
+
+    def test_set_test_via_cli(
+        self, mod: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        mod.cmd_add(base, "widget", {})
+        monkeypatch.setattr(
+            sys, "argv", ["focus", "set-test", str(base), "widget", "pytest -q"]
+        )
+        mod.main()
+        assert "test: pytest -q" in mod.node_path(base, "widget", "todo").read_text()
 
     def test_focus_error_exits_with_message_on_stderr(
         self,

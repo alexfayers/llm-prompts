@@ -1,8 +1,8 @@
 name: PR automation
-description: Sync PR status onto the llm-prompts ecosystem project board, apply a type label from the PR title, and apply path-based area labels.
+description: Sync PR status onto the llm-prompts ecosystem project board, enable squash auto-merge on ready contribute PRs, apply a type label from the PR title, and apply path-based area labels.
 inputs:
   projects-token:
-    description: Token with access to the target GitHub Project, used only for the status-sync GraphQL calls.
+    description: Token for the Project GraphQL status sync and for enabling auto-merge.
     required: true
   github-token:
     description: Token used for labeling the PR and reading repo contents.
@@ -13,7 +13,7 @@ runs:
     - name: Sync project status
       if: |
         (github.event_name == 'pull_request_target' && contains(fromJSON('["opened", "reopened", "converted_to_draft", "ready_for_review", "closed"]'), github.event.action)) ||
-        (github.event_name == 'pull_request_review' && github.event.action == 'submitted')
+        (github.event_name == 'pull_request_review' && github.event.action == 'submitted' && inputs.projects-token != '')
       uses: actions/github-script@v9
       env:
         ACTION_PATH: ${{ github.action_path }}
@@ -22,6 +22,20 @@ runs:
         script: |
           const { sync } = require(`${process.env.ACTION_PATH}/sync-project-status.js`)
           await sync({ github, context, core })
+
+    - name: Enable squash auto-merge
+      if: |
+        github.event_name == 'pull_request_target' &&
+        (github.event.action == 'ready_for_review' ||
+        (contains(fromJSON('["opened", "reopened"]'), github.event.action) && !github.event.pull_request.draft))
+      uses: actions/github-script@v9
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      with:
+        github-token: ${{ inputs.projects-token }}
+        script: |
+          const { enable } = require(`${process.env.ACTION_PATH}/auto-merge.js`)
+          await enable({ github, context, core })
 
     - name: Label PR by type
       if: |
