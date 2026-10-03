@@ -29,6 +29,7 @@ Decision order for touching this repo's own rule/skill/workflow/agent sources.
 - MUST scope prompt-rule audits and edits to the files listed in ~/.config/llm-prompts/installed.json, not every agent subdirectory under prompts/.
 - MUST grep the rule AND skill sources for existing coverage - sharpen the most specific match in place, not a second overlapping instruction.
 - MUST check you did not already make this edit earlier in the session.
+- MUST find any rule or skill that conflicts with the edit, and suggest a fix for each conflict.
 - Smallest edit that fixes the case - one sentence, not a new file.
 
 ## 5. Write
