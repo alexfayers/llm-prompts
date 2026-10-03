@@ -42,6 +42,7 @@ _COMPRESSION_PREFIX = "chore: compress "
 _CONVENTIONAL_PREFIX = re.compile(r"^[a-z]+(\([^)]*\))?!?: ", re.IGNORECASE)
 _CONVENTIONAL_SUBJECT = re.compile(r"^[a-z]+(\([^)]*\))?!?: .+", re.IGNORECASE)
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
+_SQUASH_PR_NUMBER = re.compile(r" \(#(\d+)\)$")
 _GENERATED_PREFIXES = ("- ", "Depends on ")
 _WHAT_HEADING = re.compile(r"^## What\n", re.MULTILINE)
 _HEADING = re.compile(r"^## ", re.MULTILINE)
@@ -331,15 +332,20 @@ def base_ref(repo: Path) -> str:
     return "upstream/main" if "upstream" in remotes else "origin/main"
 
 
-def stale_main_warning(repo: Path, base: str, remote: str) -> str | None:
+def squash_pr_number(subject: str) -> int | None:
+    """Return the PR number a squash-merge subject ends with, if any."""
+    match = _SQUASH_PR_NUMBER.search(subject)
+    return int(match[1]) if match else None
+
+
+def stale_main_warning(repo: Path, base: str) -> str | None:
     """Warn if a commit on ``main`` is already reachable from ``base`` (e.g. squash-merged upstream)."""
     output = _git("cherry", base, "main", repo=repo)
     if not any(line.startswith("-") for line in output.splitlines()):
         return None
     return (
         "warning: local main has commits already merged upstream that are not "
-        f"ancestors of {base} - fix with: git fetch {remote} main && "
-        f"git rebase {base}"
+        f"ancestors of {base} - fix with: llm-prompts update"
     )
 
 
@@ -798,13 +804,14 @@ def behind_warning(behind: Sequence[OpenPr]) -> str | None:
 
 
 def _merged_pr_commits(
-    repo: Path, subjects: Collection[str]
+    repo: Path, subjects: Collection[str], numbers: Collection[int]
 ) -> tuple[list[tuple[int, str, list[Commit]]], frozenset[int]]:
     """List the pre-merge commits of merged PRs that could match one of ``subjects``.
 
-    A merged PR is fetched only when its title (a single-commit PR's subject) or
-    its branch slug (a multi-commit batch's first subject) matches, and the
-    number of one whose fetch fails is returned alongside the commits.
+    A merged PR is fetched only when its title (a single-commit PR's subject),
+    its branch slug (a multi-commit batch's first subject) or its number (a
+    squash-merge subject's suffix) matches, and the number of one whose fetch
+    fails is returned alongside the commits.
     """
     slugs = {slug_for(subject) for subject in subjects}
     items = _pr_list(repo, "merged", "number,headRefName,title")
@@ -813,7 +820,9 @@ def _merged_pr_commits(
     matching = [
         item
         for item in items
-        if item["title"] in subjects or item["headRefName"].rpartition("/")[2] in slugs
+        if item["title"] in subjects
+        or item["headRefName"].rpartition("/")[2] in slugs
+        or item["number"] in numbers
     ]
     with ThreadPoolExecutor() as pool:
         fetched = list(
@@ -884,9 +893,18 @@ def inventory(repo: Path, login: str, base: str, prefix: str) -> Inventory:
     """Build the remote batch/PR state needed to plan and report on pending commits."""
     commits = log_commits(repo, base)
     scoped = scope_commits(commits, prefix)
+    upstream_subjects = _git("log", "--format=%s", f"main..{base}", repo=repo)
+    numbers = {
+        number
+        for subject in upstream_subjects.splitlines()
+        if (number := squash_pr_number(subject)) is not None
+    }
     with ThreadPoolExecutor() as pool:
         merged_future = pool.submit(
-            _merged_pr_commits, repo, {commit.subject for commit in scoped}
+            _merged_pr_commits,
+            repo,
+            {commit.subject for commit in scoped},
+            numbers,
         )
         all_prs_future = pool.submit(all_prs, repo)
         _git_network(
@@ -1164,7 +1182,7 @@ def collect_report(
     with ThreadPoolExecutor() as pool:
         open_prs_future = pool.submit(open_prs, repo)
         fetch_base(repo, remote)
-        stale_warning = stale_main_warning(repo, base, remote)
+        stale_warning = stale_main_warning(repo, base)
 
         inv = inventory(repo, login, base, prefix)
         prs, skipped_open = open_prs_future.result()
@@ -1276,7 +1294,7 @@ def run_sync(
     base = base_ref(repo)
     remote = base.split("/", 1)[0]
     fetch_base(repo, remote)
-    warning = stale_main_warning(repo, base, remote)
+    warning = stale_main_warning(repo, base)
     if warning is not None:
         print(warning)
 

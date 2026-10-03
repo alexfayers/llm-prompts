@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 
 from . import github_api
 from .setup import (
-    _GIT_TIMEOUT,
+    GIT_TIMEOUT,
     _extract_git_url,
     _format_update_message,
     _remote_commit_subjects,
@@ -220,14 +220,14 @@ def _local_source_messages(name: str, source: str) -> list[str]:
         ["git", "-C", str(repo), "fetch", "--quiet"],
         check=False,
         capture_output=True,
-        timeout=_GIT_TIMEOUT,
+        timeout=GIT_TIMEOUT,
     )
     result = subprocess.run(
         ["git", "-C", str(repo), "rev-list", "--count", "HEAD..@{u}"],
         capture_output=True,
         text=True,
         check=False,
-        timeout=_GIT_TIMEOUT,
+        timeout=GIT_TIMEOUT,
     )
     if result.returncode != 0:
         return []
@@ -241,7 +241,7 @@ def _local_source_messages(name: str, source: str) -> list[str]:
         capture_output=True,
         text=True,
         check=False,
-        timeout=_GIT_TIMEOUT,
+        timeout=GIT_TIMEOUT,
     )
     subjects = log.stdout.splitlines() if log.returncode == 0 else None
     return _format_update_message(name, subjects)
@@ -293,7 +293,7 @@ def _has_github_remote(repo: Path) -> bool:
         check=False,
         capture_output=True,
         text=True,
-        timeout=_GIT_TIMEOUT,
+        timeout=GIT_TIMEOUT,
     )
     return any(
         _is_github_remote_url(line.split()[1])
@@ -393,6 +393,7 @@ def _pull_one_local_source(name: str, source: str) -> _PullOutcome:
     Returns:
         Whether the source moved, and message lines describing the pull outcome.
     """
+    from .main_sync import GIT_TIMED_OUT, SyncResult, run_git, sync_diverged
     from .setup import _expand, _is_local_path
 
     unchanged = _PullOutcome(name, False, [])
@@ -401,60 +402,45 @@ def _pull_one_local_source(name: str, source: str) -> _PullOutcome:
     repo = _expand(source)
     if not (repo / ".git").is_dir():
         return unchanged
-    subprocess.run(
-        ["git", "-C", str(repo), "fetch", "--quiet"],
-        check=False,
-        capture_output=True,
-        timeout=_GIT_TIMEOUT,
-    )
-    result = subprocess.run(
-        ["git", "-C", str(repo), "rev-list", "--count", "HEAD..@{u}"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=_GIT_TIMEOUT,
-    )
+    run_git(repo, "fetch", "--quiet")
+    result = run_git(repo, "rev-list", "--count", "HEAD..@{u}")
     if result.returncode != 0:
         return unchanged
     count = int(result.stdout.strip())
     if count == 0:
         return unchanged
-    pull = subprocess.run(
-        ["git", "-C", str(repo), "pull", "--ff-only", "--quiet"],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=_GIT_TIMEOUT,
-    )
+    pull = run_git(repo, "pull", "--ff-only", "--quiet")
     if pull.returncode == 0:
         return _PullOutcome(name, True, [f"[{name}] pulled {count} new commit(s)"])
-    rebase = subprocess.run(
-        ["git", "-C", str(repo), "rebase", "--quiet", "@{u}"],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=_GIT_TIMEOUT,
-    )
-    if rebase.returncode == 0:
+    if pull.returncode == GIT_TIMED_OUT:
+        synced = SyncResult("failed", detail=pull.stderr.strip())
+    else:
+        synced = sync_diverged(repo)
+    if synced.mode == "failed":
         return _PullOutcome(
             name,
-            True,
-            [f"[{name}] rebased local commits onto {count} new commit(s)"],
+            False,
+            [
+                f"[{name}] {count} new commit(s) available but sync failed",
+                f"  {synced.detail}",
+            ],
         )
-    subprocess.run(
-        ["git", "-C", str(repo), "rebase", "--abort"],
-        check=False,
-        capture_output=True,
-        timeout=_GIT_TIMEOUT,
-    )
-    return _PullOutcome(
-        name,
-        False,
-        [
-            f"[{name}] {count} new commit(s) available but rebase failed",
-            f"  {rebase.stderr.strip()}",
-        ],
-    )
+    if synced.mode == "reset":
+        message = (
+            f"[{name}] local commits already upstream; reset to {count} new commit(s)"
+        )
+    elif synced.mode == "rebased":
+        message = f"[{name}] rebased local commits onto {count} new commit(s)"
+    else:
+        message = f"[{name}] dropped squash-merged commits"
+        if synced.replayed:
+            message += f"; replayed {synced.replayed} local commit(s)"
+        if synced.folded:
+            message += (
+                "; kept local changes that differ from the merge as one commit: "
+                f"{', '.join(synced.folded)} - review with git show"
+            )
+    return _PullOutcome(name, True, [message])
 
 
 def _pull_local_sources() -> set[str]:

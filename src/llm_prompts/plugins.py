@@ -11,7 +11,7 @@ from typing import Any
 
 from .setup import (
     _CONFIG_DIR,
-    _GIT_TIMEOUT,
+    GIT_TIMEOUT,
     _commit_subjects_between,
     _extract_git_url,
     _format_update_message,
@@ -139,7 +139,7 @@ def ensure_cloned(plugin: dict[str, Any]) -> Path | None:
         capture_output=True,
         text=True,
         check=False,
-        timeout=_GIT_TIMEOUT,
+        timeout=GIT_TIMEOUT,
     )
     if result.returncode != 0:
         log("error", f"[{name}] clone failed: {result.stderr.strip()}")
@@ -152,7 +152,7 @@ def ensure_cloned(plugin: dict[str, Any]) -> Path | None:
             capture_output=True,
             text=True,
             check=False,
-            timeout=_GIT_TIMEOUT,
+            timeout=GIT_TIMEOUT,
         )
         if checkout.returncode != 0:
             log(
@@ -181,7 +181,7 @@ def _reset_target(checkout: Path, ref: str | None) -> str:
         capture_output=True,
         text=True,
         check=False,
-        timeout=_GIT_TIMEOUT,
+        timeout=GIT_TIMEOUT,
     )
     if result.returncode == 0 and result.stdout.strip():
         return result.stdout.strip()
@@ -212,7 +212,7 @@ def _pull_one_plugin_source(plugin: dict[str, Any]) -> list[str]:
         capture_output=True,
         text=True,
         check=False,
-        timeout=_GIT_TIMEOUT,
+        timeout=GIT_TIMEOUT,
     ).stdout.strip()
 
     fetch = subprocess.run(
@@ -220,7 +220,7 @@ def _pull_one_plugin_source(plugin: dict[str, Any]) -> list[str]:
         check=False,
         capture_output=True,
         text=True,
-        timeout=_GIT_TIMEOUT,
+        timeout=GIT_TIMEOUT,
     )
     if fetch.returncode != 0:
         return [f"[{name}] fetch failed: {fetch.stderr.strip()}"]
@@ -231,7 +231,7 @@ def _pull_one_plugin_source(plugin: dict[str, Any]) -> list[str]:
         capture_output=True,
         text=True,
         check=False,
-        timeout=_GIT_TIMEOUT,
+        timeout=GIT_TIMEOUT,
     )
     if reset.returncode != 0:
         return [f"[{name}] update failed: {reset.stderr.strip()}"]
@@ -241,7 +241,7 @@ def _pull_one_plugin_source(plugin: dict[str, Any]) -> list[str]:
         capture_output=True,
         text=True,
         check=False,
-        timeout=_GIT_TIMEOUT,
+        timeout=GIT_TIMEOUT,
     ).stdout.strip()
     if before != after:
         return [f"[{name}] updated to {after}"]
@@ -288,7 +288,7 @@ def plugin_source_messages(plugin: dict[str, Any]) -> list[str]:
         capture_output=True,
         text=True,
         check=False,
-        timeout=_GIT_TIMEOUT,
+        timeout=GIT_TIMEOUT,
     )
     if local.returncode != 0:
         return []
@@ -302,7 +302,7 @@ def plugin_source_messages(plugin: dict[str, Any]) -> list[str]:
         ["git", "-C", str(checkout), "fetch", "--quiet"],
         check=False,
         capture_output=True,
-        timeout=_GIT_TIMEOUT,
+        timeout=GIT_TIMEOUT,
     )
     subjects = _commit_subjects_between(
         checkout, local_sha, "FETCH_HEAD", _installed_pathspecs(plugin.get("skills"))

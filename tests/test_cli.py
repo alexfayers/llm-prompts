@@ -30,6 +30,7 @@ from llm_prompts.cli import (
     main,
 )
 from llm_prompts.contribute import Report
+from llm_prompts.main_sync import SyncResult
 from llm_prompts.setup import (
     _extract_git_url,
     detect_stale_local_tools,
@@ -264,6 +265,7 @@ class TestPullLocalSources:
         (clone / ".git").mkdir(parents=True)
         fake_subprocess.on("rev-list", "--count", stdout="1\n")
         fake_subprocess.on("pull", "--ff-only", returncode=1)
+        fake_subprocess.on("diff", "--quiet", returncode=1)
         fake_subprocess.on("rebase", "--quiet", returncode=0)
 
         config = [{"name": "core", "source": str(clone)}]
@@ -273,12 +275,70 @@ class TestPullLocalSources:
                 _pull_local_sources()
 
         fake_subprocess.assert_sequence(
-            "fetch", "rev-list --count", "pull --ff-only", "rebase --quiet"
+            "fetch",
+            "rev-list --count",
+            "pull --ff-only",
+            "diff --quiet",
+            "rebase --quiet",
         )
         assert (
             "[core] rebased local commits onto 1 new commit(s)"
             in capsys.readouterr().out
         )
+
+    def test_pull_timeout_is_reported_without_syncing(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        clone = tmp_path / "clone"
+        (clone / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-list", "--count", stdout="2\n")
+        fake_subprocess.on(
+            "pull",
+            "--ff-only",
+            side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=30),
+        )
+
+        outcome = cli._pull_one_local_source("core", str(clone))
+
+        assert not outcome.changed
+        assert outcome.messages == [
+            "[core] 2 new commit(s) available but sync failed",
+            "  git pull timed out",
+        ]
+        assert fake_subprocess.matching("rebase") == []
+        assert fake_subprocess.matching("diff") == []
+
+    def test_fetch_timeout_is_ignored_like_a_failed_fetch(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        clone = tmp_path / "clone"
+        (clone / ".git").mkdir(parents=True)
+        fake_subprocess.on(
+            "fetch", side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=30)
+        )
+        fake_subprocess.on("rev-list", "--count", stdout="1\n")
+        fake_subprocess.on("pull", "--ff-only", returncode=0)
+
+        outcome = cli._pull_one_local_source("core", str(clone))
+
+        assert outcome.messages == ["[core] pulled 1 new commit(s)"]
+
+    def test_rev_list_timeout_leaves_source_unchanged(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        clone = tmp_path / "clone"
+        (clone / ".git").mkdir(parents=True)
+        fake_subprocess.on(
+            "rev-list",
+            "--count",
+            side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=30),
+        )
+
+        outcome = cli._pull_one_local_source("core", str(clone))
+
+        assert not outcome.changed
+        assert outcome.messages == []
+        assert fake_subprocess.matching("pull") == []
 
     def test_fast_forwardable_repo_is_pulled_without_rebase(
         self,
@@ -310,7 +370,10 @@ class TestPullLocalSources:
         (clone / ".git").mkdir(parents=True)
         fake_subprocess.on("rev-list", "--count", stdout="1\n")
         fake_subprocess.on("pull", "--ff-only", returncode=1)
+        fake_subprocess.on("diff", "--quiet", returncode=1)
         fake_subprocess.on("rebase", "--quiet", returncode=1)
+        fake_subprocess.on("cherry", "HEAD", stdout="+ u1\n")
+        fake_subprocess.on("ls-remote", stdout="")
 
         config = [{"name": "core", "source": str(clone)}]
         with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
@@ -322,10 +385,16 @@ class TestPullLocalSources:
             "fetch",
             "rev-list --count",
             "pull --ff-only",
+            "diff --quiet",
             "rebase --quiet",
             "rebase --abort",
+            "rev-parse --abbrev-ref",
+            "merge-base",
+            "log --reverse",
+            "cherry HEAD",
+            "ls-remote",
         )
-        assert "[core] 1 new commit(s) available but rebase failed" in (
+        assert "[core] 1 new commit(s) available but sync failed" in (
             capsys.readouterr().out
         )
 
@@ -388,7 +457,10 @@ class TestPullLocalSources:
         fake_subprocess.on("rev-list", "--count", stdout="1\n")
         fake_subprocess.on("pull", "--ff-only", returncode=1, repo=conflict)
         fake_subprocess.on("pull", "--ff-only", returncode=0, repo=ff)
+        fake_subprocess.on("diff", "--quiet", returncode=1, repo=conflict)
         fake_subprocess.on("rebase", "--quiet", returncode=1, repo=conflict)
+        fake_subprocess.on("cherry", "HEAD", stdout="+ u1\n", repo=conflict)
+        fake_subprocess.on("ls-remote", stdout="", repo=conflict)
 
         config = [
             {"name": "conflict", "source": str(conflict)},
@@ -400,10 +472,87 @@ class TestPullLocalSources:
                 _pull_local_sources()
 
         lines = capsys.readouterr().out.splitlines()
-        assert lines[0] == "[conflict] 1 new commit(s) available but rebase failed"
+        assert lines[0] == "[conflict] 1 new commit(s) available but sync failed"
         assert lines[1].startswith("  ")
         assert lines[-1] == "[ff] pulled 1 new commit(s)"
         assert "[ff]" not in "\n".join(lines[:-1])
+
+    @pytest.mark.parametrize(
+        ("result", "expected"),
+        [
+            (
+                SyncResult("reset"),
+                "[core] local commits already upstream; reset to 1 new commit(s)",
+            ),
+            (
+                SyncResult("squash-synced"),
+                "[core] dropped squash-merged commits",
+            ),
+            (
+                SyncResult("squash-synced", replayed=2),
+                "[core] dropped squash-merged commits; replayed 2 local commit(s)",
+            ),
+            (
+                SyncResult("squash-synced", replayed=1, folded=("fix a", "fix b")),
+                (
+                    "[core] dropped squash-merged commits; replayed 1 local commit(s);"
+                    " kept local changes that differ from the merge as one commit:"
+                    " fix a, fix b - review with git show"
+                ),
+            ),
+        ],
+    )
+    def test_synced_diverged_repo_reports_how_it_was_synced(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        fake_subprocess: FakeSubprocess,
+        result: SyncResult,
+        expected: str,
+    ) -> None:
+        clone = tmp_path / "clone"
+        (clone / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-list", "--count", stdout="1\n")
+        fake_subprocess.on("pull", "--ff-only", returncode=1)
+
+        config = [{"name": "core", "source": str(clone)}]
+        with (
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=config),
+            patch("llm_prompts.main_sync.sync_diverged", return_value=result),
+        ):
+            mock_config.exists.return_value = True
+            assert _pull_local_sources() == {"core"}
+
+        assert capsys.readouterr().out.splitlines() == [expected]
+
+    def test_failed_sync_reports_detail_and_leaves_source_unchanged(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        fake_subprocess: FakeSubprocess,
+    ) -> None:
+        clone = tmp_path / "clone"
+        (clone / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-list", "--count", stdout="1\n")
+        fake_subprocess.on("pull", "--ff-only", returncode=1)
+
+        config = [{"name": "core", "source": str(clone)}]
+        with (
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=config),
+            patch(
+                "llm_prompts.main_sync.sync_diverged",
+                return_value=SyncResult("failed", detail="conflict"),
+            ),
+        ):
+            mock_config.exists.return_value = True
+            assert _pull_local_sources() == set()
+
+        assert capsys.readouterr().out.splitlines() == [
+            "[core] 1 new commit(s) available but sync failed",
+            "  conflict",
+        ]
 
 
 class TestCollectUpdateMessages:
