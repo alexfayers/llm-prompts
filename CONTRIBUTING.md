@@ -17,7 +17,7 @@ uv sync
 just    # lint, type-check, test (see justfile for the individual commands)
 ```
 
-Runs `ruff check --fix`, `ruff format`, `mypy` (strict), and `pytest` via `uv run`. Run all of these before opening a PR - there's no CI workflow yet, so this is the only gate.
+Runs `ruff check --fix`, `ruff format`, `mypy` (strict), and `pytest` via `uv run`. Run all of these before opening a PR - CI runs lint, type-check, and test on every push and PR.
 
 ## Prompt file size budgets
 
@@ -34,10 +34,17 @@ Single-line, conventional-commit style (`feat:`, `fix:`, `docs:`, `chore:`, `ref
 For a change under `src/llm_prompts/prompts/**` (rules, skills, workflows, agents), commit straight to your local `main` and use `contribute list`/`sync` instead of a manual branch - never push a feature branch for these:
 
 - Commit the rule/skill change directly to your local `main`. This is what `llm-prompts update` installs from, so committing there lets you try the change live in your own agent session before it's even in a PR.
-- `llm-prompts contribute list` shows every unmerged `prompts/**` commit's derived branch and whether it's new, needs syncing, or already `ok`, across every locally-cloned overlay repo in your config by default - pass `--tool NAME` to narrow it to one.
-- `llm-prompts contribute sync --apply` cherry-picks each pending commit onto a fresh disposable branch (never by moving a branch pointer, which would drag in every earlier unmerged commit too) and force-pushes it. Re-running `sync` after amending/rewording the commit on `main` re-derives and re-pushes the same branch.
-- Never commit directly to a `contribute`-derived branch - the next `sync` run treats it as regenerable from `main` and overwrites it.
-- A branch whose source commit was dropped from `main` becomes an orphan; `sync --apply` deletes orphans with no open PR automatically, or clean one up manually with `sync --cleanup <branch>`.
+- `llm-prompts contribute list` shows every unmerged `prompts/**` commit's batch branch and status (new, current, stale, regressed, or already in another open PR), across every locally-cloned overlay repo in your config by default - pass `--tool NAME` to narrow it to one.
+- Pending commits are grouped into batches of up to 5 and appended, in order, to the newest open `<login>/contribute/<slug>` branch with room; once that batch is full or merged, a new one starts.
+- `llm-prompts contribute sync --apply` pushes each batch: one whose commits are all still current gets the new ones cherry-picked on top and pushed normally; one with an amended or missing commit is rebuilt from `main` and pushed with `--force-with-lease`.
+- `llm-prompts contribute sync --commit SHA` (repeatable) syncs only the batches holding those commits: it appends to the newest open batch with room, otherwise starts a new one, and leaves everything else local.
+- Repos merge by squash only and require PRs up to date with `main`; `llm-prompts contribute list` warns about any of your open PRs (batch or hand-made) that are behind, and `llm-prompts contribute update --apply` rebases each onto `main` with `gh pr update-branch --rebase` (dry run without `--apply`; `--tool NAME --pr N` for one PR). Rebasing keeps batch commit matching intact; never update with a merge commit.
+- `contribute` uses `gh` when installed; otherwise it calls the GitHub API with `GH_TOKEN`, `GITHUB_TOKEN`, or your git credential helper's github.com token. Without gh and without push access, fork first: rename `origin` to `upstream` and add your fork as `origin`.
+- Marking a contribute PR ready for review enables squash auto-merge; it merges once checks pass and a reviewer approves.
+- A commit already in one of your other open PRs is skipped and shown in `list` as already in that PR.
+- Never commit directly to a batch branch - `sync` treats it as regenerable from `main` and may overwrite it.
+- A regressed batch (holding a commit matching nothing on `main`) gets a recovery hint that cherry-picks just the missing commits back on top.
+- An open PR on a non-batch branch that holds a commit local `main` lacks (same subject and author time) shows it as `[not on main]` under that PR, with a hint to cherry-pick it onto `main`; `list` then exits 1.
 
 For everything else, push your own branch and open a PR against `main` as usual.
 
@@ -47,3 +54,4 @@ For everything else, push your own branch and open a PR against `main` as usual.
 - Description as bullet points, not paragraphs.
 - State WHAT changed and WHY, not HOW.
 - No restating the diff, no process commentary, no filler.
+- List a PR that must merge first as a `Depends on <PR URL>` line; the `check-dependencies` check fails until it merges and re-checks when that PR closes.

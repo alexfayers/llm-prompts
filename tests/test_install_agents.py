@@ -566,6 +566,7 @@ class TestClaudeCodeAgentsInstallLayout:
             "surveyor-sonnet-low.md",
             "surveyor-sonnet-medium.md",
             "surveyor-sonnet-high.md",
+            "eagle-vision-sentinel-sonnet-medium.md",
         }
         for name in expected:
             path = agents_dir / name
@@ -576,6 +577,7 @@ class TestClaudeCodeAgentsInstallLayout:
         assert not (agents_dir / "reasoner.md").exists()
         assert not (agents_dir / "coordinator.md").exists()
         assert not (agents_dir / "surveyor.md").exists()
+        assert not (agents_dir / "eagle-vision-sentinel.md").exists()
 
         _, frontmatter = parse_frontmatter(
             (agents_dir / "worker-sonnet-low.md").read_text(encoding="utf-8")
@@ -584,13 +586,17 @@ class TestClaudeCodeAgentsInstallLayout:
         assert frontmatter["effort"] == "low"
         assert "generate_variants" not in frontmatter
 
-    def test_surveyor_variant_keeps_read_only_tool_restriction(
-        self, claude_home: Path
+    @pytest.mark.parametrize(
+        "variant",
+        ["surveyor-sonnet-medium.md", "eagle-vision-sentinel-sonnet-medium.md"],
+    )
+    def test_read_only_variants_keep_write_edit_withheld(
+        self, claude_home: Path, variant: str
     ) -> None:
         agents_dir = claude_home / ".claude" / "agents"
 
         _, frontmatter = parse_frontmatter(
-            (agents_dir / "surveyor-sonnet-medium.md").read_text(encoding="utf-8")
+            (agents_dir / variant).read_text(encoding="utf-8")
         )
         disallowed = frontmatter["disallowedTools"]
         assert "Write" in disallowed

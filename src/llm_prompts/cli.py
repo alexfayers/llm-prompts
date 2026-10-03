@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import urlparse
 
+from . import github_api
 from .setup import (
     _GIT_TIMEOUT,
     _extract_git_url,
@@ -604,7 +605,13 @@ def _restart_memory_service() -> None:
 
 
 def _get_gh_login() -> str:
-    """Return the current gh CLI user's login."""
+    """Return the current GitHub user's login, through gh or the GitHub API."""
+    if shutil.which("gh") is None:
+        try:
+            return github_api.login()
+        except subprocess.CalledProcessError as error:
+            print(error.stderr, file=sys.stderr)
+            sys.exit(1)
     result = subprocess.run(
         ["gh", "api", "user", "--jq", ".login"],
         capture_output=True,
@@ -727,8 +734,42 @@ def main() -> int | None:
         metavar="BRANCH",
         help="Close the PR and delete this orphaned branch.",
     )
+    sync_parser.add_argument(
+        "--commit",
+        dest="commits",
+        action="append",
+        metavar="SHA",
+        help="Sync only the batches holding this commit; repeatable.",
+    )
+
+    update_parser = contribute_sub.add_parser(
+        "update",
+        help="Rebase your open PRs that are behind main onto it (dry run unless --apply).",
+        parents=[tool_parser],
+    )
+    update_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually run gh pr update-branch --rebase.",
+    )
+    update_parser.add_argument(
+        "--pr",
+        dest="numbers",
+        action="append",
+        type=int,
+        metavar="NUMBER",
+        help="Only update this PR; repeatable.",
+    )
 
     args = parser.parse_args()
+
+    if (
+        args.command == "contribute"
+        and args.contribute_command == "update"
+        and args.numbers
+        and args.tool is None
+    ):
+        update_parser.error("--pr requires --tool NAME.")
 
     if (
         args.command == "contribute"
@@ -737,6 +778,14 @@ def main() -> int | None:
         and args.tool is None
     ):
         sync_parser.error("--cleanup requires --tool NAME.")
+
+    if (
+        args.command == "contribute"
+        and args.contribute_command == "sync"
+        and args.commits
+        and (args.only or args.cleanup)
+    ):
+        sync_parser.error("--commit cannot be combined with --only or --cleanup.")
 
     if args.command == "install":
         if not args.no_update:
@@ -890,35 +939,27 @@ def main() -> int | None:
     elif args.command == "check":
         _run_size_check()
     elif args.command == "contribute":
-        from .contribute import run_list, run_sync
+        from .contribute import list_targets, sync_targets, update_targets
 
-        login = _get_gh_login()
         if args.tool is not None:
             repo, prefix = _contribute_target(args.tool)
             targets = [_ContributeTarget(args.tool, repo, prefix)]
         else:
             targets = _contribute_targets()
-        status = 0
-        for target in targets:
-            if len(targets) > 1:
-                print(f"[{target.name}]")
-            if args.contribute_command == "list":
-                status = max(status, run_list(target.repo, login, target.prefix))
-            else:
-                status = max(
-                    status,
-                    run_sync(
-                        target.repo,
-                        login,
-                        target.prefix,
-                        args.apply,
-                        args.only,
-                        args.cleanup,
-                    ),
-                )
-            if len(targets) > 1:
-                print()
-        return status
+        login = _get_gh_login()
+        if args.contribute_command == "list":
+            return list_targets(targets, login, _contribute_targets)
+        if args.contribute_command == "update":
+            return update_targets(targets, args.apply, args.numbers or ())
+        return sync_targets(
+            targets,
+            login,
+            args.apply,
+            args.only,
+            args.cleanup,
+            args.commits or (),
+            _contribute_targets,
+        )
     else:
         parser.print_help()
         sys.exit(1)
