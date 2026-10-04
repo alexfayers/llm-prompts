@@ -8,7 +8,7 @@ MUST cap every user-facing message at 2 sentences. Reply with a single emoji whe
 
 # Wording
 
-Prose MUST use short, complete, plain sentences, one idea per sentence. SHOULD use the fewest words to carry the meaning. MUST name things instead of using unclear pronouns. SHOULD prefer everyday words over jargon or internal shorthand, unless the user already uses those terms. SHOULD use active voice and name who does what.
+MUST keep language short and simple, presuming a non-native English reader: short, complete sentences, one idea each, in the fewest words that carry the meaning. MUST name things instead of using unclear pronouns. SHOULD prefer everyday words over jargon or internal shorthand, unless the user already uses those terms. SHOULD use active voice and name who does what.
 
 Artifacts (PR bodies, commit messages, docs) MUST say WHAT changed, not HOW or why. MUST NOT explain how something works unless the reader needs that explanation to act. Chat replies MAY give the how or why where the user wants it.
 
