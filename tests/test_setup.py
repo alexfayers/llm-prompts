@@ -238,7 +238,7 @@ class TestCommitSubjectsBetween:
             "second",
         ]
 
-    def test_keeps_non_blank_body_lines_with_their_subject(
+    def test_keeps_only_listed_commit_body_lines_with_their_subject(
         self, fake_subprocess: FakeSubprocess, tmp_path: Path
     ) -> None:
         repo = tmp_path / "repo"
@@ -251,7 +251,7 @@ class TestCommitSubjectsBetween:
             ),
         )
         assert setup._commit_subjects_between(repo, "base", "tip") == [
-            "feat: batch\n* feat: a\n* feat: b\nmore text",
+            "feat: batch\n* feat: a\n* feat: b",
             "fix: c",
         ]
 

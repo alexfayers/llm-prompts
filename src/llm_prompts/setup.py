@@ -131,7 +131,7 @@ _MORE_SUFFIX = re.compile(r" \(\+\d+ more\)(?= \(#\d+\)$|$)")
 
 
 def _commit_entry(lines: list[str]) -> str:
-    """Return a commit's subject and non-blank body lines, minus squashed merge commits.
+    """Return a commit's subject and the squashed commits its body lists, minus merge commits.
 
     A squash commit whose body lists its squashed commits is headed by its PR
     number instead of its subject; any other subject loses its "(+N more)" count.
@@ -140,10 +140,11 @@ def _commit_entry(lines: list[str]) -> str:
     body = [
         line.rstrip()
         for line in rest
-        if line.strip() and not line.startswith(_SQUASHED_MERGE_PREFIX)
+        if line.startswith(_SQUASHED_COMMIT_PREFIX)
+        and not line.startswith(_SQUASHED_MERGE_PREFIX)
     ]
     pr = _SQUASH_PR_NUMBER.search(subject)
-    if pr and any(line.startswith(_SQUASHED_COMMIT_PREFIX) for line in body):
+    if pr and body:
         subject = f"PR #{pr[1]}"
     else:
         subject = _MORE_SUFFIX.sub("", subject.rstrip())
