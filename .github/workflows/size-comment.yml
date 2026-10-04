@@ -1,0 +1,28 @@
+name: Size comment
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+jobs:
+  comment:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: size-report
+          path: size-artifact
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const { reportForRun } = require('./.github/scripts/post-size-report.js')
+            await reportForRun({ github, context, core, dir: 'size-artifact' })

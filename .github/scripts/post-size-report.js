@@ -43,4 +43,19 @@ async function report({ github, context, core, path }) {
   }
 }
 
-module.exports = { report };
+async function reportForRun({ github, context, core, dir }) {
+  const prNumber = fs.readFileSync(`${dir}/pr-number`, 'utf8').trim();
+  if (!/^\d+$/.test(prNumber)) {
+    core.warning(`Ignoring size report with invalid PR number: ${prNumber}`);
+    return;
+  }
+  const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: Number(prNumber) });
+  if (pr.head.sha !== context.payload.workflow_run.head_sha) {
+    core.warning(`Ignoring size report for PR #${prNumber}: its head is not the reported commit`);
+    return;
+  }
+  const prContext = { repo: context.repo, payload: { pull_request: { number: Number(prNumber) } } };
+  await report({ github, context: prContext, core, path: `${dir}/size-report.md` });
+}
+
+module.exports = { report, reportForRun };

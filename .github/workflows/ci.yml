@@ -69,7 +69,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -82,11 +81,15 @@ jobs:
           enable-cache: true
       - run: uv sync --locked
       - run: uv run llm-prompts size-report --base-root .size-base/src/llm_prompts/prompts > size-report.md
-      - uses: actions/github-script@v9
+      - run: |
+          cat size-report.md >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ github.event.pull_request.number }}" > pr-number
+      - uses: actions/upload-artifact@v4
         with:
-          script: |
-            const { report } = require('./.github/scripts/post-size-report.js')
-            await report({ github, context, core, path: 'size-report.md' })
+          name: size-report
+          path: |
+            size-report.md
+            pr-number
 
   pr-automation-test:
     runs-on: ubuntu-latest
