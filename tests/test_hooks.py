@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -56,13 +57,14 @@ def manifest_data(tmp_path: Path) -> dict[str, Any]:
 
 
 @pytest.fixture
-def plugin(manifest_data: dict[str, Any], tmp_path: Path) -> AutoReinstallPlugin:
-    """Create a plugin with pre-loaded manifest paths."""
+def plugin(
+    manifest_data: dict[str, Any], tmp_path: Path
+) -> Iterator[AutoReinstallPlugin]:
+    """Create a plugin whose manifest reads return the fixture data."""
     p = AutoReinstallPlugin()
     p._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
     with patch("llm_prompts.hooks.read_manifest", return_value=manifest_data):
-        p._get_installed_paths()
-    return p
+        yield p
 
 
 class TestFormatUserText:
@@ -350,24 +352,65 @@ class TestAutoReinstallPlugin:
         )
         fake_subprocess.assert_sequence(_UPDATE_VERB)
 
-    @patch("llm_prompts.hooks.read_manifest")
-    def test_invalidates_cache_after_reinstall(
+    def test_picks_up_file_added_to_manifest(
         self,
-        mock_manifest: MagicMock,
+        plugin: AutoReinstallPlugin,
         manifest_data: dict[str, Any],
         tmp_path: Path,
         fake_subprocess: FakeSubprocess,
     ) -> None:
-        mock_manifest.return_value = manifest_data
         fake_subprocess.on(*_UPDATE_COMMAND)
-        plugin = AutoReinstallPlugin()
-        plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
-        plugin.on_hook(
-            "PostToolUse",
-            tool_name="write_to_file",
-            parameters={"path": manifest_data["kiro"]["files"][0]},
+        added = _write(tmp_path / "steering" / "added.md", "# Added")
+        parameters = {"path": str(added)}
+        assert (
+            plugin.on_hook("PostToolUse", tool_name="Write", parameters=parameters)
+            is None
         )
-        assert plugin._installed_paths is None
+        manifest_data["kiro"]["files"].append(str(added))
+        result = plugin.on_hook("PostToolUse", tool_name="Write", parameters=parameters)
+        assert result is not None
+        fake_subprocess.assert_sequence(_UPDATE_VERB)
+
+    @patch("llm_prompts.install._discover_overlay_paths", return_value=[])
+    def test_picks_up_source_file_created_after_first_check(
+        self,
+        mock_overlays: MagicMock,
+        plugin: AutoReinstallPlugin,
+        tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
+    ) -> None:
+        fake_subprocess.on(*_UPDATE_COMMAND)
+        source_dir = tmp_path / "prompts"
+        source_dir.mkdir()
+        with patch("llm_prompts.hooks.files", return_value=tmp_path):
+            plugin.on_hook(
+                "PostToolUse",
+                tool_name="Write",
+                parameters={"path": str(tmp_path / "outside.md")},
+            )
+            created = _write(source_dir / "shared" / "rules" / "new.md", "# New")
+            result = plugin.on_hook(
+                "PostToolUse", tool_name="Write", parameters={"path": str(created)}
+            )
+        assert result is not None
+        fake_subprocess.assert_sequence(_UPDATE_VERB)
+
+    @patch("llm_prompts.install._discover_overlay_paths", return_value=[])
+    def test_ignores_file_outside_manifest_and_source_dirs(
+        self,
+        mock_overlays: MagicMock,
+        plugin: AutoReinstallPlugin,
+        tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
+    ) -> None:
+        (tmp_path / "prompts").mkdir()
+        outside = _write(tmp_path / "elsewhere" / "note.md", "# Note")
+        with patch("llm_prompts.hooks.files", return_value=tmp_path):
+            result = plugin.on_hook(
+                "PostToolUse", tool_name="Write", parameters={"path": str(outside)}
+            )
+        assert result is None
+        fake_subprocess.assert_sequence()
 
 
 class TestPromptSizeGate:
