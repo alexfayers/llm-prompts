@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_a44f0ac069e85531_test_hooks_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.1">coverage.py v7.16.1</a>,
-            created at 2026-10-04 17:32 +0000
+            created at 2026-10-04 18:36 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -343,14 +343,14 @@
     <p class="run run2"><span class="n"><a id="t261" href="#t261">261</a></span><span class="t">            <span class="str">&quot;draft&quot;</span><span class="op">:</span> <span class="key">True</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t262" href="#t262">262</a></span><span class="t">        <span class="op">}</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t263" href="#t263">263</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t264" href="#t264">264</a></span><span class="t">    <span class="key">def</span> <span class="nam">test_edit_pr_body_patches_the_body</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t264" href="#t264">264</a></span><span class="t">    <span class="key">def</span> <span class="nam">test_edit_pr_patches_the_title_and_body</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t265" href="#t265">265</a></span><span class="t">        <span class="nam">self</span><span class="op">,</span> <span class="nam">fake_github</span><span class="op">:</span> <span class="nam">FakeGitHub</span><span class="op">,</span> <span class="nam">octo_repo</span><span class="op">:</span> <span class="nam">Path</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t266" href="#t266">266</a></span><span class="t">    <span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t267" href="#t267">267</a></span><span class="t">        <span class="nam">fake_github</span><span class="op">.</span><span class="nam">on</span><span class="op">(</span><span class="str">&quot;PATCH&quot;</span><span class="op">,</span> <span class="str">&quot;/repos/octo/widgets/pulls/4&quot;</span><span class="op">,</span> <span class="op">{</span><span class="op">}</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t268" href="#t268">268</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t269" href="#t269">269</a></span><span class="t">        <span class="nam">github_api</span><span class="op">.</span><span class="nam">edit_pr_body</span><span class="op">(</span><span class="nam">octo_repo</span><span class="op">,</span> <span class="num">4</span><span class="op">,</span> <span class="str">&quot;new&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t269" href="#t269">269</a></span><span class="t">        <span class="nam">github_api</span><span class="op">.</span><span class="nam">edit_pr</span><span class="op">(</span><span class="nam">octo_repo</span><span class="op">,</span> <span class="num">4</span><span class="op">,</span> <span class="str">&quot;t&quot;</span><span class="op">,</span> <span class="str">&quot;new&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t270" href="#t270">270</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t271" href="#t271">271</a></span><span class="t">        <span class="key">assert</span> <span class="nam">fake_github</span><span class="op">.</span><span class="nam">requests</span><span class="op">[</span><span class="num">0</span><span class="op">]</span><span class="op">[</span><span class="num">2</span><span class="op">]</span> <span class="op">==</span> <span class="op">{</span><span class="str">&quot;body&quot;</span><span class="op">:</span> <span class="str">&quot;new&quot;</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t271" href="#t271">271</a></span><span class="t">        <span class="key">assert</span> <span class="nam">fake_github</span><span class="op">.</span><span class="nam">requests</span><span class="op">[</span><span class="num">0</span><span class="op">]</span><span class="op">[</span><span class="num">2</span><span class="op">]</span> <span class="op">==</span> <span class="op">{</span><span class="str">&quot;title&quot;</span><span class="op">:</span> <span class="str">&quot;t&quot;</span><span class="op">,</span> <span class="str">&quot;body&quot;</span><span class="op">:</span> <span class="str">&quot;new&quot;</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t272" href="#t272">272</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t273" href="#t273">273</a></span><span class="t">    <span class="key">def</span> <span class="nam">test_update_pr_branch_rebases_by_node_id</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t274" href="#t274">274</a></span><span class="t">        <span class="nam">self</span><span class="op">,</span> <span class="nam">fake_github</span><span class="op">:</span> <span class="nam">FakeGitHub</span><span class="op">,</span> <span class="nam">octo_repo</span><span class="op">:</span> <span class="nam">Path</span>&nbsp;</span><span class="r"></span></p>
@@ -376,7 +376,7 @@
             <a class="nav" href="z_a44f0ac069e85531_test_hooks_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.1">coverage.py v7.16.1</a>,
-            created at 2026-10-04 17:32 +0000
+            created at 2026-10-04 18:36 +0000
         </p>
     </div>
 </footer>
