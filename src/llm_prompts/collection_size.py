@@ -13,6 +13,7 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from .install import (
+    _append_included_rules,
     _builtin_skill_vars,
     _collect_content_srcs,
     _excluded_targets,
@@ -22,6 +23,7 @@ from .install import (
     _read_text,
     _rendered_content,
     _resolve_priority_sources,
+    _RuleSources,
     content_subdirs,
 )
 from .render_template import parse_frontmatter, substitute_variables
@@ -112,7 +114,7 @@ def _skill_bytes(root: Path, overlays: Sequence[Path], target: str) -> int:
 
 
 def _agent_bytes(root: Path, overlays: Sequence[Path], target: str) -> int:
-    """Sum installed agent-definition bytes, expanding generated variants.
+    """Sum installed agent-definition bytes, expanding variants and included rules.
 
     Args:
         root: This package's own prompts directory.
@@ -124,6 +126,7 @@ def _agent_bytes(root: Path, overlays: Sequence[Path], target: str) -> int:
     """
     if target != "claude-code":
         return 0
+    rules = _RuleSources.collect(_agent_for(target, root), overlays)
     total = 0
     for _, src in _resolve_priority_sources(
         [
@@ -135,12 +138,16 @@ def _agent_bytes(root: Path, overlays: Sequence[Path], target: str) -> int:
     ):
         raw = _read_text(src)
         _, frontmatter = parse_frontmatter(raw)
-        variants = (
-            _expand_agent_variants(src)
-            if "generate_variants" in frontmatter
-            else [(src.name, raw)]
+        if "generate_variants" in frontmatter:
+            files = _expand_agent_variants(src)
+        elif "rules" in frontmatter:
+            files = [(src.name, _linked_content(src))]
+        else:
+            files = [(src.name, raw)]
+        total += sum(
+            len(_append_included_rules(content, src, rules).encode())
+            for _, content in files
         )
-        total += sum(len(content.encode()) for _, content in variants)
     return total
 
 

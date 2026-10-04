@@ -358,7 +358,8 @@ def _iter_agent_artifacts(
 
     A `generate_variants` source is measured once per generated variant, since
     that is what actually gets installed; any other source is measured as
-    installed verbatim (a plain symlink, per `_install_agents`).
+    installed verbatim (a symlink per `_install_agents`, or a generated file
+    when it uses `rules`).
 
     Args:
         root: Prompts directory being scanned.

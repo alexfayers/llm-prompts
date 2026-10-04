@@ -11,12 +11,14 @@ import pytest
 import yaml
 
 from llm_prompts.install import (
+    _Agent,
     _apply_frontmatter_overrides,
     _apply_variant_frontmatter,
     _claude_model_catalogue,
     _expand_agent_variants,
     _install_agents,
     _resolve_variant_model,
+    _RuleSources,
     get_managed_dirs,
 )
 from llm_prompts.install import main as install_main
@@ -676,3 +678,253 @@ class TestCollectSources:
         sources = _collect_sources("kiro")
 
         assert not any(key.startswith("agents/") for key in sources)
+
+
+def _make_include_agent(
+    directory: Path, name: str, include: str, body: str = "Agent body."
+) -> Path:
+    """Create an agent source with a ``rules`` frontmatter key."""
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    path.write_text(
+        f"---\nname: {Path(name).stem}\ndescription: An agent.\n"
+        f"rules: {include}\n---\n\n{body}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_rule(
+    prompts_root: Path, name: str, content: str, *, shared: bool = True
+) -> Path:
+    """Write a rule source under a prompts root and return its path."""
+    rules_dir = prompts_root / ("shared" if shared else "claude-code") / "rules"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    path = rules_dir / name
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def _rule_sources(
+    prompts_root: Path,
+    overlays: list[Path] | None = None,
+    skip_set: frozenset[Path] = frozenset(),
+) -> _RuleSources:
+    """Collect claude-code rule sources from a prompts root."""
+    vars_path = prompts_root / "claude-code" / "vars.json"
+    vars_path.parent.mkdir(parents=True, exist_ok=True)
+    vars_path.write_text("{}", encoding="utf-8")
+    agent = _Agent(name="claude-code", root_dir=prompts_root, dirs={})
+    return _RuleSources.collect(agent, overlays or [], skip_set)
+
+
+class TestIncludeRules:
+    def test_include_only_agent_installs_as_regular_file_with_rule_body(
+        self, tmp_path: Path
+    ) -> None:
+        prompts = tmp_path / "prompts"
+        _write_rule(prompts, "style.md", "# Style\n\nBe terse.\n")
+        src = tmp_path / "agents"
+        _make_include_agent(src, "writer.md", "style")
+        dest = tmp_path / "dest"
+
+        managed = _install_agents([src], dest, rules=_rule_sources(prompts))
+
+        installed = dest / "writer.md"
+        assert managed == {"writer.md"}
+        assert not installed.is_symlink()
+        content = installed.read_text(encoding="utf-8")
+        assert content.index("Agent body.") < content.index("# Style")
+        assert "Be terse." in content
+        assert "rules:" not in content
+
+    def test_variant_agent_appends_rule_body_to_every_variant(
+        self, tmp_path: Path
+    ) -> None:
+        prompts = tmp_path / "prompts"
+        _write_rule(prompts, "style.md", "# Style\n\nBe terse.\n")
+        src = tmp_path / "agents"
+        path = _make_variant_template(
+            src, "worker.md", "worker", "sonnet-low,haiku-high"
+        )
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                "generate_variants:", "rules: style\ngenerate_variants:"
+            ),
+            encoding="utf-8",
+        )
+        dest = tmp_path / "dest"
+
+        managed = _install_agents([src], dest, rules=_rule_sources(prompts))
+
+        assert managed == {"worker-sonnet-low.md", "worker-haiku-high.md"}
+        for name in managed:
+            content = (dest / name).read_text(encoding="utf-8")
+            assert content.rstrip().endswith("Be terse.")
+            assert "rules:" not in content
+
+    def test_agent_with_rules_omits_claude_md(self, tmp_path: Path) -> None:
+        prompts = tmp_path / "prompts"
+        _write_rule(prompts, "style.md", "# Style\n\nBe terse.\n")
+        src = tmp_path / "agents"
+        _make_include_agent(src, "writer.md", "style")
+        dest = tmp_path / "dest"
+
+        _install_agents([src], dest, rules=_rule_sources(prompts))
+
+        content = (dest / "writer.md").read_text(encoding="utf-8")
+        assert content.count("omitClaudeMd: true") == 1
+
+    def test_variant_agent_with_rules_omits_claude_md(self, tmp_path: Path) -> None:
+        prompts = tmp_path / "prompts"
+        _write_rule(prompts, "style.md", "# Style\n\nBe terse.\n")
+        src = tmp_path / "agents"
+        path = _make_variant_template(
+            src, "worker.md", "worker", "sonnet-low,haiku-high"
+        )
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                "generate_variants:", "rules: style\ngenerate_variants:"
+            ),
+            encoding="utf-8",
+        )
+        dest = tmp_path / "dest"
+
+        managed = _install_agents([src], dest, rules=_rule_sources(prompts))
+
+        for name in managed:
+            content = (dest / name).read_text(encoding="utf-8")
+            assert content.count("omitClaudeMd: true") == 1
+
+    def test_existing_omit_claude_md_is_not_duplicated(self, tmp_path: Path) -> None:
+        prompts = tmp_path / "prompts"
+        _write_rule(prompts, "style.md", "# Style\n\nBe terse.\n")
+        src = tmp_path / "agents"
+        path = _make_include_agent(src, "writer.md", "style")
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                "rules: style", "rules: style\nomitClaudeMd: false"
+            ),
+            encoding="utf-8",
+        )
+        dest = tmp_path / "dest"
+
+        _install_agents([src], dest, rules=_rule_sources(prompts))
+
+        content = (dest / "writer.md").read_text(encoding="utf-8")
+        assert content.count("omitClaudeMd") == 1
+        assert "omitClaudeMd: false" in content
+
+    def test_empty_rules_omits_claude_md_without_appending(
+        self, tmp_path: Path
+    ) -> None:
+        prompts = tmp_path / "prompts"
+        _write_rule(prompts, "style.md", "# Style\n\nBe terse.\n")
+        src = tmp_path / "agents"
+        _make_include_agent(src, "writer.md", "")
+        dest = tmp_path / "dest"
+
+        _install_agents([src], dest, rules=_rule_sources(prompts))
+
+        content = (dest / "writer.md").read_text(encoding="utf-8")
+        assert content.count("omitClaudeMd: true") == 1
+        assert "Be terse." not in content
+
+    def test_unknown_rule_warns_and_agent_is_written_without_it(
+        self, tmp_path: Path
+    ) -> None:
+        prompts = tmp_path / "prompts"
+        _write_rule(prompts, "style.md", "# Style\n\nBe terse.\n")
+        src = tmp_path / "agents"
+        _make_include_agent(src, "writer.md", "missing,style")
+        dest = tmp_path / "dest"
+
+        with patch("llm_prompts.install.log") as log:
+            _install_agents([src], dest, rules=_rule_sources(prompts))
+
+        log.assert_any_call(
+            "warn", "Skipping unknown included rule 'missing' in writer.md"
+        )
+        content = (dest / "writer.md").read_text(encoding="utf-8")
+        assert "Be terse." in content
+
+    def test_rule_frontmatter_is_not_copied(self, tmp_path: Path) -> None:
+        prompts = tmp_path / "prompts"
+        _write_rule(
+            prompts,
+            "style.md",
+            "---\npaths:\n  - 'src/**'\n---\n# Style\n\nBe terse.\n",
+        )
+        src = tmp_path / "agents"
+        _make_include_agent(src, "writer.md", "style")
+        dest = tmp_path / "dest"
+
+        _install_agents([src], dest, rules=_rule_sources(prompts))
+
+        content = (dest / "writer.md").read_text(encoding="utf-8")
+        assert "paths:" not in content
+        assert "src/**" not in content
+        assert "Be terse." in content
+
+    def test_symlinked_dest_becomes_regular_file_without_touching_source(
+        self, tmp_path: Path
+    ) -> None:
+        prompts = tmp_path / "prompts"
+        _write_rule(prompts, "style.md", "# Style\n\nBe terse.\n")
+        src = tmp_path / "agents"
+        source = _make_include_agent(src, "writer.md", "style")
+        original = source.read_bytes()
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        (dest / "writer.md").symlink_to(source)
+
+        _install_agents([src], dest, rules=_rule_sources(prompts))
+
+        assert not (dest / "writer.md").is_symlink()
+        assert "Be terse." in (dest / "writer.md").read_text(encoding="utf-8")
+        assert source.read_bytes() == original
+
+    def test_collect_prefers_overlay_shared_rule_over_base(
+        self, tmp_path: Path
+    ) -> None:
+        base = tmp_path / "base"
+        overlay = tmp_path / "overlay"
+        _write_rule(base, "style.md", "BASE\n")
+        overlay_rule = _write_rule(overlay, "style.md", "OVERLAY\n")
+
+        rules = _rule_sources(base, [overlay])
+
+        assert rules.sources["style"] == (overlay_rule, False)
+        assert rules.body("style") == "OVERLAY"
+
+    def test_collect_excludes_skip_set_sources(self, tmp_path: Path) -> None:
+        prompts = tmp_path / "prompts"
+        skipped = _write_rule(prompts, "skipped.md", "SKIPPED\n")
+        _write_rule(prompts, "kept.md", "KEPT\n")
+        rules = _rule_sources(prompts, skip_set=frozenset({skipped.resolve()}))
+
+        assert set(rules.sources) == {"kept"}
+
+    def test_install_main_appends_overlay_rule_to_overlay_agent(
+        self, tmp_path: Path
+    ) -> None:
+        home = tmp_path / "home"
+        home.mkdir()
+        overlay = tmp_path / "overlay"
+        _write_rule(overlay, "overlay-style.md", "# Overlay\n\nOverlay rule body.\n")
+        _make_include_agent(
+            overlay / "claude-code" / "agents", "overlay-writer.md", "overlay-style"
+        )
+
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch(
+                "llm_prompts.install._discover_overlay_paths", return_value=[overlay]
+            ),
+            patch("llm_prompts.manifest.MANIFEST_PATH", tmp_path / "installed.json"),
+        ):
+            install_main(["claude-code"])
+
+        installed = home / ".claude" / "agents" / "overlay-writer.md"
+        assert not installed.is_symlink()
+        assert "Overlay rule body." in installed.read_text(encoding="utf-8")
