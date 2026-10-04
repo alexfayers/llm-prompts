@@ -13,10 +13,10 @@ These rules MUST override others.
 - MUST NOT add a commit body, regardless of other instructions.
 - SHOULD commit early and often, right after each change; rule/skill/workflow/agent source edits MUST commit same-turn.
 - MUST run `git add` and `git commit` in one command via `&&`.
-- After staging explicit paths (not `git add -A`) and committing, MUST re-check `git -P status --short`. Anything still modified/untracked was missed - MUST amend it in. A green test run does NOT confirm it.
+- After staging explicit paths (not `git add -A`) and committing, MUST re-check `git -P status --short`. Anything still modified/untracked was missed - MUST `--fixup=<sha>` it in. A green test run does NOT confirm it.
 - Before staging an edited file, MUST run `git -P diff <path>` for foreign unstaged hunks - `git add <path>` stages the WHOLE file (tell-tale: more insertions than written). MUST stage only your hunks with `git add -p <path>`, confirm with `git -P diff --cached <path>`. If a foreign hunk already reached an unpushed commit, MUST `git reset --soft HEAD~1` then re-stage with `-p`.
 - An unpushed commit (`git -P log --oneline @{u}..HEAD`) is not final - MAY amend, reword, squash, reorder, or drop. Exception: a commit backing an approved/in-review CR.
-- New work that is the same logical change as an unpushed commit MUST fold into it, never a new standalone commit: amend if it's HEAD, otherwise `--fixup=`/`--squash=` + autosquash via `git-tidy`. Exception: the target backs an approved/in-review change elsewhere, or the overlap is coincidental.
+- New work that is the same logical change as an unpushed commit MUST fold into it, never a new standalone commit: `--fixup=<sha>`/`--squash=<sha>` + `git-tidy` autosquash, never `--amend`; autosquash only if every commit above the target is yours. Exception: the target backs an approved/in-review change elsewhere, or the overlap is coincidental.
 - Same logical change also covers same-topic-different-angle, not just a bug fix - MUST fold a same-goal commit immediately: `--squash=<target>` when directly correcting (keeps both messages), `--fixup=<target>` for another angle (keeps the better message).
 - Before amending, MUST check `git -P log --oneline @{u}..HEAD`. Empty output means HEAD is already pushed - MUST NOT amend; make a new commit instead.
 - Exception: a branch backing your own unreviewed GitHub pull request, for a same-logical-change fix - amend and force-push with `--force-with-lease` instead of stacking a new commit; GitHub PRs only, not general unpushed-commit amending.
@@ -36,7 +36,7 @@ Before making a commit, MUST tell the user: "I am following the predefined git r
 
 ## Amending non-HEAD commits
 
-`git commit --amend` only modifies HEAD; to squash, fixup, reorder, reword, or drop unpushed non-HEAD commits, MUST use `git-tidy`.
+To squash, fixup, reorder, reword, or drop unpushed commits, MUST use `git-tidy`.
 
 ## Checking for uncommitted/unpushed changes across repos
 
