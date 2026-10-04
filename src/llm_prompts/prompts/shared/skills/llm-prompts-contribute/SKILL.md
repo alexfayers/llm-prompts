@@ -32,7 +32,8 @@ cline-hooks and mcp-memory each carry their own prompts tree (rules, skills, wor
 - Check push access first: `gh repo view --json viewerPermission`.
   - `WRITE`/`MAINTAIN`/`ADMIN`: `git push -u origin <branch>` then `gh pr create --fill`.
   - Otherwise: `gh repo fork --remote`, push to the fork, `gh pr create --fill --head <username>:<branch>`.
-- To update an open PR: amend/rebase locally and force-push the same branch. MUST NOT add new commits.
+- A change that builds on one of your open PRs in the same repo MUST go on that PR's branch as a new commit, with a What and a Why bullet added for it.
+- A fix to a commit already on an open PR SHOULD amend it and force-push, per `git-usage`.
 
 ## Before opening
 
