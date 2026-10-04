@@ -49,6 +49,8 @@ For a change under `src/llm_prompts/prompts/**` (rules, skills, workflows, agent
 
 For everything else, push your own branch and open a PR against `main` as usual.
 
+Add fixes for review feedback to the PR as new commits - do not amend or rebase them away - so reviewers can see what changed.
+
 ## PR titles and descriptions
 
 - Title in conventional-commit format (`type: subject`).
