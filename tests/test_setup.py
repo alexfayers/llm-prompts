@@ -318,16 +318,10 @@ class TestCommitSubjectsBetween:
 
 
 class TestFormatUpdateMessage:
-    def test_lists_subjects_with_trailing_instruction(self) -> None:
+    def test_lists_subjects(self) -> None:
         result = setup._format_update_message("core", ["Add feature X", "Fix bug Y"])
         assert len(result) == 1
-        assert result[0] == (
-            "[core] update available:\n"
-            "- Add feature X\n"
-            "- Fix bug Y\n"
-            "Summarize these changes for the user in plain language, and flag "
-            "anything that looks like a breaking change."
-        )
+        assert result[0] == ("[core] update available:\n- Add feature X\n- Fix bug Y")
 
     def test_caps_list_and_reports_remainder(self) -> None:
         subjects = [f"commit {i}" for i in range(25)]
@@ -346,9 +340,7 @@ class TestFormatUpdateMessage:
             "- feat: batch\n"
             "  * feat: a\n"
             "  * feat: b\n"
-            "- fix: c\n"
-            "Summarize these changes for the user in plain language, and flag "
-            "anything that looks like a breaking change."
+            "- fix: c"
         )
 
     def test_cap_counts_commits_not_body_lines(self) -> None:

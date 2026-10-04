@@ -87,8 +87,8 @@ def _format_update_message(
 
     Returns:
         A single multi-line message listing the commits, body lines indented
-        under their subject, and a trailing instruction, or the bare "update
-        available" fallback when ``subjects`` is empty/``None``.
+        under their subject, or the bare "update available" fallback when
+        ``subjects`` is empty/``None``.
     """
     if not subjects:
         if local and remote:
@@ -99,7 +99,6 @@ def _format_update_message(
     lines.extend("- " + subject.replace("\n", "\n  ") for subject in subjects[:cap])
     if len(subjects) > cap:
         lines.append(f"... and {len(subjects) - cap} more")
-    lines.append(_UPDATE_INSTRUCTION)
     return ["\n".join(lines)]
 
 

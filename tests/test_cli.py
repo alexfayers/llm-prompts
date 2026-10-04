@@ -32,7 +32,9 @@ from llm_prompts.cli import (
 from llm_prompts.contribute import Report
 from llm_prompts.main_sync import SyncResult
 from llm_prompts.setup import (
+    _UPDATE_INSTRUCTION,
     _extract_git_url,
+    _format_update_message,
     detect_stale_local_tools,
     run_setup,
     write_pyproject_stamp,
@@ -172,15 +174,7 @@ class TestRemoteSourceMessages:
             result = _remote_source_messages(
                 "pkg", "git+https://github.com/user/repo.git"
             )
-            assert result == [
-                (
-                    "[pkg] update available:\n"
-                    "- Add X\n"
-                    "- Fix Y\n"
-                    "Summarize these changes for the user in plain language, and flag "
-                    "anything that looks like a breaking change."
-                )
-            ]
+            assert result == [("[pkg] update available:\n- Add X\n- Fix Y")]
 
     def test_update_available_falls_back_to_shas_when_clone_fails(self) -> None:
         with (
@@ -217,15 +211,7 @@ class TestLocalSourceMessages:
         )
         result = _local_source_messages("core", str(tmp_path))
         assert result == [
-            (
-                "[core] update available:\n"
-                "- Add A\n"
-                "  * Add A2\n"
-                "- Fix B\n"
-                "- Tweak C\n"
-                "Summarize these changes for the user in plain language, and flag "
-                "anything that looks like a breaking change."
-            )
+            ("[core] update available:\n- Add A\n  * Add A2\n- Fix B\n- Tweak C")
         ]
 
     def test_up_to_date(self, tmp_path: Path, fake_subprocess: FakeSubprocess) -> None:
@@ -586,11 +572,37 @@ class TestCollectUpdateMessages:
         assert result == [
             "[core] 2 new commit(s) available",
             "[remote-pkg] update available (aa -> bb)",
+            _UPDATE_INSTRUCTION,
         ]
         mock_local.assert_called_once_with("core", "~/git/llm-prompts")
         mock_remote.assert_called_once_with(
             "remote-pkg", "git+https://github.com/user/repo.git"
         )
+
+    def test_update_instruction_appears_once_after_all_packages(self) -> None:
+        config = [
+            {"name": "pkg-a", "source": "~/git/pkg-a"},
+            {"name": "pkg-b", "source": "~/git/pkg-b"},
+        ]
+        with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
+            mock_config.exists.return_value = True
+            with (
+                patch("llm_prompts.setup._load_config", return_value=config),
+                patch("llm_prompts.plugins._load_plugins", return_value=[]),
+                patch(
+                    "llm_prompts.cli._local_source_messages",
+                    side_effect=lambda name, _source: _format_update_message(
+                        name, ["Add X"]
+                    ),
+                ),
+            ):
+                result = _collect_update_messages()
+
+        assert result == [
+            "[pkg-a] update available:\n- Add X",
+            "[pkg-b] update available:\n- Add X",
+            _UPDATE_INSTRUCTION,
+        ]
 
     def test_plugin_messages_appended_after_tools(self) -> None:
         config = [{"name": "core", "source": "~/git/llm-prompts"}]
@@ -614,6 +626,7 @@ class TestCollectUpdateMessages:
         assert result == [
             "[core] 1 new commit(s) available",
             "[p] update available (aa -> bb)",
+            _UPDATE_INSTRUCTION,
         ]
         mock_plugin.assert_called_once_with(plugin)
 

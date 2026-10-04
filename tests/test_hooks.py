@@ -21,7 +21,6 @@ from llm_prompts.hooks import (
     _format_user_text,
     _looks_like_prompt_source,
     _ReinstallDebouncer,
-    _strip_update_instruction,
 )
 from llm_prompts.setup import _UPDATE_INSTRUCTION
 from llm_prompts.size_guard import CHECKED_TARGETS, CheckResult, Violation
@@ -64,20 +63,6 @@ def plugin(manifest_data: dict[str, Any], tmp_path: Path) -> AutoReinstallPlugin
     with patch("llm_prompts.hooks.read_manifest", return_value=manifest_data):
         p._get_installed_paths()
     return p
-
-
-class TestStripUpdateInstruction:
-    """Tests for stripping the trailing model-directive instruction."""
-
-    def test_strips_instruction_and_preceding_newline(self) -> None:
-        original = "[pkg] update available:\n- did a thing\n" + _UPDATE_INSTRUCTION
-        assert _strip_update_instruction(original) == (
-            "[pkg] update available:\n- did a thing"
-        )
-
-    def test_noop_on_bare_fallback(self) -> None:
-        bare = "[pkg] update available"
-        assert _strip_update_instruction(bare) == bare
 
 
 class TestFormatUserText:
@@ -665,19 +650,18 @@ class TestUpdateCheckOnTaskStart:
         plugin._update_check_debouncer = _ReinstallDebouncer(
             tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
         )
-        message = "[pkg] update available:\n- did a thing\n" + _UPDATE_INSTRUCTION
+        message = "[pkg] update available:\n- did a thing"
+        messages = [message, _UPDATE_INSTRUCTION]
         with patch(
             "llm_prompts.cli._collect_update_messages",
-            return_value=[message],
+            return_value=messages,
         ):
             result = plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[])
         assert result is not None
-        assert result.notes == [message]
+        assert result.notes == messages
         assert len(result.user_notes) == 1
         note = result.user_notes[0]
-        assert note.user_text == _format_user_text(
-            "[pkg] update available:\n- did a thing"
-        )
+        assert note.user_text == _format_user_text(message)
         assert (tmp_path / "update-stamp").exists()
 
     def test_multiple_messages_produce_single_banner(self, tmp_path: Path) -> None:

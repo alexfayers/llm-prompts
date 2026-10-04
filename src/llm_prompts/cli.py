@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 
 from . import github_api
 from .setup import (
+    _UPDATE_INSTRUCTION,
     GIT_TIMEOUT,
     _commit_subjects_between,
     _extract_git_url,
@@ -471,7 +472,8 @@ def _collect_update_messages() -> list[str]:
     """Collect update-availability messages across all configured tool sources.
 
     Returns:
-        Message lines describing available updates, in config order.
+        Message lines describing available updates, in config order, followed
+        by a single instruction line when any update is reported.
     """
     from functools import partial
 
@@ -495,6 +497,8 @@ def _collect_update_messages() -> list[str]:
     messages: list[str] = []
     for result in _run_parallel_ordered(checks):
         messages.extend(result)
+    if messages:
+        messages.append(_UPDATE_INSTRUCTION)
     return messages
 
 

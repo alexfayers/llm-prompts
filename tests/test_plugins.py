@@ -482,12 +482,7 @@ class TestPluginSourceMessages:
 
         messages = plugins.plugin_source_messages(plugin)
         assert len(messages) == 1
-        assert messages[0] == (
-            "[p] update available:\n"
-            "- second commit subject\n"
-            "Summarize these changes for the user in plain language, and flag "
-            "anything that looks like a breaking change."
-        )
+        assert messages[0] == ("[p] update available:\n- second commit subject")
 
     @pytest.fixture
     def outdated_plugin(
