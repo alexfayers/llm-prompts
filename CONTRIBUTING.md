@@ -41,6 +41,7 @@ For a change under `src/llm_prompts/prompts/**` (rules, skills, workflows, agent
 - Repos merge by squash only and require PRs up to date with `main`; `llm-prompts contribute list` warns about any of your open PRs (batch or hand-made) that are behind, and `llm-prompts contribute update --apply` rebases each onto `main` with `gh pr update-branch --rebase` (dry run without `--apply`; `--tool NAME --pr N` for one PR). Rebasing keeps batch commit matching intact; never update with a merge commit.
 - `contribute` uses `gh` when installed; otherwise it calls the GitHub API with `GH_TOKEN`, `GITHUB_TOKEN`, or your git credential helper's github.com token. Without gh and without push access, fork first: rename `origin` to `upstream` and add your fork as `origin`.
 - Marking a contribute PR ready for review enables squash auto-merge; it merges once checks pass and a reviewer approves.
+- When main moves, open PRs with auto-merge on are rebased onto it automatically.
 - A commit already in one of your other open PRs is skipped and shown in `list` as already in that PR.
 - Never commit directly to a batch branch - `sync` treats it as regenerable from `main` and may overwrite it.
 - A regressed batch (holding a commit matching nothing on `main`) gets a recovery hint that cherry-picks just the missing commits back on top.
