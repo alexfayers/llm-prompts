@@ -49,7 +49,6 @@ _WHAT_HEADING = re.compile(r"^## What\n", re.MULTILINE)
 _HEADING = re.compile(r"^## ", re.MULTILINE)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _BLANK_LINES = re.compile(r"\n{3,}")
-_PR_SECTION_MAX_LINES = 3
 _PR_TEMPLATE_PATH = ".github/PULL_REQUEST_TEMPLATE.md"
 _FALLBACK_TEMPLATE = "## What\n\n## Why\n\n## Testing\n"
 _SLUG_MAX_LEN = 50
@@ -520,12 +519,8 @@ def pr_template(repo: Path, base: str) -> str:
 
 
 def _what_lines(commits: Sequence[Commit]) -> list[str]:
-    """Return the What section's subject bullets, capped."""
-    subjects = [f"- {commit.subject}" for commit in commits]
-    if len(subjects) > _PR_SECTION_MAX_LINES:
-        kept = _PR_SECTION_MAX_LINES - 1
-        subjects = [*subjects[:kept], f"- +{len(subjects) - kept} more (see Commits)"]
-    return subjects
+    """Return the What section's subject bullets, one per commit."""
+    return [f"- {commit.subject}" for commit in commits]
 
 
 def _with_depends(body: str, depends_on: Sequence[str]) -> str:

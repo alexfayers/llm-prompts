@@ -3875,20 +3875,17 @@ class TestPrBody:
         template = "## Why\n\n<!-- Why. -->\n"
         assert pr_body(template, commits) == "## What\n\n- feat: add foo\n\n## Why\n\n"
 
-    def test_what_section_is_capped_with_a_count_of_the_rest(self) -> None:
+    def test_what_section_lists_every_commit(self) -> None:
         commits = [Commit(f"a{i}", f"feat: add thing{i}", ()) for i in range(1, 6)]
-        subjects = "\n".join(f"- feat: add thing{i}" for i in range(1, 3))
+        subjects = "\n".join(f"- feat: add thing{i}" for i in range(1, 6))
         body = pr_body(_TEMPLATE, commits)
-        assert body.startswith(
-            f"## What\n\n{subjects}\n- +3 more (see Commits)\n\n## Why"
-        )
+        assert body.startswith(f"## What\n\n{subjects}\n\n## Why")
 
-    def test_depends_on_lines_follow_the_body_and_bullets_stay_capped(self) -> None:
-        commits = [Commit(f"a{i}", f"feat: add thing{i}", ()) for i in range(1, 6)]
+    def test_depends_on_lines_follow_the_body(self) -> None:
+        commits = [Commit(f"a{i}", f"feat: add thing{i}", ()) for i in range(1, 3)]
         body = pr_body(_TEMPLATE, commits, ["https://example.test/pr/1"])
         assert body.startswith(
-            "## What\n\n- feat: add thing1\n- feat: add thing2\n"
-            "- +3 more (see Commits)\n\n## Why"
+            "## What\n\n- feat: add thing1\n- feat: add thing2\n\n## Why"
         )
         assert body.endswith("\n\nDepends on https://example.test/pr/1\n")
 
