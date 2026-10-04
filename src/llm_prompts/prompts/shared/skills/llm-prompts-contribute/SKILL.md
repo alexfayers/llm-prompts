@@ -39,6 +39,7 @@ cline-hooks and mcp-memory each carry their own prompts tree (rules, skills, wor
 
 - Run the target repo's `just` (lint, type-check, test) - its own CONTRIBUTING.md is authority for the exact recipes (e.g. mcp-memory adds a naming-check).
 - Any changed rule/skill/workflow/agent file MUST stay within its prompt size budget.
+- Before pushing a manual PR branch, MUST confirm `git -P log --oneline origin/main..HEAD` lists only that PR's commits.
 
 ## PR content
 
