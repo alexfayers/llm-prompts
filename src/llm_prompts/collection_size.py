@@ -34,12 +34,17 @@ from .size_guard import (
     _agent_for,
     _declared_allowances,
     _own_vars_path,
+    ceiling_for,
 )
-from .size_limits import COLLECTION_BYTES, COLLECTION_SCHEDULE
+from .size_limits import COLLECTION_BYTES
 
 
 def _rendered_kind_bytes(
-    root: Path, overlays: Sequence[Path], target: str, subdir: str
+    root: Path,
+    overlays: Sequence[Path],
+    target: str,
+    subdir: str,
+    vars_root: Path | None = None,
 ) -> int:
     """Sum installed bytes for one rules/workflows subdir, priority resolved.
 
@@ -48,12 +53,14 @@ def _rendered_kind_bytes(
         overlays: Discovered overlay prompts directories, in priority order.
         target: Render target.
         subdir: Content subdirectory (``"rules"`` or ``"workflows"``).
+        vars_root: Prompts directory to read variables from, instead of this
+            package's own.
 
     Returns:
         Total bytes the install writes for this target and subdirectory.
     """
     agent = _agent_for(target, root)
-    vars_path = _own_vars_path(target)
+    vars_path = _own_vars_path(target, vars_root)
     total = 0
     for _, src, agent_specific in _collect_content_srcs(
         agent,
@@ -71,7 +78,12 @@ def _rendered_kind_bytes(
     return total
 
 
-def _skill_bytes(root: Path, overlays: Sequence[Path], target: str) -> int:
+def _skill_bytes(
+    root: Path,
+    overlays: Sequence[Path],
+    target: str,
+    vars_root: Path | None = None,
+) -> int:
     """Sum installed ``SKILL.md`` bytes for one target, priority resolved.
 
     Measures the whole substituted file `_materialize_builtin_skill` writes,
@@ -82,11 +94,13 @@ def _skill_bytes(root: Path, overlays: Sequence[Path], target: str) -> int:
         root: This package's own prompts directory.
         overlays: Discovered overlay prompts directories, in priority order.
         target: Render target.
+        vars_root: Prompts directory to read variables from, instead of this
+            package's own.
 
     Returns:
         Total ``SKILL.md`` bytes the install writes for this target.
     """
-    variables = _builtin_skill_vars(_own_vars_path(target))
+    variables = _builtin_skill_vars(_own_vars_path(target, vars_root))
 
     def gate(skill_dir: Path) -> bool:
         skill_md = skill_dir / "SKILL.md"
@@ -152,7 +166,9 @@ def _agent_bytes(root: Path, overlays: Sequence[Path], target: str) -> int:
 
 
 def collection_artifacts(
-    roots: Sequence[Path], targets: tuple[str, ...] = CHECKED_TARGETS
+    roots: Sequence[Path],
+    targets: tuple[str, ...] = CHECKED_TARGETS,
+    vars_root: Path | None = None,
 ) -> list[Artifact]:
     """Measure one per-target collection total across every root.
 
@@ -161,6 +177,8 @@ def collection_artifacts(
             overlays after it - the shape both `install.main` and the `check`
             subcommand already assemble.
         targets: Render targets to measure.
+        vars_root: Prompts directory to read variables from, instead of this
+            package's own.
 
     Returns:
         One `Artifact` per target, carrying that target's total installed bytes
@@ -177,10 +195,10 @@ def collection_artifacts(
             target,
             target,
             sum(
-                _rendered_kind_bytes(root, overlays, target, subdir)
+                _rendered_kind_bytes(root, overlays, target, subdir, vars_root)
                 for subdir in content_subdirs(target)
             )
-            + _skill_bytes(root, overlays, target)
+            + _skill_bytes(root, overlays, target, vars_root)
             + _agent_bytes(root, overlays, target),
             root,
             declared.get(target),
@@ -206,10 +224,10 @@ def evaluate_collection(artifacts: Iterable[Artifact]) -> list[Violation]:
     Raises:
         KeyError: If `COLLECTION_SCHEDULE.active_step` names no known step.
     """
-    active = COLLECTION_SCHEDULE.active_threshold()
     violations: list[Violation] = []
     for artifact in artifacts:
-        ceiling = active if artifact.allowance is None else artifact.allowance
+        ceiling = ceiling_for(artifact)
+        assert ceiling is not None
         if artifact.value > ceiling:
             violations.append(
                 Violation(

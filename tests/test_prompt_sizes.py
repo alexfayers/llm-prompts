@@ -13,6 +13,7 @@ from llm_prompts.collection_size import _agent_bytes
 from llm_prompts.render_template import resolve_frontmatter, split_frontmatter
 from llm_prompts.size_guard import (
     ALLOWANCES_FILENAME,
+    CHECKED_TARGETS,
     Artifact,
     Violation,
     _declared_allowances,
@@ -292,6 +293,21 @@ class TestIterArtifactsDispatch:
         assert "plain.md" in agent_names
         assert "worker.md" not in agent_names
 
+    def test_workflows_measured_only_for_targets_that_install_them(
+        self, tmp_path: Path
+    ) -> None:
+        _make_prompts_tree(tmp_path, targets=("claude-code", "cline"))
+        workflow_metrics = {WORKFLOW_BYTES, WORKFLOW_LINES}
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            artifacts = list(
+                iter_artifacts([tmp_path], targets=("claude-code", "cline"))
+            )
+
+        assert {a.target for a in artifacts if a.metric in workflow_metrics} == {
+            "cline"
+        }
+
     def test_frontmatter_and_placeholder_checks_pass_for_clean_content(
         self, tmp_path: Path
     ) -> None:
@@ -348,10 +364,10 @@ class TestIterArtifactsDispatch:
         assert "shared-rule.md" not in names
 
     def test_workflow_bytes_and_lines_measured(self, tmp_path: Path) -> None:
-        _make_prompts_tree(tmp_path)
+        _make_prompts_tree(tmp_path, targets=("cline",))
 
         with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
-            artifacts = list(iter_artifacts([tmp_path], targets=("claude-code",)))
+            artifacts = list(iter_artifacts([tmp_path], targets=("cline",)))
 
         flow_bytes = next(
             a
@@ -623,23 +639,21 @@ class TestDeclaredAllowances:
     def test_declaration_applies_across_every_checked_target(
         self, tmp_path: Path
     ) -> None:
-        _make_prompts_tree(tmp_path, targets=("claude-code", "copilot", "kiro"))
+        _make_prompts_tree(tmp_path, targets=CHECKED_TARGETS)
         _write(
             tmp_path / ALLOWANCES_FILENAME,
             json.dumps({RULE_BYTES: {"shared-rule.md": 4_000}}),
         )
 
         with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
-            artifacts = list(
-                iter_artifacts([tmp_path], targets=("claude-code", "copilot", "kiro"))
-            )
+            artifacts = list(iter_artifacts([tmp_path], targets=CHECKED_TARGETS))
 
         rule_bytes = [
             a
             for a in artifacts
             if a.metric == RULE_BYTES and a.dest_name == "shared-rule.md"
         ]
-        assert {a.target for a in rule_bytes} == {"claude-code", "kiro"}
+        assert {a.target for a in rule_bytes} == set(CHECKED_TARGETS) - {"copilot"}
         assert all(a.allowance == 4_000 for a in rule_bytes)
 
     def test_bool_metric_key_is_rejected_and_carries_no_allowance(

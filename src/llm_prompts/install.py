@@ -540,6 +540,16 @@ class _PiAgent(_CodexAgent):
     AGENTS_MD: ClassVar[str] = "AGENTS.md"
 
 
+AGENT_CLASSES: dict[str, type[_Agent]] = {
+    "cline": _Agent,
+    "copilot": _CopilotAgent,
+    "kiro": _Agent,
+    "claude-code": _Agent,
+    "codex": _CodexAgent,
+    "antigravity": _AntigravityAgent,
+    "pi": _PiAgent,
+}
+
 _CODEX_DOC_LIMIT = 32768
 _CODEX_DOC_LIMIT_RAISED = 65536
 
@@ -1912,15 +1922,8 @@ def main(
         log("warn", line)
 
     all_agents: dict[str, _Agent] = {
-        "cline": _Agent(name="cline", root_dir=root_dir, dirs=dirs),
-        "copilot": _CopilotAgent(name="copilot", root_dir=root_dir, dirs=dirs),
-        "kiro": _Agent(name="kiro", root_dir=root_dir, dirs=dirs),
-        "claude-code": _Agent(name="claude-code", root_dir=root_dir, dirs=dirs),
-        "codex": _CodexAgent(name="codex", root_dir=root_dir, dirs=dirs),
-        "antigravity": _AntigravityAgent(
-            name="antigravity", root_dir=root_dir, dirs=dirs
-        ),
-        "pi": _PiAgent(name="pi", root_dir=root_dir, dirs=dirs),
+        name: agent_class(name=name, root_dir=root_dir, dirs=dirs)
+        for name, agent_class in AGENT_CLASSES.items()
     }
     targets = agent_names or list(all_agents)
 

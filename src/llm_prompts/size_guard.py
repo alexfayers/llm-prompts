@@ -21,10 +21,10 @@ from importlib.resources import files
 from pathlib import Path
 
 from .install import (
+    AGENT_CLASSES,
     _Agent,
     _builtin_skill_vars,
     _collect_content_srcs,
-    _CopilotAgent,
     _discover_overlay_paths,
     _excluded_targets,
     _expand_agent_variants,
@@ -33,6 +33,7 @@ from .install import (
     _read_text,
     _rendered_content,
     _resolve_priority_sources,
+    content_subdirs,
 )
 from .render_template import (
     find_unreplaced_variables,
@@ -58,7 +59,9 @@ from .size_limits import (
     WORKFLOW_LINES,
 )
 
-CHECKED_TARGETS: tuple[str, ...] = ("claude-code", "copilot", "kiro")
+CHECKED_TARGETS: tuple[str, ...] = tuple(
+    target for target in AGENT_CLASSES if target != "cline"
+)
 ALLOWANCES_FILENAME = "size_allowances.json"
 
 
@@ -123,9 +126,15 @@ def _own_root_dir() -> Path:
     return Path(str(files("llm_prompts") / "prompts"))
 
 
-def _own_vars_path(target: str) -> Path:
-    """Return this package's own variables JSON path for a target."""
-    return _own_root_dir() / target / "vars.json"
+def _own_vars_path(target: str, vars_root: Path | None = None) -> Path:
+    """Return the variables JSON path for a target.
+
+    Args:
+        target: Render target.
+        vars_root: Prompts directory to read variables from, instead of this
+            package's own.
+    """
+    return (vars_root or _own_root_dir()) / target / "vars.json"
 
 
 def _agent_for(target: str, root: Path) -> _Agent:
@@ -140,11 +149,9 @@ def _agent_for(target: str, root: Path) -> _Agent:
         root: Prompts directory to scope this agent to.
 
     Returns:
-        A `_Agent` (or `_CopilotAgent` for copilot) rooted at `root`.
+        The target's `_Agent` subclass instance rooted at `root`.
     """
-    if target == "copilot":
-        return _CopilotAgent(name=target, root_dir=root, dirs={})
-    return _Agent(name=target, root_dir=root, dirs={})
+    return AGENT_CLASSES[target](name=target, root_dir=root, dirs={})
 
 
 def _resolve_content_frontmatter(
@@ -248,6 +255,7 @@ def _iter_rendered_kind_artifacts(
     bytes_metric: str,
     lines_metric: str,
     allowances: dict[str, dict[str, int]],
+    vars_root: Path | None = None,
 ) -> Iterator[Artifact]:
     """Yield size/validity artifacts for one rules/workflows subdir.
 
@@ -262,10 +270,12 @@ def _iter_rendered_kind_artifacts(
         bytes_metric: Metric identifier for the byte-count measurement.
         lines_metric: Metric identifier for the line-count measurement.
         allowances: This root's declared per-artifact ceilings.
+        vars_root: Prompts directory to read variables from, instead of this
+            package's own.
     """
     agent = _agent_for(target, root)
     shared_src = root / "shared" / subdir
-    vars_path = _own_vars_path(target)
+    vars_path = _own_vars_path(target, vars_root)
 
     for dest_name, src, agent_specific in _collect_content_srcs(
         agent, subdir, shared_src, [], []
@@ -295,7 +305,10 @@ def _iter_rendered_kind_artifacts(
 
 
 def _iter_skill_artifacts(
-    root: Path, target: str, allowances: dict[str, dict[str, int]]
+    root: Path,
+    target: str,
+    allowances: dict[str, dict[str, int]],
+    vars_root: Path | None = None,
 ) -> Iterator[Artifact]:
     """Yield size/validity artifacts for shared and per-target skills.
 
@@ -307,9 +320,11 @@ def _iter_skill_artifacts(
         root: Prompts directory being scanned.
         target: Render target.
         allowances: This root's declared per-artifact ceilings.
+        vars_root: Prompts directory to read variables from, instead of this
+            package's own.
     """
     candidate_dirs = [root / "shared" / "skills", root / target / "skills"]
-    variables = _builtin_skill_vars(_own_vars_path(target))
+    variables = _builtin_skill_vars(_own_vars_path(target, vars_root))
 
     def gate(skill_dir: Path) -> bool:
         skill_md = skill_dir / "SKILL.md"
@@ -394,7 +409,9 @@ def _iter_agent_artifacts(
 
 
 def iter_artifacts(
-    roots: Iterable[Path], targets: tuple[str, ...] = CHECKED_TARGETS
+    roots: Iterable[Path],
+    targets: tuple[str, ...] = CHECKED_TARGETS,
+    vars_root: Path | None = None,
 ) -> Iterator[Artifact]:
     """Measure every checked artifact under `roots` for `targets`.
 
@@ -403,6 +420,8 @@ def iter_artifacts(
             never derived from an installed destination. Passing a single
             overlay's own prompts directory scopes the scan to just its files.
         targets: Render targets to check.
+        vars_root: Prompts directory to read variables from, instead of this
+            package's own.
 
     Yields:
         One `Artifact` per (metric, target, destination) measurement.
@@ -411,13 +430,51 @@ def iter_artifacts(
         allowances, _ = _declared_allowances(root)
         for target in targets:
             yield from _iter_rendered_kind_artifacts(
-                root, target, "rules", RULE_BYTES, RULE_LINES, allowances
+                root, target, "rules", RULE_BYTES, RULE_LINES, allowances, vars_root
             )
-            yield from _iter_rendered_kind_artifacts(
-                root, target, "workflows", WORKFLOW_BYTES, WORKFLOW_LINES, allowances
-            )
-            yield from _iter_skill_artifacts(root, target, allowances)
+            if "workflows" in content_subdirs(target):
+                yield from _iter_rendered_kind_artifacts(
+                    root,
+                    target,
+                    "workflows",
+                    WORKFLOW_BYTES,
+                    WORKFLOW_LINES,
+                    allowances,
+                    vars_root,
+                )
+            yield from _iter_skill_artifacts(root, target, allowances, vars_root)
             yield from _iter_agent_artifacts(root, target, allowances)
+
+
+def ceiling_for(artifact: Artifact) -> int | None:
+    """Return the ceiling in force for an artifact.
+
+    A numeric artifact's ceiling is its metric's final, tightened further by
+    its metric's active schedule step if that step gates this name, then
+    replaced outright by a declared allowance if one applies.
+    `collection_bytes` has no per-name final: its base is the collection
+    schedule's active step, not `FINALS`.
+
+    Args:
+        artifact: A measured artifact.
+
+    Returns:
+        The byte/line/char ceiling, or None for a bool artifact.
+    """
+    if artifact.metric not in FINALS:
+        return None
+    if artifact.allowance is not None:
+        return artifact.allowance
+    if artifact.metric == COLLECTION_BYTES:
+        return COLLECTION_SCHEDULE.active_threshold()
+    ceiling = FINALS[artifact.metric]
+    schedule = SCHEDULES.get(artifact.metric)
+    active_threshold = (
+        schedule.active_threshold_for(artifact.dest_name) if schedule else None
+    )
+    if active_threshold is not None:
+        ceiling = min(ceiling, active_threshold)
+    return ceiling
 
 
 def evaluate(artifacts: Iterable[Artifact]) -> list[Violation]:
@@ -450,17 +507,8 @@ def evaluate(artifacts: Iterable[Artifact]) -> list[Violation]:
                 )
             continue
 
-        ceiling = FINALS[artifact.metric]
-
-        schedule = SCHEDULES.get(artifact.metric)
-        active_threshold = (
-            schedule.active_threshold_for(artifact.dest_name) if schedule else None
-        )
-        if active_threshold is not None:
-            ceiling = min(ceiling, active_threshold)
-
-        if artifact.allowance is not None:
-            ceiling = artifact.allowance
+        ceiling = ceiling_for(artifact)
+        assert ceiling is not None
 
         if artifact.value > ceiling:
             violations.append(
@@ -490,10 +538,9 @@ def _collection_state_lines(artifacts: Iterable[Artifact]) -> list[str]:
     Returns:
         One formatted line per collection artifact, in measurement order.
     """
-    active = COLLECTION_SCHEDULE.active_threshold()
     return [
         f"{artifact.metric} {artifact.target} current {artifact.value:,} "
-        f"ceiling {artifact.allowance or active:,} "
+        f"ceiling {ceiling_for(artifact):,} "
         f"({COLLECTION_SCHEDULE.active_step})"
         for artifact in artifacts
         if artifact.metric == COLLECTION_BYTES
@@ -683,12 +730,15 @@ def resolve_skip_set(
 def check(
     roots: Iterable[Path],
     targets: tuple[str, ...] = CHECKED_TARGETS,
+    vars_root: Path | None = None,
 ) -> CheckResult:
     """Measure every checked artifact under `roots` and evaluate it.
 
     Args:
         roots: Prompts directories to scan.
         targets: Render targets to check.
+        vars_root: Prompts directory to read variables from, instead of this
+            package's own.
 
     Returns:
         The full check outcome: pass/fail, every measured artifact, any
@@ -701,9 +751,9 @@ def check(
     for root in roots:
         _, errors = _declared_allowances(root)
         declaration_errors.extend(errors)
-    artifacts = list(iter_artifacts(roots, targets))
+    artifacts = list(iter_artifacts(roots, targets, vars_root))
     violations = evaluate(artifacts)
-    collection = collection_artifacts(roots, targets)
+    collection = collection_artifacts(roots, targets, vars_root)
     artifacts.extend(collection)
     violations.extend(evaluate_collection(collection))
     stale = stale_allowance_lines(roots, artifacts)
@@ -812,14 +862,15 @@ def check_source(
     content: str,
     targets: tuple[str, ...] = CHECKED_TARGETS,
 ) -> CheckResult:
-    """Measure one source file as if it held `content`, without walking the collection.
+    """Measure one source file as if it held `content`, without a full walk.
 
     Mirrors `source` alone into a throwaway root, at the same position it
     occupies under its real owning root, then measures that mirror with the
     same per-kind iterators `iter_artifacts` uses. This is faithful because
-    variables are always resolved via `_own_vars_path`, from this package's
-    own prompts directory regardless of which root is being scanned - a
-    mirrored file renders byte-identically to the same file in place.
+    variables are always resolved from this package's own prompts directory
+    (`_own_vars_path` with no `vars_root`) regardless of which root is being
+    scanned - a mirrored file renders byte-identically to the same file in
+    place.
 
     A source shadowed at install time by a higher-priority source of the same
     name is still measured here, since resolving priority would require

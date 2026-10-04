@@ -39,7 +39,7 @@ from llm_prompts.setup import (
     run_setup,
     write_pyproject_stamp,
 )
-from llm_prompts.size_guard import ALLOWANCES_FILENAME, Artifact
+from llm_prompts.size_guard import ALLOWANCES_FILENAME, CHECKED_TARGETS, Artifact
 from llm_prompts.size_limits import FINALS, RULE_BYTES
 
 
@@ -1264,7 +1264,7 @@ class TestRunSizeCheck:
         root = tmp_path / "root"
         (root / "shared" / "rules").mkdir(parents=True)
         (root / "shared" / "rules" / "a.md").write_text("# A\n", encoding="utf-8")
-        for target in ("claude-code", "copilot", "kiro"):
+        for target in CHECKED_TARGETS:
             target_dir = root / target
             target_dir.mkdir(parents=True)
             (target_dir / "vars.json").write_text("{}", encoding="utf-8")
@@ -1282,7 +1282,7 @@ class TestRunSizeCheck:
         (root / "shared" / "rules" / "big.md").write_text(
             "x " * FINALS[RULE_BYTES], encoding="utf-8"
         )
-        for target in ("claude-code", "copilot", "kiro"):
+        for target in CHECKED_TARGETS:
             target_dir = root / target
             target_dir.mkdir(parents=True)
             (target_dir / "vars.json").write_text("{}", encoding="utf-8")
@@ -1302,7 +1302,7 @@ class TestRunSizeCheck:
         root = tmp_path / "root"
         (root / "shared" / "rules").mkdir(parents=True)
         (root / "shared" / "rules" / "a.md").write_text("# A\n", encoding="utf-8")
-        for target in ("claude-code", "copilot", "kiro"):
+        for target in CHECKED_TARGETS:
             target_dir = root / target
             target_dir.mkdir(parents=True)
             (target_dir / "vars.json").write_text("{}", encoding="utf-8")
@@ -1321,7 +1321,7 @@ class TestRunSizeCheck:
         root = tmp_path / "root"
         (root / "shared" / "rules").mkdir(parents=True)
         (root / "shared" / "rules" / "a.md").write_text("# A\n", encoding="utf-8")
-        for target in ("claude-code", "copilot", "kiro"):
+        for target in CHECKED_TARGETS:
             target_dir = root / target
             target_dir.mkdir(parents=True)
             (target_dir / "vars.json").write_text("{}", encoding="utf-8")
@@ -1347,6 +1347,23 @@ class TestCheckSubcommand:
         ):
             main()
         mock_check.assert_called_once_with()
+
+
+class TestSizeReportSubcommand:
+    def test_size_report_prints_the_report_for_the_base_root(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch(
+                "sys.argv", ["llm-prompts", "size-report", "--base-root", str(tmp_path)]
+            ),
+            patch(
+                "llm_prompts.size_report.build_report", return_value="REPORT"
+            ) as mock_report,
+        ):
+            main()
+        mock_report.assert_called_once_with(tmp_path)
+        assert capsys.readouterr().out == "REPORT\n"
 
 
 class TestContributeTarget:
