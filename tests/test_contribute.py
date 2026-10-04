@@ -3930,12 +3930,21 @@ class TestRewriteWhat:
             f"## What\n\n- feat: add foo\n\n## Why\n\nx\n\nDepends on {url}\n"
         )
 
-    def test_trailing_depends_lines_are_replaced(self) -> None:
+    def test_top_of_what_hand_written_depends_line_is_kept(self) -> None:
         commits = [Commit("a1", "feat: add foo", ())]
-        body = "## What\n\n- feat: add foo\n\n## Why\n\nx\n\nDepends on OLD\n"
-        rewritten = rewrite_what(body, commits, ["https://example.test/pr/1"])
-        assert rewritten.endswith("x\n\nDepends on https://example.test/pr/1\n")
-        assert "OLD" not in rewritten
+        url = "https://example.test/pr/1"
+        body = "## What\n\nDepends on HAND\n- feat: add foo\n\n## Why\n\nx\n"
+        assert rewrite_what(body, commits, [url]) == (
+            f"## What\n\n- feat: add foo\n\nDepends on HAND\n\n## Why\n\nx\n\nDepends on {url}\n"
+        )
+
+    def test_trailing_hand_written_depends_line_is_kept(self) -> None:
+        commits = [Commit("a1", "feat: add foo", ())]
+        url = "https://example.test/pr/1"
+        body = f"## What\n\n- feat: add foo\n\n## Why\n\nx\n\nDepends on OLD\nDepends on {url}\n"
+        assert rewrite_what(body, commits, [url]) == (
+            f"## What\n\n- feat: add foo\n\n## Why\n\nx\n\nDepends on OLD\n\nDepends on {url}\n"
+        )
 
     def test_missing_what_heading_is_prepended(self) -> None:
         commits = [Commit("a1", "feat: add foo", ())]

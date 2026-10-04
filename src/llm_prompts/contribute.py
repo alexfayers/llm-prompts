@@ -524,16 +524,18 @@ def _what_lines(commits: Sequence[Commit]) -> list[str]:
 
 
 def _with_depends(body: str, depends_on: Sequence[str]) -> str:
-    """Return ``body`` with its trailing Depends on lines replaced by one per url."""
-    lines = body.rstrip().split("\n")
-    kept = len(lines)
-    while kept and lines[kept - 1].startswith(_DEPENDS_PREFIX):
-        kept -= 1
-    if kept == len(lines) and not depends_on:
+    """Return ``body`` with the Depends on lines for ``depends_on`` moved to one block at its end."""
+    if not depends_on:
         return body
-    rest = "\n".join(lines[:kept]).rstrip()
+    written = {f"{_DEPENDS_PREFIX}{url}" for url in depends_on}
+    lines = body.rstrip().split("\n")
+    start = len(lines)
+    while start and lines[start - 1].startswith(_DEPENDS_PREFIX):
+        start -= 1
+    kept = lines[:start] + [line for line in lines[start:] if line not in written]
+    rest = "\n".join(kept).rstrip()
     block = "\n".join(f"{_DEPENDS_PREFIX}{url}" for url in depends_on)
-    return f"{rest}\n\n{block}\n" if block else f"{rest}\n"
+    return f"{rest}\n\n{block}\n"
 
 
 def pr_body(
@@ -567,7 +569,11 @@ def rewrite_what(
         len(old),
     )
     stale = {f"{_DEPENDS_PREFIX}{url}" for url in depends_on}
-    prose = "\n".join(line for line in old[generated:] if line not in stale).strip("\n")
+    prose = "\n".join(
+        line
+        for i, line in enumerate(old)
+        if line not in stale and (i >= generated or line.startswith(_DEPENDS_PREFIX))
+    ).strip("\n")
     trailing = section[len(section.rstrip("\n")) :]
     rebuilt = "\n" + "\n".join(lines) + (f"\n\n{prose}" if prose else "") + trailing
     return _with_depends(body[: heading.end()] + rebuilt + body[end:], depends_on)
