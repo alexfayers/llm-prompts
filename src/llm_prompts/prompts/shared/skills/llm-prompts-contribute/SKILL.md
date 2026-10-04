@@ -28,16 +28,19 @@ cline-hooks and mcp-memory each carry their own prompts tree (rules, skills, wor
 
 - `llm-prompts contribute` works without gh given a GH_TOKEN or GITHUB_TOKEN.
 - Marking a contribute PR ready for review enables squash auto-merge.
+- MUST keep each repo's primary checkout on `main`; do branch work in a `git worktree`.
 - Push your own branch, open a PR against `main`.
 - Check push access first: `gh repo view --json viewerPermission`.
   - `WRITE`/`MAINTAIN`/`ADMIN`: `git push -u origin <branch>` then `gh pr create --fill`.
   - Otherwise: `gh repo fork --remote`, push to the fork, `gh pr create --fill --head <username>:<branch>`.
-- To update an open PR: amend/rebase locally and force-push the same branch. MUST NOT add new commits.
+- A change that builds on one of your open PRs in the same repo MUST go on that PR's branch as a new commit, with a What and a Why bullet added for it.
+- A fix to a commit already on an open PR SHOULD amend it and force-push, per `git-usage`.
 
 ## Before opening
 
 - Run the target repo's `just` (lint, type-check, test) - its own CONTRIBUTING.md is authority for the exact recipes (e.g. mcp-memory adds a naming-check).
 - Any changed rule/skill/workflow/agent file MUST stay within its prompt size budget.
+- Before pushing a manual PR branch, MUST confirm `git -P log --oneline origin/main..HEAD` lists only that PR's commits.
 
 ## PR content
 
