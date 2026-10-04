@@ -154,47 +154,34 @@ class AutoReinstallPlugin(HooksPlugin):
     """Auto-runs ``llm-prompts update`` when an installed prompt file is edited."""
 
     def __init__(self) -> None:
-        self._installed_paths: frozenset[Path] | None = None
+        self._source_dirs: list[Path] | None = None
         self._debouncer = _ReinstallDebouncer()
         self._update_check_debouncer = _ReinstallDebouncer(
             interval_seconds=_UPDATE_CHECK_INTERVAL,
             stamp_name=".llm-prompts-update-check-stamp",
         )
 
-    def _get_installed_paths(self) -> frozenset[Path]:
-        """Load and cache resolved paths of all installed and source files."""
-        if self._installed_paths is None:
-            paths: set[Path] = set()
-            for agent_entry in read_manifest().values():
-                for file_str in agent_entry.get("files", []):
-                    try:
-                        paths.add(Path(file_str).resolve())
-                    except (OSError, ValueError):
-                        continue
-            paths.update(self._get_source_paths())
-            self._installed_paths = frozenset(paths)
-        return self._installed_paths
+    def _get_source_dirs(self) -> list[Path]:
+        """Return the source prompt dirs, discovered once per plugin instance."""
+        if self._source_dirs is None:
+            from .install import _discover_overlay_paths
 
-    @staticmethod
-    def _get_source_paths() -> set[Path]:
-        """Return resolved paths of every file under the source prompt dirs.
+            self._source_dirs = [
+                Path(str(files("llm_prompts") / "prompts")).resolve(),
+                *(path.resolve() for path in _discover_overlay_paths()),
+            ]
+        return self._source_dirs
 
-        Rules and agent variants are rendered copies rather than symlinks, so
-        editing their sources never resolves to a manifest path; walking the
-        source trees directly catches those edits too. This must be
-        recursive: skills live nested at ``prompts/*/skills/<name>/SKILL.md``,
-        so a shallow glob would miss every skill.
-        """
-        from .install import _discover_overlay_paths
-
-        dirs = [Path(str(files("llm_prompts") / "prompts")), *_discover_overlay_paths()]
-        return {
-            path.resolve()
-            for prompts_dir in dirs
-            if prompts_dir.is_dir()
-            for path in prompts_dir.rglob("*")
-            if path.is_file()
-        }
+    def _is_tracked_path(self, resolved: Path) -> bool:
+        """Return True if the path is a manifest file or inside a source prompt dir."""
+        for agent_entry in read_manifest().values():
+            for file_str in agent_entry.get("files", []):
+                try:
+                    if Path(file_str).resolve() == resolved:
+                        return True
+                except (OSError, ValueError):
+                    continue
+        return any(resolved.is_relative_to(d) for d in self._get_source_dirs())
 
     # Update prompts/shared/rules/hooks-llm-prompts.md if this note's behavior changes.
     def _on_task_start(self, source: str, agent_type: str) -> HookResult | None:
@@ -357,7 +344,7 @@ class AutoReinstallPlugin(HooksPlugin):
         except (OSError, ValueError):
             return False
 
-        if resolved not in self._get_installed_paths():
+        if not self._is_tracked_path(resolved):
             return False
 
         logger.info("Installed prompt file edited: %s", resolved)
@@ -393,5 +380,4 @@ class AutoReinstallPlugin(HooksPlugin):
             return HookResult(notes=[note])
 
         self._debouncer.mark_run()
-        self._installed_paths = None
         return HookResult(notes=["Auto-reinstalled prompt files"])
