@@ -3883,14 +3883,14 @@ class TestPrBody:
             f"## What\n\n{subjects}\n- +3 more (see Commits)\n\n## Why"
         )
 
-    def test_depends_on_lines_precede_the_bullets_and_are_not_capped(self) -> None:
+    def test_depends_on_lines_follow_the_body_and_bullets_stay_capped(self) -> None:
         commits = [Commit(f"a{i}", f"feat: add thing{i}", ()) for i in range(1, 6)]
         body = pr_body(_TEMPLATE, commits, ["https://example.test/pr/1"])
         assert body.startswith(
-            "## What\n\nDepends on https://example.test/pr/1\n"
-            "- feat: add thing1\n- feat: add thing2\n"
+            "## What\n\n- feat: add thing1\n- feat: add thing2\n"
             "- +3 more (see Commits)\n\n## Why"
         )
+        assert body.endswith("\n\nDepends on https://example.test/pr/1\n")
 
 
 _EDITED_BODY = (
@@ -3920,9 +3920,25 @@ class TestRewriteWhat:
             "Depends on https://example.test/pr/2\n\n## Why\n\nx\n"
         )
         assert rewrite_what(body, commits, ["https://example.test/pr/1"]) == (
-            "## What\n\nDepends on https://example.test/pr/1\n- feat: add foo\n\n"
-            "See the thread.\nDepends on https://example.test/pr/2\n\n## Why\n\nx\n"
+            "## What\n\n- feat: add foo\n\nSee the thread.\n"
+            "Depends on https://example.test/pr/2\n\n## Why\n\nx\n\n"
+            "Depends on https://example.test/pr/1\n"
         )
+
+    def test_top_of_what_depends_lines_move_to_the_bottom(self) -> None:
+        commits = [Commit("a1", "feat: add foo", ())]
+        url = "https://example.test/pr/1"
+        body = f"## What\n\nDepends on {url}\n- feat: add foo\n\n## Why\n\nx\n"
+        assert rewrite_what(body, commits, [url]) == (
+            f"## What\n\n- feat: add foo\n\n## Why\n\nx\n\nDepends on {url}\n"
+        )
+
+    def test_trailing_depends_lines_are_replaced(self) -> None:
+        commits = [Commit("a1", "feat: add foo", ())]
+        body = "## What\n\n- feat: add foo\n\n## Why\n\nx\n\nDepends on OLD\n"
+        rewritten = rewrite_what(body, commits, ["https://example.test/pr/1"])
+        assert rewritten.endswith("x\n\nDepends on https://example.test/pr/1\n")
+        assert "OLD" not in rewritten
 
     def test_missing_what_heading_is_prepended(self) -> None:
         commits = [Commit("a1", "feat: add foo", ())]
@@ -4250,7 +4266,8 @@ class TestRunSyncDraftPr:
         )
 
         edit = contribute_remote.fake.matching("gh", "pr", "edit")[0]
-        assert f"## What\n\nDepends on {url}\n- feat: add foo" in edit[-1]
+        assert "## What\n\n- feat: add foo" in edit[-1]
+        assert edit[-1].endswith(f"\n\nDepends on {url}\n")
 
     def test_dependency_urls_are_written_into_an_opened_body(
         self, contribute_remote: ContributeRemote, tmp_path: Path
@@ -4270,7 +4287,8 @@ class TestRunSyncDraftPr:
         )
 
         argv = contribute_remote.fake.matching("gh", "pr", "create")[0]
-        assert f"## What\n\nDepends on {url}\n- feat: add foo" in argv[-1]
+        assert "## What\n\n- feat: add foo" in argv[-1]
+        assert argv[-1].endswith(f"\n\nDepends on {url}\n")
 
 
 class TestWithoutGh:
