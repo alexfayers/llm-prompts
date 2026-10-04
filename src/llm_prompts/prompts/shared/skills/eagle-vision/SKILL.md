@@ -60,10 +60,8 @@ A node's only tests - write no others. Each criterion:
 
 ## Autonomy check
 
-- MUST run one fresh `surveyor-haiku-low` agent per node (not a `model` override), using only `focus.py show <node>`, Grep and offset-limited Read of code - never `PLAN.md`.
-- Ask: "if every dependency were built to plan, could an agent build this node unaided?" Reply bare YES, or NO with reasons.
-- Not blockers: unbuilt dependencies or tests, files the node creates, implementer details. Blockers: contradictions, missing interfaces or inputs, user-only decisions.
-- MUST NOT dismiss a NO: fix it (asking the user what only they can decide) or re-ask why, until all say YES.
+- MUST give each node a fresh `eagle-vision-checker-haiku-low` with only its `focus.py briefs <dir>` entry inline: `plan`, then the node. With Workflow, MUST run `autonomy-check.js` as `script` with that JSON as `args`; else one Agent call per node.
+- MUST NOT dismiss a NO: fix it (asking the user what only they can decide) or re-run the changed nodes, until none say NO.
 
 ## Build
 
