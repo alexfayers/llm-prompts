@@ -1,11 +1,14 @@
 # When to Mock
 
-Mock at **system boundaries** only:
+In unit tests, mock at **system boundaries** - any code you do not own:
 
-- External APIs (payment, email, etc.)
-- Databases (sometimes - prefer test DB)
+- External APIs and services
+- Databases
+- File system, subprocesses and git
 - Time/randomness
-- File system (sometimes)
+- Third-party libraries
+
+Integration tests use the real thing. Where a project's existing tests don't mock, match them.
 
 Don't mock:
 

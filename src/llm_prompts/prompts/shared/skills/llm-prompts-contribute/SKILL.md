@@ -44,5 +44,5 @@ cline-hooks and mcp-memory each carry their own prompts tree (rules, skills, wor
 - Follow the target repo's `.github/PULL_REQUEST_TEMPLATE.md` structure (What/Why/Testing/Checks - the Checks bullet differs per repo).
 - Right after `sync` opens a PR, MUST fill Why and Testing via `gh pr edit <url> --body-file -`, at most 3 bullets per section, fewer where possible, each one short line not restating the title - Why gives the reasoning, merging related commits into one bullet; Testing is usually 1 bullet. Commits carry no body, so sync cannot write Why. Descriptions MUST be very easy for reluctant reviewers to understand, with clear reasoning.
 - Title: conventional-commit format (`type: subject`).
-- Description: bullet points, not paragraphs. State WHAT and WHY, not HOW. No restating the diff, no process commentary.
+- Description: bullet points, not paragraphs, each one full sentence. State WHAT and WHY, not HOW. No restating the diff, no process commentary.
 - Planned with eagle-vision (you built it from a plan directory, or the user names one): once the PR is open, post the plan as a separate comment - `python3 "<base-dir>/../eagle-vision/focus.py" comment <dir> | gh pr comment <pr-url> --body-file -`. Post it once, never in the description.
