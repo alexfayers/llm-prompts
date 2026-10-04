@@ -181,10 +181,11 @@ def create_draft_pr(repo: Path, base: str, head: str, title: str, body: str) -> 
     return str(request("POST", f"/repos/{owner}/{name}/pulls", payload)["html_url"])
 
 
-def edit_pr_body(repo: Path, number: int, body: str) -> None:
-    """Replace the body of PR ``number``."""
+def edit_pr(repo: Path, number: int, title: str, body: str) -> None:
+    """Replace the title and body of PR ``number``."""
     owner, name = base_repo(repo)
-    request("PATCH", f"/repos/{owner}/{name}/pulls/{number}", {"body": body})
+    payload = {"title": title, "body": body}
+    request("PATCH", f"/repos/{owner}/{name}/pulls/{number}", payload)
 
 
 def update_pr_branch(repo: Path, number: int) -> None:

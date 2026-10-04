@@ -560,6 +560,14 @@ def rewrite_what(
     return body[: heading.end()] + rebuilt + body[end:]
 
 
+def refreshed_pr(
+    title: str, body: str, commits: Sequence[Commit], depends_on: Sequence[str] = ()
+) -> tuple[str, str] | None:
+    """Return the PR title and body ``commits`` call for, or None when both are already current."""
+    refreshed = pr_title(commits), rewrite_what(body, commits, depends_on)
+    return None if refreshed == (title, body) else refreshed
+
+
 def open_draft_pr(repo: Path, base: str, head: str, title: str, body: str) -> str:
     """Open a draft PR against ``base`` from ``head`` and return its URL."""
     branch = base.split("/", 1)[1]
@@ -643,18 +651,20 @@ def _first_stderr_line(error: subprocess.CalledProcessError) -> str:
     return (error.stderr or "").strip().split("\n")[0]
 
 
-def _pr_body_text(repo: Path, number: int) -> str:
-    """Return the body of PR ``number``."""
-    view = _pr_view(repo, number, "body")
-    return view["body"] or ""
+def _pr_title_body(repo: Path, number: int) -> tuple[str, str]:
+    """Return the title and body of PR ``number``."""
+    view = _pr_view(repo, number, "title,body")
+    return view["title"] or "", view["body"] or ""
 
 
-def edit_pr_body(repo: Path, number: int, body: str) -> None:
-    """Replace the body of PR ``number``."""
+def edit_pr(repo: Path, number: int, title: str, body: str) -> None:
+    """Replace the title and body of PR ``number``."""
     if _gh_installed():
-        _run_with_retries(["gh", "pr", "edit", str(number), "--body", body], repo)
+        _run_with_retries(
+            ["gh", "pr", "edit", str(number), "--title", title, "--body", body], repo
+        )
     else:
-        _with_retries(partial(github_api.edit_pr_body, repo, number, body))
+        _with_retries(partial(github_api.edit_pr, repo, number, title, body))
 
 
 def update_pr_branch(repo: Path, number: int) -> None:
@@ -668,27 +678,28 @@ def update_pr_branch(repo: Path, number: int) -> None:
 def _refresh_pr_whats(
     repo: Path, targets: dict[str, tuple[Pr, tuple[Commit, ...], tuple[str, ...]]]
 ) -> bool:
-    """Rebuild the What section of each target's open PR, print what changed and return whether any failed."""
+    """Rebuild the title and What section of each target's open PR, print what changed and return whether any failed."""
 
     def refresh_one(
         item: tuple[str, tuple[Pr, tuple[Commit, ...], tuple[str, ...]]],
     ) -> str | None:
         branch, (pr, commits, depends_on) = item
         try:
-            body = _pr_body_text(repo, pr.number)
-            rewritten = rewrite_what(body, commits, depends_on)
-            if rewritten == body:
+            refreshed = refreshed_pr(
+                *_pr_title_body(repo, pr.number), commits, depends_on
+            )
+            if refreshed is None:
                 return None
-            edit_pr_body(repo, pr.number, rewritten)
+            edit_pr(repo, pr.number, *refreshed)
         except subprocess.CalledProcessError as error:
-            return f"{branch}: PR What not updated ({_first_stderr_line(error)})"
-        return f"{branch}: updated PR What {pr.url}"
+            return f"{branch}: PR title/What not updated ({_first_stderr_line(error)})"
+        return f"{branch}: updated PR title/What {pr.url}"
 
     with ThreadPoolExecutor() as executor:
         lines = [line for line in executor.map(refresh_one, targets.items()) if line]
     if lines:
         print("\n".join(lines))
-    return any("PR What not updated" in line for line in lines)
+    return any("PR title/What not updated" in line for line in lines)
 
 
 def _open_draft_prs(
@@ -1362,9 +1373,11 @@ def run_sync(
             else:
                 print(f"git push --force-with-lease <remote> {plan.branch}")
             if batch is not None and batch.pr is not None:
+                plan_commits = _plan_commits(plan)
                 print(
-                    f"gh pr edit {batch.pr.number} --body "
-                    f"<What rebuilt from {len(_plan_commits(plan))} commits>"
+                    f"gh pr edit {batch.pr.number} --title "
+                    f"{shlex.quote(pr_title(plan_commits))} "
+                    f"--body <What rebuilt from {len(plan_commits)} commits>"
                 )
             if plan.branch in dry_run_targets:
                 print(_pr_command(base, plan.branch, dry_run_targets.pop(plan.branch)))

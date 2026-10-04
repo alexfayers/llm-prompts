@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 from . import github_api
 from .setup import (
     GIT_TIMEOUT,
+    _commit_subjects_between,
     _extract_git_url,
     _format_update_message,
     _remote_commit_subjects,
@@ -236,15 +237,7 @@ def _local_source_messages(name: str, source: str) -> list[str]:
     if count == 0:
         return []
 
-    log = subprocess.run(
-        ["git", "-C", str(repo), "log", "--pretty=format:%s", "HEAD..@{u}"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=GIT_TIMEOUT,
-    )
-    subjects = log.stdout.splitlines() if log.returncode == 0 else None
-    return _format_update_message(name, subjects)
+    return _format_update_message(name, _commit_subjects_between(repo, "HEAD", "@{u}"))
 
 
 def _prompts_prefix(repo: Path) -> str | None:

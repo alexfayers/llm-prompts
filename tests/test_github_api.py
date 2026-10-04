@@ -261,14 +261,14 @@ class TestRepositoryCalls:
             "draft": True,
         }
 
-    def test_edit_pr_body_patches_the_body(
+    def test_edit_pr_patches_the_title_and_body(
         self, fake_github: FakeGitHub, octo_repo: Path
     ) -> None:
         fake_github.on("PATCH", "/repos/octo/widgets/pulls/4", {})
 
-        github_api.edit_pr_body(octo_repo, 4, "new")
+        github_api.edit_pr(octo_repo, 4, "t", "new")
 
-        assert fake_github.requests[0][2] == {"body": "new"}
+        assert fake_github.requests[0][2] == {"title": "t", "body": "new"}
 
     def test_update_pr_branch_rebases_by_node_id(
         self, fake_github: FakeGitHub, octo_repo: Path

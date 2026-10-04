@@ -229,7 +229,7 @@ class TestCommitSubjectsBetween:
         repo = tmp_path / "repo"
         fake_subprocess.on(
             "log",
-            "--pretty=format:%s",
+            "--pretty=format:%s%n%b%x1e",
             repo=repo,
             stdout=fake_subprocess.log_lines("third", "second"),
         )
@@ -238,11 +238,82 @@ class TestCommitSubjectsBetween:
             "second",
         ]
 
+    def test_keeps_non_blank_body_lines_with_their_subject(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        repo = tmp_path / "repo"
+        fake_subprocess.on(
+            "log",
+            "--pretty=format:%s%n%b%x1e",
+            repo=repo,
+            stdout=fake_subprocess.log_lines(
+                "feat: batch\n\n* feat: a\n\n* feat: b\n\nmore text\n", "fix: c"
+            ),
+        )
+        assert setup._commit_subjects_between(repo, "base", "tip") == [
+            "feat: batch\n* feat: a\n* feat: b\nmore text",
+            "fix: c",
+        ]
+
+    def test_drops_merge_commits_listed_in_a_squash_body(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        repo = tmp_path / "repo"
+        fake_subprocess.on(
+            "log",
+            "--pretty=format:%s%n%b%x1e",
+            repo=repo,
+            stdout=fake_subprocess.log_lines(
+                "feat: batch\n\n* feat: a\n\n* Merge branch 'main' into feat/a\n"
+            ),
+        )
+        assert setup._commit_subjects_between(repo, "base", "tip") == [
+            "feat: batch\n* feat: a"
+        ]
+
+    def test_squash_with_listed_commits_is_headed_by_its_pr_number(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        repo = tmp_path / "repo"
+        fake_subprocess.on(
+            "log",
+            "--pretty=format:%s%n%b%x1e",
+            repo=repo,
+            stdout=fake_subprocess.log_lines(
+                "feat: add foo (+1 more) (#101)\n\n* feat: add foo\n\n* feat: add bar\n"
+            ),
+        )
+        assert setup._commit_subjects_between(repo, "base", "tip") == [
+            "PR #101\n* feat: add foo\n* feat: add bar"
+        ]
+
+    def test_more_suffix_is_stripped_from_a_subject(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        repo = tmp_path / "repo"
+        fake_subprocess.on(
+            "log",
+            "--pretty=format:%s%n%b%x1e",
+            repo=repo,
+            stdout=fake_subprocess.log_lines("feat: add foo (+2 more) (#101)"),
+        )
+        assert setup._commit_subjects_between(repo, "base", "tip") == [
+            "feat: add foo (#101)"
+        ]
+
+    def test_skips_merge_commits(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        repo = tmp_path / "repo"
+        fake_subprocess.on("log", "--pretty=format:%s%n%b%x1e", repo=repo)
+        setup._commit_subjects_between(repo, "base", "tip")
+        assert "--no-merges" in fake_subprocess.matching("log")[0]
+
     def test_returns_none_on_failure(
         self, fake_subprocess: FakeSubprocess, tmp_path: Path
     ) -> None:
         repo = tmp_path / "repo"
-        fake_subprocess.on("log", "--pretty=format:%s", repo=repo, returncode=1)
+        fake_subprocess.on("log", "--pretty=format:%s%n%b%x1e", repo=repo, returncode=1)
         assert setup._commit_subjects_between(repo, "nope1", "nope2") is None
 
 
@@ -265,6 +336,27 @@ class TestFormatUpdateMessage:
         assert "- commit 19" in body
         assert "- commit 20" not in body
         assert "... and 5 more" in body
+
+    def test_indents_body_lines_under_their_subject(self) -> None:
+        result = setup._format_update_message(
+            "core", ["feat: batch\n* feat: a\n* feat: b", "fix: c"]
+        )
+        assert result[0] == (
+            "[core] update available:\n"
+            "- feat: batch\n"
+            "  * feat: a\n"
+            "  * feat: b\n"
+            "- fix: c\n"
+            "Summarize these changes for the user in plain language, and flag "
+            "anything that looks like a breaking change."
+        )
+
+    def test_cap_counts_commits_not_body_lines(self) -> None:
+        messages = [f"commit {i}\nbody {i}" for i in range(21)]
+        body = setup._format_update_message("core", messages, cap=20)[0]
+        assert "  body 19" in body
+        assert "commit 20" not in body
+        assert "... and 1 more" in body
 
     def test_falls_back_to_sha_pair_when_subjects_missing(self) -> None:
         assert setup._format_update_message(

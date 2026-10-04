@@ -476,7 +476,7 @@ class TestPluginSourceMessages:
         fake_subprocess.on("ls-remote", stdout="bbbbbbb\tHEAD\n")
         fake_subprocess.on(
             "log",
-            "--pretty=format:%s",
+            "--pretty=format:%s%n%b%x1e",
             stdout=fake_subprocess.log_lines("second commit subject"),
         )
 
@@ -505,7 +505,7 @@ class TestPluginSourceMessages:
     def test_no_commits_touching_installed_files_reports_nothing(
         self, outdated_plugin: dict[str, str], fake_subprocess: FakeSubprocess
     ) -> None:
-        fake_subprocess.on("log", "--pretty=format:%s", stdout="")
+        fake_subprocess.on("log", "--pretty=format:%s%n%b%x1e", stdout="")
 
         assert plugins.plugin_source_messages(outdated_plugin) == []
 

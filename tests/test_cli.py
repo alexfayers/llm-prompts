@@ -212,14 +212,15 @@ class TestLocalSourceMessages:
         fake_subprocess.on("rev-list", "--count", stdout="3\n")
         fake_subprocess.on(
             "log",
-            "--pretty=format:%s",
-            stdout=fake_subprocess.log_lines("Add A", "Fix B", "Tweak C"),
+            "--pretty=format:%s%n%b%x1e",
+            stdout=fake_subprocess.log_lines("Add A\n\n* Add A2", "Fix B", "Tweak C"),
         )
         result = _local_source_messages("core", str(tmp_path))
         assert result == [
             (
                 "[core] update available:\n"
                 "- Add A\n"
+                "  * Add A2\n"
                 "- Fix B\n"
                 "- Tweak C\n"
                 "Summarize these changes for the user in plain language, and flag "
@@ -249,7 +250,7 @@ class TestLocalSourceMessages:
     ) -> None:
         (tmp_path / ".git").mkdir()
         fake_subprocess.on("rev-list", "--count", stdout="2\n")
-        fake_subprocess.on("log", "--pretty=format:%s", returncode=128)
+        fake_subprocess.on("log", "--pretty=format:%s%n%b%x1e", returncode=128)
         result = _local_source_messages("core", str(tmp_path))
         assert result == ["[core] update available"]
 
