@@ -567,6 +567,7 @@ class TestClaudeCodeAgentsInstallLayout:
             "surveyor-sonnet-medium.md",
             "surveyor-sonnet-high.md",
             "eagle-vision-sentinel-sonnet-medium.md",
+            "eagle-vision-checker-haiku-low.md",
         }
         for name in expected:
             path = agents_dir / name
@@ -578,6 +579,7 @@ class TestClaudeCodeAgentsInstallLayout:
         assert not (agents_dir / "coordinator.md").exists()
         assert not (agents_dir / "surveyor.md").exists()
         assert not (agents_dir / "eagle-vision-sentinel.md").exists()
+        assert not (agents_dir / "eagle-vision-checker.md").exists()
 
         _, frontmatter = parse_frontmatter(
             (agents_dir / "worker-sonnet-low.md").read_text(encoding="utf-8")
@@ -602,6 +604,17 @@ class TestClaudeCodeAgentsInstallLayout:
         assert "Write" in disallowed
         assert "Edit" in disallowed
         assert "NotebookEdit" in disallowed
+
+    def test_checker_variant_omits_claude_md_and_limits_tools(
+        self, claude_home: Path
+    ) -> None:
+        _, frontmatter = parse_frontmatter(
+            (
+                claude_home / ".claude" / "agents" / "eagle-vision-checker-haiku-low.md"
+            ).read_text(encoding="utf-8")
+        )
+        assert frontmatter["omitClaudeMd"] == "true"
+        assert frontmatter["tools"] == "StructuredOutput, Read"
 
     def test_reasoner_variants_have_valid_yaml_frontmatter(
         self, claude_home: Path

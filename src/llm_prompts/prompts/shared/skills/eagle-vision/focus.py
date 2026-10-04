@@ -1,6 +1,7 @@
 """Manage an eagle-vision plan directory."""
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -677,13 +678,37 @@ def node_section(base: Path, node_id: str, name: str) -> str:
     return parse_sections(body).get(name, "")
 
 
+def node_brief(base: Path, nodes: Nodes, node_id: str) -> str:
+    """A node's file followed by each dependency's Out section."""
+    return find_node_path(base, node_id).read_text() + "".join(
+        f"\n## {dep_id}\n\n{node_section(base, dep_id, 'Out')}\n"
+        for dep_id in nodes[node_id]["depends"]
+    )
+
+
 def cmd_show(base: Path, node_id: str) -> None:
     """Print a node brief."""
     nodes = require_known_node(base, node_id)
     print(render_plan(base.name, plan_without_nodes(base)), end="")
-    print(find_node_path(base, node_id).read_text(), end="")
-    for dep_id in nodes[node_id]["depends"]:
-        print(f"## {dep_id}\n\n{node_section(base, dep_id, 'Out')}")
+    print(node_brief(base, nodes, node_id), end="")
+
+
+def cmd_briefs(base: Path) -> None:
+    """Print every node's brief as JSON, without build status."""
+    sections = plan_without_nodes(base)
+    sections.pop("Graph", None)
+    nodes = load_nodes(base)
+    print(
+        json.dumps(
+            {
+                "plan": render_plan(base.name, sections),
+                "nodes": {
+                    node_id: node_brief(base, nodes, node_id)
+                    for node_id in sorted(nodes)
+                },
+            }
+        )
+    )
 
 
 def cmd_ready(base: Path, node_id: str) -> None:
@@ -802,6 +827,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_cmd(
         "show", "Print all a builder needs: plan, node, dependencies' Out"
     ).add_argument("id")
+    add_cmd("briefs", "Print every node's brief as JSON, without build status")
     add_cmd("ready", "Check whether a node is ready").add_argument("id")
     add_cmd("waves", "Print nodes grouped by wave")
     add_cmd(
@@ -831,6 +857,7 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], None]] = {
     "set-test": lambda a: cmd_set_test(a.dir, a.id, a.test_command),
     "check": lambda a: cmd_check(a.dir, a.id, a.base),
     "show": lambda a: cmd_show(a.dir, a.id),
+    "briefs": lambda a: cmd_briefs(a.dir),
     "ready": lambda a: cmd_ready(a.dir, a.id),
     "waves": lambda a: cmd_waves(a.dir),
     "comment": lambda a: cmd_comment(a.dir),

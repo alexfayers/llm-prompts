@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -573,6 +574,43 @@ class TestShow:
         assert "- pytest" in out
 
 
+class TestBriefs:
+    """Tests for the briefs command's checker payload."""
+
+    def test_plan_omits_nodes_and_graph(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        mod.cmd_add(base, "base", {})
+        mod.cmd_add(base, "widget", {"depends": ["base"]})
+        capsys.readouterr()
+        mod.cmd_briefs(base)
+        plan = json.loads(capsys.readouterr().out)["plan"]
+        assert "## Goal" in plan
+        assert "## Nodes" not in plan
+        assert "## Graph" not in plan
+
+    def test_node_brief_has_node_file_and_dependency_out(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        mod.cmd_add(base, "base", {})
+        mod.cmd_add(base, "widget", {"depends": ["base"]})
+        base_path = mod.node_path(base, "base", "todo")
+        base_path.write_text(
+            base_path.read_text().replace("## Out\n", "## Out\n\n- make_base()\n")
+        )
+        capsys.readouterr()
+        mod.cmd_briefs(base)
+        nodes = json.loads(capsys.readouterr().out)["nodes"]
+        widget_file = mod.node_path(base, "widget", "todo").read_text()
+        assert nodes["widget"].startswith(widget_file)
+        assert "## base\n\n- make_base()" in nodes["widget"]
+        assert set(nodes) == {"base", "widget"}
+
+
 class TestComment:
     """Tests for the comment command's PR comment output."""
 
@@ -771,3 +809,18 @@ class TestCli:
             mod.main()
         assert exc_info.value.code == 1
         assert "unknown node 'nope'" in capsys.readouterr().err
+
+    def test_briefs_via_cli(
+        self,
+        mod: ModuleType,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        mod.cmd_add(base, "widget", {})
+        capsys.readouterr()
+        monkeypatch.setattr(sys, "argv", ["focus", "briefs", str(base)])
+        mod.main()
+        assert list(json.loads(capsys.readouterr().out)["nodes"]) == ["widget"]
