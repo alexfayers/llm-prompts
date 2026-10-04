@@ -5,7 +5,7 @@ import os
 import re
 import shutil
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
@@ -35,6 +35,7 @@ _GATING_FRONTMATTER_KEYS = {
     "requires_command",
     "exclude_targets",
     "generate_variants",
+    "rules",
 }
 
 _COLORS: dict[LogLevel, Color] = {
@@ -1176,6 +1177,19 @@ def _apply_variant_frontmatter(
     return "---\n" + "\n".join(lines) + "\n---\n" + body
 
 
+def _frontmatter_tokens(frontmatter: dict[str, str], key: str) -> list[str]:
+    """Split a flat, comma-separated frontmatter value into stripped tokens.
+
+    Args:
+        frontmatter: Parsed frontmatter key/value pairs.
+        key: Frontmatter key to read.
+
+    Returns:
+        Non-empty tokens, or an empty list when the key is absent.
+    """
+    return [t.strip() for t in frontmatter.get(key, "").split(",") if t.strip()]
+
+
 def _expand_agent_variants(src_path: Path) -> list[tuple[str, str]]:
     """Expand a ``generate_variants`` template source into generated variant files.
 
@@ -1191,11 +1205,7 @@ def _expand_agent_variants(src_path: Path) -> list[tuple[str, str]]:
     """
     content = _read_text(src_path)
     _, frontmatter = parse_frontmatter(content)
-    tokens = [
-        t.strip()
-        for t in frontmatter.get("generate_variants", "").split(",")
-        if t.strip()
-    ]
+    tokens = _frontmatter_tokens(frontmatter, "generate_variants")
     stripped = strip_gating_keys(content, _GATING_FRONTMATTER_KEYS)
     stem = src_path.stem
     catalogue = _claude_model_catalogue()
@@ -1225,24 +1235,129 @@ def _expand_agent_variants(src_path: Path) -> list[tuple[str, str]]:
     return generated
 
 
+@dataclass(frozen=True)
+class _RuleSources:
+    """Claude Code rule sources an agent can pull in through ``rules``."""
+
+    sources: dict[str, tuple[Path, bool]]
+    vars_path: Path
+
+    @classmethod
+    def collect(
+        cls,
+        agent: _Agent,
+        overlay_dirs: Sequence[Path],
+        skip_set: frozenset[Path] = frozenset(),
+    ) -> "_RuleSources":
+        """Collect rule sources by installed filename stem, in install priority order.
+
+        Args:
+            agent: The claude-code agent configuration.
+            overlay_dirs: Overlay prompts directories in priority order.
+            skip_set: Resolved source paths left untouched by the install; excluded.
+
+        Returns:
+            Rule sources mapping each stem to ``(source_path, is_agent_specific)``.
+        """
+        collected = _collect_content_srcs(
+            agent,
+            "rules",
+            agent.root_dir / "shared" / "rules",
+            [d / "shared" / "rules" for d in overlay_dirs],
+            [d / agent.name / "rules" for d in overlay_dirs],
+        )
+        return cls(
+            {
+                Path(name).stem: (src, specific)
+                for name, src, specific in collected
+                if src.resolve() not in skip_set
+            },
+            agent.vars_path(),
+        )
+
+    def body(self, name: str) -> str | None:
+        """Render a rule as installed, without its frontmatter.
+
+        Args:
+            name: Rule filename stem.
+
+        Returns:
+            The rule body, or ``None`` when rendering fails.
+        """
+        src, agent_specific = self.sources[name]
+        try:
+            content = (
+                _linked_content(src)
+                if agent_specific
+                else _rendered_content(src, self.vars_path, "claude-code")
+            )
+        except Exception as e:
+            log("error", f"Failed to render included rule '{name}': {e}")
+            return None
+        for var in find_unreplaced_variables(content):
+            log(
+                "warn", f"Unreplaced variable '{{{{{var}}}}}' in included rule '{name}'"
+            )
+        split = split_frontmatter(content)
+        return (split[1] if split else content).strip("\n")
+
+
+def _append_included_rules(
+    content: str, src: Path, rules: "_RuleSources | None"
+) -> str:
+    """Append the rules named by an agent source's ``rules`` key.
+
+    A source with a ``rules`` key also gets ``omitClaudeMd: true`` unless it
+    already sets ``omitClaudeMd``.
+
+    Args:
+        content: The agent content to install.
+        src: Agent source path, whose frontmatter names the rules.
+        rules: Available rule sources, or ``None`` when none are collected.
+
+    Returns:
+        ``content`` with ``omitClaudeMd: true`` set unless already present,
+        followed by each included rule body.
+    """
+    _, frontmatter = parse_frontmatter(_read_text(src))
+    if "rules" not in frontmatter:
+        return content
+    if "omitClaudeMd" not in parse_frontmatter(content)[1]:
+        content = content.replace("---\n", "---\nomitClaudeMd: true\n", 1)
+    if rules is None:
+        return content
+    bodies: list[str] = []
+    for token in _frontmatter_tokens(frontmatter, "rules"):
+        if token not in rules.sources:
+            log("warn", f"Skipping unknown included rule '{token}' in {src.name}")
+        elif (body := rules.body(token)) is not None:
+            bodies.append(body)
+    if not bodies:
+        return content
+    return content.rstrip("\n") + "\n\n" + "\n\n".join(bodies) + "\n"
+
+
 def _install_agents(
     candidate_dirs: list[Path],
     agents_dir: Path,
     skip_set: frozenset[Path] = frozenset(),
     previous_manifest: "dict[str, AgentManifest] | None" = None,
+    rules: "_RuleSources | None" = None,
 ) -> set[str]:
-    """Install Claude Code subagent definitions as symlinks or generated variants.
+    """Install Claude Code subagent definitions as symlinks or generated files.
 
     Overlay dirs override base on filename collision (first wins). A source
     whose frontmatter has ``generate_variants`` is expanded into per-model/
-    effort files written to ``agents_dir``; other sources are symlinked as
-    before.
+    effort files written to ``agents_dir``. A source with ``rules`` is
+    written as a regular file with the named rule bodies appended; other
+    sources are symlinked.
 
     Args:
         candidate_dirs: Source agent directories in priority order (first wins).
         agents_dir: Destination agents directory (e.g. ~/.claude/agents).
         skip_set: Resolved source paths to leave untouched.
         previous_manifest: The manifest from the previous installation.
+        rules: Rule sources that ``rules`` keys resolve against.
 
     Returns:
         Set of installed agent filenames.
@@ -1281,10 +1396,20 @@ def _install_agents(
             ):
                 managed.add(name)
             continue
-        if has_variants:
-            for gen_name, gen_content in _expand_agent_variants(src):
+        if has_variants or "rules" in frontmatter:
+            files = (
+                _expand_agent_variants(src)
+                if has_variants
+                else [(name, _linked_content(src))]
+            )
+            for gen_name, gen_content in files:
+                dest = agents_dir / gen_name
+                if dest.is_symlink():
+                    dest.unlink()
                 _write_if_changed(
-                    agents_dir / gen_name, gen_content, f"agent {gen_name}"
+                    dest,
+                    _append_included_rules(gen_content, src, rules),
+                    f"agent {gen_name}",
                 )
                 managed.add(gen_name)
         else:
@@ -1902,6 +2027,11 @@ def main(
             agents_dest,
             skip_by_agent.get("claude-code", frozenset()),
             previous_manifest,
+            _RuleSources.collect(
+                all_agents["claude-code"],
+                overlay_dirs,
+                skip_by_agent.get("claude-code", frozenset()),
+            ),
         )
         _check_unmanaged(agents_dest, managed_agents, "claude-code agents")
         installed_files["claude-code"].extend(

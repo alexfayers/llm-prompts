@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
+from llm_prompts.collection_size import _agent_bytes
 from llm_prompts.render_template import resolve_frontmatter, split_frontmatter
 from llm_prompts.size_guard import (
     ALLOWANCES_FILENAME,
@@ -1041,3 +1042,19 @@ class TestNoOwnedTemplateUsesRepoRoot:
             if "REPO_ROOT" in path.read_text(encoding="utf-8")
         ]
         assert offenders == []
+
+
+class TestAgentBytesCountsIncludedRules:
+    def test_included_rule_bytes_are_counted(self, tmp_path: Path) -> None:
+        _make_prompts_tree(tmp_path)
+        before = _agent_bytes(tmp_path, [], "claude-code")
+        _write(tmp_path / "shared" / "rules" / "big.md", "x" * 1000 + "\n")
+        _write(
+            tmp_path / "claude-code" / "agents" / "includer.md",
+            "---\nname: includer\ndescription: Includes a rule.\n"
+            "rules: big\n---\n\nBody.\n",
+        )
+
+        after = _agent_bytes(tmp_path, [], "claude-code")
+
+        assert after - before >= 1000
