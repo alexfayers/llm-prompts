@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { report } = require('./post-size-report.js');
+const { report, reportForRun } = require('./post-size-report.js');
 
 const MARKER = '<!-- prompt-size-report -->';
 
@@ -122,4 +122,35 @@ test('counts the marker toward the comment size cap', async () => {
   await report(args);
   assert.ok(calls.create[0].body.length <= 60000);
   assert.ok(calls.create[0].body.includes('Full table in the job summary.'));
+});
+
+function runSetup(prNumber, { prHeadSha = 'abc', runHeadSha = 'abc' } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'size-artifact-'));
+  fs.writeFileSync(path.join(dir, 'size-report.md'), 'changes\n');
+  fs.writeFileSync(path.join(dir, 'pr-number'), `${prNumber}\n`);
+  const { args, calls } = setup('');
+  args.github.rest.pulls = { get: async () => ({ data: { head: { sha: prHeadSha } } }) };
+  const context = { repo: args.context.repo, payload: { workflow_run: { head_sha: runHeadSha } } };
+  return { args: { github: args.github, context, core: args.core, dir }, calls };
+}
+
+test('comments on the PR named in the artifact when its head matches the run', async () => {
+  const { args, calls } = runSetup(7);
+  await reportForRun(args);
+  assert.equal(calls.create[0].issue_number, 7);
+  assert.ok(calls.create[0].body.includes('changes'));
+});
+
+test('skips the comment when the artifact PR number is not a number', async () => {
+  const { args, calls } = runSetup('7; rm');
+  await reportForRun(args);
+  assert.equal(calls.create.length, 0);
+  assert.equal(calls.warnings.length, 1);
+});
+
+test('skips the comment when the PR head does not match the run', async () => {
+  const { args, calls } = runSetup(7, { prHeadSha: 'other' });
+  await reportForRun(args);
+  assert.equal(calls.create.length, 0);
+  assert.equal(calls.warnings.length, 1);
 });
