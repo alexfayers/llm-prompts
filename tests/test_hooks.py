@@ -16,7 +16,6 @@ from llm_prompts.hooks import (
     _ANSI_RESET,
     _BANNER_DIVIDER,
     _BANNER_TITLE,
-    _DEBOUNCE_SECONDS,
     _UPDATE_CHECK_INTERVAL,
     AutoReinstallPlugin,
     _format_user_text,
@@ -57,12 +56,9 @@ def manifest_data(tmp_path: Path) -> dict[str, Any]:
 
 
 @pytest.fixture
-def plugin(
-    manifest_data: dict[str, Any], tmp_path: Path
-) -> Iterator[AutoReinstallPlugin]:
+def plugin(manifest_data: dict[str, Any]) -> Iterator[AutoReinstallPlugin]:
     """Create a plugin whose manifest reads return the fixture data."""
     p = AutoReinstallPlugin()
-    p._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
     with patch("llm_prompts.hooks.read_manifest", return_value=manifest_data):
         yield p
 
@@ -96,7 +92,7 @@ class TestReinstallDebouncer:
         assert not debouncer.should_run()
 
     def test_should_run_after_debounce_period(self, tmp_path: Path) -> None:
-        debouncer = _ReinstallDebouncer(tmp_path / "stamp")
+        debouncer = _ReinstallDebouncer(tmp_path / "stamp", interval_seconds=5.0)
         (tmp_path / "stamp").write_text(str(time.time() - 10.0))
         assert debouncer.should_run()
 
@@ -160,13 +156,11 @@ class TestAutoReinstallPlugin:
         self,
         mock_manifest: MagicMock,
         manifest_data: dict[str, Any],
-        tmp_path: Path,
         fake_subprocess: FakeSubprocess,
     ) -> None:
         mock_manifest.return_value = manifest_data
         fake_subprocess.on(*_UPDATE_COMMAND)
         plugin = AutoReinstallPlugin()
-        plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         result = plugin.on_hook(
             "PostToolUse",
             tool_name="write_to_file",
@@ -181,13 +175,11 @@ class TestAutoReinstallPlugin:
         self,
         mock_manifest: MagicMock,
         manifest_data: dict[str, Any],
-        tmp_path: Path,
         fake_subprocess: FakeSubprocess,
     ) -> None:
         mock_manifest.return_value = manifest_data
         fake_subprocess.on(*_UPDATE_COMMAND)
         plugin = AutoReinstallPlugin()
-        plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         result = plugin.on_hook(
             "PostToolUse",
             tool_name="Edit",
@@ -202,13 +194,11 @@ class TestAutoReinstallPlugin:
         self,
         mock_manifest: MagicMock,
         manifest_data: dict[str, Any],
-        tmp_path: Path,
         fake_subprocess: FakeSubprocess,
     ) -> None:
         mock_manifest.return_value = manifest_data
         fake_subprocess.on(*_UPDATE_COMMAND)
         plugin = AutoReinstallPlugin()
-        plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         result = plugin.on_hook(
             "PostToolUse",
             tool_name="Write",
@@ -223,13 +213,11 @@ class TestAutoReinstallPlugin:
         self,
         mock_manifest: MagicMock,
         manifest_data: dict[str, Any],
-        tmp_path: Path,
         fake_subprocess: FakeSubprocess,
     ) -> None:
         mock_manifest.return_value = manifest_data
         fake_subprocess.on(*_UPDATE_COMMAND, returncode=1, stderr="")
         plugin = AutoReinstallPlugin()
-        plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         result = plugin.on_hook(
             "PostToolUse",
             tool_name="write_to_file",
@@ -243,7 +231,6 @@ class TestAutoReinstallPlugin:
         self,
         mock_manifest: MagicMock,
         manifest_data: dict[str, Any],
-        tmp_path: Path,
         fake_subprocess: FakeSubprocess,
     ) -> None:
         mock_manifest.return_value = manifest_data
@@ -253,7 +240,6 @@ class TestAutoReinstallPlugin:
             stderr="size guard: rule.md exceeds final\n",
         )
         plugin = AutoReinstallPlugin()
-        plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         result = plugin.on_hook(
             "PostToolUse",
             tool_name="write_to_file",
@@ -268,89 +254,21 @@ class TestAutoReinstallPlugin:
         ]
 
     @patch("llm_prompts.hooks.read_manifest")
-    def test_debounces_rapid_writes(
+    def test_edit_updates_only_the_edited_file(
         self,
         mock_manifest: MagicMock,
         manifest_data: dict[str, Any],
-        tmp_path: Path,
         fake_subprocess: FakeSubprocess,
     ) -> None:
         mock_manifest.return_value = manifest_data
         fake_subprocess.on(*_UPDATE_COMMAND)
-        plugin = AutoReinstallPlugin()
-        plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         path = manifest_data["kiro"]["files"][0]
-
-        result1 = plugin.on_hook(
+        AutoReinstallPlugin().on_hook(
             "PostToolUse", tool_name="write_to_file", parameters={"path": path}
         )
-        assert result1 is not None
-
-        result2 = plugin.on_hook(
-            "PostToolUse", tool_name="write_to_file", parameters={"path": path}
-        )
-        assert result2 is None
-
-    @patch("llm_prompts.hooks.read_manifest")
-    def test_flushes_debounced_write_on_later_hook(
-        self,
-        mock_manifest: MagicMock,
-        manifest_data: dict[str, Any],
-        tmp_path: Path,
-        fake_subprocess: FakeSubprocess,
-    ) -> None:
-        mock_manifest.return_value = manifest_data
-        fake_subprocess.on(*_UPDATE_COMMAND)
-        plugin = AutoReinstallPlugin()
-        plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
-        path = manifest_data["kiro"]["files"][0]
-
-        plugin.on_hook(
-            "PostToolUse", tool_name="write_to_file", parameters={"path": path}
-        )
-        assert (
-            plugin.on_hook(
-                "PostToolUse", tool_name="write_to_file", parameters={"path": path}
-            )
-            is None
-        )
-        (tmp_path / "stamp").write_text(str(time.time() - _DEBOUNCE_SECONDS - 1))
-
-        result = plugin.on_hook(
-            "PostToolUse", tool_name="read_file", parameters={"path": path}
-        )
-        assert result is not None
-        assert any("Auto-reinstalled" in note for note in result.notes)
-        fake_subprocess.assert_sequence(_UPDATE_VERB, _UPDATE_VERB)
-
-    @patch("llm_prompts.hooks.read_manifest")
-    def test_holds_pending_flush_until_interval_elapses(
-        self,
-        mock_manifest: MagicMock,
-        manifest_data: dict[str, Any],
-        tmp_path: Path,
-        fake_subprocess: FakeSubprocess,
-    ) -> None:
-        mock_manifest.return_value = manifest_data
-        fake_subprocess.on(*_UPDATE_COMMAND)
-        plugin = AutoReinstallPlugin()
-        plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
-        path = manifest_data["kiro"]["files"][0]
-
-        plugin.on_hook(
-            "PostToolUse", tool_name="write_to_file", parameters={"path": path}
-        )
-        plugin.on_hook(
-            "PostToolUse", tool_name="write_to_file", parameters={"path": path}
-        )
-
-        assert (
-            plugin.on_hook(
-                "PostToolUse", tool_name="read_file", parameters={"path": path}
-            )
-            is None
-        )
-        fake_subprocess.assert_sequence(_UPDATE_VERB)
+        assert fake_subprocess.commands == [
+            [*_UPDATE_COMMAND, "--only", str(Path(path).resolve())]
+        ]
 
     def test_picks_up_file_added_to_manifest(
         self,
@@ -611,26 +529,6 @@ class TestPromptSizeGate:
             )
         assert result is None
 
-    def test_no_stamp_or_pending_file_created(
-        self, plugin: AutoReinstallPlugin, tmp_path: Path
-    ) -> None:
-        stamp = plugin._debouncer._stamp
-        pending = plugin._debouncer._pending
-        passing = CheckResult(passed=True, artifacts=[], violations=[], report="ok")
-
-        with patch("llm_prompts.size_guard.check_source", return_value=passing):
-            plugin.on_hook(
-                "PreToolUse",
-                tool_name="Write",
-                parameters={
-                    "path": str(tmp_path / "shared" / "rules" / "x.md"),
-                    "content": "hello",
-                },
-            )
-
-        assert not stamp.exists()
-        assert not pending.exists()
-
     def test_non_md_file_is_not_gated_without_reading_or_measuring(
         self, plugin: AutoReinstallPlugin, tmp_path: Path
     ) -> None:
@@ -777,14 +675,6 @@ class TestUpdateCheckOnTaskStart:
         assert result is None
         assert not (tmp_path / "update-stamp").exists()
 
-    def test_debouncers_are_independent(self) -> None:
-        plugin = AutoReinstallPlugin()
-        assert plugin._debouncer._stamp != plugin._update_check_debouncer._stamp
-        assert plugin._debouncer._interval_seconds == _DEBOUNCE_SECONDS
-        assert (
-            plugin._update_check_debouncer._interval_seconds == _UPDATE_CHECK_INTERVAL
-        )
-
     def test_fresh_start_bypasses_debounce(self, tmp_path: Path) -> None:
         plugin = AutoReinstallPlugin()
         plugin._update_check_debouncer = _ReinstallDebouncer(
@@ -854,7 +744,6 @@ class TestSourcePathWatching:
         rule_file.write_text("# Coding guidelines")
 
         plugin = AutoReinstallPlugin()
-        plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         with patch("llm_prompts.hooks.files", return_value=tmp_path):
             result = plugin.on_hook(
                 "PostToolUse",
@@ -881,7 +770,6 @@ class TestSourcePathWatching:
         skill_file.write_text("# Example skill")
 
         plugin = AutoReinstallPlugin()
-        plugin._debouncer = _ReinstallDebouncer(tmp_path / "stamp")
         with patch("llm_prompts.hooks.files", return_value=tmp_path):
             result = plugin.on_hook(
                 "PostToolUse",

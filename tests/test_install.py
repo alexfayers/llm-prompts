@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -34,6 +35,7 @@ from llm_prompts.install import (
     _passes_requires_gate,
     _rendered_content,
     get_source_for_managed_file,
+    partial_source,
 )
 from llm_prompts.install import main as install_main
 from llm_prompts.manifest import AgentManifest
@@ -1953,3 +1955,139 @@ class TestSkipFailingPrompt:
         assert dest["claude_agent"].read_text(encoding="utf-8") == (
             f"---\ndescription: {self._SHORT_DESCRIPTION}\n---\nAgent body.\n"
         )
+
+
+class TestMainOnly:
+    """`install.main(only=...)` re-renders just the prompt built from one source."""
+
+    def _env(self, tmp_path: Path) -> dict[str, Path]:
+        home = tmp_path / "home"
+        home.mkdir()
+        overlay = tmp_path / "overlay"
+        rules = overlay / "shared" / "rules"
+        _make_rule(rules, "edited.md", "new edited")
+        _make_rule(rules, "other.md", "new other")
+        dest_rules = home / ".claude" / "rules"
+        return {
+            "home": home,
+            "overlay": overlay,
+            "manifest": tmp_path / "installed.json",
+            "edited_src": rules / "edited.md",
+            "edited_dest": dest_rules / "edited.md",
+            "other_dest": dest_rules / "other.md",
+        }
+
+    def _seed(self, env: dict[str, Path], extra_files: list[str] | None = None) -> None:
+        from llm_prompts.manifest import write_manifest
+
+        with patch("llm_prompts.manifest.MANIFEST_PATH", env["manifest"]):
+            for key in ("edited_dest", "other_dest"):
+                env[key].parent.mkdir(parents=True, exist_ok=True)
+                env[key].write_text(f"old {key}", encoding="utf-8")
+            write_manifest(
+                "claude-code",
+                [str(env["edited_dest"]), str(env["other_dest"]), *(extra_files or [])],
+            )
+
+    def _run(self, env: dict[str, Path]) -> bool:
+        with (
+            patch("llm_prompts.install.Path.home", return_value=env["home"]),
+            patch(
+                "llm_prompts.install._discover_overlay_paths",
+                return_value=[env["overlay"]],
+            ),
+            patch(
+                "llm_prompts.size_guard._discover_overlay_paths",
+                return_value=[env["overlay"]],
+            ),
+            patch("llm_prompts.manifest.MANIFEST_PATH", env["manifest"]),
+        ):
+            return install_main(["claude-code"], only=env["edited_src"])
+
+    def test_rewrites_only_the_edited_rule_and_keeps_the_manifest(
+        self, tmp_path: Path
+    ) -> None:
+        from llm_prompts.manifest import read_manifest
+
+        env = self._env(tmp_path)
+        orphan = env["other_dest"].parent / "orphan.md"
+        orphan.parent.mkdir(parents=True)
+        orphan.write_text("orphan", encoding="utf-8")
+        self._seed(env, [str(orphan)])
+
+        assert self._run(env) is False
+
+        assert env["edited_dest"].read_text(encoding="utf-8").strip() == "new edited"
+        assert env["other_dest"].read_text(encoding="utf-8") == "old other_dest"
+        assert orphan.read_text(encoding="utf-8") == "orphan"
+        with patch("llm_prompts.manifest.MANIFEST_PATH", env["manifest"]):
+            files = read_manifest()["claude-code"]["files"]
+        assert set(files) >= {
+            str(orphan),
+            str(env["edited_dest"]),
+            str(env["other_dest"]),
+        }
+
+    def test_failing_size_check_returns_true_and_leaves_dest_unchanged(
+        self, tmp_path: Path
+    ) -> None:
+        from llm_prompts.size_guard import CheckResult
+
+        env = self._env(tmp_path)
+        self._seed(env)
+        failing = CheckResult(
+            passed=False,
+            artifacts=[],
+            violations=[],
+            report="Prompt-size guard failed:\n  [rule_bytes] edited.md ...",
+        )
+
+        with patch("llm_prompts.size_guard.check_source", return_value=failing):
+            result = self._run(env)
+
+        assert result is True
+        assert env["edited_dest"].read_text(encoding="utf-8") == "old edited_dest"
+
+
+class TestPartialSource:
+    @pytest.fixture
+    def root(self, tmp_path: Path) -> Iterator[Path]:
+        root = (tmp_path / "root").resolve()
+        with (
+            patch("llm_prompts.install.Path.home", return_value=tmp_path / "home"),
+            patch("llm_prompts.cli._get_root_dir", return_value=root),
+            patch("llm_prompts.size_guard._own_root_dir", return_value=root),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.size_guard._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.manifest.MANIFEST_PATH", tmp_path / "installed.json"),
+        ):
+            yield root
+
+    def test_maps_a_skill_reference_file_to_that_skills_skill_md(
+        self, root: Path
+    ) -> None:
+        skill_dir = root / "shared" / "skills" / "my-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("skill body", encoding="utf-8")
+        reference = skill_dir / "reference.md"
+        reference.write_text("reference", encoding="utf-8")
+
+        assert partial_source(reference) == skill_dir / "SKILL.md"
+
+    def test_maps_a_manifest_destination_file_to_its_source(
+        self, root: Path, tmp_path: Path
+    ) -> None:
+        from llm_prompts.manifest import write_manifest
+
+        dest = tmp_path / "home" / ".claude" / "rules" / "foo.md"
+        write_manifest("claude-code", [str(dest)])
+        rule = _make_rule(root / "shared" / "rules", "foo.md")
+
+        assert partial_source(dest) == rule
+
+    def test_returns_none_for_vars_json(self, root: Path) -> None:
+        vars_file = root / "claude-code" / "vars.json"
+        vars_file.parent.mkdir(parents=True)
+        vars_file.write_text("{}", encoding="utf-8")
+
+        assert partial_source(vars_file) is None
