@@ -4103,7 +4103,12 @@ class TestRunSyncDraftPr:
         assert contribute_remote.fake.matching("gh", "pr", "create") == []
         assert contribute_remote.fake.matching("gh", "repo", "view") == []
 
-    def _existing_pr_batch(self, contribute_remote: ContributeRemote, body: str) -> str:
+    def _existing_pr_batch(
+        self,
+        contribute_remote: ContributeRemote,
+        body: str,
+        title: str = "feat: add foo",
+    ) -> str:
         existing = [("b1", "feat: add foo")]
         contribute_remote.main(*existing, ("m2", "feat: add bar"))
         branch = contribute_remote.managed(
@@ -4111,8 +4116,8 @@ class TestRunSyncDraftPr:
         )
         self._allow_apply(contribute_remote)
         contribute_remote.fake.on_match(
-            lambda argv: argv[:4] == ["gh", "pr", "view", "9"] and "body" in argv,
-            stdout=json.dumps({"body": body}),
+            lambda argv: argv[:4] == ["gh", "pr", "view", "9"] and "title,body" in argv,
+            stdout=json.dumps({"title": title, "body": body}),
         )
         contribute_remote.fake.on("gh", "pr", "edit")
         return branch
@@ -4135,8 +4140,9 @@ class TestRunSyncDraftPr:
         assert edit[0][edit[0].index("--body") + 1] == _EDITED_BODY.replace(
             "- feat: add foo\n", "- feat: add foo\n- feat: add bar\n", 1
         )
+        assert edit[0][edit[0].index("--title") + 1] == "feat: add foo (+1 more)"
         assert edit[0][3] == "9"
-        assert f"{branch}: updated PR What https://example.test/pr/9" in (
+        assert f"{branch}: updated PR title/What https://example.test/pr/9" in (
             capsys.readouterr().out
         )
 
@@ -4149,12 +4155,27 @@ class TestRunSyncDraftPr:
         current = _EDITED_BODY.replace(
             "- feat: add foo\n", "- feat: add foo\n- feat: add bar\n", 1
         )
-        self._existing_pr_batch(contribute_remote, current)
+        self._existing_pr_batch(contribute_remote, current, "feat: add foo (+1 more)")
 
         run_sync(tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None)
 
         assert contribute_remote.fake.matching("gh", "pr", "edit") == []
-        assert "PR What" not in capsys.readouterr().out
+        assert "PR title/What" not in capsys.readouterr().out
+
+    def test_stale_title_alone_is_refreshed(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        current = _EDITED_BODY.replace(
+            "- feat: add foo\n", "- feat: add foo\n- feat: add bar\n", 1
+        )
+        self._existing_pr_batch(contribute_remote, current)
+
+        run_sync(tmp_path, contribute_remote.login, PROMPTS_PREFIX, True, None, None)
+
+        edit = contribute_remote.fake.matching("gh", "pr", "edit")
+        assert len(edit) == 1
+        assert edit[0][edit[0].index("--title") + 1] == "feat: add foo (+1 more)"
+        assert edit[0][edit[0].index("--body") + 1] == current
 
     @pytest.mark.parametrize("failing", ["view", "edit"])
     def test_failed_body_refresh_is_reported_and_fails_the_run(
@@ -4176,7 +4197,10 @@ class TestRunSyncDraftPr:
         )
 
         assert result == 1
-        assert f"{branch}: PR What not updated (no access)" in capsys.readouterr().out
+        assert (
+            f"{branch}: PR title/What not updated (no access)"
+            in capsys.readouterr().out
+        )
 
     def test_rejected_push_leaves_the_pr_body_alone(
         self, contribute_remote: ContributeRemote, tmp_path: Path
@@ -4190,7 +4214,7 @@ class TestRunSyncDraftPr:
         assert not [
             call
             for call in contribute_remote.fake.commands
-            if call[:3] == ["gh", "pr", "view"] and "body" in call
+            if call[:3] == ["gh", "pr", "view"] and "title,body" in call
         ]
 
     def test_dry_run_prints_the_pr_edit_command_without_calling_gh(
@@ -4203,9 +4227,10 @@ class TestRunSyncDraftPr:
 
         run_sync(tmp_path, contribute_remote.login, PROMPTS_PREFIX, False, None, None)
 
-        assert "gh pr edit 9 --body <What rebuilt from 2 commits>" in (
-            capsys.readouterr().out
-        )
+        assert (
+            "gh pr edit 9 --title 'feat: add foo (+1 more)' "
+            "--body <What rebuilt from 2 commits>"
+        ) in (capsys.readouterr().out)
         assert contribute_remote.fake.matching("gh", "pr", "edit") == []
 
     def test_dependency_urls_are_written_into_a_rewritten_body(
@@ -4419,14 +4444,14 @@ class TestWithoutGh:
             "draft": True,
         }
 
-    def test_edit_pr_body_patches(
+    def test_edit_pr_patches(
         self, fake_github: FakeGitHub, repo: None, tmp_path: Path
     ) -> None:
         fake_github.on("PATCH", "/repos/octo/widgets/pulls/4", {})
 
-        contribute.edit_pr_body(tmp_path, 4, "new")
+        contribute.edit_pr(tmp_path, 4, "t", "new")
 
-        assert fake_github.requests[-1][2] == {"body": "new"}
+        assert fake_github.requests[-1][2] == {"title": "t", "body": "new"}
 
     def test_update_pr_branch_rebases(
         self, fake_github: FakeGitHub, repo: None, tmp_path: Path

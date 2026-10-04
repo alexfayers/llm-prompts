@@ -72,25 +72,6 @@ def _predicted_content(
     return current_content.replace(old_string, new_string, 1)
 
 
-def _strip_update_instruction(message: str) -> str:
-    """Return ``message`` without the trailing model-directive instruction.
-
-    Strips ``_UPDATE_INSTRUCTION`` and the newline immediately preceding it
-    when present, leaving the bare "update available" fallback (which carries
-    no instruction) unchanged.
-
-    Args:
-        message: An update-availability message string.
-
-    Returns:
-        The message with the trailing instruction removed, or unchanged.
-    """
-    suffix = "\n" + _UPDATE_INSTRUCTION
-    if message.endswith(suffix):
-        return message[: -len(suffix)]
-    return message
-
-
 _BANNER_DIVIDER = "=" * 60
 _BANNER_TITLE = r"""
  _ _                                                 _
@@ -109,7 +90,7 @@ def _format_user_text(stripped_message: str) -> str:
 
     Args:
         stripped_message: Update text with the model-directive instruction
-            already removed (see ``_strip_update_instruction``).
+            already removed.
 
     Returns:
         The message framed with a banner header and footer.
@@ -248,7 +229,7 @@ class AutoReinstallPlugin(HooksPlugin):
         if not messages:
             return None
         stripped = "\n\n".join(
-            _strip_update_instruction(message) for message in messages
+            message for message in messages if message != _UPDATE_INSTRUCTION
         )
         return HookResult(
             notes=[message for message in messages],

@@ -192,9 +192,9 @@ class FakeSubprocess:
                 f"expected {list(expected)!r}, got {verbs!r}"
             )
 
-    def log_lines(self, *subjects: str) -> str:
-        """Return git log --format=%s style output for the given subjects."""
-        return "\n".join(subjects) + "\n" if subjects else ""
+    def log_lines(self, *messages: str) -> str:
+        """Return git log --format=%s%n%b%x1e style output for the given commit messages."""
+        return "\n".join(f"{message}\n\x1e" for message in messages)
 
     def sha_subjects(self, *pairs: tuple[str, str]) -> str:
         """Return git log --format=%h%x09%s style output for the given (sha, subject) pairs."""

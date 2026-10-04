@@ -476,18 +476,13 @@ class TestPluginSourceMessages:
         fake_subprocess.on("ls-remote", stdout="bbbbbbb\tHEAD\n")
         fake_subprocess.on(
             "log",
-            "--pretty=format:%s",
+            "--pretty=format:%s%n%b%x1e",
             stdout=fake_subprocess.log_lines("second commit subject"),
         )
 
         messages = plugins.plugin_source_messages(plugin)
         assert len(messages) == 1
-        assert messages[0] == (
-            "[p] update available:\n"
-            "- second commit subject\n"
-            "Summarize these changes for the user in plain language, and flag "
-            "anything that looks like a breaking change."
-        )
+        assert messages[0] == ("[p] update available:\n- second commit subject")
 
     @pytest.fixture
     def outdated_plugin(
@@ -505,7 +500,7 @@ class TestPluginSourceMessages:
     def test_no_commits_touching_installed_files_reports_nothing(
         self, outdated_plugin: dict[str, str], fake_subprocess: FakeSubprocess
     ) -> None:
-        fake_subprocess.on("log", "--pretty=format:%s", stdout="")
+        fake_subprocess.on("log", "--pretty=format:%s%n%b%x1e", stdout="")
 
         assert plugins.plugin_source_messages(outdated_plugin) == []
 

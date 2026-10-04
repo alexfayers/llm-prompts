@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -73,20 +74,21 @@ def _format_update_message(
     remote: str | None = None,
     cap: int = 20,
 ) -> list[str]:
-    """Build an update-availability message, listing commit subjects when known.
+    """Build an update-availability message, listing commit messages when known.
 
     Args:
         name: The source name, used in the header.
-        subjects: Commit subject lines newer than the local commit, or ``None``
-            when the commit list could not be determined.
+        subjects: Commit messages newer than the local commit, each a subject
+            optionally followed by body lines, or ``None`` when the commit list
+            could not be determined.
         local: The local commit SHA, used only for the bare fallback message.
         remote: The remote commit SHA, used only for the bare fallback message.
-        cap: Maximum number of subject lines to list before truncating.
+        cap: Maximum number of commits to list before truncating.
 
     Returns:
-        A single multi-line message listing the commit subjects and a trailing
-        instruction, or the bare "update available" fallback when ``subjects``
-        is empty/``None``.
+        A single multi-line message listing the commits, body lines indented
+        under their subject, or the bare "update available" fallback when
+        ``subjects`` is empty/``None``.
     """
     if not subjects:
         if local and remote:
@@ -94,10 +96,9 @@ def _format_update_message(
         return [f"[{name}] update available"]
 
     lines = [f"[{name}] update available:"]
-    lines.extend(f"- {subject}" for subject in subjects[:cap])
+    lines.extend("- " + subject.replace("\n", "\n  ") for subject in subjects[:cap])
     if len(subjects) > cap:
         lines.append(f"... and {len(subjects) - cap} more")
-    lines.append(_UPDATE_INSTRUCTION)
     return ["\n".join(lines)]
 
 
@@ -123,10 +124,37 @@ def _remote_head(git_url: str, ref: str | None) -> str | None:
     return result.stdout.split()[0]
 
 
+_SQUASHED_MERGE_PREFIX = "* Merge "
+_SQUASHED_COMMIT_PREFIX = "* "
+_SQUASH_PR_NUMBER = re.compile(r" \(#(\d+)\)$")
+_MORE_SUFFIX = re.compile(r" \(\+\d+ more\)(?= \(#\d+\)$|$)")
+
+
+def _commit_entry(lines: list[str]) -> str:
+    """Return a commit's subject and the squashed commits its body lists, minus merge commits.
+
+    A squash commit whose body lists its squashed commits is headed by its PR
+    number instead of its subject; any other subject loses its "(+N more)" count.
+    """
+    subject, *rest = lines
+    body = [
+        line.rstrip()
+        for line in rest
+        if line.startswith(_SQUASHED_COMMIT_PREFIX)
+        and not line.startswith(_SQUASHED_MERGE_PREFIX)
+    ]
+    pr = _SQUASH_PR_NUMBER.search(subject)
+    if pr and body:
+        subject = f"PR #{pr[1]}"
+    else:
+        subject = _MORE_SUFFIX.sub("", subject.rstrip())
+    return "\n".join([subject, *body])
+
+
 def _commit_subjects_between(
     repo: Path, from_sha: str, to_sha: str, paths: list[str] | None = None
 ) -> list[str] | None:
-    """Return the commit subjects in ``from_sha..to_sha`` within a local repo.
+    """Return the commit messages in ``from_sha..to_sha`` within a local repo.
 
     Args:
         repo: A local git checkout to run ``git log`` against.
@@ -135,7 +163,9 @@ def _commit_subjects_between(
         paths: Optional git pathspecs; only commits touching them are listed.
 
     Returns:
-        The subject lines newest-first, or ``None`` if the log command fails.
+        One entry per non-merge commit, newest-first, holding its subject or
+        squash PR number followed by its kept body lines, or ``None`` if the log
+        command fails.
     """
     pathspec = ["--", *paths] if paths else []
     result = subprocess.run(
@@ -144,7 +174,8 @@ def _commit_subjects_between(
             "-C",
             str(repo),
             "log",
-            "--pretty=format:%s",
+            "--pretty=format:%s%n%b%x1e",
+            "--no-merges",
             f"{from_sha}..{to_sha}",
             *pathspec,
         ],
@@ -155,7 +186,10 @@ def _commit_subjects_between(
     )
     if result.returncode != 0:
         return None
-    return result.stdout.splitlines()
+    messages = (
+        record.strip("\n").splitlines() for record in result.stdout.split("\x1e")
+    )
+    return [_commit_entry(lines) for lines in messages if lines]
 
 
 def _remote_commit_subjects(
