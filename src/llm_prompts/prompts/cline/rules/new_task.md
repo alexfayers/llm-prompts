@@ -27,7 +27,7 @@ This keeps context windows clean, commits atomic, and allows the user to review/
 
 ### How It Works
 
-1. {{agent}} proposes creating a new task with summarized context
+1. Cline proposes creating a new task with summarized context
 2. You can refine the proposed context
 3. Once approved, current task ends and new one begins with the context preloaded
 

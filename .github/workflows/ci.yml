@@ -57,12 +57,36 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
-      - run: node --test .github/scripts/check-pr-template.test.js
+      - run: node --test .github/scripts/*.test.js
       - uses: actions/github-script@v9
         with:
           script: |
             const { check } = require('./.github/scripts/check-pr-template.js')
             await check({ github, context, core })
+
+  size-report:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .size-base
+      - run: git clone --depth 1 https://github.com/alexfayers/cline-hooks ../cline-hooks
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run llm-prompts size-report --base-root .size-base/src/llm_prompts/prompts > size-report.md
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const { report } = require('./.github/scripts/post-size-report.js')
+            await report({ github, context, core, path: 'size-report.md' })
 
   pr-automation-test:
     runs-on: ubuntu-latest

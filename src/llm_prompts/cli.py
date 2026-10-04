@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import urlparse
 
 from . import github_api
+from .install import AGENT_CLASSES
 from .setup import (
     _UPDATE_INSTRUCTION,
     GIT_TIMEOUT,
@@ -29,7 +30,7 @@ if TYPE_CHECKING:
     from .manifest import AgentManifest
     from .size_guard import Artifact
 
-_AGENTS = ("cline", "copilot", "kiro", "claude-code", "codex", "antigravity", "pi")
+_AGENTS = tuple(AGENT_CLASSES)
 _MEMORY_TOOL = "mcp-memory"
 _RUN_SETUP_TRACKED_TOOLS = (_MEMORY_TOOL, "cline-hooks")
 
@@ -684,6 +685,16 @@ def main() -> int | None:
         "check",
         help="Check prompt sizes against size_limits.py's thresholds.",
     )
+    size_report_parser = subparsers.add_parser(
+        "size-report",
+        help="Print a markdown report of prompt size changes against a base.",
+    )
+    size_report_parser.add_argument(
+        "--base-root",
+        type=Path,
+        required=True,
+        help="Base revision's prompts directory to compare against.",
+    )
     contribute_parser = subparsers.add_parser(
         "contribute", help="Manage derived PR branches for prompt-source commits."
     )
@@ -921,6 +932,10 @@ def main() -> int | None:
         uninstall(None if args.agent == "all" else [args.agent], verbose=args.verbose)
     elif args.command == "check":
         _run_size_check()
+    elif args.command == "size-report":
+        from .size_report import build_report
+
+        print(build_report(args.base_root))
     elif args.command == "contribute":
         from .contribute import list_targets, sync_targets, update_targets
 

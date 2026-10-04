@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { findStickyComment, upsertStickyComment } = require('./sticky-comment.js');
 
 const MARKER = '<!-- pr-template-check -->';
 
@@ -70,34 +71,6 @@ function findBodyIssues(templateSections, prBody) {
   return issues;
 }
 
-async function findExistingComment(github, context) {
-  const comments = await github.rest.issues.listComments({
-    owner: context.repo.owner,
-    repo: context.repo.repo,
-    issue_number: context.payload.pull_request.number,
-  });
-  return comments.data.find((c) => c.body.includes(MARKER));
-}
-
-async function postComment(github, context, existing, body) {
-  const fullBody = `${MARKER}\n${body}`;
-  if (existing) {
-    await github.rest.issues.updateComment({
-      owner: context.repo.owner,
-      repo: context.repo.repo,
-      comment_id: existing.id,
-      body: fullBody,
-    });
-  } else {
-    await github.rest.issues.createComment({
-      owner: context.repo.owner,
-      repo: context.repo.repo,
-      issue_number: context.payload.pull_request.number,
-      body: fullBody,
-    });
-  }
-}
-
 async function check({ github, context, core }) {
   const pr = context.payload.pull_request;
   if (!pr || pr.draft === true || !pr.body || !pr.body.trim()) {
@@ -111,21 +84,22 @@ async function check({ github, context, core }) {
   const templateSections = parseTemplateSections(templateContent);
   const issues = findBodyIssues(templateSections, pr.body);
 
-  const existing = await findExistingComment(github, context);
+  const existing = await findStickyComment(github, context, MARKER);
 
   if (issues.length > 0) {
     core.setFailed(`PR template check failed:\n${issues.map((m) => `- ${m}`).join('\n')}`);
-    await postComment(
+    await upsertStickyComment(
       github,
       context,
-      existing,
-      `The PR template is missing required content:\n\n${issues.map((m) => `- ${m}`).join('\n')}`
+      MARKER,
+      `The PR template is missing required content:\n\n${issues.map((m) => `- ${m}`).join('\n')}`,
+      existing
     );
     return;
   }
 
   if (existing) {
-    await postComment(github, context, existing, 'PR template check passed.');
+    await upsertStickyComment(github, context, MARKER, 'PR template check passed.', existing);
   }
 }
 
