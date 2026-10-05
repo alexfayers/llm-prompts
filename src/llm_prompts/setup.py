@@ -16,6 +16,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from .squash_subject import squash_pr_number
+
 _CONFIG_DIR = Path.home() / ".config" / "llm-prompts"
 CONFIG_PATH = _CONFIG_DIR / "config.toml"
 GIT_TIMEOUT = 30
@@ -126,7 +128,6 @@ def _remote_head(git_url: str, ref: str | None) -> str | None:
 
 _SQUASHED_MERGE_PREFIX = "* Merge "
 _SQUASHED_COMMIT_PREFIX = "* "
-_SQUASH_PR_NUMBER = re.compile(r" \(#(\d+)\)$")
 _MORE_SUFFIX = re.compile(r" \(\+\d+ more\)(?= \(#\d+\)$|$)")
 
 
@@ -143,9 +144,8 @@ def _commit_entry(lines: list[str]) -> str:
         if line.startswith(_SQUASHED_COMMIT_PREFIX)
         and not line.startswith(_SQUASHED_MERGE_PREFIX)
     ]
-    pr = _SQUASH_PR_NUMBER.search(subject)
-    if pr and body:
-        subject = f"PR #{pr[1]}"
+    if (pr := squash_pr_number(subject)) is not None and body:
+        subject = f"PR #{pr}"
     else:
         subject = _MORE_SUFFIX.sub("", subject.rstrip())
     return "\n".join([subject, *body])

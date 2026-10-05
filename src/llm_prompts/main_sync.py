@@ -3,15 +3,27 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
-from collections.abc import Collection, Sequence
+from collections.abc import Sequence
+from itertools import takewhile
 from pathlib import Path
 from typing import Literal, NamedTuple
 
 from .setup import GIT_TIMEOUT
+from .squash_subject import squash_pr_number
 
 _Identity = tuple[str, str]
 GIT_TIMED_OUT = 124
+PRE_SYNC_REF = "refs/llm-prompts/pre-sync"
+_OPERATION_MARKERS = (
+    ("rebase-merge", "rebase"),
+    ("rebase-apply", "rebase"),
+    ("MERGE_HEAD", "merge"),
+    ("CHERRY_PICK_HEAD", "cherry-pick"),
+    ("REVERT_HEAD", "revert"),
+)
+_FIXUP_PREFIXES = ("fixup! ", "squash! ", "amend! ")
 
 
 class SyncResult(NamedTuple):
@@ -19,7 +31,6 @@ class SyncResult(NamedTuple):
 
     mode: Literal["reset", "rebased", "squash-synced", "failed"]
     replayed: int = 0
-    folded: tuple[str, ...] = ()
     detail: str = ""
 
 
@@ -29,31 +40,6 @@ class LocalCommit(NamedTuple):
     sha: str
     authored_at: str
     subject: str
-
-
-def split_local(
-    local: Sequence[LocalCommit],
-    covered: Collection[str],
-    pr_ids: Collection[_Identity],
-) -> tuple[list[LocalCommit], list[LocalCommit]]:
-    """Split local commits into those unrelated to any merged PR and those revised by one.
-
-    Args:
-        local: The local commits, oldest first.
-        covered: Shas whose change already exists upstream or in a merged PR.
-        pr_ids: The (author time, subject) pairs of the merged PRs' commits.
-
-    Returns:
-        The unrelated and the revised commits, each in local order.
-    """
-    unrelated: list[LocalCommit] = []
-    revised: list[LocalCommit] = []
-    for commit in local:
-        if commit.sha in covered:
-            continue
-        in_pr = (commit.authored_at, commit.subject) in pr_ids
-        (revised if in_pr else unrelated).append(commit)
-    return unrelated, revised
 
 
 def run_git(
@@ -79,6 +65,37 @@ def run_git(
         )
 
 
+def _operation_in_progress(repo: Path) -> str | None:
+    paths = run_git(
+        repo,
+        "rev-parse",
+        *(arg for marker, _ in _OPERATION_MARKERS for arg in ("--git-path", marker)),
+    ).stdout.splitlines()
+    return next(
+        (
+            operation
+            for (_, operation), path in zip(_OPERATION_MARKERS, paths, strict=False)
+            if (repo / path).exists()
+        ),
+        None,
+    )
+
+
+def _recovery(repo: Path) -> str:
+    heads = run_git(repo, "rev-parse", "HEAD", PRE_SYNC_REF).stdout.split()
+    operation = _operation_in_progress(repo)
+    if operation is None and len(heads) == 2 and heads[0] == heads[1]:
+        return "; nothing changed"
+    undo = f"git reset --keep {PRE_SYNC_REF}"
+    if operation == "rebase":
+        undo = f"git rebase --abort && {undo}"
+    return f"; recover with: cd {shlex.quote(str(repo))} && {undo}"
+
+
+def _failed(repo: Path, detail: str) -> SyncResult:
+    return SyncResult("failed", detail=detail + _recovery(repo))
+
+
 def sync_diverged(repo: Path) -> SyncResult:
     """Bring a local main whose fast-forward pull failed onto its upstream.
 
@@ -88,22 +105,53 @@ def sync_diverged(repo: Path) -> SyncResult:
     Returns:
         How the clone was synced, or a failed result that leaves it untouched.
     """
-    if run_git(repo, "diff", "--quiet", "HEAD", "@{u}").returncode == 0:
+    if (operation := _operation_in_progress(repo)) is not None:
+        detail = f"a {operation} is in progress; finish or abort it first"
+        if (
+            run_git(repo, "rev-parse", "--verify", "--quiet", PRE_SYNC_REF).returncode
+            == 0
+        ):
+            detail += f"; the state before the last sync is saved as {PRE_SYNC_REF}"
+        return SyncResult("failed", detail=detail)
+    identical = run_git(repo, "diff", "--quiet", "HEAD", "@{u}").returncode == 0
+    saved = run_git(
+        repo,
+        "update-ref",
+        "--create-reflog",
+        "-m",
+        "llm-prompts: pre-sync",
+        PRE_SYNC_REF,
+        "HEAD",
+    )
+    if saved.returncode != 0:
+        return SyncResult("failed", detail=saved.stderr.strip())
+    if identical:
         reset = run_git(repo, "reset", "--soft", "@{u}")
         if reset.returncode != 0:
-            return SyncResult("failed", detail=reset.stderr.strip())
+            return _failed(repo, reset.stderr.strip())
         return SyncResult("reset")
     rebase = run_git(repo, "rebase", "--quiet", "@{u}")
     if rebase.returncode == 0:
         return SyncResult("rebased")
-    run_git(repo, "rebase", "--abort")
+    abort = run_git(repo, "rebase", "--abort")
     if rebase.returncode == GIT_TIMED_OUT:
-        return SyncResult("failed", detail=rebase.stderr.strip())
-    return _squash_sync(repo)
+        return _failed(repo, rebase.stderr.strip())
+    if abort.returncode != 0:
+        return _failed(repo, abort.stderr.strip())
+    synced = _squash_sync(repo)
+    return _failed(repo, synced.detail) if synced.mode == "failed" else synced
 
 
 class _Bail(Exception):
     """A step could not prove the sync safe, so nothing may change; the message says why."""
+
+
+class _Conflict(_Bail):
+    """A three-way merge left conflicts in these paths."""
+
+    def __init__(self, paths: list[str]) -> None:
+        super().__init__(f"conflicts in {', '.join(paths)}")
+        self.paths = paths
 
 
 def _read(
@@ -149,17 +197,23 @@ def _cherry(repo: Path, upstream: str, head: str, mark: str) -> list[str]:
     ]
 
 
-def _pull_heads(repo: Path, remote: str) -> list[list[str]]:
-    listing = _read(repo, "ls-remote", remote, "refs/pull/*/head").splitlines()
-    if not listing:
-        raise _Bail(f"{remote} lists no pull request heads")
-    heads = [line.split() for line in listing]
+def _pull_heads(repo: Path, remote: str, refs: Sequence[str]) -> dict[str, str]:
+    heads = {
+        ref: sha
+        for sha, ref in (
+            line.split()
+            for line in _read(repo, "ls-remote", remote, *refs).splitlines()
+        )
+    }
     checked = _read(
-        repo, "cat-file", "--batch-check", input="".join(f"{sha}\n" for sha, _ in heads)
+        repo,
+        "cat-file",
+        "--batch-check",
+        input="".join(f"{sha}\n" for sha in heads.values()),
     ).splitlines()
     missing = [
         ref
-        for (_, ref), line in zip(heads, checked, strict=True)
+        for ref, line in zip(heads, checked, strict=True)
         if line.endswith(" missing")
     ]
     if missing:
@@ -174,60 +228,88 @@ def _record(commits: dict[_Identity, str], identity: _Identity, sha: str) -> Non
         )
 
 
-def _merged_pr_heads(
-    repo: Path,
-    remote: str,
-    ups: list[str],
-    local_ids: set[_Identity],
-) -> tuple[list[str], dict[_Identity, str]]:
+def _upstream_pr_numbers(repo: Path) -> dict[str, int]:
+    ups = _cherry(repo, "HEAD", "@{u}", "+")
     if not ups:
-        return [], {}
-    heads = [sha for sha, _ in _pull_heads(repo, remote)]
-    trees = _read(
-        repo, "rev-parse", *(f"{sha}^{{tree}}" for sha in [*ups, *heads])
-    ).split()
-    up_trees, head_trees = trees[: len(ups)], trees[len(ups) :]
+        return {}
+    numbers: dict[str, int] = {}
+    for line in _read(
+        repo, "log", "--no-walk=unsorted", "--format=%H%x09%s", *ups
+    ).splitlines():
+        sha, _, subject = line.partition("\t")
+        if (number := squash_pr_number(subject)) is not None:
+            numbers[sha] = number
+    return numbers
+
+
+def _merged_pr_commits(
+    repo: Path, remote: str
+) -> tuple[list[str], dict[_Identity, str]]:
     accepted: list[str] = []
     pr_commits: dict[_Identity, str] = {}
-    for up, up_tree in zip(ups, up_trees, strict=True):
-        foreign: list[bool] = []
-        for head, head_tree in zip(heads, head_trees, strict=True):
-            if head_tree != up_tree:
-                continue
-            ids: dict[_Identity, str] = {}
-            for line in _read(
-                repo,
-                "log",
-                "--no-merges",
-                "--format=%H%x09%at%x09%s",
-                f"{up}^..{head}",
-            ).splitlines():
-                sha, _, rest = line.partition("\t")
-                _record(ids, _identity(rest), sha)
-            if ids and ids.keys() <= local_ids:
-                accepted.append(head)
-                for identity, sha in ids.items():
-                    _record(pr_commits, identity, sha)
-                break
-            foreign.append(bool(ids) and ids.keys().isdisjoint(local_ids))
-        else:
-            if not foreign or not all(foreign):
-                raise _Bail(
-                    f"upstream commit {up} matches no merged pull request of local commits"
-                )
+    numbers = _upstream_pr_numbers(repo)
+    if not numbers:
+        return accepted, pr_commits
+    heads = _pull_heads(
+        repo, remote, [f"refs/pull/{number}/head" for number in numbers.values()]
+    )
+    pairs = [
+        (up, heads[ref])
+        for up, number in numbers.items()
+        if (ref := f"refs/pull/{number}/head") in heads
+    ]
+    if not pairs:
+        return accepted, pr_commits
+    trees = _read(
+        repo, "rev-parse", *(f"{sha}^{{tree}}" for pair in pairs for sha in pair)
+    ).split()
+    for (up, head), up_tree, head_tree in zip(
+        pairs, trees[0::2], trees[1::2], strict=True
+    ):
+        if up_tree != head_tree:
+            continue
+        accepted.append(head)
+        for line in _read(
+            repo, "log", "--no-merges", "--format=%H%x09%at%x09%s", f"{up}^..{head}"
+        ).splitlines():
+            sha, _, rest = line.partition("\t")
+            _record(pr_commits, _identity(rest), sha)
     return accepted, pr_commits
 
 
 def _merge_tree(repo: Path, base: str, ours: str, theirs: str) -> str:
-    return _read(
-        repo, "merge-tree", "--write-tree", f"--merge-base={base}", ours, theirs
-    ).splitlines()[0]
+    result = run_git(
+        repo,
+        "merge-tree",
+        "--write-tree",
+        "--name-only",
+        f"--merge-base={base}",
+        ours,
+        theirs,
+    )
+    if result.returncode == 0:
+        return result.stdout.splitlines()[0]
+    if result.returncode == 1:
+        raise _Conflict(list(takewhile(bool, result.stdout.splitlines()[1:])))
+    raise _Bail(result.stderr.strip() or f"git merge-tree exited {result.returncode}")
 
 
-def _replay(repo: Path, tip: str, commit: LocalCommit) -> str:
-    tree = _merge_tree(repo, f"{commit.sha}^", tip, commit.sha)
+def _equivalent(
+    repo: Path, commit: LocalCommit, pr_commits: dict[_Identity, str]
+) -> bool:
+    pr = pr_commits.get((commit.authored_at, commit.subject))
+    if pr is None:
+        return False
+    try:
+        tree = _merge_tree(repo, f"{pr}^", f"{commit.sha}^", pr)
+    except _Conflict:
+        return False
+    return tree == _read(repo, "rev-parse", f"{commit.sha}^{{tree}}").strip()
+
+
+def _commit_as(repo: Path, tree: str, parent: str, source: str) -> str:
     name, email, date, message = _read(
-        repo, "log", "-1", "--format=%an%x00%ae%x00%aI%x00%B", commit.sha
+        repo, "log", "-1", "--format=%an%x00%ae%x00%aI%x00%B", source
     ).split("\x00", 3)
     env = {"GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email, "GIT_AUTHOR_DATE": date}
     return _read(
@@ -235,7 +317,7 @@ def _replay(repo: Path, tip: str, commit: LocalCommit) -> str:
         "commit-tree",
         tree,
         "-p",
-        tip,
+        parent,
         "-F",
         "-",
         input=message.rstrip("\n") + "\n",
@@ -243,140 +325,70 @@ def _replay(repo: Path, tip: str, commit: LocalCommit) -> str:
     ).strip()
 
 
-def _proven_bases(
-    repo: Path,
-    revised: list[LocalCommit],
-    pr_commits: dict[_Identity, str],
-) -> dict[str, str]:
-    """Find, for each revised commit, its earlier reflog version that a PR merged.
+def _replay(repo: Path, tip: str, commit: LocalCommit) -> str:
+    try:
+        tree = _merge_tree(repo, f"{commit.sha}^", tip, commit.sha)
+    except _Conflict as conflict:
+        raise _Bail(
+            f"local commit {commit.sha[:12]} ({commit.subject}) conflicts with upstream"
+            f" in {', '.join(conflict.paths)}"
+        ) from conflict
+    return _commit_as(repo, tree, tip, commit.sha)
 
-    Args:
-        repo: The local clone.
-        revised: The local commits revised by a merged PR, in local order.
-        pr_commits: The merged PRs' commit shas by (author time, subject).
 
-    Returns:
-        The earlier version's sha for each revised commit's sha.
+def _fixup_target(subject: str) -> str | None:
+    target = subject
+    while target.startswith(_FIXUP_PREFIXES):
+        target = target.partition("! ")[2]
+    return target if target != subject else None
 
-    Raises:
-        _Bail: If a revised commit has no earlier version with the PR commit's patch-id.
-    """
-    wanted = {(commit.authored_at, commit.subject) for commit in revised}
-    candidates: dict[_Identity, list[str]] = {}
-    for line in _read(
-        repo, "log", "--walk-reflogs", "--format=%H%x09%at%x09%s", "HEAD"
-    ).splitlines():
-        sha, _, rest = line.partition("\t")
-        if _identity(rest) in wanted:
-            candidates.setdefault(_identity(rest), []).append(sha)
-    shas = dict.fromkeys(
-        [
-            *(pr_commits[identity] for identity in wanted),
-            *(sha for versions in candidates.values() for sha in versions),
-        ]
-    )
-    patch_ids = {
-        sha: patch_id
-        for patch_id, _, sha in (
-            line.partition(" ")
-            for line in _read(
-                repo,
-                "patch-id",
-                "--stable",
-                input=_read(
-                    repo,
-                    "show",
-                    "--no-color",
-                    "--no-ext-diff",
-                    "--format=medium",
-                    *shas,
-                ),
-            ).splitlines()
-        )
-    }
-    bases: dict[str, str] = {}
-    for commit in revised:
-        identity = (commit.authored_at, commit.subject)
-        pr_patch_id = patch_ids.get(pr_commits[identity])
-        base = next(
-            (
-                sha
-                for sha in candidates.get(identity, [])
-                if patch_ids.get(sha) == pr_patch_id
-            ),
+
+def _autosquash(repo: Path, commits: list[LocalCommit]) -> list[LocalCommit]:
+    grouped: list[LocalCommit] = []
+    for commit in commits:
+        target = _fixup_target(commit.subject)
+        index = next(
+            (i for i in reversed(range(len(grouped))) if grouped[i].subject == target),
             None,
         )
-        if pr_patch_id is None or base is None:
-            raise _Bail(
-                f"no earlier local version of {commit.sha} matches its merged pull request"
+        if index is None:
+            grouped.append(commit)
+            continue
+        base = grouped[index]
+        try:
+            tree = _merge_tree(repo, f"{commit.sha}^", base.sha, commit.sha)
+        except _Conflict:
+            grouped.append(commit)
+        else:
+            grouped[index] = base._replace(
+                sha=_commit_as(repo, tree, f"{base.sha}^", base.sha)
             )
-        bases[commit.sha] = base
-    return bases
-
-
-def _fold_tree(
-    repo: Path,
-    tip_tree: str,
-    revised: list[LocalCommit],
-    bases: dict[str, str],
-) -> str:
-    tree = tip_tree
-    for commit in revised:
-        base = bases[commit.sha]
-        tree = _merge_tree(
-            repo,
-            _merge_tree(repo, f"{base}^", f"{commit.sha}^", base),
-            tree,
-            commit.sha,
-        )
-    return tree
-
-
-def _fold(repo: Path, tip: str, tree: str, revised: list[LocalCommit]) -> str:
-    message = "\n\n".join(
-        _read(repo, "log", "-1", "--format=%B", c.sha).rstrip("\n") for c in revised
-    )
-    return _read(
-        repo, "commit-tree", tree, "-p", tip, "-F", "-", input=f"{message}\n"
-    ).strip()
+    return grouped
 
 
 def _build_sync(repo: Path) -> SyncResult:
     remote = _read(repo, "rev-parse", "--abbrev-ref", "@{u}").strip().partition("/")[0]
     merge_base = _read(repo, "merge-base", "HEAD", "@{u}").strip()
     local = _local_commits(repo, merge_base)
-    heads, pr_commits = _merged_pr_heads(
-        repo,
-        remote,
-        _cherry(repo, "HEAD", "@{u}", "+"),
-        {(commit.authored_at, commit.subject) for commit in local},
-    )
+    heads, pr_commits = _merged_pr_commits(repo, remote)
     covered = {
         *_cherry(repo, "@{u}", "HEAD", "-"),
         *(sha for head in heads for sha in _cherry(repo, head, "HEAD", "-")),
     }
-    unrelated, revised = split_local(local, covered, pr_commits)
-    tip = _read(repo, "rev-parse", "@{u}").strip()
-    for commit in unrelated:
-        tip = _replay(repo, tip, commit)
-    tip_tree = _read(repo, "rev-parse", f"{tip}^{{tree}}").strip()
-    merged = run_git(
-        repo, "merge-tree", "--write-tree", f"--merge-base={merge_base}", tip, "HEAD"
-    )
-    folded: tuple[str, ...] = ()
-    if merged.returncode != 0 or merged.stdout.split("\n", 1)[0] != tip_tree:
-        if not revised:
-            raise _Bail("local changes missing upstream match no merged pull request")
-        tree = _fold_tree(
-            repo, tip_tree, revised, _proven_bases(repo, revised, pr_commits)
+    replayed = [
+        commit
+        for commit in _autosquash(
+            repo, [commit for commit in local if commit.sha not in covered]
         )
-        if tree != tip_tree:
-            tip = _fold(repo, tip, tree, revised)
-            folded = tuple(commit.subject for commit in revised)
+        if not _equivalent(repo, commit, pr_commits)
+    ]
+    tip = _read(repo, "rev-parse", "@{u}").strip()
+    for commit in replayed:
+        tip = _replay(repo, tip, commit)
     reset = run_git(repo, "reset", "--keep", tip)
     if reset.returncode != 0:
         return SyncResult("failed", detail=reset.stderr.strip())
-    return SyncResult("squash-synced", replayed=len(unrelated), folded=folded)
+    return SyncResult("squash-synced", replayed=len(replayed))
 
 
 def _squash_sync(repo: Path) -> SyncResult:

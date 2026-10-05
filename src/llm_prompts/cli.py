@@ -388,7 +388,13 @@ def _pull_one_local_source(name: str, source: str) -> _PullOutcome:
     Returns:
         Whether the source moved, and message lines describing the pull outcome.
     """
-    from .main_sync import GIT_TIMED_OUT, SyncResult, run_git, sync_diverged
+    from .main_sync import (
+        GIT_TIMED_OUT,
+        PRE_SYNC_REF,
+        SyncResult,
+        run_git,
+        sync_diverged,
+    )
     from .setup import _expand, _is_local_path
 
     unchanged = _PullOutcome(name, False, [])
@@ -430,11 +436,7 @@ def _pull_one_local_source(name: str, source: str) -> _PullOutcome:
         message = f"[{name}] dropped squash-merged commits"
         if synced.replayed:
             message += f"; replayed {synced.replayed} local commit(s)"
-        if synced.folded:
-            message += (
-                "; kept local changes that differ from the merge as one commit: "
-                f"{', '.join(synced.folded)} - review with git show"
-            )
+        message += f"; undo with: git reset --keep {PRE_SYNC_REF}"
     return _PullOutcome(name, True, [message])
 
 

@@ -265,7 +265,9 @@ class TestPullLocalSources:
             "fetch",
             "rev-list --count",
             "pull --ff-only",
+            "rev-parse --git-path",
             "diff --quiet",
+            "update-ref",
             "rebase --quiet",
         )
         assert (
@@ -359,8 +361,7 @@ class TestPullLocalSources:
         fake_subprocess.on("pull", "--ff-only", returncode=1)
         fake_subprocess.on("diff", "--quiet", returncode=1)
         fake_subprocess.on("rebase", "--quiet", returncode=1)
-        fake_subprocess.on("cherry", "HEAD", stdout="+ u1\n")
-        fake_subprocess.on("ls-remote", stdout="")
+        fake_subprocess.on("merge-base", returncode=1)
 
         config = [{"name": "core", "source": str(clone)}]
         with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
@@ -372,14 +373,15 @@ class TestPullLocalSources:
             "fetch",
             "rev-list --count",
             "pull --ff-only",
+            "rev-parse --git-path",
             "diff --quiet",
+            "update-ref",
             "rebase --quiet",
             "rebase --abort",
             "rev-parse --abbrev-ref",
             "merge-base",
-            "log --reverse",
-            "cherry HEAD",
-            "ls-remote",
+            "rev-parse HEAD",
+            "rev-parse --git-path",
         )
         assert "[core] 1 new commit(s) available but sync failed" in (
             capsys.readouterr().out
@@ -446,8 +448,7 @@ class TestPullLocalSources:
         fake_subprocess.on("pull", "--ff-only", returncode=0, repo=ff)
         fake_subprocess.on("diff", "--quiet", returncode=1, repo=conflict)
         fake_subprocess.on("rebase", "--quiet", returncode=1, repo=conflict)
-        fake_subprocess.on("cherry", "HEAD", stdout="+ u1\n", repo=conflict)
-        fake_subprocess.on("ls-remote", stdout="", repo=conflict)
+        fake_subprocess.on("merge-base", returncode=1, repo=conflict)
 
         config = [
             {"name": "conflict", "source": str(conflict)},
@@ -473,18 +474,16 @@ class TestPullLocalSources:
             ),
             (
                 SyncResult("squash-synced"),
-                "[core] dropped squash-merged commits",
+                (
+                    "[core] dropped squash-merged commits;"
+                    " undo with: git reset --keep refs/llm-prompts/pre-sync"
+                ),
             ),
             (
                 SyncResult("squash-synced", replayed=2),
-                "[core] dropped squash-merged commits; replayed 2 local commit(s)",
-            ),
-            (
-                SyncResult("squash-synced", replayed=1, folded=("fix a", "fix b")),
                 (
-                    "[core] dropped squash-merged commits; replayed 1 local commit(s);"
-                    " kept local changes that differ from the merge as one commit:"
-                    " fix a, fix b - review with git show"
+                    "[core] dropped squash-merged commits; replayed 2 local commit(s);"
+                    " undo with: git reset --keep refs/llm-prompts/pre-sync"
                 ),
             ),
         ],
