@@ -2,7 +2,6 @@ const fs = require('fs');
 const { findStickyComment, upsertStickyComment } = require('./sticky-comment.js');
 
 const MARKER = '<!-- prompt-size-report -->';
-const NO_CHANGES_TEXT = 'This PR changes no prompt sizes.';
 const MAX_COMMENT_LENGTH = 60000;
 const DETAILS_TAG = '<details>';
 const HEADLINE_SECTION_COUNT = 2;
@@ -32,9 +31,7 @@ async function report({ github, context, core, path }) {
 
   try {
     const existing = await findStickyComment(github, context, MARKER);
-    if (existing || !markdown.includes(NO_CHANGES_TEXT)) {
-      await upsertStickyComment(github, context, MARKER, buildCommentBody(markdown), existing);
-    }
+    await upsertStickyComment(github, context, MARKER, buildCommentBody(markdown), existing);
   } catch (error) {
     if (error.status !== 403) {
       throw error;
