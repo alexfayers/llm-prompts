@@ -70,10 +70,10 @@ test('creates a comment on a draft PR', async () => {
   assert.equal(calls.create.length, 1);
 });
 
-test('does not create a comment for a no-change report but updates an existing one', async () => {
+test('creates a comment for a no-change report and updates an existing one', async () => {
   const none = setup('This PR changes no prompt sizes.\n');
   await report(none.args);
-  assert.equal(none.calls.create.length, 0);
+  assert.equal(none.calls.create.length, 1);
   assert.equal(none.calls.summary.length, 1);
 
   const existing = setup('This PR changes no prompt sizes.\n', { comments: [{ id: 4, body: MARKER }] });
