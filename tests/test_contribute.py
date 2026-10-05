@@ -46,7 +46,6 @@ from llm_prompts.contribute import (
     run_sync,
     scope_commits,
     slug_for,
-    squash_pr_number,
     stale_main_warning,
 )
 from llm_prompts.size_guard import CheckResult
@@ -87,20 +86,6 @@ def _plan(
     branch: str, group: Group, mode: Literal["append", "rebuild", "new"]
 ) -> BatchPlan:
     return BatchPlan(branch=branch, slug="foo", pr=None, groups=(group,), mode=mode)
-
-
-class TestSquashPrNumber:
-    @pytest.mark.parametrize(
-        ("subject", "expected"),
-        [
-            ("feat: x (#39)", 39),
-            ("feat: x", None),
-            ("feat (#3) x", None),
-            ("x (#39) ", None),
-        ],
-    )
-    def test_trailing_pr_number(self, subject: str, expected: int | None) -> None:
-        assert squash_pr_number(subject) == expected
 
 
 class TestSlugFor:

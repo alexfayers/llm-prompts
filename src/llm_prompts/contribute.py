@@ -37,12 +37,12 @@ from .batching import (
 )
 from .listing import Entry, classify, pr_only_warning, render
 from .size_guard import check
+from .squash_subject import squash_pr_number
 
 _COMPRESSION_PREFIX = "chore: compress "
 _CONVENTIONAL_PREFIX = re.compile(r"^[a-z]+(\([^)]*\))?!?: ", re.IGNORECASE)
 _CONVENTIONAL_SUBJECT = re.compile(r"^[a-z]+(\([^)]*\))?!?: .+", re.IGNORECASE)
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
-_SQUASH_PR_NUMBER = re.compile(r" \(#(\d+)\)$")
 _DEPENDS_PREFIX = "Depends on "
 _GENERATED_PREFIXES = ("- ", _DEPENDS_PREFIX)
 _WHAT_HEADING = re.compile(r"^## What\n", re.MULTILINE)
@@ -330,12 +330,6 @@ def base_ref(repo: Path) -> str:
     """Return the base ref to diff against: ``upstream/main`` post-fork, else ``origin/main``."""
     remotes = _git("remote", repo=repo).splitlines()
     return "upstream/main" if "upstream" in remotes else "origin/main"
-
-
-def squash_pr_number(subject: str) -> int | None:
-    """Return the PR number a squash-merge subject ends with, if any."""
-    match = _SQUASH_PR_NUMBER.search(subject)
-    return int(match[1]) if match else None
 
 
 def stale_main_warning(repo: Path, base: str) -> str | None:
