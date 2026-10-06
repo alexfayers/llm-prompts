@@ -472,6 +472,7 @@ class ContributeRemote:
             "state": pr.state,
             "url": pr.url,
             "headRefName": branch,
+            "isDraft": pr.is_draft,
         }
 
     def _register_branch(
@@ -582,7 +583,10 @@ class ContributeRemote:
         def side_effect(
             argv: list[str], kwargs: dict[str, Any]
         ) -> subprocess.CompletedProcess[str]:
-            return subprocess.CompletedProcess(argv, 0, json.dumps(self._pr_items), "")
+            items = [
+                {**item, "isDraft": self._is_draft(item)} for item in self._pr_items
+            ]
+            return subprocess.CompletedProcess(argv, 0, json.dumps(items), "")
 
         self.fake.on(
             "gh",
@@ -593,9 +597,12 @@ class ContributeRemote:
             "--state",
             "all",
             "--json",
-            "number,state,url,headRefName",
+            "number,state,url,headRefName,isDraft",
             side_effect=side_effect,
         )
+
+    def _is_draft(self, item: dict[str, Any]) -> bool:
+        return bool(self._reviews.get(item["number"], (item["isDraft"], ""))[0])
 
     def _register_open_pr_list(self) -> None:
         def side_effect(
@@ -604,7 +611,7 @@ class ContributeRemote:
             items = [
                 {
                     **item,
-                    "isDraft": self._reviews.get(item["number"], (False, ""))[0],
+                    "isDraft": self._is_draft(item),
                     "reviewDecision": self._reviews.get(item["number"], (False, ""))[1],
                     "body": self._bodies.get(item["number"], ""),
                     **(
