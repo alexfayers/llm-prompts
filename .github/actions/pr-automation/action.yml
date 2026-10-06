@@ -1,5 +1,5 @@
 name: PR automation
-description: Sync PR status onto the llm-prompts ecosystem project board, enable squash auto-merge on ready contribute PRs, apply a type label from the PR title, apply path-based area labels, and rebase auto-merge PRs onto the base branch when it moves.
+description: Sync PR status onto the llm-prompts ecosystem project board, enable squash auto-merge on ready contribute PRs, assign the PR author, apply a type label from the PR title, apply path-based area labels, and rebase auto-merge PRs onto the base branch when it moves.
 inputs:
   projects-token:
     description: Token for the Project GraphQL status sync and for enabling auto-merge.
@@ -47,6 +47,19 @@ runs:
         script: |
           const { rebase } = require(`${process.env.ACTION_PATH}/rebase-prs.js`)
           await rebase({ github, context, core })
+
+    - name: Assign PR author
+      if: |
+        github.event_name == 'pull_request_target' &&
+        contains(fromJSON('["opened", "reopened"]'), github.event.action)
+      uses: actions/github-script@v9
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const { assign } = require(`${process.env.ACTION_PATH}/assign-author.js`)
+          await assign({ github, context, core })
 
     - name: Label PR by type
       if: |
