@@ -529,7 +529,7 @@ class TestOpenPrBody:
             "--author",
             "@me",
             "--json",
-            "number,state,url,headRefName,isDraft,reviewDecision,body,headRefOid,baseRefName",
+            "number,state,url,headRefName,isDraft,reviewDecision,body,headRefOid,baseRefName,title",
             stdout=json.dumps(
                 [
                     {
@@ -554,7 +554,7 @@ class TestOpenPrBody:
 class TestOpenPrHeads:
     JSON_FIELDS = (
         "number,state,url,headRefName,isDraft,reviewDecision,body,"
-        "headRefOid,baseRefName"
+        "headRefOid,baseRefName,title"
     )
 
     def _list(self, fake: FakeSubprocess, extra: dict[str, Any]) -> None:
@@ -601,6 +601,22 @@ class TestOpenPrHeads:
         prs, _ = open_prs(tmp_path)
 
         assert (prs[0].head_sha, prs[0].base_branch) == ("", "")
+
+    def test_reads_title(self, fake_subprocess: FakeSubprocess, tmp_path: Path) -> None:
+        self._list(fake_subprocess, {"title": "docs: note"})
+
+        prs, _ = open_prs(tmp_path)
+
+        assert prs[0].title == "docs: note"
+
+    def test_missing_title_maps_to_empty(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        self._list(fake_subprocess, {"title": None})
+
+        prs, _ = open_prs(tmp_path)
+
+        assert prs[0].title == ""
 
 
 def _open_pr(
@@ -690,7 +706,7 @@ class TestBehindWarning:
 
 class TestCollectReportBehind:
     def _behind_pr(self, contribute_remote: ContributeRemote) -> None:
-        contribute_remote.main()
+        contribute_remote.main(("c1", "feat: a"))
         contribute_remote.unmanaged_pr("someone/a", 3, [("c1", "feat: a")])
         contribute_remote.head(3, "s3")
 
@@ -2012,7 +2028,7 @@ class TestRunList:
         assert "      p2 feat: add foo [not on main]" in out.splitlines()
         assert result == 1
 
-    def test_pr_sharing_no_commit_with_main_stays_unlisted(
+    def test_pr_sharing_no_commit_with_main_is_listed_as_not_on_main(
         self,
         contribute_remote: ContributeRemote,
         tmp_path: Path,
@@ -2023,9 +2039,18 @@ class TestRunList:
 
         result, out = self._list(contribute_remote, tmp_path, capsys)
 
-        assert "someone/other" not in out
-        assert "p1" not in out
-        assert result == 0
+        assert out == (
+            "  local only:\n"
+            "    [new] tester/contribute/add-foo\n"
+            "      m1 feat: add foo\n"
+            "  waiting for review:\n"
+            "    [#83 - needs review] someone/other\n"
+            "      p1 fix: other [not on main]\n"
+            "  warning: these open PRs hold commits local main does not have - "
+            "cherry-pick them onto main:\n"
+            "    someone/other: git cherry-pick p1\n"
+        )
+        assert result == 1
 
     def test_regressed_managed_batch_is_not_also_flagged_as_not_on_main(
         self,
@@ -2134,10 +2159,153 @@ class TestRunList:
             dates={"p1": "2024-02-02T00:00:00+00:00"},
         )
 
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert out == (
+            "  needs PR:\n"
+            "    [manual PR]\n"
+            "      m1 docs: note [code]\n"
+            "  waiting for review:\n"
+            "    [#82 - needs review] someone/notes\n"
+            "      p1 docs: note [not on main]\n"
+            "  warning: these open PRs hold commits local main does not have - "
+            "cherry-pick them onto main:\n"
+            "    someone/notes: git cherry-pick p1\n"
+        )
+        assert result == 1
+
+    def test_code_only_squash_of_a_pr_matches_it_by_title(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "docs: note"), paths={"m1": (_OUT_SCOPE,)})
+        contribute_remote.unmanaged_pr(
+            "someone/notes", 82, [("p1", "docs: first"), ("p2", "docs: second")]
+        )
+        contribute_remote.title(82, "docs: note")
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert out == (
+            "  waiting for review:\n"
+            "    [manual PR] [#82 - needs review] someone/notes\n"
+            "      m1 docs: note [code]\n"
+        )
+        assert result == 0
+
+    def test_open_prs_sharing_a_title_match_neither(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "docs: note"), paths={"m1": (_OUT_SCOPE,)})
+        contribute_remote.unmanaged_pr("someone/notes", 82, [("p1", "docs: first")])
+        contribute_remote.unmanaged_pr("someone/other", 83, [("p2", "docs: second")])
+        contribute_remote.title(82, "docs: note")
+        contribute_remote.title(83, "docs: note")
+
         _, out = self._list(contribute_remote, tmp_path, capsys)
 
-        assert "  needs PR:" in out
-        assert "[#82" not in out
+        assert "  needs PR:\n    [manual PR]\n      m1 docs: note [code]\n" in out
+        assert "[manual PR] [#" not in out
+
+    def test_title_match_needs_a_unique_local_subject(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(
+            ("m1", "docs: note"),
+            ("m2", "docs: note"),
+            paths={"m1": (_OUT_SCOPE,), "m2": (_OUT_SCOPE,)},
+        )
+        contribute_remote.unmanaged_pr("someone/notes", 82, [("p1", "docs: first")])
+        contribute_remote.title(82, "docs: note")
+
+        _, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert (
+            "  needs PR:\n"
+            "    [manual PR]\n"
+            "      m1 docs: note [code]\n"
+            "      m2 docs: note [code]\n"
+        ) in out
+        assert "[manual PR] [#" not in out
+
+    def test_pr_matched_by_commit_is_not_matched_by_title(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(
+            ("m1", "docs: note"),
+            ("m2", "docs: tidy"),
+            paths={"m1": (_OUT_SCOPE,), "m2": (_OUT_SCOPE,)},
+        )
+        contribute_remote.unmanaged_pr("someone/notes", 82, [("p1", "docs: note")])
+        contribute_remote.title(82, "docs: tidy")
+
+        _, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert out == (
+            "  needs PR:\n"
+            "    [manual PR]\n"
+            "      m2 docs: tidy [code]\n"
+            "  waiting for review:\n"
+            "    [manual PR] [#82 - needs review] someone/notes\n"
+            "      m1 docs: note [code]\n"
+        )
+
+    def test_managed_pr_title_is_not_matched(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(
+            ("b1", "feat: add foo"),
+            ("m1", "docs: note"),
+            paths={"m1": (_OUT_SCOPE,)},
+        )
+        contribute_remote.managed(
+            "add-foo", [("b1", "feat: add foo")], pr=Pr(5, "OPEN", "u")
+        )
+        contribute_remote.title(5, "docs: note")
+
+        _, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert "  needs PR:\n    [manual PR]\n      m1 docs: note [code]\n" in out
+        assert "[manual PR] [#" not in out
+
+    def test_in_scope_commit_is_not_matched_by_title(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        contribute_remote.main(("m1", "feat: add foo"))
+        contribute_remote.unmanaged_pr("someone/other", 83, [("p1", "fix: other")])
+        contribute_remote.title(83, "feat: add foo")
+
+        result, out = self._list(contribute_remote, tmp_path, capsys)
+
+        assert out == (
+            "  local only:\n"
+            "    [new] tester/contribute/add-foo\n"
+            "      m1 feat: add foo\n"
+            "  waiting for review:\n"
+            "    [#83 - needs review] someone/other\n"
+            "      p1 fix: other [not on main]\n"
+            "  warning: these open PRs hold commits local main does not have - "
+            "cherry-pick them onto main:\n"
+            "    someone/other: git cherry-pick p1\n"
+        )
+        assert result == 1
 
     def test_two_code_only_commits_in_one_pr_share_a_header(
         self,
@@ -4355,6 +4523,7 @@ class TestWithoutGh:
             "body": "b",
             "headRefOid": "abc",
             "baseRefName": "main",
+            "title": "feat: x",
         }
         commit = {
             "oid": "c1",
@@ -4382,6 +4551,7 @@ class TestWithoutGh:
             "main",
             "",
         )
+        assert prs[0].title == "feat: x"
         assert [c.sha for c in prs[0].commits] == ["c1"]
         assert "is:open" in fake_github.graphql_variables("search(")[0]["q"]
 

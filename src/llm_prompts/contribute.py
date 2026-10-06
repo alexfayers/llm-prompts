@@ -100,6 +100,7 @@ class OpenPr(NamedTuple):
     body: str = ""
     head_sha: str = ""
     base_branch: str = ""
+    title: str = ""
 
 
 class Inventory(NamedTuple):
@@ -453,7 +454,7 @@ def open_prs(repo: Path) -> tuple[list[OpenPr], frozenset[int]]:
     items = _pr_list(
         repo,
         "open",
-        "number,state,url,headRefName,isDraft,reviewDecision,body,headRefOid,baseRefName",
+        "number,state,url,headRefName,isDraft,reviewDecision,body,headRefOid,baseRefName,title",
     )
     prs: list[OpenPr] = []
     skipped: set[int] = set()
@@ -474,6 +475,7 @@ def open_prs(repo: Path) -> tuple[list[OpenPr], frozenset[int]]:
                 body=item.get("body") or "",
                 head_sha=item.get("headRefOid") or "",
                 base_branch=item.get("baseRefName") or "",
+                title=item.get("title") or "",
             )
         )
     return prs, frozenset(skipped)
@@ -897,6 +899,38 @@ def _open_pr_by_sha(
     return by_sha
 
 
+def _squashed_pr_by_sha(
+    commits: Sequence[Commit],
+    manual: Collection[str],
+    prs: Sequence[OpenPr],
+    login: str,
+    by_sha: dict[str, OpenPr],
+) -> dict[str, OpenPr]:
+    """Map each manual commit to the one open PR, with no commit-matched commit, whose title is its subject."""
+    matched = {open_pr.pr.number for open_pr in by_sha.values()}
+    candidates = [
+        open_pr
+        for open_pr in prs
+        if open_pr.title
+        and not is_managed(open_pr.branch, login)
+        and open_pr.pr.number not in matched
+    ]
+    subject_counts: dict[str, int] = {}
+    for commit in commits:
+        subject_counts[commit.subject] = subject_counts.get(commit.subject, 0) + 1
+    by_title: dict[str, list[OpenPr]] = {}
+    for open_pr in candidates:
+        by_title.setdefault(open_pr.title, []).append(open_pr)
+    return {
+        commit.sha: by_title[commit.subject][0]
+        for commit in commits
+        if commit.sha in manual
+        and commit.sha not in by_sha
+        and subject_counts[commit.subject] == 1
+        and len(by_title.get(commit.subject, ())) == 1
+    }
+
+
 def _pr_only_commits(
     commits: Sequence[Commit], prs: Sequence[OpenPr], login: str
 ) -> dict[int, tuple[Commit, ...]]:
@@ -1217,15 +1251,22 @@ def collect_report(
     code_only = _manual_shas(commits, prefix)
     groups = group_commits(in_scope, login, prefix)
     plans = pending_plans(groups, inv, login)
+    by_sha = _open_pr_by_sha(commits, prs)
+    squashed = _squashed_pr_by_sha(commits, code_only, prs, login, by_sha)
+    squashed_numbers = {open_pr.pr.number for open_pr in squashed.values()}
     entries, problems = classify(
         commits,
         groups,
         plans,
         inv,
         prs,
-        _open_pr_by_sha(commits, prs),
+        {**by_sha, **squashed},
         code_only,
-        _pr_only_commits(commits, prs, login),
+        {
+            number: missing
+            for number, missing in _pr_only_commits(commits, prs, login).items()
+            if number not in squashed_numbers
+        },
     )
 
     pr_only = pr_only_warning(entries)

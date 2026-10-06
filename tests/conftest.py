@@ -330,6 +330,7 @@ class ContributeRemote:
         self._pr_extra_commits: dict[int, list[dict[str, str]]] = {}
         self._reviews: dict[int, tuple[bool, str]] = {}
         self._bodies: dict[int, str] = {}
+        self._titles: dict[int, str] = {}
         self._pr_heads: dict[int, tuple[str, str]] = {}
         self._paths: dict[str, Sequence[str]] = {}
         self._register_fetch()
@@ -460,6 +461,10 @@ class ContributeRemote:
     def body(self, number: int, text: str) -> None:
         """Set an open PR's body."""
         self._bodies[number] = text
+
+    def title(self, number: int, text: str) -> None:
+        """Set an open PR's title."""
+        self._titles[number] = text
 
     def legacy(self, branch: str, pr: Pr | None = None) -> str:
         """Register a legacy `<login>/<slug>` branch (no commits) on the remote."""
@@ -614,6 +619,7 @@ class ContributeRemote:
                     "isDraft": self._is_draft(item),
                     "reviewDecision": self._reviews.get(item["number"], (False, ""))[1],
                     "body": self._bodies.get(item["number"], ""),
+                    "title": self._titles.get(item["number"], ""),
                     **(
                         {
                             "headRefOid": self._pr_heads[item["number"]][0],
@@ -637,7 +643,7 @@ class ContributeRemote:
             "--author",
             "@me",
             "--json",
-            "number,state,url,headRefName,isDraft,reviewDecision,body,headRefOid,baseRefName",
+            "number,state,url,headRefName,isDraft,reviewDecision,body,headRefOid,baseRefName,title",
             side_effect=side_effect,
         )
 
