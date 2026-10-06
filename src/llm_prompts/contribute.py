@@ -87,6 +87,7 @@ class Pr(NamedTuple):
     number: int
     state: str
     url: str
+    is_draft: bool = False
 
 
 class OpenPr(NamedTuple):
@@ -94,7 +95,6 @@ class OpenPr(NamedTuple):
 
     pr: Pr
     branch: str
-    is_draft: bool
     review_decision: str
     commits: tuple[Commit, ...]
     body: str = ""
@@ -402,9 +402,12 @@ def all_prs(repo: Path) -> list[tuple[str, Pr]]:
     than one for the same branch name (e.g. an earlier closed PR alongside a
     later one that reused the branch).
     """
-    items = _pr_list(repo, "all", "number,state,url,headRefName")
+    items = _pr_list(repo, "all", "number,state,url,headRefName,isDraft")
     return [
-        (item["headRefName"], Pr(item["number"], item["state"], item["url"]))
+        (
+            item["headRefName"],
+            Pr(item["number"], item["state"], item["url"], item["isDraft"]),
+        )
         for item in items
     ]
 
@@ -464,9 +467,8 @@ def open_prs(repo: Path) -> tuple[list[OpenPr], frozenset[int]]:
             commits = ()
         prs.append(
             OpenPr(
-                pr=Pr(item["number"], item["state"], item["url"]),
+                pr=Pr(item["number"], item["state"], item["url"], item["isDraft"]),
                 branch=item["headRefName"],
-                is_draft=item["isDraft"],
                 review_decision=item["reviewDecision"] or "",
                 commits=commits,
                 body=item.get("body") or "",

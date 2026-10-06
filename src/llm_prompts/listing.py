@@ -62,7 +62,7 @@ def review_state(pr: OpenPr | None) -> str:
     """Label an open PR's review state; a draft outranks its review decision."""
     if pr is None:
         return "needs review"
-    if pr.is_draft:
+    if pr.pr.is_draft:
         return "draft"
     return {"CHANGES_REQUESTED": "changes requested", "APPROVED": "approved"}.get(
         pr.review_decision, "needs review"
