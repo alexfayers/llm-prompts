@@ -5,7 +5,7 @@ import os
 import re
 import shutil
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Container, Sequence
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
@@ -403,6 +403,16 @@ def _install_linked(src: Path, dest: Path, label: str) -> None:
         log("error", f"Failed to install {label}: {e}")
 
 
+@dataclass(frozen=True)
+class _AllExcept:
+    """Skip set holding every source except ``kept``."""
+
+    kept: frozenset[Path]
+
+    def __contains__(self, item: object) -> bool:
+        return item not in self.kept
+
+
 @dataclass
 class _Agent:
     """Agent installation configuration."""
@@ -432,7 +442,7 @@ class _Agent:
         shared_src: Path,
         overlay_srcs: list[Path],
         overlay_agent_srcs: list[Path],
-        skip_set: frozenset[Path] = frozenset(),
+        skip_set: Container[Path] = frozenset(),
         previous_manifest: "dict[str, AgentManifest] | None" = None,
     ) -> set[str]:
         """Install rule content, returning the destination filenames written.
@@ -480,7 +490,7 @@ class _CodexAgent(_Agent):
         shared_src: Path,
         overlay_srcs: list[Path],
         overlay_agent_srcs: list[Path],
-        skip_set: frozenset[Path] = frozenset(),
+        skip_set: Container[Path] = frozenset(),
         previous_manifest: "dict[str, AgentManifest] | None" = None,
     ) -> set[str]:
         from .manifest import read_rendered_rule, write_rendered_rules
@@ -499,11 +509,12 @@ class _CodexAgent(_Agent):
         for name, src in sorted((name, src) for name, src, _ in collected):
             if src.resolve() in skip_set:
                 cached = read_rendered_rule(self.name, name)
-                if cached is None:
+                if cached is not None:
+                    rules[name] = cached
+                    continue
+                if not isinstance(skip_set, _AllExcept):
                     held_back.append(name)
                     continue
-                rules[name] = cached
-                continue
             try:
                 rules[name] = render_template(str(src), str(vars_path), self.name)
             except Exception as e:
@@ -675,7 +686,7 @@ def _install_content(
     shared_src: Path,
     overlay_srcs: list[Path],
     overlay_agent_srcs: list[Path],
-    skip_set: frozenset[Path] = frozenset(),
+    skip_set: Container[Path] = frozenset(),
     previous_manifest: "dict[str, AgentManifest] | None" = None,
 ) -> set[str]:
     """Install shared and agent-specific content for one agent and content type.
@@ -707,7 +718,11 @@ def _install_content(
     for name, src, agent_specific in collected:
         if src.resolve() in skip_set:
             if _carry_forward(
-                target, dest_dir / name, f"{subdir}/{name}", previous_manifest
+                target,
+                dest_dir / name,
+                f"{subdir}/{name}",
+                previous_manifest,
+                quiet=isinstance(skip_set, _AllExcept),
             ):
                 managed.add(name)
             continue
@@ -903,7 +918,7 @@ def _materialize_builtin_skill(
     vars_path: Path,
     managed: set[str],
     agent_name: str = "",
-    skip_set: frozenset[Path] = frozenset(),
+    skip_set: Container[Path] = frozenset(),
     previous_manifest: "dict[str, AgentManifest] | None" = None,
 ) -> None:
     """Install a built-in/overlay skill as a real directory with variables substituted.
@@ -924,7 +939,13 @@ def _materialize_builtin_skill(
     previous_manifest = previous_manifest if previous_manifest is not None else {}
     skill_md = source / "SKILL.md"
     if skill_md.resolve() in skip_set:
-        if _carry_forward(agent_name, dest, f"skill {dest.name}", previous_manifest):
+        if _carry_forward(
+            agent_name,
+            dest,
+            f"skill {dest.name}",
+            previous_manifest,
+            quiet=isinstance(skip_set, _AllExcept),
+        ):
             managed.add(dest.name)
         return
     raw = _read_text(skill_md)
@@ -939,7 +960,7 @@ def _install_skills(
     skills_parent: Path,
     agent_name: str,
     vars_path: Path,
-    skip_set: frozenset[Path] = frozenset(),
+    skip_set: Container[Path] = frozenset(),
     previous_manifest: "dict[str, AgentManifest] | None" = None,
 ) -> set[str]:
     """Install skills as materialized directories, overlay overriding base on collision.
@@ -1257,7 +1278,7 @@ class _RuleSources:
         cls,
         agent: _Agent,
         overlay_dirs: Sequence[Path],
-        skip_set: frozenset[Path] = frozenset(),
+        skip_set: Container[Path] = frozenset(),
     ) -> "_RuleSources":
         """Collect rule sources by installed filename stem, in install priority order.
 
@@ -1350,7 +1371,7 @@ def _append_included_rules(
 def _install_agents(
     candidate_dirs: list[Path],
     agents_dir: Path,
-    skip_set: frozenset[Path] = frozenset(),
+    skip_set: Container[Path] = frozenset(),
     previous_manifest: "dict[str, AgentManifest] | None" = None,
     rules: "_RuleSources | None" = None,
 ) -> set[str]:
@@ -1398,11 +1419,16 @@ def _install_agents(
                             prev_path,
                             f"agent {prev_path.name}",
                             previous_manifest,
+                            quiet=isinstance(skip_set, _AllExcept),
                         )
                     ):
                         managed.add(prev_path.name)
             elif _carry_forward(
-                "claude-code", agents_dir / name, f"agent {name}", previous_manifest
+                "claude-code",
+                agents_dir / name,
+                f"agent {name}",
+                previous_manifest,
+                quiet=isinstance(skip_set, _AllExcept),
             ):
                 managed.add(name)
             continue
@@ -1714,6 +1740,7 @@ def _carry_forward(
     dest: Path,
     label: str,
     previous_manifest: "dict[str, AgentManifest]",
+    quiet: bool = False,
 ) -> bool:
     """Decide whether a size-guard-skipped destination stays managed.
 
@@ -1722,11 +1749,14 @@ def _carry_forward(
         dest: Destination path that was skipped.
         label: Human-readable label for the skipped prompt.
         previous_manifest: The manifest from the previous installation.
+        quiet: Whether to omit the size guard warnings.
 
     Returns:
         Whether ``dest`` was installed last time and should stay managed.
     """
     previous_files = set(previous_manifest.get(agent_name, {}).get("files", []))
+    if quiet:
+        return str(dest) in previous_files
     if str(dest) in previous_files:
         log("warn", f"[{agent_name}] Kept previous {label}: size guard violation")
         return True
@@ -1866,6 +1896,7 @@ def main(
     *,
     verbose: bool = False,
     size_baseline: dict[Path, str] | None = None,
+    only: Path | None = None,
 ) -> bool:
     """Run the installation workflow.
 
@@ -1874,6 +1905,8 @@ def main(
         verbose: Show debug-level output.
         size_baseline: A `size_guard.snapshot_sources` taken before pulling
             sources; violations in files changed since then only warn.
+        only: Source file to reinstall alone; every other prompt is left
+            untouched and the manifest keeps its previous files.
 
     Returns:
         Whether any prompt was skipped or any agent frozen due to a size
@@ -1889,37 +1922,53 @@ def main(
     from .manifest import read_manifest
     from .size_guard import check as run_size_check
     from .size_guard import (
+        check_source,
         format_report,
         parked_state_lines,
         resolve_skip_set,
         split_by_change,
     )
 
-    size_result = run_size_check([root_dir, *overlay_dirs])
-    if size_result.declaration_errors:
-        for line in format_report([], size_result.declaration_errors).splitlines():
-            log("error", line)
-        sys.exit(1)
-    blocking, pulled = split_by_change(size_result.violations, size_baseline)
-    skip_by_agent, frozen_agents = resolve_skip_set(blocking)
     previous_manifest = read_manifest()
-    if blocking:
-        for line in format_report(blocking).splitlines():
-            log("error", line)
-    for name in sorted(frozen_agents):
-        log("error", f"[{name}] Frozen: collection_bytes size guard violation")
-    if pulled:
-        for line in format_report(pulled).splitlines():
+    all_skipped: frozenset[Path] = frozenset()
+    size_failed = False
+    frozen_agents: frozenset[str] = frozenset()
+    skip_by_agent: dict[str, Container[Path]]
+    if only is not None:
+        result = check_source(only, _read_text(only))
+        if not result.passed:
+            for line in result.report.splitlines():
+                log("error", line)
+            size_failed = True
+        skip = _AllExcept(frozenset() if size_failed else frozenset({only.resolve()}))
+        skip_by_agent = dict.fromkeys(AGENT_CLASSES, skip)
+    else:
+        size_result = run_size_check([root_dir, *overlay_dirs])
+        if size_result.declaration_errors:
+            for line in format_report([], size_result.declaration_errors).splitlines():
+                log("error", line)
+            sys.exit(1)
+        blocking, pulled = split_by_change(size_result.violations, size_baseline)
+        skip_sets, frozen_agents = resolve_skip_set(blocking)
+        skip_by_agent = dict(skip_sets)
+        all_skipped = frozenset().union(*skip_sets.values())
+        if blocking:
+            for line in format_report(blocking).splitlines():
+                log("error", line)
+        for name in sorted(frozen_agents):
+            log("error", f"[{name}] Frozen: collection_bytes size guard violation")
+        if pulled:
+            for line in format_report(pulled).splitlines():
+                log("warn", line)
+            log(
+                "warn",
+                "Installing anyway as these changed in this update; run "
+                "`llm-prompts check` once they are compressed.",
+            )
+        for line in parked_state_lines(size_result.artifacts):
+            log("info", line)
+        for line in size_result.stale:
             log("warn", line)
-        log(
-            "warn",
-            "Installing anyway as these changed in this update; run "
-            "`llm-prompts check` once they are compressed.",
-        )
-    for line in parked_state_lines(size_result.artifacts):
-        log("info", line)
-    for line in size_result.stale:
-        log("warn", line)
 
     all_agents: dict[str, _Agent] = {
         name: agent_class(name=name, root_dir=root_dir, dirs=dirs)
@@ -2033,7 +2082,9 @@ def main(
             _RuleSources.collect(
                 all_agents["claude-code"],
                 overlay_dirs,
-                skip_by_agent.get("claude-code", frozenset()),
+                frozenset()
+                if only is not None
+                else skip_by_agent.get("claude-code", frozenset()),
             ),
         )
         _check_unmanaged(agents_dest, managed_agents, "claude-code agents")
@@ -2095,19 +2146,25 @@ def main(
             pi_packages, previous_manifest.get("pi", {}).get("packages", [])
         )
     for name in targets:
-        _cleanup_stale(name, installed_files[name], previous_manifest)
+        manifest_files = installed_files[name]
+        if only is None:
+            _cleanup_stale(name, manifest_files, previous_manifest)
+        else:
+            manifest_files = sorted(
+                set(manifest_files)
+                | set(previous_manifest.get(name, {}).get("files", []))
+            )
         write_manifest(
             name,
-            installed_files[name],
+            manifest_files,
             packages=pi_packages if name == "pi" else None,
         )
 
-    all_skipped: frozenset[Path] = frozenset().union(*skip_by_agent.values())
     for source in sorted(all_skipped):
         display = source.parent.name if source.name == "SKILL.md" else source.name
         log("error", f"Skipped installing {display}: size guard violation")
 
-    return bool(all_skipped) or bool(frozen_agents)
+    return size_failed or bool(all_skipped) or bool(frozen_agents)
 
 
 def get_managed_dirs() -> list[Path]:
@@ -2178,6 +2235,41 @@ def get_source_for_managed_file(path: str) -> str | None:
             source = _collect_sources(agent).get(f"skills/{relative.parts[0]}")
             if source is not None:
                 return str(source.parent.joinpath(*relative.parts[1:]))
+    return None
+
+
+def partial_source(path: Path) -> Path | None:
+    """Return the source file whose installed prompt an edit of ``path`` rebuilds.
+
+    Args:
+        path: An edited source file, or an installed managed file.
+
+    Returns:
+        The source file to reinstall alone, or None where the edit cannot be
+        reinstalled on its own (variables, settings, allowances, concatenated
+        or plugin-sourced files, files outside every prompts root).
+    """
+    from .size_guard import _owning_root
+
+    source = path.resolve()
+    managed = get_managed_files()
+    dest = next((d for d in (str(path), str(source)) if d in managed), None)
+    if dest is not None:
+        mapped = get_source_for_managed_file(dest)
+        if mapped is None:
+            return None
+        source = Path(mapped).resolve()
+    root = _owning_root(source)
+    if root is None or not source.is_file():
+        return None
+    match source.relative_to(root).parts:
+        case (_, "rules" | "workflows", name) | ("claude-code", "agents", name) if (
+            name.endswith(".md")
+        ):
+            return source
+        case (group, "skills", skill, _, *_):
+            skill_md = root / group / "skills" / skill / "SKILL.md"
+            return skill_md if skill_md.is_file() else None
     return None
 
 

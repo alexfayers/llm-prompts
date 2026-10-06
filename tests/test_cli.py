@@ -1785,3 +1785,29 @@ class TestGetGhLoginWithoutGh:
 
         assert caught.value.code == 1
         assert "HTTP 401: Bad credentials" in capsys.readouterr().err
+
+
+class TestUpdateOnly:
+    def test_reinstalls_only_the_mapped_source_without_pulling_or_setup(self) -> None:
+        source = Path("/synthetic/rule.md")
+        with (
+            patch("sys.argv", ["llm-prompts", "update", "--only", "/synthetic/x.md"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={"kiro": {"files": []}},
+            ),
+            patch("llm_prompts.install.partial_source", return_value=source),
+            patch("llm_prompts.install.main", return_value=False) as mock_install,
+            patch("llm_prompts.cli._pull_local_sources") as mock_pull_local,
+            patch("llm_prompts.plugins.pull_plugin_sources") as mock_pull_plugins,
+            patch("llm_prompts.setup.run_setup") as mock_setup,
+            patch("llm_prompts.cli._reconfigure_agents") as mock_reconfigure,
+        ):
+            exit_code = run_capturing_exit(main)
+
+        mock_install.assert_called_once_with(["kiro"], only=source)
+        mock_pull_local.assert_not_called()
+        mock_pull_plugins.assert_not_called()
+        mock_setup.assert_not_called()
+        mock_reconfigure.assert_not_called()
+        assert exit_code == 0

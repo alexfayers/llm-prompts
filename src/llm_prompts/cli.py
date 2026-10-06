@@ -671,6 +671,12 @@ def main() -> int | None:
         action="store_true",
         help="Report available updates without applying them.",
     )
+    update_parser.add_argument(
+        "--only",
+        type=Path,
+        metavar="PATH",
+        help="Reinstall only the prompt built from this edited file.",
+    )
     uninstall_parser = subparsers.add_parser(
         "uninstall",
         help="Remove installed rules, workflows, skills, and agent config patches.",
@@ -896,6 +902,13 @@ def main() -> int | None:
             )
             sys.exit(1)
 
+        from .install import main as install_main
+        from .install import partial_source
+
+        only_source = partial_source(args.only) if args.only else None
+        if only_source is not None:
+            sys.exit(1 if install_main(list(manifest), only=only_source) else 0)
+
         from .size_guard import snapshot_sources
 
         size_baseline = snapshot_sources(_size_guard_roots())
@@ -914,8 +927,6 @@ def main() -> int | None:
         for name in _RUN_SETUP_TRACKED_TOOLS:
             if _get_installed_commit(name) != commits_before_setup[name]:
                 changed_sources.add(name)
-
-        from .install import main as install_main
 
         size_guard_failed = install_main(list(manifest), size_baseline=size_baseline)
 
