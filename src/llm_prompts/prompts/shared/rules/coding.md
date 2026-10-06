@@ -13,6 +13,8 @@ copilot_apply_to: '**'
 - MUST NOT {{TOOL_COMPLETE}} until all tasks in the focus chain are done.
 - {{ACTION_NO_NARRATE}}
 - MUST write for reuse: where several functions do similar things, merge them or create an interface.
+- MUST make a change once, at its source, not at each place that uses it - avoid shotgun surgery.
+- MUST NOT change code the task does not need; leaving code better applies only to code you are already editing.
 - Committed text (docs, CLAUDE.md, design decisions) MUST describe the current atomic state - never a failed intermediate approach, a removed feature, or "we tried X then switched to Y".
 - SHOULD NOT add a variable assignment that does not improve clarity; a value used once needs no name.
 - SHOULD NOT use magic numbers: where a threshold recurs, derive every occurrence from one named constant.
