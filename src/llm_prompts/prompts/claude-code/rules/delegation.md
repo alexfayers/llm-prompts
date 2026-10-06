@@ -6,7 +6,7 @@
   - **Opus** - design, architecture, root-cause work, debugging, planning, synthesis.
   - **Sonnet** - parallel mechanical work Opus decided: an edit pattern, a bounded search.
   - **Haiku** - trivial work: a lookup, exact change, known shell recipe. Judgment, not file count, sets tier - never with real reasoning.
-- A known target (file, symbol, doc you know) is a trivial lookup: SHOULD go to Haiku, or read it yourself if cheaper; MUST NOT let it become "go find out about X". Exception: an active team's delegate-first default (agent-teams.md) overrules this.
+- A known target (file, symbol, doc you know) is a trivial lookup: SHOULD go to Haiku, or read it yourself if cheaper; MUST NOT let it become "go find out about X". An active team (agent-teams.md) overrules this.
 - A spawn commits that dimension: MUST NOT resume reads on it or re-read its report - `SendMessage` instead.
 - Design/editor agents MUST NOT run tests.
 
@@ -18,7 +18,7 @@
 
 ## Spawn prompt contract
 
-State the desired change concisely, close to how it was given - MUST NOT spell out mechanics a delegate can work out itself, unless risky/ambiguous. `SendMessage` follows this plus `anti-yap.md`: state the ask/answer, not context it has.
+State the desired change concisely, close to how it was given - MUST NOT spell out mechanics it can derive, unless risky/ambiguous. `SendMessage` follows this plus `anti-yap.md`: state the ask/answer, not context it has.
 
 Every spawn prompt, design delegates included, MUST specify:
 
@@ -51,6 +51,6 @@ For a code comment, state policy/convention, not draft prose.
 ## Escalation and waiting
 
 - A delegate stuck on an ambiguity, or needing a user-only preference, SHOULD escalate.
-- MUST NOT idle-wait for a background agent/command, `sleep`, or a placeholder call - completion re-invokes you: do other work or end the turn.
+- MUST NOT idle-wait on a background agent/command, `sleep` or placeholder call - completion re-invokes you: do other work or end the turn.
 - A mid-turn message is silently ignored: wait, or re-verify state yourself. Once idle, `SendMessage` resumes a NAMED delegate - ask for a missing/truncated section, not re-derive it.
-- A resend returns a SUMMARY; read its transcript `.jsonl` under `subagents/` - never ask again, MUST NOT re-run the work.
+- A resend returns a SUMMARY; read its transcript `.jsonl` under `subagents/` - MUST NOT ask again or re-run the work.
