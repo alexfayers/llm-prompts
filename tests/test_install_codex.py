@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Container, Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,6 +10,7 @@ import pytest
 
 from llm_prompts.install import (
     _Agent,
+    _AllExcept,
     _CodexAgent,
     _collect_content_srcs,
     _ensure_codex_doc_limit,
@@ -158,7 +159,7 @@ class TestCodexAgentsMdSkip(TestCodexAgentsMdConcat):
     """Skip-set-aware AGENTS.md rendering, reusing the concat fixture's `_build`."""
 
     def _install(
-        self, agent: _CodexAgent, shared: Path, skip_set: frozenset[Path] = frozenset()
+        self, agent: _CodexAgent, shared: Path, skip_set: Container[Path] = frozenset()
     ) -> set[str]:
         """Call install_rules with the fixed empty overlay lists, varying only skip_set."""
         return agent.install_rules(
@@ -256,6 +257,30 @@ class TestCodexAgentsMdSkip(TestCodexAgentsMdConcat):
         content = agents_md.read_text(encoding="utf-8")
         assert "coding body" not in content
         assert "canary body" in content
+        assert "planning body" in content
+
+    def test_only_rebuilds_from_cached_text_rendering_cache_misses(
+        self, rendered_rules_dir: Path, tmp_path: Path
+    ) -> None:
+        agent = self._build(tmp_path)
+        shared = agent.root_dir / "shared" / "rules"
+        write_rendered_rules(
+            "codex",
+            {"000-canary.md": "cached canary text"},
+        )
+
+        self._install(
+            agent,
+            shared,
+            skip_set=_AllExcept(frozenset({(shared / "coding.md").resolve()})),
+        )
+
+        content = (tmp_path / "home" / ".codex" / "AGENTS.md").read_text(
+            encoding="utf-8"
+        )
+        assert "coding body" in content
+        assert "cached canary text" in content
+        assert "canary body" not in content
         assert "planning body" in content
 
 

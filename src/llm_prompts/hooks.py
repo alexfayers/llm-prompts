@@ -20,7 +20,6 @@ _WRITE_TOOLS = frozenset(
 )
 _GATED_EDIT_TOOLS = frozenset({"Write", "write_to_file", "Edit"})
 _GATED_PARENT_DIRS = frozenset({"rules", "workflows", "skills", "agents"})
-_DEBOUNCE_SECONDS = 5.0
 _UPDATE_CHECK_INTERVAL = 60 * 60
 _DEBOUNCED_TASK_START_SOURCES = frozenset({"resume", "compact"})
 
@@ -113,15 +112,14 @@ class _ReinstallDebouncer:
     def __init__(
         self,
         stamp_path: Path | None = None,
-        interval_seconds: float = _DEBOUNCE_SECONDS,
-        stamp_name: str = ".llm-prompts-reinstall-stamp",
+        interval_seconds: float = _UPDATE_CHECK_INTERVAL,
+        stamp_name: str = ".llm-prompts-update-check-stamp",
     ) -> None:
         if stamp_path is None:
             from platformdirs import user_data_dir
 
             stamp_path = Path(user_data_dir("cline-hooks")) / stamp_name
         self._stamp = stamp_path
-        self._pending = stamp_path.with_name(f"{stamp_path.name}.pending")
         self._interval_seconds = interval_seconds
 
     def should_run(self) -> bool:
@@ -135,19 +133,9 @@ class _ReinstallDebouncer:
         return (time.time() - last_run) >= self._interval_seconds
 
     def mark_run(self) -> None:
-        """Record that a reinstall just happened, satisfying any pending request."""
+        """Record that a run just happened."""
         self._stamp.parent.mkdir(parents=True, exist_ok=True)
         self._stamp.write_text(str(time.time()), encoding="utf-8")
-        self._pending.unlink(missing_ok=True)
-
-    def mark_pending(self) -> None:
-        """Record that a request was skipped and still needs a run."""
-        self._pending.parent.mkdir(parents=True, exist_ok=True)
-        self._pending.touch()
-
-    def is_pending(self) -> bool:
-        """Return True if a skipped request is still waiting for a run."""
-        return self._pending.exists()
 
 
 class AutoReinstallPlugin(HooksPlugin):
@@ -155,11 +143,7 @@ class AutoReinstallPlugin(HooksPlugin):
 
     def __init__(self) -> None:
         self._source_dirs: list[Path] | None = None
-        self._debouncer = _ReinstallDebouncer()
-        self._update_check_debouncer = _ReinstallDebouncer(
-            interval_seconds=_UPDATE_CHECK_INTERVAL,
-            stamp_name=".llm-prompts-update-check-stamp",
-        )
+        self._update_check_debouncer = _ReinstallDebouncer()
 
     def _get_source_dirs(self) -> list[Path]:
         """Return the source prompt dirs, discovered once per plugin instance."""
@@ -241,14 +225,8 @@ class AutoReinstallPlugin(HooksPlugin):
         if hook_name == "PreToolUse":
             return self._gate_edit(kwargs)
 
-        if not self._is_installed_file_edit(hook_name, kwargs):
-            return self._flush_pending()
-
-        if not self._debouncer.should_run():
-            self._debouncer.mark_pending()
-            return None
-
-        return self._run_update()
+        edited = self._edited_installed_file(hook_name, kwargs)
+        return self._run_update(edited) if edited else None
 
     def _gate_edit(self, kwargs: dict[str, object]) -> HookResult | None:
         """Deny a Write/Edit that would newly breach or worsen a prompt-size threshold.
@@ -321,47 +299,41 @@ class AutoReinstallPlugin(HooksPlugin):
             + format_report(worsened)
         )
 
-    def _is_installed_file_edit(
+    def _edited_installed_file(
         self, hook_name: str, kwargs: dict[str, object]
-    ) -> bool:
-        """Return True if this hook is a write to a file the manifest tracks."""
+    ) -> Path | None:
+        """Return the resolved path if this hook is a write to a file the manifest tracks."""
         if hook_name != "PostToolUse":
-            return False
+            return None
 
         if kwargs.get("tool_name") not in _WRITE_TOOLS:
-            return False
+            return None
 
         parameters = kwargs.get("parameters")
         if not isinstance(parameters, dict):
-            return False
+            return None
 
         path_str = parameters.get("path") or parameters.get("file_path")
         if not path_str:
-            return False
+            return None
 
         try:
             resolved = Path(str(path_str)).resolve()
         except (OSError, ValueError):
-            return False
+            return None
 
         if not self._is_tracked_path(resolved):
-            return False
+            return None
 
         logger.info("Installed prompt file edited: %s", resolved)
-        return True
-
-    def _flush_pending(self) -> HookResult | None:
-        """Run a reinstall the debounce deferred, once the interval has elapsed."""
-        if not self._debouncer.is_pending() or not self._debouncer.should_run():
-            return None
-        return self._run_update()
+        return resolved
 
     # Update prompts/shared/rules/hooks-llm-prompts.md if this note's behavior changes.
-    def _run_update(self) -> HookResult:
-        """Reinstall every prompt file, reporting the outcome as a hook note."""
+    def _run_update(self, path: Path) -> HookResult:
+        """Reinstall one edited prompt file, reporting the outcome as a hook note."""
         try:
             completed = subprocess.run(
-                ["llm-prompts", "update"],
+                ["llm-prompts", "update", "--only", str(path)],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -379,5 +351,4 @@ class AutoReinstallPlugin(HooksPlugin):
                 note += f":\n{stderr}"
             return HookResult(notes=[note])
 
-        self._debouncer.mark_run()
         return HookResult(notes=["Auto-reinstalled prompt files"])
