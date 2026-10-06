@@ -928,3 +928,38 @@ class TestIncludeRules:
         installed = home / ".claude" / "agents" / "overlay-writer.md"
         assert not installed.is_symlink()
         assert "Overlay rule body." in installed.read_text(encoding="utf-8")
+
+
+class TestMainOnlyAgent:
+    @pytest.fixture
+    def overlay(self, tmp_path: Path) -> Iterator[Path]:
+        home = tmp_path / "home"
+        home.mkdir()
+        overlay = tmp_path / "overlay"
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch(
+                "llm_prompts.install._discover_overlay_paths", return_value=[overlay]
+            ),
+            patch(
+                "llm_prompts.size_guard._discover_overlay_paths",
+                return_value=[overlay],
+            ),
+            patch("llm_prompts.manifest.MANIFEST_PATH", tmp_path / "installed.json"),
+        ):
+            yield overlay
+
+    def test_edited_agent_with_rules_still_embeds_its_rule_bodies(
+        self, overlay: Path, tmp_path: Path
+    ) -> None:
+        _write_rule(overlay, "style.md", "# Style\n\nBe terse.\n")
+        agent = _make_include_agent(
+            overlay / "claude-code" / "agents", "writer.md", "style"
+        )
+
+        install_main(["claude-code"], only=agent)
+
+        content = (tmp_path / "home" / ".claude" / "agents" / "writer.md").read_text(
+            encoding="utf-8"
+        )
+        assert "Be terse." in content

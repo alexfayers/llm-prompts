@@ -25,7 +25,7 @@ From then on, keep everything current with:
 llm-prompts update    # pull tool/plugin sources, refresh packages, reinstall for every agent you've set up
 ```
 
-`update` re-pulls every git-based `[[tools]]` and `[[plugins]]` source, re-runs `setup` if any `[[tools]]` are remote, then reinstalls for each agent already in your manifest (i.e. every agent you've previously run `install` for) - no need to name agents again. Use `llm-prompts update --check` to see what's available without applying it.
+`update` re-pulls every git-based `[[tools]]` and `[[plugins]]` source, re-runs `setup` if any `[[tools]]` are remote, then reinstalls for each agent already in your manifest (i.e. every agent you've previously run `install` for) - no need to name agents again. Use `llm-prompts update --check` to see what's available without applying it. `llm-prompts update --only PATH` skips the pulls and setup and reinstalls only the prompt built from that file - the auto-reinstall hook runs this after each edit.
 
 ## Concepts
 
@@ -200,6 +200,7 @@ llm-prompts install kiro --agent-config PATH   # also patch agent JSON with reso
 llm-prompts install <agent> --no-update        # skip auto-update
 llm-prompts update                             # pull tool/plugin sources, reinstall every configured agent
 llm-prompts update --check                     # report available updates without applying them
+llm-prompts update --only PATH                 # reinstall only the prompt built from this edited file
 llm-prompts uninstall <agent>                  # remove installed files and config patches
 llm-prompts source <agent>                     # show source file paths
 llm-prompts setup                              # install all configured tools
