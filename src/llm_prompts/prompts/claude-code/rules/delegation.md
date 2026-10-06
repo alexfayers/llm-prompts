@@ -51,6 +51,6 @@ For a code comment, state policy/convention, not draft prose.
 ## Escalation and waiting
 
 - A delegate stuck on an ambiguity, or needing a user-only preference, SHOULD escalate.
-- MUST NOT idle-wait on a background agent/command, `sleep` or placeholder call - completion re-invokes you: do other work or end the turn.
+- MUST NOT idle-wait on a background agent/command, `sleep` or placeholder call - completion re-invokes you: do other work or end the turn. Exception: while a delegate runs, MUST keep a background `sleep 300` armed; if it fires with no update, MUST `SendMessage` it for status.
 - A mid-turn message is silently ignored: wait, or re-verify state yourself. Once idle, `SendMessage` resumes a NAMED delegate - ask for a missing/truncated section, not re-derive it.
 - A resend returns a SUMMARY; read its transcript `.jsonl` under `subagents/` - MUST NOT ask again or re-run the work.
