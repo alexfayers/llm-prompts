@@ -12,7 +12,7 @@ from llm_prompts.listing import Entry, render, review_state
 
 def _open_pr(*, draft: bool = False, decision: str = "") -> OpenPr:
     return OpenPr(
-        Pr(5, "OPEN", "https://example.test/pull/5"), "b", draft, decision, ()
+        Pr(5, "OPEN", "https://example.test/pull/5", draft), "b", decision, ()
     )
 
 

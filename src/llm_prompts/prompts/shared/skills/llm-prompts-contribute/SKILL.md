@@ -15,9 +15,9 @@ cline-hooks and mcp-memory each carry their own prompts tree (rules, skills, wor
 
 - Commit straight to that repo's local `main`.
 - `llm-prompts contribute list` - shows every unmerged commit's batch branch and status (new/current/stale/regressed/in another PR) across configured overlay repos; `--tool NAME` narrows to one.
-- Pending commits are grouped into batches of up to 5, appended in order to the newest open `<login>/contribute/<slug>` branch with room; a full or merged batch starts a new one.
+- Pending commits are grouped into batches of up to 5, appended in order to the newest `<login>/contribute/<slug>` branch with no PR or a draft PR and room; a full, merged or ready-for-review batch starts a new one.
 - `llm-prompts contribute sync --apply` - a batch whose commits are all current gets new ones cherry-picked on top and pushed normally; a batch with an amended or missing commit is rebuilt from `main` and pushed with `--force-with-lease`. It also opens a draft PR, no reviewers, for each pushed batch branch lacking an open PR; the body follows the target repo's template with What listing the batch's commit subjects.
-- `llm-prompts contribute sync --commit SHA` (repeatable) - syncs only the batches holding those commits, appending to the newest open batch with room or starting a new one; everything else stays local.
+- `llm-prompts contribute sync --commit SHA` (repeatable) - syncs only the batches holding those commits, appending to the newest draft or PR-less batch with room or starting a new one; everything else stays local.
 - `llm-prompts contribute update --apply` - rebases your open PRs that are behind `main`.
 - `sync --commit A --commit B` naming commits in different repos links them: the first named is the dependency; its repo syncs first, and the dependent's batch stays local until the dependency is pushed.
 - `list` prints each linked commit's dependency on its own line, `-> depends on <pr url>` (or `<tool>: unpushed`/`no PR yet`), red when it blocks; sync writes it at the bottom of the PR body as `Depends on <url>`, and rewrites only the `What` section and those lines when a batch's commits change.

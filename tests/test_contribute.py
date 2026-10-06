@@ -399,12 +399,14 @@ class TestOpenPrs:
                         "state": "OPEN",
                         "url": "https://github.com/o/r/pull/12",
                         "headRefName": "tester/add-foo-skill",
+                        "isDraft": False,
                     },
                     {
                         "number": 9,
                         "state": "MERGED",
                         "url": "https://github.com/o/r/pull/9",
                         "headRefName": "tester/add-foo-skill",
+                        "isDraft": False,
                     },
                 ]
             ),
@@ -414,6 +416,22 @@ class TestOpenPrs:
             ("tester/add-foo-skill", Pr(12, "OPEN", "https://github.com/o/r/pull/12")),
             ("tester/add-foo-skill", Pr(9, "MERGED", "https://github.com/o/r/pull/9")),
         ]
+
+    def test_all_prs_carries_draft_flag(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        item = {
+            "number": 12,
+            "state": "OPEN",
+            "url": "https://github.com/o/r/pull/12",
+            "headRefName": "tester/add-foo-skill",
+            "isDraft": True,
+        }
+        fake_subprocess.on("gh", "pr", "list", stdout=json.dumps([item]))
+
+        [(_, pr)] = all_prs(tmp_path)
+
+        assert pr.is_draft is True
 
     def test_requests_a_high_limit_so_old_prs_are_not_truncated(
         self, fake_subprocess: FakeSubprocess, tmp_path: Path
@@ -591,7 +609,6 @@ def _open_pr(
     return contribute.OpenPr(
         pr=Pr(number, "OPEN", f"https://github.com/octo/widgets/pull/{number}"),
         branch=f"someone/pr-{number}",
-        is_draft=False,
         review_decision="",
         commits=(),
         head_sha=head_sha,
@@ -4119,7 +4136,9 @@ class TestRunSyncDraftPr:
         existing = [("b1", "feat: add foo")]
         contribute_remote.main(*existing, ("m2", "feat: add bar"))
         branch = contribute_remote.managed(
-            "add-foo", existing, pr=Pr(9, "OPEN", "https://example.test/pr/9")
+            "add-foo",
+            existing,
+            pr=Pr(9, "OPEN", "https://example.test/pr/9", is_draft=True),
         )
         self._allow_apply(contribute_remote)
         contribute_remote.fake.on_match(
@@ -4312,11 +4331,12 @@ class TestWithoutGh:
             "state": "OPEN",
             "url": "https://github.com/octo/widgets/pull/12",
             "headRefName": "tester/add-foo-skill",
+            "isDraft": True,
         }
         fake_github.on_graphql("search(", self._search(node))
 
         assert all_prs(tmp_path) == [
-            ("tester/add-foo-skill", Pr(12, "OPEN", node["url"]))
+            ("tester/add-foo-skill", Pr(12, "OPEN", node["url"], is_draft=True))
         ]
         assert fake_github.graphql_variables("search(")[0]["q"] == (
             "repo:octo/widgets is:pr author:tester"

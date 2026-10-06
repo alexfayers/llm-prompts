@@ -70,13 +70,14 @@ class TestPlanBatches:
         owned_groups: tuple[Group, ...],
         amended: frozenset[str] = frozenset(),
         unmatched: tuple[Commit, ...] = (),
+        pr: Pr | None = None,
     ) -> Batch:
         commits = tuple(
             Commit(f"b-{g.slug}", g.commits[0].subject, ()) for g in owned_groups
         )
         owned = {c.sha: g.commits[0] for c, g in zip(commits, owned_groups)}
         match = Match(owned=owned, amended=amended, unmatched=unmatched)
-        return Batch(branch, slug, None, commits, match)
+        return Batch(branch, slug, pr, commits, match)
 
     def _inventory(
         self, batches: tuple[Batch, ...] = (), past_slugs: frozenset[str] = frozenset()
@@ -126,6 +127,45 @@ class TestPlanBatches:
         assert len(plans) == 1
         assert plans[0].mode == "new"
         assert plans[0].groups == pending
+
+    def test_published_newest_batch_takes_no_appends(self) -> None:
+        owned = (self._group("o1"),)
+        pr = Pr(1, "OPEN", "https://example.test/pr/1")
+        batch = self._batch("alice/contribute/old", "old", owned, pr=pr)
+        pending = (self._group("p1"),)
+
+        plans = plan_batches(owned + pending, self._inventory((batch,)), "alice")
+
+        assert len(plans) == 1
+        assert plans[0].mode == "new"
+        assert plans[0].groups == pending
+
+    def test_older_draft_behind_a_published_batch_takes_appends(self) -> None:
+        draft_owned = (self._group("d1"),)
+        published_owned = (self._group("u1"),)
+        draft = self._batch(
+            "alice/contribute/draft",
+            "draft",
+            draft_owned,
+            pr=Pr(1, "OPEN", "https://example.test/pr/1", is_draft=True),
+        )
+        published = self._batch(
+            "alice/contribute/published",
+            "published",
+            published_owned,
+            pr=Pr(2, "OPEN", "https://example.test/pr/2"),
+        )
+        pending = (self._group("p1"),)
+
+        plans = plan_batches(
+            draft_owned + published_owned + pending,
+            self._inventory((draft, published)),
+            "alice",
+        )
+
+        assert len(plans) == 1
+        assert plans[0].branch == "alice/contribute/draft"
+        assert plans[0].groups == draft_owned + pending
 
     def test_pending_groups_keep_main_order_when_split_across_new_batches(self) -> None:
         groups = tuple(self._group(f"g{n}") for n in range(7))

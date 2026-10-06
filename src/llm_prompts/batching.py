@@ -95,6 +95,11 @@ def _is_stale(batch: Batch) -> bool:
     return batch_status(batch) != "current"
 
 
+def _accepts_appends(batch: Batch) -> bool:
+    """Return whether `batch` has no PR or a draft one, so may take new groups."""
+    return batch.pr is None or batch.pr.is_draft
+
+
 def _owned_shas(batch: Batch) -> set[str]:
     """Return the main-commit shas `batch`'s branch already owns."""
     return {commit.sha for commit in batch.match.owned.values()}
@@ -134,8 +139,8 @@ def plan_batches(
     """Bucket `groups` (the full pending backlog, main order) into batch plans.
 
     Groups already owned by an existing batch stay with it; the rest append to
-    the newest open batch while it has room, else start new batches capped at
-    `BATCH_CAP`. A batch with an amended or unmatched owned commit, or one
+    the newest batch with no PR or a draft PR while it has room, else start new
+    batches capped at `BATCH_CAP`. A batch with an amended or unmatched owned commit, or one
     missing a commit from an owned group, is rebuilt rather than appended to,
     even with no new groups. A current batch with no new groups gets no plan.
     """
@@ -163,7 +168,10 @@ def plan_batches(
 
     used_slugs = {batch.slug for batch in inv.batches} | inv.past_slugs
     plans: list[BatchPlan] = []
-    newest_index = len(inv.batches) - 1
+    append_index = max(
+        (index for index, batch in enumerate(inv.batches) if _accepts_appends(batch)),
+        default=-1,
+    )
 
     for index, batch in enumerate(inv.batches):
         batch_groups = existing[index]
@@ -172,7 +180,7 @@ def plan_batches(
         owns_selected = selected is None or any(
             commit.sha in selected for group in batch_groups for commit in group.commits
         )
-        if index == newest_index and (owns_selected or not stale):
+        if index == append_index and (owns_selected or not stale):
             room = max(0, BATCH_CAP - len(batch_groups))
             appended, pending = pending[:room], pending[room:]
         if not appended and not (stale and owns_selected):
