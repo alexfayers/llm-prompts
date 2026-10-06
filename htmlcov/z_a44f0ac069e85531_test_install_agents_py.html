@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">506 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">506<span class="text"> run</span></button>
+            <span class="text">520 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">520<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_a44f0ac069e85531_test_install_antigravity_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.1">coverage.py v7.16.1</a>,
-            created at 2026-10-05 17:53 +0000
+            created at 2026-10-06 21:03 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -1010,6 +1010,41 @@
     <p class="run"><span class="n"><a id="t928" href="#t928">928</a></span><span class="t">        <span class="nam">installed</span> <span class="op">=</span> <span class="nam">home</span> <span class="op">/</span> <span class="str">&quot;.claude&quot;</span> <span class="op">/</span> <span class="str">&quot;agents&quot;</span> <span class="op">/</span> <span class="str">&quot;overlay-writer.md&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t929" href="#t929">929</a></span><span class="t">        <span class="key">assert</span> <span class="key">not</span> <span class="nam">installed</span><span class="op">.</span><span class="nam">is_symlink</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t930" href="#t930">930</a></span><span class="t">        <span class="key">assert</span> <span class="str">&quot;Overlay rule body.&quot;</span> <span class="key">in</span> <span class="nam">installed</span><span class="op">.</span><span class="nam">read_text</span><span class="op">(</span><span class="nam">encoding</span><span class="op">=</span><span class="str">&quot;utf-8&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t931" href="#t931">931</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t932" href="#t932">932</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t933" href="#t933">933</a></span><span class="t"><span class="key">class</span> <span class="nam">TestMainOnlyAgent</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t934" href="#t934">934</a></span><span class="t">    <span class="op">@</span><span class="nam">pytest</span><span class="op">.</span><span class="nam">fixture</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t935" href="#t935">935</a></span><span class="t">    <span class="key">def</span> <span class="nam">overlay</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">tmp_path</span><span class="op">:</span> <span class="nam">Path</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">Iterator</span><span class="op">[</span><span class="nam">Path</span><span class="op">]</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t936" href="#t936">936</a></span><span class="t">        <span class="nam">home</span> <span class="op">=</span> <span class="nam">tmp_path</span> <span class="op">/</span> <span class="str">&quot;home&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t937" href="#t937">937</a></span><span class="t">        <span class="nam">home</span><span class="op">.</span><span class="nam">mkdir</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t938" href="#t938">938</a></span><span class="t">        <span class="nam">overlay</span> <span class="op">=</span> <span class="nam">tmp_path</span> <span class="op">/</span> <span class="str">&quot;overlay&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t939" href="#t939">939</a></span><span class="t">        <span class="key">with</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t940" href="#t940">940</a></span><span class="t">            <span class="nam">patch</span><span class="op">(</span><span class="str">&quot;llm_prompts.install.Path.home&quot;</span><span class="op">,</span> <span class="nam">return_value</span><span class="op">=</span><span class="nam">home</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t941" href="#t941">941</a></span><span class="t">            <span class="nam">patch</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t942" href="#t942">942</a></span><span class="t">                <span class="str">&quot;llm_prompts.install._discover_overlay_paths&quot;</span><span class="op">,</span> <span class="nam">return_value</span><span class="op">=</span><span class="op">[</span><span class="nam">overlay</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t943" href="#t943">943</a></span><span class="t">            <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t944" href="#t944">944</a></span><span class="t">            <span class="nam">patch</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t945" href="#t945">945</a></span><span class="t">                <span class="str">&quot;llm_prompts.size_guard._discover_overlay_paths&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t946" href="#t946">946</a></span><span class="t">                <span class="nam">return_value</span><span class="op">=</span><span class="op">[</span><span class="nam">overlay</span><span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t947" href="#t947">947</a></span><span class="t">            <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t948" href="#t948">948</a></span><span class="t">            <span class="nam">patch</span><span class="op">(</span><span class="str">&quot;llm_prompts.manifest.MANIFEST_PATH&quot;</span><span class="op">,</span> <span class="nam">tmp_path</span> <span class="op">/</span> <span class="str">&quot;installed.json&quot;</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t949" href="#t949">949</a></span><span class="t">        <span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t950" href="#t950">950</a></span><span class="t">            <span class="key">yield</span> <span class="nam">overlay</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t951" href="#t951">951</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t952" href="#t952">952</a></span><span class="t">    <span class="key">def</span> <span class="nam">test_edited_agent_with_rules_still_embeds_its_rule_bodies</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t953" href="#t953">953</a></span><span class="t">        <span class="nam">self</span><span class="op">,</span> <span class="nam">overlay</span><span class="op">:</span> <span class="nam">Path</span><span class="op">,</span> <span class="nam">tmp_path</span><span class="op">:</span> <span class="nam">Path</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t954" href="#t954">954</a></span><span class="t">    <span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t955" href="#t955">955</a></span><span class="t">        <span class="nam">_write_rule</span><span class="op">(</span><span class="nam">overlay</span><span class="op">,</span> <span class="str">&quot;style.md&quot;</span><span class="op">,</span> <span class="str">&quot;# Style\n\nBe terse.\n&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t956" href="#t956">956</a></span><span class="t">        <span class="nam">agent</span> <span class="op">=</span> <span class="nam">_make_include_agent</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t957" href="#t957">957</a></span><span class="t">            <span class="nam">overlay</span> <span class="op">/</span> <span class="str">&quot;claude-code&quot;</span> <span class="op">/</span> <span class="str">&quot;agents&quot;</span><span class="op">,</span> <span class="str">&quot;writer.md&quot;</span><span class="op">,</span> <span class="str">&quot;style&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t958" href="#t958">958</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t959" href="#t959">959</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t960" href="#t960">960</a></span><span class="t">        <span class="nam">install_main</span><span class="op">(</span><span class="op">[</span><span class="str">&quot;claude-code&quot;</span><span class="op">]</span><span class="op">,</span> <span class="nam">only</span><span class="op">=</span><span class="nam">agent</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t961" href="#t961">961</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t962" href="#t962">962</a></span><span class="t">        <span class="nam">content</span> <span class="op">=</span> <span class="op">(</span><span class="nam">tmp_path</span> <span class="op">/</span> <span class="str">&quot;home&quot;</span> <span class="op">/</span> <span class="str">&quot;.claude&quot;</span> <span class="op">/</span> <span class="str">&quot;agents&quot;</span> <span class="op">/</span> <span class="str">&quot;writer.md&quot;</span><span class="op">)</span><span class="op">.</span><span class="nam">read_text</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t963" href="#t963">963</a></span><span class="t">            <span class="nam">encoding</span><span class="op">=</span><span class="str">&quot;utf-8&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t964" href="#t964">964</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t965" href="#t965">965</a></span><span class="t">        <span class="key">assert</span> <span class="str">&quot;Be terse.&quot;</span> <span class="key">in</span> <span class="nam">content</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -1019,7 +1054,7 @@
             <a class="nav" href="z_a44f0ac069e85531_test_install_antigravity_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.1">coverage.py v7.16.1</a>,
-            created at 2026-10-05 17:53 +0000
+            created at 2026-10-06 21:03 +0000
         </p>
     </div>
 </footer>

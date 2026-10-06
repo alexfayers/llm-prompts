@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for src/llm_prompts/size_guard.py: 98%</title>
+    <title>Coverage for src/llm_prompts/size_guard.py: 99%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
     <script src="coverage_html_cb_15cffcd0.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>src<span class="sep">/</span>llm_prompts<span class="sep">/</span>size_guard.py</b>:
-            <span class="pc_cov">98%</span>
+            <span class="pc_cov">99%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">287 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">281<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">6<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">284<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">3<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_e0ac35ffd7a69d64_size_limits_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.1">coverage.py v7.16.1</a>,
-            created at 2026-10-05 17:53 +0000
+            created at 2026-10-06 21:03 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -934,9 +934,9 @@
     <p class="run"><span class="n"><a id="t852" href="#t852">852</a></span><span class="t">        <span class="key">for</span> <span class="nam">target</span> <span class="key">in</span> <span class="nam">_scoped_targets</span><span class="op">(</span><span class="nam">first</span><span class="op">,</span> <span class="nam">targets</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t853" href="#t853">853</a></span><span class="t">            <span class="key">yield</span> <span class="key">from</span> <span class="nam">_iter_skill_artifacts</span><span class="op">(</span><span class="nam">tmp</span><span class="op">,</span> <span class="nam">target</span><span class="op">,</span> <span class="nam">allowances</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t854" href="#t854">854</a></span><span class="t">    <span class="key">elif</span> <span class="nam">rel_parts</span><span class="op">[</span><span class="op">:</span><span class="num">2</span><span class="op">]</span> <span class="op">==</span> <span class="op">(</span><span class="str">&quot;claude-code&quot;</span><span class="op">,</span> <span class="str">&quot;agents&quot;</span><span class="op">)</span> <span class="key">and</span> <span class="nam">len</span><span class="op">(</span><span class="nam">rel_parts</span><span class="op">)</span> <span class="op">==</span> <span class="num">3</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t855" href="#t855">855</a></span><span class="t">        <span class="nam">_mirror</span><span class="op">(</span><span class="nam">tmp</span><span class="op">,</span> <span class="nam">rel_parts</span><span class="op">,</span> <span class="nam">content</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t856" href="#t856">856</a></span><span class="t">        <span class="key">for</span> <span class="nam">target</span> <span class="key">in</span> <span class="nam">_scoped_targets</span><span class="op">(</span><span class="str">&quot;claude-code&quot;</span><span class="op">,</span> <span class="nam">targets</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t857" href="#t857">857</a></span><span class="t">            <span class="key">yield</span> <span class="key">from</span> <span class="nam">_iter_agent_artifacts</span><span class="op">(</span><span class="nam">tmp</span><span class="op">,</span> <span class="nam">target</span><span class="op">,</span> <span class="nam">allowances</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t855" href="#t855">855</a></span><span class="t">        <span class="nam">_mirror</span><span class="op">(</span><span class="nam">tmp</span><span class="op">,</span> <span class="nam">rel_parts</span><span class="op">,</span> <span class="nam">content</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t856" href="#t856">856</a></span><span class="t">        <span class="key">for</span> <span class="nam">target</span> <span class="key">in</span> <span class="nam">_scoped_targets</span><span class="op">(</span><span class="str">&quot;claude-code&quot;</span><span class="op">,</span> <span class="nam">targets</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t857" href="#t857">857</a></span><span class="t">            <span class="key">yield</span> <span class="key">from</span> <span class="nam">_iter_agent_artifacts</span><span class="op">(</span><span class="nam">tmp</span><span class="op">,</span> <span class="nam">target</span><span class="op">,</span> <span class="nam">allowances</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t858" href="#t858">858</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t859" href="#t859">859</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t860" href="#t860">860</a></span><span class="t"><span class="key">def</span> <span class="nam">check_source</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
@@ -998,7 +998,7 @@
             <a class="nav" href="z_e0ac35ffd7a69d64_size_limits_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.1">coverage.py v7.16.1</a>,
-            created at 2026-10-05 17:53 +0000
+            created at 2026-10-06 21:03 +0000
         </p>
     </div>
 </footer>

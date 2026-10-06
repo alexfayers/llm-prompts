@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">734 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">734<span class="text"> run</span></button>
+            <span class="text">745 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">745<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_a44f0ac069e85531_test_cli_uninstall_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.1">coverage.py v7.16.1</a>,
-            created at 2026-10-05 17:53 +0000
+            created at 2026-10-06 21:03 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -1867,6 +1867,32 @@
     <p class="pln"><span class="n"><a id="t1785" href="#t1785">1785</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1786" href="#t1786">1786</a></span><span class="t">        <span class="key">assert</span> <span class="nam">caught</span><span class="op">.</span><span class="nam">value</span><span class="op">.</span><span class="nam">code</span> <span class="op">==</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1787" href="#t1787">1787</a></span><span class="t">        <span class="key">assert</span> <span class="str">&quot;HTTP 401: Bad credentials&quot;</span> <span class="key">in</span> <span class="nam">capsys</span><span class="op">.</span><span class="nam">readouterr</span><span class="op">(</span><span class="op">)</span><span class="op">.</span><span class="nam">err</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1788" href="#t1788">1788</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1789" href="#t1789">1789</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1790" href="#t1790">1790</a></span><span class="t"><span class="key">class</span> <span class="nam">TestUpdateOnly</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1791" href="#t1791">1791</a></span><span class="t">    <span class="key">def</span> <span class="nam">test_reinstalls_only_the_mapped_source_without_pulling_or_setup</span><span class="op">(</span><span class="nam">self</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1792" href="#t1792">1792</a></span><span class="t">        <span class="nam">source</span> <span class="op">=</span> <span class="nam">Path</span><span class="op">(</span><span class="str">&quot;/synthetic/rule.md&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1793" href="#t1793">1793</a></span><span class="t">        <span class="key">with</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1794" href="#t1794">1794</a></span><span class="t">            <span class="nam">patch</span><span class="op">(</span><span class="str">&quot;sys.argv&quot;</span><span class="op">,</span> <span class="op">[</span><span class="str">&quot;llm-prompts&quot;</span><span class="op">,</span> <span class="str">&quot;update&quot;</span><span class="op">,</span> <span class="str">&quot;--only&quot;</span><span class="op">,</span> <span class="str">&quot;/synthetic/x.md&quot;</span><span class="op">]</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1795" href="#t1795">1795</a></span><span class="t">            <span class="nam">patch</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1796" href="#t1796">1796</a></span><span class="t">                <span class="str">&quot;llm_prompts.manifest.read_manifest&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1797" href="#t1797">1797</a></span><span class="t">                <span class="nam">return_value</span><span class="op">=</span><span class="op">{</span><span class="str">&quot;kiro&quot;</span><span class="op">:</span> <span class="op">{</span><span class="str">&quot;files&quot;</span><span class="op">:</span> <span class="op">[</span><span class="op">]</span><span class="op">}</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1798" href="#t1798">1798</a></span><span class="t">            <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1799" href="#t1799">1799</a></span><span class="t">            <span class="nam">patch</span><span class="op">(</span><span class="str">&quot;llm_prompts.install.partial_source&quot;</span><span class="op">,</span> <span class="nam">return_value</span><span class="op">=</span><span class="nam">source</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1800" href="#t1800">1800</a></span><span class="t">            <span class="nam">patch</span><span class="op">(</span><span class="str">&quot;llm_prompts.install.main&quot;</span><span class="op">,</span> <span class="nam">return_value</span><span class="op">=</span><span class="key">False</span><span class="op">)</span> <span class="key">as</span> <span class="nam">mock_install</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1801" href="#t1801">1801</a></span><span class="t">            <span class="nam">patch</span><span class="op">(</span><span class="str">&quot;llm_prompts.cli._pull_local_sources&quot;</span><span class="op">)</span> <span class="key">as</span> <span class="nam">mock_pull_local</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1802" href="#t1802">1802</a></span><span class="t">            <span class="nam">patch</span><span class="op">(</span><span class="str">&quot;llm_prompts.plugins.pull_plugin_sources&quot;</span><span class="op">)</span> <span class="key">as</span> <span class="nam">mock_pull_plugins</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1803" href="#t1803">1803</a></span><span class="t">            <span class="nam">patch</span><span class="op">(</span><span class="str">&quot;llm_prompts.setup.run_setup&quot;</span><span class="op">)</span> <span class="key">as</span> <span class="nam">mock_setup</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1804" href="#t1804">1804</a></span><span class="t">            <span class="nam">patch</span><span class="op">(</span><span class="str">&quot;llm_prompts.cli._reconfigure_agents&quot;</span><span class="op">)</span> <span class="key">as</span> <span class="nam">mock_reconfigure</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1805" href="#t1805">1805</a></span><span class="t">        <span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1806" href="#t1806">1806</a></span><span class="t">            <span class="nam">exit_code</span> <span class="op">=</span> <span class="nam">run_capturing_exit</span><span class="op">(</span><span class="nam">main</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1807" href="#t1807">1807</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1808" href="#t1808">1808</a></span><span class="t">        <span class="nam">mock_install</span><span class="op">.</span><span class="nam">assert_called_once_with</span><span class="op">(</span><span class="op">[</span><span class="str">&quot;kiro&quot;</span><span class="op">]</span><span class="op">,</span> <span class="nam">only</span><span class="op">=</span><span class="nam">source</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1809" href="#t1809">1809</a></span><span class="t">        <span class="nam">mock_pull_local</span><span class="op">.</span><span class="nam">assert_not_called</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1810" href="#t1810">1810</a></span><span class="t">        <span class="nam">mock_pull_plugins</span><span class="op">.</span><span class="nam">assert_not_called</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1811" href="#t1811">1811</a></span><span class="t">        <span class="nam">mock_setup</span><span class="op">.</span><span class="nam">assert_not_called</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1812" href="#t1812">1812</a></span><span class="t">        <span class="nam">mock_reconfigure</span><span class="op">.</span><span class="nam">assert_not_called</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1813" href="#t1813">1813</a></span><span class="t">        <span class="key">assert</span> <span class="nam">exit_code</span> <span class="op">==</span> <span class="num">0</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -1876,7 +1902,7 @@
             <a class="nav" href="z_a44f0ac069e85531_test_cli_uninstall_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.1">coverage.py v7.16.1</a>,
-            created at 2026-10-05 17:53 +0000
+            created at 2026-10-06 21:03 +0000
         </p>
     </div>
 </footer>
