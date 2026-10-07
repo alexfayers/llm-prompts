@@ -1,16 +1,20 @@
 """Manage an eagle-vision plan directory."""
 
 import argparse
+import fcntl
 import io
 import json
+import os
 import re
 import subprocess
 import sys
-from collections.abc import Callable
-from contextlib import redirect_stdout
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, redirect_stdout, suppress
+from functools import partial
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from itertools import combinations
 from pathlib import Path
-from typing import NoReturn, TypedDict
+from typing import Any, NoReturn, TypedDict
 
 SECTION_ORDER = [
     "Goal",
@@ -25,8 +29,20 @@ SECTION_ORDER = [
     "Later",
 ]
 FRONT_MATTER_RE = re.compile(r"\A---\n((?:.*\n)*?)---\n")
-STAGES: dict[str, str] = {"todo": "", "testing": "testing", "done": "done"}
+STAGES: dict[str, str] = {
+    "todo": "",
+    "building": "building",
+    "testing": "testing",
+    "done": "done",
+}
+STAGE_STYLES: dict[str, str] = {
+    "done": "fill:#9f9,stroke:#393",
+    "testing": "fill:#ff9,stroke:#993",
+    "building": "fill:#9cf,stroke:#369",
+}
 LINK_KEYS = ("depends", "scope", "inputs", "outputs", "deletes")
+VIEW_PAGE = Path(__file__).resolve().parent / "view.html"
+VIEW_SECTIONS = ("In", "Out", "Accept")
 
 
 class FocusError(Exception):
@@ -278,8 +294,8 @@ def render_waves(nodes: Nodes, all_nodes: Nodes) -> str:
             node = nodes[node_id]
             if node["stage"] == "done":
                 lines.append(f"- [x] {node_id}")
-            elif node["stage"] == "testing":
-                lines.append(f"- [ ] {node_id} (testing)")
+            elif node["stage"] in ("building", "testing"):
+                lines.append(f"- [ ] {node_id} ({node['stage']})")
             else:
                 ready = all(is_done(all_nodes, d) for d in node["depends"])
                 lines.append(f"- [ ] {node_id}" + (" (ready)" if ready else ""))
@@ -310,16 +326,13 @@ def plan_sections(nodes: Nodes, all_nodes: Nodes) -> dict[str, str]:
             )
         elif node_id not in referenced:
             graph.append(mermaid_node(node_id))
-    done_ids = sorted(node_id for node_id in nodes if nodes[node_id]["stage"] == "done")
-    if done_ids:
-        graph.append("classDef done fill:#9f9,stroke:#393")
-        graph.extend(f"{mermaid_id(node_id)}:::done" for node_id in done_ids)
-    testing_ids = sorted(
-        node_id for node_id in nodes if nodes[node_id]["stage"] == "testing"
-    )
-    if testing_ids:
-        graph.append("classDef testing fill:#ff9,stroke:#993")
-        graph.extend(f"{mermaid_id(node_id)}:::testing" for node_id in testing_ids)
+    for stage, style in STAGE_STYLES.items():
+        stage_ids = sorted(
+            node_id for node_id in nodes if nodes[node_id]["stage"] == stage
+        )
+        if stage_ids:
+            graph.append(f"classDef {stage} {style}")
+            graph.extend(f"{mermaid_id(node_id)}:::{stage}" for node_id in stage_ids)
     graph.append("```")
     return {
         "Graph": "\n".join(graph),
@@ -384,6 +397,21 @@ def render_plan(title: str, sections: dict[str, str]) -> str:
     return "\n\n".join([f"# {title}", render_sections(sections)]) + "\n"
 
 
+def write_atomic(path: Path, text: str) -> None:
+    """Write a file via a temp file in the same dir, then replace."""
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temp_path.write_text(text)
+    os.replace(temp_path, path)
+
+
+@contextmanager
+def plan_lock(base: Path) -> Iterator[None]:
+    """Hold an exclusive lock on a plan dir."""
+    with (base / ".focus.lock").open("a") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        yield
+
+
 def require_plan(base: Path) -> None:
     """Require a plan directory."""
     if not plan_path(base).is_file():
@@ -404,7 +432,7 @@ def regenerate_plan(base: Path, nodes: Nodes) -> None:
     path = plan_path(base)
     sections = parse_sections(path.read_text())
     sections.update(plan_sections(nodes, with_siblings(base, nodes)))
-    path.write_text(render_plan(base.name, sections))
+    write_atomic(path, render_plan(base.name, sections))
 
 
 def make_node(links: Links, stage: str) -> Node:
@@ -499,10 +527,12 @@ def cmd_join(base: Path, prefix: str = "") -> None:
             body = (
                 f"# Interface: {node['outputs'][0]}\n\n## In\n\n## Out\n\n## Accept\n"
             )
-            node_path(base, node_id, "todo").write_text(render_node_file(links, body))
+            write_atomic(
+                node_path(base, node_id, "todo"), render_node_file(links, body)
+            )
         elif links != before[node_id]:
             path = find_node_path(base, node_id)
-            path.write_text(set_links(path.read_text(), links))
+            write_atomic(path, set_links(path.read_text(), links))
     regenerate_plan(base, nodes)
     print("\n".join(lines) or "nothing to join")
 
@@ -545,10 +575,10 @@ def cmd_init(base: Path) -> None:
     """Create a plan."""
     if base.exists():
         raise FocusError(f"{base} already exists")
-    (base / "nodes" / STAGES["testing"]).mkdir(parents=True)
-    (base / "nodes" / STAGES["done"]).mkdir(parents=True)
+    for stage in ("building", "testing", "done"):
+        (base / "nodes" / STAGES[stage]).mkdir(parents=True)
     sections = {name: "" for name in SECTION_ORDER} | plan_sections({}, {})
-    plan_path(base).write_text(render_plan(base.name, sections))
+    write_atomic(plan_path(base), render_plan(base.name, sections))
     print(f"created {base}")
 
 
@@ -563,7 +593,7 @@ def cmd_add(base: Path, name: str, links: Links) -> None:
     nodes[node_id] = make_node(links, "todo")
     validate_or_raise(nodes, with_siblings(base, nodes))
     body = f"# {name}\n\n## In\n\n## Out\n\n## Accept\n"
-    path.write_text(render_node_file(links, body))
+    write_atomic(path, render_node_file(links, body))
     regenerate_plan(base, nodes)
     print(f"added {path}{links_summary(links)}")
 
@@ -582,7 +612,7 @@ def edit_links(base: Path, node_id: str, links: Links, add: bool) -> None:
     }
     nodes[node_id] = make_node(new_links, nodes[node_id]["stage"])
     validate_or_raise(nodes, with_siblings(base, nodes))
-    path.write_text(set_links(path.read_text(), new_links))
+    write_atomic(path, set_links(path.read_text(), new_links))
     regenerate_plan(base, nodes)
     print(f"{node_id}{links_summary(new_links)}")
 
@@ -590,40 +620,50 @@ def edit_links(base: Path, node_id: str, links: Links, add: bool) -> None:
 def move_node(
     base: Path,
     node_id: str,
-    src_stage: str,
+    src_stages: tuple[str, ...],
     dst_stage: str,
     verb: str,
     note: str = "",
 ) -> None:
     """Move a node between stages."""
-    nodes = require_known_node(base, node_id)
-    src_path = node_path(base, node_id, src_stage)
-    if not src_path.exists():
-        raise FocusError(f"'{node_id}' is not in nodes/{STAGES[src_stage]}")
-    nodes[node_id]["stage"] = dst_stage
-    validate_or_raise(nodes, with_siblings(base, nodes))
-    src_path.rename(node_path(base, node_id, dst_stage))
-    regenerate_plan(base, nodes)
+    require_plan(base)
+    with plan_lock(base):
+        nodes = require_known_node(base, node_id)
+        src_stage = nodes[node_id]["stage"]
+        if src_stage not in src_stages:
+            expected = " or ".join(f"nodes/{STAGES[stage]}" for stage in src_stages)
+            raise FocusError(f"'{node_id}' is not in {expected}")
+        nodes[node_id]["stage"] = dst_stage
+        validate_or_raise(nodes, with_siblings(base, nodes))
+        dst_path = node_path(base, node_id, dst_stage)
+        dst_path.parent.mkdir(exist_ok=True)
+        node_path(base, node_id, src_stage).rename(dst_path)
+        regenerate_plan(base, nodes)
     print(f"{verb} {node_id}" + (f": {note}" if note else ""))
+
+
+def cmd_start(base: Path, node_id: str) -> None:
+    """Mark a node's build started."""
+    move_node(base, node_id, ("todo",), "building", "start")
 
 
 def cmd_built(base: Path, node_id: str) -> None:
     """Mark a node built, awaiting acceptance tests."""
-    move_node(base, node_id, "todo", "testing", "built")
+    move_node(base, node_id, ("todo", "building"), "testing", "built")
     path = node_path(base, node_id, "testing")
-    path.write_text(update_failed_line(path.read_text(), None))
+    write_atomic(path, update_failed_line(path.read_text(), None))
 
 
 def cmd_pass(base: Path, node_id: str) -> None:
     """Mark a node's acceptance tests passing."""
-    move_node(base, node_id, "testing", "done", "pass")
+    move_node(base, node_id, ("testing",), "done", "pass")
 
 
 def cmd_fail(base: Path, node_id: str, reason: str) -> None:
     """Mark a node's acceptance tests failing."""
-    move_node(base, node_id, "testing", "todo", "fail", reason)
+    move_node(base, node_id, ("testing",), "todo", "fail", reason)
     path = node_path(base, node_id, "todo")
-    path.write_text(update_failed_line(path.read_text(), reason))
+    write_atomic(path, update_failed_line(path.read_text(), reason))
 
 
 def fail_and_exit(base: Path, node_id: str, reason: str) -> NoReturn:
@@ -638,8 +678,8 @@ def cmd_set_test(base: Path, node_id: str, command: str) -> None:
     if "\n" in command:
         raise FocusError("test command must be one line")
     path = find_node_path(base, node_id)
-    path.write_text(
-        replace_front_lines(path.read_text(), {"test"}, [f"test: {command}"])
+    write_atomic(
+        path, replace_front_lines(path.read_text(), {"test"}, [f"test: {command}"])
     )
     print(f"{node_id} test: {command}")
 
@@ -720,14 +760,15 @@ def cmd_rename(base: Path, node_id: str, name: str) -> None:
                 new_id if dep == node_id else dep for dep in node["depends"]
             ]
             path = node_path(base, other_id, node["stage"])
-            path.write_text(set_links(path.read_text(), node_links(node)))
+            write_atomic(path, set_links(path.read_text(), node_links(node)))
     nodes[new_id] = nodes.pop(node_id)
     old_path = node_path(base, node_id, nodes[new_id]["stage"])
     new_path = node_path(base, new_id, nodes[new_id]["stage"])
-    new_path.write_text(
+    write_atomic(
+        new_path,
         re.sub(
             r"^# .*$", f"# {name}", old_path.read_text(), count=1, flags=re.MULTILINE
-        )
+        ),
     )
     old_path.unlink()
     regenerate_plan(base, nodes)
@@ -881,6 +922,7 @@ def build_parser() -> argparse.ArgumentParser:
     rename_parser.add_argument("id")
     rename_parser.add_argument("name")
 
+    add_cmd("start", "Mark a node's build started").add_argument("id")
     add_cmd("built", "Mark a node built, awaiting check").add_argument("id")
     add_cmd("pass", "Mark a node's acceptance tests passing").add_argument("id")
     fail_parser = add_cmd(
@@ -916,6 +958,11 @@ def build_parser() -> argparse.ArgumentParser:
         "comment",
         "Print a PR comment with the plan and each node's acceptance criteria",
     )
+    view_parser = add_cmd(
+        "view",
+        "Serve a live graph view of the plan on localhost (--port, default 8765)",
+    )
+    view_parser.add_argument("--port", type=int, default=8765)
 
     return parser
 
@@ -933,6 +980,7 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], None]] = {
     "join": lambda a: cmd_join(a.dir),
     "remove": lambda a: cmd_remove(a.dir, a.id),
     "rename": lambda a: cmd_rename(a.dir, a.id, a.name),
+    "start": lambda a: cmd_start(a.dir, a.id),
     "built": lambda a: cmd_built(a.dir, a.id),
     "pass": lambda a: cmd_pass(a.dir, a.id),
     "fail": lambda a: cmd_fail(a.dir, a.id, a.reason),
@@ -944,6 +992,7 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], None]] = {
     "ready": lambda a: cmd_ready(a.dir, a.id),
     "waves": lambda a: cmd_waves(a.dir),
     "comment": lambda a: cmd_comment(a.dir),
+    "view": lambda a: cmd_view(a.dir, a.port),
 }
 
 
@@ -964,6 +1013,83 @@ def load_children(plans: list[Path]) -> Nodes:
             ]
             nodes[f"{plan.name}/{node_id}"] = node
     return nodes
+
+
+def view_data(base: Path) -> dict[str, object]:
+    """The plan graph for the view page: repos, wave count and nodes."""
+    plans = child_plans(base)
+    if plans:
+        nodes = all_nodes = load_children(plans)
+    else:
+        plans = [base]
+        nodes = load_nodes(base)
+        all_nodes = with_siblings(base, nodes)
+    waves = compute_waves(nodes, all_nodes)
+
+    def entry(node_id: str) -> dict[str, object]:
+        repo, separator, label = node_id.partition("/")
+        if not separator:
+            repo, label = base.resolve().name, node_id
+        return {
+            "id": node_id,
+            "repo": repo,
+            "label": label,
+            "wave": waves[node_id],
+            "stage": nodes[node_id]["stage"],
+            "depends": nodes[node_id]["depends"],
+            "sections": {
+                name: node_section(plans[0], node_id, name) for name in VIEW_SECTIONS
+            },
+        }
+
+    return {
+        "repos": [plan.resolve().name for plan in plans],
+        "waves": max(waves.values(), default=0),
+        "nodes": [entry(node_id) for node_id in nodes],
+    }
+
+
+class ViewHandler(BaseHTTPRequestHandler):
+    """Serve the view page and the plan graph rebuilt on every request."""
+
+    def __init__(self, *args: Any, base: Path, **kwargs: Any) -> None:
+        """Store the plan dir before the request is handled."""
+        self.base = base
+        super().__init__(*args, **kwargs)
+
+    def do_GET(self) -> None:
+        """Answer the page, or the plan graph as JSON."""
+        if self.path == "/":
+            body, content_type = VIEW_PAGE.read_bytes(), "text/html; charset=utf-8"
+        elif self.path == "/data.json":
+            body = json.dumps(view_data(self.base)).encode()
+            content_type = "application/json"
+        else:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        """Keep the console quiet."""
+
+
+def make_view_server(base: Path, port: int) -> ThreadingHTTPServer:
+    """A localhost server for the plan dir's view."""
+    return ThreadingHTTPServer(("127.0.0.1", port), partial(ViewHandler, base=base))
+
+
+def cmd_view(base: Path, port: int) -> None:
+    """Serve a live graph view of the plan until interrupted."""
+    if not child_plans(base):
+        require_plan(base)
+    with make_view_server(base, port) as server:
+        print(f"http://127.0.0.1:{server.server_port}/", flush=True)
+        with suppress(KeyboardInterrupt):
+            server.serve_forever()
 
 
 def merged_waves(plans: list[Path], args: argparse.Namespace) -> None:

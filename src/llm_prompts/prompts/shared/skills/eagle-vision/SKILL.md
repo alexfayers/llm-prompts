@@ -62,7 +62,7 @@ A node's only tests - write no others. Each criterion:
 
 ## Plan directory
 
-- Manage it with `python3 "<base-dir>/focus.py" <command> <dir> ...` - `-h` lists and explains each command.
+- Manage it with `python3 "<base-dir>/focus.py" <command> <dir> ...` - `-h` explains each command.
 - Multi-repo: one plan dir per repo, as siblings, under a parent PLAN.md holding only the shared layers.
 - Cross-repo order MUST be `--depends <dir>/<node>`.
 - SHOULD run commands on the parent with `<dir>/<node>` ids.
@@ -84,9 +84,9 @@ A node's only tests - write no others. Each criterion:
 ## Build
 
 - MUST spawn one standing `eagle-vision-sentinel-sonnet-medium`: target from Constraints, integration branch `ev/<plan>`, gate `focus.py check <dir> <node> --node-only --base ev/<plan>`, `check-wave <dir>` per merged wave.
-- MUST tell the sentinel each `ready` node.
+- MUST `start` each `ready` node and tell the sentinel.
 - MUST spawn a fresh test writer and implementer per node worktree from `show <node>`, docs too, no `coordinator`.
 - Neither builder messages the other, runs tests or sleeps - gaps go to the lead.
-- The implementer runs `built <node>`, then messages the sentinel.
+- The implementer runs `built <node>`, then tells the sentinel.
 - Once all are done, MUST `tidy-code` the new source and tests, then review and fix its diff (max 2 rounds, rest to user).
 - The sentinel then lands `ev/<plan>` on the target.
