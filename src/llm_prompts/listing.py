@@ -120,6 +120,17 @@ def _batch_entry(
     return Entry(stage, tuple(tags), batch.branch, _commit_lines(commits))
 
 
+def _open_pr_entry(number: int, open_pr: OpenPr | None) -> Entry:
+    """Build an empty entry for an open PR under its review stage."""
+    state = review_state(open_pr)
+    return Entry(
+        _REVIEW_STAGES[state],
+        (_pr_tag(number, state, _REVIEW_STAGES[state]),),
+        open_pr.branch if open_pr else "",
+        (),
+    )
+
+
 def classify(
     commits: Sequence[Commit],
     groups: Sequence[Group],
@@ -193,16 +204,9 @@ def classify(
                 if commit.sha in inv.unmanaged
                 else pr_by_sha[commit.sha].pr.number
             )
-            open_pr = open_by_number.get(number)
-            state = review_state(open_pr)
             add(
                 number,
-                Entry(
-                    _REVIEW_STAGES[state],
-                    (_pr_tag(number, state, _REVIEW_STAGES[state]),),
-                    open_pr.branch if open_pr else "",
-                    (),
-                ),
+                _open_pr_entry(number, open_by_number.get(number)),
                 commit,
                 manual,
             )
@@ -210,11 +214,13 @@ def classify(
             add(None, Entry("needs PR", (_MANUAL_TAG,), "", ()), commit, manual)
 
     for number, missing in pr_only.items():
-        if number in bucket_index:
-            entry = entries[bucket_index[number]]
-            entries[bucket_index[number]] = entry._replace(
-                lines=(*entry.lines, *((commit, _PR_ONLY) for commit in missing))
-            )
+        if number not in bucket_index:
+            bucket_index[number] = len(entries)
+            entries.append(_open_pr_entry(number, open_by_number[number]))
+        entry = entries[bucket_index[number]]
+        entries[bucket_index[number]] = entry._replace(
+            lines=(*entry.lines, *((commit, _PR_ONLY) for commit in missing))
+        )
 
     problems = [
         group
