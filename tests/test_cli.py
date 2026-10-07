@@ -639,7 +639,7 @@ class TestUpdateCommandPullsPlugins:
                 return_value={"kiro": {"files": []}},
             ),
             patch("llm_prompts.cli._pull_local_sources"),
-            patch("llm_prompts.setup.has_remote_sources", return_value=False),
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup") as mock_setup,
             patch("llm_prompts.install.main", return_value=frozenset()) as mock_install,
@@ -647,6 +647,7 @@ class TestUpdateCommandPullsPlugins:
             patch("llm_prompts.plugins.pull_plugin_sources") as mock_pull,
             patch("llm_prompts.size_guard.snapshot_sources", return_value={}),
         ):
+            mock_config.exists.return_value = False
             main()
 
         mock_pull.assert_called_once_with()
@@ -662,7 +663,6 @@ class TestUpdateCommandPullsPlugins:
             ),
             patch("llm_prompts.cli._pull_local_sources"),
             patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
-            patch("llm_prompts.setup.has_remote_sources", return_value=False),
             patch(
                 "llm_prompts.setup.detect_stale_local_tools",
                 return_value={"cline-hooks"},
@@ -677,7 +677,7 @@ class TestUpdateCommandPullsPlugins:
 
         mock_setup.assert_called_once_with(force_reinstall={"cline-hooks"})
 
-    def test_update_forces_stale_local_tool_even_with_remote_sources(self) -> None:
+    def test_update_runs_setup_whenever_the_config_exists(self) -> None:
         with (
             patch("sys.argv", ["llm-prompts", "update"]),
             patch(
@@ -686,11 +686,7 @@ class TestUpdateCommandPullsPlugins:
             ),
             patch("llm_prompts.cli._pull_local_sources"),
             patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
-            patch("llm_prompts.setup.has_remote_sources", return_value=True),
-            patch(
-                "llm_prompts.setup.detect_stale_local_tools",
-                return_value={"cline-hooks"},
-            ),
+            patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup") as mock_setup,
             patch("llm_prompts.install.main", return_value=frozenset()),
             patch("llm_prompts.cli._restart_memory_service"),
@@ -699,7 +695,7 @@ class TestUpdateCommandPullsPlugins:
             mock_config.exists.return_value = True
             main()
 
-        mock_setup.assert_called_once_with(force_reinstall={"cline-hooks"})
+        mock_setup.assert_called_once_with(force_reinstall=None)
 
 
 class TestRestartMemoryService:
@@ -736,7 +732,6 @@ class TestUpdateRestartsMemoryOnlyWhenItChanged:
                 return_value={"kiro": {"files": []}},
             ),
             patch("llm_prompts.cli._pull_local_sources", return_value=changed),
-            patch("llm_prompts.setup.has_remote_sources", return_value=False),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup"),
             patch("llm_prompts.install.main", return_value=frozenset()),
@@ -764,7 +759,6 @@ class TestUpdateRestartsMemoryOnlyWhenItChanged:
             ),
             patch("llm_prompts.cli._pull_local_sources", return_value=set()),
             patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
-            patch("llm_prompts.setup.has_remote_sources", return_value=True),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup"),
             patch("llm_prompts.install.main", return_value=frozenset()),
@@ -800,7 +794,6 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
                 },
             ),
             patch("llm_prompts.cli._pull_local_sources", return_value=changed),
-            patch("llm_prompts.setup.has_remote_sources", return_value=False),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup"),
             patch("llm_prompts.install.main", return_value=frozenset()),
@@ -866,7 +859,6 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             ),
             patch("llm_prompts.cli._pull_local_sources", return_value=set()),
             patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
-            patch("llm_prompts.setup.has_remote_sources", return_value=True),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup"),
             patch("llm_prompts.install.main", return_value=False),
@@ -909,7 +901,6 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             ),
             patch("llm_prompts.cli._pull_local_sources", return_value=set()),
             patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
-            patch("llm_prompts.setup.has_remote_sources", return_value=True),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup"),
             patch("llm_prompts.install.main", return_value=False),
@@ -987,7 +978,6 @@ class TestUpdateSizeGuardSkipExitCode:
                 return_value={"claude-code": {"files": []}, "pi": {"files": []}},
             ),
             patch("llm_prompts.cli._pull_local_sources", return_value=changed),
-            patch("llm_prompts.setup.has_remote_sources", return_value=False),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup"),
             patch("llm_prompts.install.main", return_value=size_guard_failed),
@@ -1163,13 +1153,13 @@ class TestRunSetupForceReinstall:
     def _run(
         self,
         fake_subprocess: FakeSubprocess,
-        commands: list[tuple[str, list[str], list[str] | None, list[str]]],
+        commands: list[tuple[str, list[str], list[str], list[str]]],
         force_reinstall: set[str],
     ) -> list[list[str]]:
         with (
             patch("llm_prompts.setup._load_config", return_value=[]),
             patch("llm_prompts.setup._validate_paths", return_value=[]),
-            patch("llm_prompts.setup._detect_installer", return_value="uv"),
+            patch("llm_prompts.setup._require_uv"),
             patch("llm_prompts.setup._build_commands", return_value=commands),
             patch("llm_prompts.setup.write_pyproject_stamp"),
         ):
@@ -1177,7 +1167,7 @@ class TestRunSetupForceReinstall:
         return fake_subprocess.commands
 
     def test_forced_core_skips_upgrade(self, fake_subprocess: FakeSubprocess) -> None:
-        commands: list[tuple[str, list[str], list[str] | None, list[str]]] = [
+        commands: list[tuple[str, list[str], list[str], list[str]]] = [
             ("core", ["uv", "install"], ["uv", "upgrade"], [])
         ]
         calls = self._run(fake_subprocess, commands, {"core"})
@@ -1186,14 +1176,14 @@ class TestRunSetupForceReinstall:
     def test_stale_overlay_forces_its_core(
         self, fake_subprocess: FakeSubprocess
     ) -> None:
-        commands: list[tuple[str, list[str], list[str] | None, list[str]]] = [
+        commands: list[tuple[str, list[str], list[str], list[str]]] = [
             ("core", ["uv", "install"], ["uv", "upgrade"], ["hooks"])
         ]
         calls = self._run(fake_subprocess, commands, {"hooks"})
         assert calls == [["uv", "install"]]
 
     def test_unforced_core_uses_upgrade(self, fake_subprocess: FakeSubprocess) -> None:
-        commands: list[tuple[str, list[str], list[str] | None, list[str]]] = [
+        commands: list[tuple[str, list[str], list[str], list[str]]] = [
             ("core", ["uv", "install"], ["uv", "upgrade"], [])
         ]
         calls = self._run(fake_subprocess, commands, {"other"})

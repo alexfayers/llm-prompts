@@ -11,7 +11,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: git clone --depth 1 https://github.com/alexfayers/cline-hooks ../cline-hooks
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
@@ -23,7 +22,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: git clone --depth 1 https://github.com/alexfayers/cline-hooks ../cline-hooks
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
@@ -38,7 +36,6 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - run: git clone --depth 1 https://github.com/alexfayers/cline-hooks ../cline-hooks
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
@@ -75,7 +72,6 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: .size-base
-      - run: git clone --depth 1 https://github.com/alexfayers/cline-hooks ../cline-hooks
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true

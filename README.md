@@ -17,7 +17,7 @@ This installs [uv](https://docs.astral.sh/uv/) (if needed), installs llm-prompts
 llm-prompts install {agent}    # kiro, cline, copilot, claude-code, codex, antigravity, pi, or all
 ```
 
-The first `install` bootstraps everything: when your config has any remote (git URL) `[[tools]]` entries, `install` automatically runs `setup` first to install/upgrade those packages, then installs rules/workflows/skills for the target agent(s). Pass `--no-update` to skip the automatic `setup`.
+The first `install` bootstraps everything: when a setup config exists, `install` automatically runs `setup` first to install/upgrade the configured packages, then installs rules/workflows/skills for the target agent(s). Pass `--no-update` to skip the automatic `setup`.
 
 From then on, keep everything current with:
 
@@ -82,7 +82,7 @@ Each `[[tools]]` entry has:
 | `name` | Tool name |
 | `source` | Local path (`~/...`) or `git+` URL |
 
-For local-path and git URL sources, whether a package is an overlay (and which tools it targets) and whether it's standalone is inferred automatically from its own `pyproject.toml` (entry-point groups become overlay targets; a `[project.scripts]` table marks it standalone) - `mcp-memory` above needs no extra config because of this. Overlays are added via `--with-editable` (local) or `--with` (git) to their target tools. The installer is auto-detected (`uv` > `pipx` > `pip`).
+For local-path and git URL sources, whether a package is an overlay (and which tools it targets) and whether it's standalone is inferred automatically from its own `pyproject.toml` (entry-point groups become overlay targets; a `[project.scripts]` table marks it standalone) - `mcp-memory` above needs no extra config because of this. Overlays are added via `--with` to their target tools. `setup` requires uv.
 
 To override the inference, set `overlays_for` (list of tools this package plugs into as an overlay) and/or `standalone` (`true` if the tool also needs its own install, e.g. it has a CLI) explicitly.
 
@@ -237,10 +237,10 @@ standalone = true
 overlays_for = ["llm-prompts", "cline-hooks"]
 ```
 
-Local paths are installed as editable, so changes to rules, workflows, and skills are picked up immediately by `llm-prompts install` without needing to re-run `setup`.
+Local paths are installed as copies of the checkout. Changes to rules, workflows, and skills are picked up immediately by `llm-prompts install`; `llm-prompts update` reinstalls the checkouts to pick up Python changes.
 
 ```bash
-llm-prompts setup              # install all tools as editable
+llm-prompts setup              # install all tools
 llm-prompts install {agent}    # install rules/workflows/skills
 ```
 

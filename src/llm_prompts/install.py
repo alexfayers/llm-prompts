@@ -7,9 +7,13 @@ import shutil
 import sys
 from collections.abc import Callable, Container, Sequence
 from dataclasses import dataclass
+from functools import cache
+from importlib.metadata import distribution, packages_distributions
 from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 from .colors import Color, paint
 from .render_template import (
@@ -265,12 +269,35 @@ def _excluded_targets(src: Path) -> set[str]:
     return {name.strip() for name in raw.split(",") if name.strip()}
 
 
+@cache
+def prompts_dir(module: str) -> Path:
+    """Return a package's prompts directory, from its checkout if installed from one.
+
+    Args:
+        module: The importable package name.
+
+    Returns:
+        The prompts directory in the local checkout the package was installed
+        from, or the one inside the installed package.
+    """
+    for dist_name in packages_distributions().get(module, []):
+        raw_direct_url = distribution(dist_name).read_text("direct_url.json")
+        direct_url = json.loads(raw_direct_url) if raw_direct_url else {}
+        if "dir_info" not in direct_url:
+            continue
+        root = Path(url2pathname(urlparse(direct_url["url"]).path))
+        for candidate in (root / "src" / module / "prompts", root / module / "prompts"):
+            if candidate.is_dir():
+                return candidate
+    return Path(str(files(module) / "prompts"))
+
+
 def _discover_overlay_paths() -> list[Path]:
     """Discover overlay directories from installed packages via entry_points.
 
     Packages declare an ``llm_prompts`` entry point group where each entry
     point value is the package name. The prompts directory is resolved via
-    ``importlib.resources.files(<package>) / "prompts"``.
+    ``prompts_dir(<package>)``.
 
     Returns:
         List of overlay directory paths from installed packages.
@@ -280,7 +307,7 @@ def _discover_overlay_paths() -> list[Path]:
     paths: list[Path] = []
     for ep in entry_points(group="llm_prompts"):
         try:
-            overlay_path = Path(str(files(ep.value) / "prompts"))
+            overlay_path = prompts_dir(ep.value)
             if overlay_path.is_dir():
                 log("info", f"[overlay] Discovered '{ep.name}' at {overlay_path}")
                 paths.append(overlay_path)
@@ -1914,7 +1941,7 @@ def main(
     """
     global _verbose
     _verbose = verbose
-    root_dir = Path(str(files("llm_prompts") / "prompts"))
+    root_dir = prompts_dir("llm_prompts")
     dirs = _get_dirs()
 
     overlay_dirs = _discover_overlay_paths()

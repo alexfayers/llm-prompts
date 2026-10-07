@@ -9,13 +9,12 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Callable
-from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import urlparse
 
 from . import github_api
-from .install import AGENT_CLASSES
+from .install import AGENT_CLASSES, prompts_dir
 from .setup import (
     _UPDATE_INSTRUCTION,
     GIT_TIMEOUT,
@@ -37,7 +36,7 @@ _RUN_SETUP_TRACKED_TOOLS = (_MEMORY_TOOL, "cline-hooks")
 
 def _get_root_dir() -> Path:
     """Return the llm-prompts package data directory."""
-    return Path(str(files("llm_prompts") / "prompts"))
+    return prompts_dir("llm_prompts")
 
 
 def _collect_sources(agent: str) -> dict[str, Path]:
@@ -794,12 +793,11 @@ def main() -> int | None:
             from .setup import (
                 CONFIG_PATH,
                 detect_stale_local_tools,
-                has_remote_sources,
                 run_setup,
             )
 
             stale = detect_stale_local_tools()
-            if CONFIG_PATH.exists() and (has_remote_sources() or stale):
+            if CONFIG_PATH.exists():
                 run_setup(force_reinstall=stale or None)
                 result = subprocess.run(
                     [sys.argv[0], "install", args.agent]
@@ -890,7 +888,6 @@ def main() -> int | None:
         from .setup import (
             CONFIG_PATH,
             detect_stale_local_tools,
-            has_remote_sources,
             run_setup,
         )
 
@@ -922,7 +919,7 @@ def main() -> int | None:
             name: _get_installed_commit(name) for name in _RUN_SETUP_TRACKED_TOOLS
         }
         stale = detect_stale_local_tools()
-        if CONFIG_PATH.exists() and (has_remote_sources() or stale):
+        if CONFIG_PATH.exists():
             run_setup(force_reinstall=stale or None)
         for name in _RUN_SETUP_TRACKED_TOOLS:
             if _get_installed_commit(name) != commits_before_setup[name]:

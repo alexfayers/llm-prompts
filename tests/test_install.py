@@ -36,6 +36,7 @@ from llm_prompts.install import (
     _rendered_content,
     get_source_for_managed_file,
     partial_source,
+    prompts_dir,
 )
 from llm_prompts.install import main as install_main
 from llm_prompts.manifest import AgentManifest
@@ -1874,7 +1875,6 @@ class TestSkipFailingPrompt:
         with (
             patch("sys.argv", ["llm-prompts", "update"]),
             patch("llm_prompts.cli._pull_local_sources", return_value=set()),
-            patch("llm_prompts.setup.has_remote_sources", return_value=False),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup"),
             patch("llm_prompts.cli._get_installed_commit", return_value=None),
@@ -2091,3 +2091,38 @@ class TestPartialSource:
         vars_file.write_text("{}", encoding="utf-8")
 
         assert partial_source(vars_file) is None
+
+
+class TestPromptsDir:
+    @pytest.mark.parametrize(
+        ("direct_url", "expected"),
+        [
+            ({"dir_info": {}}, "checkout/src/pkgdemo/prompts"),
+            ({"vcs_info": {"vcs": "git"}}, "site/pkgdemo/prompts"),
+        ],
+    )
+    def test_resolves_a_checkout_install_to_its_source_tree(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        direct_url: dict[str, Any],
+        expected: str,
+    ) -> None:
+        site = tmp_path / "site"
+        (site / "pkgdemo" / "prompts").mkdir(parents=True)
+        (site / "pkgdemo" / "__init__.py").write_text("", encoding="utf-8")
+        (tmp_path / "checkout" / "src" / "pkgdemo" / "prompts").mkdir(parents=True)
+        dist_info = site / "pkgdemo-1.0.dist-info"
+        dist_info.mkdir()
+        (dist_info / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: pkgdemo\nVersion: 1.0\n", encoding="utf-8"
+        )
+        (dist_info / "top_level.txt").write_text("pkgdemo\n", encoding="utf-8")
+        (dist_info / "direct_url.json").write_text(
+            json.dumps({"url": (tmp_path / "checkout").as_uri(), **direct_url}),
+            encoding="utf-8",
+        )
+        monkeypatch.syspath_prepend(str(site))
+        prompts_dir.cache_clear()
+
+        assert prompts_dir("pkgdemo") == tmp_path / expected

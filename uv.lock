@@ -27,7 +27,7 @@ wheels = [
 [[package]]
 name = "cline-hooks"
 version = "1.0"
-source = { editable = "../cline-hooks" }
+source = { git = "https://github.com/alexfayers/cline-hooks.git#de32bc8156daf7614fa377d9aff109f12cedced8" }
 dependencies = [
     { name = "bashlex" },
     { name = "gitpython" },
@@ -35,37 +35,6 @@ dependencies = [
     { name = "pluggy" },
     { name = "pydantic" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "bashlex" },
-    { name = "gitpython" },
-    { name = "platformdirs" },
-    { name = "pluggy", specifier = ">=1.6.0" },
-    { name = "pydantic", specifier = ">=2" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "coverage", specifier = ">=7.0" },
-    { name = "fayers-configs", git = "https://github.com/alexfayers/fayers-configs" },
-    { name = "mypy", specifier = ">=1.15" },
-    { name = "pytest", specifier = ">=9.0.2" },
-    { name = "pytest-cov", specifier = ">=6.1.1" },
-    { name = "pytest-mock", specifier = ">=3.14" },
-    { name = "ruff", specifier = ">=0.11.0" },
-]
-lint = [
-    { name = "fayers-configs", git = "https://github.com/alexfayers/fayers-configs" },
-    { name = "ruff", specifier = ">=0.11.0" },
-]
-test = [
-    { name = "coverage", specifier = ">=7.0" },
-    { name = "pytest", specifier = ">=9.0.2" },
-    { name = "pytest-cov", specifier = ">=6.1.1" },
-    { name = "pytest-mock", specifier = ">=3.14" },
-]
-typecheck = [{ name = "mypy", specifier = ">=1.15" }]
 
 [[package]]
 name = "colorama"
@@ -273,12 +242,12 @@ name = "llm-prompts"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cline-hooks" },
     { name = "platformdirs" },
 ]
 
 [package.dev-dependencies]
 dev = [
-    { name = "cline-hooks" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -288,11 +257,13 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "platformdirs", specifier = ">=4.11.7" }]
+requires-dist = [
+    { name = "cline-hooks", git = "https://github.com/alexfayers/cline-hooks.git" },
+    { name = "platformdirs", specifier = ">=4.11.7" },
+]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "cline-hooks", editable = "../cline-hooks" },
     { name = "mypy", specifier = ">=1.20.2" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
