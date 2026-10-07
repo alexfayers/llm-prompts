@@ -20,7 +20,7 @@ These rules MUST override others.
 - New work that is the same logical change as an unpushed commit MUST fold into it, never a new standalone commit: `--fixup=<sha>`/`--squash=<sha>` + `git-tidy` autosquash, never `--amend`; autosquash only if every commit above the target is yours. Exception: the target backs an approved/in-review change elsewhere, or the overlap is coincidental.
 - Same logical change also covers same-topic-different-angle, not just a bug fix - MUST fold a same-goal commit immediately: `--squash=<target>` when directly correcting (keeps both messages), `--fixup=<target>` for another angle (keeps the better message).
 - Before amending, MUST check `git -P log --oneline @{u}..HEAD`. Empty output means HEAD is already pushed - MUST NOT amend; make a new commit instead.
-- Exception: a branch backing your own unreviewed GitHub pull request, for a same-logical-change fix - amend and force-push with `--force-with-lease` instead of stacking a new commit; GitHub PRs only, not general unpushed-commit amending.
+- Exception: for a same-logical-change fix on a branch backing your own unreviewed GitHub PR, amend and force-push with `--force-with-lease` instead of stacking a commit.
 - MUST NOT amend a commit backing an already-approved CR/review, even unpushed - new work gets its own commit and CR. MUST ask if unsure.
 - If using a focus chain, the last task MUST be committing the changes.
 - MUST keep history linear - MUST NOT create a merge commit. MUST fold one branch into another via `git rebase` or fast-forward; `git merge` only for an already-pushed/shared branch you can't rewrite. MUST rebase away an accidental unpushed merge commit.
@@ -33,7 +33,7 @@ Before making a commit, MUST tell the user: "I am following the predefined git r
 - MUST NOT push without explicit user permission - MUST ask first.
 - MUST classify internal vs public by remote host, MUST NOT by name - run `git remote get-url origin`, inspect the host; a personal/public-looking name can still push to an internal host, and vice versa.
 - Before pushing, MUST run `git grep -n '^<<<<<<<' HEAD` for conflict markers in tracked files - if found, MUST NOT push; fix first.
-- Before pushing to a public remote (github.com, pypi, npm, etc.) - a gate at push time, not just commit time - MUST scan the diff and commit messages of `@{u}..HEAD` for internal/proprietary identifiers (hostnames/URLs, employer project/package names, employee aliases, ticket IDs, cloud account IDs). Internal/corporate hosts are exempt. If anything matches, MUST NOT push; fix it first. An active no-internal-leakage rule defines the exact patterns.
+- Before pushing to a public remote (github.com, pypi, npm, etc.), MUST scan the diff and commit messages of `@{u}..HEAD` for internal/proprietary identifiers (hostnames/URLs, employer project/package names, employee aliases, ticket IDs, cloud account IDs). Internal/corporate hosts are exempt. If anything matches, MUST NOT push; fix it first. An active no-internal-leakage rule defines the exact patterns.
 
 ## Amending non-HEAD commits
 
