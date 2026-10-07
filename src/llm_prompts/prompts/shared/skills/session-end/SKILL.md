@@ -12,9 +12,9 @@ Before you end the session or {{TOOL_COMPLETE}}, work through this checklist:
    - Shared agent-team `TaskList` items are not memory - they die with the session. If a `TaskList` is active, run `TaskList` and check every non-`completed` item, including anything explicitly deferred. Each such item MUST get its own memory `task/` entity (status `planned`/`blocked`, with a relation) if it doesn't already have one.
 2. **Update task entities.** Set the status of any `task/` entities worked on (`resolved`, `blocked`, etc.) across every project scope touched this session, not just the starting one. On resolving a task, delete verbose implementation observations - keep only the outcome summary.
 3. **Reflect on {{RULE_FILES}}.** If the session involved user feedback or corrections, update any {{RULE_FILES}} or skill files needed to prevent the same issues next time. Apply improvements directly.
-4. **Review tasks.** Skip if arrived here from the `handoff` skill. Search memory for planned and in-progress tasks in each project touched this session (read, ran commands in, or discussed) plus `global`, using `max_observation_chars=0`. MUST list only tasks this session worked on, unblocked or found. MUST run the `todos` skill and show the full list only when the user asks.
+4. **Review tasks.** Skip if arrived here from the `handoff` skill. Run `search_all_projects(query="task", projects=[...], expand_groups=True, entityType="task", status=["in-progress", "planned"], names_only=True, limit=500)` over each project touched this session plus `global`. MUST list only tasks this session worked on, unblocked or found. MUST run the `todos` skill and show the full list only when the user asks.
 
-   Present as ONE markdown table, not prose or bullets - one row per item, grouped by project, in-progress before planned, then TODOs. Fill "What it is" from the observation the scan already returned, only where the task name doesn't already say it - never fetch more for it. Omit projects with nothing:
+   Present as ONE markdown table, not prose or bullets - one row per item, grouped by project, in-progress before planned, then TODOs. Fill "What it is" from the task name, blank where the name says it - `get_entity_with_relations` only on tasks the user picks. Omit projects with nothing:
 
    ```
    | Project | Status | Task | What it is |
