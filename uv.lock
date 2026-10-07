@@ -32,6 +32,7 @@ dependencies = [
     { name = "bashlex" },
     { name = "gitpython" },
     { name = "platformdirs" },
+    { name = "pluggy" },
     { name = "pydantic" },
 ]
 
@@ -40,6 +41,7 @@ requires-dist = [
     { name = "bashlex" },
     { name = "gitpython" },
     { name = "platformdirs" },
+    { name = "pluggy", specifier = ">=1.6.0" },
     { name = "pydantic", specifier = ">=2" },
 ]
 
