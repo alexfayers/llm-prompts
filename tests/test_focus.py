@@ -5,7 +5,12 @@ from __future__ import annotations
 import importlib.util
 import json
 import shutil
+import subprocess
 import sys
+import threading
+import urllib.error
+import urllib.request
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType
 
@@ -377,6 +382,82 @@ class TestOutsideScope:
             "b.py",
             "z.py",
         ]
+
+
+class TestStart:
+    """Tests for the start command and the building stage."""
+
+    def test_moves_todo_to_building(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        mod.cmd_add(base, "widget", {})
+        capsys.readouterr()
+        mod.cmd_start(base, "widget")
+        assert capsys.readouterr().out == "start widget\n"
+        assert not mod.node_path(base, "widget", "todo").exists()
+        assert mod.node_path(base, "widget", "building").exists()
+
+    def test_start_requires_todo(self, mod: ModuleType, tmp_path: Path) -> None:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        mod.cmd_add(base, "widget", {})
+        mod.cmd_start(base, "widget")
+        with pytest.raises(mod.FocusError, match=r"'widget' is not in nodes/$"):
+            mod.cmd_start(base, "widget")
+
+    def test_built_accepts_building_only_once(
+        self, mod: ModuleType, tmp_path: Path
+    ) -> None:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        mod.cmd_add(base, "widget", {})
+        mod.cmd_start(base, "widget")
+        mod.cmd_built(base, "widget")
+        assert mod.node_path(base, "widget", "testing").exists()
+        with pytest.raises(mod.FocusError, match="is not in nodes/ or nodes/building"):
+            mod.cmd_built(base, "widget")
+
+    def test_fail_rejects_building(self, mod: ModuleType, tmp_path: Path) -> None:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        mod.cmd_add(base, "widget", {})
+        mod.cmd_start(base, "widget")
+        with pytest.raises(mod.FocusError, match="is not in nodes/testing"):
+            mod.cmd_fail(base, "widget", "broken")
+
+    def test_waves_show_building(self, mod: ModuleType, tmp_path: Path) -> None:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        mod.cmd_add(base, "widget", {})
+        mod.cmd_start(base, "widget")
+        nodes = mod.load_nodes(base)
+        assert "- [ ] widget (building)" in mod.render_waves(nodes, nodes)
+
+    def test_plan_graph_styles_building(self, mod: ModuleType, tmp_path: Path) -> None:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        mod.cmd_add(base, "widget", {})
+        mod.cmd_start(base, "widget")
+        plan = mod.plan_path(base).read_text()
+        assert "classDef building" in plan
+        assert "widget:::building" in plan
+
+    def test_init_creates_building_dir(self, mod: ModuleType, tmp_path: Path) -> None:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        assert (base / "nodes" / "building").is_dir()
+
+    def test_start_recreates_missing_building_dir(
+        self, mod: ModuleType, tmp_path: Path
+    ) -> None:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        mod.cmd_add(base, "widget", {})
+        (base / "nodes" / "building").rmdir()
+        mod.cmd_start(base, "widget")
+        assert mod.node_path(base, "widget", "building").exists()
 
 
 class TestCheck:
@@ -975,6 +1056,16 @@ class TestCli:
         mod.main()
         assert "test: pytest -q" in mod.node_path(base, "widget", "todo").read_text()
 
+    def test_start_via_cli(
+        self, mod: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        mod.cmd_add(base, "widget", {})
+        monkeypatch.setattr(sys, "argv", ["focus", "start", str(base), "widget"])
+        mod.main()
+        assert mod.node_path(base, "widget", "building").exists()
+
     def test_focus_error_exits_with_message_on_stderr(
         self,
         mod: ModuleType,
@@ -1004,6 +1095,46 @@ class TestCli:
         monkeypatch.setattr(sys, "argv", ["focus", "briefs", str(base)])
         mod.main()
         assert list(json.loads(capsys.readouterr().out)["nodes"]) == ["widget"]
+
+
+class TestWriteAtomic:
+    """Tests for atomic file writes."""
+
+    def test_replaces_content_and_leaves_no_temp_file(
+        self, mod: ModuleType, tmp_path: Path
+    ) -> None:
+        target = tmp_path / "PLAN.md"
+        target.write_text("old")
+        mod.write_atomic(target, "new")
+        assert target.read_text() == "new"
+        assert list(tmp_path.iterdir()) == [target]
+
+
+class TestConcurrentMoves:
+    """Tests for parallel node moves on one plan."""
+
+    def test_parallel_built_keeps_hand_written_sections(
+        self, mod: ModuleType, tmp_path: Path
+    ) -> None:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        plan = mod.plan_path(base)
+        sections = mod.parse_sections(plan.read_text())
+        sections["Constraints"] = "- keep it small"
+        sections["Checks"] = "- pytest -q"
+        plan.write_text(mod.render_plan(base.name, sections))
+        names = [f"node{i}" for i in range(12)]
+        for name in names:
+            mod.cmd_add(base, name, {})
+        processes = [
+            subprocess.Popen([sys.executable, str(_SCRIPT), "built", str(base), name])
+            for name in names
+        ]
+        assert [process.wait() for process in processes] == [0] * len(names)
+        text = plan.read_text()
+        assert "- keep it small" in text
+        assert "- pytest -q" in text
+        assert all(f"{name}:::testing" in text for name in names)
 
 
 class TestParentDir:
@@ -1099,3 +1230,93 @@ class TestParentDir:
         with pytest.raises(SystemExit):
             self._run(mod, monkeypatch, "check-wave", str(parent))
         assert capsys.readouterr().out == "$ true\n$ false\n`false` exited 1\n"
+
+
+class TestView:
+    """Tests for the view command's graph data and server."""
+
+    @pytest.fixture
+    def parent(self, mod: ModuleType, tmp_path: Path) -> Path:
+        parent = tmp_path / "plans"
+        parent.mkdir()
+        mod.plan_path(parent).write_text("# plans\n")
+        for name in ("core", "app"):
+            mod.cmd_init(parent / name)
+        mod.cmd_add(parent / "core", "port", {})
+        mod.node_path(parent / "core", "port", "todo").write_text(
+            mod.render_node_file(
+                {}, "# port\n\n## In\n\n- a\n\n## Out\n\n- b\n\n## Accept\n\n- c\n"
+            )
+        )
+        mod.cmd_add(parent / "app", "widget", {"depends": ["core/port"]})
+        return parent
+
+    def _serve(self, mod: ModuleType, base: Path) -> tuple[ThreadingHTTPServer, str]:
+        server = mod.make_view_server(base, 0)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return server, f"http://127.0.0.1:{server.server_port}"
+
+    def test_data_for_parent_of_plan_dirs(self, mod: ModuleType, parent: Path) -> None:
+        data = mod.view_data(parent)
+        assert data["repos"] == ["app", "core"]
+        assert data["waves"] == 2
+        nodes = {node["id"]: node for node in data["nodes"]}
+        assert nodes["core/port"] == {
+            "id": "core/port",
+            "repo": "core",
+            "label": "port",
+            "wave": 1,
+            "stage": "todo",
+            "depends": [],
+            "sections": {"In": "- a", "Out": "- b", "Accept": "- c"},
+        }
+        assert nodes["app/widget"]["wave"] == 2
+        assert nodes["app/widget"]["depends"] == ["core/port"]
+
+    def test_data_for_single_plan_dir(self, mod: ModuleType, tmp_path: Path) -> None:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        mod.cmd_add(base, "port", {})
+        mod.cmd_add(base, "widget", {"depends": ["port"]})
+        data = mod.view_data(base)
+        assert data["repos"] == ["plan"]
+        nodes = {node["id"]: node for node in data["nodes"]}
+        assert nodes["widget"]["repo"] == "plan"
+        assert nodes["widget"]["label"] == "widget"
+        assert nodes["widget"]["wave"] == 2
+
+    def test_data_reports_stage(self, mod: ModuleType, parent: Path) -> None:
+        mod.cmd_built(parent / "core", "port")
+        nodes = {node["id"]: node for node in mod.view_data(parent)["nodes"]}
+        assert nodes["core/port"]["stage"] == "testing"
+
+    def test_data_reports_building_stage(self, mod: ModuleType, parent: Path) -> None:
+        mod.cmd_start(parent / "core", "port")
+        nodes = {node["id"]: node for node in mod.view_data(parent)["nodes"]}
+        assert nodes["core/port"]["stage"] == "building"
+
+    def test_server_serves_fresh_data_and_page(
+        self, mod: ModuleType, parent: Path
+    ) -> None:
+        server, url = self._serve(mod, parent)
+        try:
+            with urllib.request.urlopen(f"{url}/data.json") as response:
+                assert response.headers["Content-Type"] == "application/json"
+                assert len(json.loads(response.read())["nodes"]) == 2
+            mod.cmd_add(parent / "app", "gadget", {})
+            with urllib.request.urlopen(f"{url}/data.json") as response:
+                assert len(json.loads(response.read())["nodes"]) == 3
+            with urllib.request.urlopen(f"{url}/") as response:
+                assert b"<html" in response.read()
+            with pytest.raises(urllib.error.HTTPError, match="404"):
+                urllib.request.urlopen(f"{url}/missing")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_view_command_requires_a_plan(
+        self, mod: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "argv", ["focus", "view", str(tmp_path)])
+        with pytest.raises(SystemExit):
+            mod.main()
