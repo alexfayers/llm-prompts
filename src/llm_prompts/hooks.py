@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import subprocess
 import time
-from importlib.resources import files
 from pathlib import Path
 
 from cline_hooks.core.plugin import HookResult, HooksPlugin, UserFacingNote
@@ -148,10 +147,10 @@ class AutoReinstallPlugin(HooksPlugin):
     def _get_source_dirs(self) -> list[Path]:
         """Return the source prompt dirs, discovered once per plugin instance."""
         if self._source_dirs is None:
-            from .install import _discover_overlay_paths
+            from .install import _discover_overlay_paths, prompts_dir
 
             self._source_dirs = [
-                Path(str(files("llm_prompts") / "prompts")).resolve(),
+                prompts_dir("llm_prompts").resolve(),
                 *(path.resolve() for path in _discover_overlay_paths()),
             ]
         return self._source_dirs

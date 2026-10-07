@@ -29,7 +29,7 @@ _DEFAULT_CONFIG = """\
 # Each [[tools]] entry is a package to install.
 # `source` can be:
 #   - A git URL (e.g. "git+https://github.com/user/repo.git")
-#   - A local path (~/git/pkg or /abs/path) - installed as editable
+#   - A local path (~/git/pkg or /abs/path) - installed from the checkout
 #
 # Overlay relationships are inferred from pyproject.toml entry points.
 # Standalone status is inferred from pyproject.toml scripts.
@@ -311,12 +311,6 @@ def _read_pyproject(tool: dict[str, Any]) -> dict[str, Any] | None:
     return None  # unrecognised source: inference not supported, use explicit fields
 
 
-def has_remote_sources() -> bool:
-    """Check if any configured tool uses a non-local source."""
-    tools = _load_config()
-    return any(not _is_local_path(str(t.get("source", ""))) for t in tools)
-
-
 def _pyproject_stamp_path() -> Path:
     """Return the path of the local-tool pyproject hash stamp file."""
     from platformdirs import user_data_dir
@@ -379,21 +373,19 @@ def _expand(path_str: str) -> Path:
     return Path(path_str).expanduser().resolve()
 
 
-def _detect_installer() -> str:
-    """Detect the best available installer."""
-    for name in ("uv", "pipx", "pip"):
-        if shutil.which(name):
-            return name
-    print("No installer found. Install uv, pipx, or pip.", file=sys.stderr)
-    sys.exit(1)
+def _require_uv() -> None:
+    """Exit with an error if uv is not installed."""
+    if not shutil.which("uv"):
+        print("setup needs uv: https://docs.astral.sh/uv/", file=sys.stderr)
+        sys.exit(1)
 
 
 def _build_commands(
-    tools: list[dict[str, Any]], installer: str
-) -> list[tuple[str, list[str], list[str] | None, list[str]]]:
+    tools: list[dict[str, Any]],
+) -> list[tuple[str, list[str], list[str], list[str]]]:
     """Build install commands for all core tools.
 
-    Returns list of (tool_name, install_cmd, upgrade_cmd_or_None, overlay_names) tuples.
+    Returns list of (tool_name, install_cmd, upgrade_cmd, overlay_names) tuples.
     """
     overlay_map: dict[str, list[dict[str, Any]]] = {}
     for tool in tools:
@@ -411,100 +403,44 @@ def _build_commands(
         or not (t.get("overlays_for") or _infer_overlays_for(t))
     ]
 
-    commands: list[tuple[str, list[str], list[str] | None, list[str]]] = []
+    commands: list[tuple[str, list[str], list[str], list[str]]] = []
     for core in cores:
         name = str(core["name"])
         source = str(core["source"])
         overlays = overlay_map.get(name, [])
-        install_cmd = _build_install_cmd(installer, source, overlays)
-        upgrade_cmd = _build_upgrade_cmd(installer, name, source, overlays)
+        install_cmd = _build_install_cmd(name, source, overlays)
+        upgrade_cmd = _build_upgrade_cmd(name, overlays)
         overlay_names = [str(o["name"]) for o in overlays]
         commands.append((name, install_cmd, upgrade_cmd, overlay_names))
 
     return commands
 
 
-def _source_args(installer: str, source: str, *, editable: bool) -> list[str]:
-    """Build the source arguments for an installer."""
-    local = _is_local_path(source)
-    path = str(_expand(source)) if local else source
-
-    if installer == "uv":
-        if local and editable:
-            return ["--editable", path]
-        if local:
-            return ["--with-editable", path]
-        if editable:
-            return [path]
-        return ["--with", path]
-
-    if installer == "pipx":
-        if editable:
-            if local:
-                return ["--editable", path]
-            return [path]
-        if local:
-            return ["--pip-args", f"--editable {path}"]
-        return ["--pip-args", path]
-
-    # pip
-    if local:
-        return ["--editable", path]
-    return [path]
-
-
 def _build_install_cmd(
-    installer: str, core_source: str, overlays: list[dict[str, Any]]
+    core_name: str, core_source: str, overlays: list[dict[str, Any]]
 ) -> list[str]:
     """Build a full install command."""
-    if installer == "uv":
-        cmd = ["uv", "tool", "install"]
-        cmd.extend(_source_args(installer, core_source, editable=True))
-        for overlay in overlays:
-            src = str(overlay["source"])
-            if _is_local_path(src):
-                cmd.extend(["--with-editable", str(_expand(src))])
-            else:
-                cmd.extend(["--with", src])
-        cmd.extend(["--reinstall", "--force"])
-        return cmd
-
-    if installer == "pipx":
-        cmd = ["pipx", "install"]
-        if _is_local_path(core_source):
-            cmd.extend(["--editable", str(_expand(core_source))])
-        else:
-            cmd.append(core_source)
-        cmd.append("--force")
-        # pipx uses inject for extras
-        return cmd
-
-    # pip
-    cmd = ["pip", "install"]
-    cmd.extend(_source_args(installer, core_source, editable=True))
+    packages = [{"name": core_name, "source": core_source}, *overlays]
+    cmd = ["uv", "tool", "install", _install_source(core_source)]
     for overlay in overlays:
-        cmd.extend(_source_args(installer, str(overlay["source"]), editable=False))
+        cmd.extend(["--with", _install_source(str(overlay["source"]))])
+    for package in packages:
+        if _is_local_path(str(package["source"])):
+            cmd.extend(["--no-sources-package", str(package["name"])])
+    cmd.extend(["--reinstall", "--force"])
     return cmd
 
 
-def _build_upgrade_cmd(
-    installer: str,
-    name: str,
-    core_source: str,
-    overlays: list[dict[str, Any]],
-) -> list[str] | None:
-    """Build a targeted upgrade command, or None if not supported."""
-    if installer != "uv":
-        return None
-    remote_packages: list[str] = []
-    if not _is_local_path(core_source):
-        remote_packages.append(name)
-    for overlay in overlays:
-        if not _is_local_path(str(overlay["source"])):
-            remote_packages.append(str(overlay["name"]))
+def _install_source(source: str) -> str:
+    """Return the expanded path of a local source, or the source itself."""
+    return str(_expand(source)) if _is_local_path(source) else source
+
+
+def _build_upgrade_cmd(name: str, overlays: list[dict[str, Any]]) -> list[str]:
+    """Build a targeted upgrade command that reinstalls every package."""
     cmd = ["uv", "tool", "upgrade", name]
-    for pkg in remote_packages:
-        cmd.extend(["--reinstall-package", pkg])
+    for package_name in [name, *(str(o["name"]) for o in overlays)]:
+        cmd.extend(["--reinstall-package", package_name])
     return cmd
 
 
@@ -626,8 +562,8 @@ def run_setup(
             print(err, file=sys.stderr)
         sys.exit(1)
 
-    installer = _detect_installer()
-    commands = _build_commands(tools, installer)
+    _require_uv()
+    commands = _build_commands(tools)
 
     if tool_filter:
         commands = [(n, i, u, o) for n, i, u, o in commands if n == tool_filter]
@@ -641,7 +577,7 @@ def run_setup(
         forced = name in force_reinstall or any(
             o in force_reinstall for o in overlay_names
         )
-        if upgrade_cmd and not forced:
+        if not forced:
             if dry_run:
                 print(f"\n[{name}] {' '.join(upgrade_cmd)}")
                 print(f"[{name}] (fallback) {' '.join(install_cmd)}")

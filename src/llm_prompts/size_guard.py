@@ -17,7 +17,6 @@ import json
 import tempfile
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field, replace
-from importlib.resources import files
 from pathlib import Path
 
 from .install import (
@@ -34,6 +33,7 @@ from .install import (
     _rendered_content,
     _resolve_priority_sources,
     content_subdirs,
+    prompts_dir,
 )
 from .render_template import (
     find_unreplaced_variables,
@@ -123,7 +123,7 @@ def _own_root_dir() -> Path:
     Returns:
         Path to `llm_prompts`'s own `prompts` directory.
     """
-    return Path(str(files("llm_prompts") / "prompts"))
+    return prompts_dir("llm_prompts")
 
 
 def _own_vars_path(target: str, vars_root: Path | None = None) -> Path:

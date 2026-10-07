@@ -300,7 +300,9 @@ class TestAutoReinstallPlugin:
         fake_subprocess.on(*_UPDATE_COMMAND)
         source_dir = tmp_path / "prompts"
         source_dir.mkdir()
-        with patch("llm_prompts.hooks.files", return_value=tmp_path):
+        with patch(
+            "llm_prompts.install.prompts_dir", return_value=tmp_path / "prompts"
+        ):
             plugin.on_hook(
                 "PostToolUse",
                 tool_name="Write",
@@ -323,7 +325,9 @@ class TestAutoReinstallPlugin:
     ) -> None:
         (tmp_path / "prompts").mkdir()
         outside = _write(tmp_path / "elsewhere" / "note.md", "# Note")
-        with patch("llm_prompts.hooks.files", return_value=tmp_path):
+        with patch(
+            "llm_prompts.install.prompts_dir", return_value=tmp_path / "prompts"
+        ):
             result = plugin.on_hook(
                 "PostToolUse", tool_name="Write", parameters={"path": str(outside)}
             )
@@ -744,7 +748,9 @@ class TestSourcePathWatching:
         rule_file.write_text("# Coding guidelines")
 
         plugin = AutoReinstallPlugin()
-        with patch("llm_prompts.hooks.files", return_value=tmp_path):
+        with patch(
+            "llm_prompts.install.prompts_dir", return_value=tmp_path / "prompts"
+        ):
             result = plugin.on_hook(
                 "PostToolUse",
                 tool_name="Edit",
@@ -770,7 +776,9 @@ class TestSourcePathWatching:
         skill_file.write_text("# Example skill")
 
         plugin = AutoReinstallPlugin()
-        with patch("llm_prompts.hooks.files", return_value=tmp_path):
+        with patch(
+            "llm_prompts.install.prompts_dir", return_value=tmp_path / "prompts"
+        ):
             result = plugin.on_hook(
                 "PostToolUse",
                 tool_name="Edit",

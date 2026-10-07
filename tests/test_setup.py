@@ -182,7 +182,7 @@ class TestBuildCommandsRegression:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(setup, "_fetch_remote_pyproject", self._canned_pyproject)
-        commands = setup._build_commands(self._shipped_tools(), "uv")
+        commands = setup._build_commands(self._shipped_tools())
         overlays_by_core = {
             name: overlay_names for name, _, _, overlay_names in commands
         }
@@ -193,8 +193,68 @@ class TestBuildCommandsRegression:
 
     def test_fetch_cached_per_url(self, fake_subprocess: FakeSubprocess) -> None:
         with patch("llm_prompts.setup.shutil.which", return_value="/usr/bin/git"):
-            setup._build_commands(self._shipped_tools(), "uv")
+            setup._build_commands(self._shipped_tools())
         assert len(fake_subprocess.matching("clone")) == 3
+
+
+class TestUvCommands:
+    def test_local_checkouts_install_non_editable_and_reinstall_on_upgrade(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(setup, "_fetch_remote_pyproject", lambda url: None)
+        core = tmp_path / "core"
+        local_overlay = tmp_path / "local-overlay"
+        git_overlay = "git+https://example.com/git-overlay.git"
+        tools: list[dict[str, Any]] = [
+            {"name": "core", "source": str(core), "standalone": True},
+            {
+                "name": "local-overlay",
+                "source": str(local_overlay),
+                "overlays_for": ["core"],
+            },
+            {"name": "git-overlay", "source": git_overlay, "overlays_for": ["core"]},
+        ]
+
+        [(_, install_cmd, upgrade_cmd, _)] = setup._build_commands(tools)
+
+        assert install_cmd == [
+            "uv",
+            "tool",
+            "install",
+            str(core.resolve()),
+            "--with",
+            str(local_overlay.resolve()),
+            "--with",
+            git_overlay,
+            "--no-sources-package",
+            "core",
+            "--no-sources-package",
+            "local-overlay",
+            "--reinstall",
+            "--force",
+        ]
+        assert upgrade_cmd == [
+            "uv",
+            "tool",
+            "upgrade",
+            "core",
+            "--reinstall-package",
+            "core",
+            "--reinstall-package",
+            "local-overlay",
+            "--reinstall-package",
+            "git-overlay",
+        ]
+
+    def test_setup_without_uv_exits_with_message(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr("llm_prompts.setup.shutil.which", lambda name: None)
+
+        with pytest.raises(SystemExit):
+            setup._require_uv()
+
+        assert "setup needs uv" in capsys.readouterr().err
 
 
 class TestRunParallelOrdered:

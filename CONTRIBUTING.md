@@ -2,11 +2,10 @@
 
 ## Setup
 
-`llm-prompts` needs a sibling checkout of [cline-hooks](https://github.com/alexfayers/cline-hooks) - `pyproject.toml`'s `[tool.uv.sources]` pins it as an editable relative path (`../cline-hooks`), and `src/llm_prompts/hooks.py` imports it unconditionally, so tests fail to collect without it:
+`uv sync` installs [cline-hooks](https://github.com/alexfayers/cline-hooks) from GitHub, as `pyproject.toml`'s `[tool.uv.sources]` declares:
 
 ```bash
 git clone https://github.com/alexfayers/llm-prompts.git
-git clone https://github.com/alexfayers/cline-hooks.git
 cd llm-prompts
 uv sync
 ```
