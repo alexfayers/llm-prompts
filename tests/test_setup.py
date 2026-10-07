@@ -182,7 +182,7 @@ class TestBuildCommandsRegression:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(setup, "_fetch_remote_pyproject", self._canned_pyproject)
-        commands = setup._build_commands(self._shipped_tools())
+        commands = setup._build_commands(self._shipped_tools(), set())
         overlays_by_core = {
             name: overlay_names for name, _, _, overlay_names in commands
         }
@@ -193,12 +193,12 @@ class TestBuildCommandsRegression:
 
     def test_fetch_cached_per_url(self, fake_subprocess: FakeSubprocess) -> None:
         with patch("llm_prompts.setup.shutil.which", return_value="/usr/bin/git"):
-            setup._build_commands(self._shipped_tools())
+            setup._build_commands(self._shipped_tools(), set())
         assert len(fake_subprocess.matching("clone")) == 3
 
 
 class TestUvCommands:
-    def test_local_checkouts_install_non_editable_and_reinstall_on_upgrade(
+    def test_local_checkouts_install_non_editable_and_reinstall_only_changed_on_upgrade(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(setup, "_fetch_remote_pyproject", lambda url: None)
@@ -215,7 +215,9 @@ class TestUvCommands:
             {"name": "git-overlay", "source": git_overlay, "overlays_for": ["core"]},
         ]
 
-        [(_, install_cmd, upgrade_cmd, _)] = setup._build_commands(tools)
+        [(_, install_cmd, upgrade_cmd, _)] = setup._build_commands(
+            tools, {"local-overlay"}
+        )
 
         assert install_cmd == [
             "uv",
@@ -239,11 +241,7 @@ class TestUvCommands:
             "upgrade",
             "core",
             "--reinstall-package",
-            "core",
-            "--reinstall-package",
             "local-overlay",
-            "--reinstall-package",
-            "git-overlay",
         ]
 
     def test_setup_without_uv_exits_with_message(
@@ -255,6 +253,98 @@ class TestUvCommands:
             setup._require_uv()
 
         assert "setup needs uv" in capsys.readouterr().err
+
+
+class TestChangedLocalTools:
+    @pytest.fixture
+    def checkouts(
+        self,
+        tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> list[dict[str, Any]]:
+        monkeypatch.setattr(
+            setup, "_checkout_stamp_path", lambda: tmp_path / "checkout-stamp"
+        )
+        tools: list[dict[str, Any]] = [
+            {"name": "core", "source": str(tmp_path / "core")},
+            {"name": "overlay", "source": str(tmp_path / "overlay")},
+            {"name": "remote", "source": "git+https://example.com/remote.git"},
+        ]
+        for tool in tools[:2]:
+            repo = (tmp_path / tool["name"]).resolve()
+            for verb in ("ls-files", "status", "diff"):
+                fake_subprocess.on(verb, repo=repo, stdout=f"{tool['name']} {verb}")
+        return tools
+
+    def test_only_checkouts_that_differ_from_the_stamp_are_changed(
+        self,
+        tmp_path: Path,
+        checkouts: list[dict[str, Any]],
+        fake_subprocess: FakeSubprocess,
+    ) -> None:
+        setup.write_checkout_stamp(checkouts)
+        assert setup.detect_changed_local_tools(checkouts) == set()
+
+        fake_subprocess.on(
+            "status", repo=(tmp_path / "overlay").resolve(), stdout=" M file.py"
+        )
+        assert setup.detect_changed_local_tools(checkouts) == {"overlay"}
+
+    def test_checkout_state_ignores_prompts(
+        self,
+        checkouts: list[dict[str, Any]],
+        fake_subprocess: FakeSubprocess,
+    ) -> None:
+        setup.detect_changed_local_tools(checkouts)
+
+        git_calls = [argv for argv, _ in fake_subprocess.calls if argv[0] == "git"]
+        assert git_calls
+        assert all(argv[-1] == setup._NOT_PROMPTS for argv in git_calls)
+
+    def test_every_local_tool_is_changed_without_a_stamp(
+        self, checkouts: list[dict[str, Any]]
+    ) -> None:
+        assert setup.detect_changed_local_tools(checkouts) == {"core", "overlay"}
+
+    def test_checkout_with_failing_git_is_changed(
+        self,
+        tmp_path: Path,
+        checkouts: list[dict[str, Any]],
+        fake_subprocess: FakeSubprocess,
+    ) -> None:
+        setup.write_checkout_stamp(checkouts)
+        fake_subprocess.on(
+            "ls-files", repo=(tmp_path / "core").resolve(), returncode=128
+        )
+        assert setup.detect_changed_local_tools(checkouts) == {"core"}
+
+
+class TestRunSetupReinstallsChangedCheckouts:
+    def test_second_run_without_checkout_changes_reinstalls_nothing(
+        self,
+        tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        core = tmp_path / "core"
+        core.mkdir()
+        (core / "pyproject.toml").write_text(
+            '[project]\nname = "core"\n[project.scripts]\ncore = "core:main"\n'
+        )
+        tools: list[dict[str, Any]] = [{"name": "core", "source": str(core)}]
+        monkeypatch.setattr(setup, "_load_config", lambda: tools)
+        monkeypatch.setattr(setup, "_require_uv", lambda: None)
+        monkeypatch.setattr(
+            setup, "_pyproject_stamp_path", lambda: tmp_path / "pyproject-stamp"
+        )
+
+        setup.run_setup()
+        setup.run_setup()
+
+        first, second = fake_subprocess.matching("uv", "tool", "upgrade")
+        assert "--reinstall-package" in first
+        assert "--reinstall-package" not in second
 
 
 class TestRunParallelOrdered:

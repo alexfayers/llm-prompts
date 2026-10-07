@@ -368,6 +368,94 @@ def write_pyproject_stamp() -> None:
     stamp.write_text(json.dumps(_hash_local_pyprojects()), encoding="utf-8")
 
 
+def _checkout_stamp_path() -> Path:
+    """Return the path of the local-checkout state stamp file."""
+    return _pyproject_stamp_path().with_name(".llm-prompts-checkout-stamp")
+
+
+_NOT_PROMPTS = ":(exclude,glob)**/prompts/**"
+
+
+def _checkout_state(repo: Path) -> str | None:
+    """Return a digest of a checkout's files, status and uncommitted diff outside prompts.
+
+    Args:
+        repo: The checkout directory.
+
+    Returns:
+        The hex digest, or ``None`` if git fails.
+    """
+    digest = hashlib.sha256()
+    for args in (["ls-files", "-s"], ["status", "--porcelain"], ["diff", "HEAD"]):
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(repo), *args, "--", _NOT_PROMPTS],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=GIT_TIMEOUT,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if result.returncode != 0:
+            return None
+        digest.update(result.stdout.encode())
+    return digest.hexdigest()
+
+
+def _hash_local_checkouts(tools: list[dict[str, Any]]) -> dict[str, str | None]:
+    """Return a name -> state digest map of each local tool's checkout.
+
+    Args:
+        tools: The configured tools.
+
+    Returns:
+        A mapping of local tool name to its checkout state, ``None`` if unreadable.
+    """
+    return {
+        str(tool.get("name", "")): _checkout_state(_expand(str(tool["source"])))
+        for tool in tools
+        if _is_local_path(str(tool.get("source", "")))
+    }
+
+
+def detect_changed_local_tools(tools: list[dict[str, Any]]) -> set[str]:
+    """Return the names of local tools whose checkout differs from the stamp.
+
+    Args:
+        tools: The configured tools.
+
+    Returns:
+        The local tool names whose checkout state is unreadable or differs from
+        the stamp; every local tool if the stamp is missing or unreadable.
+    """
+    try:
+        recorded = json.loads(_checkout_stamp_path().read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        recorded = {}
+    return {
+        name
+        for name, state in _hash_local_checkouts(tools).items()
+        if state is None or recorded.get(name) != state
+    }
+
+
+def write_checkout_stamp(tools: list[dict[str, Any]]) -> None:
+    """Write the current local-checkout states to the stamp file.
+
+    Args:
+        tools: The configured tools.
+    """
+    stamp = _checkout_stamp_path()
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    states = {
+        name: state
+        for name, state in _hash_local_checkouts(tools).items()
+        if state is not None
+    }
+    stamp.write_text(json.dumps(states), encoding="utf-8")
+
+
 def _expand(path_str: str) -> Path:
     """Expand ~ and resolve a path string."""
     return Path(path_str).expanduser().resolve()
@@ -381,9 +469,13 @@ def _require_uv() -> None:
 
 
 def _build_commands(
-    tools: list[dict[str, Any]],
+    tools: list[dict[str, Any]], changed_local: set[str]
 ) -> list[tuple[str, list[str], list[str], list[str]]]:
     """Build install commands for all core tools.
+
+    Args:
+        tools: The configured tools.
+        changed_local: Names of local tools whose upgrade must rebuild them.
 
     Returns list of (tool_name, install_cmd, upgrade_cmd, overlay_names) tuples.
     """
@@ -409,7 +501,7 @@ def _build_commands(
         source = str(core["source"])
         overlays = overlay_map.get(name, [])
         install_cmd = _build_install_cmd(name, source, overlays)
-        upgrade_cmd = _build_upgrade_cmd(name, overlays)
+        upgrade_cmd = _build_upgrade_cmd(name, overlays, changed_local)
         overlay_names = [str(o["name"]) for o in overlays]
         commands.append((name, install_cmd, upgrade_cmd, overlay_names))
 
@@ -436,11 +528,14 @@ def _install_source(source: str) -> str:
     return str(_expand(source)) if _is_local_path(source) else source
 
 
-def _build_upgrade_cmd(name: str, overlays: list[dict[str, Any]]) -> list[str]:
-    """Build a targeted upgrade command that reinstalls every package."""
+def _build_upgrade_cmd(
+    name: str, overlays: list[dict[str, Any]], changed_local: set[str]
+) -> list[str]:
+    """Build a targeted upgrade command that reinstalls only changed local packages."""
     cmd = ["uv", "tool", "upgrade", name]
     for package_name in [name, *(str(o["name"]) for o in overlays)]:
-        cmd.extend(["--reinstall-package", package_name])
+        if package_name in changed_local:
+            cmd.extend(["--reinstall-package", package_name])
     return cmd
 
 
@@ -563,7 +658,7 @@ def run_setup(
         sys.exit(1)
 
     _require_uv()
-    commands = _build_commands(tools)
+    commands = _build_commands(tools, detect_changed_local_tools(tools))
 
     if tool_filter:
         commands = [(n, i, u, o) for n, i, u, o in commands if n == tool_filter]
@@ -616,4 +711,5 @@ def run_setup(
         print("\nAll tools installed successfully.")
     if not dry_run and not tool_filter:
         write_pyproject_stamp()
+        write_checkout_stamp(tools)
     return changed

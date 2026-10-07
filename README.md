@@ -239,7 +239,7 @@ standalone = true
 overlays_for = ["llm-prompts", "cline-hooks"]
 ```
 
-Local paths are installed as copies of the checkout. Changes to rules, workflows, and skills are picked up immediately by `llm-prompts install`; `llm-prompts update` reinstalls the checkouts to pick up Python changes.
+Local paths are installed as copies of the checkout. Changes to rules, workflows, and skills are picked up immediately by `llm-prompts install`; `llm-prompts update` reinstalls only the checkouts whose files outside `prompts/` changed since the last setup, to pick up Python changes.
 
 ```bash
 llm-prompts setup              # install all tools

@@ -1162,6 +1162,7 @@ class TestRunSetupForceReinstall:
             patch("llm_prompts.setup._require_uv"),
             patch("llm_prompts.setup._build_commands", return_value=commands),
             patch("llm_prompts.setup.write_pyproject_stamp"),
+            patch("llm_prompts.setup.write_checkout_stamp"),
         ):
             run_setup(force_reinstall=force_reinstall)
         return fake_subprocess.commands
