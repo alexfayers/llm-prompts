@@ -23,17 +23,16 @@ const BLOCKERS = {
 }
 
 phase('Check')
-const ids = Object.keys(args.nodes)
-const verdicts = await parallel(ids.map(id => () =>
-  agent(`${args.plan}\n${args.nodes[id]}`, {
-    label: `check:${id}`,
+const verdicts = await parallel(args.map(path => () =>
+  agent(`Read only the file ${path} (in chunks if needed). It holds a plan and one node's brief. Judge that node.`, {
+    label: `check:${path}`,
     phase: 'Check',
     schema: BLOCKERS,
     agentType: 'eagle-vision-checker-haiku-low',
   })))
-const blocked = ids
+const blocked = args
   .map((node, i) => ({ node, blockers: verdicts[i]?.blockers }))
   .filter(v => v.blockers?.length)
-const unchecked = ids.filter((_, i) => !verdicts[i])
-log(`${ids.length - blocked.length - unchecked.length}/${ids.length} nodes have no blockers`)
+const unchecked = args.filter((_, i) => !verdicts[i])
+log(`${args.length - blocked.length - unchecked.length}/${args.length} nodes have no blockers`)
 return { blocked, unchecked }
