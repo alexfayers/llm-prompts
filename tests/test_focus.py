@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -441,6 +442,58 @@ class TestCheck:
         out = capsys.readouterr().out
         assert out == "$ true\n$ true\npass widget\n"
 
+    def test_node_only_skips_plan_checks(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        plan = mod.plan_path(base)
+        sections = mod.parse_sections(plan.read_text())
+        sections["Checks"] = "- false"
+        plan.write_text(mod.render_plan(base.name, sections))
+        mod.cmd_add(base, "widget", {})
+        mod.cmd_built(base, "widget")
+        mod.cmd_set_test(base, "widget", "true")
+        capsys.readouterr()
+        mod.cmd_check(base, "widget", node_only=True)
+        assert capsys.readouterr().out == "$ true\npass widget\n"
+        assert mod.node_path(base, "widget", "done").exists()
+
+
+class TestCheckWave:
+    """Tests for the check-wave command."""
+
+    def _plan_with_checks(self, mod: ModuleType, tmp_path: Path, checks: str) -> Path:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        plan = mod.plan_path(base)
+        sections = mod.parse_sections(plan.read_text())
+        sections["Checks"] = checks
+        plan.write_text(mod.render_plan(base.name, sections))
+        return base
+
+    def test_runs_each_check(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        base = self._plan_with_checks(mod, tmp_path, "- true\n- test 1 = 1")
+        capsys.readouterr()
+        mod.cmd_check_wave(base)
+        assert capsys.readouterr().out == "$ true\n$ test 1 = 1\n"
+
+    def test_runs_every_check_and_names_each_failure(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        base = self._plan_with_checks(
+            mod, tmp_path, "- true\n- false\n- true\n- exit 3"
+        )
+        capsys.readouterr()
+        with pytest.raises(SystemExit) as exc_info:
+            mod.cmd_check_wave(base)
+        assert exc_info.value.code == 1
+        assert capsys.readouterr().out == (
+            "$ true\n$ false\n`false` exited 1\n$ true\n$ exit 3\n`exit 3` exited 3\n"
+        )
+
 
 class TestCheckBase:
     """Tests for the check command's --base scope gate."""
@@ -611,6 +664,25 @@ class TestBriefs:
         assert "## base\n\n- make_base()" in nodes["widget"]
         assert set(nodes) == {"base", "widget"}
 
+    def test_out_writes_plan_then_node_brief_per_node(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        base = tmp_path / "plan"
+        out = tmp_path / "briefs"
+        mod.cmd_init(base)
+        mod.cmd_add(base, "base", {})
+        mod.cmd_add(base, "widget", {"depends": ["base"]})
+        capsys.readouterr()
+        mod.cmd_briefs(base)
+        payload = json.loads(capsys.readouterr().out)
+        mod.cmd_briefs(base, out)
+        assert capsys.readouterr().out.splitlines() == [
+            str(out / "base.md"),
+            str(out / "widget.md"),
+        ]
+        for node_id, brief in payload["nodes"].items():
+            assert (out / f"{node_id}.md").read_text() == payload["plan"] + brief
+
 
 class TestComment:
     """Tests for the comment command's PR comment output."""
@@ -751,6 +823,113 @@ class TestJoin:
         assert any("dependency cycle" in p for p in exc_info.value.problems)
 
 
+class TestSiblingDepends:
+    """Tests for depends entries naming a node in a sibling plan dir."""
+
+    def _plans(self, mod: ModuleType, tmp_path: Path) -> tuple[Path, Path]:
+        core, app = tmp_path / "core", tmp_path / "app"
+        mod.cmd_init(core)
+        mod.cmd_init(app)
+        mod.cmd_add(core, "port", {})
+        mod.cmd_add(app, "widget", {"depends": ["core/port"]})
+        return core, app
+
+    def test_ready_waits_until_sibling_node_is_done(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        core, app = self._plans(mod, tmp_path)
+        plan = mod.plan_path(app)
+        sections = mod.parse_sections(plan.read_text())
+        sections["Checks"] = "- true"
+        plan.write_text(mod.render_plan(app.name, sections))
+        mod.cmd_set_test(app, "widget", "true")
+        capsys.readouterr()
+        with pytest.raises(SystemExit):
+            mod.cmd_ready(app, "widget")
+        assert capsys.readouterr().out == "waiting on: core/port\n"
+        mod.cmd_built(core, "port")
+        mod.cmd_pass(core, "port")
+        capsys.readouterr()
+        mod.cmd_ready(app, "widget")
+        assert capsys.readouterr().out == "ready\n"
+
+    def test_waves_count_sibling_dependencies(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        core, app = self._plans(mod, tmp_path)
+        mod.cmd_add(app, "gadget", {})
+        capsys.readouterr()
+        mod.cmd_waves(app)
+        assert capsys.readouterr().out == (
+            "### Wave 1\n- [ ] gadget (ready)\n\n### Wave 2\n- [ ] widget\n"
+        )
+        mod.cmd_built(core, "port")
+        mod.cmd_pass(core, "port")
+        capsys.readouterr()
+        mod.cmd_waves(app)
+        assert "- [ ] widget (ready)" in capsys.readouterr().out
+
+    def test_graph_draws_sibling_dependency_with_safe_id(
+        self, mod: ModuleType, tmp_path: Path
+    ) -> None:
+        _, app = self._plans(mod, tmp_path)
+        graph = mod.parse_sections(mod.plan_path(app).read_text())["Graph"]
+        assert 'core_port["core/port"] --> widget["widget"]' in graph
+
+    def test_briefs_include_sibling_dependency_out(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        core, app = self._plans(mod, tmp_path)
+        port_path = mod.node_path(core, "port", "todo")
+        port_path.write_text(
+            port_path.read_text().replace("## Out\n", "## Out\n\n- make_port()\n")
+        )
+        capsys.readouterr()
+        mod.cmd_briefs(app)
+        nodes = json.loads(capsys.readouterr().out)["nodes"]
+        assert "## core/port\n\n- make_port()" in nodes["widget"]
+
+    @pytest.mark.parametrize("remove_dir", [False, True])
+    def test_join_reports_missing_sibling_dependency_as_unknown(
+        self, mod: ModuleType, tmp_path: Path, remove_dir: bool
+    ) -> None:
+        core, app = self._plans(mod, tmp_path)
+        if remove_dir:
+            shutil.rmtree(core)
+        else:
+            mod.cmd_remove(core, "port")
+        with pytest.raises(mod.FocusError) as exc_info:
+            mod.cmd_join(app)
+        assert exc_info.value.problems == ["widget: unknown dependency 'core/port'"]
+
+    def test_cycle_across_dirs_errors(self, mod: ModuleType, tmp_path: Path) -> None:
+        core, _ = self._plans(mod, tmp_path)
+        with pytest.raises(mod.FocusError) as exc_info:
+            mod.edit_links(core, "port", {"depends": ["app/widget"]}, add=True)
+        assert exc_info.value.problems == [
+            "dependency cycle: port -> app/widget -> port"
+        ]
+
+    def test_rename_keeps_same_dir_references(
+        self, mod: ModuleType, tmp_path: Path
+    ) -> None:
+        _, app = self._plans(mod, tmp_path)
+        mod.cmd_add(app, "gadget", {"depends": ["widget"]})
+        mod.cmd_rename(app, "widget", "gizmo")
+        depends = mod.load_nodes(app)["gadget"]["depends"]
+        assert depends == ["gizmo"]
+        assert mod.load_nodes(app)["gizmo"]["depends"] == ["core/port"]
+
+    def test_waves_treat_missing_sibling_dependency_as_not_done(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        core, app = self._plans(mod, tmp_path)
+        mod.cmd_remove(core, "port")
+        capsys.readouterr()
+        mod.cmd_waves(app)
+        assert capsys.readouterr().out == "### Wave 1\n- [ ] widget\n"
+
+
 class TestCli:
     """Tests for CLI wiring of the remove and rename commands."""
 
@@ -825,3 +1004,98 @@ class TestCli:
         monkeypatch.setattr(sys, "argv", ["focus", "briefs", str(base)])
         mod.main()
         assert list(json.loads(capsys.readouterr().out)["nodes"]) == ["widget"]
+
+
+class TestParentDir:
+    """Tests for running commands on a dir whose subdirs are plan dirs."""
+
+    @pytest.fixture
+    def parent(self, mod: ModuleType, tmp_path: Path) -> Path:
+        parent = tmp_path / "plans"
+        parent.mkdir()
+        mod.plan_path(parent).write_text("# plans\n")
+        for name in ("core", "app"):
+            mod.cmd_init(parent / name)
+        mod.cmd_add(parent / "core", "port", {})
+        mod.cmd_add(parent / "app", "widget", {"depends": ["core/port"]})
+        return parent
+
+    def _run(
+        self, mod: ModuleType, monkeypatch: pytest.MonkeyPatch, *argv: str
+    ) -> None:
+        monkeypatch.setattr(sys, "argv", ["focus", *argv])
+        mod.main()
+
+    def test_node_commands_act_on_the_child_plan(
+        self, mod: ModuleType, parent: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._run(mod, monkeypatch, "built", str(parent), "core/port")
+        assert mod.node_path(parent / "core", "port", "testing").exists()
+        self._run(mod, monkeypatch, "link", str(parent), "app/widget", "--scope", "w/")
+        assert (
+            "scope: w/" in mod.node_path(parent / "app", "widget", "todo").read_text()
+        )
+
+    def test_waves_merge_child_plans(
+        self,
+        mod: ModuleType,
+        parent: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mod.cmd_add(parent / "app", "gadget", {})
+        capsys.readouterr()
+        self._run(mod, monkeypatch, "waves", str(parent))
+        assert capsys.readouterr().out == (
+            "### Wave 1\n- [ ] app/gadget (ready)\n- [ ] core/port (ready)\n\n"
+            "### Wave 2\n- [ ] app/widget\n"
+        )
+
+    def test_briefs_and_comment_merge_child_plans(
+        self,
+        mod: ModuleType,
+        parent: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        capsys.readouterr()
+        self._run(mod, monkeypatch, "briefs", str(parent))
+        briefs = json.loads(capsys.readouterr().out)
+        assert list(briefs["nodes"]) == ["app/widget", "core/port"]
+        assert "# app" in briefs["plan"]
+        assert "# core" in briefs["plan"]
+        out = tmp_path / "out"
+        self._run(mod, monkeypatch, "briefs", str(parent), "--out", str(out))
+        assert capsys.readouterr().out == f"{out}/app/widget.md\n{out}/core/port.md\n"
+        self._run(mod, monkeypatch, "comment", str(parent))
+        comment = capsys.readouterr().out
+        assert comment.index("### core/port") < comment.index("### app/widget")
+
+    def test_join_and_check_wave_run_over_child_plans(
+        self,
+        mod: ModuleType,
+        parent: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        app = parent / "app"
+        mod.cmd_add(app, "gadget", {"outputs": ["api"]})
+        mod.cmd_add(app, "gizmo", {"inputs": ["api"]})
+        capsys.readouterr()
+        self._run(mod, monkeypatch, "join", str(parent))
+        assert capsys.readouterr().out == (
+            "app/gadget depends on app/interface-api\n"
+            "app/gizmo depends on app/interface-api\n"
+        )
+        self._run(mod, monkeypatch, "join", str(parent))
+        assert capsys.readouterr().out == "nothing to join\n"
+        for name, check in (("app", "true"), ("core", "false")):
+            plan = mod.plan_path(parent / name)
+            sections = mod.parse_sections(plan.read_text())
+            sections["Checks"] = f"- {check}"
+            plan.write_text(mod.render_plan(name, sections))
+        capsys.readouterr()
+        with pytest.raises(SystemExit):
+            self._run(mod, monkeypatch, "check-wave", str(parent))
+        assert capsys.readouterr().out == "$ true\n$ false\n`false` exited 1\n"
