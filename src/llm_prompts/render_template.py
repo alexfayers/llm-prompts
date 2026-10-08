@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from jinja2 import Environment, Undefined
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -144,20 +146,37 @@ def strip_gating_keys(content: str, keys: set[str]) -> str:
     return "---\n" + "\n".join(kept) + "\n---\n" + body
 
 
+class _PlaceholderUndefined(Undefined):
+    """Undefined variable that renders back as its own ``{{NAME}}`` placeholder."""
+
+    def __str__(self) -> str:
+        return "{{" + str(self._undefined_name) + "}}"
+
+
+_JINJA_ENV = Environment(
+    undefined=_PlaceholderUndefined,
+    autoescape=False,
+    keep_trailing_newline=True,
+    trim_blocks=True,
+    lstrip_blocks=True,
+)
+
+
 def substitute_variables(content: str, variables: dict[str, str]) -> str:
-    """Replace {{key}} placeholders with variable values.
+    """Render ``content`` as a Jinja template with ``variables``.
 
     Args:
-        content: Input content containing placeholders.
+        content: Input content containing ``{{NAME}}`` placeholders and
+            optional Jinja block tags.
         variables: Mapping of variable names to replacement values.
 
     Returns:
-        Content with placeholders replaced.
+        Rendered content. Unknown variables stay as ``{{NAME}}``.
+
+    Raises:
+        jinja2.TemplateSyntaxError: If ``content`` is not a valid template.
     """
-    result = content
-    for key, value in variables.items():
-        result = result.replace("{{" + key + "}}", value)
-    return result
+    return _JINJA_ENV.from_string(content).render(variables)
 
 
 def find_unreplaced_variables(content: str) -> list[str]:

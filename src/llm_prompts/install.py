@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
+from jinja2 import TemplateError
+
 from .colors import Color, paint
 from .render_template import (
     find_unreplaced_variables,
@@ -976,7 +978,11 @@ def _materialize_builtin_skill(
             managed.add(dest.name)
         return
     raw = _read_text(skill_md)
-    substituted = substitute_variables(raw, _builtin_skill_vars(vars_path))
+    try:
+        substituted = substitute_variables(raw, _builtin_skill_vars(vars_path))
+    except TemplateError as e:
+        log("error", f"Failed to render skill '{source.name}': {e}")
+        return
     for var in find_unreplaced_variables(substituted):
         log("warn", f"Unreplaced variable '{{{{{var}}}}}' in skill '{source.name}'")
     _materialize_skill_dir(source, dest, substituted, "skill", managed)

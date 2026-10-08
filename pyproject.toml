@@ -4,7 +4,11 @@ version = "0.1.0"
 description = "Cross-agent rules, workflows, and skills for LLM coding assistants"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["cline-hooks", "platformdirs>=4.11.7"]
+dependencies = [
+    "cline-hooks",
+    "jinja2>=3.1.6",
+    "platformdirs>=4.11.7",
+]
 
 [project.scripts]
 llm-prompts = "llm_prompts.cli:main"

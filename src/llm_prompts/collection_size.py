@@ -12,6 +12,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
+from jinja2 import TemplateError
+
 from .install import (
     _append_included_rules,
     _builtin_skill_vars,
@@ -69,11 +71,14 @@ def _rendered_kind_bytes(
         [d / "shared" / subdir for d in overlays],
         [d / target / subdir for d in overlays],
     ):
-        content = (
-            _linked_content(src)
-            if agent_specific
-            else _rendered_content(src, vars_path, target)
-        )
+        try:
+            content = (
+                _linked_content(src)
+                if agent_specific
+                else _rendered_content(src, vars_path, target)
+            )
+        except TemplateError:
+            continue
         total += len(content.encode())
     return total
 
@@ -121,10 +126,16 @@ def _skill_bytes(
         lambda p: p.name,
         gate,
     )
-    return sum(
-        len(substitute_variables(_read_text(d / "SKILL.md"), variables).encode())
-        for _, d in resolved
-    )
+    total = 0
+    for _, skill_dir in resolved:
+        try:
+            substituted = substitute_variables(
+                _read_text(skill_dir / "SKILL.md"), variables
+            )
+        except TemplateError:
+            continue
+        total += len(substituted.encode())
+    return total
 
 
 def _agent_bytes(root: Path, overlays: Sequence[Path], target: str) -> int:
