@@ -23,6 +23,7 @@ AGENT_DESCRIPTION_CHARS = "agent_description_chars"
 COLLECTION_BYTES = "collection_bytes"
 FRONTMATTER_VALID = "frontmatter_valid"
 NO_UNSUBSTITUTED_PLACEHOLDERS = "no_unsubstituted_placeholders"
+TEMPLATE_RENDERS = "template_renders"
 
 UNITS: dict[str, str] = {
     RULE_LINES: "rendered lines",

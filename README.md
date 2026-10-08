@@ -51,6 +51,8 @@ Agents are Claude Code custom subagent definitions - single markdown files with 
 
 Shared rules and workflows use `{{VAR}}` template placeholders that get substituted per agent. For example, `{{RULE_FILES}}` becomes "steering files" for Kiro, ".clinerules files" for Cline, and "AGENTS.md" for Codex. This allows a single source file to work across all agents. Variables are defined in each agent's `vars.json`.
 
+Templates are rendered with Jinja2, so text can vary per agent with block tags such as `{% if AGENT == "pi" %}`, `{% else %}` and `{% endif %}`. Put each block tag on its own line: the line is removed from the output, so no blank line is left behind. A placeholder with no value stays in the output as `{{NAME}}` and is reported as unreplaced. A template with invalid syntax is skipped during install and fails `llm-prompts check`.
+
 ### Overlays
 
 Overlays are separate packages that add extra rules, workflows, and skills on top of the core llm-prompts content. They are useful for organisation-specific or private rules that you don't want in the public repo.

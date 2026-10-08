@@ -37,6 +37,7 @@ from llm_prompts.size_limits import (
     SCHEDULES,
     SKILL_BODY_BYTES,
     SKILL_DESCRIPTION_CHARS,
+    TEMPLATE_RENDERS,
     UNITS,
     WORKFLOW_BYTES,
     WORKFLOW_LINES,
@@ -540,6 +541,31 @@ class TestCheck:
         assert result.passed is True
         assert result.violations == []
         assert result.report == "All prompt-size checks passed."
+
+    @pytest.mark.parametrize(
+        ("path", "dest_name"),
+        [
+            (("shared", "rules", "shared-rule.md"), "shared-rule.md"),
+            (("shared", "skills", "demo", "SKILL.md"), "demo"),
+        ],
+    )
+    def test_template_syntax_error_is_a_violation_not_a_crash(
+        self, tmp_path: Path, path: tuple[str, ...], dest_name: str
+    ) -> None:
+        _make_prompts_tree(tmp_path)
+        _write(
+            tmp_path.joinpath(*path),
+            "---\nname: demo\ndescription: Broken.\n---\n\n{% if AGENT %}\n",
+        )
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check([tmp_path], targets=("claude-code",))
+
+        assert result.passed is False
+        assert any(
+            v.metric == TEMPLATE_RENDERS and v.dest_name == dest_name
+            for v in result.violations
+        )
 
     def test_oversized_artifact_fails_with_a_readable_report(
         self, tmp_path: Path

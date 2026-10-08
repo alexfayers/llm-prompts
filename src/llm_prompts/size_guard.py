@@ -19,6 +19,8 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from jinja2 import TemplateError
+
 from .install import (
     AGENT_CLASSES,
     _Agent,
@@ -54,6 +56,7 @@ from .size_limits import (
     SCHEDULES,
     SKILL_BODY_BYTES,
     SKILL_DESCRIPTION_CHARS,
+    TEMPLATE_RENDERS,
     UNITS,
     WORKFLOW_BYTES,
     WORKFLOW_LINES,
@@ -280,11 +283,15 @@ def _iter_rendered_kind_artifacts(
     for dest_name, src, agent_specific in _collect_content_srcs(
         agent, subdir, shared_src, [], []
     ):
-        content = (
-            _linked_content(src)
-            if agent_specific
-            else _rendered_content(src, vars_path, target)
-        )
+        try:
+            content = (
+                _linked_content(src)
+                if agent_specific
+                else _rendered_content(src, vars_path, target)
+            )
+        except TemplateError:
+            yield Artifact(TEMPLATE_RENDERS, target, dest_name, False, src)
+            continue
         yield Artifact(
             bytes_metric,
             target,
@@ -342,7 +349,11 @@ def _iter_skill_artifacts(
     )
     for name, skill_dir in resolved:
         skill_md = skill_dir / "SKILL.md"
-        substituted = substitute_variables(_read_text(skill_md), variables)
+        try:
+            substituted = substitute_variables(_read_text(skill_md), variables)
+        except TemplateError:
+            yield Artifact(TEMPLATE_RENDERS, target, name, False, skill_md)
+            continue
         # `parse_frontmatter`'s body drops the blank line separating it from
         # the frontmatter block, matching what the metric intends to measure.
         body, _ = parse_frontmatter(substituted)
