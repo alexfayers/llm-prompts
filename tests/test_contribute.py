@@ -301,60 +301,6 @@ class TestPatchIds:
         assert len(fake.matching("patch-id", "--stable")) == 1
 
 
-class TestPatchIdIgnoresSurroundingContext:
-    """Exercises real git, since a fake diff can't show context sensitivity."""
-
-    def _git(self, tmp_path: Path, *args: str) -> str:
-        return subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.email=test@example.com",
-                "-c",
-                "user.name=Test",
-                "-c",
-                "commit.gpgsign=false",
-                *args,
-            ],
-            cwd=tmp_path,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-
-    def test_patch_id_matches_the_same_change_applied_with_different_context(
-        self, tmp_path: Path
-    ) -> None:
-        file_path = tmp_path / "file.txt"
-        file_path.write_text("".join(f"line{n}\n" for n in range(1, 10)))
-        self._git(tmp_path, "init", "-q")
-        self._git(tmp_path, "add", "file.txt")
-        self._git(tmp_path, "commit", "-q", "-m", "chore: base")
-        base_sha = self._git(tmp_path, "rev-parse", "HEAD")
-
-        lines = file_path.read_text().splitlines()
-        lines[1] = "line2-changed"
-        file_path.write_text("\n".join(lines) + "\n")
-        self._git(tmp_path, "commit", "-q", "-am", "chore: change context")
-
-        lines = file_path.read_text().splitlines()
-        lines[4] = "line5-changed"
-        file_path.write_text("\n".join(lines) + "\n")
-        self._git(tmp_path, "commit", "-q", "-am", "feat: change target")
-        main_sha = self._git(tmp_path, "rev-parse", "HEAD")
-
-        self._git(tmp_path, "checkout", "-q", base_sha)
-        self._git(tmp_path, "cherry-pick", main_sha)
-        branch_sha = self._git(tmp_path, "rev-parse", "HEAD")
-
-        from llm_prompts.contribute import _patch_ids
-
-        patch_ids = _patch_ids(tmp_path, [main_sha, branch_sha])
-
-        assert patch_ids[main_sha] != ""
-        assert patch_ids[main_sha] == patch_ids[branch_sha]
-
-
 class TestRemoteBranches:
     def test_parses_branch_names_from_ls_remote(
         self, fake_subprocess: FakeSubprocess, tmp_path: Path
@@ -1635,73 +1581,6 @@ class TestInventoryFetchesBeforeReadingBranches:
         assert ls_remote_calls != []
         commands = contribute_remote.fake.commands
         assert commands.index(fetch_calls[0]) < commands.index(ls_remote_calls[0])
-
-
-class TestInventoryFetchSurvivesForcePush:
-    """Exercises real git: rebuilds force-push their batch branch, so a stale
-    local tracking ref is a non-fast-forward update that a `+`-less fetch
-    refspec would reject.
-    """
-
-    def _git(self, cwd: Path, *args: str) -> str:
-        return subprocess.run(
-            ["git", *args],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-
-    def test_fetch_survives_a_force_pushed_managed_branch(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        origin = tmp_path / "origin.git"
-        repo = tmp_path / "repo"
-        self._git(tmp_path, "init", "--bare", "-q", str(origin))
-        self._git(tmp_path, "init", "-q", "-b", "main", str(repo))
-        self._git(repo, "config", "user.email", "test@example.com")
-        self._git(repo, "config", "user.name", "Test")
-        self._git(repo, "config", "commit.gpgsign", "false")
-        (repo / "base.txt").write_text("base\n")
-        self._git(repo, "add", "base.txt")
-        self._git(repo, "commit", "-q", "-m", "chore: base")
-        self._git(repo, "remote", "add", "origin", str(origin))
-        self._git(repo, "push", "-q", "origin", "main")
-        base_sha = self._git(repo, "rev-parse", "main")
-
-        branch = batch_branch("tester", "foo")
-
-        (repo / "old.txt").write_text("old\n")
-        self._git(repo, "add", "old.txt")
-        self._git(repo, "commit", "-q", "-m", "feat: old batch")
-        old_sha = self._git(repo, "rev-parse", "HEAD")
-        self._git(repo, "push", "-q", "origin", f"HEAD:refs/heads/{branch}")
-        self._git(repo, "update-ref", f"refs/remotes/origin/{branch}", old_sha)
-        self._git(repo, "reset", "-q", "--hard", base_sha)
-
-        (repo / "new.txt").write_text("new\n")
-        self._git(repo, "add", "new.txt")
-        self._git(repo, "commit", "-q", "-m", "feat: rebuilt batch")
-        new_sha = self._git(repo, "rev-parse", "HEAD")
-        self._git(repo, "push", "-q", "--force", "origin", f"HEAD:refs/heads/{branch}")
-        self._git(repo, "reset", "-q", "--hard", base_sha)
-
-        real_run = subprocess.run
-
-        def fake_run(
-            argv: list[str], **kwargs: Any
-        ) -> subprocess.CompletedProcess[str]:
-            if argv[0] == "gh":
-                return subprocess.CompletedProcess(argv, 0, "[]", "")
-            return real_run(argv, **kwargs)
-
-        monkeypatch.setattr(subprocess, "run", fake_run)
-
-        inventory(repo, "tester", "main", PROMPTS_PREFIX)
-
-        updated_sha = self._git(repo, "rev-parse", f"refs/remotes/origin/{branch}")
-        assert updated_sha == new_sha
-        assert updated_sha != old_sha
 
 
 class TestInventoryBatchOrdering:

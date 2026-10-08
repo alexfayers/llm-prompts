@@ -31,13 +31,13 @@ from .install import (
     _expand_agent_variants,
     _linked_content,
     _passes_requires_gate,
-    _read_text,
     _rendered_content,
     _resolve_priority_sources,
     content_subdirs,
     prompts_dir,
 )
 from .render_template import (
+    _read_text,
     find_unreplaced_variables,
     parse_frontmatter,
     resolve_frontmatter,

@@ -718,6 +718,26 @@ def isolated_links_path(
     return path
 
 
+@pytest.fixture(autouse=True)
+def isolated_config_dir(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Point every module-level path under the user's llm-prompts config dir at a per-test temporary dir."""
+    config_dir = tmp_path_factory.mktemp("config")
+    monkeypatch.setattr("llm_prompts.setup._CONFIG_DIR", config_dir)
+    monkeypatch.setattr("llm_prompts.setup.CONFIG_PATH", config_dir / "config.toml")
+    monkeypatch.setattr(
+        "llm_prompts.manifest.MANIFEST_PATH", config_dir / "installed.json"
+    )
+    monkeypatch.setattr(
+        "llm_prompts.manifest.RENDERED_RULES_DIR", config_dir / "rendered-rules"
+    )
+    monkeypatch.setattr(
+        "llm_prompts.plugins._PLUGIN_DIR", config_dir / "plugin-sources"
+    )
+    return config_dir
+
+
 class FakeGitHub:
     """Fake `github_api.urlopen`, routed by REST (method, path) or GraphQL query substring."""
 

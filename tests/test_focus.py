@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
 
 import pytest
+from conftest import FakeSubprocess
 
 _SCRIPT = (
     Path(__file__).parent.parent
@@ -442,21 +442,6 @@ class TestCheck:
         assert out == "$ true\n$ true\npass widget\n"
 
 
-@pytest.fixture
-def git_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A git repo with one commit, as the working directory."""
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    for key in ("AUTHOR", "COMMITTER"):
-        monkeypatch.setenv(f"GIT_{key}_NAME", "t")
-        monkeypatch.setenv(f"GIT_{key}_EMAIL", "t@example.com")
-    monkeypatch.chdir(repo)
-    (repo / "README.md").write_text("hi\n")
-    for args in (["init", "-q"], ["add", "."], ["commit", "-q", "-m", "init"]):
-        subprocess.run(["git", *args], cwd=repo, check=True)
-    return repo
-
-
 class TestCheckBase:
     """Tests for the check command's --base scope gate."""
 
@@ -468,33 +453,49 @@ class TestCheckBase:
         mod.cmd_set_test(base, "widget", "true")
         return base
 
-    def test_out_of_scope_change_fails_node(
-        self, mod: ModuleType, git_repo: Path
+    def _fake_git(
+        self,
+        fake: FakeSubprocess,
+        repo: Path,
+        changed: str = "",
+        merge_base_rc: int = 0,
     ) -> None:
-        base = self._built_widget(mod, git_repo)
-        (git_repo / "stray.py").write_text("x\n")
+        fake.on("rev-parse", "--show-toplevel", stdout=f"{repo}\n")
+        fake.on("merge-base", stdout="abc123\n", returncode=merge_base_rc, stderr="bad")
+        fake.on("diff", "--name-only", stdout=changed)
+
+    def test_out_of_scope_change_fails_node(
+        self, mod: ModuleType, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        base = self._built_widget(mod, tmp_path)
+        self._fake_git(fake_subprocess, tmp_path, "stray.py\n")
         with pytest.raises(SystemExit) as exc_info:
             mod.cmd_check(base, "widget", "HEAD")
         assert exc_info.value.code == 1
         text = mod.node_path(base, "widget", "todo").read_text()
         assert "failed: outside scope: stray.py" in text
 
-    def test_in_scope_change_passes(self, mod: ModuleType, git_repo: Path) -> None:
-        base = self._built_widget(mod, git_repo)
-        (git_repo / "src").mkdir()
-        (git_repo / "src" / "a.py").write_text("x\n")
+    def test_in_scope_change_passes(
+        self, mod: ModuleType, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        base = self._built_widget(mod, tmp_path)
+        self._fake_git(fake_subprocess, tmp_path, "src/a.py\n")
         mod.cmd_check(base, "widget", "HEAD")
         assert mod.node_path(base, "widget", "done").exists()
 
     def test_plan_dir_changes_are_ignored(
-        self, mod: ModuleType, git_repo: Path
+        self, mod: ModuleType, tmp_path: Path, fake_subprocess: FakeSubprocess
     ) -> None:
-        base = self._built_widget(mod, git_repo)
+        base = self._built_widget(mod, tmp_path)
+        self._fake_git(fake_subprocess, tmp_path, "plan/PLAN.md\n")
         mod.cmd_check(base, "widget", "HEAD")
         assert mod.node_path(base, "widget", "done").exists()
 
-    def test_bad_base_raises(self, mod: ModuleType, git_repo: Path) -> None:
-        base = self._built_widget(mod, git_repo)
+    def test_bad_base_raises(
+        self, mod: ModuleType, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        base = self._built_widget(mod, tmp_path)
+        self._fake_git(fake_subprocess, tmp_path, merge_base_rc=128)
         with pytest.raises(mod.FocusError):
             mod.cmd_check(base, "widget", "no-such-ref")
 

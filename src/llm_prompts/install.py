@@ -19,6 +19,8 @@ from jinja2 import TemplateError
 
 from .colors import Color, paint
 from .render_template import (
+    _read_text,
+    clear_read_cache,
     find_unreplaced_variables,
     normalize_whitespace,
     parse_frontmatter,
@@ -182,18 +184,6 @@ def _get_cline_extra_dirs() -> tuple[Path, dict[str, Path]]:
         "workflows": cline_base / "Workflows",
     }
     return agents, symlinks
-
-
-def _read_text(path: Path) -> str:
-    """Read UTF-8 text from disk.
-
-    Args:
-        path: Path to read.
-
-    Returns:
-        File content.
-    """
-    return path.read_text(encoding="utf-8")
 
 
 def _write_text(path: Path, content: str) -> None:
@@ -1947,6 +1937,7 @@ def main(
     """
     global _verbose
     _verbose = verbose
+    clear_read_cache()
     root_dir = prompts_dir("llm_prompts")
     dirs = _get_dirs()
 
