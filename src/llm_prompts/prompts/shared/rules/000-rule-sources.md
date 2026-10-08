@@ -36,7 +36,6 @@ To add an llm-prompts overlay package, add a `[[tools]]` entry to `~/.config/llm
 [[tools]]
 name = "<package-name>"
 source = "<git-url-or-local-path>"
-overlays_for = ["llm-prompts"]
 ```
 
 The `source` field must be a pip-installable reference:
@@ -45,8 +44,6 @@ The `source` field must be a pip-installable reference:
 - Local path: `~/path/to/repo`
 
 If given a web URL to a repository, convert it to a `git+https://` or `git+ssh://` URL that pip can install from.
-
-For local and git sources, `overlays_for`/`standalone` are inferred from the package's `pyproject.toml`, so they are optional overrides; bare PyPI sources still need them set explicitly.
 
 Then run `llm-prompts setup` to install it, followed by `llm-prompts install {{AGENT}}` to apply the new rules, workflows, and skills.
 
@@ -58,11 +55,7 @@ To add persistent memory via [mcp-memory](https://github.com/alexfayers/mcp-memo
 [[tools]]
 name = "mcp-memory"
 source = "git+https://github.com/alexfayers/mcp-memory.git"
-standalone = true
-overlays_for = ["llm-prompts"]
 ```
-
-For local and git sources, `overlays_for`/`standalone` are inferred from the package's `pyproject.toml`, so they are optional overrides; bare PyPI sources still need them set explicitly.
 
 Then run `llm-prompts setup` followed by `llm-prompts install {{AGENT}}`.
 

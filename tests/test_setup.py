@@ -75,56 +75,24 @@ class TestFetchRemotePyproject:
         assert "timed out" in capsys.readouterr().err
 
 
-class TestInferOverlaysFor:
-    def test_entry_point_groups(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        data: dict[str, Any] = {
-            "project": {"entry-points": {"cline_hooks": {}, "llm_prompts": {}}}
-        }
+class TestScriptNames:
+    def test_declared_scripts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        data = {"project": {"scripts": {"foo": "pkg:main", "bar": "pkg:other"}}}
         monkeypatch.setattr(setup, "_fetch_remote_pyproject", lambda url: data)
-        result = setup._infer_overlays_for(
-            {"name": "mcp-memory", "source": "git+https://github.com/user/repo.git"}
-        )
-        assert sorted(result) == ["cline-hooks", "llm-prompts"]
-
-    def test_own_name_excluded(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        data: dict[str, Any] = {"project": {"entry-points": {"cline_hooks": {}}}}
-        monkeypatch.setattr(setup, "_fetch_remote_pyproject", lambda url: data)
-        result = setup._infer_overlays_for(
-            {"name": "cline-hooks", "source": "git+https://github.com/user/repo.git"}
-        )
-        assert result == []
-
-    def test_no_entry_points(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            setup, "_fetch_remote_pyproject", lambda url: {"project": {}}
-        )
-        result = setup._infer_overlays_for(
+        assert setup._script_names(
             {"name": "x", "source": "git+https://github.com/user/repo.git"}
-        )
-        assert result == []
-
-    def test_bare_pypi(self) -> None:
-        assert setup._infer_overlays_for({"name": "x", "source": "some-package"}) == []
-
-
-class TestInferStandalone:
-    def test_has_scripts(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        data = {"project": {"scripts": {"foo": "pkg:main"}}}
-        monkeypatch.setattr(setup, "_fetch_remote_pyproject", lambda url: data)
-        assert setup._infer_standalone(
-            {"name": "x", "source": "git+https://github.com/user/repo.git"}
-        )
+        ) == ["foo", "bar"]
 
     def test_no_scripts(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
             setup, "_fetch_remote_pyproject", lambda url: {"project": {}}
         )
-        assert not setup._infer_standalone(
+        assert not setup._script_names(
             {"name": "x", "source": "git+https://github.com/user/repo.git"}
         )
 
     def test_bare_pypi(self) -> None:
-        assert not setup._infer_standalone({"name": "x", "source": "some-package"})
+        assert not setup._script_names({"name": "x", "source": "some-package"})
 
 
 class TestValidatePaths:
@@ -147,101 +115,84 @@ class TestValidatePaths:
         assert setup._validate_paths([{"name": "x", "source": str(tmp_path)}]) == []
 
 
-class TestBuildCommandsRegression:
-    """Regression: git-source tools infer overlays so mcp-memory folds into its targets."""
-
-    def _shipped_tools(self) -> list[dict[str, object]]:
-        tools: list[dict[str, object]] = tomllib.loads(setup._DEFAULT_CONFIG)["tools"]
-        return tools
-
-    def _canned_pyproject(self, git_url: str) -> dict[str, Any] | None:
-        by_repo: dict[str, dict[str, Any]] = {
-            "llm-prompts": {
-                "project": {
-                    "scripts": {"llm-prompts": "llm_prompts.cli:main"},
-                    "entry-points": {
-                        "cline_hooks": {"llm-prompts": "llm_prompts.hooks"}
-                    },
-                }
-            },
-            "cline-hooks": {
-                "project": {"scripts": {"cline-hook": "cline_hooks.cli:main"}}
-            },
-            "mcp-memory": {
-                "project": {
-                    "entry-points": {
-                        "llm_prompts": {"mcp-memory": "mcp_memory"},
-                        "cline_hooks": {"mcp-memory": "mcp_memory.hooks"},
-                    }
-                }
-            },
-        }
-        return next((v for k, v in by_repo.items() if k in git_url), None)
-
-    def test_mcp_memory_folded_as_overlay(
+class TestShippedConfig:
+    def test_scripted_tools_are_installed_into_the_first_tools_env(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(setup, "_fetch_remote_pyproject", self._canned_pyproject)
-        commands = setup._build_commands(self._shipped_tools(), set())
-        overlays_by_core = {
-            name: overlay_names for name, _, _, overlay_names in commands
+        tools: list[dict[str, Any]] = tomllib.loads(setup._DEFAULT_CONFIG)["tools"]
+        scripts = {
+            "llm-prompts": {"project": {"scripts": {"llm-prompts": "x:main"}}},
+            "cline-hooks": {"project": {"scripts": {"cline-hook": "x:main"}}},
+            "mcp-memory": {"project": {"name": "mcp-memory"}},
         }
+        monkeypatch.setattr(
+            setup,
+            "_fetch_remote_pyproject",
+            lambda url: next(v for k, v in scripts.items() if k in url),
+        )
 
-        assert "mcp-memory" not in overlays_by_core
-        assert "mcp-memory" in overlays_by_core["llm-prompts"]
-        assert "mcp-memory" in overlays_by_core["cline-hooks"]
+        env = setup._build_commands(tools, set())
 
-    def test_fetch_cached_per_url(self, fake_subprocess: FakeSubprocess) -> None:
-        with patch("llm_prompts.setup.shutil.which", return_value="/usr/bin/git"):
-            setup._build_commands(self._shipped_tools(), set())
-        assert len(fake_subprocess.matching("clone")) == 3
+        assert env.name == "llm-prompts"
+        assert env.members == ["cline-hooks", "mcp-memory"]
+        assert env.scripts == ["llm-prompts", "cline-hook"]
+        assert env.install_cmd[
+            env.install_cmd.index("--with-executables-from") + 1
+        ] == ("cline-hooks")
 
 
 class TestUvCommands:
-    def test_local_checkouts_install_non_editable_and_reinstall_only_changed_on_upgrade(
+    def test_all_tools_install_into_the_first_tools_env_and_upgrade_reinstalls_only_changed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(setup, "_fetch_remote_pyproject", lambda url: None)
-        core = tmp_path / "core"
-        local_overlay = tmp_path / "local-overlay"
-        git_overlay = "git+https://example.com/git-overlay.git"
+        sources = {name: tmp_path / name for name in ("core", "cli", "lib")}
+        for name, scripts in (("core", "core"), ("cli", "cli"), ("lib", "")):
+            sources[name].mkdir()
+            (sources[name] / "pyproject.toml").write_text(
+                f'[project]\nname = "{name}"\n[project.scripts]\n'
+                + (f'{scripts} = "{name}:main"\n' if scripts else ""),
+                encoding="utf-8",
+            )
+        git_member = "git+https://example.com/git-member.git"
         tools: list[dict[str, Any]] = [
-            {"name": "core", "source": str(core), "standalone": True},
-            {
-                "name": "local-overlay",
-                "source": str(local_overlay),
-                "overlays_for": ["core"],
-            },
-            {"name": "git-overlay", "source": git_overlay, "overlays_for": ["core"]},
+            {"name": "core", "source": str(sources["core"])},
+            {"name": "cli", "source": str(sources["cli"])},
+            {"name": "lib", "source": str(sources["lib"])},
+            {"name": "git-member", "source": git_member},
         ]
 
-        [(_, install_cmd, upgrade_cmd, _)] = setup._build_commands(
-            tools, {"local-overlay"}
-        )
+        env = setup._build_commands(tools, {"cli"})
 
-        assert install_cmd == [
+        assert env.install_cmd == [
             "uv",
             "tool",
             "install",
-            str(core.resolve()),
+            str(sources["core"].resolve()),
             "--with",
-            str(local_overlay.resolve()),
+            str(sources["cli"].resolve()),
             "--with",
-            git_overlay,
+            str(sources["lib"].resolve()),
+            "--with",
+            git_member,
+            "--with-executables-from",
+            "cli",
             "--no-sources-package",
             "core",
             "--no-sources-package",
-            "local-overlay",
+            "cli",
+            "--no-sources-package",
+            "lib",
             "--reinstall",
             "--force",
         ]
-        assert upgrade_cmd == [
+        assert env.upgrade_cmd == [
             "uv",
             "tool",
             "upgrade",
             "core",
             "--reinstall-package",
-            "local-overlay",
+            "cli",
         ]
 
     def test_setup_without_uv_exits_with_message(
@@ -253,6 +204,46 @@ class TestUvCommands:
             setup._require_uv()
 
         assert "setup needs uv" in capsys.readouterr().err
+
+
+class TestEnvDrift:
+    @staticmethod
+    def _receipt(requirements: list[str], entrypoints: list[str]) -> str:
+        def table(names: list[str]) -> str:
+            return ", ".join(f'{{ name = "{name}" }}' for name in names)
+
+        return (
+            f"[tool]\nrequirements = [{table(requirements)}]\n"
+            f"entrypoints = [{table(entrypoints)}]\n"
+        )
+
+    @pytest.mark.parametrize(
+        ("requirements", "entrypoints", "drifted"),
+        [
+            (["core", "cli"], ["core", "cli"], False),
+            (["core"], ["core", "cli"], True),
+            (["core", "cli"], ["core"], True),
+            (None, None, True),
+        ],
+        ids=["complete", "missing-member", "missing-script", "no-receipt"],
+    )
+    def test_env_drifts_when_receipt_lacks_a_member_or_script(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        requirements: list[str] | None,
+        entrypoints: list[str] | None,
+        drifted: bool,
+    ) -> None:
+        monkeypatch.setattr(setup, "_uv_tools_dir", lambda: tmp_path)
+        if requirements is not None and entrypoints is not None:
+            (tmp_path / "core").mkdir()
+            (tmp_path / "core" / "uv-receipt.toml").write_text(
+                self._receipt(requirements, entrypoints), encoding="utf-8"
+            )
+        env = setup.SharedEnv("core", [], [], ["cli"], ["core", "cli"])
+
+        assert setup._has_drifted(env) is drifted
 
 
 class TestChangedLocalTools:
@@ -320,31 +311,123 @@ class TestChangedLocalTools:
         assert setup.detect_changed_local_tools(checkouts) == {"core"}
 
 
-class TestRunSetupReinstallsChangedCheckouts:
-    def test_second_run_without_checkout_changes_reinstalls_nothing(
+class TestRunSetup:
+    @pytest.fixture
+    def tools_dir(
         self,
         tmp_path: Path,
         fake_subprocess: FakeSubprocess,
         monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        core = tmp_path / "core"
-        core.mkdir()
-        (core / "pyproject.toml").write_text(
-            '[project]\nname = "core"\n[project.scripts]\ncore = "core:main"\n'
-        )
-        tools: list[dict[str, Any]] = [{"name": "core", "source": str(core)}]
+    ) -> Path:
+        tools: list[dict[str, Any]] = []
+        for name in ("core", "cli"):
+            source = tmp_path / name
+            source.mkdir()
+            (source / "pyproject.toml").write_text(
+                f'[project]\nname = "{name}"\n[project.scripts]\n{name} = "{name}:main"\n'
+            )
+            tools.append({"name": name, "source": str(source)})
+        tools_dir = tmp_path / "uv-tools"
+        self.write_receipt(tools_dir, ["core", "cli"])
         monkeypatch.setattr(setup, "_load_config", lambda: tools)
         monkeypatch.setattr(setup, "_require_uv", lambda: None)
+        monkeypatch.setattr(setup, "_uv_tools_dir", lambda: tools_dir)
         monkeypatch.setattr(
             setup, "_pyproject_stamp_path", lambda: tmp_path / "pyproject-stamp"
         )
+        return tools_dir
 
+    @staticmethod
+    def write_receipt(tools_dir: Path, entrypoints: list[str]) -> None:
+        names = ", ".join(f'{{ name = "{name}" }}' for name in entrypoints)
+        (tools_dir / "core").mkdir(parents=True, exist_ok=True)
+        (tools_dir / "core" / "uv-receipt.toml").write_text(
+            f'[tool]\nrequirements = [{{ name = "core" }}, {{ name = "cli" }}]\n'
+            f"entrypoints = [{names}]\n"
+        )
+
+    def test_second_run_without_checkout_changes_reinstalls_nothing(
+        self, tools_dir: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
         setup.run_setup()
         setup.run_setup()
 
         first, second = fake_subprocess.matching("uv", "tool", "upgrade")
         assert "--reinstall-package" in first
         assert "--reinstall-package" not in second
+        assert not fake_subprocess.matching("uv", "tool", "install")
+
+    def test_named_tool_forces_a_full_reinstall_of_the_shared_env(
+        self, tools_dir: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        setup.run_setup("cli")
+
+        assert not fake_subprocess.matching("uv", "tool", "upgrade")
+        assert len(fake_subprocess.matching("uv", "tool", "install")) == 1
+        assert not fake_subprocess.matching("uv", "tool", "uninstall")
+
+    def test_full_install_removes_members_old_tool_envs_then_installs_again(
+        self,
+        tools_dir: Path,
+        fake_subprocess: FakeSubprocess,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        (tools_dir / "cli").mkdir()
+
+        setup.run_setup("core")
+
+        install, uninstall, reinstall = [
+            c for c in fake_subprocess.commands if c[0] == "uv"
+        ]
+        assert install[:3] == ["uv", "tool", "install"]
+        assert uninstall == ["uv", "tool", "uninstall", "cli"]
+        assert reinstall == install
+        assert "[cli] removed old tool env" in capsys.readouterr().out
+
+    def test_upgrade_run_retries_removing_a_leftover_member_env(
+        self, tools_dir: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        (tools_dir / "cli").mkdir()
+
+        setup.run_setup()
+
+        assert [c[:3] for c in fake_subprocess.commands if c[0] == "uv"] == [
+            ["uv", "tool", "upgrade"],
+            ["uv", "tool", "uninstall"],
+            ["uv", "tool", "install"],
+        ]
+
+    def test_failed_install_keeps_members_old_tool_envs(
+        self, tools_dir: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        (tools_dir / "cli").mkdir()
+        fake_subprocess.on("uv", "tool", "install", returncode=1)
+
+        with pytest.raises(SystemExit):
+            setup.run_setup("core")
+
+        assert not fake_subprocess.matching("uv", "tool", "uninstall")
+
+    def test_unknown_tool_name_exits(
+        self,
+        tools_dir: Path,
+        fake_subprocess: FakeSubprocess,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        with pytest.raises(SystemExit):
+            setup.run_setup("missing")
+
+        assert "No tool named 'missing'" in capsys.readouterr().err
+        assert not fake_subprocess.commands
+
+    def test_upgrade_that_drops_scripts_falls_back_to_a_full_install(
+        self, tools_dir: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        self.write_receipt(tools_dir, ["core"])
+
+        setup.run_setup()
+
+        assert len(fake_subprocess.matching("uv", "tool", "install")) == 1
 
 
 class TestRunParallelOrdered:

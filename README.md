@@ -61,7 +61,7 @@ For example, [mcp-memory](https://github.com/alexfayers/mcp-memory) is an overla
 
 ## Setup config
 
-`llm-prompts setup` reads `~/.config/llm-prompts/config.toml` to install all your tools and overlays in one go.
+`llm-prompts setup` reads `~/.config/llm-prompts/config.toml` to install all your tools in one go.
 
 ```toml
 [[tools]]
@@ -84,17 +84,15 @@ Each `[[tools]]` entry has:
 | `name` | Tool name |
 | `source` | Local path (`~/...`) or `git+` URL |
 
-For local-path and git URL sources, whether a package is an overlay (and which tools it targets) and whether it's standalone is inferred automatically from its own `pyproject.toml` (entry-point groups become overlay targets; a `[project.scripts]` table marks it standalone) - `mcp-memory` above needs no extra config because of this. Overlays are added via `--with` to their target tools. `setup` requires uv.
-
-To override the inference, set `overlays_for` (list of tools this package plugs into as an overlay) and/or `standalone` (`true` if the tool also needs its own install, e.g. it has a CLI) explicitly.
+All tools install into one shared uv environment owned by the first entry; the other entries are added to it with `--with`. The commands each tool declares under `[project.scripts]` in its own `pyproject.toml` are exposed from that environment. `setup` requires uv.
 
 ```bash
 llm-prompts setup              # install all tools
-llm-prompts setup mcp-memory   # install just one tool
+llm-prompts setup mcp-memory   # reinstall the shared environment from scratch
 llm-prompts setup --dry-run    # preview commands without running
 ```
 
-`setup` installs or upgrades the tools/overlays in `config.toml`. Filter to a single tool by name, preview the commands with `--dry-run`, or create the starter config with `--init`.
+`setup` installs or upgrades the tools in `config.toml`. Name a tool to reinstall the whole shared environment from scratch, preview the commands with `--dry-run`, or create the starter config with `--init`.
 
 ## Plugin sources
 
@@ -235,8 +233,6 @@ source = "~/cline-hooks"
 [[tools]]
 name = "mcp-memory"
 source = "~/mcp-memory"
-standalone = true
-overlays_for = ["llm-prompts", "cline-hooks"]
 ```
 
 Local paths are installed as copies of the checkout. Changes to rules, workflows, and skills are picked up immediately by `llm-prompts install`; `llm-prompts update` reinstalls only the checkouts whose files outside `prompts/` changed since the last setup, to pick up Python changes.
