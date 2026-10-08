@@ -14,7 +14,7 @@ import tomllib
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from .squash_subject import squash_pr_number
 
@@ -24,15 +24,15 @@ GIT_TIMEOUT = 30
 
 _DEFAULT_CONFIG = """\
 # llm-prompts setup configuration
-# Run `llm-prompts setup` to install all tools with their overlays.
+# Run `llm-prompts setup` to install all tools into one shared environment.
 
 # Each [[tools]] entry is a package to install.
 # `source` can be:
 #   - A git URL (e.g. "git+https://github.com/user/repo.git")
 #   - A local path (~/git/pkg or /abs/path) - installed from the checkout
 #
-# Overlay relationships are inferred from pyproject.toml entry points.
-# Standalone status is inferred from pyproject.toml scripts.
+# The first entry owns the environment; the others are installed alongside it.
+# Each tool's commands are taken from its pyproject.toml scripts.
 
 [[tools]]
 name = "llm-prompts"
@@ -368,6 +368,94 @@ def write_pyproject_stamp() -> None:
     stamp.write_text(json.dumps(_hash_local_pyprojects()), encoding="utf-8")
 
 
+def _checkout_stamp_path() -> Path:
+    """Return the path of the local-checkout state stamp file."""
+    return _pyproject_stamp_path().with_name(".llm-prompts-checkout-stamp")
+
+
+_NOT_PROMPTS = ":(exclude,glob)**/prompts/**"
+
+
+def _checkout_state(repo: Path) -> str | None:
+    """Return a digest of a checkout's files, status and uncommitted diff outside prompts.
+
+    Args:
+        repo: The checkout directory.
+
+    Returns:
+        The hex digest, or ``None`` if git fails.
+    """
+    digest = hashlib.sha256()
+    for args in (["ls-files", "-s"], ["status", "--porcelain"], ["diff", "HEAD"]):
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(repo), *args, "--", _NOT_PROMPTS],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=GIT_TIMEOUT,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if result.returncode != 0:
+            return None
+        digest.update(result.stdout.encode())
+    return digest.hexdigest()
+
+
+def _hash_local_checkouts(tools: list[dict[str, Any]]) -> dict[str, str | None]:
+    """Return a name -> state digest map of each local tool's checkout.
+
+    Args:
+        tools: The configured tools.
+
+    Returns:
+        A mapping of local tool name to its checkout state, ``None`` if unreadable.
+    """
+    return {
+        str(tool.get("name", "")): _checkout_state(_expand(str(tool["source"])))
+        for tool in tools
+        if _is_local_path(str(tool.get("source", "")))
+    }
+
+
+def detect_changed_local_tools(tools: list[dict[str, Any]]) -> set[str]:
+    """Return the names of local tools whose checkout differs from the stamp.
+
+    Args:
+        tools: The configured tools.
+
+    Returns:
+        The local tool names whose checkout state is unreadable or differs from
+        the stamp; every local tool if the stamp is missing or unreadable.
+    """
+    try:
+        recorded = json.loads(_checkout_stamp_path().read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        recorded = {}
+    return {
+        name
+        for name, state in _hash_local_checkouts(tools).items()
+        if state is None or recorded.get(name) != state
+    }
+
+
+def write_checkout_stamp(tools: list[dict[str, Any]]) -> None:
+    """Write the current local-checkout states to the stamp file.
+
+    Args:
+        tools: The configured tools.
+    """
+    stamp = _checkout_stamp_path()
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    states = {
+        name: state
+        for name, state in _hash_local_checkouts(tools).items()
+        if state is not None
+    }
+    stamp.write_text(json.dumps(states), encoding="utf-8")
+
+
 def _expand(path_str: str) -> Path:
     """Expand ~ and resolve a path string."""
     return Path(path_str).expanduser().resolve()
@@ -380,51 +468,51 @@ def _require_uv() -> None:
         sys.exit(1)
 
 
-def _build_commands(
-    tools: list[dict[str, Any]],
-) -> list[tuple[str, list[str], list[str], list[str]]]:
-    """Build install commands for all core tools.
+class SharedEnv(NamedTuple):
+    """The commands and expected contents of the one uv tool env holding every tool."""
 
-    Returns list of (tool_name, install_cmd, upgrade_cmd, overlay_names) tuples.
+    name: str
+    install_cmd: list[str]
+    upgrade_cmd: list[str]
+    members: list[str]
+    scripts: list[str]
+
+
+def _build_commands(tools: list[dict[str, Any]], changed_local: set[str]) -> SharedEnv:
+    """Build the commands for the uv tool env owned by the first tool.
+
+    Args:
+        tools: The configured tools; the first owns the env and the rest are
+            members installed alongside it.
+        changed_local: Names of local tools whose upgrade must rebuild them.
+
+    Returns:
+        The install and upgrade commands, the member names and the script names
+        the env must expose.
     """
-    overlay_map: dict[str, list[dict[str, Any]]] = {}
-    for tool in tools:
-        targets = tool.get("overlays_for", []) + _infer_overlays_for(tool)
-        for target in targets:
-            existing = overlay_map.setdefault(str(target), [])
-            if not any(str(o["name"]) == str(tool["name"]) for o in existing):
-                existing.append(tool)
-
-    cores = [
-        t
-        for t in tools
-        if t.get("standalone")
-        or _infer_standalone(t)
-        or not (t.get("overlays_for") or _infer_overlays_for(t))
-    ]
-
-    commands: list[tuple[str, list[str], list[str], list[str]]] = []
-    for core in cores:
-        name = str(core["name"])
-        source = str(core["source"])
-        overlays = overlay_map.get(name, [])
-        install_cmd = _build_install_cmd(name, source, overlays)
-        upgrade_cmd = _build_upgrade_cmd(name, overlays)
-        overlay_names = [str(o["name"]) for o in overlays]
-        commands.append((name, install_cmd, upgrade_cmd, overlay_names))
-
-    return commands
+    owner, *members = tools
+    name = str(owner["name"])
+    member_names = [str(member["name"]) for member in members]
+    scripts = {str(tool["name"]): _script_names(tool) for tool in tools}
+    return SharedEnv(
+        name,
+        _build_install_cmd(owner, members, [n for n in member_names if scripts[n]]),
+        _build_upgrade_cmd(name, member_names, changed_local),
+        member_names,
+        [script for names in scripts.values() for script in names],
+    )
 
 
 def _build_install_cmd(
-    core_name: str, core_source: str, overlays: list[dict[str, Any]]
+    owner: dict[str, Any], members: list[dict[str, Any]], executable_members: list[str]
 ) -> list[str]:
     """Build a full install command."""
-    packages = [{"name": core_name, "source": core_source}, *overlays]
-    cmd = ["uv", "tool", "install", _install_source(core_source)]
-    for overlay in overlays:
-        cmd.extend(["--with", _install_source(str(overlay["source"]))])
-    for package in packages:
+    cmd = ["uv", "tool", "install", _install_source(str(owner["source"]))]
+    for member in members:
+        cmd.extend(["--with", _install_source(str(member["source"]))])
+    if executable_members:
+        cmd.extend(["--with-executables-from", ",".join(executable_members)])
+    for package in [owner, *members]:
         if _is_local_path(str(package["source"])):
             cmd.extend(["--no-sources-package", str(package["name"])])
     cmd.extend(["--reinstall", "--force"])
@@ -436,61 +524,49 @@ def _install_source(source: str) -> str:
     return str(_expand(source)) if _is_local_path(source) else source
 
 
-def _build_upgrade_cmd(name: str, overlays: list[dict[str, Any]]) -> list[str]:
-    """Build a targeted upgrade command that reinstalls every package."""
+def _build_upgrade_cmd(
+    name: str, member_names: list[str], changed_local: set[str]
+) -> list[str]:
+    """Build a targeted upgrade command that reinstalls only changed local packages."""
     cmd = ["uv", "tool", "upgrade", name]
-    for package_name in [name, *(str(o["name"]) for o in overlays)]:
-        cmd.extend(["--reinstall-package", package_name])
+    for package_name in [name, *member_names]:
+        if package_name in changed_local:
+            cmd.extend(["--reinstall-package", package_name])
     return cmd
 
 
-def _has_missing_overlays(tool_name: str, overlay_names: list[str]) -> bool:
-    """Check if any expected overlays are missing from a uv tool environment.
-
-    Args:
-        tool_name: The core tool name (used to find the uv tool dir).
-        overlay_names: Package names that should be installed as overlays.
-
-    Returns:
-        True if any overlay is missing.
-    """
-    if not overlay_names:
-        return False
-    receipt = (
-        Path.home()
-        / ".local"
-        / "share"
-        / "uv"
-        / "tools"
-        / tool_name
-        / "uv-receipt.toml"
-    )
-    if not receipt.exists():
-        return True
-    content = receipt.read_text(encoding="utf-8")
-    return any(name not in content for name in overlay_names)
-
-
-def _infer_standalone(tool: dict[str, Any]) -> bool:
-    """Infer if a tool is standalone from its pyproject.toml scripts section."""
-    data = _read_pyproject(tool)
-    if data is None:
-        return False
-    return bool(data.get("project", {}).get("scripts"))
-
-
-def _infer_overlays_for(tool: dict[str, Any]) -> list[str]:
-    """Infer overlay targets from a tool's pyproject.toml entry point groups."""
+def _script_names(tool: dict[str, Any]) -> list[str]:
+    """Return the script names a tool declares in its pyproject.toml."""
     data = _read_pyproject(tool)
     if data is None:
         return []
-    entry_points = data.get("project", {}).get("entry-points", {})
-    name = str(tool.get("name", ""))
-    return [
-        group.replace("_", "-")
-        for group in entry_points
-        if group.replace("_", "-") != name
-    ]
+    return list(data.get("project", {}).get("scripts", {}))
+
+
+def _uv_tools_dir() -> Path:
+    """Return the directory holding one uv tool env per installed tool."""
+    return Path.home() / ".local" / "share" / "uv" / "tools"
+
+
+def _has_drifted(env: SharedEnv) -> bool:
+    """Check if the installed env lacks any expected member or script.
+
+    Args:
+        env: The shared env and what it must contain.
+
+    Returns:
+        True if the receipt is missing, a member is not in its requirements, or
+        a script is not in its entrypoints.
+    """
+    receipt = _uv_tools_dir() / env.name / "uv-receipt.toml"
+    if not receipt.exists():
+        return True
+    tool = tomllib.loads(receipt.read_text(encoding="utf-8")).get("tool", {})
+    requirements = {str(r["name"]) for r in tool.get("requirements", [])}
+    entrypoints = {str(e["name"]) for e in tool.get("entrypoints", [])}
+    return not requirements.issuperset(env.members) or not entrypoints.issuperset(
+        env.scripts
+    )
 
 
 def _load_config() -> list[dict[str, Any]]:
@@ -537,19 +613,58 @@ def init_config() -> None:
     print("Edit it to add your tools and overlay paths, then run `llm-prompts setup`.")
 
 
+def _run_install(env: SharedEnv) -> None:
+    """Run the shared env's install command, exiting on failure."""
+    result = subprocess.run(
+        env.install_cmd, check=False, capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        print(result.stderr, end="")
+        print(f"\nFailed: {env.name}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _remove_member_envs(env: SharedEnv, *, dry_run: bool) -> bool:
+    """Uninstall the standalone uv tool envs that members had before sharing one.
+
+    Args:
+        env: The shared env whose members' own envs are removed.
+        dry_run: Print what would be removed without running it.
+
+    Returns:
+        True if any env was removed.
+    """
+    removed = False
+    for member in env.members:
+        if not (_uv_tools_dir() / member).is_dir():
+            continue
+        command = ["uv", "tool", "uninstall", member]
+        if dry_run:
+            print(f"[{member}] {' '.join(command)}")
+            continue
+        result = subprocess.run(command, check=False, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(result.stderr, end="")
+        else:
+            print(f"[{member}] removed old tool env")
+            removed = True
+    return removed
+
+
 def run_setup(
     tool_filter: str | None = None,
     *,
     dry_run: bool = False,
     force_reinstall: set[str] | None = None,
 ) -> bool:
-    """Install all configured tools with their overlays.
+    """Install all configured tools into one shared uv tool env.
 
     Args:
-        tool_filter: Install only the tool with this name, if given.
+        tool_filter: Reinstall the whole env from scratch, if a configured tool
+            with this name is given.
         dry_run: Print commands without running them.
-        force_reinstall: Names of tools (cores or overlays) whose cores must
-            skip the upgrade path and run a full reinstall.
+        force_reinstall: Names of tools whose change must skip the upgrade path
+            and run a full reinstall.
 
     Returns:
         True if any packages were upgraded or installed.
@@ -563,57 +678,50 @@ def run_setup(
         sys.exit(1)
 
     _require_uv()
-    commands = _build_commands(tools)
-
     if tool_filter:
-        commands = [(n, i, u, o) for n, i, u, o in commands if n == tool_filter]
-        if not commands:
+        if tool_filter not in {str(tool["name"]) for tool in tools}:
             print(f"No tool named '{tool_filter}' in config.", file=sys.stderr)
             sys.exit(1)
+        force_reinstall = {str(tools[0]["name"])}
+
+    env = _build_commands(tools, detect_changed_local_tools(tools))
+    name = env.name
 
     changed = False
-    failed: list[str] = []
-    for name, install_cmd, upgrade_cmd, overlay_names in commands:
-        forced = name in force_reinstall or any(
-            o in force_reinstall for o in overlay_names
+    needs_install = name in force_reinstall or any(
+        member in force_reinstall for member in env.members
+    )
+    if not needs_install:
+        print(f"\n[{name}] {' '.join(env.upgrade_cmd)}")
+        if dry_run:
+            print(f"[{name}] (fallback) {' '.join(env.install_cmd)}")
+            return False
+        result = subprocess.run(
+            env.upgrade_cmd, check=False, capture_output=True, text=True
         )
-        if not forced:
-            if dry_run:
-                print(f"\n[{name}] {' '.join(upgrade_cmd)}")
-                print(f"[{name}] (fallback) {' '.join(install_cmd)}")
-                continue
-            print(f"\n[{name}] {' '.join(upgrade_cmd)}")
-            result = subprocess.run(
-                upgrade_cmd, check=False, capture_output=True, text=True
-            )
-            if result.returncode == 0:
-                if "Nothing to upgrade" not in result.stdout:
-                    print(result.stdout, end="")
-                    changed = True
-                if not _has_missing_overlays(name, overlay_names):
-                    continue
-                print(f"[{name}] Missing overlays, running full install...")
-
-            else:
+        if result.returncode == 0:
+            if "Nothing to upgrade" not in result.stdout:
                 print(result.stdout, end="")
-                print(f"[{name}] Upgrade failed, falling back to full install...")
-
-        print(f"\n[{name}] {' '.join(install_cmd)}")
-        if not dry_run:
-            result = subprocess.run(
-                install_cmd, check=False, capture_output=True, text=True
-            )
-            if result.returncode != 0:
-                print(result.stderr, end="")
-                failed.append(name)
-            else:
                 changed = True
+            needs_install = _has_drifted(env)
+            if needs_install:
+                print(f"[{name}] Missing members or scripts, running full install...")
+        else:
+            print(result.stdout, end="")
+            print(f"[{name}] Upgrade failed, falling back to full install...")
+            needs_install = True
 
-    if failed:
-        print(f"\nFailed: {', '.join(failed)}", file=sys.stderr)
-        sys.exit(1)
-    if not dry_run and commands:
+    if needs_install:
+        print(f"\n[{name}] {' '.join(env.install_cmd)}")
+        if not dry_run:
+            _run_install(env)
+            changed = True
+
+    if _remove_member_envs(env, dry_run=dry_run):
+        _run_install(env)
+
+    if not dry_run:
         print("\nAll tools installed successfully.")
-    if not dry_run and not tool_filter:
         write_pyproject_stamp()
+        write_checkout_stamp(tools)
     return changed

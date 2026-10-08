@@ -33,6 +33,7 @@ from llm_prompts.contribute import Report
 from llm_prompts.main_sync import SyncResult
 from llm_prompts.setup import (
     _UPDATE_INSTRUCTION,
+    SharedEnv,
     _extract_git_url,
     _format_update_message,
     detect_stale_local_tools,
@@ -1153,41 +1154,36 @@ class TestRunSetupForceReinstall:
     def _run(
         self,
         fake_subprocess: FakeSubprocess,
-        commands: list[tuple[str, list[str], list[str], list[str]]],
+        members: list[str],
         force_reinstall: set[str],
     ) -> list[list[str]]:
+        env = SharedEnv("core", ["uv", "install"], ["uv", "upgrade"], members, [])
         with (
             patch("llm_prompts.setup._load_config", return_value=[]),
             patch("llm_prompts.setup._validate_paths", return_value=[]),
             patch("llm_prompts.setup._require_uv"),
-            patch("llm_prompts.setup._build_commands", return_value=commands),
+            patch("llm_prompts.setup._build_commands", return_value=env),
+            patch("llm_prompts.setup._has_drifted", return_value=False),
+            patch("llm_prompts.setup._remove_member_envs", return_value=False),
             patch("llm_prompts.setup.write_pyproject_stamp"),
+            patch("llm_prompts.setup.write_checkout_stamp"),
         ):
             run_setup(force_reinstall=force_reinstall)
         return fake_subprocess.commands
 
     def test_forced_core_skips_upgrade(self, fake_subprocess: FakeSubprocess) -> None:
-        commands: list[tuple[str, list[str], list[str], list[str]]] = [
-            ("core", ["uv", "install"], ["uv", "upgrade"], [])
-        ]
-        calls = self._run(fake_subprocess, commands, {"core"})
+        calls = self._run(fake_subprocess, [], {"core"})
         assert calls == [["uv", "install"]]
 
-    def test_stale_overlay_forces_its_core(
+    def test_stale_member_forces_the_shared_env(
         self, fake_subprocess: FakeSubprocess
     ) -> None:
-        commands: list[tuple[str, list[str], list[str], list[str]]] = [
-            ("core", ["uv", "install"], ["uv", "upgrade"], ["hooks"])
-        ]
-        calls = self._run(fake_subprocess, commands, {"hooks"})
+        calls = self._run(fake_subprocess, ["hooks"], {"hooks"})
         assert calls == [["uv", "install"]]
 
     def test_unforced_core_uses_upgrade(self, fake_subprocess: FakeSubprocess) -> None:
-        commands: list[tuple[str, list[str], list[str], list[str]]] = [
-            ("core", ["uv", "install"], ["uv", "upgrade"], [])
-        ]
-        calls = self._run(fake_subprocess, commands, {"other"})
-        assert calls[0] == ["uv", "upgrade"]
+        calls = self._run(fake_subprocess, [], {"other"})
+        assert calls == [["uv", "upgrade"]]
 
 
 class TestCheckForUpdates:
