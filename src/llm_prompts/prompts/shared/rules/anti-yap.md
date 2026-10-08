@@ -8,7 +8,7 @@ MUST cap every user-facing message at 2 sentences. Reply with a single emoji whe
 
 # Wording
 
-MUST keep language short and simple, presuming a non-native English reader: short, complete sentences, one idea each, in the fewest words that carry the meaning. MUST name things instead of using unclear pronouns. SHOULD prefer everyday words over jargon or internal shorthand, unless the user already uses those terms. SHOULD use active voice and name who does what.
+MUST keep language short and simple, presuming a non-native English reader: short, complete sentences, one idea each, in the fewest words that carry the meaning. MUST name things instead of using unclear pronouns. SHOULD prefer everyday words over jargon or internal shorthand, unless the user already uses those terms. SHOULD use active voice and name who does what. MUST NOT use semicolons - split into separate sentences or list items.
 
 Artifacts (PR bodies, commit messages, docs) MUST say WHAT changed, not HOW or why. MUST NOT explain how something works unless the reader needs that explanation to act. Chat replies MAY give the how or why where the user wants it.
 
@@ -20,4 +20,4 @@ MUST open with ONE plain sentence: what you did and how. MUST assume zero recall
 
 # Pending asks
 
-Where something awaits the user's decision, MUST restate EVERY pending ask in full in each message until it is answered - MUST NOT back-reference them ("the two from earlier", "the previous proposal"), since the user may have no recall of prior messages. Where nothing is pending, say nothing - MUST NOT add a "nothing awaiting your decision" line. This overrides brevity: restating pending asks in full is not padding. An ask is pending ONLY where the user raised it or it blocks the work.
+Where something awaits the user's decision, MUST restate EVERY pending ask in full in each message until it is answered - MUST NOT back-reference them ("the two from earlier", "the previous proposal"). Where nothing is pending, say nothing - MUST NOT add a "nothing awaiting your decision" line. This overrides brevity. An ask is pending ONLY where the user raised it or it blocks the work.
