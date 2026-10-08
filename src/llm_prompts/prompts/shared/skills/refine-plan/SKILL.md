@@ -5,9 +5,9 @@ description: Evaluate and refine a plan before implementation begins. Use once y
 
 # Refine Plan
 
-MUST score the plan objectively across quality and confidence dimensions. MUST be brutally honest and MUST NOT sugarcoat.
+MUST score the plan objectively and with care across quality and confidence dimensions. MUST be brutally honest and MUST NOT sugarcoat.
 
-MUST split the problem into component parts. MUST assign each part an integer score from 1 to 10 per category below. **MUST calculate scores objectively and with care.**
+MUST split the problem into component parts and assign each an integer score from 1 to 10 per category below.
 
 ## 1. Score each category (1-10)
 
@@ -28,7 +28,7 @@ For any score below 10, MUST note how to improve it.
 
 ## 2. Validate with script
 
-MUST run the scoring script with your scores and evidence. MUST pipe the JSON via stdin, not as a shell argument - inline single-quoted JSON breaks on apostrophes (e.g. "doesn't") and newlines:
+MUST run the scoring script with your scores and evidence. MUST pipe the JSON via stdin, not as a shell argument:
 
 ```bash
 python3 "<base-dir>/score.py" <<'JSON'
@@ -38,16 +38,16 @@ JSON
 
 The JSON MUST contain:
 - `scores`: category -> integer 1-10
-- `evidence`: category -> concrete citation (REQUIRED for scores >= 7). MUST reference a specific file path, pattern, or verifiable finding.
+- `evidence`: category -> concrete citation (REQUIRED for scores >= 7). MUST reference a specific file path, pattern, or verifiable finding. MUST prefix each claim `existing:` (true of the code now) or `proposed:` (true once the plan lands).
 - `testability_skipped`: true (optional, if no tests exist)
 
-The script rejects scores >= 7 without evidence. This forces actual research before claiming high scores. MUST present the full output to the user.
+The script rejects scores >= 7 without evidence. MUST present the full output to the user.
 
-## 3. Validate evidence (if Agent tool available)
+## 3. Validate evidence
 
 MUST launch a validation Agent with ONLY the evidence strings and scores:
 
-> For each claim, MUST read the cited file/pattern/resource and confirm or dispute. MUST be skeptical - 9+ means near-perfect and is rare.
+> For each `existing:` claim, MUST read the cited file/pattern/resource and confirm or dispute. MUST NOT dispute a `proposed:` claim for being absent from the code - judge only whether the design holds. MUST be skeptical - 9+ means near-perfect and is rare.
 >
 > 1. [category]: [score] - "[evidence]"
 > ...
@@ -56,7 +56,7 @@ If the validator disputes any score, MUST lower it and re-run the script. MAY sk
 
 ## 4. Gate and iterate
 
-- **`pass: false`**: MUST improve the plan to address below-threshold categories, re-score ALL categories, and re-run the script. MUST NOT ask the user before improving. MUST repeat until the gate passes.
+- **`pass: false`**: MUST improve the plan to address below-threshold categories, re-score ALL categories, and re-run the script. MUST NOT ask the user before improving. MUST repeat until it passes.
 - **`pass: true`**: MUST present the scores, then the plan in this layout:
   - `#` heading naming the outcome, then one line of why.
   - `## What happens`: numbered plain-word steps.
@@ -67,7 +67,7 @@ If you cannot reach a passing score after deep investigation, {{TOOL_ASK}}.
 
 **MUST NOT start implementation until both quality and confidence averages >= 9.**
 
-Once passing, MUST update memory with learnings from the refinement.
+Once passing, MUST update memory with learnings.
 
 {{TOOL_WRAP_UP}}
 
