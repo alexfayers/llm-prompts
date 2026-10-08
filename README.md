@@ -7,12 +7,12 @@
 | src/llm\_prompts/\_\_init\_\_.py                                              |        0 |        0 |    100% |           |
 | src/llm\_prompts/batching.py                                                  |      138 |        1 |     99% |       129 |
 | src/llm\_prompts/cli.py                                                       |      454 |       71 |     84% |82-83, 109-122, 182-183, 272-273, 401, 404, 453, 528-530, 566-568, 578-581, 600-609, 793-813, 832-834, 837-843, 846-849, 852-865, 874, 876-881, 884-885, 896-900, 972-973, 978 |
-| src/llm\_prompts/collection\_size.py                                          |       56 |        3 |     95% |108, 188, 232 |
+| src/llm\_prompts/collection\_size.py                                          |       67 |        3 |     96% |113, 199, 243 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/contribute.py                                                |      875 |       12 |     99% |149, 176, 318, 1141, 1166, 1366, 1383-1384, 1474-1476, 1817 |
 | src/llm\_prompts/github\_api.py                                               |       96 |        1 |     99% |        71 |
 | src/llm\_prompts/hooks.py                                                     |      163 |       15 |     91% |62, 67, 130-131, 165-166, 255, 263-264, 306, 321-322, 341-343 |
-| src/llm\_prompts/install.py                                                   |      993 |      167 |     83% |81, 242-243, 265-266, 315-319, 351-353, 356, 381-384, 416, 419-420, 426, 429-430, 547-548, 561, 618-620, 649, 651, 704-705, 831-832, 905, 908-909, 1013, 1088, 1095-1096, 1138, 1198, 1352-1354, 1356, 1386, 1496-1499, 1502-1503, 1530-1550, 1559-1566, 1571-1581, 1586-1596, 1616, 1651-1658, 1663-1676, 1681-1685, 1694-1703, 1708-1717, 1722-1731, 1736-1748, 1753-1762, 1816-1818, 1909, 1912, 2030, 2287, 2291, 2304 |
+| src/llm\_prompts/install.py                                                   |      998 |      170 |     83% |83, 244-245, 267-268, 317-321, 353-355, 358, 383-386, 418, 421-422, 428, 431-432, 549-550, 563, 620-622, 651, 653, 706-707, 833-834, 907, 910-911, 983-985, 1019, 1094, 1101-1102, 1144, 1204, 1358-1360, 1362, 1392, 1502-1505, 1508-1509, 1536-1556, 1565-1572, 1577-1587, 1592-1602, 1622, 1657-1664, 1669-1682, 1687-1691, 1700-1709, 1714-1723, 1728-1737, 1742-1754, 1759-1768, 1822-1824, 1915, 1918, 2036, 2293, 2297, 2310 |
 | src/llm\_prompts/links.py                                                     |      132 |        0 |    100% |           |
 | src/llm\_prompts/listing.py                                                   |      126 |        0 |    100% |           |
 | src/llm\_prompts/main\_sync.py                                                |      195 |        1 |     99% |       234 |
@@ -25,10 +25,10 @@
 | src/llm\_prompts/prompts/shared/skills/git-usage/check\_repos.py              |       67 |       12 |     82% |41-42, 44, 63, 73-75, 95-96, 124-125, 159 |
 | src/llm\_prompts/prompts/shared/skills/tidy-code/check\_reduction.py          |       42 |        1 |     98% |        97 |
 | src/llm\_prompts/prompts/shared/skills/todos/find\_todos.py                   |       44 |        7 |     84% |96-98, 103-105, 109 |
-| src/llm\_prompts/render\_template.py                                          |      149 |       15 |     90% |113, 235, 342-343, 352-370, 382-386, 390 |
+| src/llm\_prompts/render\_template.py                                          |      151 |       15 |     90% |115, 254, 361-362, 371-389, 401-405, 409 |
 | src/llm\_prompts/setup.py                                                     |      285 |       63 |     78% |212-241, 286, 293-294, 316-318, 334, 337, 358-359, 459-471, 498-510, 520, 531-537, 561-563, 569-572, 582-584, 595-599, 607-608, 613-614 |
-| src/llm\_prompts/size\_guard.py                                               |      286 |        3 |     99% |228-229, 332 |
-| src/llm\_prompts/size\_limits.py                                              |       47 |        1 |     98% |       105 |
+| src/llm\_prompts/size\_guard.py                                               |      295 |        3 |     99% |231-232, 339 |
+| src/llm\_prompts/size\_limits.py                                              |       48 |        1 |     98% |       106 |
 | src/llm\_prompts/size\_report.py                                              |      127 |        4 |     97% |107, 161, 163, 165 |
 | src/llm\_prompts/squash\_subject.py                                           |        6 |        0 |    100% |           |
 | tests/conftest.py                                                             |      331 |        2 |     99% |  154, 764 |
@@ -53,7 +53,8 @@
 | tests/test\_main\_sync.py                                                     |      243 |        0 |    100% |           |
 | tests/test\_manifest.py                                                       |       66 |        0 |    100% |           |
 | tests/test\_plugins.py                                                        |      267 |        0 |    100% |           |
-| tests/test\_prompt\_sizes.py                                                  |      497 |        0 |    100% |           |
+| tests/test\_prompt\_sizes.py                                                  |      505 |        0 |    100% |           |
+| tests/test\_render\_template.py                                               |       16 |        0 |    100% |           |
 | tests/test\_retrospective\_extract.py                                         |       90 |        0 |    100% |           |
 | tests/test\_rewrite\_range\_script.py                                         |       68 |        0 |    100% |           |
 | tests/test\_setup.py                                                          |      187 |        0 |    100% |           |
@@ -62,7 +63,7 @@
 | tests/test\_squash\_subject.py                                                |        7 |        0 |    100% |           |
 | tests/test\_todos\_script.py                                                  |       87 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      118 |        0 |    100% |           |
-| **TOTAL**                                                                     | **13934** |  **520** | **96%** |           |
+| **TOTAL**                                                                     | **13986** |  **523** | **96%** |           |
 
 
 ## Setup coverage badge
