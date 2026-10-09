@@ -72,10 +72,17 @@ Then include, in order:
 - Do not push to get uncommitted work committed before writing the handoff,
   unless the user asks. Capture the tree as-is, dirty or not, and note what is
   uncommitted and where it lives.
+{% if AGENT == "pi" %}
+- Before writing, MUST `{{TOOL_STEER}}` each running delegate to reach a commit or
+  checkpoint and report its state, and MUST read that report with
+  `{{TOOL_AGENT_RESULT}}` before ending. A handoff request is not an instruction to stop in-flight work.
+  The doc and the reply MUST name every delegate and what state it left.
+{% else %}
 - Before writing, MUST `SendMessage` each running delegate to reach a commit or
   checkpoint and report its state, and MUST wait for that report before
   `TaskStop`. A handoff request is not an instruction to stop in-flight work.
   The doc and the reply MUST name every delegate stopped and what state it left.
+{% endif %}
 - **Memory first, doc second.** Durable facts (decisions, outcomes, learnings,
   task status) MUST already be in the memory graph before you write the
   handoff - the doc only points at it. If not yet persisted, do so now (see
@@ -87,7 +94,7 @@ Then include, in order:
   workspace (if any) and at the authoritative memory entity for the effort -
   not just at the doc itself.
 - For multi-step work, MUST instruct the resuming session to track steps with
-  the harness task tools (TaskCreate/TaskUpdate/TaskList), updating status as
+  the harness task tools ({% if AGENT == "pi" %}`tower_do`/`tower_do_status`{% else %}TaskCreate/TaskUpdate/TaskList{% endif %}), updating status as
   it goes.
 - For multi-phase work, MUST carry context (or explicit references: file:line,
   gate) for EVERY remaining phase, not only the next one.

@@ -184,3 +184,36 @@ class TestVarsRoot:
             return artifact.value
 
         assert collection_bytes("a" * 100) - collection_bytes("a") == 99
+
+
+class TestHerdsmanRender:
+    def test_pi_is_measured_as_herdsman_without_herdr_on_path(
+        self, tmp_path: Path
+    ) -> None:
+        rules = tmp_path / "root" / "shared" / "rules"
+        rules.mkdir(parents=True)
+        (rules / "r.md").write_text("{{TOOL_AGENT}}\n")
+
+        result = check([tmp_path / "root"], ("pi",))
+
+        (artifact,) = (a for a in result.artifacts if a.metric == RULE_BYTES)
+        assert artifact.value == len("delegate_agent\n")
+
+
+class TestPiCollectionCountsRoleOnlyRuleOnce:
+    @staticmethod
+    def _pi_collection_bytes(tmp_path: Path, role_pad: str) -> int:
+        rules = tmp_path / "root" / "shared" / "rules"
+        rules.mkdir(parents=True, exist_ok=True)
+        (rules / "core.md").write_text("core\n")
+        (rules / "lead.md").write_text("---\nroles: lead\n---\nlead\n")
+        (rules / "worker.md").write_text(f"---\nroles: worker\n---\nworker{role_pad}\n")
+        result = check([tmp_path / "root"], ("pi",))
+        (artifact,) = (a for a in result.artifacts if a.metric == COLLECTION_BYTES)
+        assert isinstance(artifact.value, int)
+        return artifact.value
+
+    def test_a_role_only_rule_adds_its_bytes_once(self, tmp_path: Path) -> None:
+        small = self._pi_collection_bytes(tmp_path, "")
+        large = self._pi_collection_bytes(tmp_path, "x" * 100)
+        assert large - small == 100

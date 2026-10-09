@@ -36,6 +36,19 @@ def rendered_rules_dir(tmp_path: Path) -> Iterator[Path]:
         yield path
 
 
+class TestPiRuleRoles:
+    def test_selectors_read_back_and_are_omitted_when_not_given(
+        self, manifest_path: Path
+    ) -> None:
+        write_manifest("pi", ["a"], pi_rule_roles={"git.md": ["lead", "worker"]})
+        write_manifest("codex", ["b"])
+
+        agents = read_manifest()
+
+        assert agents["pi"]["pi_rule_roles"] == {"git.md": ["lead", "worker"]}
+        assert "pi_rule_roles" not in agents["codex"]
+
+
 class TestDeleteAgent:
     def test_delete_agent_removes_entry(self, manifest_path: Path) -> None:
         write_manifest("cline", ["a.md"])

@@ -412,8 +412,72 @@ class TestExpandAgentVariants:
         assert set(generated) == {"worker-sonnet-low.md", "worker-haiku-high.md"}
 
 
+class TestExtraVariants:
+    def _template(self, tmp_path: Path) -> Path:
+        src = _make_variant_template(tmp_path, "worker.md", "worker", "sonnet-low")
+        text = src.read_text(encoding="utf-8").replace(
+            "generate_variants: sonnet-low",
+            "generate_variants: sonnet-low\npi_extra_variants: zed-low,zed-high",
+        )
+        src.write_text(text, encoding="utf-8")
+        return src
+
+    def test_target_extra_variants_added_when_alias_resolves(
+        self, tmp_path: Path
+    ) -> None:
+        src = self._template(tmp_path)
+
+        generated = dict(
+            _expand_agent_variants(
+                src, lambda t: {"zed": "acme/zed"}.get(t, t), None, "pi"
+            )
+        )
+
+        assert set(generated) == {
+            "worker-sonnet-low.md",
+            "worker-zed-low.md",
+            "worker-zed-high.md",
+        }
+        _, frontmatter = parse_frontmatter(generated["worker-zed-high.md"])
+        assert frontmatter["model"] == "acme/zed"
+        assert "pi_extra_variants" not in frontmatter
+
+    def test_extra_variants_skipped_when_alias_unresolved(self, tmp_path: Path) -> None:
+        src = self._template(tmp_path)
+
+        generated = dict(_expand_agent_variants(src, lambda t: t, None, "pi"))
+
+        assert set(generated) == {"worker-sonnet-low.md"}
+
+    def test_haiku_variants_have_thinking_off_for_pi_only(self, tmp_path: Path) -> None:
+        src = tmp_path / "worker.md"
+        src.write_text(
+            "---\nname: worker\ndescription: D\ngenerate_variants: haiku-high\n---\n\nB.\n"
+        )
+
+        pi = dict(_expand_agent_variants(src, lambda t: t, None, "pi"))
+        other = dict(_expand_agent_variants(src, lambda t: t, None, "codex"))
+
+        _, pi_frontmatter = parse_frontmatter(pi["worker-haiku-high.md"])
+        _, other_frontmatter = parse_frontmatter(other["worker-haiku-high.md"])
+        assert pi_frontmatter["effort"] == "off"
+        assert pi_frontmatter["name"] == "worker-haiku-high"
+        assert other_frontmatter["effort"] == "high"
+
+    def test_extra_variants_ignored_for_other_targets(self, tmp_path: Path) -> None:
+        src = self._template(tmp_path)
+
+        generated = dict(_expand_agent_variants(src, lambda t: "m", None, "codex"))
+        no_target = dict(_expand_agent_variants(src))
+
+        assert set(generated) == {"worker-sonnet-low.md"}
+        assert set(no_target) == {"worker-sonnet-low.md"}
+        _, frontmatter = parse_frontmatter(no_target["worker-sonnet-low.md"])
+        assert "pi_extra_variants" not in frontmatter
+
+
 class TestInstallAgents:
-    def test_symlinks_source_files_into_dest(self, tmp_path: Path) -> None:
+    def test_writes_source_files_into_dest(self, tmp_path: Path) -> None:
         src = tmp_path / "agents"
         dest = tmp_path / "dest"
         a = _make_agent(src, "architect.md", "arch")
@@ -421,27 +485,26 @@ class TestInstallAgents:
 
         managed = _install_agents([src], dest)
 
-        assert (dest / "architect.md").is_symlink()
-        assert (dest / "reviewer.md").is_symlink()
-        assert (dest / "architect.md").resolve() == a.resolve()
-        assert (dest / "reviewer.md").resolve() == b.resolve()
+        for name, source in (("architect.md", a), ("reviewer.md", b)):
+            assert not (dest / name).is_symlink()
+            assert (dest / name).read_text(encoding="utf-8") == source.read_text(
+                encoding="utf-8"
+            )
         assert managed == {"architect.md", "reviewer.md"}
 
-    def test_idempotent_second_run_keeps_valid_symlink(self, tmp_path: Path) -> None:
+    def test_idempotent_second_run_does_not_rewrite(self, tmp_path: Path) -> None:
         src = tmp_path / "agents"
         dest = tmp_path / "dest"
-        a = _make_agent(src, "architect.md", "arch")
+        _make_agent(src, "architect.md", "arch")
 
         _install_agents([src], dest)
+        before = (dest / "architect.md").stat().st_mtime_ns
         second = _install_agents([src], dest)
 
-        assert (dest / "architect.md").is_symlink()
-        assert (dest / "architect.md").resolve() == a.resolve()
+        assert (dest / "architect.md").stat().st_mtime_ns == before
         assert second == {"architect.md"}
 
-    def test_replaces_preexisting_regular_file_with_symlink(
-        self, tmp_path: Path
-    ) -> None:
+    def test_replaces_preexisting_regular_file(self, tmp_path: Path) -> None:
         src = tmp_path / "agents"
         dest = tmp_path / "dest"
         a = _make_agent(src, "architect.md", "source content")
@@ -450,11 +513,56 @@ class TestInstallAgents:
 
         managed = _install_agents([src], dest)
 
-        assert (dest / "architect.md").is_symlink()
         assert (dest / "architect.md").read_text(encoding="utf-8") == a.read_text(
             encoding="utf-8"
         )
         assert managed == {"architect.md"}
+
+    def test_preexisting_symlink_dest_becomes_regular_file(
+        self, tmp_path: Path
+    ) -> None:
+        src = tmp_path / "agents"
+        source = _make_agent(src, "architect.md", "arch")
+        original = source.read_bytes()
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        (dest / "architect.md").symlink_to(source)
+
+        _install_agents([src], dest, variables={"AGENT": "claude-code"})
+
+        assert not (dest / "architect.md").is_symlink()
+        assert (dest / "architect.md").read_bytes() == original
+        assert source.read_bytes() == original
+
+    @pytest.mark.parametrize(
+        ("target", "kept", "dropped"),
+        [
+            ("pi", "pi body", "claude body"),
+            ("claude-code", "claude body", "pi body"),
+        ],
+    )
+    def test_if_blocks_render_per_target_including_frontmatter(
+        self, tmp_path: Path, target: str, kept: str, dropped: str
+    ) -> None:
+        src = tmp_path / "agents"
+        src.mkdir()
+        (src / "lead.md").write_text(
+            "---\nname: lead\n"
+            '{% if AGENT == "pi" %}\nallowed_subagents: Explore\n{% endif %}\n'
+            "---\n\n"
+            '{% if AGENT == "pi" %}\npi body\n{% else %}\nclaude body\n{% endif %}\n',
+            encoding="utf-8",
+        )
+        dest = tmp_path / "dest"
+
+        _install_agents([src], dest, variables={"AGENT": target})
+
+        installed = (dest / "lead.md").read_text(encoding="utf-8")
+        _, frontmatter = parse_frontmatter(installed)
+        assert frontmatter["name"] == "lead"
+        assert ("allowed_subagents" in frontmatter) == (target == "pi")
+        assert kept in installed
+        assert dropped not in installed
 
     def test_missing_source_dir_is_noop(self, tmp_path: Path) -> None:
         managed = _install_agents([tmp_path / "nope"], tmp_path / "dest")
@@ -476,11 +584,10 @@ class TestInstallAgents:
         managed = _install_agents([overlay_dir, base_dir], dest)
 
         collide = dest / "collide.md"
-        assert collide.is_symlink()
         assert "OVL-C" in collide.read_text(encoding="utf-8")
         assert managed == {"base-only.md", "collide.md", "overlay-only.md"}
 
-    def test_variant_template_writes_generated_files_alongside_symlinks(
+    def test_variant_template_writes_generated_files_alongside_plain_agents(
         self, tmp_path: Path
     ) -> None:
         src = tmp_path / "agents"
@@ -495,7 +602,7 @@ class TestInstallAgents:
             "worker-sonnet-low.md",
             "worker-haiku-high.md",
         }
-        assert (dest / "architect.md").is_symlink()
+        assert (dest / "architect.md").is_file()
         assert not (dest / "worker-sonnet-low.md").is_symlink()
         assert (dest / "worker-sonnet-low.md").is_file()
         assert not (dest / "worker.md").exists()

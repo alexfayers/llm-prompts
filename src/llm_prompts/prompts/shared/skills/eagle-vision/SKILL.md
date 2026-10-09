@@ -27,7 +27,7 @@ The current layer is the first empty `PLAN.md` section.
 - MUST write a layer to a plan file only once the user approves its text; start the next only on "next".
 - MUST explain items plainly, not bare paths or names; show only the current layer or changes unless asked.
 - MUST show Graph and Nodes from `focus.py` output, never retyped, after checking scope paths and existing inputs are real.
-- Every decision MUST use AskUserQuestion with a recommended option, max 3 per call, rest held. Text just before the call is hidden - use the question, preview or an earlier turn.
+- Every decision MUST use {{TOOL_ASK_QUESTION}} with a recommended option, max 3 per call, rest held. Text just before the call is hidden - use the question, preview or an earlier turn.
 - Each message MUST open with progress: layer or node, elapsed (`date`), time left from measured pace, or `?`.
 - Scope creep: MUST log tangents under "Later"; plan-changing ones are decisions.
 - Each layer: question anything unneeded; keep it simple.
@@ -48,7 +48,7 @@ A node's only tests - write no others. Each criterion:
 - MUST NOT repeat another node's criterion, or check log lines or other nodes.
 - SHOULD be 5-6, MUST NOT exceed 8; cover boundaries (empty, caps, paging).
 - End-to-end nodes test user journeys with the real command and tools, sandboxed, no pushes or fakes; MUST NOT drop or weaken a real-tool test.
-- Review each node alone: one AskUserQuestion keep/change/drop per criterion, 4 per call.
+- Review each node alone: one {{TOOL_ASK_QUESTION}} keep/change/drop per criterion, 4 per call.
 
 ## Plan directory
 

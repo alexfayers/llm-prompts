@@ -15,19 +15,27 @@ from pathlib import Path
 from jinja2 import TemplateError
 
 from .install import (
+    _GATING_FRONTMATTER_KEYS,
+    _agent_source_dirs,
     _append_included_rules,
     _builtin_skill_vars,
     _collect_content_srcs,
-    _excluded_targets,
     _expand_agent_variants,
     _linked_content,
     _passes_requires_gate,
+    _PiRuleBundle,
     _rendered_content,
     _resolve_priority_sources,
     _RuleSources,
+    _targets_agent,
     content_subdirs,
 )
-from .render_template import _read_text, parse_frontmatter, substitute_variables
+from .render_template import (
+    _read_text,
+    parse_frontmatter,
+    strip_gating_keys,
+    substitute_variables,
+)
 from .size_guard import (
     CHECKED_TARGETS,
     Artifact,
@@ -110,9 +118,9 @@ def _skill_bytes(
         skill_md = skill_dir / "SKILL.md"
         if not skill_md.is_file():
             return False
-        if not _passes_requires_gate(skill_md):
+        if not _passes_requires_gate(skill_md, target):
             return False
-        return target not in _excluded_targets(skill_md)
+        return _targets_agent(skill_md, target)
 
     resolved = _resolve_priority_sources(
         [
@@ -128,8 +136,9 @@ def _skill_bytes(
     total = 0
     for _, skill_dir in resolved:
         try:
-            substituted = substitute_variables(
-                _read_text(skill_dir / "SKILL.md"), variables
+            substituted = strip_gating_keys(
+                substitute_variables(_read_text(skill_dir / "SKILL.md"), variables),
+                _GATING_FRONTMATTER_KEYS,
             )
         except TemplateError:
             continue
@@ -137,42 +146,78 @@ def _skill_bytes(
     return total
 
 
-def _agent_bytes(root: Path, overlays: Sequence[Path], target: str) -> int:
+def _agent_bytes(
+    root: Path,
+    overlays: Sequence[Path],
+    target: str,
+    vars_root: Path | None = None,
+) -> int:
     """Sum installed agent-definition bytes, expanding variants and included rules.
 
     Args:
         root: This package's own prompts directory.
         overlays: Discovered overlay prompts directories, in priority order.
         target: Render target - agents are claude-code only.
+        vars_root: Prompts directory to read variables from, instead of this
+            package's own.
 
     Returns:
         Total agent-definition bytes installed, or 0 for any other target.
     """
     if target != "claude-code":
         return 0
+    variables = _builtin_skill_vars(_own_vars_path(target, vars_root))
     rules = _RuleSources.collect(_agent_for(target, root), overlays)
     total = 0
     for _, src in _resolve_priority_sources(
-        [
-            *(d / "claude-code" / "agents" for d in overlays),
-            root / "claude-code" / "agents",
-        ],
+        _agent_source_dirs(root, overlays, target),
         lambda d: sorted(d.glob("*.md")),
         lambda p: p.name,
     ):
-        raw = _read_text(src)
-        _, frontmatter = parse_frontmatter(raw)
-        if "generate_variants" in frontmatter:
-            files = _expand_agent_variants(src)
-        elif "rules" in frontmatter:
-            files = [(src.name, _linked_content(src))]
-        else:
-            files = [(src.name, raw)]
+        try:
+            rendered = substitute_variables(_read_text(src), variables)
+        except TemplateError:
+            continue
+        _, frontmatter = parse_frontmatter(rendered)
+        files = (
+            _expand_agent_variants(src, variables=variables)
+            if "generate_variants" in frontmatter
+            else [(src.name, strip_gating_keys(rendered, _GATING_FRONTMATTER_KEYS))]
+        )
         total += sum(
             len(_append_included_rules(content, src, rules).encode())
             for _, content in files
         )
     return total
+
+
+def _pi_bundle_bytes(
+    root: Path, overlays: Sequence[Path], vars_root: Path | None = None
+) -> int:
+    """Sum the bytes of the global ``AGENTS.md`` and the rule files outside it.
+
+    A rule in ``AGENTS.md`` is not counted again as a rule file. Agent
+    definitions are not counted: `pi_role_prompt_bytes` guards each expanded
+    role prompt.
+
+    Args:
+        root: This package's own prompts directory.
+        overlays: Discovered overlay prompts directories, in priority order.
+        vars_root: Prompts directory to read variables from, instead of this
+            package's own.
+
+    Returns:
+        Total bytes of ``AGENTS.md`` and the rule files outside it.
+    """
+    bundle = _PiRuleBundle.build(
+        _agent_for("pi", root), overlays, vars_path=_own_vars_path("pi", vars_root)
+    )
+    in_agents_md = set(bundle.lead_names())
+    return len(bundle.lead_text().encode()) + sum(
+        len(text.encode())
+        for name, text in bundle.texts.items()
+        if name not in in_agents_md
+    )
 
 
 def collection_artifacts(
@@ -207,9 +252,11 @@ def collection_artifacts(
             sum(
                 _rendered_kind_bytes(root, overlays, target, subdir, vars_root)
                 for subdir in content_subdirs(target)
+                if not (target == "pi" and subdir == "rules")
             )
+            + (_pi_bundle_bytes(root, overlays, vars_root) if target == "pi" else 0)
             + _skill_bytes(root, overlays, target, vars_root)
-            + _agent_bytes(root, overlays, target),
+            + _agent_bytes(root, overlays, target, vars_root),
             root,
             declared.get(target),
         )

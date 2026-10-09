@@ -21,6 +21,7 @@ WORKFLOW_LINES = "workflow_lines"
 SKILL_DESCRIPTION_CHARS = "skill_description_chars"
 AGENT_DESCRIPTION_CHARS = "agent_description_chars"
 COLLECTION_BYTES = "collection_bytes"
+PI_ROLE_PROMPT_BYTES = "pi_role_prompt_bytes"
 FRONTMATTER_VALID = "frontmatter_valid"
 NO_UNSUBSTITUTED_PLACEHOLDERS = "no_unsubstituted_placeholders"
 TEMPLATE_RENDERS = "template_renders"
@@ -34,6 +35,7 @@ UNITS: dict[str, str] = {
     SKILL_DESCRIPTION_CHARS: "chars",
     AGENT_DESCRIPTION_CHARS: "chars, post-expansion",
     COLLECTION_BYTES: "owned bytes per target",
+    PI_ROLE_PROMPT_BYTES: "llm-prompts-owned expanded prompt bytes",
 }
 
 FINALS: dict[str, int] = {
@@ -45,7 +47,11 @@ FINALS: dict[str, int] = {
     SKILL_DESCRIPTION_CHARS: 200,
     AGENT_DESCRIPTION_CHARS: 200,
     COLLECTION_BYTES: 50_000,
+    PI_ROLE_PROMPT_BYTES: 50_000,
 }
+
+# Metrics whose ceiling is the active collection step rather than a per-file final.
+COLLECTION_CEILING_METRICS = frozenset({COLLECTION_BYTES, PI_ROLE_PROMPT_BYTES})
 
 # `_apply_variant_frontmatter` appends " [<model>, <effort> effort]" to every
 # generated agent's description; the longest real model/effort combination

@@ -32,6 +32,7 @@ from llm_prompts.size_limits import (
     FINALS,
     FRONTMATTER_VALID,
     NO_UNSUBSTITUTED_PLACEHOLDERS,
+    PI_ROLE_PROMPT_BYTES,
     RULE_BYTES,
     RULE_LINES,
     SCHEDULES,
@@ -1098,3 +1099,132 @@ class TestAgentBytesCountsIncludedRules:
         after = _agent_bytes(tmp_path, [], "claude-code")
 
         assert after - before >= 1000
+
+
+class TestSharedAgentsAreMeasured:
+    def test_description_and_collection_bytes_cover_shared_agents(
+        self, tmp_path: Path
+    ) -> None:
+        _make_prompts_tree(tmp_path)
+        before = _agent_bytes(tmp_path, [], "claude-code")
+        _write(
+            tmp_path / "shared" / "agents" / "helper.md",
+            "---\nname: helper\ndescription: Helps.\n---\n\n" + "x" * 1000 + "\n",
+        )
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            artifacts = list(iter_artifacts([tmp_path], targets=("claude-code",)))
+
+        description = next(
+            a
+            for a in artifacts
+            if a.metric == AGENT_DESCRIPTION_CHARS and a.dest_name == "helper.md"
+        )
+        assert description.value == len("Helps.")
+        assert _agent_bytes(tmp_path, [], "claude-code") - before >= 1000
+
+
+def _make_pi_tree(root: Path, lead_text: str = "BBB") -> None:
+    """Build a synthetic prompts tree with a core rule, a lead rule and one agent."""
+    _write(root / "pi" / "vars.json", json.dumps({"AGENT": "pi"}))
+    _write(root / "shared" / "rules" / "a.md", "# A\n\nAAA\n")
+    _write(
+        root / "shared" / "rules" / "b.md",
+        f"---\nroles: lead\n---\n\n# B\n\n{lead_text}\n",
+    )
+    _write(
+        root / "shared" / "agents" / "helper.md",
+        "---\nname: helper\ndescription: Does things.\n---\n\nBody.\n",
+    )
+
+
+def _pi_check(root: Path) -> dict[str, int]:
+    """Return the pi role-prompt bytes of a synthetic tree by artifact name."""
+    with patch("llm_prompts.size_guard._own_root_dir", return_value=root):
+        result = check([root], targets=("pi",))
+    return {
+        a.dest_name: int(a.value)
+        for a in result.artifacts
+        if a.metric == PI_ROLE_PROMPT_BYTES
+    }
+
+
+class TestPiRolePromptBytes:
+    def test_lead_is_agents_md_and_custom_role_agent_expands_every_rule(
+        self, tmp_path: Path
+    ) -> None:
+        _make_pi_tree(tmp_path)
+
+        measured = _pi_check(tmp_path)
+
+        assert measured["lead"] == len("# A\n\nAAA\n\n# B\n\nBBB\n")
+        assert measured["helper.md"] == len("# A\n\nAAA\n\n# B\n\nBBB\n\n\nBody.")
+
+    def test_unresolvable_selector_fails_the_check(self, tmp_path: Path) -> None:
+        _make_pi_tree(tmp_path)
+        _write(
+            tmp_path / "shared" / "rules" / "b.md",
+            "---\nroles: wizard\n---\n\n# B\n",
+        )
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check([tmp_path], targets=("pi",))
+
+        assert [(v.metric, v.dest_name) for v in result.violations] == [
+            (TEMPLATE_RENDERS, "b.md")
+        ]
+
+
+class TestPiCollectionCountsFilesNotExpansions:
+    def test_agent_definitions_do_not_count(self, tmp_path: Path) -> None:
+        def pi_total(root: Path) -> int:
+            with patch("llm_prompts.size_guard._own_root_dir", return_value=root):
+                result = check([root], targets=("pi",))
+            return next(
+                int(a.value) for a in result.artifacts if a.metric == COLLECTION_BYTES
+            )
+
+        without, with_agent = tmp_path / "without", tmp_path / "with"
+        _make_pi_tree(without)
+        _make_pi_tree(with_agent)
+        _write(
+            with_agent / "shared" / "agents" / "extra.md",
+            "---\nname: extra\ndescription: More.\n---\n\n" + "Y" * 5000 + "\n",
+        )
+
+        assert pi_total(with_agent) == pi_total(without)
+
+    def test_a_rule_in_agents_md_counts_once(self, tmp_path: Path) -> None:
+        def pi_total(root: Path) -> int:
+            with patch("llm_prompts.size_guard._own_root_dir", return_value=root):
+                result = check([root], targets=("pi",))
+            return next(
+                int(a.value) for a in result.artifacts if a.metric == COLLECTION_BYTES
+            )
+
+        small, large = tmp_path / "small", tmp_path / "large"
+        _make_pi_tree(small, "B" * 10)
+        _make_pi_tree(large, "B" * 1010)
+
+        assert pi_total(large) - pi_total(small) == 1000
+
+
+class TestCheckSourceMeasuresDependentPiRoles:
+    def test_rule_edit_is_measured_in_every_definition_that_expands_it(
+        self, tmp_path: Path
+    ) -> None:
+        _make_pi_tree(tmp_path)
+        _write(
+            tmp_path / ALLOWANCES_FILENAME,
+            json.dumps({PI_ROLE_PROMPT_BYTES: {"helper.md": 100}}),
+        )
+        source = tmp_path / "shared" / "rules" / "b.md"
+        content = "---\nroles: lead\n---\n\n# B\n\n" + "B" * 500 + "\n"
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check_source(source, content, targets=("pi",))
+
+        assert [(v.metric, v.dest_name) for v in result.violations] == [
+            (PI_ROLE_PROMPT_BYTES, "helper.md")
+        ]
+        assert "B" * 500 not in source.read_text(encoding="utf-8")
