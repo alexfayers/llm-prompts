@@ -4,7 +4,7 @@
 - SHOULD match Agent's `model` to the work; name one only where follow-up is expected (`agent-teams.md`).
   - A foreseeable-blocker stop (size/lint gate, permission denial, build slot) implies follow-up - name it to reuse context on retry.
   - **Opus** - design, architecture, root-cause work, debugging, planning, synthesis.
-  - **Sonnet** - parallel mechanical work Opus decided: an edit pattern, a bounded search.
+  - **Sonnet** - parallel mechanical work Opus decided: edit pattern, bounded search.
   - **Haiku** - trivial work: a lookup, exact change, known shell recipe. Judgment, not file count, sets tier - never with real reasoning.
 - A known target (file, symbol, doc you know) is a trivial lookup: SHOULD go to Haiku, or read it yourself if cheaper; MUST NOT let it become "go find out about X". An active team (agent-teams.md) overrules this.
 - A spawn commits that dimension: MUST NOT resume reads on it or re-read its report - `SendMessage` instead.
@@ -12,19 +12,19 @@
 
 ## Who holds `Agent`
 
-- MUST use only named tiers - `reasoner` (Opus, holds `Agent`), `worker` (mechanical), `surveyor` (read-only), `coordinator` (breakdown, `Explore`-only `Agent`); never `general-purpose`.
+- MUST use only named tiers, passing the installed `<tier>-<model>-<effort>` name (e.g. `reasoner-opus-high`), never the bare tier - `reasoner` (Opus, holds `Agent`), `worker` (mechanical), `surveyor` (read-only), `coordinator` (breakdown, `Explore`-only `Agent`); never `general-purpose`.
 - `Explore`/`Plan` inherit no rules: their prompt MUST carry every binding constraint; SHOULD prefer `Explore` over `surveyor` for a bounded read-only search.
 - Only main spawns a NAMED teammate; roster is flat. `reasoner` MAY fan out unnamed subagents (may recurse), `coordinator` unnamed `Explore` only; else report to `coordinator`, raising the AGENT REQUEST.
 
 ## Spawn prompt contract
 
-State the desired change concisely, close to how it was given - MUST NOT spell out mechanics it can derive, unless risky/ambiguous. `SendMessage` follows this plus `anti-yap.md`: state the ask/answer, not context it has.
+State the change concisely, as given - MUST NOT spell out mechanics it can derive, unless risky/ambiguous. `SendMessage` follows this plus `anti-yap.md`: state the ask/answer, not known context.
 
-Every spawn prompt, design delegates included, MUST specify:
+Every spawn prompt MUST specify:
 
 - source order - local checkout, internal/official docs, public web last - report back if unanswered, never silently widen;
-- for a tracked task (memory `task/`, plan slice, ticket): decisions recorded against it - a late one lives only there, not the ticket/plan doc;
-- the scope boundary it MUST NOT cross - for remote/live systems, read-only as the ceiling, naming disallowed mutations;
+- for a tracked task (memory `task/`, plan slice, ticket): decisions recorded against it - a late one lives only there;
+- the scope boundary it MUST NOT cross - remote/live systems: read-only ceiling, naming disallowed mutations;
 - for lint/formatting/test conventions, package config (`pyproject.toml` or equiv) is authority - MUST match the file it edits, never memory/global preferences;
 - where the prompt pins a concrete shape (signature, return type, format) and says match a sibling, MUST reconcile the two, not leave a contradiction to escalate;
 - for code/prose, the output-size limit - minimal diff, no unrequested comments, refactors or reformatting, terse report.
@@ -38,7 +38,7 @@ For a code comment, state policy/convention, not draft prose.
 
 ## Parallelise by default
 
-- SHOULD parallelise whenever work decomposes, design and research included; serial only where step two needs step one's output.
+- SHOULD parallelise whenever work decomposes, design and research included; serial only where a step needs prior output.
 - On an open design question, SHOULD dispatch a few Opus delegates on different angles and synthesize.
 
 ## Effort, not model tier
@@ -50,7 +50,7 @@ For a code comment, state policy/convention, not draft prose.
 
 ## Escalation and waiting
 
-- A delegate stuck on an ambiguity, or needing a user-only preference, SHOULD escalate.
+- A delegate stuck on an ambiguity or needing a user-only preference SHOULD escalate.
 - MUST NOT idle-wait on a background agent/command, `sleep` or placeholder call - completion re-invokes you: do other work or end the turn. Exception: while a delegate runs, MUST keep a background `sleep 300` armed; if it fires with no update, MUST `SendMessage` it for status.
 - A mid-turn message is silently ignored: wait, or re-verify state yourself. Once idle, `SendMessage` resumes a NAMED delegate - ask for a missing/truncated section, not re-derive it.
 - A resend returns a SUMMARY; read its transcript `.jsonl` under `subagents/` - MUST NOT ask again or re-run the work.
