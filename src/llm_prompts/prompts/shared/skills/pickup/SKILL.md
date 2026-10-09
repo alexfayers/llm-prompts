@@ -28,6 +28,15 @@ session and need to write the doc.
 4. Go straight into the "next task, stated concretely" section as your first
    action.
 
+A handoff that arrived as a prompt has no file: MUST skip the search in step 1
+and the delete in step 2, and MUST send the confirmation the prompt asks for
+before step 4. The sender closes its tab only after that reply, so MUST send it.
+{% if has_command("herdr") and AGENT != "claude-code" %}
+Where the prompt's first line is `HANDOFF-ACK <id>` and `<id>` is not your own pane or name, MUST first run
+`herdr agent prompt <id> "HANDOFF-ACK <id>"` as the only command in its call,
+before any other tool. Other tools stay blocked until it succeeds.
+{% endif %}
+
 Only fall back to the `handoff` skill's write flow if the user's wording is
 actually about ending *this* session or handing off to someone else - if in
 doubt, treat "do the handoff" for an already-existing doc as an instruction to

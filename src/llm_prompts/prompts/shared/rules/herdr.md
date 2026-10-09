@@ -12,7 +12,20 @@ requires_command: herdr
 {% if AGENT == "pi" %}
 - MUST hand off to a new Herdr session only when the cwd, worktree, env or process must change. Otherwise MUST compact with `compact_now`.
 {% endif %}
-- Handing off to a new session via Herdr, MUST start it in a new tab, confirm its agent is running (`herdr agent get`), then close the old session's tab.
+- Every handoff MUST go live to a new Herdr session, not to `HANDOFF.md`, unless the user asks for a disk handoff or has opted out in conversation or memory.
+- Live handoff: MUST write the doc via the `handoff` skill, start an agent of the same kind in a new tab, and send the doc as its prompt. The prompt MUST tell it to use `pickup` and to confirm its understanding of the asks to this session at the address below.
+{% if AGENT == "claude-code" %}
+  - Address: this session's name from `ListAgents`. The new session replies with `SendMessage`.
+{% else %}
+  - Address: this pane's ID (`<id>`) from `herdr pane current --current`. The prompt's FIRST LINE MUST be exactly `HANDOFF-ACK <id>` alone, naming this sending pane, never the new session. The `pickup` instruction follows it. The new session replies with `herdr agent prompt <id>`.
+{% endif %}
+- MUST confirm the new agent is running from `herdr agent get`, not from its own words.
+{% if AGENT == "claude-code" %}
+- MUST NOT close the old session's tab before the new session's reply has arrived. Where the reply asks for more information, MUST answer it and wait for the next reply. Once a reply needs nothing more, MUST close the tab as the very last step.
+{% else %}
+- MUST NOT run `herdr tab close` on the old session's tab until a prompt containing `HANDOFF-ACK <id>` has arrived. Where the reply asks for more information, MUST answer it and wait for the next reply. Once a reply needs nothing more, MUST close the tab as the very last step.
+{% endif %}
+- On any failure, or if the reply never arrives, MUST keep the old tab open and report to the user. MUST NOT resend a stalled prompt.
 
 ## Feature worktrees
 
