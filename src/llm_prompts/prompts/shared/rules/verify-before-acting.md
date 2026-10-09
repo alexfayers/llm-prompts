@@ -1,4 +1,5 @@
 ---
+pi_roles: core
 description: Read actual system state before proposing infrastructure changes
 copilot_apply_to: '**'
 ---

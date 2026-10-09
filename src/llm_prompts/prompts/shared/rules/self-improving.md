@@ -1,3 +1,7 @@
+---
+pi_roles: lead
+---
+
 # Self-Improving Reflection
 
 **Objective:** Continuously improve {{RULE_FILES}} based on user interactions and feedback.

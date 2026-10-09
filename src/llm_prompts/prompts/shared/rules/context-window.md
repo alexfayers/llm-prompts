@@ -1,3 +1,7 @@
+---
+pi_roles: core
+---
+
 # Context Window Management
 
 ## Efficient Tools

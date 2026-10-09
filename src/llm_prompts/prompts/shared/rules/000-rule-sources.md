@@ -1,4 +1,5 @@
 ---
+pi_roles: lead, reasoner, worker, reviewer
 paths: '**/prompts/**/*, **/.claude/rules/*.md, **/.claude/skills/**/*, **/llm-prompts/config.toml'
 kiro_inclusion: manual
 ---
@@ -17,6 +18,11 @@ Before adding a rule, MUST check it would still read correctly in an unrelated r
 Run `llm-prompts source {{AGENT}}` to see the source file paths for all installed rules, workflows, and skills.
 
 After editing any source file, run `llm-prompts update` to reinstall. MUST use the installed `llm-prompts` (PATH), never `uv run llm-prompts` - it can miss overlays and delete their installed files.
+
+{% if AGENT == "pi" %}
+After changing pi extensions, packages, settings, agent definitions or AGENTS.md, MUST tell the user to run `/reload`.
+A change that adds or changes llm-prompts-managed pi config (extension, seed file, pinned package, slash command) MUST update the `pi-help` skill source in the same change.
+{% endif %}
 
 For initial setup or full reinstall of all tools and overlays, use `llm-prompts setup`. Config is at `~/.config/llm-prompts/config.toml` - run `llm-prompts setup --init` to create it.
 

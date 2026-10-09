@@ -1,4 +1,5 @@
 ---
+pi_roles: core
 description: Do not pre-validate commands or approaches the user explicitly specifies
 copilot_apply_to: '**'
 ---

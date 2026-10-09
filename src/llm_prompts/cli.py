@@ -46,7 +46,7 @@ def _collect_sources(agent: str) -> dict[str, Path]:
     take priority over shared sources, and agent-specific sources are
     added if they don't exist in shared.
     """
-    from .install import _discover_overlay_paths, content_subdirs
+    from .install import _agent_source_dirs, _discover_overlay_paths, content_subdirs
 
     root = _get_root_dir()
 
@@ -94,9 +94,7 @@ def _collect_sources(agent: str) -> dict[str, Path]:
 
     # Agents (claude-code only)
     if agent == "claude-code":
-        for agents_src in [d / "claude-code" / "agents" for d in overlay_dirs] + [
-            root / "claude-code" / "agents"
-        ]:
+        for agents_src in _agent_source_dirs(root, overlay_dirs, agent):
             if agents_src.is_dir():
                 for f in sorted(agents_src.glob("*.md")):
                     sources.setdefault(f"agents/{f.name}", f)
@@ -159,6 +157,17 @@ def _run_size_check() -> None:
     _print_parked_state(result.artifacts)
     for line in result.stale:
         print(line)
+
+
+def _run_extension_factory_check() -> None:
+    """Report pi extensions lacking a default factory function and exit 1 if any."""
+    from .extension_factories import find_missing_default_factory
+
+    missing = find_missing_default_factory(_size_guard_roots())
+    for extension in missing:
+        print(f"{extension}: no default factory function")
+    if missing:
+        sys.exit(1)
 
 
 def _get_installed_commit(package_name: str) -> str | None:
@@ -700,7 +709,7 @@ def main() -> int | None:
     )
     subparsers.add_parser(
         "check",
-        help="Check prompt sizes against size_limits.py's thresholds.",
+        help="Check prompt sizes against size_limits.py's thresholds and pi extensions for default factories.",
     )
     size_report_parser = subparsers.add_parser(
         "size-report",
@@ -952,6 +961,7 @@ def main() -> int | None:
         uninstall(None if args.agent == "all" else [args.agent], verbose=args.verbose)
     elif args.command == "check":
         _run_size_check()
+        _run_extension_factory_check()
     elif args.command == "size-report":
         from .size_report import build_report
 

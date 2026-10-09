@@ -1,4 +1,5 @@
 ---
+pi_roles: lead, reasoner, worker, reviewer
 description: Coding guidelines to follow when generating, reviewing, or modifying code
 copilot_apply_to: '**'
 ---

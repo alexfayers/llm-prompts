@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 import subprocess
 import threading
 import urllib.error
@@ -736,6 +737,19 @@ def isolated_config_dir(
         "llm_prompts.plugins._PLUGIN_DIR", config_dir / "plugin-sources"
     )
     return config_dir
+
+
+@pytest.fixture(autouse=True)
+def herdr_off_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hide the real `herdr` and `pi` commands so installs do not depend on the host PATH."""
+    real_which = shutil.which
+
+    def which(command: str, *args: Any, **kwargs: Any) -> str | None:
+        return (
+            None if command in ("herdr", "pi") else real_which(command, *args, **kwargs)
+        )
+
+    monkeypatch.setattr(shutil, "which", which)
 
 
 class FakeGitHub:

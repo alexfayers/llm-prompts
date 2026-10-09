@@ -124,3 +124,151 @@ class TestSharedSourcesResolveToolVariables:
         }
 
         assert used <= load_vars(target_vars).keys()
+
+
+class TestHerdsmanOverrides:
+    TEMPLATE = (
+        "{{TOOL_AGENT}}|{{TOOL_STEER}}|{{TOOL_AGENT_RESULT}}|[{{TOOL_WORKFLOW}}]\n"
+    )
+    VARIABLES: ClassVar[dict[str, str]] = {
+        "TOOL_AGENT": "Agent",
+        "TOOL_STEER": "steer_subagent",
+        "TOOL_AGENT_RESULT": "get_subagent_result",
+        "TOOL_WORKFLOW": "SubagentWorkflow",
+    }
+
+    @pytest.mark.parametrize(
+        ("agent", "expected"),
+        [
+            ("pi", "delegate_agent|steer_agent|inspect_agent|[]\n"),
+            (
+                "claude-code",
+                "Agent|steer_subagent|get_subagent_result|[SubagentWorkflow]\n",
+            ),
+        ],
+    )
+    def test_overrides_apply_only_to_pi(self, agent: str, expected: str) -> None:
+        assert (
+            substitute_variables(self.TEMPLATE, {**self.VARIABLES, "AGENT": agent})
+            == expected
+        )
+
+
+class TestSourcesUseToolVariables:
+    DELEGATION = Path(__file__).parent.parent / (
+        "src/llm_prompts/prompts/shared/rules/delegation.md"
+    )
+
+    @pytest.mark.parametrize(
+        ("agent", "present", "absent"),
+        [
+            ("pi", "`continue_agent`", "`Agent`"),
+            ("claude-code", "`Agent`", "continue_agent"),
+        ],
+    )
+    def test_delegation_rule_tool_names(
+        self, agent: str, present: str, absent: str
+    ) -> None:
+        variables = {
+            **load_vars(self.DELEGATION.parents[2] / agent / "vars.json"),
+            "AGENT": agent,
+        }
+
+        output = substitute_variables(
+            self.DELEGATION.read_text(encoding="utf-8"), variables
+        )
+
+        assert present in output
+        assert absent not in output
+
+
+class TestDelegationModelOptionsArePiOnly:
+    SHARED = Path(__file__).parent.parent / "src/llm_prompts/prompts/shared"
+    SOURCES = ("rules/delegation.md", "agents/reasoner.md")
+    PI_OPTIONS = ("`opus`", "`sonnet`", "`haiku`")
+    GPT_NAMES = re.compile(r"`(sol|terra|luna)`")
+
+    def _render(self, source: str, agent: str) -> str:
+        variables = {
+            **load_vars(self.SHARED.parent / agent / "vars.json"),
+            "AGENT": agent,
+        }
+        return substitute_variables(
+            (self.SHARED / source).read_text(encoding="utf-8"), variables
+        )
+
+    @pytest.mark.parametrize("agent", ["claude-code", "cline", "copilot", "kiro"])
+    @pytest.mark.parametrize("source", SOURCES)
+    def test_non_pi_targets_name_no_gpt_models(self, agent: str, source: str) -> None:
+        output = self._render(source, agent)
+
+        assert not self.GPT_NAMES.search(output)
+
+    def test_claude_code_delegation_keeps_claude_tiers(self) -> None:
+        output = self._render("rules/delegation.md", "claude-code")
+
+        assert all(tier in output for tier in ("**Opus**", "**Sonnet**", "**Haiku**"))
+
+    def test_pi_delegation_names_a_model_per_job(self) -> None:
+        output = self._render("rules/delegation.md", "pi")
+
+        assert all(option in output for option in self.PI_OPTIONS)
+
+    @pytest.mark.parametrize("source", SOURCES)
+    def test_pi_names_no_gpt_models(self, source: str) -> None:
+        assert not self.GPT_NAMES.search(self._render(source, "pi"))
+
+
+class TestReloadRuleIsPiOnly:
+    SHARED = Path(__file__).parent.parent / "src/llm_prompts/prompts/shared"
+    SOURCE = "rules/000-rule-sources.md"
+    RELOAD = "`/reload`"
+
+    def _render(self, agent: str) -> str:
+        variables = {
+            **load_vars(self.SHARED.parent / agent / "vars.json"),
+            "AGENT": agent,
+        }
+        return substitute_variables(
+            (self.SHARED / self.SOURCE).read_text(encoding="utf-8"), variables
+        )
+
+    def test_pi_tells_user_to_reload(self) -> None:
+        assert self.RELOAD in self._render("pi")
+
+    @pytest.mark.parametrize("agent", ["claude-code", "cline", "copilot", "kiro"])
+    def test_other_targets_do_not_mention_reload(self, agent: str) -> None:
+        assert self.RELOAD not in self._render(agent)
+
+
+class TestPlanningRuleLinesAreClaudeCodeOnly:
+    SHARED = Path(__file__).parent.parent / "src/llm_prompts/prompts/shared"
+    CLAUDE_CODE_LINES = (
+        "MUST NOT skip the agent phase and plan in your head.",
+        "MUST NOT assume a broad mandate from a narrow request.",
+    )
+
+    def _render(self, source: str, agent: str) -> str:
+        variables = {
+            **load_vars(self.SHARED.parent / agent / "vars.json"),
+            "AGENT": agent,
+        }
+        return substitute_variables(
+            (self.SHARED / source).read_text(encoding="utf-8"), variables
+        )
+
+    @pytest.mark.parametrize("line", CLAUDE_CODE_LINES)
+    def test_claude_code_planning_keeps_line(self, line: str) -> None:
+        assert line in self._render("rules/planning.md", "claude-code")
+
+    @pytest.mark.parametrize("line", CLAUDE_CODE_LINES)
+    def test_pi_planning_drops_line(self, line: str) -> None:
+        assert line not in self._render("rules/planning.md", "pi")
+
+    def test_claude_code_agent_teams_does_not_name_tower_do_patch(self) -> None:
+        assert "tower_do_patch" not in self._render(
+            "rules/agent-teams.md", "claude-code"
+        )
+
+    def test_pi_agent_teams_names_tower_do_patch(self) -> None:
+        assert "tower_do_patch" in self._render("rules/agent-teams.md", "pi")

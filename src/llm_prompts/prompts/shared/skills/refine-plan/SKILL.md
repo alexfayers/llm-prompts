@@ -43,16 +43,16 @@ The JSON MUST contain:
 
 The script rejects scores >= 7 without evidence. This forces actual research before claiming high scores. MUST present the full output to the user.
 
-## 3. Validate evidence (if Agent tool available)
+## 3. Validate evidence (if {{TOOL_AGENT}} tool available)
 
-MUST launch a validation Agent with ONLY the evidence strings and scores:
+MUST launch a validation subagent via `{{TOOL_AGENT}}` with ONLY the evidence strings and scores:
 
 > For each claim, MUST read the cited file/pattern/resource and confirm or dispute. MUST be skeptical - 9+ means near-perfect and is rare.
 >
 > 1. [category]: [score] - "[evidence]"
 > ...
 
-If the validator disputes any score, MUST lower it and re-run the script. MAY skip where the Agent tool is unavailable.
+If the validator disputes any score, MUST lower it and re-run the script. MAY skip where the {{TOOL_AGENT}} tool is unavailable.
 
 ## 4. Gate and iterate
 

@@ -1,3 +1,7 @@
+---
+pi_roles: core
+---
+
 # Skill usage (HIGHEST importance)
 
 ## Session Start

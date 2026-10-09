@@ -1,4 +1,5 @@
 ---
+pi_roles: core
 description: Banned phrases and response patterns to avoid
 copilot_apply_to: '**'
 ---

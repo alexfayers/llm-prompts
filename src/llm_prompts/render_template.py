@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING
 
 from jinja2 import Environment, Template, Undefined
 
+from .herdsman import HERDSMAN_OVERRIDES, is_herdsman
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -218,6 +220,8 @@ def substitute_variables(content: str, variables: dict[str, str]) -> str:
     Raises:
         jinja2.TemplateSyntaxError: If ``content`` is not a valid template.
     """
+    if is_herdsman(variables):
+        variables = {**variables, **HERDSMAN_OVERRIDES}
     return _compile_template(content).render(variables)
 
 
@@ -365,6 +369,22 @@ def render_for_codex(body: str) -> str:
     return normalize_whitespace(body)
 
 
+def substitute_template(template_path: str, variables_path: str) -> str:
+    """Substitute a template file's variables, leaving its frontmatter intact.
+
+    Args:
+        template_path: Path to the template file.
+        variables_path: Path to JSON file with variables.
+
+    Returns:
+        The template content after variable substitution.
+    """
+    template_content = _read_text(Path(template_path))
+    variables = load_vars(Path(variables_path))
+    variables.setdefault("REPO_ROOT", str(Path(__file__).parent.parent.resolve()))
+    return substitute_variables(template_content, variables)
+
+
 def render_template(template_path: str, variables_path: str, target: str) -> str:
     """Render a template file with variable substitution.
 
@@ -379,15 +399,9 @@ def render_template(template_path: str, variables_path: str, target: str) -> str
     Raises:
         ValueError: If target is not a recognised format.
     """
-    template_content = _read_text(Path(template_path))
-    variables = load_vars(Path(variables_path))
-    variables.setdefault("REPO_ROOT", str(Path(__file__).parent.parent.resolve()))
-
-    # Substitute variables
-    substituted = substitute_variables(template_content, variables)
-
-    # Parse frontmatter
-    body, frontmatter = parse_frontmatter(substituted)
+    body, frontmatter = parse_frontmatter(
+        substitute_template(template_path, variables_path)
+    )
 
     # Render based on target
     if target == "cline":

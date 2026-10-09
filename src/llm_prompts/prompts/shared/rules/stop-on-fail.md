@@ -1,4 +1,5 @@
 ---
+pi_roles: core
 description: Stop and ask for help when a task or tool fails
 copilot_apply_to: '**'
 ---
