@@ -6,17 +6,26 @@ import argparse
 import json
 import re
 import sys
+from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from jinja2 import Environment, Undefined
+from jinja2 import Environment, Template, Undefined
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
+_READ_CACHE: dict[tuple[Path, int, int], str] = {}
+
+
+def clear_read_cache() -> None:
+    """Forget every file content cached by `_read_text`."""
+    _READ_CACHE.clear()
+
+
 def _read_text(path: Path) -> str:
-    """Read UTF-8 text from disk.
+    """Read UTF-8 text from disk, reusing content for an unchanged file.
 
     Args:
         path: Path to read.
@@ -24,7 +33,11 @@ def _read_text(path: Path) -> str:
     Returns:
         File content.
     """
-    return path.read_text(encoding="utf-8")
+    stat = path.stat()
+    key = (path, stat.st_mtime_ns, stat.st_size)
+    if key not in _READ_CACHE:
+        _READ_CACHE[key] = path.read_text(encoding="utf-8")
+    return _READ_CACHE[key]
 
 
 def parse_frontmatter(content: str) -> tuple[str, dict[str, str]]:
@@ -162,6 +175,19 @@ _JINJA_ENV = Environment(
 )
 
 
+@cache
+def _compile_template(content: str) -> Template:
+    """Compile ``content`` as a Jinja template.
+
+    Args:
+        content: Template source.
+
+    Returns:
+        The compiled template.
+    """
+    return _JINJA_ENV.from_string(content)
+
+
 def substitute_variables(content: str, variables: dict[str, str]) -> str:
     """Render ``content`` as a Jinja template with ``variables``.
 
@@ -176,7 +202,7 @@ def substitute_variables(content: str, variables: dict[str, str]) -> str:
     Raises:
         jinja2.TemplateSyntaxError: If ``content`` is not a valid template.
     """
-    return _JINJA_ENV.from_string(content).render(variables)
+    return _compile_template(content).render(variables)
 
 
 def find_unreplaced_variables(content: str) -> list[str]:

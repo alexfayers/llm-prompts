@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -41,6 +42,7 @@ from llm_prompts.install import (
 from llm_prompts.install import main as install_main
 from llm_prompts.manifest import AgentManifest
 from llm_prompts.render_template import (
+    _read_text,
     render_template,
     resolve_frontmatter,
     split_frontmatter,
@@ -651,6 +653,27 @@ class TestMainValidatesPlugins:
         content_a = (dest_a / "SKILL.md").read_text(encoding="utf-8")
         assert "disable-model-invocation: false" in content_a
         assert dest_b.is_symlink()
+
+
+class TestMainReadCache:
+    def test_main_rereads_files_cached_by_an_earlier_run(self, tmp_path: Path) -> None:
+        home = tmp_path / "home"
+        home.mkdir()
+        source = tmp_path / "source.txt"
+        source.write_text("one", encoding="utf-8")
+        mtime_ns = source.stat().st_mtime_ns
+        assert _read_text(source) == "one"
+        source.write_text("two", encoding="utf-8")
+        os.utime(source, ns=(mtime_ns, mtime_ns))
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.manifest.MANIFEST_PATH", tmp_path / "installed.json"),
+            patch("llm_prompts.plugins._load_plugins", return_value=[]),
+        ):
+            install_main(["claude-code"])
+
+        assert _read_text(source) == "two"
 
 
 class TestMainRunsSizeGuard:

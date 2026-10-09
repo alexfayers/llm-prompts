@@ -22,13 +22,12 @@ from .install import (
     _expand_agent_variants,
     _linked_content,
     _passes_requires_gate,
-    _read_text,
     _rendered_content,
     _resolve_priority_sources,
     _RuleSources,
     content_subdirs,
 )
-from .render_template import parse_frontmatter, substitute_variables
+from .render_template import _read_text, parse_frontmatter, substitute_variables
 from .size_guard import (
     CHECKED_TARGETS,
     Artifact,

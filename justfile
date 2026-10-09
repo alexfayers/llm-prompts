@@ -14,7 +14,7 @@ type-check: _uv
     uv run mypy src/ tests/
 
 test: _uv
-    uv run pytest -vv --nf --cov=. --cov-report=xml
+    uv run pytest -vv --nf -n auto --maxprocesses 4 --cov=. --cov-report=xml
 
 check: _uv
     uv run llm-prompts check

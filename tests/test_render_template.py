@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import patch
+
 import pytest
 from jinja2 import TemplateSyntaxError
 
-from llm_prompts.render_template import find_unreplaced_variables, substitute_variables
+from llm_prompts.render_template import (
+    _JINJA_ENV,
+    _read_text,
+    find_unreplaced_variables,
+    substitute_variables,
+)
 
 BRANCHED = (
     "before\n"
@@ -42,3 +50,32 @@ class TestSubstituteVariables:
     def test_syntax_error_raises(self) -> None:
         with pytest.raises(TemplateSyntaxError):
             substitute_variables("{% if AGENT %}unclosed\n", {"AGENT": "pi"})
+
+
+class TestReadText:
+    def test_unchanged_file_is_read_once_and_changed_file_is_reread(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "file.txt"
+        path.write_text("one", encoding="utf-8")
+        original = Path.read_text
+
+        with patch.object(
+            Path, "read_text", autospec=True, side_effect=original
+        ) as read_text:
+            assert (_read_text(path), _read_text(path)) == ("one", "one")
+            path.write_text("three", encoding="utf-8")
+            assert _read_text(path) == "three"
+
+        assert read_text.call_count == 2
+
+
+class TestSubstituteVariablesCache:
+    def test_same_content_is_compiled_once(self) -> None:
+        with patch.object(
+            _JINJA_ENV, "from_string", wraps=_JINJA_ENV.from_string
+        ) as from_string:
+            substitute_variables("cache probe {{A}}", {"A": "1"})
+            substitute_variables("cache probe {{A}}", {"A": "2"})
+
+        assert from_string.call_count == 1
