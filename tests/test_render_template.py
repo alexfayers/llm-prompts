@@ -51,6 +51,17 @@ class TestSubstituteVariables:
         assert output == "Use x and {{MISSING}}.\n"
         assert find_unreplaced_variables(output) == ["MISSING"]
 
+    @pytest.mark.parametrize(("path", "expected"), [("/bin/tool", "yes\n"), (None, "")])
+    def test_has_command_branches_on_path_lookup(
+        self, monkeypatch: pytest.MonkeyPatch, path: str | None, expected: str
+    ) -> None:
+        monkeypatch.setattr("llm_prompts.render_template.shutil.which", lambda _: path)
+
+        assert (
+            substitute_variables('{% if has_command("tool") %}\nyes\n{% endif %}\n', {})
+            == expected
+        )
+
     def test_syntax_error_raises(self) -> None:
         with pytest.raises(TemplateSyntaxError):
             substitute_variables("{% if AGENT %}unclosed\n", {"AGENT": "pi"})

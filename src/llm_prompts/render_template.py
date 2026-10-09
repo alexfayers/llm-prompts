@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import sys
 from functools import cache
 from pathlib import Path
@@ -204,6 +205,21 @@ def _compile_template(content: str) -> Template:
         The compiled template.
     """
     return _JINJA_ENV.from_string(content)
+
+
+def _has_command(name: str) -> bool:
+    """Report whether ``name`` resolves to an executable on PATH.
+
+    Args:
+        name: Command name to look up.
+
+    Returns:
+        True when the command is on PATH.
+    """
+    return shutil.which(name) is not None
+
+
+_JINJA_ENV.globals["has_command"] = _has_command
 
 
 def substitute_variables(content: str, variables: dict[str, str]) -> str:

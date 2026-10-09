@@ -11,6 +11,10 @@ that lets someone rebuild your mental model - not a diary.
 
 ## Where it goes
 
+{% if has_command("herdr") %}
+Inside Herdr (`test "${HERDR_ENV:-}" = 1`), MUST send the doc live per the herdr rule (handoff carries `HANDOFF-ACK <id>`, old tab closes after the ack) and omit Step 0, unless the user asks for a disk handoff or has opted out. Otherwise:
+
+{% endif %}
 Write to `HANDOFF.md` in the workspace root (or the directory the work lives in),
 unless the user names another location. One handoff doc at a time - overwrite a
 stale `HANDOFF.md` that is no longer relevant.
