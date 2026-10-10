@@ -1900,7 +1900,7 @@ class TestSkipFailingPrompt:
             patch("llm_prompts.cli._pull_local_sources", return_value=set()),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup"),
-            patch("llm_prompts.cli._get_installed_commit", return_value=None),
+            patch("llm_prompts.cli._get_installed_dist", return_value=None),
             patch("llm_prompts.cli._restart_memory_service"),
             patch("llm_prompts.cli._auto_migrate_memory_db"),
             patch("llm_prompts.plugins.pull_plugin_sources"),

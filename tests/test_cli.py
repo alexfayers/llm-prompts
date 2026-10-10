@@ -764,8 +764,13 @@ class TestUpdateRestartsMemoryOnlyWhenItChanged:
             patch("llm_prompts.setup.run_setup"),
             patch("llm_prompts.install.main", return_value=frozenset()),
             patch(
-                "llm_prompts.cli._get_installed_commit",
-                side_effect=["oldcommit", "hookscommit", "newcommit", "hookscommit"],
+                "llm_prompts.cli._get_installed_dist",
+                side_effect=[
+                    (Path("env"), "oldcommit"),
+                    (Path("env"), "hookscommit"),
+                    (Path("env"), "newcommit"),
+                    (Path("env"), "hookscommit"),
+                ],
             ),
             patch("llm_prompts.cli._auto_migrate_memory_db"),
             patch("llm_prompts.cli._restart_memory_service") as mock_restart,
@@ -798,7 +803,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup"),
             patch("llm_prompts.install.main", return_value=frozenset()),
-            patch("llm_prompts.cli._get_installed_commit", return_value=None),
+            patch("llm_prompts.cli._get_installed_dist", return_value=None),
             patch("llm_prompts.cli._restart_memory_service"),
             patch("llm_prompts.plugins.pull_plugin_sources"),
             patch("llm_prompts.install.try_install_hooks_claude_code") as hooks,
@@ -864,8 +869,13 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.setup.run_setup"),
             patch("llm_prompts.install.main", return_value=False),
             patch(
-                "llm_prompts.cli._get_installed_commit",
-                side_effect=["memcommit", "oldhooks", "memcommit", "newhooks"],
+                "llm_prompts.cli._get_installed_dist",
+                side_effect=[
+                    (Path("env"), "memcommit"),
+                    (Path("env"), "oldhooks"),
+                    (Path("env"), "memcommit"),
+                    (Path("env"), "newhooks"),
+                ],
             ),
             patch("llm_prompts.plugins.pull_plugin_sources"),
             patch("llm_prompts.install.try_install_hooks_claude_code") as hooks,
@@ -889,6 +899,47 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
         migrate.assert_not_called()
         restart.assert_not_called()
 
+    def test_a_tool_moving_into_the_shared_env_at_the_same_commit_reconfigures_agents(
+        self, tmp_path: Path
+    ) -> None:
+        uv_tools = tmp_path / ".local" / "share" / "uv" / "tools"
+
+        def install_tool(env: str) -> None:
+            dist_info = (
+                uv_tools / env / "lib" / "site-packages" / "my_tool-0.1.0.dist-info"
+            )
+            dist_info.mkdir(parents=True)
+            (dist_info / "direct_url.json").write_text(
+                json.dumps({"vcs_info": {"commit_id": "samecommit"}})
+            )
+
+        def move_into_shared_env(force_reinstall: set[str] | None) -> None:
+            install_tool("llm-prompts")
+            next((uv_tools / "my-tool").rglob("direct_url.json")).unlink()
+
+        install_tool("my-tool")
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={"claude-code": {"files": []}},
+            ),
+            patch("llm_prompts.cli.Path.home", return_value=tmp_path),
+            patch("llm_prompts.cli._RUN_SETUP_TRACKED_TOOLS", ("my-tool",)),
+            patch("llm_prompts.cli._pull_local_sources", return_value=set()),
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+            patch("llm_prompts.setup.run_setup", side_effect=move_into_shared_env),
+            patch("llm_prompts.install.main", return_value=False),
+            patch("llm_prompts.plugins.pull_plugin_sources"),
+            patch("llm_prompts.install.try_install_hooks_claude_code") as hooks,
+            patch("llm_prompts.install.try_allow_update_claude_code"),
+        ):
+            mock_config.exists.return_value = True
+            main()
+
+        hooks.assert_called_once_with()
+
     def test_no_installed_commit_change_via_run_setup_skips_reconfigure(self) -> None:
         with (
             patch("sys.argv", ["llm-prompts", "update"]),
@@ -906,8 +957,13 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.setup.run_setup"),
             patch("llm_prompts.install.main", return_value=False),
             patch(
-                "llm_prompts.cli._get_installed_commit",
-                side_effect=["memcommit", "hookscommit", "memcommit", "hookscommit"],
+                "llm_prompts.cli._get_installed_dist",
+                side_effect=[
+                    (Path("env"), "memcommit"),
+                    (Path("env"), "hookscommit"),
+                    (Path("env"), "memcommit"),
+                    (Path("env"), "hookscommit"),
+                ],
             ),
             patch("llm_prompts.plugins.pull_plugin_sources"),
             patch("llm_prompts.install.try_install_hooks_claude_code") as hooks,
@@ -982,7 +1038,7 @@ class TestUpdateSizeGuardSkipExitCode:
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup"),
             patch("llm_prompts.install.main", return_value=size_guard_failed),
-            patch("llm_prompts.cli._get_installed_commit", return_value=None),
+            patch("llm_prompts.cli._get_installed_dist", return_value=None),
             patch("llm_prompts.cli._restart_memory_service"),
             patch("llm_prompts.plugins.pull_plugin_sources"),
             patch("llm_prompts.install.try_install_hooks_claude_code") as hooks,
