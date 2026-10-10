@@ -26,6 +26,7 @@ SECTION_ORDER = [
     "Nodes",
     "Constraints",
     "Checks",
+    "Collect",
     "Later",
 ]
 FRONT_MATTER_RE = re.compile(r"\A---\n((?:.*\n)*?)---\n")
@@ -232,6 +233,25 @@ def scope_overlaps(a: str, b: str) -> bool:
     return longer[: len(shorter)] == shorter
 
 
+def scope_file(entry: str) -> str:
+    """A scope entry up to the first path segment that names a file."""
+    parts = entry.rstrip("/").split("/")
+    return "/".join(
+        next(
+            (parts[: i + 1] for i, p in enumerate(parts) if "." in p.lstrip(".")), parts
+        )
+    )
+
+
+def shares_file(a: Node, b: Node) -> bool:
+    """Whether two nodes have scope in the same file."""
+    return any(
+        scope_overlaps(scope_file(x), scope_file(y))
+        for x in a["scope"]
+        for y in b["scope"]
+    )
+
+
 def validate_or_raise(nodes: Nodes, all_nodes: Nodes) -> None:
     """Validate the graph."""
     problems = [
@@ -256,23 +276,59 @@ def validate_or_raise(nodes: Nodes, all_nodes: Nodes) -> None:
 
 
 def compute_waves(nodes: Nodes, all_nodes: Nodes) -> dict[str, int]:
-    """Compute each node's wave number."""
-    waves: dict[str, int] = {}
+    """Compute each node's wave number, spreading same-file nodes over spare waves."""
+    earliest: dict[str, int] = {}
 
-    def wave(node_id: str) -> int:
-        if node_id not in waves:
-            waves[node_id] = 1 + max(
+    def earliest_wave(node_id: str) -> int:
+        if node_id not in earliest:
+            earliest[node_id] = 1 + max(
                 (
-                    wave(dep)
+                    earliest_wave(dep)
                     for dep in all_nodes[node_id]["depends"]
                     if dep in all_nodes
                 ),
                 default=0,
             )
-        return waves[node_id]
+        return earliest[node_id]
 
     for node_id in nodes:
-        wave(node_id)
+        earliest_wave(node_id)
+    last = max((earliest[node_id] for node_id in nodes), default=0)
+    latest: dict[str, int] = {}
+
+    def latest_wave(node_id: str) -> int:
+        if node_id not in latest:
+            latest[node_id] = min(
+                (
+                    latest_wave(other) - 1
+                    for other, node in nodes.items()
+                    if node_id in node["depends"]
+                ),
+                default=last,
+            )
+        return latest[node_id]
+
+    waves: dict[str, int] = {}
+    for node_id in sorted(nodes, key=lambda n: (earliest[n], n)):
+        start = 1 + max(
+            (
+                waves.get(dep, earliest[dep])
+                for dep in nodes[node_id]["depends"]
+                if dep in all_nodes
+            ),
+            default=0,
+        )
+        plan_dir = node_id.rpartition("/")[0]
+        clashing = {
+            waves[other]
+            for other in waves
+            if other.rpartition("/")[0] == plan_dir
+            and shares_file(nodes[node_id], nodes[other])
+        }
+        waves[node_id] = next(
+            (w for w in range(start, latest_wave(node_id) + 1) if w not in clashing),
+            start,
+        )
     return waves
 
 
@@ -514,6 +570,47 @@ def join_edges(nodes: Nodes, prefix: str = "") -> list[str]:
     return lines
 
 
+def ancestors(all_nodes: Nodes, node_id: str) -> set[str]:
+    """Every node a node transitively depends on."""
+    found: set[str] = set()
+    pending = [node_id]
+    while pending:
+        for dep in all_nodes[pending.pop()]["depends"]:
+            if dep in all_nodes and dep not in found:
+                found.add(dep)
+                pending.append(dep)
+    return found
+
+
+def unlinked_mentions(
+    base: Path, nodes: Nodes, all_nodes: Nodes, prefix: str = ""
+) -> list[str]:
+    """Warn of backticked outputs of other nodes that a node has no depends path to."""
+    lines: list[str] = []
+    for node_id in nodes:
+        _, body = parse_node_file(find_node_path(base, node_id).read_text())
+        upstream = ancestors(all_nodes, node_id)
+        names = dict.fromkeys(
+            span.partition("(")[0].strip() for span in re.findall(r"`([^`\n]+)`", body)
+        )
+        for name in names:
+            if name in nodes[node_id]["outputs"] or any(
+                linked.rpartition("/")[2] == interface_id(name)
+                for linked in (node_id, *upstream)
+            ):
+                continue
+            lines.extend(
+                f"warning: {prefix}{node_id} mentions `{name}`, output of {prefix if producer in nodes else ''}{producer}, with no depends path"
+                for producer, other in all_nodes.items()
+                if name in other["outputs"]
+                and producer != interface_id(name)
+                and producer != node_id
+                and producer not in upstream
+                and node_id not in ancestors(all_nodes, producer)
+            )
+    return lines
+
+
 def cmd_join(base: Path, prefix: str = "") -> None:
     """Join outputs, inputs and deletes into interface nodes and ordering edges."""
     require_plan(base)
@@ -535,6 +632,8 @@ def cmd_join(base: Path, prefix: str = "") -> None:
             write_atomic(path, set_links(path.read_text(), links))
     regenerate_plan(base, nodes)
     print("\n".join(lines) or "nothing to join")
+    for warning in unlinked_mentions(base, nodes, with_siblings(base, nodes), prefix):
+        print(warning, file=sys.stderr)
 
 
 def outside_scope(paths: list[str], scope: list[str]) -> list[str]:
@@ -719,6 +818,30 @@ def cmd_check(
     if failure:
         fail_and_exit(base, node_id, f"`{failure[0]}` exited {failure[1]}")
     cmd_pass(base, node_id)
+
+
+def plan_collect(base: Path) -> str:
+    """The plan's Collect command template."""
+    templates = parse_checks(
+        parse_sections(plan_path(base).read_text()).get("Collect", "")
+    )
+    if not templates:
+        raise FocusError("plan has no Collect command")
+    if "{test}" not in templates[0]:
+        raise FocusError("Collect command needs {test}")
+    return templates[0]
+
+
+def cmd_collect(base: Path, node_id: str) -> None:
+    """Dry-run a node's test command selection, exiting 1 if it selects no tests."""
+    require_known_node(base, node_id)
+    command = node_test_command(find_node_path(base, node_id).read_text())
+    if command is None:
+        raise FocusError(f"'{node_id}' has no test command")
+    failure = next(failures([plan_collect(base).replace("{test}", command)]), None)
+    if failure:
+        print(f"`{node_id}` selects no tests: `{failure[0]}` exited {failure[1]}")
+        sys.exit(1)
 
 
 def cmd_check_wave(base: Path) -> None:
@@ -944,6 +1067,7 @@ def build_parser() -> argparse.ArgumentParser:
     check_parser.add_argument("--base", default=None)
     check_parser.add_argument("--node-only", action="store_true")
     add_cmd("check-wave", "Run the plan's Checks once; exit 1 at the first failure")
+    add_cmd("collect", "Dry-run a node's test command selection").add_argument("id")
     add_cmd(
         "show", "Print all a builder needs: plan, node, dependencies' Out"
     ).add_argument("id")
@@ -987,6 +1111,7 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], None]] = {
     "set-test": lambda a: cmd_set_test(a.dir, a.id, a.test_command),
     "check": lambda a: cmd_check(a.dir, a.id, a.base, a.node_only),
     "check-wave": lambda a: cmd_check_wave(a.dir),
+    "collect": lambda a: cmd_collect(a.dir, a.id),
     "show": lambda a: cmd_show(a.dir, a.id),
     "briefs": lambda a: cmd_briefs(a.dir, a.out),
     "ready": lambda a: cmd_ready(a.dir, a.id),

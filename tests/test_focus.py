@@ -576,6 +576,263 @@ class TestCheckWave:
         )
 
 
+class TestCollect:
+    """Tests for the collect command."""
+
+    def _plan(self, mod: ModuleType, tmp_path: Path, collect: str | None) -> Path:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        if collect is not None:
+            plan = mod.plan_path(base)
+            sections = mod.parse_sections(plan.read_text())
+            sections["Collect"] = collect
+            plan.write_text(mod.render_plan(base.name, sections))
+        mod.cmd_add(base, "widget", {})
+        return base
+
+    def test_collect_section_appears_in_new_plan_and_survives_regenerate(
+        self, mod: ModuleType, tmp_path: Path
+    ) -> None:
+        base = self._plan(mod, tmp_path, "- pytest --collect-only {test}")
+        text = mod.plan_path(base).read_text()
+        assert (
+            text.index("## Checks") < text.index("## Collect") < text.index("## Later")
+        )
+        assert "- pytest --collect-only {test}" in text
+
+    def test_passes_when_template_exits_zero_and_keeps_stage(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        base = self._plan(mod, tmp_path, "- {test}")
+        mod.cmd_set_test(base, "widget", "true")
+        capsys.readouterr()
+        mod.cmd_collect(base, "widget")
+        assert capsys.readouterr().out == "$ true\n"
+        assert mod.node_path(base, "widget", "todo").exists()
+
+    def test_failing_template_names_node_and_exit_code_and_exits(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        base = self._plan(mod, tmp_path, "- {test}")
+        mod.cmd_set_test(base, "widget", "exit 5")
+        capsys.readouterr()
+        with pytest.raises(SystemExit) as exc_info:
+            mod.cmd_collect(base, "widget")
+        assert exc_info.value.code == 1
+        assert capsys.readouterr().out == (
+            "$ exit 5\n`widget` selects no tests: `exit 5` exited 5\n"
+        )
+        assert mod.node_path(base, "widget", "todo").exists()
+
+    @pytest.mark.parametrize(
+        ("collect", "test_command", "message"),
+        [
+            ("", "true", "plan has no Collect command"),
+            ("- pytest --collect-only", "true", r"Collect command needs \{test\}"),
+            ("- {test}", None, "'widget' has no test command"),
+        ],
+    )
+    def test_errors(
+        self,
+        mod: ModuleType,
+        tmp_path: Path,
+        collect: str,
+        test_command: str | None,
+        message: str,
+    ) -> None:
+        base = self._plan(mod, tmp_path, collect)
+        if test_command:
+            mod.cmd_set_test(base, "widget", test_command)
+        with pytest.raises(mod.FocusError, match=message):
+            mod.cmd_collect(base, "widget")
+
+    def test_cli_resolves_child_plan_node_from_parent_dir(
+        self,
+        mod: ModuleType,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        parent = tmp_path / "plans"
+        parent.mkdir()
+        mod.plan_path(parent).write_text("# plans\n")
+        child = self._plan(mod, parent, "- {test}")
+        mod.cmd_set_test(child, "widget", "true")
+        capsys.readouterr()
+        monkeypatch.setattr(
+            sys, "argv", ["focus", "collect", str(parent), "plan/widget"]
+        )
+        mod.main()
+        assert capsys.readouterr().out == "$ true\n"
+
+
+class TestScopeFile:
+    """Tests for reducing a scope entry to its file."""
+
+    @pytest.mark.parametrize(
+        ("entry", "expected"),
+        [
+            ("src/x.py/Sym/attr", "src/x.py"),
+            ("docs/", "docs"),
+            (".github/workflows/ci.yml/job", ".github/workflows/ci.yml"),
+        ],
+    )
+    def test_scope_file(self, mod: ModuleType, entry: str, expected: str) -> None:
+        assert mod.scope_file(entry) == expected
+
+
+class TestSameFileWaves:
+    """Tests for spreading nodes that share a file across waves."""
+
+    def _waves(self, mod: ModuleType, base: Path) -> dict[str, int]:
+        nodes = mod.load_nodes(base)
+        waves: dict[str, int] = mod.compute_waves(nodes, mod.with_siblings(base, nodes))
+        return waves
+
+    def _plan(self, mod: ModuleType, tmp_path: Path) -> Path:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        return base
+
+    def test_same_file_node_with_slack_moves_to_a_later_wave(
+        self, mod: ModuleType, tmp_path: Path
+    ) -> None:
+        base = self._plan(mod, tmp_path)
+        mod.cmd_add(base, "a", {"scope": ["f.py/A"]})
+        mod.cmd_add(base, "b", {"scope": ["f.py/B"]})
+        mod.cmd_add(base, "c", {"depends": ["a"]})
+        assert self._waves(mod, base) == {"a": 1, "b": 2, "c": 2}
+
+    def test_same_file_nodes_without_slack_stay_together(
+        self, mod: ModuleType, tmp_path: Path
+    ) -> None:
+        base = self._plan(mod, tmp_path)
+        mod.cmd_add(base, "a", {"scope": ["f.py/A"]})
+        mod.cmd_add(base, "b", {"scope": ["f.py/B"]})
+        mod.cmd_add(base, "c", {"depends": ["a"]})
+        mod.cmd_add(base, "d", {"depends": ["b"]})
+        assert self._waves(mod, base) == {"a": 1, "b": 1, "c": 2, "d": 2}
+
+    def test_same_path_in_different_plan_dirs_is_not_separated(
+        self,
+        mod: ModuleType,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        parent = tmp_path / "plans"
+        parent.mkdir()
+        mod.plan_path(parent).write_text("# plans\n")
+        for name in ("core", "app"):
+            mod.cmd_init(parent / name)
+            mod.cmd_add(parent / name, "widget", {"scope": ["f.py/A"]})
+        mod.cmd_add(parent / "app", "step", {})
+        mod.cmd_add(parent / "app", "gadget", {"depends": ["step"]})
+        capsys.readouterr()
+        monkeypatch.setattr(sys, "argv", ["focus", "waves", str(parent)])
+        mod.main()
+        assert capsys.readouterr().out == (
+            "### Wave 1\n- [ ] app/step (ready)\n- [ ] app/widget (ready)\n"
+            "- [ ] core/widget (ready)\n\n"
+            "### Wave 2\n- [ ] app/gadget\n"
+        )
+
+    def test_marking_a_node_done_keeps_wave_numbers(
+        self, mod: ModuleType, tmp_path: Path
+    ) -> None:
+        base = self._plan(mod, tmp_path)
+        mod.cmd_add(base, "a", {"scope": ["f.py/A"]})
+        mod.cmd_add(base, "b", {"scope": ["f.py/B"]})
+        mod.cmd_add(base, "c", {"depends": ["a"]})
+        before = self._waves(mod, base)
+        for step in (mod.cmd_start, mod.cmd_built, mod.cmd_pass):
+            step(base, "a")
+        assert self._waves(mod, base) == before
+
+
+class TestJoinWarning:
+    """Tests for the join command's advisory warning on mentions without a depends path."""
+
+    WARNING = "warning: user mentions `Thing`, output of maker, with no depends path\n"
+
+    def _plan(self, mod: ModuleType, tmp_path: Path) -> Path:
+        base = tmp_path / "plan"
+        mod.cmd_init(base)
+        mod.cmd_add(base, "maker", {"outputs": ["Thing"]})
+        mod.cmd_add(base, "user", {})
+        self._mention(mod, base, "user", "Thing")
+        return base
+
+    def _mention(self, mod: ModuleType, base: Path, node_id: str, span: str) -> None:
+        path = mod.find_node_path(base, node_id)
+        path.write_text(path.read_text() + f"\nUses `{span}`.\n")
+
+    def test_warns_on_output_mention_with_no_depends_path(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        base = self._plan(mod, tmp_path)
+        capsys.readouterr()
+        mod.cmd_join(base)
+        captured = capsys.readouterr()
+        assert captured.out == "nothing to join\n"
+        assert captured.err == self.WARNING
+
+    def test_no_warning_when_a_depends_path_exists_or_output_is_own(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        base = self._plan(mod, tmp_path)
+        mod.cmd_add(base, "mid", {"depends": ["maker"]})
+        mod.edit_links(base, "user", {"depends": ["mid"]}, add=True)
+        self._mention(mod, base, "maker", "Thing")
+        capsys.readouterr()
+        mod.cmd_join(base)
+        assert capsys.readouterr().err == ""
+        mod.edit_links(base, "user", {"depends": ["mid"]}, add=False)
+        mod.edit_links(base, "maker", {"depends": ["user"]}, add=True)
+        mod.cmd_join(base)
+        assert capsys.readouterr().err == ""
+
+    def test_no_warning_when_an_interface_node_mediates(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        base = self._plan(mod, tmp_path)
+        mod.edit_links(base, "user", {"inputs": ["Thing"]}, add=True)
+        capsys.readouterr()
+        mod.cmd_join(base)
+        assert capsys.readouterr().err == ""
+
+    def test_names_sibling_producer_by_its_dir_and_ignores_call_signature(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        parent = tmp_path / "plans"
+        parent.mkdir()
+        for name in ("core", "app"):
+            mod.cmd_init(parent / name)
+        mod.cmd_add(parent / "core", "maker", {"outputs": ["Thing"]})
+        mod.cmd_add(parent / "app", "user", {})
+        self._mention(mod, parent / "app", "user", "Thing(x)")
+        capsys.readouterr()
+        mod.cmd_join(parent / "app")
+        assert capsys.readouterr().err == (
+            "warning: user mentions `Thing`, output of core/maker, with no depends path\n"
+        )
+
+    def test_no_warning_when_a_sibling_interface_node_mediates(
+        self, mod: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        parent = tmp_path / "plans"
+        parent.mkdir()
+        for name in ("core", "app"):
+            mod.cmd_init(parent / name)
+        mod.cmd_add(parent / "core", "maker", {"outputs": ["Thing"]})
+        mod.cmd_add(parent / "core", "interface-thing", {"outputs": ["Thing"]})
+        mod.cmd_add(parent / "app", "user", {"depends": ["core/interface-thing"]})
+        self._mention(mod, parent / "app", "user", "Thing")
+        capsys.readouterr()
+        mod.cmd_join(parent / "app")
+        assert capsys.readouterr().err == ""
+
+
 class TestCheckBase:
     """Tests for the check command's --base scope gate."""
 
