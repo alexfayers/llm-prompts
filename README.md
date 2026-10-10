@@ -6,7 +6,7 @@
 |------------------------------------------------------------------------------ | -------: | -------: | ------: | --------: |
 | src/llm\_prompts/\_\_init\_\_.py                                              |        0 |        0 |    100% |           |
 | src/llm\_prompts/batching.py                                                  |      138 |        1 |     99% |       129 |
-| src/llm\_prompts/cli.py                                                       |      454 |       71 |     84% |82-83, 109-122, 182-183, 272-273, 401, 404, 453, 528-530, 566-568, 578-581, 600-609, 793-813, 832-834, 837-843, 846-849, 852-865, 874, 876-881, 884-885, 896-900, 972-973, 978 |
+| src/llm\_prompts/cli.py                                                       |      457 |       71 |     84% |82-83, 109-122, 192-193, 282-283, 411, 414, 463, 538-540, 576-578, 588-591, 610-619, 803-823, 842-844, 847-853, 856-859, 862-875, 884, 886-891, 894-895, 906-910, 982-983, 988 |
 | src/llm\_prompts/collection\_size.py                                          |       67 |        3 |     96% |112, 198, 242 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/contribute.py                                                |      875 |       12 |     99% |149, 176, 318, 1141, 1166, 1366, 1383-1384, 1474-1476, 1817 |
@@ -35,7 +35,7 @@
 | tests/test\_batching.py                                                       |      314 |        0 |    100% |           |
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
 | tests/test\_check\_repos\_script.py                                           |       67 |        0 |    100% |           |
-| tests/test\_cli.py                                                            |      744 |        0 |    100% |           |
+| tests/test\_cli.py                                                            |      758 |        0 |    100% |           |
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
 | tests/test\_conftest.py                                                       |       60 |        0 |    100% |           |
 | tests/test\_contribute.py                                                     |     1872 |        0 |    100% |           |
@@ -63,7 +63,7 @@
 | tests/test\_squash\_subject.py                                                |        7 |        0 |    100% |           |
 | tests/test\_todos\_script.py                                                  |       87 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      118 |        0 |    100% |           |
-| **TOTAL**                                                                     | **14072** |  **516** | **96%** |           |
+| **TOTAL**                                                                     | **14089** |  **516** | **96%** |           |
 
 
 ## Setup coverage badge
