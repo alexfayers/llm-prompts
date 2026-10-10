@@ -163,6 +163,16 @@ def _run_size_check() -> None:
 
 def _get_installed_commit(package_name: str) -> str | None:
     """Get the installed commit hash from direct_url.json in a uv tool env."""
+    installed = _get_installed_dist(package_name)
+    return installed[1] if installed else None
+
+
+def _get_installed_dist(package_name: str) -> tuple[Path, str] | None:
+    """Find a tool's git-installed direct_url.json in a uv tool env.
+
+    Returns:
+        The direct_url.json path and its commit hash, or None if not found.
+    """
     import json
 
     uv_tools = Path.home() / ".local" / "share" / "uv" / "tools"
@@ -178,7 +188,7 @@ def _get_installed_commit(package_name: str) -> str | None:
                 vcs_info = data.get("vcs_info", {})
                 commit_id: str | None = vcs_info.get("commit_id")
                 if commit_id:
-                    return commit_id
+                    return dist_info, commit_id
             except (OSError, json.JSONDecodeError):
                 continue
     return None
@@ -915,14 +925,14 @@ def main() -> int | None:
 
         pull_plugin_sources()
 
-        commits_before_setup = {
-            name: _get_installed_commit(name) for name in _RUN_SETUP_TRACKED_TOOLS
+        dists_before_setup = {
+            name: _get_installed_dist(name) for name in _RUN_SETUP_TRACKED_TOOLS
         }
         stale = detect_stale_local_tools()
         if CONFIG_PATH.exists():
             run_setup(force_reinstall=stale or None)
         for name in _RUN_SETUP_TRACKED_TOOLS:
-            if _get_installed_commit(name) != commits_before_setup[name]:
+            if _get_installed_dist(name) != dists_before_setup[name]:
                 changed_sources.add(name)
 
         size_guard_failed = install_main(list(manifest), size_baseline=size_baseline)
