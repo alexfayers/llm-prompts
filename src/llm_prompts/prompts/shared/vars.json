@@ -1,0 +1,7 @@
+{
+  "TOOL_ASK_QUESTION": "AskUserQuestion",
+  "TOOL_WORKFLOW": "Workflow",
+  "TOOL_AGENT": "Agent",
+  "TOOL_STEER": "steer_subagent",
+  "TOOL_AGENT_RESULT": "get_subagent_result"
+}

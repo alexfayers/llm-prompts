@@ -22,6 +22,7 @@ from .render_template import (
     _read_text,
     clear_read_cache,
     find_unreplaced_variables,
+    load_vars,
     normalize_whitespace,
     parse_frontmatter,
     render_template,
@@ -927,8 +928,7 @@ def _builtin_skill_vars(vars_path: Path) -> dict[str, str]:
     """
     if not vars_path.exists():
         return {}
-    data: dict[str, str] = json.loads(_read_text(vars_path))
-    return data
+    return load_vars(vars_path)
 
 
 def _materialize_builtin_skill(

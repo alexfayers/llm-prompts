@@ -40,6 +40,22 @@ def _read_text(path: Path) -> str:
     return _READ_CACHE[key]
 
 
+def load_vars(vars_path: Path) -> dict[str, str]:
+    """Load a target's variables JSON merged over the shared variables.
+
+    Args:
+        vars_path: Target variables JSON path.
+
+    Returns:
+        Shared variables (if present) overridden by the target's own.
+    """
+    shared_path = vars_path.parent.parent / "shared" / "vars.json"
+    shared: dict[str, str] = (
+        json.loads(_read_text(shared_path)) if shared_path.exists() else {}
+    )
+    return {**shared, **json.loads(_read_text(vars_path))}
+
+
 def parse_frontmatter(content: str) -> tuple[str, dict[str, str]]:
     """Extract YAML frontmatter and body from content.
 
@@ -364,7 +380,7 @@ def render_template(template_path: str, variables_path: str, target: str) -> str
         ValueError: If target is not a recognised format.
     """
     template_content = _read_text(Path(template_path))
-    variables = json.loads(_read_text(Path(variables_path)))
+    variables = load_vars(Path(variables_path))
     variables.setdefault("REPO_ROOT", str(Path(__file__).parent.parent.resolve()))
 
     # Substitute variables
