@@ -12,8 +12,10 @@ runs:
   steps:
     - name: Sync project status
       if: |
-        (github.event_name == 'pull_request_target' && contains(fromJSON('["opened", "reopened", "converted_to_draft", "ready_for_review", "closed"]'), github.event.action)) ||
-        (github.event_name == 'pull_request_review' && github.event.action == 'submitted' && inputs.projects-token != '')
+        inputs.projects-token != '' &&
+        ((github.event_name == 'pull_request_target' && contains(fromJSON('["opened", "reopened", "converted_to_draft", "ready_for_review", "closed"]'), github.event.action)) ||
+        (github.event_name == 'pull_request_review' && github.event.action == 'submitted') ||
+        (github.event_name == 'workflow_run' && github.event.action == 'completed'))
       uses: actions/github-script@v9
       env:
         ACTION_PATH: ${{ github.action_path }}
@@ -75,7 +77,7 @@ runs:
           await label({ github, context, core })
 
     - name: Label PR by area
-      if: github.event_name != 'push'
+      if: ${{ !contains(fromJSON('["push", "workflow_run"]'), github.event_name) }}
       uses: actions/labeler@v7
       with:
         repo-token: ${{ inputs.github-token }}

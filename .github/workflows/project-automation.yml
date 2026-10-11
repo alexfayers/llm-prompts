@@ -7,9 +7,12 @@ on:
     types: [opened, reopened, ready_for_review, converted_to_draft, edited, closed, synchronize]
   pull_request_review:
     types: [submitted]
+  workflow_run:
+    workflows: [Dependencies]
+    types: [completed]
 
 concurrency:
-  group: project-automation-${{ github.event.pull_request.number || github.ref }}
+  group: project-automation-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_sha || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
