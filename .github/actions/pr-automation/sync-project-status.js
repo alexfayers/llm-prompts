@@ -1,60 +1,53 @@
 // Re-derive these IDs with: gh project field-list 4 --owner alexfayers --format json
 const PROJECT_ID = 'PVT_kwHOAuJVkc4Bg4S7';
 const STATUS_FIELD_ID = 'PVTSSF_lAHOAuJVkc4Bg4S7zhf2L34';
+const DEPENDENCY_CHECK_NAME = 'check-dependencies';
 const STATUS_OPTION = {
   IN_PROGRESS: '47fc9ee4',
   REVIEW: '432b1b61',
   APPROVED: 'c6f50cd1',
   DONE: '98236657',
+  BLOCKED: 'a441f58e',
 };
 
-function resolveStatus(eventName, payload) {
-  if (eventName === 'pull_request_target') {
-    const pr = payload.pull_request;
-    switch (payload.action) {
-      case 'opened':
-      case 'reopened':
-        return pr.draft ? STATUS_OPTION.IN_PROGRESS : STATUS_OPTION.REVIEW;
-      case 'converted_to_draft':
-        return STATUS_OPTION.IN_PROGRESS;
-      case 'ready_for_review':
-        return STATUS_OPTION.REVIEW;
-      case 'closed':
-        return STATUS_OPTION.DONE;
-      default:
-        return null;
-    }
-  }
-
-  if (eventName === 'pull_request_review' && payload.action === 'submitted') {
-    switch (payload.review.state) {
-      case 'approved':
-        return STATUS_OPTION.APPROVED;
-      case 'changes_requested':
-        return STATUS_OPTION.REVIEW;
-      default:
-        return null;
-    }
-  }
-
-  return null;
+function latestCheck(checkRuns) {
+  const completed = checkRuns.filter((run) => run.status === 'completed');
+  return completed.reduce((latest, run) => (!latest || run.started_at > latest.started_at ? run : latest), null);
 }
 
-async function sync({ github, context, core }) {
-  const optionId = resolveStatus(context.eventName, context.payload);
-  if (!optionId) {
-    core.info(`No status mapping for ${context.eventName}/${context.payload.action}; skipping.`);
-    return;
+function resolveStatus(pr) {
+  if (pr.state !== 'OPEN') {
+    return STATUS_OPTION.DONE;
   }
+  if (pr.reviewDecision === 'CHANGES_REQUESTED' || pr.dependencyCheck === 'failure') {
+    return STATUS_OPTION.BLOCKED;
+  }
+  if (pr.isDraft) {
+    return STATUS_OPTION.IN_PROGRESS;
+  }
+  return pr.reviewDecision === 'APPROVED' ? STATUS_OPTION.APPROVED : STATUS_OPTION.REVIEW;
+}
 
-  const pr = context.payload.pull_request;
+async function fetchPr(github, { owner, repo, number }) {
+  const { repository } = await github.graphql(
+    `query($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) { id state isDraft reviewDecision headRefOid }
+      }
+    }`,
+    { owner, repo, number }
+  );
+  return repository.pullRequest;
+}
+
+async function setStatus(github, contentId, optionId) {
   const addResult = await github.graphql(
     `mutation($projectId: ID!, $contentId: ID!) {
       addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
         item { id }
       }
     }`,
-    { projectId: PROJECT_ID, contentId: pr.node_id }
+    { projectId: PROJECT_ID, contentId }
   );
   const itemId = addResult.addProjectV2ItemById.item.id;
 
@@ -75,4 +68,35 @@ async function sync({ github, context, core }) {
   );
 }
 
-module.exports = { resolveStatus, sync };
+async function findDependencyCheck(github, core, { owner, repo }, sha) {
+  const { data } = await github.rest.checks.listForRef({ owner, repo, ref: sha, check_name: DEPENDENCY_CHECK_NAME });
+  const check = latestCheck(data.check_runs);
+  if (check?.conclusion === 'failure') {
+    const { data: annotations } = await github.rest.checks.listAnnotations({ owner, repo, check_run_id: check.id });
+    const blockers = annotations.filter((annotation) => annotation.annotation_level === 'failure');
+    core.info(`Blocked by: ${blockers.map((annotation) => annotation.message).join(', ')} (${check.html_url})`);
+  }
+  return check?.conclusion ?? null;
+}
+
+async function findPullRequestNumber(github, { payload, repo }) {
+  if (payload.pull_request) {
+    return payload.pull_request.number;
+  }
+  const openPrs = await github.paginate(github.rest.pulls.list, { ...repo, state: 'open', per_page: 100 });
+  return openPrs.find((pr) => pr.head.sha === payload.workflow_run.head_sha)?.number;
+}
+
+async function sync({ github, context, core }) {
+  const number = await findPullRequestNumber(github, context);
+  if (!number) {
+    core.info(`No open PR for ${context.payload.workflow_run.head_sha}; skipping.`);
+    return;
+  }
+
+  const pr = await fetchPr(github, { ...context.repo, number });
+  const dependencyCheck = await findDependencyCheck(github, core, context.repo, pr.headRefOid);
+  await setStatus(github, pr.id, resolveStatus({ ...pr, dependencyCheck }));
+}
+
+module.exports = { latestCheck, resolveStatus, sync };
