@@ -19,11 +19,11 @@ function resolveStatus(pr) {
   if (pr.state !== 'OPEN') {
     return STATUS_OPTION.DONE;
   }
-  if (pr.reviewDecision === 'CHANGES_REQUESTED' || pr.dependencyCheck === 'failure') {
-    return STATUS_OPTION.BLOCKED;
-  }
   if (pr.isDraft) {
     return STATUS_OPTION.IN_PROGRESS;
+  }
+  if (pr.reviewDecision === 'CHANGES_REQUESTED' || pr.dependencyCheck === 'failure') {
+    return STATUS_OPTION.BLOCKED;
   }
   return pr.reviewDecision === 'APPROVED' ? STATUS_OPTION.APPROVED : STATUS_OPTION.REVIEW;
 }

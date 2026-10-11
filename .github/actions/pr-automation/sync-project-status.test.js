@@ -17,11 +17,16 @@ test('PR with changes requested maps to Blocked', () => {
   assert.equal(resolveStatus({ ...openPr, reviewDecision: 'CHANGES_REQUESTED' }), 'a441f58e');
 });
 
-test('PR with a failed dependency check maps to Blocked even when draft or approved', () => {
+test('open ready PR with a failed dependency check maps to Blocked even when approved', () => {
   const dependencyCheck = 'failure';
   assert.equal(resolveStatus({ ...openPr, dependencyCheck }), 'a441f58e');
-  assert.equal(resolveStatus({ ...openPr, dependencyCheck, isDraft: true }), 'a441f58e');
   assert.equal(resolveStatus({ ...openPr, dependencyCheck, reviewDecision: 'APPROVED' }), 'a441f58e');
+});
+
+test('draft PR maps to In Progress even when blocked', () => {
+  const draftPr = { ...openPr, isDraft: true };
+  assert.equal(resolveStatus({ ...draftPr, dependencyCheck: 'failure' }), '47fc9ee4');
+  assert.equal(resolveStatus({ ...draftPr, reviewDecision: 'CHANGES_REQUESTED' }), '47fc9ee4');
 });
 
 test('PR whose dependency check passed, was cancelled or is missing falls back to its draft or review state', () => {
