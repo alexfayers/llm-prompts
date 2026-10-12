@@ -16,10 +16,9 @@ session and need to write the doc.
    sits at the session's workspace root, NOT inside the repo the work is about.
    Before concluding none exists, MUST check every workspace root:
    `find <roots> -maxdepth 3 -iname 'HANDOFF*.md'`.
-2. Delete it as its own standalone tool call - do not chain the delete with
-   another command (e.g. `rm HANDOFF.md && git status`). A chained command
-   fails as a unit if the other half trips a permission/hook gate (such as a
-   skill-usage requirement on `git`), which silently leaves the doc undeleted.
+2. Delete it as its own tool call, never chained (e.g. `rm HANDOFF.md && git
+   status`) - a chained command fails as a unit if the other half trips a
+   gate, silently leaving the doc undeleted.
 3. Check for a workspace-level operating-rules file (e.g. a `RULES.md` or
    equivalent at the workspace root) and read it in full before taking any
    other action - it can only narrow process/delegation (who does which work,
@@ -28,6 +27,13 @@ session and need to write the doc.
 4. Go straight into the "next task, stated concretely" section as your first
    action.
 
+A handoff that arrived as a prompt has no file: MUST skip the search in step 1
+and the delete in step 2, and MUST send the confirmation the prompt asks for
+before step 4. The sender closes its tab only after that reply.
+{% if has_command("herdr") %}
+Where the first line is `HANDOFF-ACK <id>` and `<id>` is not your own pane or name, MUST first reply `HANDOFF-ACK <id>` as the only tool call, on the channel the handoff came by: `herdr agent prompt <id> "HANDOFF-ACK <id>"` for a prompt{% if AGENT == "claude-code" %}, `SendMessage` to the sender for a message{% endif %}. Without a shell tool, MUST instead make that one call a subagent spawn ({% if AGENT == "pi" %}`delegate_agent` with a definition that has `bash`{% else %}`Agent`{% endif %}) whose task is only to run that exact command. Other tools stay blocked until it succeeds.
+{% endif %}
+
 Only fall back to the `handoff` skill's write flow if the user's wording is
 actually about ending *this* session or handing off to someone else - if in
 doubt, treat "do the handoff" for an already-existing doc as an instruction to
@@ -35,14 +41,11 @@ act on it, not to verify or rewrite it.
 
 ## Do not re-verify claims the handoff or memory already states as fact
 
-You have zero prior context by design - the handoff doc and the memory
-entities it points to ARE the full record, not a summary to be checked against
-reality. Re-running `git status`/`git log`/an audit/a full re-fetch of
-already-quoted entity content "just to confirm" is redundant work that adds
-nothing (the writing session already did it) and, if repeated every time,
-turns into a loop where sessions spend their budget re-deriving the same
-starting state instead of advancing the task - the exact failure this skill
-exists to prevent.
+You have no prior context by design - the handoff doc and the memory
+entities it points to ARE the full record. Re-running `git status`/`git log`/an
+audit/a full re-fetch of already-quoted entity content "just to confirm" is
+redundant (the writing session already did it) and loops sessions into
+re-deriving the starting state instead of advancing the task.
 
 Trust stated facts (branch, commit, test status, prior session's findings) as
 given. The only reason to re-check something is if the handoff itself flags it

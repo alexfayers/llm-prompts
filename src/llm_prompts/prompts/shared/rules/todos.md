@@ -1,3 +1,7 @@
+---
+roles: lead
+---
+
 # TODOs
 
 Default to memory-only TODOs (a `task/` entity, per the memory rules) rather than a TODO.md file. Only add to a TODO.md file if one already exists in the place you're working - do not create a new TODO.md file to record a TODO.

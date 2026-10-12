@@ -1,3 +1,7 @@
+---
+roles: lead
+---
+
 # MCP Usage
 
 You can and SHOULD use multiple tools in a single call, in parallel.

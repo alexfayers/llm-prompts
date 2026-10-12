@@ -1,0 +1,9 @@
+{
+  "mode": "block",
+  "allow": [
+    "pi-web-access",
+    "*mcp*",
+    "*bedrock*",
+    "*provider*"
+  ]
+}

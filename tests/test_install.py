@@ -21,7 +21,6 @@ from llm_prompts.install import (
     _cleanup_stale,
     _collect_content_srcs,
     _env_var_set,
-    _excluded_targets,
     _get_cline_extra_dirs,
     _get_dirs,
     _install_agents,
@@ -35,6 +34,7 @@ from llm_prompts.install import (
     _materialize_override_skill,
     _passes_requires_gate,
     _rendered_content,
+    _targets_agent,
     get_source_for_managed_file,
     partial_source,
     prompts_dir,
@@ -215,21 +215,102 @@ class TestCollectContentSrcsEnvGate:
         names = [name for name, _, _ in collected]
         assert names == ["agent-teams.md", "coding.md"]
 
+    @pytest.mark.parametrize(
+        ("target", "expected"),
+        [("pi", ["agent-teams.md", "coding.md"]), ("claude-code", ["coding.md"])],
+    )
+    def test_target_override_replaces_gate_for_that_target_only(
+        self, tmp_path: Path, target: str, expected: list[str]
+    ) -> None:
+        root = tmp_path / "prompts"
+        shared = root / "shared" / "rules"
+        _make_rule(shared, "coding.md", "# coding\n")
+        _make_rule(
+            shared,
+            "agent-teams.md",
+            '---\nrequires_env: MY_FLAG\npi_requires_env: ""\n---\n\n# Agent teams\n',
+        )
+        agent = _Agent(
+            name=target,
+            root_dir=root,
+            dirs={target: {"rules": tmp_path / "dest"}},
+        )
 
-class TestExcludedTargets:
-    def test_empty_when_key_absent(self, tmp_path: Path) -> None:
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("llm_prompts.install.Path.home", return_value=tmp_path / "home"),
+        ):
+            collected = _collect_content_srcs(
+                agent=agent,
+                subdir="rules",
+                shared_src=shared,
+                overlay_srcs=[],
+                overlay_agent_srcs=[],
+            )
+
+        assert sorted(name for name, _, _ in collected) == expected
+
+    def test_exclude_targets_skips_named_agent_only(self, tmp_path: Path) -> None:
+        root = tmp_path / "prompts"
+        shared = root / "shared" / "rules"
+        _make_rule(shared, "coding.md", "# coding\n")
+        _make_rule(shared, "claude-only.md", "---\nexclude_targets: pi\n---\n\n# C\n")
+
+        def collected_names(agent_name: str) -> list[str]:
+            agent = _Agent(
+                name=agent_name,
+                root_dir=root,
+                dirs={agent_name: {"rules": tmp_path / "dest"}},
+            )
+            collected = _collect_content_srcs(agent, "rules", shared, [], [])
+            return [name for name, _, _ in collected]
+
+        assert collected_names("pi") == ["coding.md"]
+        assert collected_names("claude-code") == ["claude-only.md", "coding.md"]
+
+    def test_targets_installs_to_listed_agents_only(self, tmp_path: Path) -> None:
+        root = tmp_path / "prompts"
+        shared = root / "shared" / "rules"
+        _make_rule(shared, "coding.md", "# coding\n")
+        _make_rule(shared, "cc-only.md", "---\ntargets: claude-code\n---\n\n# C\n")
+
+        def collected_names(agent_name: str) -> list[str]:
+            agent = _Agent(
+                name=agent_name,
+                root_dir=root,
+                dirs={agent_name: {"rules": tmp_path / "dest"}},
+            )
+            collected = _collect_content_srcs(agent, "rules", shared, [], [])
+            return [name for name, _, _ in collected]
+
+        assert collected_names("pi") == ["coding.md"]
+        assert collected_names("claude-code") == ["cc-only.md", "coding.md"]
+
+
+class TestTargetsAgent:
+    def test_every_agent_when_keys_absent(self, tmp_path: Path) -> None:
         rule = _make_rule(tmp_path, "rule.md", "---\nname: x\n---\n\n# Rule\n")
-        assert _excluded_targets(rule) == set()
+        assert _targets_agent(rule, "codex")
 
-    def test_single_value(self, tmp_path: Path) -> None:
-        rule = _make_rule(tmp_path, "rule.md", "---\nexclude_targets: codex\n---\n")
-        assert _excluded_targets(rule) == {"codex"}
-
-    def test_comma_separated_strips_whitespace(self, tmp_path: Path) -> None:
+    def test_exclude_targets_comma_separated_strips_whitespace(
+        self, tmp_path: Path
+    ) -> None:
         rule = _make_rule(
             tmp_path, "rule.md", "---\nexclude_targets: codex, cline\n---\n"
         )
-        assert _excluded_targets(rule) == {"codex", "cline"}
+        assert not _targets_agent(rule, "codex")
+        assert not _targets_agent(rule, "cline")
+        assert _targets_agent(rule, "pi")
+
+    def test_targets_lists_the_only_agents(self, tmp_path: Path) -> None:
+        rule = _make_rule(
+            tmp_path,
+            "rule.md",
+            "---\ntargets: claude-code, pi\nexclude_targets: pi\n---\n",
+        )
+        assert _targets_agent(rule, "claude-code")
+        assert not _targets_agent(rule, "pi")
+        assert not _targets_agent(rule, "codex")
 
 
 class TestInstallSkillsGating:
@@ -289,6 +370,7 @@ class TestInstallSkillsGating:
         ask_codex = cc_agents / "skills" / "ask-codex"
         assert ask_codex.is_dir() and not ask_codex.is_symlink()
         assert "ask-codex" in cc_managed
+        assert "requires_command" not in (ask_codex / "SKILL.md").read_text()
 
     def test_overlay_skill_overrides_base_on_name_collision(
         self, tmp_path: Path
@@ -1783,6 +1865,26 @@ class TestGetSourceForManagedFile:
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
         ):
             dest = home / ".claude" / "rules" / "foo.md"
+            source = get_source_for_managed_file(str(dest))
+
+        assert source == str(rule_src / "foo.md")
+
+    def test_resolves_pi_rule_file_to_its_shared_source(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        root = tmp_path / "root"
+        rule_src = root / "shared" / "rules"
+        rule_src.mkdir(parents=True)
+        (rule_src / "foo.md").write_text("rule body", encoding="utf-8")
+
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.cli._get_root_dir", return_value=root),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+        ):
+            dest = home / ".pi" / "agent" / "rules" / "foo.md"
             source = get_source_for_managed_file(str(dest))
 
         assert source == str(rule_src / "foo.md")

@@ -21,6 +21,33 @@ WORKFLOW_LINES = "workflow_lines"
 SKILL_DESCRIPTION_CHARS = "skill_description_chars"
 AGENT_DESCRIPTION_CHARS = "agent_description_chars"
 COLLECTION_BYTES = "collection_bytes"
+PI_ROLE_PROMPT_BYTES = "pi_role_prompt_bytes"
+# Report-only parts of `collection_bytes`: what a session loads up front versus
+# what it loads on demand. No ceilings. `start_bytes` is the up-front parts
+# summed. `collection_bytes` is the worst case for one session: start plus
+# every skill body and workflow. Agent bodies and role-only rules are listed
+# but never counted, as each loads only into its own spawned agent's session.
+START_BYTES = "start_bytes"
+ALWAYS_RULE_BYTES = "always_rule_bytes"
+ALWAYS_SKILL_FRONTMATTER_BYTES = "always_skill_frontmatter_bytes"
+ALWAYS_AGENT_FRONTMATTER_BYTES = "always_agent_frontmatter_bytes"
+ON_DEMAND_SKILL_BODY_BYTES = "on_demand_skill_body_bytes"
+ON_DEMAND_AGENT_BODY_BYTES = "on_demand_agent_body_bytes"
+ON_DEMAND_WORKFLOW_BYTES = "on_demand_workflow_bytes"
+ON_DEMAND_ROLE_RULE_BYTES = "on_demand_role_rule_bytes"
+ALWAYS_LOADED_METRICS = (
+    ALWAYS_RULE_BYTES,
+    ALWAYS_SKILL_FRONTMATTER_BYTES,
+    ALWAYS_AGENT_FRONTMATTER_BYTES,
+)
+WORST_CASE_ON_DEMAND_METRICS = (
+    ON_DEMAND_SKILL_BODY_BYTES,
+    ON_DEMAND_WORKFLOW_BYTES,
+)
+# Rough bytes per token for the size report's token estimates. A new pi
+# session's system prompt measured 28.7k tokens for 80,671 bytes (2.81), and an
+# earlier measurement gave 2.64, so 2.8 is used. An estimate, not a tokenizer.
+BYTES_PER_TOKEN = 2.8
 FRONTMATTER_VALID = "frontmatter_valid"
 NO_UNSUBSTITUTED_PLACEHOLDERS = "no_unsubstituted_placeholders"
 TEMPLATE_RENDERS = "template_renders"
@@ -33,7 +60,8 @@ UNITS: dict[str, str] = {
     WORKFLOW_LINES: "rendered lines",
     SKILL_DESCRIPTION_CHARS: "chars",
     AGENT_DESCRIPTION_CHARS: "chars, post-expansion",
-    COLLECTION_BYTES: "owned bytes per target",
+    COLLECTION_BYTES: "owned bytes per target, worst-case session",
+    PI_ROLE_PROMPT_BYTES: "llm-prompts-owned expanded prompt bytes",
 }
 
 FINALS: dict[str, int] = {
@@ -45,7 +73,11 @@ FINALS: dict[str, int] = {
     SKILL_DESCRIPTION_CHARS: 200,
     AGENT_DESCRIPTION_CHARS: 200,
     COLLECTION_BYTES: 50_000,
+    PI_ROLE_PROMPT_BYTES: 50_000,
 }
+
+# Metrics whose ceiling is the active collection step rather than a per-file final.
+COLLECTION_CEILING_METRICS = frozenset({COLLECTION_BYTES, PI_ROLE_PROMPT_BYTES})
 
 # `_apply_variant_frontmatter` appends " [<model>, <effort> effort]" to every
 # generated agent's description; the longest real model/effort combination

@@ -1,0 +1,5 @@
+{
+  "enabled": true,
+  "graceSeconds": 900,
+  "intervalSeconds": 60
+}

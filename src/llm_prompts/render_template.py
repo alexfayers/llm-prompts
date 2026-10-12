@@ -5,12 +5,15 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import sys
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from jinja2 import Environment, Template, Undefined
+
+from .herdsman import HERDSMAN_OVERRIDES, is_herdsman
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -38,6 +41,22 @@ def _read_text(path: Path) -> str:
     if key not in _READ_CACHE:
         _READ_CACHE[key] = path.read_text(encoding="utf-8")
     return _READ_CACHE[key]
+
+
+def load_vars(vars_path: Path) -> dict[str, str]:
+    """Load a target's variables JSON merged over the shared variables.
+
+    Args:
+        vars_path: Target variables JSON path.
+
+    Returns:
+        Shared variables (if present) overridden by the target's own.
+    """
+    shared_path = vars_path.parent.parent / "shared" / "vars.json"
+    shared: dict[str, str] = (
+        json.loads(_read_text(shared_path)) if shared_path.exists() else {}
+    )
+    return {**shared, **json.loads(_read_text(vars_path))}
 
 
 def parse_frontmatter(content: str) -> tuple[str, dict[str, str]]:
@@ -188,6 +207,21 @@ def _compile_template(content: str) -> Template:
     return _JINJA_ENV.from_string(content)
 
 
+def _has_command(name: str) -> bool:
+    """Report whether ``name`` resolves to an executable on PATH.
+
+    Args:
+        name: Command name to look up.
+
+    Returns:
+        True when the command is on PATH.
+    """
+    return shutil.which(name) is not None
+
+
+_JINJA_ENV.globals["has_command"] = _has_command
+
+
 def substitute_variables(content: str, variables: dict[str, str]) -> str:
     """Render ``content`` as a Jinja template with ``variables``.
 
@@ -202,6 +236,8 @@ def substitute_variables(content: str, variables: dict[str, str]) -> str:
     Raises:
         jinja2.TemplateSyntaxError: If ``content`` is not a valid template.
     """
+    if is_herdsman(variables):
+        variables = {**variables, **HERDSMAN_OVERRIDES}
     return _compile_template(content).render(variables)
 
 
@@ -349,6 +385,22 @@ def render_for_codex(body: str) -> str:
     return normalize_whitespace(body)
 
 
+def substitute_template(template_path: str, variables_path: str) -> str:
+    """Substitute a template file's variables, leaving its frontmatter intact.
+
+    Args:
+        template_path: Path to the template file.
+        variables_path: Path to JSON file with variables.
+
+    Returns:
+        The template content after variable substitution.
+    """
+    template_content = _read_text(Path(template_path))
+    variables = load_vars(Path(variables_path))
+    variables.setdefault("REPO_ROOT", str(Path(__file__).parent.parent.resolve()))
+    return substitute_variables(template_content, variables)
+
+
 def render_template(template_path: str, variables_path: str, target: str) -> str:
     """Render a template file with variable substitution.
 
@@ -363,15 +415,9 @@ def render_template(template_path: str, variables_path: str, target: str) -> str
     Raises:
         ValueError: If target is not a recognised format.
     """
-    template_content = _read_text(Path(template_path))
-    variables = json.loads(_read_text(Path(variables_path)))
-    variables.setdefault("REPO_ROOT", str(Path(__file__).parent.parent.resolve()))
-
-    # Substitute variables
-    substituted = substitute_variables(template_content, variables)
-
-    # Parse frontmatter
-    body, frontmatter = parse_frontmatter(substituted)
+    body, frontmatter = parse_frontmatter(
+        substitute_template(template_path, variables_path)
+    )
 
     # Render based on target
     if target == "cline":

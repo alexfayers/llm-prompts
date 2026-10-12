@@ -1,4 +1,5 @@
 ---
+roles: reasoner, worker, reviewer
 description: Python-specific coding guidelines
 paths: '**/*.py'
 ---

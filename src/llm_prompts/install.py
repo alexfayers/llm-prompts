@@ -4,10 +4,11 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
-from collections.abc import Callable, Container, Sequence
+from collections.abc import Callable, Container, Mapping, Sequence
 from dataclasses import dataclass
-from functools import cache
+from functools import cache, partial
 from importlib.metadata import distribution, packages_distributions
 from importlib.resources import files
 from pathlib import Path
@@ -18,15 +19,19 @@ from urllib.request import url2pathname
 from jinja2 import TemplateError
 
 from .colors import Color, paint
+from .herdsman import HERDSMAN_DISABLED_DEFINITIONS, herdr_available
 from .render_template import (
     _read_text,
     clear_read_cache,
     find_unreplaced_variables,
+    load_vars,
     normalize_whitespace,
     parse_frontmatter,
     render_template,
+    resolve_frontmatter,
     split_frontmatter,
     strip_gating_keys,
+    substitute_template,
     substitute_variables,
 )
 
@@ -35,15 +40,13 @@ if TYPE_CHECKING:
 
 LogLevel = Literal["debug", "info", "warn", "error", "success"]
 
-# Frontmatter keys consumed by the installer's own gating logic
-# (_passes_requires_gate, _excluded_targets). These are stripped from
-# agent-specific files before install so they never leak into the installed copy.
-_GATING_FRONTMATTER_KEYS = {
+_TARGET_GATING_KEYS = {
     "requires_env",
     "requires_command",
+    "requires_absent_command",
+    "targets",
     "exclude_targets",
-    "generate_variants",
-    "rules",
+    "extra_variants",
 }
 
 _COLORS: dict[LogLevel, Color] = {
@@ -133,6 +136,8 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
         "pi": {
             "rules": pi_agent,
             "skills": pi_agent / "skills",
+            "agents": pi_agent / "agents",
+            "workflows": pi_agent / "prompts",
         },
     }
 
@@ -218,15 +223,43 @@ def _env_var_set(name: str) -> bool:
     return bool(settings.get("env", {}).get(name))
 
 
-def _passes_requires_gate(src: Path) -> bool:
+def _override_key(target: str, key: str) -> str:
+    """Return the frontmatter key that overrides ``key`` for one target.
+
+    Args:
+        target: Target agent name.
+        key: Frontmatter key being overridden.
+
+    Returns:
+        ``<target>_<key>``, with hyphens in the target name as underscores.
+    """
+    return f"{target.replace('-', '_')}_{key}"
+
+
+def _gating_value(frontmatter: dict[str, str], key: str, target: str) -> str:
+    """Return a gating key's value, honouring a target-specific override.
+
+    Args:
+        frontmatter: Parsed frontmatter key-value pairs.
+        key: Gating key.
+        target: Target agent name whose override wins when set.
+
+    Returns:
+        The override's value if present, else the base key's, else empty.
+    """
+    return frontmatter.get(_override_key(target, key), frontmatter.get(key, ""))
+
+
+def _passes_requires_gate(src: Path, target: str = "") -> bool:
     """Check a source file's ``requires_*`` frontmatter gates, if present.
 
     Args:
         src: Source file path.
+        target: Target agent name whose gate overrides apply.
 
     Returns:
-        True if the file has no ``requires_env``/``requires_command`` keys, or
-        every present gate is satisfied (env var set / command on PATH); False
+        True if the file has no ``requires_*`` keys, or every present gate
+        is satisfied (env var set / command on or absent from PATH); False
         if the file should be skipped.
     """
     try:
@@ -234,31 +267,70 @@ def _passes_requires_gate(src: Path) -> bool:
     except OSError:
         return True
     _, frontmatter = parse_frontmatter(content)
-    required_env = frontmatter.get("requires_env")
+    return _requirements_met(frontmatter, target)
+
+
+def _requirements_met(declared: dict[str, str], target: str = "") -> bool:
+    """Check the ``requires_*`` gates among a set of declared keys.
+
+    Args:
+        declared: Frontmatter or pi package entry keys.
+        target: Target agent name whose gate overrides apply.
+
+    Returns:
+        True if there are no ``requires_*`` keys, or every present gate is
+        satisfied (env var set / command on or absent from PATH).
+    """
+    required_env = _gating_value(declared, "requires_env", target)
     if required_env and not _env_var_set(required_env):
         return False
-    required_command = frontmatter.get("requires_command")
-    return not (required_command and shutil.which(required_command) is None)
+    required_command = _gating_value(declared, "requires_command", target)
+    if required_command and shutil.which(required_command) is None:
+        return False
+    absent_command = _gating_value(declared, "requires_absent_command", target)
+    return not (absent_command and shutil.which(absent_command) is not None)
 
 
-def _excluded_targets(src: Path) -> set[str]:
-    """Return the set of agent names a source file opts out of installing to.
-
-    Parses the flat, comma-separated ``exclude_targets`` frontmatter key.
+def _target_names(src: Path, key: str, target: str = "") -> set[str]:
+    """Return the agent names listed under a comma-separated frontmatter key.
 
     Args:
         src: Source file path.
+        key: Frontmatter key holding the comma-separated agent names.
+        target: Target agent name whose key override applies.
 
     Returns:
-        Set of agent names to skip; empty if the key is absent.
+        Set of agent names; empty if the key is absent.
     """
     try:
         content = _read_text(src)
     except OSError:
         return set()
     _, frontmatter = parse_frontmatter(content)
-    raw = frontmatter.get("exclude_targets", "")
-    return {name.strip() for name in raw.split(",") if name.strip()}
+    return {
+        name.strip()
+        for name in _gating_value(frontmatter, key, target).split(",")
+        if name.strip()
+    }
+
+
+def _targets_agent(src: Path, name: str) -> bool:
+    """Return whether a source file installs to the named agent.
+
+    ``targets`` lists the only agents to install to; ``exclude_targets`` lists
+    agents to skip. Neither key means every agent.
+
+    Args:
+        src: Source file path.
+        name: Agent name.
+
+    Returns:
+        True if the file installs to ``name``.
+    """
+    included = _target_names(src, "targets", name)
+    return (not included or name in included) and name not in _target_names(
+        src, "exclude_targets", name
+    )
 
 
 @cache
@@ -580,6 +652,54 @@ AGENT_CLASSES: dict[str, type[_Agent]] = {
     "pi": _PiAgent,
 }
 
+# Frontmatter keys consumed by the installer's own gating logic
+# (_passes_requires_gate, _targets_agent), with their per-target overrides.
+# These are stripped from agent-specific files before install so they never
+# leak into the installed copy.
+_GATING_FRONTMATTER_KEYS = {
+    "generate_variants",
+    "roles",
+    "rules",
+    *_TARGET_GATING_KEYS,
+    *(_override_key(t, k) for t in AGENT_CLASSES for k in _TARGET_GATING_KEYS),
+}
+
+_AGENT_ROLES = ("coordinator", "reasoner", "worker", "surveyor", "reviewer")
+_RULE_ROLES = frozenset({"lead", *_AGENT_ROLES})
+
+
+def _parse_roles(content: str, label: str) -> frozenset[str]:
+    """Read the Pi roles a rule is selected for from its ``roles`` frontmatter.
+
+    Args:
+        content: Rule content after template substitution, frontmatter intact.
+        label: Rule name for error messages.
+
+    Returns:
+        The declared roles, or ``{"core"}`` when the rule declares none.
+
+    Raises:
+        ValueError: ``roles`` is empty, malformed, or names an unknown role
+            (``core`` is the default and cannot be declared).
+    """
+    split = split_frontmatter(content)
+    declared = [
+        line.partition(":")[2]
+        for line in (split[0] if split else [])
+        if line.partition(":")[0].strip() == "roles"
+    ]
+    if not declared:
+        return frozenset({"core"})
+    tokens = [t.strip() for t in declared[0].strip().strip("'\"").split(",")]
+    roles = frozenset(tokens)
+    if "" in roles or not roles <= _RULE_ROLES:
+        raise ValueError(
+            f"{label}: invalid roles '{declared[0].strip()}' - "
+            f"omit roles for a core rule, or use any of {sorted(_RULE_ROLES)}"
+        )
+    return roles
+
+
 _CODEX_DOC_LIMIT = 32768
 _CODEX_DOC_LIMIT_RAISED = 65536
 
@@ -671,8 +791,11 @@ def _collect_content_srcs(
     def add(src: Path, name: str, *, agent_specific: bool) -> None:
         if name in seen:
             return
-        if not _passes_requires_gate(src):
+        if not _passes_requires_gate(src, agent.name):
             log("debug", f"Skipping {name}: requires gate not satisfied.")
+            return
+        if not _targets_agent(src, agent.name):
+            log("debug", f"Skipping {name}: excluded for {agent.name}.")
             return
         collected.append((name, src, agent_specific))
         seen.add(name)
@@ -927,8 +1050,7 @@ def _builtin_skill_vars(vars_path: Path) -> dict[str, str]:
     """
     if not vars_path.exists():
         return {}
-    data: dict[str, str] = json.loads(_read_text(vars_path))
-    return data
+    return load_vars(vars_path)
 
 
 def _materialize_builtin_skill(
@@ -969,7 +1091,10 @@ def _materialize_builtin_skill(
         return
     raw = _read_text(skill_md)
     try:
-        substituted = substitute_variables(raw, _builtin_skill_vars(vars_path))
+        substituted = strip_gating_keys(
+            substitute_variables(raw, _builtin_skill_vars(vars_path)),
+            _GATING_FRONTMATTER_KEYS,
+        )
     except TemplateError as e:
         log("error", f"Failed to render skill '{source.name}': {e}")
         return
@@ -993,7 +1118,7 @@ def _install_skills(
         skills_parent: Parent directory whose ``skills`` subdir receives the
             materialized skill directories.
         agent_name: Target agent name, used to apply the requires-gate and
-            ``exclude_targets`` checks.
+            ``targets``/``exclude_targets`` checks.
         vars_path: Variables JSON path for the target agent.
         skip_set: Resolved source paths to leave untouched.
         previous_manifest: The manifest from the previous installation.
@@ -1007,13 +1132,13 @@ def _install_skills(
         skill_md = skill_path / "SKILL.md"
         if not skill_md.is_file():
             return False
-        if not _passes_requires_gate(skill_md):
+        if not _passes_requires_gate(skill_md, agent_name):
             log(
                 "debug",
                 f"Skipping skill '{skill_path.name}': requires gate not satisfied.",
             )
             return False
-        if agent_name in _excluded_targets(skill_md):
+        if not _targets_agent(skill_md, agent_name):
             log(
                 "debug",
                 f"Skipping skill '{skill_path.name}': excluded for {agent_name}.",
@@ -1061,7 +1186,7 @@ def _install_plugin_skills(
             discovery, in config order.
         skills_parent: Parent directory whose ``skills`` subdir receives symlinks.
         agent_name: Target agent name, for the requires-gate and
-            ``exclude_targets`` checks.
+            ``targets``/``exclude_targets`` checks.
         already_managed: Skill names already installed this run (built-in or
             overlay); a plugin skill colliding with one is skipped.
 
@@ -1082,12 +1207,12 @@ def _install_plugin_skills(
         skill_md = src_dir / "SKILL.md"
         if not skill_md.is_file():
             continue
-        if not _passes_requires_gate(skill_md):
+        if not _passes_requires_gate(skill_md, agent_name):
             log(
                 "debug", f"Skipping plugin skill '{name}': requires gate not satisfied."
             )
             continue
-        if agent_name in _excluded_targets(skill_md):
+        if not _targets_agent(skill_md, agent_name):
             log("debug", f"Skipping plugin skill '{name}': excluded for {agent_name}.")
             continue
         if overrides:
@@ -1167,8 +1292,16 @@ def _resolve_variant_model(alias: str, catalogue: dict[str, str]) -> str:
     return resolved
 
 
+_THINKING_OFF_VARIANT_MODELS = {"pi": frozenset({"haiku"})}
+
+
 def _apply_variant_frontmatter(
-    content: str, stem: str, model: str, effort: str, model_value: str
+    content: str,
+    stem: str,
+    model: str,
+    effort: str,
+    model_value: str,
+    effort_value: str = "",
 ) -> str:
     """Rewrite a template's frontmatter for one generated model/effort variant.
 
@@ -1185,6 +1318,7 @@ def _apply_variant_frontmatter(
         model: Tier alias for this variant, used in its name and description.
         effort: Effort level for this variant.
         model_value: Value to emit as the ``model`` key.
+        effort_value: Value to emit as the ``effort`` key; defaults to ``effort``.
 
     Returns:
         Content with the variant's frontmatter applied.
@@ -1227,7 +1361,7 @@ def _apply_variant_frontmatter(
     close_description_block()
 
     lines.append(f"model: {model_value}")
-    lines.append(f"effort: {effort}")
+    lines.append(f"effort: {effort_value or effort}")
     return "---\n" + "\n".join(lines) + "\n---\n" + body
 
 
@@ -1244,28 +1378,51 @@ def _frontmatter_tokens(frontmatter: dict[str, str], key: str) -> list[str]:
     return [t.strip() for t in frontmatter.get(key, "").split(",") if t.strip()]
 
 
-def _expand_agent_variants(src_path: Path) -> list[tuple[str, str]]:
+def _expand_agent_variants(
+    src_path: Path,
+    resolve_model: Callable[[str], str] | None = None,
+    variables: dict[str, str] | None = None,
+    target: str = "",
+) -> list[tuple[str, str]]:
     """Expand a ``generate_variants`` template source into generated variant files.
 
     Parses the flat, comma-separated ``generate_variants`` frontmatter key
     (each token a ``<model>-<effort>`` pair) and produces one generated file
     per token. Malformed tokens are logged and skipped rather than raising.
+    The target's ``<target>_extra_variants`` tokens are added too, but only
+    those whose model alias ``resolve_model`` maps to something else.
 
     Args:
         src_path: Template source file path.
+        resolve_model: Maps a variant's tier alias to its ``model`` value;
+            defaults to the Claude Code model catalogue.
+        variables: Variables the source is rendered with before its
+            frontmatter is parsed.
+        target: Target agent name whose ``<target>_extra_variants`` apply.
 
     Returns:
         List of ``(generated_filename, generated_content)`` pairs.
+
+    Raises:
+        TemplateError: If the source is not a valid template.
     """
-    content = _read_text(src_path)
+    content = substitute_variables(_read_text(src_path), variables or {})
     _, frontmatter = parse_frontmatter(content)
     tokens = _frontmatter_tokens(frontmatter, "generate_variants")
+    extra_tokens = (
+        _frontmatter_tokens(frontmatter, _override_key(target, "extra_variants"))
+        if target
+        else []
+    )
     stripped = strip_gating_keys(content, _GATING_FRONTMATTER_KEYS)
     stem = src_path.stem
-    catalogue = _claude_model_catalogue()
+    if resolve_model is None:
+        resolve_model = partial(
+            _resolve_variant_model, catalogue=_claude_model_catalogue()
+        )
 
     generated: list[tuple[str, str]] = []
-    for token in tokens:
+    for token in [*tokens, *extra_tokens]:
         parts = token.split("-")
         if len(parts) != 2:
             log(
@@ -1273,6 +1430,9 @@ def _expand_agent_variants(src_path: Path) -> list[tuple[str, str]]:
             )
             continue
         model, effort = parts
+        resolved_model = resolve_model(model)
+        if token in extra_tokens and resolved_model == model:
+            continue
         filename = f"{stem}-{model}-{effort}.md"
         generated.append(
             (
@@ -1282,7 +1442,10 @@ def _expand_agent_variants(src_path: Path) -> list[tuple[str, str]]:
                     stem,
                     model,
                     effort,
-                    _resolve_variant_model(model, catalogue),
+                    resolved_model,
+                    "off"
+                    if model in _THINKING_OFF_VARIANT_MODELS.get(target, ())
+                    else "",
                 ),
             )
         )
@@ -1291,10 +1454,11 @@ def _expand_agent_variants(src_path: Path) -> list[tuple[str, str]]:
 
 @dataclass(frozen=True)
 class _RuleSources:
-    """Claude Code rule sources an agent can pull in through ``rules``."""
+    """Rule sources an agent can pull in through ``rules``."""
 
     sources: dict[str, tuple[Path, bool]]
     vars_path: Path
+    agent_name: str
 
     @classmethod
     def collect(
@@ -1306,7 +1470,7 @@ class _RuleSources:
         """Collect rule sources by installed filename stem, in install priority order.
 
         Args:
-            agent: The claude-code agent configuration.
+            agent: The agent configuration the rules are rendered for.
             overlay_dirs: Overlay prompts directories in priority order.
             skip_set: Resolved source paths left untouched by the install; excluded.
 
@@ -1327,6 +1491,7 @@ class _RuleSources:
                 if src.resolve() not in skip_set
             },
             agent.vars_path(),
+            agent.name,
         )
 
     def body(self, name: str) -> str | None:
@@ -1343,7 +1508,7 @@ class _RuleSources:
             content = (
                 _linked_content(src)
                 if agent_specific
-                else _rendered_content(src, self.vars_path, "claude-code")
+                else _rendered_content(src, self.vars_path, self.agent_name)
             )
         except Exception as e:
             log("error", f"Failed to render included rule '{name}': {e}")
@@ -1354,6 +1519,20 @@ class _RuleSources:
             )
         split = split_frontmatter(content)
         return (split[1] if split else content).strip("\n")
+
+
+def _omit_claude_md_for_rules(content: str) -> str:
+    """Set ``omitClaudeMd: true`` on agent content that does not set it.
+
+    Args:
+        content: Agent content whose source names its rules with ``rules``.
+
+    Returns:
+        ``content`` with ``omitClaudeMd: true`` unless already present.
+    """
+    if "omitClaudeMd" in parse_frontmatter(content)[1]:
+        return content
+    return content.replace("---\n", "---\nomitClaudeMd: true\n", 1)
 
 
 def _append_included_rules(
@@ -1376,8 +1555,7 @@ def _append_included_rules(
     _, frontmatter = parse_frontmatter(_read_text(src))
     if "rules" not in frontmatter:
         return content
-    if "omitClaudeMd" not in parse_frontmatter(content)[1]:
-        content = content.replace("---\n", "---\nomitClaudeMd: true\n", 1)
+    content = _omit_claude_md_for_rules(content)
     if rules is None:
         return content
     bodies: list[str] = []
@@ -1391,20 +1569,584 @@ def _append_included_rules(
     return content.rstrip("\n") + "\n\n" + "\n\n".join(bodies) + "\n"
 
 
+@dataclass(frozen=True)
+class _PiRuleBundle:
+    """Pi rules rendered once, each with the roles it is selected for.
+
+    Attributes:
+        texts: Rendered rule text by installed filename.
+        roles: Roles each rule is selected for, by installed filename.
+        held_back: Skipped rules that have no cached text and selectors.
+        failures: ``(source, message)`` for each rule that failed to render.
+        selector_errors: ``(source, message)`` for each rule with invalid
+            ``roles``.
+    """
+
+    texts: dict[str, str]
+    roles: dict[str, frozenset[str]]
+    held_back: tuple[str, ...] = ()
+    failures: tuple[tuple[Path, str], ...] = ()
+    selector_errors: tuple[tuple[Path, str], ...] = ()
+
+    @classmethod
+    def build(
+        cls,
+        agent: _Agent,
+        overlay_dirs: Sequence[Path],
+        skip_set: Container[Path] = frozenset(),
+        previous_manifest: "dict[str, AgentManifest] | None" = None,
+        vars_path: Path | None = None,
+    ) -> "_PiRuleBundle":
+        """Render every rule pi installs, once, with its role selectors.
+
+        Skipped rules take their cached text and selectors together.
+
+        Args:
+            agent: The pi agent configuration.
+            overlay_dirs: Overlay prompts directories in priority order.
+            skip_set: Resolved source paths left untouched by the install.
+            previous_manifest: The manifest from the previous installation.
+            vars_path: Variables JSON path, instead of the agent's own.
+
+        Returns:
+            The bundle.
+        """
+        from .manifest import read_rendered_rule
+
+        vars_path = vars_path or agent.vars_path()
+        cached_roles = (
+            (previous_manifest or {}).get(agent.name, {}).get("pi_rule_roles", {})
+        )
+        texts: dict[str, str] = {}
+        roles: dict[str, frozenset[str]] = {}
+        held_back: list[str] = []
+        failures: list[tuple[Path, str]] = []
+        selector_errors: list[tuple[Path, str]] = []
+        for name, src, agent_specific in _collect_content_srcs(
+            agent,
+            "rules",
+            agent.root_dir / "shared" / "rules",
+            [d / "shared" / "rules" for d in overlay_dirs],
+            [d / agent.name / "rules" for d in overlay_dirs],
+        ):
+            if src.resolve() in skip_set:
+                cached = read_rendered_rule(agent.name, name)
+                if cached is not None and name in cached_roles:
+                    texts[name], roles[name] = cached, frozenset(cached_roles[name])
+                    continue
+                if not isinstance(skip_set, _AllExcept):
+                    held_back.append(name)
+                    continue
+            try:
+                if agent_specific:
+                    texts[name] = _linked_content(src)
+                    declared = _read_text(src)
+                else:
+                    texts[name] = _rendered_content(src, vars_path, agent.name)
+                    declared = substitute_template(str(src), str(vars_path))
+            except Exception as e:
+                failures.append((src, f"Failed to render rules/{name}: {e}"))
+                continue
+            try:
+                roles[name] = _parse_roles(declared, f"rules/{name}")
+            except ValueError as e:
+                selector_errors.append((src, str(e)))
+                del texts[name]
+        return cls(
+            texts, roles, tuple(held_back), tuple(failures), tuple(selector_errors)
+        )
+
+    def lead_names(self) -> list[str]:
+        """List the rules in the global ``AGENTS.md``: the core and lead rules.
+
+        Returns:
+            Installed filenames, sorted.
+        """
+        return sorted(
+            name for name in self.texts if self.roles[name] & {"core", "lead"}
+        )
+
+    def lead_text(self) -> str:
+        """Return the global ``AGENTS.md`` text: the core and lead rules.
+
+        Returns:
+            The selected rules joined in installed-filename order.
+        """
+        return normalize_whitespace(
+            "\n\n".join(self.texts[name] for name in self.lead_names())
+        )
+
+    def select(self, frontmatter: dict[str, str]) -> list[str]:
+        """Choose the rules an agent definition references.
+
+        Args:
+            frontmatter: The agent source's parsed frontmatter.
+
+        Returns:
+            Installed filenames, sorted, each once. A source with ``rules``
+            gets those rules, one with ``omitClaudeMd`` gets none, a known
+            role gets the core rules and its own, any other gets every rule.
+        """
+        if "rules" in frontmatter:
+            names = {
+                f"{token}.md" for token in _frontmatter_tokens(frontmatter, "rules")
+            }
+            return sorted(names & self.texts.keys())
+        if frontmatter.get("omitClaudeMd") == "true":
+            return []
+        role = frontmatter.get("name", "")
+        if role not in _AGENT_ROLES:
+            return sorted(self.texts)
+        return sorted(name for name, r in self.roles.items() if r & {"core", role})
+
+
+def _reference_rules(
+    content: str, src_frontmatter: dict[str, str], bundle: _PiRuleBundle
+) -> str:
+    """Put the rule references an agent source selects ahead of its body.
+
+    Args:
+        content: Generated agent content.
+        src_frontmatter: The agent source's parsed frontmatter.
+        bundle: The rules pi installs.
+
+    Returns:
+        ``content`` with ``omitClaudeMd: true`` set when the source names its
+        rules, and one ``@../rules/<name>`` line per selected rule before the
+        body.
+    """
+    if "rules" in src_frontmatter:
+        content = _omit_claude_md_for_rules(content)
+    references = [f"@../rules/{name}" for name in bundle.select(src_frontmatter)]
+    split = split_frontmatter(content)
+    if not references or split is None:
+        return content
+    head = content[: len(content) - len(split[1])]
+    return head + "\n".join(references) + "\n\n" + split[1].lstrip("\n")
+
+
+def _expanded_definition(content: str, rule_texts: Mapping[str, str]) -> str:
+    """Expand a definition's rule references the way herdsman does at launch.
+
+    Each whole-line ``@../rules/<name>`` reference is replaced by that rule's
+    text. A rule is included once and references are not expanded recursively.
+
+    Args:
+        content: Installed definition content.
+        rule_texts: Rendered rule text by installed filename.
+
+    Returns:
+        The definition body, outer blank lines trimmed, with references replaced.
+
+    Raises:
+        ValueError: A reference names no rule, or a rule's text is not
+            NUL-free UTF-8.
+    """
+    split = split_frontmatter(content)
+    body = (split[1] if split else content).strip("\n")
+    included: set[str] = set()
+    lines: list[str] = []
+    for line in body.split("\n"):
+        stripped = line.strip()
+        if not stripped.startswith("@../rules/"):
+            lines.append(line)
+            continue
+        name = stripped.removeprefix("@../rules/")
+        if name not in rule_texts:
+            raise ValueError(f"unresolved rule reference '{stripped}'")
+        if name in included:
+            continue
+        text = rule_texts[name]
+        try:
+            text.encode()
+        except UnicodeEncodeError as e:
+            raise ValueError(f"rule '{name}' is not valid UTF-8") from e
+        if "\0" in text:
+            raise ValueError(f"rule '{name}' contains a NUL byte")
+        included.add(name)
+        lines.append(text)
+    return "\n".join(lines)
+
+
+def _pi_definitions(
+    candidate_dirs: list[Path],
+    bundle: _PiRuleBundle,
+    dialect: "_AgentDialect",
+    variables: dict[str, str],
+) -> tuple[list[tuple[str, Path, str]], list[Path]]:
+    """Generate every pi subagent definition the install would write.
+
+    Args:
+        candidate_dirs: Source agent directories in priority order (first wins).
+        bundle: The rules pi installs.
+        dialect: The pi subagent definition dialect.
+        variables: Variables the sources are rendered with.
+
+    Returns:
+        The ``(filename, source, content)`` of each definition, and the
+        sources that failed to render.
+    """
+    definitions: list[tuple[str, Path, str]] = []
+    failed: list[Path] = []
+    for name, src in _resolve_priority_sources(
+        candidate_dirs, lambda d: sorted(d.glob("*.md")), lambda p: p.name
+    ):
+        try:
+            rendered = substitute_variables(_read_text(src), variables)
+            generated = _generated_agents(
+                src, rendered, name, dialect, variables, "pi", None, bundle
+            )
+        except TemplateError:
+            failed.append(src)
+            continue
+        definitions.extend((gen_name, src, content) for gen_name, content in generated)
+    return definitions, failed
+
+
+@dataclass(frozen=True)
+class _AgentDialect:
+    """How a target agent's subagent definitions differ from Claude Code's.
+
+    Attributes:
+        translate: Rewrites installed agent content, or ``None`` to install
+            Claude Code definitions as they are.
+        resolve_model: Maps a variant's tier alias to its ``model`` value, or
+            ``None`` to use the Claude Code model catalogue.
+    """
+
+    translate: Callable[[str], str] | None = None
+    resolve_model: Callable[[str], str] | None = None
+
+
+_CLAUDE_AGENT_DIALECT = _AgentDialect()
+
+_PI_TOOL_NAMES = {
+    "Read": ["read"],
+    "Write": ["write"],
+    "Edit": ["edit"],
+    "Bash": ["bash"],
+    "Grep": ["grep"],
+    "Glob": ["find"],
+    "LS": ["ls"],
+    "TaskCreate": ["ext:tower-do/tower_do", "ext:tower-do-patch/tower_do_patch"],
+    "TaskUpdate": ["ext:tower-do/tower_do", "ext:tower-do-patch/tower_do_patch"],
+    "TaskGet": ["ext:tower-do/tower_do_status"],
+    "TaskList": ["ext:tower-do/tower_do_status"],
+    "SendMessage": ["ext:tower-do/tower_do_talk"],
+}
+_PI_DROPPED_FRONTMATTER_KEYS = {"color", "omitClaudeMd"}
+
+
+_HERDSMAN_STRING_KEYS = {"name", "description", "model"}
+_HERDSMAN_ARRAY_KEYS = {
+    "tools": "tools",
+    "disallowedTools": "excludeTools",
+    "allowed_subagents": "agents",
+}
+_HERDSMAN_BOOLEAN_KEYS = {"extensions": "noExtensions", "skills": "inheritSkills"}
+
+
+def _pi_skill_paths(
+    value: str, skill_sources: Sequence[Path], agent_dir: Path, strict: bool = True
+) -> list[str]:
+    """Resolve a ``pi_skills`` list to the skill files a delegate loads.
+
+    Args:
+        value: Comma-separated skill names; a trailing ``?`` marks an optional skill.
+        skill_sources: Skill source directories, whose subdirectories are skills.
+        agent_dir: Pi's config directory, holding installed skills and packages.
+        strict: Whether a required skill that resolves nowhere is an error.
+
+    Returns:
+        Absolute ``SKILL.md`` path per resolvable skill: an installed skill from
+        ``skill_sources``, else a skill shipped by an installed pi package.
+
+    Raises:
+        ValueError: A required skill resolves nowhere and ``strict`` is set.
+    """
+    paths: list[str] = []
+    for entry in (item.strip() for item in value.split(",")):
+        name = entry.removesuffix("?")
+        if any((source / name / "SKILL.md").is_file() for source in skill_sources):
+            paths.append(str(agent_dir / "skills" / name / "SKILL.md"))
+        elif packaged := sorted(
+            path
+            for pattern in ("*", "@*/*")
+            for path in agent_dir.glob(
+                f"npm/node_modules/{pattern}/skills/{name}/SKILL.md"
+            )
+        ):
+            paths.append(str(packaged[0]))
+        elif strict and entry == name:
+            raise ValueError(f"pi_skills: skill '{name}' not found")
+    return paths
+
+
+def _herdsman_agent_content(
+    content: str,
+    tool_names: Mapping[str, list[str]],
+    resolve_model: Callable[[str], str],
+    resolve_skills: Callable[[str], list[str]],
+) -> str:
+    """Rewrite a Claude Code subagent definition for the herdsman extension.
+
+    Args:
+        content: Installed Claude Code agent content.
+        tool_names: Herdsman tool names for each Claude Code tool name.
+        resolve_model: Maps the definition's ``model`` tier alias to its model.
+        resolve_skills: Maps a ``pi_skills`` value to skill file paths.
+
+    Returns:
+        Content with herdsman's frontmatter and the body unchanged.
+
+    Raises:
+        ValueError: A frontmatter key has no herdsman equivalent.
+    """
+    split = split_frontmatter(content)
+    if split is None:
+        return content
+    frontmatter = resolve_frontmatter(split[0]) or {}
+    lines: list[str] = []
+    for key, value in frontmatter.items():
+        if key in _HERDSMAN_STRING_KEYS:
+            text = resolve_model(value) if key == "model" else value
+            lines.append(f"{key}: {json.dumps(text)}")
+        elif key == "effort":
+            lines.append(f"thinking: {value}")
+        elif key in _HERDSMAN_ARRAY_KEYS:
+            names = [name.strip() for name in value.split(",")]
+            if key == "disallowedTools":
+                names = [
+                    herdsman
+                    for name in names
+                    for herdsman in tool_names.get(
+                        name, [name] if name.islower() else []
+                    )
+                ]
+            elif key != "allowed_subagents":
+                names = [
+                    herdsman for name in names for herdsman in tool_names.get(name, [])
+                ]
+            if names:
+                lines.append(
+                    f"{_HERDSMAN_ARRAY_KEYS[key]}: {json.dumps(list(dict.fromkeys(names)))}"
+                )
+        elif key == "pi_skills":
+            lines.append(f"skills: {json.dumps(resolve_skills(value))}")
+        elif key in _HERDSMAN_BOOLEAN_KEYS:
+            flag = value == "true"
+            lines.append(
+                f"{_HERDSMAN_BOOLEAN_KEYS[key]}: {str(flag if key == 'skills' else not flag).lower()}"
+            )
+        elif key not in _PI_DROPPED_FRONTMATTER_KEYS:
+            raise ValueError(
+                f"No herdsman equivalent for agent frontmatter key '{key}'"
+            )
+    inherit = str(frontmatter.get("omitClaudeMd") != "true").lower()
+    lines += [
+        "systemPromptMode: append",
+        "inheritGlobalContext: false",
+        f"inheritProjectContext: {inherit}",
+    ]
+    return "---\n" + "\n".join(lines) + "\n---\n" + split[1]
+
+
+def _pi_agent_models(fragments: list[Path]) -> dict[str, str]:
+    """Collect the tier-to-model map declared by every ``pi/agent-models.json``.
+
+    Args:
+        fragments: Candidate fragment paths, core first, then overlays.
+
+    Returns:
+        Model for each tier alias; the last fragment declaring a tier wins.
+    """
+    models: dict[str, str] = {}
+    for fragment in fragments:
+        if fragment.is_file():
+            models.update(json.loads(_read_text(fragment)))
+    return models
+
+
+def _agent_source_dirs(
+    root_dir: Path, overlay_dirs: Sequence[Path], target: str
+) -> list[Path]:
+    """Return the subagent source directories a target installs from.
+
+    Args:
+        root_dir: This package's own prompts directory.
+        overlay_dirs: Overlay prompts directories in priority order.
+        target: Target agent name.
+
+    Returns:
+        Directories in priority order (first wins): each root's ``pi`` agents
+        for pi, its ``claude-code`` agents where it applies - every root for
+        Claude Code, only this package's own for pi - then its ``shared``
+        agents.
+    """
+    dirs: list[Path] = []
+    for root in (*overlay_dirs, root_dir):
+        if target == "pi":
+            dirs.append(root / "pi" / "agents")
+        if target == "claude-code" or (target == "pi" and root == root_dir):
+            dirs.append(root / "claude-code" / "agents")
+        dirs.append(root / "shared" / "agents")
+    return dirs
+
+
+def _pi_agent_dialect(
+    root_dir: Path, overlay_dirs: Sequence[Path], strict_skills: bool = True
+) -> _AgentDialect:
+    """Build the pi subagent dialect from the core and overlay model maps.
+
+    Args:
+        root_dir: This package's own prompts directory.
+        overlay_dirs: Overlay prompts directories in priority order.
+        strict_skills: Whether a ``pi_skills`` entry that resolves nowhere fails.
+
+    Returns:
+        Dialect translating definitions to pi, with mapped tiers resolved.
+    """
+    models = _pi_agent_models(
+        [root_dir / "pi" / "agent-models.json"]
+        + [d / "pi" / "agent-models.json" for d in overlay_dirs]
+    )
+
+    def resolve_model(tier: str) -> str:
+        return models.get(tier, tier)
+
+    tool_names = {
+        **{
+            claude: [pi.rpartition("/")[2] for pi in pis]
+            for claude, pis in _PI_TOOL_NAMES.items()
+        },
+        "Agent": ["agent"],
+    }
+    return _AgentDialect(
+        partial(
+            _herdsman_agent_content,
+            tool_names=tool_names,
+            resolve_model=resolve_model,
+            resolve_skills=partial(
+                _pi_skill_paths,
+                skill_sources=[
+                    *(d / "shared" / "skills" for d in overlay_dirs),
+                    root_dir / "shared" / "skills",
+                    root_dir / "pi" / "skills",
+                    *(d / "pi" / "skills" for d in overlay_dirs),
+                ],
+                agent_dir=_pi_agent_dir(),
+                strict=strict_skills,
+            ),
+        ),
+        resolve_model,
+    )
+
+
+def _install_disabled_definitions(agents_dir: Path) -> set[str]:
+    """Write overlays that disable herdsman's bundled agent definitions.
+
+    Args:
+        agents_dir: Destination agents directory.
+
+    Returns:
+        Set of installed overlay filenames.
+    """
+    managed: set[str] = set()
+    for name in HERDSMAN_DISABLED_DEFINITIONS:
+        filename = f"{name}.md"
+        dest = agents_dir / filename
+        if dest.is_symlink():
+            dest.unlink()
+        _write_if_changed(
+            dest,
+            f"---\nname: {name}\nenabled: false\n---\n",
+            f"agent {filename}",
+        )
+        managed.add(filename)
+    return managed
+
+
+def _install_herdsman_overlays(overlays_dir: Path, agents_dir: Path) -> set[str]:
+    """Copy overlays of herdsman's bundled agent definitions verbatim.
+
+    Args:
+        overlays_dir: Source directory of overlay definitions.
+        agents_dir: Destination agents directory.
+
+    Returns:
+        Set of installed overlay filenames.
+    """
+    managed: set[str] = set()
+    for src in sorted(overlays_dir.glob("*.md")):
+        dest = agents_dir / src.name
+        if dest.is_symlink():
+            dest.unlink()
+        _write_if_changed(dest, _read_text(src), f"agent {src.name}")
+        managed.add(src.name)
+    return managed
+
+
+def _generated_agents(
+    src: Path,
+    rendered: str,
+    name: str,
+    dialect: _AgentDialect,
+    variables: dict[str, str],
+    agent_name: str,
+    rules: "_RuleSources | None",
+    bundle: "_PiRuleBundle | None",
+) -> list[tuple[str, str]]:
+    """Generate the installed files for one subagent source.
+
+    Args:
+        src: Agent source path.
+        rendered: The source after variable substitution.
+        name: The source's filename.
+        dialect: The target agent's subagent definition dialect.
+        variables: Variables the source is rendered with.
+        agent_name: Target agent name.
+        rules: Rule sources that ``rules`` keys resolve against.
+        bundle: Rules to reference instead of inlining, if any.
+
+    Returns:
+        ``(filename, content)`` for each variant, in the target's dialect.
+    """
+    frontmatter = parse_frontmatter(rendered)[1]
+    files = (
+        _expand_agent_variants(src, dialect.resolve_model, variables, agent_name)
+        if "generate_variants" in frontmatter
+        else [(name, strip_gating_keys(rendered, _GATING_FRONTMATTER_KEYS))]
+    )
+    generated: list[tuple[str, str]] = []
+    for gen_name, gen_content in files:
+        content = (
+            _reference_rules(gen_content, frontmatter, bundle)
+            if bundle is not None
+            else _append_included_rules(gen_content, src, rules)
+        )
+        generated.append(
+            (gen_name, dialect.translate(content) if dialect.translate else content)
+        )
+    return generated
+
+
 def _install_agents(
     candidate_dirs: list[Path],
     agents_dir: Path,
     skip_set: Container[Path] = frozenset(),
     previous_manifest: "dict[str, AgentManifest] | None" = None,
     rules: "_RuleSources | None" = None,
+    agent_name: str = "claude-code",
+    dialect: _AgentDialect = _CLAUDE_AGENT_DIALECT,
+    variables: dict[str, str] | None = None,
+    bundle: "_PiRuleBundle | None" = None,
 ) -> set[str]:
-    """Install Claude Code subagent definitions as symlinks or generated files.
+    """Install subagent definitions as rendered files.
 
-    Overlay dirs override base on filename collision (first wins). A source
-    whose frontmatter has ``generate_variants`` is expanded into per-model/
-    effort files written to ``agents_dir``. A source with ``rules`` is
-    written as a regular file with the named rule bodies appended; other
-    sources are symlinked.
+    Overlay dirs override base on filename collision (first wins). Each source
+    is rendered with ``variables`` and written to ``agents_dir``; one whose
+    frontmatter has ``generate_variants`` is expanded into per-model/effort
+    files.
 
     Args:
         candidate_dirs: Source agent directories in priority order (first wins).
@@ -1412,23 +2154,33 @@ def _install_agents(
         skip_set: Resolved source paths to leave untouched.
         previous_manifest: The manifest from the previous installation.
         rules: Rule sources that ``rules`` keys resolve against.
+        agent_name: Target agent name, for the manifest entry.
+        dialect: The target agent's subagent definition dialect.
+        variables: Variables the sources are rendered with.
+        bundle: Rules to reference from definitions instead of inlining them.
 
     Returns:
         Set of installed agent filenames.
     """
     previous_manifest = previous_manifest if previous_manifest is not None else {}
-    log("info", "[claude-code] Installing agents...")
+    log("info", f"[{agent_name}] Installing agents...")
     managed: set[str] = set()
     resolved = _resolve_priority_sources(
         candidate_dirs,
         lambda d: sorted(d.glob("*.md")),
         lambda p: p.name,
     )
+    variables = variables or {}
     for name, src in resolved:
-        _, frontmatter = parse_frontmatter(_read_text(src))
+        try:
+            rendered = substitute_variables(_read_text(src), variables)
+        except TemplateError as e:
+            log("error", f"Failed to render agent '{name}': {e}")
+            continue
+        _, frontmatter = parse_frontmatter(rendered)
         has_variants = "generate_variants" in frontmatter
         if src.resolve() in skip_set:
-            previous_files = previous_manifest.get("claude-code", {}).get("files", [])
+            previous_files = previous_manifest.get(agent_name, {}).get("files", [])
             if has_variants:
                 prefix = f"{src.stem}-"
                 for filepath in previous_files:
@@ -1438,7 +2190,7 @@ def _install_agents(
                         and prev_path.name.startswith(prefix)
                         and prev_path.name.endswith(".md")
                         and _carry_forward(
-                            "claude-code",
+                            agent_name,
                             prev_path,
                             f"agent {prev_path.name}",
                             previous_manifest,
@@ -1447,7 +2199,7 @@ def _install_agents(
                     ):
                         managed.add(prev_path.name)
             elif _carry_forward(
-                "claude-code",
+                agent_name,
                 agents_dir / name,
                 f"agent {name}",
                 previous_manifest,
@@ -1455,25 +2207,89 @@ def _install_agents(
             ):
                 managed.add(name)
             continue
-        if has_variants or "rules" in frontmatter:
-            files = (
-                _expand_agent_variants(src)
-                if has_variants
-                else [(name, _linked_content(src))]
-            )
-            for gen_name, gen_content in files:
-                dest = agents_dir / gen_name
-                if dest.is_symlink():
-                    dest.unlink()
-                _write_if_changed(
-                    dest,
-                    _append_included_rules(gen_content, src, rules),
-                    f"agent {gen_name}",
-                )
-                managed.add(gen_name)
-        else:
-            _install_symlink(src, agents_dir / name, "agent", managed)
+        for gen_name, gen_content in _generated_agents(
+            src, rendered, name, dialect, variables, agent_name, rules, bundle
+        ):
+            dest = agents_dir / gen_name
+            if dest.is_symlink():
+                dest.unlink()
+            _write_if_changed(dest, gen_content, f"agent {gen_name}")
+            managed.add(gen_name)
     return managed
+
+
+def _pi_rules_dir() -> Path:
+    """Return the directory holding pi's shared rule files.
+
+    Returns:
+        ``rules`` under pi's config directory.
+    """
+    return _pi_agent_dir() / "rules"
+
+
+def _install_pi_rule_files(bundle: _PiRuleBundle, rules_dir: Path) -> set[str]:
+    """Write each rule as a file the agent definitions reference.
+
+    Args:
+        bundle: The rules pi installs.
+        rules_dir: Destination directory.
+
+    Returns:
+        Installed rule filenames, or an empty set when any rule failed to write.
+    """
+    log("info", "[pi] Installing rule files...")
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    for name, text in bundle.texts.items():
+        dest = rules_dir / name
+        if dest.is_symlink():
+            dest.unlink()
+        _write_if_changed(dest, text, f"rules/{name}")
+    if not all((rules_dir / name).is_file() for name in bundle.texts):
+        return set()
+    return set(bundle.texts)
+
+
+def _install_pi_lead_rules(agent: _Agent, bundle: _PiRuleBundle) -> set[str]:
+    """Write the global ``AGENTS.md`` holding the core and lead rules.
+
+    Args:
+        agent: The pi agent configuration.
+        bundle: The rules pi installs.
+
+    Returns:
+        The installed filename.
+    """
+    from .manifest import write_rendered_rules
+
+    log("info", f"[{agent.name}] Installing rules...")
+    output = bundle.lead_text()
+    for var in find_unreplaced_variables(output):
+        log("warn", f"Unreplaced variable '{{{{{var}}}}}' in {_PiAgent.AGENTS_MD}")
+    dest_dir = agent.dest_dir("rules")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    _write_if_changed(dest_dir / _PiAgent.AGENTS_MD, output, _PiAgent.AGENTS_MD)
+    write_rendered_rules(agent.name, bundle.texts)
+    return {_PiAgent.AGENTS_MD}
+
+
+def _previous_pi_bundle_files(
+    previous_manifest: "dict[str, AgentManifest]", agents_dir: Path, agents_md: Path
+) -> list[str]:
+    """List the pi files of the last installed rule bundle.
+
+    Args:
+        previous_manifest: The manifest from the previous installation.
+        agents_dir: Pi's agent definitions directory.
+        agents_md: Pi's global ``AGENTS.md``.
+
+    Returns:
+        The previous definitions, rule files and ``AGENTS.md``.
+    """
+    return [
+        f
+        for f in previous_manifest.get("pi", {}).get("files", [])
+        if Path(f).parent in (agents_dir, _pi_rules_dir()) or Path(f) == agents_md
+    ]
 
 
 def _symlink_dir(source: Path, dest: Path) -> None:
@@ -1592,6 +2408,17 @@ def try_install_hooks_antigravity() -> None:
     subprocess.run([binary, "install", "antigravity"], check=False)
 
 
+_PI_DEFAULT_KEYS = (
+    "defaultProvider",
+    "defaultModel",
+    "defaultTools",
+    "steeringMode",
+    "followUpMode",
+    "cacheWarming",
+    "enableInstallTelemetry",
+)
+
+
 def _package_source(entry: str | dict[str, Any]) -> str:
     """Return a pi ``packages`` entry's source, whether string or object form."""
     return entry if isinstance(entry, str) else str(entry.get("source", ""))
@@ -1604,27 +2431,111 @@ def _pi_packages(fragments: list[Path]) -> list[str]:
         fragments: Candidate fragment paths, core first, then overlays.
 
     Returns:
-        Package sources in declaration order, without duplicates.
+        Package sources whose gates pass, in declaration order, without duplicates.
     """
     packages: list[str] = []
     for fragment in fragments:
         if not fragment.is_file():
             continue
-        for source in json.loads(_read_text(fragment)).get("packages", []):
+        for entry in json.loads(_read_text(fragment)).get("packages", []):
+            if isinstance(entry, dict) and not _requirements_met(entry, "pi"):
+                continue
+            source = _package_source(entry)
             if source not in packages:
                 packages.append(source)
     return packages
 
 
-def _sync_pi_packages(wanted: list[str], previous: list[str]) -> None:
+def _pi_defaults(fragments: list[Path]) -> dict[str, Any]:
+    """Collect the default provider, model and tools declared by ``pi/settings.json`` fragments.
+
+    Args:
+        fragments: Candidate fragment paths, core first, then overlays.
+
+    Returns:
+        the ``_PI_DEFAULT_KEYS`` values; the last fragment declaring a key wins.
+    """
+    defaults: dict[str, Any] = {}
+    for fragment in fragments:
+        if fragment.is_file():
+            declared = json.loads(_read_text(fragment))
+            defaults.update(
+                {key: declared[key] for key in _PI_DEFAULT_KEYS if key in declared}
+            )
+    return defaults
+
+
+def _install_pi_extensions(
+    source_dirs: list[Path], dest_dir: Path, previous_files: Container[str]
+) -> list[str]:
+    """Copy every ``*.ts`` pi extension from the source directories into ``dest_dir``.
+
+    A destination file that exists but was not installed by llm-prompts is left alone.
+
+    Args:
+        source_dirs: Candidate ``pi/extensions`` directories, core first, then overlays.
+        dest_dir: pi's extensions directory.
+        previous_files: File paths llm-prompts installed for pi last time.
+
+    Returns:
+        Installed file paths; a later source wins on a filename collision.
+    """
+    sources: dict[str, Path] = {}
+    for source_dir in source_dirs:
+        if source_dir.is_dir():
+            sources.update(
+                {path.name: path for path in sorted(source_dir.glob("*.ts"))}
+            )
+    if sources:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+    installed: list[str] = []
+    for name, path in sources.items():
+        dest = dest_dir / name
+        if dest.exists() and str(dest) not in previous_files:
+            log(
+                "warn",
+                f"[pi] Skipped extension {name}: {dest} is not managed by llm-prompts.",
+            )
+            continue
+        _write_text(dest, _read_text(path))
+        installed.append(str(dest))
+    return installed
+
+
+def _seed_pi_files(dirs: list[Path]) -> None:
+    """Copy ``pi/seed/`` files into the pi agent directory where absent.
+
+    Args:
+        dirs: Prompts directories, core first, then overlays; a later directory
+            replaces an earlier one's file at the same relative path.
+    """
+    seeds: dict[Path, Path] = {}
+    for prompts_dir in dirs:
+        seed_dir = prompts_dir / "pi" / "seed"
+        for source in sorted(seed_dir.rglob("*")):
+            if source.is_file():
+                seeds[source.relative_to(seed_dir)] = source
+    for relative, source in seeds.items():
+        dest = _pi_agent_dir() / relative
+        if not dest.exists():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            _write_text(dest, _read_text(source))
+            log("success", f"[pi] Seeded {dest}.")
+
+
+def _sync_pi_packages(
+    wanted: list[str], previous: list[str], defaults: dict[str, Any] | None = None
+) -> None:
     """Make pi's global settings list exactly the managed packages in ``wanted``.
 
     Packages the user added themselves are left alone; a package llm-prompts
-    managed before but no longer declares is removed.
+    managed before but no longer declares is removed. Each default the user's
+    settings lack is filled in; one already set is kept.
 
     Args:
         wanted: Package sources llm-prompts now declares.
         previous: Package sources llm-prompts managed at the last install.
+        defaults: Default provider, model and tools llm-prompts now declares.
     """
     settings_path = _pi_agent_dir() / "settings.json"
     settings: dict[str, Any] = (
@@ -1635,11 +2546,229 @@ def _sync_pi_packages(wanted: list[str], previous: list[str]) -> None:
     packages = [entry for entry in current if _package_source(entry) not in stale]
     present = {_package_source(entry) for entry in packages}
     packages.extend(source for source in wanted if source not in present)
-    if packages == current:
+    missing_defaults = {k: v for k, v in (defaults or {}).items() if k not in settings}
+    if packages == current and not missing_defaults:
         return
     settings["packages"] = packages
+    settings.update(missing_defaults)
     _write_text(settings_path, json.dumps(settings, indent=2) + "\n")
     log("success", f"[pi] Updated packages in {settings_path}.")
+
+
+def _install_pi_packages(sources: list[str]) -> bool:
+    """Run ``pi install`` for each npm package whose pinned version is not installed.
+
+    Args:
+        sources: Package sources llm-prompts declares.
+
+    Returns:
+        Whether any ``pi install`` failed.
+    """
+    pi = shutil.which("pi")
+    if pi is None:
+        log("warn", "[pi] `pi` not found, skipping package installs.")
+        return False
+    failed = False
+    for source in sources:
+        if not source.startswith("npm:"):
+            continue
+        name, _, version = source.removeprefix("npm:").rpartition("@")
+        if not name:
+            name, version = source.removeprefix("npm:"), ""
+        manifest = _pi_agent_dir() / "npm" / "node_modules" / name / "package.json"
+        if manifest.exists() and (
+            not version or json.loads(_read_text(manifest)).get("version") == version
+        ):
+            continue
+        if subprocess.run([pi, "install", source], check=False).returncode:
+            log("error", f"[pi] `pi install {source}` failed.")
+            failed = True
+    return failed
+
+
+def _enabled_claude_plugin_paths() -> list[Path] | None:
+    """Return install paths of the Claude plugins enabled in the user's settings.
+
+    Returns:
+        Existing install directories, or None when a Claude file is unparseable.
+    """
+    claude_dir = Path.home() / ".claude"
+    settings_path = claude_dir / "settings.json"
+    installed_path = claude_dir / "plugins" / "installed_plugins.json"
+    if not settings_path.exists() or not installed_path.exists():
+        return []
+    try:
+        enabled = json.loads(_read_text(settings_path)).get("enabledPlugins", {})
+        installed = json.loads(_read_text(installed_path)).get("plugins", {})
+    except json.JSONDecodeError:
+        log("warn", "[pi] Could not parse Claude plugin files, skipping plugins.")
+        return None
+    paths: list[Path] = []
+    for key in (key for key, on in enabled.items() if on):
+        records = installed.get(key) or [{}]
+        path = Path(records[0].get("installPath", ""))
+        if path.is_absolute() and path.is_dir():
+            paths.append(path)
+        else:
+            log("warn", f"[pi] Plugin {key} is not installed, skipping.")
+    return paths
+
+
+def _claude_plugin_skill_dirs() -> list[str] | None:
+    """Return the skill dirs of the enabled Claude plugins, or None if unreadable."""
+    plugin_paths = _enabled_claude_plugin_paths()
+    if plugin_paths is None:
+        return None
+    return [str(p / "skills") for p in plugin_paths if (p / "skills").is_dir()]
+
+
+def _sync_pi_skills(wanted: list[str], previous: list[str]) -> None:
+    """Make pi's ``skills`` setting list exactly the managed dirs in ``wanted``.
+
+    Entries the user added themselves are left alone.
+
+    Args:
+        wanted: Skill dirs llm-prompts now declares.
+        previous: Skill dirs llm-prompts managed at the last install.
+    """
+    settings_path = _pi_agent_dir() / "settings.json"
+    settings: dict[str, Any] = (
+        json.loads(_read_text(settings_path)) if settings_path.exists() else {}
+    )
+    current: list[str] = settings.get("skills", [])
+    stale = set(previous) - set(wanted)
+    skills = [entry for entry in current if entry not in stale]
+    skills.extend(path for path in wanted if path not in skills)
+    if skills == current:
+        return
+    settings["skills"] = skills
+    _write_text(settings_path, json.dumps(settings, indent=2) + "\n")
+    log("success", f"[pi] Updated skills in {settings_path}.")
+
+
+_PI_PERMISSION_ACTIONS = (("allow", "allow"), ("ask", "ask"), ("deny", "deny"))
+
+
+def _claude_mcp_permissions() -> dict[str, str] | None:
+    """Translate Claude's MCP permission rules into pi's ``mcp`` permission rules.
+
+    Only rules for servers in pi's ``mcp.json`` are used. A server with Claude
+    rules but no server-wide allow defaults to ``ask``, ahead of its tool rules.
+
+    Returns:
+        Ordered pi rules (last match wins), or None when Claude's settings are unparseable.
+    """
+    settings_path = Path.home() / ".claude" / "settings.json"
+    if not settings_path.exists():
+        return {}
+    try:
+        permissions = json.loads(_read_text(settings_path)).get("permissions", {})
+    except json.JSONDecodeError:
+        log("warn", "[pi] Could not parse Claude settings, skipping MCP permissions.")
+        return None
+    pi_servers = sorted(
+        _read_mcp_servers(_pi_agent_dir() / "mcp.json", "mcp.json"),
+        key=len,
+        reverse=True,
+    )
+    server_rules: dict[str, str] = {}
+    tool_rules: dict[str, str] = {}
+    for claude_list, action in _PI_PERMISSION_ACTIONS:
+        for rule in permissions.get(claude_list, []):
+            server = next(
+                (s for s in pi_servers if rule.startswith(f"mcp__{s}__")), None
+            )
+            if server is None:
+                continue
+            tool = rule.removeprefix(f"mcp__{server}__")
+            if tool == "*":
+                server_rules[server] = action
+            else:
+                tool_rules[f"{server}:{tool}"] = action
+    touched = {key.split(":", 1)[0] for key in tool_rules} | set(server_rules)
+    defaults = {s: "ask" for s in sorted(touched) if s not in server_rules}
+    return {**defaults, **server_rules, **tool_rules}
+
+
+def _sync_pi_mcp_permissions(wanted: dict[str, str], previous: list[str]) -> None:
+    """Make pi's ``mcp`` permission rules include exactly the managed ``wanted`` rules.
+
+    Rules the user added themselves are left alone.
+
+    Args:
+        wanted: Rules llm-prompts now declares, in match order.
+        previous: Rule keys llm-prompts managed at the last install.
+    """
+    config_path = (
+        _pi_agent_dir() / "extensions" / "pi-permission-system" / "config.json"
+    )
+    config: dict[str, Any] = (
+        json.loads(_read_text(config_path)) if config_path.exists() else {}
+    )
+    current: dict[str, str] = config.get("permission", {}).get("mcp", {})
+    kept = {k: v for k, v in current.items() if k not in previous and k not in wanted}
+    rules = {**kept, **wanted}
+    if rules == current and list(rules) == list(current):
+        return
+    permission = config.setdefault("permission", {})
+    if rules:
+        permission["mcp"] = rules
+    else:
+        permission.pop("mcp", None)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_text(config_path, json.dumps(config, indent=2) + "\n")
+    log("success", f"[pi] Updated MCP permissions in {config_path}.")
+
+
+_PI_MCP_KEYS = ("type", "command", "args", "env", "cwd", "url", "headers")
+
+
+def _read_mcp_servers(path: Path, label: str) -> dict[str, Any]:
+    """Read the ``mcpServers`` map from a JSON file, warning on a bad file."""
+    if not path.exists():
+        return {}
+    try:
+        servers: dict[str, Any] = json.loads(_read_text(path)).get("mcpServers", {})
+    except json.JSONDecodeError:
+        log("warn", f"[pi] Could not parse {label}, skipping MCP servers.")
+        return {}
+    return servers
+
+
+def _sync_pi_mcp_servers() -> None:
+    """Add the MCP servers from Claude's user config and enabled plugins that pi's lacks.
+
+    Existing pi entries are never changed, and Claude's user config wins over
+    plugins. Servers pi cannot run are skipped. Only server names are logged,
+    since entries may hold secrets.
+    """
+    candidates = _read_mcp_servers(Path.home() / ".claude.json", ".claude.json")
+    plugin_paths = _enabled_claude_plugin_paths() or []
+    plugin_sets = [
+        _read_mcp_servers(path / ".mcp.json", f"{path.name}/.mcp.json")
+        for path in plugin_paths
+    ]
+    mcp_path = _pi_agent_dir() / "mcp.json"
+    config: dict[str, Any] = (
+        json.loads(_read_text(mcp_path)) if mcp_path.exists() else {}
+    )
+    servers: dict[str, Any] = config.setdefault("mcpServers", {})
+    added = []
+    for name, entry in [
+        item for source in (candidates, *plugin_sets) for item in source.items()
+    ]:
+        if name in servers:
+            continue
+        if entry.get("type") == "sse" or not (entry.get("command") or entry.get("url")):
+            log("warn", f"[pi] Skipping unsupported MCP server {name}.")
+            continue
+        servers[name] = {k: entry[k] for k in _PI_MCP_KEYS if k in entry}
+        added.append(name)
+    if not added:
+        return
+    mcp_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_text(mcp_path, json.dumps(config, indent=2) + "\n")
+    log("success", f"[pi] Added MCP servers {', '.join(added)} to {mcp_path}.")
 
 
 def try_install_hooks_pi() -> None:
@@ -1814,6 +2943,16 @@ def _cleanup_stale(
             log("info", f"[{agent_name}] Removed stale directory: {path.name}")
 
 
+def _remove_empty_dir(path: Path) -> None:
+    """Remove a directory when it exists and holds nothing.
+
+    Args:
+        path: Directory to remove.
+    """
+    if path.is_dir() and not any(path.iterdir()):
+        path.rmdir()
+
+
 def _remove_manifest_files(agent_name: str, files: list[str]) -> None:
     """Remove files that were installed for an agent.
 
@@ -1909,7 +3048,10 @@ def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) ->
         if name == "claude-code":
             _disallow_update_claude_code()
         if name == "pi":
+            _remove_empty_dir(_pi_rules_dir())
             _sync_pi_packages([], entry.get("packages", []))
+            _sync_pi_skills([], entry.get("skills", []))
+            _sync_pi_mcp_permissions({}, entry.get("mcp_permissions", []))
         delete_agent(name)
         log("success", f"[{name}] Uninstalled.")
 
@@ -1956,6 +3098,7 @@ def main(
     previous_manifest = read_manifest()
     all_skipped: frozenset[Path] = frozenset()
     size_failed = False
+    pi_install_failed = False
     frozen_agents: frozenset[str] = frozenset()
     skip_by_agent: dict[str, Container[Path]]
     if only is not None:
@@ -2092,27 +3235,75 @@ def main(
         skills_dir = skills_parent / "skills"
         installed_files[skill_agent].extend(str(skills_dir / s) for s in managed)
 
-    if "claude-code" in active_targets:
-        agents_dest = dirs["claude-code"]["agents"]
-        agent_dirs = [
-            *(d / "claude-code" / "agents" for d in overlay_dirs),
-            root_dir / "claude-code" / "agents",
-        ]
-        managed_agents = _install_agents(
-            agent_dirs,
-            agents_dest,
-            skip_by_agent.get("claude-code", frozenset()),
+    pi_bundle: _PiRuleBundle | None = None
+    pi_bundle_held = False
+    if "pi" in active_targets:
+        pi_bundle = _PiRuleBundle.build(
+            all_agents["pi"],
+            overlay_dirs,
+            skip_by_agent.get("pi", frozenset()),
             previous_manifest,
-            _RuleSources.collect(
-                all_agents["claude-code"],
-                overlay_dirs,
-                frozenset()
-                if only is not None
-                else skip_by_agent.get("claude-code", frozenset()),
-            ),
         )
-        _check_unmanaged(agents_dest, managed_agents, "claude-code agents")
-        installed_files["claude-code"].extend(
+        if pi_bundle.selector_errors:
+            raise ValueError("; ".join(m for _, m in pi_bundle.selector_errors))
+        for _, message in pi_bundle.failures:
+            log("error", message)
+        for name in pi_bundle.held_back:
+            log(
+                "warn",
+                f"[pi] Kept previous rule bundle: rules/{name} skipped with no cached copy",
+            )
+        pi_bundle_held = bool(pi_bundle.held_back)
+        if not pi_bundle_held:
+            rule_files = _install_pi_rule_files(pi_bundle, _pi_rules_dir())
+            pi_bundle_held = len(rule_files) != len(pi_bundle.texts)
+            installed_files["pi"].extend(str(_pi_rules_dir() / f) for f in rule_files)
+    pi_agents_md = dirs["pi"]["rules"] / _PiAgent.AGENTS_MD
+    previous_pi_bundle = _previous_pi_bundle_files(
+        previous_manifest, dirs["pi"]["agents"], pi_agents_md
+    )
+    if pi_bundle_held:
+        installed_files["pi"].extend(
+            f for f in previous_pi_bundle if Path(f).parent == _pi_rules_dir()
+        )
+
+    for agents_target in ("claude-code", "pi"):
+        if agents_target not in active_targets:
+            continue
+        agents_dest = dirs[agents_target]["agents"]
+        agent_dirs = _agent_source_dirs(root_dir, overlay_dirs, agents_target)
+        target_skip_set = skip_by_agent.get(agents_target, frozenset())
+        if agents_target == "pi" and pi_bundle_held:
+            managed_agents = {
+                Path(f).name
+                for f in previous_pi_bundle
+                if Path(f).parent == agents_dest
+            }
+        else:
+            managed_agents = _install_agents(
+                agent_dirs,
+                agents_dest,
+                target_skip_set,
+                previous_manifest,
+                _RuleSources.collect(
+                    all_agents[agents_target],
+                    overlay_dirs,
+                    frozenset() if only is not None else target_skip_set,
+                ),
+                agents_target,
+                _pi_agent_dialect(root_dir, overlay_dirs)
+                if agents_target == "pi"
+                else _CLAUDE_AGENT_DIALECT,
+                _builtin_skill_vars(all_agents[agents_target].vars_path()),
+                bundle=pi_bundle if agents_target == "pi" else None,
+            )
+        if agents_target == "pi":
+            managed_agents |= _install_disabled_definitions(agents_dest)
+            managed_agents |= _install_herdsman_overlays(
+                root_dir / "pi" / "herdsman-overlays", agents_dest
+            )
+        _check_unmanaged(agents_dest, managed_agents, f"{agents_target} agents")
+        installed_files[agents_target].extend(
             str(agents_dest / a) for a in managed_agents
         )
 
@@ -2123,7 +3314,13 @@ def main(
             overlay_srcs = [d / "shared" / subdir for d in overlay_dirs]
             overlay_agent_srcs = [d / agent.name / subdir for d in overlay_dirs]
             shared_src = root_dir / "shared" / subdir
-            if subdir == "rules":
+            if subdir == "rules" and name == "pi" and pi_bundle is not None:
+                installed = (
+                    {_PiAgent.AGENTS_MD} & {Path(f).name for f in previous_pi_bundle}
+                    if pi_bundle_held
+                    else _install_pi_lead_rules(agent, pi_bundle)
+                )
+            elif subdir == "rules":
                 installed = agent.install_rules(
                     shared_src,
                     overlay_srcs,
@@ -2161,18 +3358,58 @@ def main(
     from .manifest import write_manifest
 
     pi_packages: list[str] | None = None
+    pi_skills: list[str] | None = None
+    pi_mcp_rules: list[str] | None = None
+    pi_rule_roles: dict[str, list[str]] | None = previous_manifest.get("pi", {}).get(
+        "pi_rule_roles"
+    )
     if "pi" in active_targets:
-        pi_packages = _pi_packages(
-            [root_dir / "pi" / "settings.json"]
-            + [d / "pi" / "settings.json" for d in overlay_dirs]
+        pi_rule_roles = (
+            None
+            if pi_bundle is None
+            else previous_manifest.get("pi", {}).get("pi_rule_roles", {})
+            if pi_bundle_held
+            else {name: sorted(r) for name, r in pi_bundle.roles.items()}
         )
+        if not herdr_available():
+            log("warn", "[pi] `herdr` not found on PATH. pi needs herdr to run.")
+        pi_fragments = [root_dir / "pi" / "settings.json"] + [
+            d / "pi" / "settings.json" for d in overlay_dirs
+        ]
+        pi_packages = _pi_packages(pi_fragments)
         _sync_pi_packages(
-            pi_packages, previous_manifest.get("pi", {}).get("packages", [])
+            pi_packages,
+            previous_manifest.get("pi", {}).get("packages", []),
+            _pi_defaults(pi_fragments),
         )
+        pi_install_failed = _install_pi_packages(pi_packages)
+        installed_files["pi"].extend(
+            _install_pi_extensions(
+                [root_dir / "pi" / "extensions"]
+                + [d / "pi" / "extensions" for d in overlay_dirs],
+                _pi_agent_dir() / "extensions",
+                set(previous_manifest.get("pi", {}).get("files", [])),
+            )
+        )
+        _seed_pi_files([root_dir, *overlay_dirs])
+        _sync_pi_mcp_servers()
+        pi_skills = _claude_plugin_skill_dirs()
+        if pi_skills is None:
+            pi_skills = previous_manifest.get("pi", {}).get("skills", [])
+        _sync_pi_skills(pi_skills, previous_manifest.get("pi", {}).get("skills", []))
+        previous_rules = previous_manifest.get("pi", {}).get("mcp_permissions", [])
+        claude_rules = _claude_mcp_permissions()
+        if claude_rules is None:
+            pi_mcp_rules = previous_rules
+        else:
+            pi_mcp_rules = list(claude_rules)
+            _sync_pi_mcp_permissions(claude_rules, previous_rules)
     for name in targets:
-        manifest_files = installed_files[name]
+        manifest_files = list(dict.fromkeys(installed_files[name]))
         if only is None:
             _cleanup_stale(name, manifest_files, previous_manifest)
+            if name == "pi" and pi_bundle is None:
+                _remove_empty_dir(_pi_rules_dir())
         else:
             manifest_files = sorted(
                 set(manifest_files)
@@ -2182,13 +3419,16 @@ def main(
             name,
             manifest_files,
             packages=pi_packages if name == "pi" else None,
+            skills=pi_skills if name == "pi" else None,
+            mcp_permissions=pi_mcp_rules if name == "pi" else None,
+            pi_rule_roles=pi_rule_roles if name == "pi" else None,
         )
 
     for source in sorted(all_skipped):
         display = source.parent.name if source.name == "SKILL.md" else source.name
         log("error", f"Skipped installing {display}: size guard violation")
 
-    return size_failed or bool(all_skipped) or bool(frozen_agents)
+    return size_failed or bool(all_skipped) or bool(frozen_agents) or pi_install_failed
 
 
 def get_managed_dirs() -> list[Path]:
@@ -2204,6 +3444,7 @@ def get_managed_dirs() -> list[Path]:
     agents_dir, _ = _get_cline_extra_dirs()
     managed: set[Path] = set()
     managed.add(agents_dir / "skills")
+    managed.add(_pi_rules_dir())
     for key, value in dirs.items():
         for subdir, subdir_path in value.items():
             if key in ("codex", "antigravity", "pi") and subdir == "rules":
@@ -2246,6 +3487,9 @@ def get_source_for_managed_file(path: str) -> str | None:
     from .cli import _collect_sources
 
     dest = Path(path)
+    if dest.parent == _pi_rules_dir():
+        source = _collect_sources("pi").get(f"rules/{dest.name}")
+        return str(source) if source is not None else None
     dirs = _get_dirs()
     for agent, subdirs in dirs.items():
         for subdir, dest_dir in subdirs.items():
@@ -2287,9 +3531,7 @@ def partial_source(path: Path) -> Path | None:
     if root is None or not source.is_file():
         return None
     match source.relative_to(root).parts:
-        case (_, "rules" | "workflows", name) | ("claude-code", "agents", name) if (
-            name.endswith(".md")
-        ):
+        case (_, "rules" | "workflows" | "agents", name) if name.endswith(".md"):
             return source
         case (group, "skills", skill, _, *_):
             skill_md = root / group / "skills" / skill / "SKILL.md"

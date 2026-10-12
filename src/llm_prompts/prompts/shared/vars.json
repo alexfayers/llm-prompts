@@ -1,0 +1,14 @@
+{
+  "ACTION_NO_NARRATE": "Never narrate or describe what you are about to do - just do it.",
+  "TOOL_COMPLETE": "mark the task as complete",
+  "TOOL_ASK_QUESTION": "AskUserQuestion",
+  "TOOL_WORKFLOW": "Workflow",
+  "TOOL_WRAP_UP": "",
+  "PLAN_MODE_RESPOND_TOOL": "present any plan",
+  "PLAN_MODE": "PLAN MODE",
+  "ACT_MODE": "ACT MODE",
+  "TASK_PROGRESS": "task progress",
+  "TOOL_AGENT": "Agent",
+  "TOOL_STEER": "steer_subagent",
+  "TOOL_AGENT_RESULT": "get_subagent_result"
+}
