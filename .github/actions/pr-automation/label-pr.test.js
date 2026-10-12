@@ -71,7 +71,7 @@ test('missing body does not throw', () => {
   assert.equal(hasBreakingChange('feat: add widget', undefined), false);
 });
 
-function blockedFixture({ reviewDecision = null, dependencyCheck = null, labels = [], state = 'OPEN', createLabelError = null }) {
+function blockedFixture({ reviewDecision = null, dependencyCheck = null, labels = [], state = 'OPEN', createLabelError = null, checkRunsOverride = null }) {
   const calls = [];
   const issues = {
     createLabel: async (args) => {
@@ -81,9 +81,9 @@ function blockedFixture({ reviewDecision = null, dependencyCheck = null, labels 
     addLabels: async (args) => calls.push(['addLabels', args.labels]),
     removeLabel: async (args) => calls.push(['removeLabel', args.name]),
   };
-  const checkRuns = dependencyCheck
+  const checkRuns = checkRunsOverride ?? (dependencyCheck
     ? [{ id: 1, status: 'completed', conclusion: dependencyCheck, started_at: '2026-10-11T10:00:00Z' }]
-    : [];
+    : []);
   const github = {
     graphql: async () => ({
       repository: {
@@ -133,6 +133,25 @@ test('PR no longer blocked loses the blocked label', async () => {
   const { github, context, core, calls } = blockedFixture({ dependencyCheck: 'success', labels: ['blocked', 'chore'] });
   await labelBlocked({ github, context, core });
   assert.deepEqual(calls, [['removeLabel', 'blocked']]);
+});
+
+test('labelled PR keeps the label while the dependency check has not completed', async () => {
+  const pending = { id: 2, status: 'in_progress', conclusion: null, started_at: '2026-10-11T10:00:00Z' };
+  for (const checkRunsOverride of [[], [pending]]) {
+    const { github, context, core, calls } = blockedFixture({ labels: ['blocked'], checkRunsOverride });
+    await labelBlocked({ github, context, core });
+    assert.deepEqual(calls, []);
+  }
+});
+
+test('labelled PR keeps the label while a rerun is pending after a completed failure', async () => {
+  const checkRunsOverride = [
+    { id: 1, status: 'completed', conclusion: 'failure', started_at: '2026-10-11T10:00:00Z' },
+    { id: 2, status: 'in_progress', conclusion: null, started_at: '2026-10-11T10:05:00Z' },
+  ];
+  const { github, context, core, calls } = blockedFixture({ labels: ['blocked'], checkRunsOverride });
+  await labelBlocked({ github, context, core });
+  assert.deepEqual(calls, []);
 });
 
 test('unblocked PR without the label is left alone', async () => {
