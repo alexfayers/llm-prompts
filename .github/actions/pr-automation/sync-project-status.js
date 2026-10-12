@@ -7,7 +7,6 @@ const STATUS_OPTION = {
   REVIEW: '432b1b61',
   APPROVED: 'c6f50cd1',
   DONE: '98236657',
-  BLOCKED: 'a441f58e',
 };
 
 function latestCheck(checkRuns) {
@@ -25,9 +24,6 @@ function resolveStatus(pr) {
   }
   if (pr.isDraft) {
     return STATUS_OPTION.IN_PROGRESS;
-  }
-  if (isBlocked(pr)) {
-    return STATUS_OPTION.BLOCKED;
   }
   return pr.reviewDecision === 'APPROVED' ? STATUS_OPTION.APPROVED : STATUS_OPTION.REVIEW;
 }
@@ -105,8 +101,7 @@ async function sync({ github, context, core }) {
   if (!pr) {
     return;
   }
-  const dependencyCheck = await findDependencyCheck(github, core, context.repo, pr.headRefOid);
-  await setStatus(github, pr.id, resolveStatus({ ...pr, dependencyCheck }));
+  await setStatus(github, pr.id, resolveStatus(pr));
 }
 
 module.exports = { findDependencyCheck, findPr, isBlocked, latestCheck, resolveStatus, sync };

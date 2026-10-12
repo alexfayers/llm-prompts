@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { isBlocked, latestCheck, resolveStatus } = require('./sync-project-status.js');
 
 const openPr = { state: 'OPEN', isDraft: false, reviewDecision: null, dependencyCheck: null };
@@ -13,34 +15,23 @@ test('approved PR maps to Approved', () => {
   assert.equal(resolveStatus({ ...openPr, reviewDecision: 'APPROVED' }), 'c6f50cd1');
 });
 
-test('PR with changes requested maps to Blocked', () => {
-  assert.equal(resolveStatus({ ...openPr, reviewDecision: 'CHANGES_REQUESTED' }), 'a441f58e');
-});
-
-test('open ready PR with a failed dependency check maps to Blocked even when approved', () => {
-  const dependencyCheck = 'failure';
-  assert.equal(resolveStatus({ ...openPr, dependencyCheck }), 'a441f58e');
-  assert.equal(resolveStatus({ ...openPr, dependencyCheck, reviewDecision: 'APPROVED' }), 'a441f58e');
-});
-
-test('draft PR maps to In Progress even when blocked', () => {
-  const draftPr = { ...openPr, isDraft: true };
-  assert.equal(resolveStatus({ ...draftPr, dependencyCheck: 'failure' }), '47fc9ee4');
-  assert.equal(resolveStatus({ ...draftPr, reviewDecision: 'CHANGES_REQUESTED' }), '47fc9ee4');
-});
-
-test('PR whose dependency check passed, was cancelled or is missing falls back to its draft or review state', () => {
-  for (const dependencyCheck of ['success', 'cancelled', null]) {
-    assert.equal(resolveStatus({ ...openPr, dependencyCheck }), '432b1b61');
-    assert.equal(resolveStatus({ ...openPr, dependencyCheck, isDraft: true }), '47fc9ee4');
-    assert.equal(resolveStatus({ ...openPr, dependencyCheck, reviewDecision: 'APPROVED' }), 'c6f50cd1');
+test('blocked PRs keep their draft, review or approved status', () => {
+  for (const blocker of [{ dependencyCheck: 'failure' }, { reviewDecision: 'CHANGES_REQUESTED' }]) {
+    assert.equal(resolveStatus({ ...openPr, ...blocker }), '432b1b61');
+    assert.equal(resolveStatus({ ...openPr, ...blocker, isDraft: true }), '47fc9ee4');
   }
+  assert.equal(resolveStatus({ ...openPr, dependencyCheck: 'failure', reviewDecision: 'APPROVED' }), 'c6f50cd1');
 });
 
 test('closed or merged PR maps to Done even with a failed dependency check', () => {
   const dependencyCheck = 'failure';
   assert.equal(resolveStatus({ ...openPr, state: 'CLOSED', dependencyCheck }), '98236657');
   assert.equal(resolveStatus({ ...openPr, state: 'MERGED', dependencyCheck }), '98236657');
+});
+
+test('status resolution never references the Triage option', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'sync-project-status.js'), 'utf8');
+  assert.doesNotMatch(source, /triage/i);
 });
 
 test('latestCheck returns the completed check run that started last, or null', () => {
