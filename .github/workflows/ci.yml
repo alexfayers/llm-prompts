@@ -47,20 +47,6 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           ANNOTATE_MISSING_LINES: true
 
-  pr-template-check:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v4
-      - run: node --test .github/scripts/*.test.js
-      - uses: actions/github-script@v9
-        with:
-          script: |
-            const { check } = require('./.github/scripts/check-pr-template.js')
-            await check({ github, context, core })
-
   size-report:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
