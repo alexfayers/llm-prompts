@@ -98,7 +98,7 @@ async function labelBlocked({ github, context, core }) {
   if (blocked && !labelled) {
     await ensureLabel(github, core, context.repo, BLOCKED_LABEL);
     await addLabels(github, core, target, [BLOCKED_LABEL.name]);
-  } else if (!blocked && labelled) {
+  } else if (!blocked && labelled && dependencyCheck !== null) {
     await removeLabel(github, core, target, BLOCKED_LABEL.name);
   }
 }
