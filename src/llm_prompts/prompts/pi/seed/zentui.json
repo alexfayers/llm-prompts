@@ -1,0 +1,25 @@
+{
+  "components": {
+    "editor": { "enabled": false },
+    "userMessages": { "enabled": false },
+    "selectorBorders": { "enabled": false },
+    "footer": {
+      "style": "starship",
+      "modelLabel": "name",
+      "styles": {
+        "starship": {
+          "format": "$cwd( on $git_branch)( $git_status)$fill$model($sep$context)($sep$tree_context)($sep$tokens)($sep$tree_cost)",
+          "separator": "dot",
+          "variables": {
+            "tree_context": "llm-prompts/context-total:ctx",
+            "tree_cost": "llm-prompts/context-total:cost"
+          },
+          "extensionStatuses": {
+            "placements": { "lsp": "left" },
+            "colorModes": { "lsp": "zentui", "context-total": "zentui" }
+          }
+        }
+      }
+    }
+  }
+}

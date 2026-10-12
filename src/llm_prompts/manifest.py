@@ -19,6 +19,9 @@ class AgentManifest(TypedDict, total=False):
     files: list[str]
     agent_config: str
     packages: list[str]
+    skills: list[str]
+    mcp_permissions: list[str]
+    pi_rule_roles: dict[str, list[str]]
     installed_at: str
 
 
@@ -44,6 +47,9 @@ def write_manifest(
     *,
     agent_config: str | None = None,
     packages: list[str] | None = None,
+    skills: list[str] | None = None,
+    mcp_permissions: list[str] | None = None,
+    pi_rule_roles: dict[str, list[str]] | None = None,
 ) -> None:
     """Write or update the manifest for an agent.
 
@@ -52,6 +58,9 @@ def write_manifest(
         files: List of installed file paths.
         agent_config: Path to agent config that was patched, if any.
         packages: Agent packages llm-prompts manages in the agent's settings, if any.
+        skills: Agent skill dirs llm-prompts manages in the agent's settings, if any.
+        mcp_permissions: Agent MCP permission rule keys llm-prompts manages, if any.
+        pi_rule_roles: Roles each pi rule is selected for, by rule filename, if any.
     """
     agents = read_manifest()
 
@@ -63,6 +72,12 @@ def write_manifest(
         entry["agent_config"] = agent_config
     if packages is not None:
         entry["packages"] = packages
+    if skills is not None:
+        entry["skills"] = skills
+    if mcp_permissions is not None:
+        entry["mcp_permissions"] = mcp_permissions
+    if pi_rule_roles is not None:
+        entry["pi_rule_roles"] = pi_rule_roles
 
     agents[agent_name] = entry
 

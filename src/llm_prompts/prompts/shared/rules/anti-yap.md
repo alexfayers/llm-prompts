@@ -4,6 +4,8 @@ MUST NOT include raw metrics (test counts, line counts, file counts) or process/
 
 User-facing messages MUST stay concise. MUST NOT restate what the user already knows, summarise your own prior message, or pad a report with framing or narration - SHOULD use the shortest form that carries the detail. This binds a message to another agent as much as one to the user - one line where possible.
 
+- A delegate's final reply MUST be a short summary plus its result ref. The summary MUST carry every decision, every ask and the key facts.
+
 MUST cap every user-facing message at 2 sentences. Reply with a single emoji when nothing is needed from the user; ask a question when something is. Pending asks and milestone reports below still carry their required content in full. Drop this cap for the rest of the session if the user wants more detail.
 
 # Wording

@@ -25,6 +25,7 @@ from llm_prompts.cli import (
     _pull_local_sources,
     _remote_source_messages,
     _restart_memory_service,
+    _run_extension_factory_check,
     _run_size_check,
     _size_guard_roots,
     main,
@@ -1380,11 +1381,50 @@ class TestRunSizeCheck:
         assert "not_a_metric" in capsys.readouterr().out
 
 
+class TestRunExtensionFactoryCheck:
+    def test_extension_without_default_factory_is_listed_and_exits_nonzero(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        extensions = tmp_path / "pi" / "extensions"
+        extensions.mkdir(parents=True)
+        (extensions / "good.ts").write_text("export default function () {}\n")
+        (extensions / "bad.ts").write_text("export function factory() {}\n")
+
+        with (
+            patch("llm_prompts.cli._size_guard_roots", return_value=[tmp_path]),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            _run_extension_factory_check()
+
+        assert exc_info.value.code == 1
+        out = capsys.readouterr().out
+        assert "bad.ts" in out
+        assert "good.ts" not in out
+
+    def test_all_extensions_with_default_factory_passes(self, tmp_path: Path) -> None:
+        extensions = tmp_path / "pi" / "extensions"
+        extensions.mkdir(parents=True)
+        (extensions / "good.ts").write_text("export default function () {}\n")
+
+        with patch("llm_prompts.cli._size_guard_roots", return_value=[tmp_path]):
+            _run_extension_factory_check()
+
+
 class TestCheckSubcommand:
     def test_check_dispatches_to_run_size_check(self) -> None:
         with (
             patch("sys.argv", ["llm-prompts", "check"]),
             patch("llm_prompts.cli._run_size_check") as mock_check,
+            patch("llm_prompts.cli._run_extension_factory_check"),
+        ):
+            main()
+        mock_check.assert_called_once_with()
+
+    def test_check_dispatches_to_run_extension_factory_check(self) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "check"]),
+            patch("llm_prompts.cli._run_size_check"),
+            patch("llm_prompts.cli._run_extension_factory_check") as mock_check,
         ):
             main()
         mock_check.assert_called_once_with()

@@ -1,4 +1,5 @@
 ---
+roles: reasoner, worker, reviewer
 description: Guidelines for writing and changing tests
 paths: '**/test_*.py, **/conftest.py, **/*_test.*, **/*.test.*, **/*.spec.*, **/tests/**, **/test/**'
 ---

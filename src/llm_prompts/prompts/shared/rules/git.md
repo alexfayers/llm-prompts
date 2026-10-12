@@ -1,3 +1,7 @@
+---
+roles: lead, worker, reviewer
+---
+
 # Git
 
 - MUST include at least one "Commit changes" item when building a {{TASK_PROGRESS}} checklist, and SHOULD add commit steps throughout it rather than only at the end - committing often is what keeps work saved.

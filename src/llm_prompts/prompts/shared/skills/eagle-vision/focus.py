@@ -1,14 +1,20 @@
 """Manage an eagle-vision plan directory."""
 
 import argparse
+import fcntl
+import io
 import json
+import os
 import re
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, redirect_stdout, suppress
+from functools import partial
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from itertools import combinations
 from pathlib import Path
-from typing import NoReturn, TypedDict
+from typing import Any, NoReturn, TypedDict
 
 SECTION_ORDER = [
     "Goal",
@@ -20,11 +26,24 @@ SECTION_ORDER = [
     "Nodes",
     "Constraints",
     "Checks",
+    "Collect",
     "Later",
 ]
 FRONT_MATTER_RE = re.compile(r"\A---\n((?:.*\n)*?)---\n")
-STAGES: dict[str, str] = {"todo": "", "testing": "testing", "done": "done"}
+STAGES: dict[str, str] = {
+    "todo": "",
+    "building": "building",
+    "testing": "testing",
+    "done": "done",
+}
+STAGE_STYLES: dict[str, str] = {
+    "done": "fill:#9f9,stroke:#393",
+    "testing": "fill:#ff9,stroke:#993",
+    "building": "fill:#9cf,stroke:#369",
+}
 LINK_KEYS = ("depends", "scope", "inputs", "outputs", "deletes")
+VIEW_PAGE = Path(__file__).resolve().parent / "view.html"
+VIEW_SECTIONS = ("In", "Out", "Accept")
 
 
 class FocusError(Exception):
@@ -130,9 +149,11 @@ def set_links(text: str, links: Links) -> str:
 
 
 def find_node_path(base: Path, node_id: str) -> Path:
-    """Find a node's file."""
+    """Find a node's file, in a sibling plan dir for '<dir>/<node>'."""
+    plan_name, _, name = node_id.rpartition("/")
+    plan_dir = base.resolve().parent / plan_name if plan_name else base
     for stage in STAGES:
-        path = node_path(base, node_id, stage)
+        path = node_path(plan_dir, name, stage)
         if path.exists():
             return path
     raise FocusError(f"unknown node '{node_id}'")
@@ -149,10 +170,38 @@ def load_nodes(base: Path) -> Nodes:
     return nodes
 
 
-def find_cycle(nodes: Nodes) -> list[str] | None:
-    """Find a dependency cycle."""
+def sibling_dependency(dep: str, sibling_name: str, plan_name: str) -> str:
+    """A sibling node's dependency, as seen from the plan dir named plan_name."""
+    if "/" not in dep:
+        return f"{sibling_name}/{dep}"
+    dir_name, _, node_id = dep.partition("/")
+    return node_id if dir_name == plan_name else dep
+
+
+def load_siblings(base: Path) -> Nodes:
+    """Load the nodes of sibling plan dirs, keyed '<dir>/<node>'."""
+    plan_dir = base.resolve()
+    siblings: Nodes = {}
+    for sibling in sorted(plan_dir.parent.iterdir()):
+        if sibling != plan_dir and plan_path(sibling).is_file():
+            for node_id, node in load_nodes(sibling).items():
+                node["depends"] = [
+                    sibling_dependency(dep, sibling.name, plan_dir.name)
+                    for dep in node["depends"]
+                ]
+                siblings[f"{sibling.name}/{node_id}"] = node
+    return siblings
+
+
+def with_siblings(base: Path, nodes: Nodes) -> Nodes:
+    """The nodes together with those of sibling plan dirs."""
+    return {**load_siblings(base), **nodes}
+
+
+def find_cycle(nodes: Nodes, all_nodes: Nodes) -> list[str] | None:
+    """Find a dependency cycle reachable from nodes."""
     WHITE, GRAY, BLACK = 0, 1, 2
-    color = dict.fromkeys(nodes, WHITE)
+    color = dict.fromkeys(all_nodes, WHITE)
     path: list[str] = []
 
     def visit(node_id: str) -> list[str] | None:
@@ -162,7 +211,7 @@ def find_cycle(nodes: Nodes) -> list[str] | None:
             return [*path[path.index(node_id) :], node_id]
         color[node_id] = GRAY
         path.append(node_id)
-        for dep in nodes[node_id]["depends"]:
+        for dep in all_nodes[node_id]["depends"]:
             cycle = visit(dep)
             if cycle:
                 return cycle
@@ -184,15 +233,34 @@ def scope_overlaps(a: str, b: str) -> bool:
     return longer[: len(shorter)] == shorter
 
 
-def validate_or_raise(nodes: Nodes) -> None:
+def scope_file(entry: str) -> str:
+    """A scope entry up to the first path segment that names a file."""
+    parts = entry.rstrip("/").split("/")
+    return "/".join(
+        next(
+            (parts[: i + 1] for i, p in enumerate(parts) if "." in p.lstrip(".")), parts
+        )
+    )
+
+
+def shares_file(a: Node, b: Node) -> bool:
+    """Whether two nodes have scope in the same file."""
+    return any(
+        scope_overlaps(scope_file(x), scope_file(y))
+        for x in a["scope"]
+        for y in b["scope"]
+    )
+
+
+def validate_or_raise(nodes: Nodes, all_nodes: Nodes) -> None:
     """Validate the graph."""
     problems = [
         f"{node_id}: unknown dependency '{dep}'"
         for node_id, node in nodes.items()
         for dep in node["depends"]
-        if dep not in nodes
+        if dep not in all_nodes
     ]
-    cycle = find_cycle(nodes)
+    cycle = find_cycle(nodes, all_nodes)
     if cycle:
         problems.append(f"dependency cycle: {' -> '.join(cycle)}")
 
@@ -207,25 +275,71 @@ def validate_or_raise(nodes: Nodes) -> None:
         raise FocusError(problems=problems)
 
 
-def compute_waves(nodes: Nodes) -> dict[str, int]:
-    """Compute each node's wave number."""
-    waves: dict[str, int] = {}
+def compute_waves(nodes: Nodes, all_nodes: Nodes) -> dict[str, int]:
+    """Compute each node's wave number, spreading same-file nodes over spare waves."""
+    earliest: dict[str, int] = {}
 
-    def wave(node_id: str) -> int:
-        if node_id not in waves:
-            waves[node_id] = 1 + max(
-                (wave(dep) for dep in nodes[node_id]["depends"]), default=0
+    def earliest_wave(node_id: str) -> int:
+        if node_id not in earliest:
+            earliest[node_id] = 1 + max(
+                (
+                    earliest_wave(dep)
+                    for dep in all_nodes[node_id]["depends"]
+                    if dep in all_nodes
+                ),
+                default=0,
             )
-        return waves[node_id]
+        return earliest[node_id]
 
     for node_id in nodes:
-        wave(node_id)
+        earliest_wave(node_id)
+    last = max((earliest[node_id] for node_id in nodes), default=0)
+    latest: dict[str, int] = {}
+
+    def latest_wave(node_id: str) -> int:
+        if node_id not in latest:
+            latest[node_id] = min(
+                (
+                    latest_wave(other) - 1
+                    for other, node in nodes.items()
+                    if node_id in node["depends"]
+                ),
+                default=last,
+            )
+        return latest[node_id]
+
+    waves: dict[str, int] = {}
+    for node_id in sorted(nodes, key=lambda n: (earliest[n], n)):
+        start = 1 + max(
+            (
+                waves.get(dep, earliest[dep])
+                for dep in nodes[node_id]["depends"]
+                if dep in all_nodes
+            ),
+            default=0,
+        )
+        plan_dir = node_id.rpartition("/")[0]
+        clashing = {
+            waves[other]
+            for other in waves
+            if other.rpartition("/")[0] == plan_dir
+            and shares_file(nodes[node_id], nodes[other])
+        }
+        waves[node_id] = next(
+            (w for w in range(start, latest_wave(node_id) + 1) if w not in clashing),
+            start,
+        )
     return waves
 
 
-def render_waves(nodes: Nodes) -> str:
+def is_done(all_nodes: Nodes, node_id: str) -> bool:
+    """Whether a node exists and is done."""
+    return node_id in all_nodes and all_nodes[node_id]["stage"] == "done"
+
+
+def render_waves(nodes: Nodes, all_nodes: Nodes) -> str:
     """Render nodes grouped by wave."""
-    waves = compute_waves(nodes)
+    waves = compute_waves(nodes, all_nodes)
     by_wave: dict[int, list[str]] = {}
     for node_id in sorted(nodes):
         by_wave.setdefault(waves[node_id], []).append(node_id)
@@ -236,10 +350,10 @@ def render_waves(nodes: Nodes) -> str:
             node = nodes[node_id]
             if node["stage"] == "done":
                 lines.append(f"- [x] {node_id}")
-            elif node["stage"] == "testing":
-                lines.append(f"- [ ] {node_id} (testing)")
+            elif node["stage"] in ("building", "testing"):
+                lines.append(f"- [ ] {node_id} ({node['stage']})")
             else:
-                ready = all(nodes[d]["stage"] == "done" for d in node["depends"])
+                ready = all(is_done(all_nodes, d) for d in node["depends"])
                 lines.append(f"- [ ] {node_id}" + (" (ready)" if ready else ""))
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
@@ -247,7 +361,7 @@ def render_waves(nodes: Nodes) -> str:
 
 def mermaid_id(node_id: str) -> str:
     """Mermaid-safe node id (hyphens can trigger reserved-word parsing, e.g. 'end')."""
-    return node_id.replace("-", "_")
+    return re.sub(r"[-/]", "_", node_id)
 
 
 def mermaid_node(node_id: str) -> str:
@@ -255,7 +369,7 @@ def mermaid_node(node_id: str) -> str:
     return f'{mermaid_id(node_id)}["{node_id}"]'
 
 
-def plan_sections(nodes: Nodes) -> dict[str, str]:
+def plan_sections(nodes: Nodes, all_nodes: Nodes) -> dict[str, str]:
     """Render generated sections."""
     referenced = {dep for node in nodes.values() for dep in node["depends"]}
     graph = ["```mermaid", "graph LR"]
@@ -268,16 +382,13 @@ def plan_sections(nodes: Nodes) -> dict[str, str]:
             )
         elif node_id not in referenced:
             graph.append(mermaid_node(node_id))
-    done_ids = sorted(node_id for node_id in nodes if nodes[node_id]["stage"] == "done")
-    if done_ids:
-        graph.append("classDef done fill:#9f9,stroke:#393")
-        graph.extend(f"{mermaid_id(node_id)}:::done" for node_id in done_ids)
-    testing_ids = sorted(
-        node_id for node_id in nodes if nodes[node_id]["stage"] == "testing"
-    )
-    if testing_ids:
-        graph.append("classDef testing fill:#ff9,stroke:#993")
-        graph.extend(f"{mermaid_id(node_id)}:::testing" for node_id in testing_ids)
+    for stage, style in STAGE_STYLES.items():
+        stage_ids = sorted(
+            node_id for node_id in nodes if nodes[node_id]["stage"] == stage
+        )
+        if stage_ids:
+            graph.append(f"classDef {stage} {style}")
+            graph.extend(f"{mermaid_id(node_id)}:::{stage}" for node_id in stage_ids)
     graph.append("```")
     return {
         "Graph": "\n".join(graph),
@@ -286,7 +397,7 @@ def plan_sections(nodes: Nodes) -> dict[str, str]:
             for node_id in sorted(nodes)
             if nodes[node_id]["scope"]
         ),
-        "Nodes": render_waves(nodes),
+        "Nodes": render_waves(nodes, all_nodes),
     }
 
 
@@ -342,6 +453,21 @@ def render_plan(title: str, sections: dict[str, str]) -> str:
     return "\n\n".join([f"# {title}", render_sections(sections)]) + "\n"
 
 
+def write_atomic(path: Path, text: str) -> None:
+    """Write a file via a temp file in the same dir, then replace."""
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temp_path.write_text(text)
+    os.replace(temp_path, path)
+
+
+@contextmanager
+def plan_lock(base: Path) -> Iterator[None]:
+    """Hold an exclusive lock on a plan dir."""
+    with (base / ".focus.lock").open("a") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        yield
+
+
 def require_plan(base: Path) -> None:
     """Require a plan directory."""
     if not plan_path(base).is_file():
@@ -361,8 +487,8 @@ def regenerate_plan(base: Path, nodes: Nodes) -> None:
     """Regenerate PLAN.md."""
     path = plan_path(base)
     sections = parse_sections(path.read_text())
-    sections.update(plan_sections(nodes))
-    path.write_text(render_plan(base.name, sections))
+    sections.update(plan_sections(nodes, with_siblings(base, nodes)))
+    write_atomic(path, render_plan(base.name, sections))
 
 
 def make_node(links: Links, stage: str) -> Node:
@@ -394,7 +520,7 @@ def interface_id(name: str) -> str:
     return f"interface-{slugify(name)}"
 
 
-def join_edges(nodes: Nodes) -> list[str]:
+def join_edges(nodes: Nodes, prefix: str = "") -> list[str]:
     """Add interface nodes and ordering edges for outputs, inputs and deletes."""
     producers: dict[str, list[str]] = {}
     for node_id, node in nodes.items():
@@ -423,7 +549,7 @@ def join_edges(nodes: Nodes) -> list[str]:
             if dep != node_id and dep not in nodes[node_id]["depends"]
         ]
         nodes[node_id]["depends"] = merge_unique(nodes[node_id]["depends"], added)
-        lines.extend(f"{node_id} {verb} {dep}{reason}" for dep in added)
+        lines.extend(f"{prefix}{node_id} {verb} {prefix}{dep}{reason}" for dep in added)
 
     for name, (producer,) in producers.items():
         others = [c for c in consumers.get(name, []) if c != producer]
@@ -444,25 +570,70 @@ def join_edges(nodes: Nodes) -> list[str]:
     return lines
 
 
-def cmd_join(base: Path) -> None:
+def ancestors(all_nodes: Nodes, node_id: str) -> set[str]:
+    """Every node a node transitively depends on."""
+    found: set[str] = set()
+    pending = [node_id]
+    while pending:
+        for dep in all_nodes[pending.pop()]["depends"]:
+            if dep in all_nodes and dep not in found:
+                found.add(dep)
+                pending.append(dep)
+    return found
+
+
+def unlinked_mentions(
+    base: Path, nodes: Nodes, all_nodes: Nodes, prefix: str = ""
+) -> list[str]:
+    """Warn of backticked outputs of other nodes that a node has no depends path to."""
+    lines: list[str] = []
+    for node_id in nodes:
+        _, body = parse_node_file(find_node_path(base, node_id).read_text())
+        upstream = ancestors(all_nodes, node_id)
+        names = dict.fromkeys(
+            span.partition("(")[0].strip() for span in re.findall(r"`([^`\n]+)`", body)
+        )
+        for name in names:
+            if name in nodes[node_id]["outputs"] or any(
+                linked.rpartition("/")[2] == interface_id(name)
+                for linked in (node_id, *upstream)
+            ):
+                continue
+            lines.extend(
+                f"warning: {prefix}{node_id} mentions `{name}`, output of {prefix if producer in nodes else ''}{producer}, with no depends path"
+                for producer, other in all_nodes.items()
+                if name in other["outputs"]
+                and producer != interface_id(name)
+                and producer != node_id
+                and producer not in upstream
+                and node_id not in ancestors(all_nodes, producer)
+            )
+    return lines
+
+
+def cmd_join(base: Path, prefix: str = "") -> None:
     """Join outputs, inputs and deletes into interface nodes and ordering edges."""
     require_plan(base)
     nodes = load_nodes(base)
     before = {node_id: node_links(node) for node_id, node in nodes.items()}
-    lines = join_edges(nodes)
-    validate_or_raise(nodes)
+    lines = join_edges(nodes, prefix)
+    validate_or_raise(nodes, with_siblings(base, nodes))
     for node_id, node in nodes.items():
         links = node_links(node)
         if node_id not in before:
             body = (
                 f"# Interface: {node['outputs'][0]}\n\n## In\n\n## Out\n\n## Accept\n"
             )
-            node_path(base, node_id, "todo").write_text(render_node_file(links, body))
+            write_atomic(
+                node_path(base, node_id, "todo"), render_node_file(links, body)
+            )
         elif links != before[node_id]:
             path = find_node_path(base, node_id)
-            path.write_text(set_links(path.read_text(), links))
+            write_atomic(path, set_links(path.read_text(), links))
     regenerate_plan(base, nodes)
     print("\n".join(lines) or "nothing to join")
+    for warning in unlinked_mentions(base, nodes, with_siblings(base, nodes), prefix):
+        print(warning, file=sys.stderr)
 
 
 def outside_scope(paths: list[str], scope: list[str]) -> list[str]:
@@ -503,10 +674,10 @@ def cmd_init(base: Path) -> None:
     """Create a plan."""
     if base.exists():
         raise FocusError(f"{base} already exists")
-    (base / "nodes" / STAGES["testing"]).mkdir(parents=True)
-    (base / "nodes" / STAGES["done"]).mkdir(parents=True)
-    sections = {name: "" for name in SECTION_ORDER} | plan_sections({})
-    plan_path(base).write_text(render_plan(base.name, sections))
+    for stage in ("building", "testing", "done"):
+        (base / "nodes" / STAGES[stage]).mkdir(parents=True)
+    sections = {name: "" for name in SECTION_ORDER} | plan_sections({}, {})
+    write_atomic(plan_path(base), render_plan(base.name, sections))
     print(f"created {base}")
 
 
@@ -519,9 +690,9 @@ def cmd_add(base: Path, name: str, links: Links) -> None:
         raise FocusError(f"node '{node_id}' already exists")
     nodes = load_nodes(base)
     nodes[node_id] = make_node(links, "todo")
-    validate_or_raise(nodes)
+    validate_or_raise(nodes, with_siblings(base, nodes))
     body = f"# {name}\n\n## In\n\n## Out\n\n## Accept\n"
-    path.write_text(render_node_file(links, body))
+    write_atomic(path, render_node_file(links, body))
     regenerate_plan(base, nodes)
     print(f"added {path}{links_summary(links)}")
 
@@ -539,8 +710,8 @@ def edit_links(base: Path, node_id: str, links: Links, add: bool) -> None:
         for key in LINK_KEYS
     }
     nodes[node_id] = make_node(new_links, nodes[node_id]["stage"])
-    validate_or_raise(nodes)
-    path.write_text(set_links(path.read_text(), new_links))
+    validate_or_raise(nodes, with_siblings(base, nodes))
+    write_atomic(path, set_links(path.read_text(), new_links))
     regenerate_plan(base, nodes)
     print(f"{node_id}{links_summary(new_links)}")
 
@@ -548,40 +719,50 @@ def edit_links(base: Path, node_id: str, links: Links, add: bool) -> None:
 def move_node(
     base: Path,
     node_id: str,
-    src_stage: str,
+    src_stages: tuple[str, ...],
     dst_stage: str,
     verb: str,
     note: str = "",
 ) -> None:
     """Move a node between stages."""
-    nodes = require_known_node(base, node_id)
-    src_path = node_path(base, node_id, src_stage)
-    if not src_path.exists():
-        raise FocusError(f"'{node_id}' is not in nodes/{STAGES[src_stage]}")
-    nodes[node_id]["stage"] = dst_stage
-    validate_or_raise(nodes)
-    src_path.rename(node_path(base, node_id, dst_stage))
-    regenerate_plan(base, nodes)
+    require_plan(base)
+    with plan_lock(base):
+        nodes = require_known_node(base, node_id)
+        src_stage = nodes[node_id]["stage"]
+        if src_stage not in src_stages:
+            expected = " or ".join(f"nodes/{STAGES[stage]}" for stage in src_stages)
+            raise FocusError(f"'{node_id}' is not in {expected}")
+        nodes[node_id]["stage"] = dst_stage
+        validate_or_raise(nodes, with_siblings(base, nodes))
+        dst_path = node_path(base, node_id, dst_stage)
+        dst_path.parent.mkdir(exist_ok=True)
+        node_path(base, node_id, src_stage).rename(dst_path)
+        regenerate_plan(base, nodes)
     print(f"{verb} {node_id}" + (f": {note}" if note else ""))
+
+
+def cmd_start(base: Path, node_id: str) -> None:
+    """Mark a node's build started."""
+    move_node(base, node_id, ("todo",), "building", "start")
 
 
 def cmd_built(base: Path, node_id: str) -> None:
     """Mark a node built, awaiting acceptance tests."""
-    move_node(base, node_id, "todo", "testing", "built")
+    move_node(base, node_id, ("todo", "building"), "testing", "built")
     path = node_path(base, node_id, "testing")
-    path.write_text(update_failed_line(path.read_text(), None))
+    write_atomic(path, update_failed_line(path.read_text(), None))
 
 
 def cmd_pass(base: Path, node_id: str) -> None:
     """Mark a node's acceptance tests passing."""
-    move_node(base, node_id, "testing", "done", "pass")
+    move_node(base, node_id, ("testing",), "done", "pass")
 
 
 def cmd_fail(base: Path, node_id: str, reason: str) -> None:
     """Mark a node's acceptance tests failing."""
-    move_node(base, node_id, "testing", "todo", "fail", reason)
+    move_node(base, node_id, ("testing",), "todo", "fail", reason)
     path = node_path(base, node_id, "todo")
-    path.write_text(update_failed_line(path.read_text(), reason))
+    write_atomic(path, update_failed_line(path.read_text(), reason))
 
 
 def fail_and_exit(base: Path, node_id: str, reason: str) -> NoReturn:
@@ -596,14 +777,33 @@ def cmd_set_test(base: Path, node_id: str, command: str) -> None:
     if "\n" in command:
         raise FocusError("test command must be one line")
     path = find_node_path(base, node_id)
-    path.write_text(
-        replace_front_lines(path.read_text(), {"test"}, [f"test: {command}"])
+    write_atomic(
+        path, replace_front_lines(path.read_text(), {"test"}, [f"test: {command}"])
     )
     print(f"{node_id} test: {command}")
 
 
-def cmd_check(base: Path, node_id: str, git_base: str | None = None) -> None:
-    """Run a node's test command and the plan's Checks, then pass or fail it."""
+def plan_checks(base: Path) -> list[str]:
+    """The plan's Checks commands."""
+    return parse_checks(parse_sections(plan_path(base).read_text()).get("Checks", ""))
+
+
+def failures(commands: list[str]) -> Iterator[tuple[str, int]]:
+    """Run commands in order, lazily yielding each failing one with its exit code."""
+    for cmd in commands:
+        print(f"$ {cmd}", flush=True)
+        returncode = subprocess.run(cmd, shell=True, check=False).returncode
+        if returncode != 0:
+            yield cmd, returncode
+
+
+def cmd_check(
+    base: Path,
+    node_id: str,
+    git_base: str | None = None,
+    node_only: bool = False,
+) -> None:
+    """Run a node's test command and, unless node_only, the plan's Checks, then pass or fail it."""
     nodes = require_known_node(base, node_id)
     if nodes[node_id]["stage"] != "testing":
         raise FocusError(f"'{node_id}' is not in nodes/{STAGES['testing']}")
@@ -614,13 +814,45 @@ def cmd_check(base: Path, node_id: str, git_base: str | None = None) -> None:
         outside = outside_scope(changed_files(base, git_base), nodes[node_id]["scope"])
         if outside:
             fail_and_exit(base, node_id, f"outside scope: {', '.join(outside)}")
-    checks = parse_checks(parse_sections(plan_path(base).read_text()).get("Checks", ""))
-    for cmd in [command, *checks]:
-        print(f"$ {cmd}", flush=True)
-        result = subprocess.run(cmd, shell=True, check=False)
-        if result.returncode != 0:
-            fail_and_exit(base, node_id, f"`{cmd}` exited {result.returncode}")
+    failure = next(failures([command, *([] if node_only else plan_checks(base))]), None)
+    if failure:
+        fail_and_exit(base, node_id, f"`{failure[0]}` exited {failure[1]}")
     cmd_pass(base, node_id)
+
+
+def plan_collect(base: Path) -> str:
+    """The plan's Collect command template."""
+    templates = parse_checks(
+        parse_sections(plan_path(base).read_text()).get("Collect", "")
+    )
+    if not templates:
+        raise FocusError("plan has no Collect command")
+    if "{test}" not in templates[0]:
+        raise FocusError("Collect command needs {test}")
+    return templates[0]
+
+
+def cmd_collect(base: Path, node_id: str) -> None:
+    """Dry-run a node's test command selection, exiting 1 if it selects no tests."""
+    require_known_node(base, node_id)
+    command = node_test_command(find_node_path(base, node_id).read_text())
+    if command is None:
+        raise FocusError(f"'{node_id}' has no test command")
+    failure = next(failures([plan_collect(base).replace("{test}", command)]), None)
+    if failure:
+        print(f"`{node_id}` selects no tests: `{failure[0]}` exited {failure[1]}")
+        sys.exit(1)
+
+
+def cmd_check_wave(base: Path) -> None:
+    """Run every one of the plan's Checks, exiting 1 if any failed."""
+    require_plan(base)
+    failed = False
+    for cmd, returncode in failures(plan_checks(base)):
+        print(f"`{cmd}` exited {returncode}")
+        failed = True
+    if failed:
+        sys.exit(1)
 
 
 def cmd_remove(base: Path, node_id: str) -> None:
@@ -651,14 +883,15 @@ def cmd_rename(base: Path, node_id: str, name: str) -> None:
                 new_id if dep == node_id else dep for dep in node["depends"]
             ]
             path = node_path(base, other_id, node["stage"])
-            path.write_text(set_links(path.read_text(), node_links(node)))
+            write_atomic(path, set_links(path.read_text(), node_links(node)))
     nodes[new_id] = nodes.pop(node_id)
     old_path = node_path(base, node_id, nodes[new_id]["stage"])
     new_path = node_path(base, new_id, nodes[new_id]["stage"])
-    new_path.write_text(
+    write_atomic(
+        new_path,
         re.sub(
             r"^# .*$", f"# {name}", old_path.read_text(), count=1, flags=re.MULTILINE
-        )
+        ),
     )
     old_path.unlink()
     regenerate_plan(base, nodes)
@@ -693,22 +926,20 @@ def cmd_show(base: Path, node_id: str) -> None:
     print(node_brief(base, nodes, node_id), end="")
 
 
-def cmd_briefs(base: Path) -> None:
-    """Print every node's brief as JSON, without build status."""
+def cmd_briefs(base: Path, out: Path | None = None) -> None:
+    """Print every node's brief as JSON, or write one brief file per node to out."""
     sections = plan_without_nodes(base)
     sections.pop("Graph", None)
     nodes = load_nodes(base)
-    print(
-        json.dumps(
-            {
-                "plan": render_plan(base.name, sections),
-                "nodes": {
-                    node_id: node_brief(base, nodes, node_id)
-                    for node_id in sorted(nodes)
-                },
-            }
-        )
-    )
+    plan = render_plan(base.name, sections)
+    briefs = {node_id: node_brief(base, nodes, node_id) for node_id in sorted(nodes)}
+    if out is None:
+        print(json.dumps({"plan": plan, "nodes": briefs}))
+        return
+    out.mkdir(parents=True, exist_ok=True)
+    for node_id, brief in briefs.items():
+        (out / f"{node_id}.md").write_text(plan + brief)
+        print(out / f"{node_id}.md")
 
 
 def cmd_ready(base: Path, node_id: str) -> None:
@@ -716,10 +947,10 @@ def cmd_ready(base: Path, node_id: str) -> None:
     nodes = require_known_node(base, node_id)
     if node_test_command(find_node_path(base, node_id).read_text()) is None:
         raise FocusError(f"'{node_id}' has no test command")
-    checks = parse_checks(parse_sections(plan_path(base).read_text()).get("Checks", ""))
-    if not checks:
+    if not plan_checks(base):
         raise FocusError("plan has no Checks")
-    waiting = [d for d in nodes[node_id]["depends"] if nodes[d]["stage"] != "done"]
+    all_nodes = with_siblings(base, nodes)
+    waiting = [d for d in nodes[node_id]["depends"] if not is_done(all_nodes, d)]
     if waiting:
         print(f"waiting on: {', '.join(waiting)}")
         sys.exit(1)
@@ -729,7 +960,8 @@ def cmd_ready(base: Path, node_id: str) -> None:
 def cmd_waves(base: Path) -> None:
     """Print nodes grouped by wave."""
     require_plan(base)
-    print(render_waves(load_nodes(base)))
+    nodes = load_nodes(base)
+    print(render_waves(nodes, with_siblings(base, nodes)))
 
 
 COMMENT_INTRO = (
@@ -744,25 +976,33 @@ def details(summary: str, body: str) -> str:
     return f"<details><summary>{summary}</summary>\n\n{body}\n\n</details>"
 
 
+def accept_text(base: Path, nodes: Nodes, all_nodes: Nodes) -> str:
+    """Each node's acceptance criteria, in wave order."""
+    waves = compute_waves(nodes, all_nodes)
+    order = sorted(nodes, key=lambda n: (waves[n], n))
+    return "\n\n".join(
+        f"### {node_id}\n\n{node_section(base, node_id, 'Accept')}" for node_id in order
+    )
+
+
+def comment_text(plan: str, accept: str) -> str:
+    """A PR comment with the plan and each node's acceptance criteria."""
+    return "\n\n".join(
+        [
+            "## Eagle-vision plan",
+            COMMENT_INTRO,
+            details("Eagle-vision plan", plan),
+            details("Eagle-vision acceptance criteria per node", accept),
+        ]
+    )
+
+
 def cmd_comment(base: Path) -> None:
     """Print a PR comment with the plan and each node's acceptance criteria."""
     require_plan(base)
     nodes = load_nodes(base)
-    waves = compute_waves(nodes)
-    order = sorted(nodes, key=lambda n: (waves[n], n))
-    accept = "\n\n".join(
-        f"### {node_id}\n\n{node_section(base, node_id, 'Accept')}" for node_id in order
-    )
-    print(
-        "\n\n".join(
-            [
-                "## Eagle-vision plan",
-                COMMENT_INTRO,
-                details("Eagle-vision plan", render_sections(plan_without_nodes(base))),
-                details("Eagle-vision acceptance criteria per node", accept),
-            ]
-        )
-    )
+    plan = render_sections(plan_without_nodes(base))
+    print(comment_text(plan, accept_text(base, nodes, with_siblings(base, nodes))))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -805,6 +1045,7 @@ def build_parser() -> argparse.ArgumentParser:
     rename_parser.add_argument("id")
     rename_parser.add_argument("name")
 
+    add_cmd("start", "Mark a node's build started").add_argument("id")
     add_cmd("built", "Mark a node built, awaiting check").add_argument("id")
     add_cmd("pass", "Mark a node's acceptance tests passing").add_argument("id")
     fail_parser = add_cmd(
@@ -820,20 +1061,32 @@ def build_parser() -> argparse.ArgumentParser:
     set_test_parser.add_argument("test_command")
     check_parser = add_cmd(
         "check",
-        "Fail changes outside scope since --base, run the node's test and the plan's Checks, then pass or fail it",
+        "Fail changes outside scope since --base, run the node's test and the plan's Checks (--node-only: not the Checks), then pass or fail it",
     )
     check_parser.add_argument("id")
     check_parser.add_argument("--base", default=None)
+    check_parser.add_argument("--node-only", action="store_true")
+    add_cmd("check-wave", "Run the plan's Checks once; exit 1 at the first failure")
+    add_cmd("collect", "Dry-run a node's test command selection").add_argument("id")
     add_cmd(
         "show", "Print all a builder needs: plan, node, dependencies' Out"
     ).add_argument("id")
-    add_cmd("briefs", "Print every node's brief as JSON, without build status")
+    briefs_parser = add_cmd(
+        "briefs",
+        "Print every node's brief as JSON, without build status; --out writes one file per node and prints the paths",
+    )
+    briefs_parser.add_argument("--out", type=Path, default=None)
     add_cmd("ready", "Check whether a node is ready").add_argument("id")
     add_cmd("waves", "Print nodes grouped by wave")
     add_cmd(
         "comment",
         "Print a PR comment with the plan and each node's acceptance criteria",
     )
+    view_parser = add_cmd(
+        "view",
+        "Serve a live graph view of the plan on localhost (--port, default 8765)",
+    )
+    view_parser.add_argument("--port", type=int, default=8765)
 
     return parser
 
@@ -851,24 +1104,203 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], None]] = {
     "join": lambda a: cmd_join(a.dir),
     "remove": lambda a: cmd_remove(a.dir, a.id),
     "rename": lambda a: cmd_rename(a.dir, a.id, a.name),
+    "start": lambda a: cmd_start(a.dir, a.id),
     "built": lambda a: cmd_built(a.dir, a.id),
     "pass": lambda a: cmd_pass(a.dir, a.id),
     "fail": lambda a: cmd_fail(a.dir, a.id, a.reason),
     "set-test": lambda a: cmd_set_test(a.dir, a.id, a.test_command),
-    "check": lambda a: cmd_check(a.dir, a.id, a.base),
+    "check": lambda a: cmd_check(a.dir, a.id, a.base, a.node_only),
+    "check-wave": lambda a: cmd_check_wave(a.dir),
+    "collect": lambda a: cmd_collect(a.dir, a.id),
     "show": lambda a: cmd_show(a.dir, a.id),
-    "briefs": lambda a: cmd_briefs(a.dir),
+    "briefs": lambda a: cmd_briefs(a.dir, a.out),
     "ready": lambda a: cmd_ready(a.dir, a.id),
     "waves": lambda a: cmd_waves(a.dir),
     "comment": lambda a: cmd_comment(a.dir),
+    "view": lambda a: cmd_view(a.dir, a.port),
 }
+
+
+def child_plans(parent: Path) -> list[Path]:
+    """Plan dirs directly under a dir that has no nodes of its own."""
+    if (parent / "nodes").is_dir() or not parent.is_dir():
+        return []
+    return sorted(child for child in parent.iterdir() if plan_path(child).is_file())
+
+
+def load_children(plans: list[Path]) -> Nodes:
+    """Load the nodes of plan dirs, keyed '<dir>/<node>'."""
+    nodes: Nodes = {}
+    for plan in plans:
+        for node_id, node in load_nodes(plan).items():
+            node["depends"] = [
+                sibling_dependency(dep, plan.name, "") for dep in node["depends"]
+            ]
+            nodes[f"{plan.name}/{node_id}"] = node
+    return nodes
+
+
+def view_data(base: Path) -> dict[str, object]:
+    """The plan graph for the view page: repos, wave count and nodes."""
+    plans = child_plans(base)
+    if plans:
+        nodes = all_nodes = load_children(plans)
+    else:
+        plans = [base]
+        nodes = load_nodes(base)
+        all_nodes = with_siblings(base, nodes)
+    waves = compute_waves(nodes, all_nodes)
+
+    def entry(node_id: str) -> dict[str, object]:
+        repo, separator, label = node_id.partition("/")
+        if not separator:
+            repo, label = base.resolve().name, node_id
+        return {
+            "id": node_id,
+            "repo": repo,
+            "label": label,
+            "wave": waves[node_id],
+            "stage": nodes[node_id]["stage"],
+            "depends": nodes[node_id]["depends"],
+            "sections": {
+                name: node_section(plans[0], node_id, name) for name in VIEW_SECTIONS
+            },
+        }
+
+    return {
+        "repos": [plan.resolve().name for plan in plans],
+        "waves": max(waves.values(), default=0),
+        "nodes": [entry(node_id) for node_id in nodes],
+    }
+
+
+class ViewHandler(BaseHTTPRequestHandler):
+    """Serve the view page and the plan graph rebuilt on every request."""
+
+    def __init__(self, *args: Any, base: Path, **kwargs: Any) -> None:
+        """Store the plan dir before the request is handled."""
+        self.base = base
+        super().__init__(*args, **kwargs)
+
+    def do_GET(self) -> None:
+        """Answer the page, or the plan graph as JSON."""
+        if self.path == "/":
+            body, content_type = VIEW_PAGE.read_bytes(), "text/html; charset=utf-8"
+        elif self.path == "/data.json":
+            body = json.dumps(view_data(self.base)).encode()
+            content_type = "application/json"
+        else:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        """Keep the console quiet."""
+
+
+def make_view_server(base: Path, port: int) -> ThreadingHTTPServer:
+    """A localhost server for the plan dir's view."""
+    return ThreadingHTTPServer(("127.0.0.1", port), partial(ViewHandler, base=base))
+
+
+def cmd_view(base: Path, port: int) -> None:
+    """Serve a live graph view of the plan until interrupted."""
+    if not child_plans(base):
+        require_plan(base)
+    with make_view_server(base, port) as server:
+        print(f"http://127.0.0.1:{server.server_port}/", flush=True)
+        with suppress(KeyboardInterrupt):
+            server.serve_forever()
+
+
+def merged_waves(plans: list[Path], args: argparse.Namespace) -> None:
+    """Print the nodes of plan dirs grouped by wave."""
+    nodes = load_children(plans)
+    print(render_waves(nodes, nodes))
+
+
+def output_of(command: Callable[[Path], None], plan: Path) -> str:
+    """What a command prints for a plan dir."""
+    with redirect_stdout(io.StringIO()) as buffer:
+        command(plan)
+    return buffer.getvalue()
+
+
+def merged_briefs(plans: list[Path], args: argparse.Namespace) -> None:
+    """Print the briefs of plan dirs as one JSON object, or write them under out."""
+    if args.out:
+        for plan in plans:
+            cmd_briefs(plan, args.out / plan.name)
+        return
+    briefs = {plan.name: json.loads(output_of(cmd_briefs, plan)) for plan in plans}
+    print(
+        json.dumps(
+            {
+                "plan": "\n".join(brief["plan"] for brief in briefs.values()),
+                "nodes": {
+                    f"{name}/{node_id}": text
+                    for name, brief in briefs.items()
+                    for node_id, text in brief["nodes"].items()
+                },
+            }
+        )
+    )
+
+
+def merged_comment(plans: list[Path], args: argparse.Namespace) -> None:
+    """Print a PR comment covering plan dirs."""
+    nodes = load_children(plans)
+    plan = "\n".join(render_plan(plan.name, plan_without_nodes(plan)) for plan in plans)
+    print(comment_text(plan, accept_text(plans[0], nodes, nodes)))
+
+
+def merged_join(plans: list[Path], args: argparse.Namespace) -> None:
+    """Join each plan dir, printing the added edges."""
+    lines = [
+        line
+        for plan in plans
+        for line in output_of(lambda p: cmd_join(p, f"{p.name}/"), plan).splitlines()
+        if line != "nothing to join"
+    ]
+    print("\n".join(lines) or "nothing to join")
+
+
+def merged_check_wave(plans: list[Path], args: argparse.Namespace) -> None:
+    """Run each plan dir's Checks, exiting 1 at the first failure."""
+    for plan in plans:
+        cmd_check_wave(plan)
+
+
+MERGED: dict[str, Callable[[list[Path], argparse.Namespace], None]] = {
+    "waves": merged_waves,
+    "briefs": merged_briefs,
+    "comment": merged_comment,
+    "join": merged_join,
+    "check-wave": merged_check_wave,
+}
+
+
+def run_command(args: argparse.Namespace) -> None:
+    """Run a command, resolving '<child>/<node>' ids when given a parent of plan dirs."""
+    plans = child_plans(args.dir)
+    if plans and args.command in MERGED:
+        MERGED[args.command](plans, args)
+        return
+    if plans and hasattr(args, "id"):
+        child, _, args.id = args.id.rpartition("/")
+        args.dir /= child
+    COMMANDS[args.command](args)
 
 
 def main() -> None:
     """Run the CLI."""
     args = build_parser().parse_args()
     try:
-        COMMANDS[args.command](args)
+        run_command(args)
     except FocusError as exc:
         for line in exc.problems or [str(exc)]:
             print(line, file=sys.stderr)

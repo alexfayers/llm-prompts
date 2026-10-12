@@ -1,5 +1,8 @@
 """Measures installed-artifact sizes against `size_limits.py`'s thresholds.
 
+pi is always measured as its herdsman render (the larger one), whether or not
+`herdr` is on PATH.
+
 Every measurement replicates the render-vs-linked dispatch `install.py` itself
 uses (`_collect_content_srcs`'s `agent_specific` flag): shared sources are
 rendered with variables substituted, agent-specific sources are only stripped
@@ -14,8 +17,9 @@ import contextlib
 import hashlib
 import io
 import json
+import shutil
 import tempfile
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -24,15 +28,20 @@ from jinja2 import TemplateError
 from .install import (
     AGENT_CLASSES,
     _Agent,
+    _agent_source_dirs,
     _builtin_skill_vars,
     _collect_content_srcs,
     _discover_overlay_paths,
-    _excluded_targets,
     _expand_agent_variants,
+    _expanded_definition,
     _linked_content,
     _passes_requires_gate,
+    _pi_agent_dialect,
+    _pi_definitions,
+    _PiRuleBundle,
     _rendered_content,
     _resolve_priority_sources,
+    _targets_agent,
     content_subdirs,
     prompts_dir,
 )
@@ -47,10 +56,12 @@ from .render_template import (
 from .size_limits import (
     AGENT_DESCRIPTION_CHARS,
     COLLECTION_BYTES,
+    COLLECTION_CEILING_METRICS,
     COLLECTION_SCHEDULE,
     FINALS,
     FRONTMATTER_VALID,
     NO_UNSUBSTITUTED_PLACEHOLDERS,
+    PI_ROLE_PROMPT_BYTES,
     RULE_BYTES,
     RULE_LINES,
     SCHEDULES,
@@ -337,9 +348,9 @@ def _iter_skill_artifacts(
         skill_md = skill_dir / "SKILL.md"
         if not skill_md.is_file():
             return False
-        if not _passes_requires_gate(skill_md):
+        if not _passes_requires_gate(skill_md, target):
             return False
-        return target not in _excluded_targets(skill_md)
+        return _targets_agent(skill_md, target)
 
     resolved = _resolve_priority_sources(
         candidate_dirs,
@@ -378,33 +389,43 @@ def _iter_skill_artifacts(
 
 
 def _iter_agent_artifacts(
-    root: Path, target: str, allowances: dict[str, dict[str, int]]
+    root: Path,
+    target: str,
+    allowances: dict[str, dict[str, int]],
+    vars_root: Path | None = None,
 ) -> Iterator[Artifact]:
     """Yield post-expansion description/validity artifacts for claude-code agents.
 
-    A `generate_variants` source is measured once per generated variant, since
-    that is what actually gets installed; any other source is measured as
-    installed verbatim (a symlink per `_install_agents`, or a generated file
-    when it uses `rules`).
+    Each source is substituted with the target's variables, matching
+    `_install_agents`. A `generate_variants` source is measured once per
+    generated variant, since that is what actually gets installed.
 
     Args:
         root: Prompts directory being scanned.
         target: Render target - agents are claude-code only.
         allowances: This root's declared per-artifact ceilings.
+        vars_root: Prompts directory to read variables from, instead of this
+            package's own.
     """
     if target != "claude-code":
         return
-    agents_dir = root / "claude-code" / "agents"
-    if not agents_dir.is_dir():
-        return
-
-    for src in sorted(agents_dir.glob("*.md")):
-        raw = _read_text(src)
-        _, base_frontmatter = parse_frontmatter(raw)
+    sources = [
+        src
+        for agents_dir in _agent_source_dirs(root, [], target)
+        for src in sorted(agents_dir.glob("*.md"))
+    ]
+    variables = _builtin_skill_vars(_own_vars_path(target, vars_root))
+    for src in sources:
+        try:
+            rendered = substitute_variables(_read_text(src), variables)
+        except TemplateError:
+            yield Artifact(TEMPLATE_RENDERS, target, src.name, False, src)
+            continue
+        _, base_frontmatter = parse_frontmatter(rendered)
         variants = (
-            _expand_agent_variants(src)
+            _expand_agent_variants(src, variables=variables)
             if "generate_variants" in base_frontmatter
-            else [(src.name, raw)]
+            else [(src.name, rendered)]
         )
         for name, content in variants:
             _, frontmatter, valid = _resolve_content_frontmatter(content)
@@ -417,6 +438,60 @@ def _iter_agent_artifacts(
                 allowances.get(AGENT_DESCRIPTION_CHARS, {}).get(name),
             )
             yield from _common_artifacts(content, target, name, src)
+
+
+def _iter_pi_role_artifacts(
+    roots: Sequence[Path], vars_root: Path | None = None
+) -> Iterator[Artifact]:
+    """Yield the expanded prompt size of each pi agent definition and the lead.
+
+    Measures the resolved installation union: the global ``AGENTS.md`` as the
+    ``lead`` artifact, and each generated definition with its rule references
+    expanded.
+
+    Args:
+        roots: Prompts directories, this package's own first, then overlays.
+        vars_root: Prompts directory to read variables from, instead of this
+            package's own.
+    """
+    if not roots:
+        return
+    root, overlays = roots[0], list(roots[1:])
+    allowances = _declared_allowances(root)[0].get(PI_ROLE_PROMPT_BYTES, {})
+    vars_path = _own_vars_path("pi", vars_root)
+    bundle = _PiRuleBundle.build(_agent_for("pi", root), overlays, vars_path=vars_path)
+    for src, _ in (*bundle.failures, *bundle.selector_errors):
+        yield Artifact(TEMPLATE_RENDERS, "pi", src.name, False, src)
+    yield Artifact(
+        PI_ROLE_PROMPT_BYTES,
+        "pi",
+        "lead",
+        len(bundle.lead_text().encode()),
+        root,
+        allowances.get("lead"),
+    )
+    definitions, failed = _pi_definitions(
+        _agent_source_dirs(root, overlays, "pi"),
+        bundle,
+        _pi_agent_dialect(root, overlays, strict_skills=False),
+        _builtin_skill_vars(vars_path),
+    )
+    for src in failed:
+        yield Artifact(TEMPLATE_RENDERS, "pi", src.name, False, src)
+    for name, src, content in definitions:
+        try:
+            expanded = _expanded_definition(content, bundle.texts)
+        except ValueError:
+            yield Artifact(TEMPLATE_RENDERS, "pi", name, False, src)
+            continue
+        yield Artifact(
+            PI_ROLE_PROMPT_BYTES,
+            "pi",
+            name,
+            len(expanded.encode()),
+            src,
+            allowances.get(name),
+        )
 
 
 def iter_artifacts(
@@ -454,7 +529,7 @@ def iter_artifacts(
                     vars_root,
                 )
             yield from _iter_skill_artifacts(root, target, allowances, vars_root)
-            yield from _iter_agent_artifacts(root, target, allowances)
+            yield from _iter_agent_artifacts(root, target, allowances, vars_root)
 
 
 def ceiling_for(artifact: Artifact) -> int | None:
@@ -476,7 +551,7 @@ def ceiling_for(artifact: Artifact) -> int | None:
         return None
     if artifact.allowance is not None:
         return artifact.allowance
-    if artifact.metric == COLLECTION_BYTES:
+    if artifact.metric in COLLECTION_CEILING_METRICS:
         return COLLECTION_SCHEDULE.active_threshold()
     ceiling = FINALS[artifact.metric]
     schedule = SCHEDULES.get(artifact.metric)
@@ -549,13 +624,23 @@ def _collection_state_lines(artifacts: Iterable[Artifact]) -> list[str]:
     Returns:
         One formatted line per collection artifact, in measurement order.
     """
-    return [
+    artifacts = list(artifacts)
+    lines = [
         f"{artifact.metric} {artifact.target} current {artifact.value:,} "
         f"ceiling {ceiling_for(artifact):,} "
         f"({COLLECTION_SCHEDULE.active_step})"
         for artifact in artifacts
         if artifact.metric == COLLECTION_BYTES
     ]
+    role_artifacts = [a for a in artifacts if a.metric == PI_ROLE_PROMPT_BYTES]
+    if role_artifacts:
+        largest = max(role_artifacts, key=lambda a: int(a.value))
+        lines.append(
+            f"{largest.metric} {largest.target} largest {largest.dest_name} "
+            f"current {largest.value:,} ceiling {ceiling_for(largest):,} "
+            f"({COLLECTION_SCHEDULE.active_step})"
+        )
+    return lines
 
 
 def parked_state_lines(artifacts: Iterable[Artifact]) -> list[str]:
@@ -576,7 +661,7 @@ def parked_state_lines(artifacts: Iterable[Artifact]) -> list[str]:
     artifacts = list(artifacts)
     over_final: dict[str, list[int]] = {}
     for artifact in artifacts:
-        if artifact.metric == COLLECTION_BYTES:
+        if artifact.metric in COLLECTION_CEILING_METRICS:
             continue
         final = FINALS.get(artifact.metric)
         if (
@@ -763,6 +848,8 @@ def check(
         _, errors = _declared_allowances(root)
         declaration_errors.extend(errors)
     artifacts = list(iter_artifacts(roots, targets, vars_root))
+    if "pi" in targets:
+        artifacts.extend(_iter_pi_role_artifacts(roots, vars_root))
     violations = evaluate(artifacts)
     collection = collection_artifacts(roots, targets, vars_root)
     artifacts.extend(collection)
@@ -827,6 +914,66 @@ def _mirror(tmp: Path, rel_parts: tuple[str, ...], content: str) -> None:
     dest.write_text(content, encoding="utf-8")
 
 
+_PI_ROLE_SOURCE_DIRS: tuple[str, ...] = (
+    "shared/rules",
+    "shared/agents",
+    "pi/rules",
+    "pi/agents",
+    "claude-code/agents",
+    "pi/agent-models.json",
+    ALLOWANCES_FILENAME,
+)
+
+
+def _iter_pi_role_artifacts_with(
+    source: Path, content: str, rel_parts: tuple[str, ...]
+) -> Iterator[Artifact]:
+    """Yield the pi role artifacts as if ``source`` held ``content``.
+
+    Copies every root's rule and agent sources into a throwaway tree, writes
+    ``content`` over ``source`` there, and measures that tree as the full
+    installation union.
+
+    Args:
+        source: Path of the rule or agent source being measured.
+        content: The file's hypothetical text.
+        rel_parts: The source's path components relative to its owning root.
+    """
+    with contextlib.redirect_stderr(io.StringIO()):
+        overlay_paths = _discover_overlay_paths()
+    roots = [_own_root_dir(), *overlay_paths]
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        mirrored: list[Path] = []
+        for index, root in enumerate(roots):
+            mirror = Path(tmp_dir) / str(index)
+            for relative in _PI_ROLE_SOURCE_DIRS:
+                original = root / relative
+                if original.is_dir():
+                    shutil.copytree(original, mirror / relative)
+                elif original.is_file():
+                    (mirror / relative).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(original, mirror / relative)
+            if source.is_relative_to(root):
+                _mirror(mirror, rel_parts, content)
+            mirrored.append(mirror)
+        yield from _iter_pi_role_artifacts(mirrored, _own_root_dir())
+
+
+def _affects_pi_roles(rel_parts: tuple[str, ...]) -> bool:
+    """Report whether a source's text reaches pi's role prompts.
+
+    Args:
+        rel_parts: The source's path components relative to its owning root.
+
+    Returns:
+        True for a rule or agent source pi installs from.
+    """
+    return len(rel_parts) == 3 and (
+        (rel_parts[0] in ("shared", "pi") and rel_parts[1] in ("rules", "agents"))
+        or rel_parts[:2] == ("claude-code", "agents")
+    )
+
+
 def _iter_source_artifacts(
     tmp: Path,
     rel_parts: tuple[str, ...],
@@ -862,9 +1009,9 @@ def _iter_source_artifacts(
         _mirror(tmp, rel_parts, content)
         for target in _scoped_targets(first, targets):
             yield from _iter_skill_artifacts(tmp, target, allowances)
-    elif rel_parts[:2] == ("claude-code", "agents") and len(rel_parts) == 3:
+    elif rel_parts[1:2] == ("agents",) and len(rel_parts) == 3:
         _mirror(tmp, rel_parts, content)
-        for target in _scoped_targets("claude-code", targets):
+        for target in _scoped_targets(rel_parts[0], targets):
             yield from _iter_agent_artifacts(tmp, target, allowances)
 
 
@@ -909,6 +1056,8 @@ def check_source(
                 Path(tmp_dir), rel_parts, content, targets, allowances
             )
         )
+    if "pi" in targets and _affects_pi_roles(rel_parts):
+        artifacts.extend(_iter_pi_role_artifacts_with(source, content, rel_parts))
     artifacts = [replace(a, source=source) for a in artifacts]
 
     violations = evaluate(artifacts)

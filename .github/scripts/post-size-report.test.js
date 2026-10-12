@@ -93,6 +93,16 @@ test('drops the trailing details block from an oversize comment but keeps it in 
   assert.equal(calls.summary[0], markdown);
 });
 
+test('keeps the earlier details blocks when only the trailing one is oversize', async () => {
+  const markdown = `summary line\n<details>\nloaded split\n</details>\n\n<details>\n${'x'.repeat(60000)}\n</details>\n`;
+  const { args, calls } = setup(markdown);
+  await report(args);
+  const { body } = calls.create[0];
+  assert.ok(body.length <= 60000);
+  assert.ok(body.includes('loaded split'));
+  assert.ok(!body.includes('xxx'));
+});
+
 test('falls back to the badges and headline when the content before the details block is still oversize', async () => {
   const headline = '![a](badge)\n\n**Prompt size** 1 file changed size in this PR, 0 over the limit';
   const markdown = `${headline}\n\n| File |\n${'x'.repeat(60000)}\n\n<details>\n</details>\n`;

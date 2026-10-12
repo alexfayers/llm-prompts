@@ -184,3 +184,17 @@ class TestVarsRoot:
             return artifact.value
 
         assert collection_bytes("a" * 100) - collection_bytes("a") == 99
+
+
+class TestHerdsmanRender:
+    def test_pi_is_measured_as_herdsman_without_herdr_on_path(
+        self, tmp_path: Path
+    ) -> None:
+        rules = tmp_path / "root" / "shared" / "rules"
+        rules.mkdir(parents=True)
+        (rules / "r.md").write_text("{{TOOL_AGENT}}\n")
+
+        result = check([tmp_path / "root"], ("pi",))
+
+        (artifact,) = (a for a in result.artifacts if a.metric == RULE_BYTES)
+        assert artifact.value == len("delegate_agent\n")
