@@ -42,6 +42,8 @@ Added by llm-prompts, no README. MUST verify each against installed files first.
   - Keeps the system prompt stable so the 5-minute cache holds. `cacheWarming` `"idle"` keeps it warm.
 - **compact-now**
   - Adds `compact_now`: `instructions` summary replaces old context. Auto-continues.
+- **cd**
+  - `/cd <dir>` and `change_dir`: move the session (history kept) to `<dir>`. The tool switches after the turn.
 - **tower-do-patch**
   - Adds `tower_do_patch`: change single tasks, no replay.
 - **context-total**
