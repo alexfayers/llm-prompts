@@ -27,21 +27,31 @@ from llm_prompts.size_guard import (
 from llm_prompts.size_limits import (
     AGENT_BASE_DESCRIPTION_MAX_CHARS,
     AGENT_DESCRIPTION_CHARS,
+    ALWAYS_AGENT_FRONTMATTER_BYTES,
+    ALWAYS_LOADED_METRICS,
+    ALWAYS_RULE_BYTES,
+    ALWAYS_SKILL_FRONTMATTER_BYTES,
     COLLECTION_BYTES,
     COLLECTION_SCHEDULE,
     FINALS,
     FRONTMATTER_VALID,
     NO_UNSUBSTITUTED_PLACEHOLDERS,
+    ON_DEMAND_AGENT_BODY_BYTES,
+    ON_DEMAND_ROLE_RULE_BYTES,
+    ON_DEMAND_SKILL_BODY_BYTES,
+    ON_DEMAND_WORKFLOW_BYTES,
     PI_ROLE_PROMPT_BYTES,
     RULE_BYTES,
     RULE_LINES,
     SCHEDULES,
     SKILL_BODY_BYTES,
     SKILL_DESCRIPTION_CHARS,
+    START_BYTES,
     TEMPLATE_RENDERS,
     UNITS,
     WORKFLOW_BYTES,
     WORKFLOW_LINES,
+    WORST_CASE_ON_DEMAND_METRICS,
     CollectionSchedule,
     CollectionStep,
     Schedule,
@@ -634,6 +644,73 @@ class TestCheckWiresCollectionMetric:
         assert not any(v.metric == COLLECTION_BYTES for v in result.violations)
 
 
+class TestCollectionSplitsAlwaysLoadedFromOnDemand:
+    @staticmethod
+    def _measure(tmp_path: Path) -> dict[tuple[str, str], int]:
+        targets = ("claude-code", "copilot")
+        _make_prompts_tree(tmp_path, targets=targets)
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check([tmp_path], targets=targets)
+        return {(a.metric, a.target): int(a.value) for a in result.artifacts}
+
+    def test_start_is_the_always_loaded_parts(self, tmp_path: Path) -> None:
+        measured = self._measure(tmp_path)
+
+        for target in ("claude-code", "copilot"):
+            assert measured[(START_BYTES, target)] == sum(
+                measured[(metric, target)] for metric in ALWAYS_LOADED_METRICS
+            )
+
+    def test_collection_is_start_plus_skill_bodies_and_workflows_never_agent_bodies(
+        self, tmp_path: Path
+    ) -> None:
+        measured = self._measure(tmp_path)
+
+        for target in ("claude-code", "copilot"):
+            assert measured[(COLLECTION_BYTES, target)] == measured[
+                (START_BYTES, target)
+            ] + sum(
+                measured[(metric, target)] for metric in WORST_CASE_ON_DEMAND_METRICS
+            )
+        assert measured[(ON_DEMAND_AGENT_BODY_BYTES, "claude-code")] > 0
+
+    def test_a_skill_loads_its_frontmatter_always_and_its_body_on_demand(
+        self, tmp_path: Path
+    ) -> None:
+        measured = self._measure(tmp_path)
+
+        frontmatter = "---\nname: demo\ndescription: A demo skill.\n---\n"
+        assert measured[(ALWAYS_SKILL_FRONTMATTER_BYTES, "copilot")] == len(frontmatter)
+        assert measured[(ON_DEMAND_SKILL_BODY_BYTES, "copilot")] == len(
+            "\nFor copilot.\n"
+        )
+
+    def test_an_agent_loads_its_frontmatter_always_and_its_body_on_demand(
+        self, tmp_path: Path
+    ) -> None:
+        measured = self._measure(tmp_path)
+
+        assert measured[(ALWAYS_AGENT_FRONTMATTER_BYTES, "claude-code")] > 0
+        assert measured[(ON_DEMAND_AGENT_BODY_BYTES, "claude-code")] > 0
+        assert measured[(ALWAYS_AGENT_FRONTMATTER_BYTES, "copilot")] == 0
+        assert measured[(ON_DEMAND_AGENT_BODY_BYTES, "copilot")] == 0
+
+    def test_rules_load_always_and_workflows_on_demand(self, tmp_path: Path) -> None:
+        _make_prompts_tree(tmp_path)
+        with (
+            patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path),
+            patch(
+                "llm_prompts.collection_size.content_subdirs",
+                return_value=["rules", "workflows"],
+            ),
+        ):
+            result = check([tmp_path], targets=("claude-code",))
+
+        measured = {a.metric: int(a.value) for a in result.artifacts}
+        assert measured[ALWAYS_RULE_BYTES] > 0
+        assert measured[ON_DEMAND_WORKFLOW_BYTES] == len("# Flow\n\nDoes a thing.\n")
+
+
 class TestDeclaredAllowances:
     def test_absent_file_leaves_allowance_none(self, tmp_path: Path) -> None:
         _make_prompts_tree(tmp_path)
@@ -1088,7 +1165,7 @@ class TestNoOwnedTemplateUsesRepoRoot:
 class TestAgentBytesCountsIncludedRules:
     def test_included_rule_bytes_are_counted(self, tmp_path: Path) -> None:
         _make_prompts_tree(tmp_path)
-        before = _agent_bytes(tmp_path, [], "claude-code")
+        before = _agent_bytes(tmp_path, [], "claude-code").total
         _write(tmp_path / "shared" / "rules" / "big.md", "x" * 1000 + "\n")
         _write(
             tmp_path / "claude-code" / "agents" / "includer.md",
@@ -1096,7 +1173,7 @@ class TestAgentBytesCountsIncludedRules:
             "rules: big\n---\n\nBody.\n",
         )
 
-        after = _agent_bytes(tmp_path, [], "claude-code")
+        after = _agent_bytes(tmp_path, [], "claude-code").total
 
         assert after - before >= 1000
 
@@ -1106,7 +1183,7 @@ class TestSharedAgentsAreMeasured:
         self, tmp_path: Path
     ) -> None:
         _make_prompts_tree(tmp_path)
-        before = _agent_bytes(tmp_path, [], "claude-code")
+        before = _agent_bytes(tmp_path, [], "claude-code").total
         _write(
             tmp_path / "shared" / "agents" / "helper.md",
             "---\nname: helper\ndescription: Helps.\n---\n\n" + "x" * 1000 + "\n",
@@ -1121,7 +1198,7 @@ class TestSharedAgentsAreMeasured:
             if a.metric == AGENT_DESCRIPTION_CHARS and a.dest_name == "helper.md"
         )
         assert description.value == len("Helps.")
-        assert _agent_bytes(tmp_path, [], "claude-code") - before >= 1000
+        assert _agent_bytes(tmp_path, [], "claude-code").total - before >= 1000
 
 
 def _make_pi_tree(root: Path, lead_text: str = "BBB") -> None:
@@ -1176,24 +1253,6 @@ class TestPiRolePromptBytes:
 
 
 class TestPiCollectionCountsFilesNotExpansions:
-    def test_agent_definitions_do_not_count(self, tmp_path: Path) -> None:
-        def pi_total(root: Path) -> int:
-            with patch("llm_prompts.size_guard._own_root_dir", return_value=root):
-                result = check([root], targets=("pi",))
-            return next(
-                int(a.value) for a in result.artifacts if a.metric == COLLECTION_BYTES
-            )
-
-        without, with_agent = tmp_path / "without", tmp_path / "with"
-        _make_pi_tree(without)
-        _make_pi_tree(with_agent)
-        _write(
-            with_agent / "shared" / "agents" / "extra.md",
-            "---\nname: extra\ndescription: More.\n---\n\n" + "Y" * 5000 + "\n",
-        )
-
-        assert pi_total(with_agent) == pi_total(without)
-
     def test_a_rule_in_agents_md_counts_once(self, tmp_path: Path) -> None:
         def pi_total(root: Path) -> int:
             with patch("llm_prompts.size_guard._own_root_dir", return_value=root):
@@ -1207,6 +1266,88 @@ class TestPiCollectionCountsFilesNotExpansions:
         _make_pi_tree(large, "B" * 1010)
 
         assert pi_total(large) - pi_total(small) == 1000
+
+
+class TestPiAgentDefinitionsSplitFrontmatterFromBody:
+    @staticmethod
+    def _measure(root: Path, body: str, agent: bool = True) -> dict[str, int]:
+        _make_pi_tree(root)
+        _write(
+            root / "shared" / "agents" / "helper.md",
+            f"---\nname: helper\ndescription: Does things.\n---\n\n{body}\n",
+        )
+        if not agent:
+            (root / "shared" / "agents" / "helper.md").unlink()
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=root):
+            result = check([root], targets=("pi",))
+        return {a.metric: int(a.value) for a in result.artifacts if a.target == "pi"}
+
+    def test_a_definition_lists_its_frontmatter_and_loads_its_body_on_demand(
+        self, tmp_path: Path
+    ) -> None:
+        small = self._measure(tmp_path / "small", "Body.")
+        large = self._measure(tmp_path / "large", "Body." + "x" * 1000)
+
+        assert small[ALWAYS_AGENT_FRONTMATTER_BYTES] > 0
+        assert (
+            large[ALWAYS_AGENT_FRONTMATTER_BYTES]
+            == small[ALWAYS_AGENT_FRONTMATTER_BYTES]
+        )
+        assert (
+            large[ON_DEMAND_AGENT_BODY_BYTES] - small[ON_DEMAND_AGENT_BODY_BYTES]
+            == 1000
+        )
+
+    def test_bodies_stay_out_of_the_collection_total(self, tmp_path: Path) -> None:
+        small = self._measure(tmp_path / "small", "Body.")
+        large = self._measure(tmp_path / "large", "Body." + "x" * 1000)
+
+        assert large[COLLECTION_BYTES] == small[COLLECTION_BYTES]
+
+    def test_frontmatter_counts_in_the_collection_total(self, tmp_path: Path) -> None:
+        without = self._measure(tmp_path / "without", "Body.", agent=False)
+        with_agent = self._measure(tmp_path / "with", "Body.")
+
+        added = with_agent[ALWAYS_AGENT_FRONTMATTER_BYTES]
+        assert added > 0
+        assert with_agent[COLLECTION_BYTES] - without[COLLECTION_BYTES] == added
+
+
+class TestPiRulesSplitByLoad:
+    def test_agents_md_loads_always_and_role_only_rules_on_demand(
+        self, tmp_path: Path
+    ) -> None:
+        _make_pi_tree(tmp_path)
+        _write(
+            tmp_path / "shared" / "rules" / "w.md",
+            "---\nroles: worker\n---\n\n# W\n\n" + "W" * 100 + "\n",
+        )
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check([tmp_path], targets=("pi",))
+
+        measured = {a.metric: int(a.value) for a in result.artifacts}
+        assert measured[ON_DEMAND_ROLE_RULE_BYTES] == len("# W\n\n" + "W" * 100 + "\n")
+        assert measured[ALWAYS_RULE_BYTES] == len("# A\n\nAAA\n\n# B\n\nBBB\n")
+
+    def test_role_only_rules_stay_out_of_the_lead_sessions_totals(
+        self, tmp_path: Path
+    ) -> None:
+        def measure(root: Path, with_worker_rule: bool) -> dict[str, int]:
+            _make_pi_tree(root)
+            if with_worker_rule:
+                _write(
+                    root / "shared" / "rules" / "w.md",
+                    "---\nroles: worker\n---\n\n# W\n\n" + "W" * 100 + "\n",
+                )
+            with patch("llm_prompts.size_guard._own_root_dir", return_value=root):
+                result = check([root], targets=("pi",))
+            return {a.metric: int(a.value) for a in result.artifacts}
+
+        without = measure(tmp_path / "without", False)
+        with_rule = measure(tmp_path / "with", True)
+
+        assert with_rule[COLLECTION_BYTES] == without[COLLECTION_BYTES]
+        assert with_rule[START_BYTES] == without[START_BYTES]
 
 
 class TestCheckSourceMeasuresDependentPiRoles:

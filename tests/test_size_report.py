@@ -9,11 +9,20 @@ import pytest
 from llm_prompts import size_report
 from llm_prompts.size_guard import CHECKED_TARGETS, Artifact, CheckResult
 from llm_prompts.size_limits import (
+    ALWAYS_AGENT_FRONTMATTER_BYTES,
+    ALWAYS_RULE_BYTES,
+    ALWAYS_SKILL_FRONTMATTER_BYTES,
+    BYTES_PER_TOKEN,
     COLLECTION_BYTES,
     FINALS,
     FRONTMATTER_VALID,
+    ON_DEMAND_AGENT_BODY_BYTES,
+    ON_DEMAND_ROLE_RULE_BYTES,
+    ON_DEMAND_SKILL_BODY_BYTES,
+    ON_DEMAND_WORKFLOW_BYTES,
     RULE_BYTES,
     RULE_LINES,
+    START_BYTES,
 )
 from llm_prompts.size_report import Row, build_report, compare, render_markdown
 
@@ -211,44 +220,7 @@ class TestRenderMarkdown:
             " ![cline](https://img.shields.io/badge/cline-0%25-lightgrey)"
         )
 
-    def test_collection_table_lists_each_target(self) -> None:
-        report = render_markdown(
-            [
-                _collection(100, 110, "claude-code", "kiro"),
-                _collection(5, 6, "copilot"),
-                _row(1, 2),
-            ]
-        )
-        assert "| | target | before | after | change | % | limit |" in report
-        assert "| :-: | --- | ---: | ---: | ---: | ---: | ---: |" in report
-        assert (
-            "| &#x1F534; | claude-code | 100 | 110 | +10 | +10.0% | 50,000 |" in report
-        )
-        assert "| &#x1F534; | kiro | 100 | 110 | +10 | +10.0% | 50,000 |" in report
-        assert "| &#x1F534; | copilot | 5 | 6 | +1 | +20.0% | 50,000 |" in report
-
-    def test_collection_table_sits_in_a_per_agent_details_block(self) -> None:
-        report = render_markdown([_collection(100, 110, "kiro"), _row(1, 2)])
-        per_agent = report.split("<details>")[1]
-        assert per_agent.startswith("\n<summary>Per-agent impact</summary>\n\n")
-        assert "| | target | before | after | change | % | limit |" in per_agent
-        assert "| target |" not in report.split("<details>")[0]
-
-    def test_zero_and_tiny_changes_show_no_signed_zero(self) -> None:
-        report = render_markdown(
-            [
-                _collection(100, 100, "claude-code"),
-                _collection(100_000, 99_996, "kiro"),
-                _row(1, 2),
-            ]
-        )
-        assert "| &#x26AA; | claude-code | 100 | 100 | 0 | 0% | 50,000 |" in report
-        assert (
-            "| &#x26A0;&#xFE0F; | kiro | 100,000 | 99,996 | -4 | <0.1% | 50,000 |"
-            in report
-        )
-
-    def test_changed_rows_show_above_the_details_blocks_sorted_by_absolute_delta(
+    def test_changed_files_are_sorted_by_absolute_delta(
         self,
     ) -> None:
         rows = [
@@ -256,7 +228,7 @@ class TestRenderMarkdown:
             Row(RULE_BYTES, ("kiro",), "", "shared/rules/big.md", 900, 500, 5_000),
             Row(RULE_BYTES, ("kiro",), "", "shared/rules/same.md", 7, 7, 5_000),
         ]
-        changed = render_markdown(rows).split("<details>")[0]
+        changed = render_markdown(rows).split("<details>")[2]
         assert (
             "| | file | metric | targets | before | after | change | % | limit |"
             in changed
@@ -290,18 +262,233 @@ class TestRenderMarkdown:
             in render_markdown([_row(1, 5_001)])
         )
 
-    def test_all_rows_block_holds_every_row_including_collection(self) -> None:
+
+def _part(metric: str, base: int | None, head: int | None, *targets: str) -> Row:
+    return Row(metric, targets, targets[0], "-", base, head, None)
+
+
+def _tok(size: int) -> str:
+    return f"~{size / BYTES_PER_TOKEN / 1000:.1f}k tok"
+
+
+class TestRenderSummary:
+    @staticmethod
+    def _blocks(report: str) -> list[str]:
+        return report.split("\n\n")
+
+    def test_one_row_per_changed_target_shows_only_the_change_per_column(
+        self,
+    ) -> None:
+        report = render_markdown(
+            [
+                _collection(160, 180, "claude-code"),
+                _part(START_BYTES, 115, 126, "claude-code"),
+                _part(ALWAYS_RULE_BYTES, 100, 110, "claude-code"),
+                _part(ALWAYS_SKILL_FRONTMATTER_BYTES, 10, 10, "claude-code"),
+                _part(ALWAYS_AGENT_FRONTMATTER_BYTES, 5, 8, "claude-code"),
+                _part(ON_DEMAND_SKILL_BODY_BYTES, 44, 53, "claude-code"),
+                _part(ON_DEMAND_WORKFLOW_BYTES, 1, 2, "claude-code"),
+                _part(ON_DEMAND_AGENT_BODY_BYTES, 20, 20, "claude-code"),
+                _row(1, 2),
+            ]
+        )
+
+        assert self._blocks(report)[2] == (
+            "| | target | rules | frontmatter | bodies | start | worst case |\n"
+            "| :-: | --- | ---: | ---: | ---: | ---: | ---: |\n"
+            f"| &#x1F534; | claude-code | +10 | +3 | +10 | 126 (+9.6%)<br>{_tok(126)} "
+            f"| 180 (+12.5%)<br>{_tok(180)} |"
+        )
+
+    def test_an_unchanged_column_shows_a_dash_and_a_decrease_its_sign(self) -> None:
+        report = render_markdown(
+            [
+                _collection(100, 90, "kiro"),
+                _part(START_BYTES, 100, 90, "kiro"),
+                _part(ALWAYS_RULE_BYTES, 100, 90, "kiro"),
+                _part(ON_DEMAND_SKILL_BODY_BYTES, 50, 50, "kiro"),
+                _row(1, 2),
+            ]
+        )
+
+        assert (
+            f"| &#x1F7E2; | kiro | -10 | - | - | 90 (-10.0%)<br>{_tok(90)} "
+            f"| 90 (-10.0%)<br>{_tok(90)} |" in report
+        )
+
+    def test_targets_without_a_change_are_left_out(self) -> None:
+        report = render_markdown(
+            [
+                _collection(100, 100, "claude-code"),
+                _part(START_BYTES, 100, 100, "claude-code"),
+                _part(ALWAYS_RULE_BYTES, 100, 100, "claude-code"),
+                _collection(100, 90, "kiro"),
+                _part(START_BYTES, 100, 90, "kiro"),
+                _part(ALWAYS_RULE_BYTES, 100, 90, "kiro"),
+                _row(1, 2),
+            ]
+        )
+
+        assert "claude-code" not in self._blocks(report)[2]
+        assert "| kiro |" in self._blocks(report)[2]
+
+    def test_a_part_new_on_head_counts_as_zero_before(self) -> None:
+        report = render_markdown(
+            [
+                _collection(0, 40, "kiro"),
+                _part(START_BYTES, 0, 40, "kiro"),
+                _part(ALWAYS_AGENT_FRONTMATTER_BYTES, None, 40, "kiro"),
+                _row(1, 2),
+            ]
+        )
+
+        assert f"| kiro | - | +40 | - | 40<br>{_tok(40)} | 40<br>{_tok(40)} |" in report
+
+    def test_targets_with_identical_changes_share_a_row(self) -> None:
+        report = render_markdown(
+            [
+                _collection(100, 110, "kiro", "copilot"),
+                _part(START_BYTES, 100, 110, "kiro", "copilot"),
+                _part(ALWAYS_RULE_BYTES, 100, 110, "kiro", "copilot"),
+                _row(1, 2),
+            ]
+        )
+
+        assert (
+            f"| &#x1F534; | kiro, copilot | +10 | - | - | 110 (+10.0%)<br>{_tok(110)} "
+            f"| 110 (+10.0%)<br>{_tok(110)} |" in self._blocks(report)[2]
+        )
+
+    def test_merged_targets_with_different_sizes_show_the_change_only(self) -> None:
+        report = render_markdown(
+            [
+                _collection(100, 110, "kiro"),
+                _collection(200, 210, "copilot"),
+                _part(START_BYTES, 100, 110, "kiro"),
+                _part(START_BYTES, 100, 110, "copilot"),
+                _part(ALWAYS_RULE_BYTES, 100, 110, "kiro"),
+                _part(ALWAYS_RULE_BYTES, 200, 210, "copilot"),
+                _row(1, 2),
+            ]
+        )
+
+        assert (
+            f"| &#x1F534; | kiro, copilot | +10 | - | - | 110 (+10.0%)<br>{_tok(110)} "
+            "| +10 |" in report
+        )
+
+    def test_targets_with_different_changes_stay_apart(self) -> None:
+        report = render_markdown(
+            [
+                _collection(100, 110, "kiro"),
+                _collection(100, 120, "copilot"),
+                _part(ALWAYS_RULE_BYTES, 100, 110, "kiro"),
+                _part(ALWAYS_RULE_BYTES, 100, 120, "copilot"),
+                _row(1, 2),
+            ]
+        )
+
+        summary = self._blocks(report)[2]
+        assert "| kiro | +10 |" in summary
+        assert "| copilot | +20 |" in summary
+
+    def test_worst_case_over_its_limit_gets_the_over_limit_emoji(self) -> None:
+        over = Row(COLLECTION_BYTES, ("kiro",), "kiro", "-", 100, 60_000, 50_000)
+
+        assert "| &#x26A0;&#xFE0F; | kiro |" in render_markdown([over, _row(1, 2)])
+
+    def test_details_hold_before_and_after_and_the_uncounted_parts(self) -> None:
+        report = render_markdown(
+            [
+                _collection(100, 110, "kiro", "copilot"),
+                _collection(5, 5, "codex"),
+                _part(START_BYTES, 100, 110, "kiro", "copilot"),
+                _part(ALWAYS_RULE_BYTES, 100, 110, "kiro", "copilot"),
+                _part(ON_DEMAND_AGENT_BODY_BYTES, 20, 30, "kiro", "copilot"),
+                _part(ON_DEMAND_ROLE_RULE_BYTES, 0, 4, "kiro", "copilot"),
+                _part(ALWAYS_RULE_BYTES, 5, 5, "codex"),
+                _row(1, 2),
+            ]
+        )
+
+        details = report.split("<details>")[1]
+        assert details.startswith("\n<summary>Details</summary>\n\n")
+        assert (
+            "| target | rules | frontmatter | bodies | agent bodies "
+            "| role-only rules | start | worst case |" in details
+        )
+        assert (
+            "| &#x1F534; | kiro | 100 -> 110 (+10) | - | - | 20 -> 30 (+10) "
+            "| 0 -> 4 (+4) | 100 -> 110 (+10) | 100 -> 110 (+10) |" in details
+        )
+        assert "| copilot |" in details
+        assert "codex" not in details
+
+    def test_agent_bodies_and_role_only_rules_are_not_in_the_summary(self) -> None:
+        report = render_markdown(
+            [
+                _collection(100, 110, "kiro"),
+                _part(ALWAYS_RULE_BYTES, 100, 110, "kiro"),
+                _part(ON_DEMAND_AGENT_BODY_BYTES, 20, 90, "kiro"),
+                _part(ON_DEMAND_ROLE_RULE_BYTES, 0, 70, "kiro"),
+                _row(1, 2),
+            ]
+        )
+
+        assert "+90" not in self._blocks(report)[2]
+        assert "+70" not in self._blocks(report)[2]
+
+    def test_tokens_are_estimated_from_one_bytes_per_token_constant(self) -> None:
+        rows = [
+            _collection(60_000, 90_000, "pi"),
+            _part(START_BYTES, 50_000, 80_000, "pi"),
+            _part(ALWAYS_RULE_BYTES, 50_000, 80_000, "pi"),
+            _row(1, 2),
+        ]
+        blocks = render_markdown(rows).split("\n\n")
+
+        assert f"80,000 (+60.0%)<br>{_tok(80_000)}" in blocks[2]
+
+    def test_old_collection_and_part_tables_are_gone(self) -> None:
+        report = render_markdown(
+            [
+                _collection(100, 110, "kiro"),
+                _part(ON_DEMAND_SKILL_BODY_BYTES, 50, 60, "kiro"),
+                _row(1, 2),
+            ]
+        )
+
+        assert "Per-agent impact" not in report
+        assert "Always loaded vs on demand" not in report
+        assert "| part |" not in report
+        assert "collection_bytes" not in report
+
+    def test_details_and_changed_files_are_collapsed_and_unchanged_rows_hidden(
+        self,
+    ) -> None:
         rows = [
             _collection(100, 110, "kiro"),
+            _part(ON_DEMAND_SKILL_BODY_BYTES, 50, 60, "kiro"),
             _row(100, 110),
             Row(RULE_BYTES, ("kiro",), "", "shared/rules/same.md", 7, 7, 5_000),
         ]
-        details = render_markdown(rows).split("<details>")[2]
-        assert details.startswith("\n<summary>All rows</summary>\n\n")
-        assert "same.md" in details
-        assert "| rules/a.md |" in details
-        assert "| - | collection_bytes | kiro |" in details
-        assert details.rstrip().endswith("</details>")
+
+        report = render_markdown(rows)
+
+        blocks = report.split("<details>")
+        assert len(blocks) == 3
+        assert blocks[2].startswith("\n<summary>Changed files</summary>\n\n")
+        assert "rules/a.md" in blocks[2]
+        assert "same.md" not in report
+        assert ON_DEMAND_SKILL_BODY_BYTES not in report
+        assert blocks[2].rstrip().endswith("</details>")
+
+    def test_parts_are_not_changed_files_in_the_headline(self) -> None:
+        report = render_markdown(
+            [_part(ON_DEMAND_SKILL_BODY_BYTES, 50, 60, "kiro"), _row(1, 2)]
+        )
+
+        assert "1 file changed size in this PR" in report
 
 
 class TestBuildReport:

@@ -13,7 +13,18 @@ from pathlib import Path
 
 from .cli import _size_guard_roots
 from .size_guard import CHECKED_TARGETS, Artifact, ceiling_for, check
-from .size_limits import COLLECTION_BYTES
+from .size_limits import (
+    ALWAYS_AGENT_FRONTMATTER_BYTES,
+    ALWAYS_RULE_BYTES,
+    ALWAYS_SKILL_FRONTMATTER_BYTES,
+    BYTES_PER_TOKEN,
+    COLLECTION_BYTES,
+    ON_DEMAND_AGENT_BODY_BYTES,
+    ON_DEMAND_ROLE_RULE_BYTES,
+    ON_DEMAND_SKILL_BODY_BYTES,
+    ON_DEMAND_WORKFLOW_BYTES,
+    START_BYTES,
+)
 
 
 @dataclass(frozen=True)
@@ -79,6 +90,22 @@ _ALIGNMENT = {
     "metric": "---",
     "targets": "---",
 }
+_COLUMN_METRICS = {
+    "rules": (ALWAYS_RULE_BYTES,),
+    "frontmatter": (ALWAYS_SKILL_FRONTMATTER_BYTES, ALWAYS_AGENT_FRONTMATTER_BYTES),
+    "bodies": (ON_DEMAND_SKILL_BODY_BYTES, ON_DEMAND_WORKFLOW_BYTES),
+    "agent bodies": (ON_DEMAND_AGENT_BODY_BYTES,),
+    "role-only rules": (ON_DEMAND_ROLE_RULE_BYTES,),
+    "start": (START_BYTES,),
+    "worst case": (COLLECTION_BYTES,),
+}
+_COLUMN_OF = {
+    metric: column for column, metrics in _COLUMN_METRICS.items() for metric in metrics
+}
+_SUMMARY_COLUMNS = ("rules", "frontmatter", "bodies", "start", "worst case")
+_SIZE_COLUMNS = frozenset({"start", "worst case"})
+_SUMMARY_HEADER = ["", "target", *_SUMMARY_COLUMNS]
+_DETAIL_HEADER = ["", "target", *_COLUMN_METRICS]
 _ROW_HEADER = [
     "",
     "file",
@@ -238,19 +265,85 @@ def _row_lines(rows: Iterable[Row]) -> list[list[str]]:
     ]
 
 
-def _collection_lines(rows: Iterable[Row]) -> list[list[str]]:
+_Sizes = dict[str, dict[str, list[int]]]
+
+
+def _cell(before_after: Sequence[int] | None) -> str:
+    if before_after is None or before_after[0] == before_after[1]:
+        return "-"
+    before, after = before_after
+    return f"{before:,} -> {after:,} ({_signed(after - before)})"
+
+
+def _change_cell(before_after: Sequence[int] | None) -> str:
+    if before_after is None or before_after[0] == before_after[1]:
+        return "-"
+    return _signed(before_after[1] - before_after[0])
+
+
+def _size_cell(pairs: Sequence[Sequence[int] | None]) -> str:
+    first = pairs[0]
+    if first is None or first[0] == first[1]:
+        return "-"
+    if any(pair is None or pair[1] != first[1] for pair in pairs):
+        return _change_cell(first)
+    pct = _pct(Row("", (), "", "", first[0], first[1], None))
+    size = f"{first[1]:,} ({pct})" if first[0] else f"{first[1]:,}"
+    return f"{size}<br>~{first[1] / BYTES_PER_TOKEN / 1000:.1f}k tok"
+
+
+def _sizes_by_target(rows: Iterable[Row]) -> _Sizes:
+    sizes: _Sizes = {}
+    for row in rows:
+        for target in row.targets:
+            pair = sizes.setdefault(target, {}).setdefault(
+                _COLUMN_OF[row.metric], [0, 0]
+            )
+            pair[0] += row.base or 0
+            pair[1] += row.head or 0
+    return sizes
+
+
+def _changed(columns: dict[str, list[int]], names: Iterable[str]) -> bool:
+    return any(
+        columns[name][0] != columns[name][1] for name in names if name in columns
+    )
+
+
+def _summary_lines(sizes: _Sizes, totals: dict[str, Row]) -> list[list[str]]:
+    groups: dict[tuple[str, tuple[str, ...]], list[str]] = {}
+    for target, columns in sizes.items():
+        if not _changed(columns, _SUMMARY_COLUMNS):
+            continue
+        key = (
+            _emoji(totals[target]) if target in totals else _UNCHANGED,
+            tuple(_change_cell(columns.get(name)) for name in _SUMMARY_COLUMNS),
+        )
+        groups.setdefault(key, []).append(target)
     return [
         [
-            _emoji(row),
-            target,
-            _count(row.base),
-            _count(row.head),
-            _signed(row.delta),
-            _pct(row),
-            _count(row.ceiling),
+            emoji,
+            ", ".join(targets),
+            *(
+                _size_cell([sizes[t].get(name) for t in targets])
+                if name in _SIZE_COLUMNS
+                else change
+                for name, change in zip(_SUMMARY_COLUMNS, changes, strict=True)
+            ),
         ]
-        for row in rows
-        for target in row.targets
+        for (emoji, changes), targets in groups.items()
+    ]
+
+
+def _detail_lines(sizes: _Sizes, totals: dict[str, Row]) -> list[list[str]]:
+    return [
+        [
+            _emoji(totals[target]) if target in totals else _UNCHANGED,
+            target,
+            *(_cell(columns.get(name)) for name in _COLUMN_METRICS),
+        ]
+        for target, columns in sizes.items()
+        if _changed(columns, _COLUMN_METRICS)
     ]
 
 
@@ -266,12 +359,15 @@ def render_markdown(rows: Sequence[Row]) -> str:
         rows: Rows from `compare`.
 
     Returns:
-        Markdown with per-target badges, a changed-file headline, the changed
-        rows table and collapsible per-agent and all-row tables.
+        Markdown with per-target badges, a changed-file headline, one summary
+        table of the targets whose size changed, and a collapsed table of the
+        changed files.
     """
     collection = [row for row in rows if row.metric == COLLECTION_BYTES]
+    sizes = _sizes_by_target(row for row in rows if row.metric in _COLUMN_OF)
+    totals = {target: row for row in collection for target in row.targets}
     changed = sorted(
-        (r for r in rows if r.metric != COLLECTION_BYTES and r.delta),
+        (r for r in rows if r.metric not in _COLUMN_OF and r.delta),
         key=lambda r: -abs(r.delta),
     )
     badges = " ".join(
@@ -289,15 +385,9 @@ def render_markdown(rows: Sequence[Row]) -> str:
     sections = [
         badges,
         headline,
-        "\n".join(_table(_ROW_HEADER, _row_lines(changed))),
-        _details(
-            "Per-agent impact",
-            _table(
-                ["", "target", "before", "after", "change", "%", "limit"],
-                _collection_lines(collection),
-            ),
-        ),
-        _details("All rows", _table(_ROW_HEADER, _row_lines(rows))),
+        "\n".join(_table(_SUMMARY_HEADER, _summary_lines(sizes, totals))),
+        _details("Details", _table(_DETAIL_HEADER, _detail_lines(sizes, totals))),
+        _details("Changed files", _table(_ROW_HEADER, _row_lines(changed))),
     ]
     return "\n\n".join(sections) + "\n"
 
