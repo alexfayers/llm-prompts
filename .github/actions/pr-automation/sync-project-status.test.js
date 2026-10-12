@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { latestCheck, resolveStatus } = require('./sync-project-status.js');
+const { isBlocked, latestCheck, resolveStatus } = require('./sync-project-status.js');
 
 const openPr = { state: 'OPEN', isDraft: false, reviewDecision: null, dependencyCheck: null };
 
@@ -52,4 +52,12 @@ test('latestCheck returns the completed check run that started last, or null', (
   assert.equal(latestCheck(runs), runs[1]);
   assert.equal(latestCheck([runs[2]]), null);
   assert.equal(latestCheck([]), null);
+});
+
+test('PR is blocked by a failed dependency check or requested changes only', () => {
+  assert.equal(isBlocked({ ...openPr, dependencyCheck: 'failure' }), true);
+  assert.equal(isBlocked({ ...openPr, reviewDecision: 'CHANGES_REQUESTED' }), true);
+  for (const dependencyCheck of ['success', 'cancelled', null]) {
+    assert.equal(isBlocked({ ...openPr, dependencyCheck, reviewDecision: 'APPROVED' }), false);
+  }
 });

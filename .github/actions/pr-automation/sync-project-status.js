@@ -15,6 +15,10 @@ function latestCheck(checkRuns) {
   return completed.reduce((latest, run) => (!latest || run.started_at > latest.started_at ? run : latest), null);
 }
 
+function isBlocked(pr) {
+  return pr.dependencyCheck === 'failure' || pr.reviewDecision === 'CHANGES_REQUESTED';
+}
+
 function resolveStatus(pr) {
   if (pr.state !== 'OPEN') {
     return STATUS_OPTION.DONE;
@@ -22,7 +26,7 @@ function resolveStatus(pr) {
   if (pr.isDraft) {
     return STATUS_OPTION.IN_PROGRESS;
   }
-  if (pr.reviewDecision === 'CHANGES_REQUESTED' || pr.dependencyCheck === 'failure') {
+  if (isBlocked(pr)) {
     return STATUS_OPTION.BLOCKED;
   }
   return pr.reviewDecision === 'APPROVED' ? STATUS_OPTION.APPROVED : STATUS_OPTION.REVIEW;
@@ -32,7 +36,7 @@ async function fetchPr(github, { owner, repo, number }) {
   const { repository } = await github.graphql(
     `query($owner: String!, $repo: String!, $number: Int!) {
       repository(owner: $owner, name: $repo) {
-        pullRequest(number: $number) { id state isDraft reviewDecision headRefOid }
+        pullRequest(number: $number) { id number state isDraft reviewDecision headRefOid labels(first: 50) { nodes { name } } }
       }
     }`,
     { owner, repo, number }
@@ -87,16 +91,22 @@ async function findPullRequestNumber(github, { payload, repo }) {
   return openPrs.find((pr) => pr.head.sha === payload.workflow_run.head_sha)?.number;
 }
 
-async function sync({ github, context, core }) {
+async function findPr(github, context, core) {
   const number = await findPullRequestNumber(github, context);
   if (!number) {
     core.info(`No open PR for ${context.payload.workflow_run.head_sha}; skipping.`);
+    return null;
+  }
+  return fetchPr(github, { ...context.repo, number });
+}
+
+async function sync({ github, context, core }) {
+  const pr = await findPr(github, context, core);
+  if (!pr) {
     return;
   }
-
-  const pr = await fetchPr(github, { ...context.repo, number });
   const dependencyCheck = await findDependencyCheck(github, core, context.repo, pr.headRefOid);
   await setStatus(github, pr.id, resolveStatus({ ...pr, dependencyCheck }));
 }
 
-module.exports = { latestCheck, resolveStatus, sync };
+module.exports = { findDependencyCheck, findPr, isBlocked, latestCheck, resolveStatus, sync };
