@@ -1,5 +1,5 @@
 name: PR automation
-description: Sync PR status onto the llm-prompts ecosystem project board, enable squash auto-merge on ready contribute PRs, assign the PR author, apply a type label from the PR title, apply path-based area labels, and rebase auto-merge PRs onto the base branch when it moves.
+description: Sync PR status onto the llm-prompts ecosystem project board, enable squash auto-merge on ready contribute PRs, assign the PR author, apply a type label from the PR title, label blocked PRs, apply path-based area labels, and rebase auto-merge PRs onto the base branch when it moves.
 inputs:
   projects-token:
     description: Token for the Project GraphQL status sync and for enabling auto-merge.
@@ -14,8 +14,7 @@ runs:
       if: |
         inputs.projects-token != '' &&
         ((github.event_name == 'pull_request_target' && contains(fromJSON('["opened", "reopened", "converted_to_draft", "ready_for_review", "closed"]'), github.event.action)) ||
-        (github.event_name == 'pull_request_review' && github.event.action == 'submitted') ||
-        (github.event_name == 'workflow_run' && github.event.action == 'completed'))
+        (github.event_name == 'pull_request_review' && github.event.action == 'submitted'))
       uses: actions/github-script@v9
       env:
         ACTION_PATH: ${{ github.action_path }}
@@ -75,6 +74,20 @@ runs:
         script: |
           const { label } = require(`${process.env.ACTION_PATH}/label-pr.js`)
           await label({ github, context, core })
+
+    - name: Label blocked PR
+      if: |
+        (github.event_name == 'pull_request_target' && contains(fromJSON('["opened", "reopened", "converted_to_draft", "ready_for_review", "synchronize"]'), github.event.action)) ||
+        (github.event_name == 'pull_request_review' && github.event.action == 'submitted') ||
+        (github.event_name == 'workflow_run' && github.event.action == 'completed')
+      uses: actions/github-script@v9
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const { labelBlocked } = require(`${process.env.ACTION_PATH}/label-pr.js`)
+          await labelBlocked({ github, context, core })
 
     - name: Label PR by area
       if: ${{ !contains(fromJSON('["push", "workflow_run"]'), github.event_name) }}

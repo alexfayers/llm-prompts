@@ -1,0 +1,19 @@
+name: PR template
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+
+jobs:
+  pr-template-check:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: node --test .github/scripts/*.test.js
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const { check } = require('./.github/scripts/check-pr-template.js')
+            await check({ github, context, core })
