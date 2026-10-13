@@ -87,7 +87,7 @@ export function createScan(ownerId: string): Scan {
 }
 
 function resetScan(scan: Scan): void {
-	Object.assign(scan, createScan(scan.ownerId));
+	Object.assign(scan, createScan(scan.ownerId), { usage: { tokens: scan.usage.tokens, cost: 0 } });
 }
 
 function validUsage(message: NonNullable<Entry["message"]>): number {
@@ -118,7 +118,6 @@ function recordResult(scan: Scan, details: Details): void {
 
 function addUsage(scan: Scan, usage: Usage | undefined): void {
 	if (!usage) return;
-	scan.usage.tokens += usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 	scan.usage.cost += usage.cost?.total ?? 0;
 }
 
@@ -143,6 +142,7 @@ export function feedEntry(scan: Scan, entry: Entry, size: number): void {
 		const tokens = validUsage(entry.message);
 		if (tokens > 0) {
 			scan.usageTokens = tokens;
+			scan.usage.tokens = Math.max(scan.usage.tokens, tokens);
 			scan.trailingBytes = 0;
 			scan.compacted = false;
 			scan.provider = entry.message.provider ?? scan.provider;
