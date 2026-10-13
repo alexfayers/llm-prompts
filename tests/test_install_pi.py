@@ -6,6 +6,7 @@ import json
 import re
 import shutil
 import subprocess
+import tomllib
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -214,6 +215,70 @@ class TestRequiresAbsentCommand:
                 _requirements_met({"requires_absent_command": "herdr"}, "pi")
                 is expected
             )
+
+
+class TestHerdrSoundConfig:
+    _CONFIG = '[ui.toast]\ndelivery = "terminal"\n\n[ui.sound]\nenabled = true\n'
+
+    @pytest.fixture
+    def herdr_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        (tmp_path / "home").mkdir()
+        path = tmp_path / "home" / ".config" / "herdr" / "config.toml"
+        path.parent.mkdir(parents=True)
+        path.write_text(self._CONFIG, encoding="utf-8")
+        return path
+
+    def test_install_mutes_pi_in_the_herdr_config_once(
+        self, tmp_path: Path, herdr_config: Path
+    ) -> None:
+        _install(tmp_path / "home", tmp_path / "installed.json")
+        merged = herdr_config.read_text(encoding="utf-8")
+        assert merged.startswith(self._CONFIG)
+        assert tomllib.loads(merged)["ui"]["sound"]["agents"] == {"pi": "off"}
+        backup = herdr_config.with_name("config.toml.bak-pi-notify")
+        assert backup.read_text(encoding="utf-8") == self._CONFIG
+
+        backup.unlink()
+        _install(tmp_path / "home", tmp_path / "installed.json")
+        assert herdr_config.read_text(encoding="utf-8") == merged
+        assert not backup.exists()
+
+    def test_herdr_config_path_overrides_the_default_location(
+        self, tmp_path: Path, herdr_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        other = tmp_path / "other.toml"
+        other.write_text(self._CONFIG, encoding="utf-8")
+        monkeypatch.setenv("HERDR_CONFIG_PATH", str(other))
+        _install(tmp_path / "home", tmp_path / "installed.json")
+        assert (
+            "pi"
+            in tomllib.loads(other.read_text(encoding="utf-8"))["ui"]["sound"]["agents"]
+        )
+        assert herdr_config.read_text(encoding="utf-8") == self._CONFIG
+
+    def test_no_herdr_means_the_config_is_not_touched(
+        self, tmp_path: Path, herdr_config: Path
+    ) -> None:
+        _install(tmp_path / "home", tmp_path / "installed.json", herdr=False)
+        assert herdr_config.read_text(encoding="utf-8") == self._CONFIG
+
+    def test_a_missing_config_is_not_created(self, tmp_path: Path) -> None:
+        (tmp_path / "home").mkdir()
+        _install(tmp_path / "home", tmp_path / "installed.json")
+        assert not (tmp_path / "home" / ".config" / "herdr").exists()
+
+    def test_an_unmergeable_config_warns_and_install_continues(
+        self,
+        tmp_path: Path,
+        herdr_config: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        herdr_config.write_text("not = = toml", encoding="utf-8")
+        failed = _install(tmp_path / "home", tmp_path / "installed.json")
+        assert not failed
+        assert herdr_config.read_text(encoding="utf-8") == "not = = toml"
+        assert "config.toml" in capsys.readouterr().err
 
 
 class TestPiPackages:

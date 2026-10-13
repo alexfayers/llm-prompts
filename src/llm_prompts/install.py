@@ -19,6 +19,7 @@ from urllib.request import url2pathname
 from jinja2 import TemplateError
 
 from .colors import Color, paint
+from .herdr_config import HerdrConfigError, herdr_config_path, mute_agent_sound
 from .herdsman import HERDSMAN_DISABLED_DEFINITIONS, herdr_available
 from .render_template import (
     _read_text,
@@ -2523,6 +2524,20 @@ def _seed_pi_files(dirs: list[Path]) -> None:
             log("success", f"[pi] Seeded {dest}.")
 
 
+def _mute_pi_in_herdr() -> None:
+    """Silence Herdr's own sound for pi in Herdr's config, where that file exists."""
+    config_path = herdr_config_path()
+    if not config_path.is_file():
+        return
+    try:
+        changed = mute_agent_sound(config_path, "pi")
+    except HerdrConfigError as error:
+        log("warn", f"[pi] Left {config_path} unchanged: {error}.")
+        return
+    if changed:
+        log("success", f"[pi] Muted pi's Herdr sound in {config_path}.")
+
+
 def _sync_pi_packages(
     wanted: list[str], previous: list[str], defaults: dict[str, Any] | None = None
 ) -> None:
@@ -3371,7 +3386,9 @@ def main(
             if pi_bundle_held
             else {name: sorted(r) for name, r in pi_bundle.roles.items()}
         )
-        if not herdr_available():
+        if herdr_available():
+            _mute_pi_in_herdr()
+        else:
             log("warn", "[pi] `herdr` not found on PATH. pi needs herdr to run.")
         pi_fragments = [root_dir / "pi" / "settings.json"] + [
             d / "pi" / "settings.json" for d in overlay_dirs

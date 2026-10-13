@@ -50,6 +50,12 @@ Added by llm-prompts, no README. MUST verify each against installed files first.
   - Lead in herdr only. Closes finished idle lead-less panes. Only reports merged clean worktrees (any repo; `gh` check for GitHub origin only) and other orphans. Outside herdr: warns once.
   - `/pane-reaper` checks now, `on|off` toggles, `close <pane-id>` closes a reported one.
   - `pane-reaper.json`: `enabled`, `graceSeconds` (age to close), `intervalSeconds` (min 10).
+- **herdr-notify**
+  - Auto Herdr notice: turn done (sound `done`), dialog but not `custom` overlay (`request`). No-op outside Herdr.
+  - Subagents (`PI_SUBAGENT_CHILD`, `PI_HERDSMAN_MAILBOX`) never auto. `PI_NOTIFY_AUTO=0` off.
+  - `/notify <message> [| <title>]`; tool `notify` (`title`, `body`, `sound`: `none|done|request`).
+  - Herdr rejects a value starting with `-`. Not the pi-notify package.
+  - Install adds `[ui.sound.agents] pi = "off"` to Herdr `config.toml` (backup `.bak-pi-notify`).
 - **diff-preview**
   - Long-ask preview (pi-compact-tools diff, else text) in the box. Scroll: wheel or Alt+Up/Down. On via `authorizerChain`.
 - **permission-box**: centred accent overlay for prompt and preview.

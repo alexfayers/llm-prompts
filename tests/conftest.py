@@ -752,6 +752,12 @@ def herdr_off_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(shutil, "which", which)
 
 
+@pytest.fixture(autouse=True)
+def herdr_config_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep a `HERDR_CONFIG_PATH` from the host environment out of installs."""
+    monkeypatch.delenv("HERDR_CONFIG_PATH", raising=False)
+
+
 class FakeGitHub:
     """Fake `github_api.urlopen`, routed by REST (method, path) or GraphQL query substring."""
 
