@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
+      statuses: write
     steps:
       - uses: alexfayers/llm-prompts/.github/actions/pr-automation@main
         with:
