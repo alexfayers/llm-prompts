@@ -34,6 +34,13 @@ test('cleared dependencies remove the blocked label', async () => {
   assert.deepEqual(calls, [['status', 'success'], ['removeLabel', 'blocked']]);
 });
 
+test('removing a blocked label that is already gone does not fail', async () => {
+  const { github, context, core, calls } = fixture({ body: 'Depends on #1', labels: ['blocked'] });
+  github.rest.issues.removeLabel = async () => { throw Object.assign(new Error('Label does not exist'), { status: 404 }); };
+  await check({ github, context, core });
+  assert.deepEqual(calls, [['status', 'success']]);
+});
+
 test('an API error sets the error status and still fails', async () => {
   const { github, context, core, calls } = fixture({ body: 'Depends on #1' });
   github.rest.issues.get = async () => { throw new Error('boom'); };
