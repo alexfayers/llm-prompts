@@ -1,6 +1,8 @@
 ---
 name: tdd
 description: Test-driven development with red-green-refactor loop. Use when user wants to build features or fix bugs using TDD, mentions "red-green-refactor", or wants test-first development.
+metadata:
+  attach_triggers: tdd, test-driven, red-green, failing test, write tests, add tests
 ---
 
 # Test-Driven Development

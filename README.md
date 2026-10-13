@@ -51,6 +51,8 @@ A skill's `metadata` frontmatter can make the cline-hooks `SkillStartupBlocks` p
 
 - `inject_at_start: true` injects the skill.
 
+The `SkillAttach` plugin suggests up to 3 skills in a spawned subagent's task, never one the task already names. A skill opts in with `attach_triggers: a, b` (phrases the task mentions) or `attach_roles: a, b` (agent types).
+
 ### Agents
 
 Agents are custom subagent definitions - single markdown files with YAML frontmatter (`name`, `description`, `model`, etc.) that define a specialised subagent. Agents in `shared/agents/` are installed for `claude-code` and `pi`; agents in `claude-code/agents/` are installed for `claude-code`, and for `pi` when they ship with this repo. They are installed as files with template variables substituted; for `pi` they are written with pi's frontmatter keys and tool names.

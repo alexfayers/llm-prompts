@@ -1,6 +1,8 @@
 ---
 name: git-tidy
 description: "Tidy unpushed commit history via a non-interactive rebase: squash, fixup, reorder, reword, or drop commits. Use when asked to tidy, clean up, squash, reorder, reword, or drop unpushed commits."
+metadata:
+  attach_triggers: squash, fixup, autosquash, tidy commits, reorder commits, reword commit
 ---
 
 # Git Tidy
