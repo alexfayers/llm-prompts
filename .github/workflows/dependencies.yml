@@ -10,7 +10,7 @@ jobs:
     permissions:
       issues: write
       statuses: write
-      pull-requests: read
+      pull-requests: write
     steps:
       - uses: alexfayers/llm-prompts/.github/actions/check-dependencies@main
 
