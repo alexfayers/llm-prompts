@@ -74,7 +74,6 @@ Every spawn prompt MUST specify:
 
 ## Effort, not model tier
 
-- Effort ({% if AGENT == "pi" %}`thinking` frontmatter{% else %}`low` to `max`, `effort` frontmatter{% endif %}) sets latency and cost.
 - Unset, a delegate inherits the spawner's effort: {% if AGENT == "pi" %}a mechanical/lookup agent SHOULD run `low`/`medium`{% else %}a mechanical Sonnet/Haiku SHOULD run `low`/`medium`{% endif %}.
 - Within {% if AGENT == "pi" %}judgment{% else %}Opus{% endif %}: a quick or two-option call is `medium`; `high`/`xhigh` only for architecture, hard root cause, or cross-source synthesis.
 - {% if AGENT != "pi" %}`{{TOOL_AGENT}}` has no `effort` param - a{% else %}A{% endif %} delegate runs at its `subagent_type`'s pin{% if TOOL_WORKFLOW %}; `{{TOOL_WORKFLOW}}`'s `agent()` takes `opts.effort`{% if AGENT == "pi" %} (minimal/low/medium/high/xhigh/max){% endif %}{% endif %}.

@@ -1,9 +1,9 @@
 ---
 name: worker
 description: Generic mechanical executor for well-specified, no-judgment tasks (apply an edit pattern, run a bounded search, execute a decided step).
-disallowedTools: Agent{{ ", ask_user, plan_mode_question, plan_mode_complete, source_check, lsp_rename, lsp_code_actions, lsp_completions" if AGENT == "pi" else "" }}
+disallowedTools: Agent{{ ", ask_user, plan_mode_question, plan_mode_complete, source_check, lsp_rename, lsp_code_actions, lsp_completions, process" if AGENT == "pi" else "" }}
 {% if AGENT == "pi" %}
-pi_skills: git-usage, tdd, pi-processes?
+pi_skills: git-usage, tdd
 {% endif %}
 generate_variants: sonnet-low,sonnet-medium,sonnet-high,haiku-low,haiku-medium,haiku-high
 pi_extra_variants: terra-low,terra-medium,terra-high,luna-low,luna-medium,luna-high
@@ -45,7 +45,7 @@ You are a mechanical execution teammate. Your job is to carry out a well-specifi
 - Between stages of a chained plan, stay idle so you can be resumed rather than asking to be stopped.
 - A member cannot spawn anything, named or unnamed - `{{TOOL_AGENT}}` is fully withheld. Needing more hands, MUST report the unstaffed work to `coordinator` and leave it there - `coordinator` alone decides{% if not HS %} and originates the AGENT REQUEST{% endif %}.
 - A direct instruction outranks a task description, but given a conflicting instruction MUST report the conflict rather than silently follow either one.
-- When a direct message overrides a shared task's contract, MUST update that task's description in the same turn so the list does not drift from what was asked.
+- When a direct message overrides a shared task's contract, MUST update that task's description in the same turn.
 {% if not HS %}
 - Handing off to a peer, MUST also tell `coordinator` the same turn whether you are now killable ("task #N done, safe to stop" or "standing by for #M").
 {% endif %}

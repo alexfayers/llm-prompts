@@ -35,11 +35,11 @@ Added by llm-prompts, no README. MUST verify each against installed files first.
   - After editing extensions, packages, settings, agents, `AGENTS.md`.
 - **Handoff**
   - A handoff starts a new session whose first prompt line is `HANDOFF-ACK <pane-id>`. The old tab stays open until the new session replies with it.
-  - Agents MUST NOT run `herdr agent prompt` on a pane the user may be typing in: it presses Enter and wipes the draft.
+  - Agents MUST NOT run `herdr agent prompt` on a pane the user may be typing in.
 - **net-guard**
   - Blocks and logs network calls from extensions not in `net-guard.json` `allow`. `"mode": "log"` only logs (`net-guard.log`). Not a security boundary.
 - **prompt-cache-stabilizer**
-  - Keeps the system prompt stable so the 5-minute cache holds. `cacheWarming` `"idle"` keeps it warm.
+  - Keeps the system prompt stable. `cacheWarming` `"idle"` keeps it warm.
 - **compact-now**
   - Adds `compact_now`: `instructions` summary replaces old context. Auto-continues.
 - **tower-do-patch**
