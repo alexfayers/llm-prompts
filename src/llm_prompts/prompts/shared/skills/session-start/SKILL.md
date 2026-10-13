@@ -1,15 +1,21 @@
 ---
 name: session-start
-description: Check memory for in-progress tasks and active TODOs at the start of each session. Use at the beginning of every new conversation.
+description: Start-up checks. Load only when no start-up blocks were injected.
+metadata:
+  inject_at_start: true
 ---
 
 # session-start
 
 Before the first reply, check memory for in-progress work:
 
+{% if AGENT not in ["claude-code", "pi"] %}
 0. If `HANDOFF.md` is in the workspace root, run the `pickup` skill instead and stop here.
+{% endif %}
 0.5. If the workspace root has an operating-rules file (e.g. `RULES.md`), read it in full first.
+{% if AGENT not in ["claude-code", "pi"] %}
 1. `read_graph(project="<repo-name>")`.
+{% endif %}
 2. Only if the opening message asks about outstanding work, run `search_all_projects(query="task", projects=["global", "<repo-name>"], expand_groups=True, entityType="task", status=["in-progress", "planned"], names_only=True, limit=500)`. Otherwise skip. To scan every project, omit `projects`/`expand_groups`, only on an explicit "what's outstanding everywhere?" ask.
 3. If the scan ran, present ONE table of ALL results, grouped by project, in-progress first. Leave "What it is" blank where the name says it. Call `get_entity_with_relations` only on tasks the user picks:
 
