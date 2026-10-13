@@ -50,23 +50,37 @@ def _binary_dir(tmp_path: Path, name: str, *binaries: str) -> Path:
     return directory
 
 
-def _sent_after_prompts(
+def _run_events(
     tmp_path: Path,
     path_dirs: list[Path],
     *,
     commands: list[str] | None = None,
     project_config: dict[str, Any] | None = None,
-    events: tuple[str, ...] = ("session_start", "before_agent_start"),
-) -> list[Any]:
+    events: tuple[str | tuple[str, dict[str, Any]], ...] = (
+        "session_start",
+        "before_agent_start",
+    ),
+) -> dict[str, Any]:
     project = tmp_path / "project"
     project.mkdir(exist_ok=True)
     if project_config is not None:
         (project / ".pi-lsp.json").write_text(json.dumps(project_config))
-    pi = {"$pi": "pi", "commands": ["lsp-config"] if commands is None else commands}
+    pi = {
+        "$pi": "pi",
+        "commands": ["lsp-config", "lsp-restart"] if commands is None else commands,
+    }
     steps: list[dict[str, Any]] = [{"fn": "default", "args": [pi]}]
-    steps += [
-        {"emit": event, "pi": "pi", "ctx": {"cwd": str(project)}} for event in events
-    ]
+    for event in events:
+        name, payload = (event, {}) if isinstance(event, str) else event
+        steps.append(
+            {
+                "emit": name,
+                "pi": "pi",
+                "ctx": {"cwd": str(project)},
+                "payload": payload,
+                "as": "last",
+            }
+        )
     steps.append({"sent": "pi", "as": "sent"})
     config = tmp_path / "config.json"
     agent_dir = tmp_path / "agent"
@@ -83,12 +97,19 @@ def _sent_after_prompts(
     )
     output: dict[str, Any] = json.loads(done.stdout)
     assert "error" not in output, output["error"]
-    sent: list[Any] = output["results"]["sent"]
+    results: dict[str, Any] = output["results"]
+    return results
+
+
+def _sent_after_prompts(
+    tmp_path: Path, path_dirs: list[Path], **kwargs: Any
+) -> list[Any]:
+    sent: list[Any] = _run_events(tmp_path, path_dirs, **kwargs)["sent"]
     return sent
 
 
 class TestPythonFallback:
-    """Tests for switching Python to ty when pyright is missing."""
+    """Tests for switching Python to ty or ruff when pyright is missing."""
 
     def test_ty_replaces_missing_pyright_once_per_session(self, tmp_path: Path) -> None:
         ty_only = _binary_dir(tmp_path, "bin", "ty")
@@ -138,3 +159,41 @@ class TestPythonFallback:
             ),
         )
         assert len(sent) == 2
+
+    def test_ruff_replaces_missing_pyright_and_ty(self, tmp_path: Path) -> None:
+        ruff_only = _binary_dir(tmp_path, "bin", "ruff")
+        assert _sent_after_prompts(tmp_path, [ruff_only]) == [
+            ["/lsp-config python ruff server", {"expandPromptTemplates": True}]
+        ]
+
+    def test_ty_is_preferred_over_ruff(self, tmp_path: Path) -> None:
+        both = _binary_dir(tmp_path, "bin", "ty", "ruff")
+        assert _sent_after_prompts(tmp_path, [both]) == [
+            ["/lsp-config python ty server", {"expandPromptTemplates": True}]
+        ]
+
+
+_SESSION = ("session_start", "before_agent_start")
+
+
+class TestReadDoesNotStartServers:
+    """Tests that reading a file neither starts a server nor changes the result."""
+
+    def test_a_read_sends_nothing_and_leaves_the_result_unchanged(
+        self, tmp_path: Path
+    ) -> None:
+        pyright = _binary_dir(tmp_path, "bin", "pyright-langserver")
+        read = (
+            "tool_result",
+            {
+                "toolName": "read",
+                "input": {"path": "a.py"},
+                "isError": False,
+                "content": [{"type": "text", "text": "print(1)"}],
+            },
+        )
+        output = _run_events(
+            tmp_path, [pyright], events=(*_SESSION, read, ("turn_end", {}))
+        )
+        assert output["sent"] == []
+        assert output.get("last") is None

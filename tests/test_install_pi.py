@@ -17,6 +17,7 @@ import yaml
 from llm_prompts import manifest as manifest_module
 from llm_prompts.install import (
     _expanded_definition,
+    _herdsman_agent_content,
     _linked_content,
     _parse_roles,
     _requirements_met,
@@ -994,7 +995,18 @@ class TestPiAgents:
     ) -> None:
         path = pi_home / ".pi" / "agent" / "agents" / "Explore.md"
         explore = _frontmatter(path)
-        assert explore["tools"] == ["read", "bash", "grep", "find", "ls"]
+        assert explore["tools"] == [
+            "read",
+            "grep",
+            "find",
+            "ls",
+            "lsp_symbols",
+            "lsp_definition",
+            "lsp_references",
+            "lsp_hover",
+            "code_overview",
+            "ast_search",
+        ]
         assert explore["inheritProjectContext"] is False
         assert explore["model"] == "haiku"
         assert "thinking: off\n" in path.read_text(encoding="utf-8")
@@ -1008,6 +1020,30 @@ class TestPiAgents:
         ):
             install_main(["claude-code"])
         assert not (claude_home / ".claude" / "agents" / "Explore.md").exists()
+
+    def test_read_only_search_agents_are_told_to_prefer_structure_tools(
+        self, pi_home: Path
+    ) -> None:
+        agents = pi_home / ".pi" / "agent" / "agents"
+        for name in ("Explore.md", "surveyor-sonnet-low.md"):
+            text = (agents / name).read_text(encoding="utf-8")
+            assert "Prefer lsp_symbols, code_overview" in text, name
+
+    def test_explore_has_no_bash_and_greps_only_docs_and_config(
+        self, pi_home: Path
+    ) -> None:
+        text = (pi_home / ".pi" / "agent" / "agents" / "Explore.md").read_text(
+            encoding="utf-8"
+        )
+        assert "bash" not in text.lower()
+        assert "MUST NOT use grep for code" in text
+        assert "lsp_references" in text
+
+    def test_explore_is_told_not_to_sleep_or_poll(self, pi_home: Path) -> None:
+        text = (pi_home / ".pi" / "agent" / "agents" / "Explore.md").read_text(
+            encoding="utf-8"
+        )
+        assert "MUST NOT use `sleep` or poll/idle-wait" in text
 
     def test_only_reasoner_and_coordinator_may_spawn_explore(
         self, pi_home: Path
@@ -1047,6 +1083,19 @@ class TestPiAgents:
         )
         for fast in ("worker-haiku-low.md", "Explore.md"):
             assert _frontmatter(agents / fast)["model"] == "acme/fast"
+
+
+def test_herdsman_tools_pass_pi_names_but_not_mcp_names() -> None:
+    content = (
+        "---\ntools: Read, lsp_symbols, mcp__acme__list_things, Unknown\n---\nbody\n"
+    )
+    translated = _herdsman_agent_content(
+        content,
+        tool_names={"Read": ["read"]},
+        resolve_model=lambda tier: tier,
+        resolve_skills=lambda value: [],
+    )
+    assert 'tools: ["read", "lsp_symbols"]' in translated
 
 
 class TestHerdsmanAgents:
@@ -1161,7 +1210,18 @@ class TestHerdsmanAgents:
             assert inheriting["inheritProjectContext"] is True
         for frontmatter in (coordinator, reasoner, worker, checker, explore):
             assert frontmatter["systemPromptMode"] == "append"
-        assert explore["tools"] == ["read", "bash", "grep", "find", "ls"]
+        assert explore["tools"] == [
+            "read",
+            "grep",
+            "find",
+            "ls",
+            "lsp_symbols",
+            "lsp_definition",
+            "lsp_references",
+            "lsp_hover",
+            "code_overview",
+            "ast_search",
+        ]
         for frontmatter in (coordinator, reasoner, worker, checker, explore):
             assert (
                 not {

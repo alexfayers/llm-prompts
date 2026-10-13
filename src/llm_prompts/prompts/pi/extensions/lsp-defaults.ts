@@ -1,27 +1,37 @@
-// Switches Python projects to the ty language server when ty is installed and no Python server is configured.
+// Falls back to the ty or ruff language server for Python when pyright is missing.
 import { accessSync, constants, readFileSync } from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const LANGUAGES = [{ id: "python", default: "pyright-langserver", fallback: ["ty", "server"] }];
+const LANGUAGES = [
+	{ id: "python", default: "pyright-langserver", fallbacks: [["ty", "server"], ["ruff", "server"]] },
+	{ id: "typescript", default: "typescript-language-server", fallbacks: [] },
+	{ id: "typescriptreact", default: "typescript-language-server", fallbacks: [] },
+	{ id: "javascript", default: "typescript-language-server", fallbacks: [] },
+	{ id: "javascriptreact", default: "typescript-language-server", fallbacks: [] },
+];
 
-function onPath(binary: string): boolean {
-	return (process.env.PATH ?? "").split(path.delimiter).some((dir) => {
-		try {
-			accessSync(path.join(dir, binary), constants.X_OK);
-			return true;
-		} catch {
-			return false;
-		}
-	});
-}
+type ProjectConfig = { servers?: Record<string, { command?: string }> };
 
-function projectConfigures(cwd: string, languageId: string): boolean {
+function executable(file: string): boolean {
 	try {
-		const config = JSON.parse(readFileSync(path.join(cwd, ".pi-lsp.json"), "utf8"));
-		return config?.servers?.[languageId] !== undefined;
+		accessSync(file, constants.X_OK);
+		return true;
 	} catch {
 		return false;
+	}
+}
+
+function installed(command: string, cwd: string): boolean {
+	if (command.includes("/")) return executable(path.resolve(cwd, command));
+	return (process.env.PATH ?? "").split(path.delimiter).some((dir) => executable(path.join(dir, command)));
+}
+
+function projectConfig(cwd: string): ProjectConfig | undefined {
+	try {
+		return JSON.parse(readFileSync(path.join(cwd, ".pi-lsp.json"), "utf8"));
+	} catch {
+		return undefined;
 	}
 }
 
@@ -33,9 +43,11 @@ export default function (pi: ExtensionAPI) {
 	pi.on("before_agent_start", async (_event, ctx) => {
 		if (applied || !pi.getCommands().some((command) => command.name === "lsp-config")) return;
 		applied = true;
+		const servers = projectConfig(ctx.cwd)?.servers;
 		for (const language of LANGUAGES) {
-			if (projectConfigures(ctx.cwd, language.id) || onPath(language.default) || !onPath(language.fallback[0])) continue;
-			await pi.sendUserMessage(`/lsp-config ${language.id} ${language.fallback.join(" ")}`, { expandPromptTemplates: true });
+			const fallback = language.fallbacks.find((command) => installed(command[0], ctx.cwd));
+			if (servers?.[language.id] !== undefined || installed(language.default, ctx.cwd) || !fallback) continue;
+			await pi.sendUserMessage(`/lsp-config ${language.id} ${fallback.join(" ")}`, { expandPromptTemplates: true });
 		}
 	});
 }
