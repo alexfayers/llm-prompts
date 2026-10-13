@@ -24,7 +24,8 @@ const INTERESTING_LINE = new RegExp(
 );
 
 type Usage = { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens?: number; cost?: { total?: number } };
-export type UsageTotals = { tokens: number; cost: number };
+export type UsageCost = { cost: number };
+export type UsageTotals = UsageCost & { tokens: number };
 type ContextUsage = { tokens: number | null; contextWindow: number; percent: number | null };
 type Details = Record<string, unknown>;
 type Entry = {
@@ -51,8 +52,9 @@ export type Scan = {
 	ownerId: string;
 	offset: number;
 	usageTokens: number;
+	peakTokens: number | null;
 	trailingBytes: number;
-	usage: UsageTotals;
+	usage: UsageCost;
 	compacted: boolean;
 	partial: boolean;
 	children: Map<string, Child>;
@@ -75,19 +77,20 @@ export type Node = {
 	percent: number | null;
 };
 
-export type Sample = { nodes: Node[]; partial: boolean; session: UsageTotals; tree: UsageTotals };
+export type Sample = { nodes: Node[]; partial: boolean; session: UsageCost; tree: UsageTotals; unknown: boolean };
 
 export type SampleOptions = {
+	leadTokens?: number | null;
 	mailboxIds?: Set<string>;
 	windowOf?: (provider: string, modelId: string) => number | undefined;
 };
 
 export function createScan(ownerId: string): Scan {
-	return { ownerId, offset: 0, usageTokens: 0, trailingBytes: 0, usage: { tokens: 0, cost: 0 }, compacted: false, partial: false, children: new Map() };
+	return { ownerId, offset: 0, usageTokens: 0, peakTokens: null, trailingBytes: 0, usage: { cost: 0 }, compacted: false, partial: false, children: new Map() };
 }
 
 function resetScan(scan: Scan): void {
-	Object.assign(scan, createScan(scan.ownerId));
+	Object.assign(scan, createScan(scan.ownerId), { peakTokens: scan.peakTokens });
 }
 
 function validUsage(message: NonNullable<Entry["message"]>): number {
@@ -118,11 +121,10 @@ function recordResult(scan: Scan, details: Details): void {
 
 function addUsage(scan: Scan, usage: Usage | undefined): void {
 	if (!usage) return;
-	scan.usage.tokens += usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 	scan.usage.cost += usage.cost?.total ?? 0;
 }
 
-export function scanUsage(scan: Scan): UsageTotals {
+export function scanUsage(scan: Scan): UsageCost {
 	return { ...scan.usage };
 }
 
@@ -143,6 +145,7 @@ export function feedEntry(scan: Scan, entry: Entry, size: number): void {
 		const tokens = validUsage(entry.message);
 		if (tokens > 0) {
 			scan.usageTokens = tokens;
+			scan.peakTokens = Math.max(scan.peakTokens ?? 0, tokens);
 			scan.trailingBytes = 0;
 			scan.compacted = false;
 			scan.provider = entry.message.provider ?? scan.provider;
@@ -254,10 +257,16 @@ function finishedNode(child: Child, depth: number): Node {
 	};
 }
 
+function recordPeak(scan: Scan, tokens: number | null): number | null {
+	if (tokens !== null) scan.peakTokens = Math.max(scan.peakTokens ?? 0, tokens);
+	return scan.peakTokens;
+}
+
 export async function sampleChildren(root: Scan, scans: Map<string, Scan>, options: SampleOptions = {}): Promise<Sample> {
 	const nodes: Node[] = [];
 	const visited = new Set([root.ownerId]);
 	const touched: Scan[] = [root];
+	const contextTokens: (number | null)[] = [recordPeak(root, options.leadTokens !== undefined ? options.leadTokens : scanTokens(root))];
 	const walk = async (scan: Scan, depth: number, listed: boolean): Promise<void> => {
 		for (const child of listChildren(scan)) {
 			if (visited.has(child.sessionId)) continue;
@@ -267,11 +276,13 @@ export async function sampleChildren(root: Scan, scans: Map<string, Scan>, optio
 			touched.push(childScan);
 			await readIfPresent(childScan, child.sessionPath);
 			if (child.done) {
+				contextTokens.push(recordPeak(childScan, child.usage?.tokens ?? null));
 				if (listed) nodes.push(finishedNode(child, depth));
 				await walk(childScan, depth + 1, false);
 				continue;
 			}
 			const tokens = scanTokens(childScan);
+			contextTokens.push(recordPeak(childScan, tokens));
 			const contextWindow = childScan.provider && childScan.modelId ? options.windowOf?.(childScan.provider, childScan.modelId) : undefined;
 			const live = !options.mailboxIds || options.mailboxIds.has(child.sessionId);
 			if (listed) {
@@ -290,11 +301,9 @@ export async function sampleChildren(root: Scan, scans: Map<string, Scan>, optio
 		}
 	};
 	await walk(root, 0, true);
-	const tree = touched.reduce<UsageTotals>(
-		(sum, scan) => ({ tokens: sum.tokens + scan.usage.tokens, cost: sum.cost + scan.usage.cost }),
-		{ tokens: 0, cost: 0 },
-	);
-	return { nodes, partial: touched.some((scan) => scan.partial), session: scanUsage(root), tree };
+	const { tokens, unknown } = sumTokens(contextTokens);
+	const cost = touched.reduce((sum, scan) => sum + scan.usage.cost, 0);
+	return { nodes, partial: touched.some((scan) => scan.partial), session: scanUsage(root), tree: { tokens, cost }, unknown };
 }
 
 const TOKENS_PER_K = 1000;
@@ -333,7 +342,7 @@ function liveTotal(lead: LeadUsage, sample: Sample): { tokens: number; sessions:
 
 export function formatContext(sample: Sample): string {
 	const { tokens, unknown } = sumTokens(liveNodeTokens(sample));
-	return `agents ${formatTokens(tokens)}${unknown ? "+" : ""} \u00b7 tree ${formatTokens(sample.tree.tokens)}`;
+	return `agents ${formatTokens(tokens)}${unknown ? "+" : ""} \u00b7 tree ${formatTokens(sample.tree.tokens)}${sample.unknown ? "+" : ""}`;
 }
 
 export function formatCost(sample: Sample): string {
@@ -384,7 +393,7 @@ export function formatReport(lead: LeadUsage, sample: Sample): string {
 		`  lead  ${lead ? formatUsage(lead.tokens, lead.contextWindow, lead.percent) : "unknown"}`,
 		...sample.nodes.filter((node) => node.state === "live").map((node) => nodeLine(node, "  ".repeat(node.depth + 1))),
 		...(ended.length ? ["Finished (last known)", ...ended.map((node) => nodeLine(node, "  "))] : []),
-		`Tree cumulative: ${formatTokens(sample.tree.tokens)} tokens, ${formatDollars(sample.tree.cost)}`,
+		`Tree: ${formatTokens(sample.tree.tokens)}${sample.unknown ? "+" : ""} tokens, ${formatDollars(sample.tree.cost)} cumulative cost`,
 		STATS_LINE,
 	].join("\n");
 }
@@ -417,11 +426,13 @@ export default function (pi: ExtensionAPI) {
 
 	async function sample(ctx: ExtensionContext): Promise<{ lead: LeadUsage; sampled: Sample }> {
 		const root = syncLead(tracker, ctx.sessionManager.getSessionId(), ctx.sessionManager.getEntries() as Entry[]);
+		const lead = ctx.getContextUsage();
 		const sampled = await sampleChildren(root, scans, {
+			leadTokens: lead?.tokens,
 			mailboxIds: await readMailboxIds(agentDir),
 			windowOf: (provider, modelId) => ctx.modelRegistry.find(provider, modelId)?.contextWindow,
 		});
-		return { lead: ctx.getContextUsage(), sampled };
+		return { lead, sampled };
 	}
 
 	function stopSampler(): void {

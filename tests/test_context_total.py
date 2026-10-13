@@ -191,8 +191,27 @@ def _costed(cost: float, kind: str = "assistant", stop: str = "stop") -> str:
     )
 
 
+def _request(context: int) -> str:
+    return _line(
+        {
+            "type": "message",
+            "message": {
+                "role": "assistant",
+                "stopReason": "stop",
+                "usage": {
+                    "input": context,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "totalTokens": context,
+                },
+            },
+        }
+    )
+
+
 class TestUsageTotals:
-    """Tests for the cumulative tokens and cost of one session file."""
+    """Tests for the cumulative cost of one session file."""
 
     def test_sums_every_usage_bearing_entry_including_failed_replies_and_tools(
         self, tmp_path: Path
@@ -211,8 +230,7 @@ class TestUsageTotals:
             {"fn": "scanUsage", "args": [{"$ref": "scan"}], "as": "usage"},
         ]
         usage = _run(tmp_path, steps)["usage"]
-        assert usage["cost"] == 1.9375
-        assert usage["tokens"] == 4 * 20
+        assert usage == {"cost": 1.9375}
 
 
 class TestReadNew:
@@ -394,17 +412,17 @@ class TestSampleChildren:
         sessions = str(tmp_path)
         lead = tmp_path / "lead.jsonl"
         lead.write_text(
-            _costed(1.0)
-            + _spawn("c1", "r1", owner="lead", sessions=sessions)
+            _spawn("c1", "r1", owner="lead", sessions=sessions)
             + _spawn("f1", "r2", owner="lead", sessions=sessions)
             + _result("f1", "r2", 400, owner="lead")
+            + _costed(1.0)
         )
         (tmp_path / "c1.jsonl").write_text(
-            _costed(2.0) + _spawn("g1", "r3", owner="c1", sessions=sessions)
+            _spawn("g1", "r3", owner="c1", sessions=sessions) + _costed(2.0)
         )
         (tmp_path / "g1.jsonl").write_text(_costed(4.0))
         (tmp_path / "f1.jsonl").write_text(
-            _costed(0.5) + _spawn("h1", "r4", owner="f1", sessions=sessions)
+            _spawn("h1", "r4", owner="f1", sessions=sessions) + _costed(0.5)
         )
         (tmp_path / "h1.jsonl").write_text(_costed(0.25))
         steps: list[dict[str, Any]] = [
@@ -417,9 +435,189 @@ class TestSampleChildren:
             },
         ]
         sample = _run(tmp_path, steps)["sample"]
-        assert sample["tree"] == {"tokens": 5 * 20, "cost": 7.75}
-        assert sample["session"] == {"tokens": 20, "cost": 1.0}
+        assert sample["tree"] == {"tokens": 20 + 20 + 20 + 400 + 20, "cost": 7.75}
+        assert sample["session"] == {"cost": 1.0}
         assert [node["sessionId"] for node in sample["nodes"]] == ["c1", "g1", "f1"]
+
+    def test_tree_tokens_sum_context_not_cumulative_requests(
+        self, tmp_path: Path
+    ) -> None:
+        sessions = str(tmp_path)
+        lead = tmp_path / "lead.jsonl"
+        lead.write_text(
+            _spawn("c1", "r1", owner="lead", sessions=sessions)
+            + _spawn("f1", "r2", owner="lead", sessions=sessions)
+            + _result("f1", "r2", 50, owner="lead")
+            + _request(100)
+            + _request(200)
+            + _request(300)
+        )
+        (tmp_path / "c1.jsonl").write_text(_request(10) + _request(20) + _request(30))
+        (tmp_path / "f1.jsonl").write_text(_request(1000) + _request(2000))
+        steps: list[dict[str, Any]] = [
+            {"fn": "createScan", "args": ["lead"], "as": "root"},
+            {"fn": "readNew", "args": [{"$ref": "root"}, str(lead)]},
+            {
+                "fn": "sampleChildren",
+                "args": [{"$ref": "root"}, {"$map": []}],
+                "as": "known",
+            },
+            {"fn": "createScan", "args": ["lead"], "as": "leadlessRoot"},
+            {"fn": "readNew", "args": [{"$ref": "leadlessRoot"}, str(lead)]},
+            {
+                "fn": "sampleChildren",
+                "args": [{"$ref": "leadlessRoot"}, {"$map": []}, {"leadTokens": None}],
+                "as": "leadless",
+            },
+            {
+                "fn": "sampleChildren",
+                "args": [{"$ref": "root"}, {"$map": []}, {"leadTokens": 400}],
+                "as": "override",
+            },
+            {"fn": "createScan", "args": ["fresh"], "as": "fresh"},
+            {
+                "fn": "sampleChildren",
+                "args": [{"$ref": "fresh"}, {"$map": []}],
+                "as": "unknown",
+            },
+        ]
+        results = _run(tmp_path, steps)
+        assert results["known"]["tree"]["tokens"] == 300 + 30 + 2000
+        assert results["known"]["unknown"] is False
+        assert results["override"]["tree"]["tokens"] == 400 + 30 + 2000
+        assert results["leadless"]["tree"]["tokens"] == 300 + 30 + 2000
+        assert results["leadless"]["unknown"] is False
+        assert results["unknown"]["unknown"] is True
+
+    def test_tree_counts_lost_agents_unknown_finished_usage_and_agents_under_finished(
+        self, tmp_path: Path
+    ) -> None:
+        sessions = str(tmp_path)
+        lead = tmp_path / "lead.jsonl"
+        lead.write_text(
+            _spawn("lost", "r1", owner="lead", sessions=sessions)
+            + _spawn("f1", "r2", owner="lead", sessions=sessions)
+            + _result("f1", "r2", 50, owner="lead")
+            + _request(300)
+        )
+        (tmp_path / "lost.jsonl").write_text(_request(70))
+        (tmp_path / "f1.jsonl").write_text(
+            _spawn("h1", "r3", owner="f1", sessions=sessions) + _request(2000)
+        )
+        (tmp_path / "h1.jsonl").write_text(_request(9))
+        no_usage = _result("f9", "r2", 0, owner="lead").replace(
+            '"contextUsage":{"tokens":0,"contextWindow":1000,"percent":0.0}',
+            '"contextUsage":null',
+        )
+        assert no_usage != _result("f9", "r2", 0, owner="lead")
+        bare = tmp_path / "bare.jsonl"
+        bare.write_text(
+            _spawn("f9", "r2", owner="lead", sessions=sessions)
+            + no_usage
+            + _request(300)
+        )
+        steps: list[dict[str, Any]] = [
+            {"fn": "createScan", "args": ["lead"], "as": "root"},
+            {"fn": "readNew", "args": [{"$ref": "root"}, str(lead)]},
+            {
+                "fn": "sampleChildren",
+                "args": [{"$ref": "root"}, {"$map": []}, {"mailboxIds": {"$set": []}}],
+                "as": "counted",
+            },
+            {"fn": "createScan", "args": ["lead"], "as": "bareRoot"},
+            {"fn": "readNew", "args": [{"$ref": "bareRoot"}, str(bare)]},
+            {
+                "fn": "sampleChildren",
+                "args": [{"$ref": "bareRoot"}, {"$map": []}],
+                "as": "bare",
+            },
+        ]
+        results = _run(tmp_path, steps)
+        counted = results["counted"]
+        assert [node["state"] for node in counted["nodes"]] == ["lost", "finished"]
+        assert counted["tree"]["tokens"] == 300 + 70 + 2000 + 9
+        assert counted["unknown"] is False
+        assert results["bare"]["unknown"] is True
+
+    def test_tree_keeps_each_agents_peak_context_and_never_decreases(
+        self, tmp_path: Path
+    ) -> None:
+        sessions = str(tmp_path)
+        lead = tmp_path / "lead.jsonl"
+        lead.write_text(
+            _spawn("c1", "r1", owner="lead", sessions=sessions)
+            + _spawn("f1", "r2", owner="lead", sessions=sessions)
+            + _spawn("lost", "r3", owner="lead", sessions=sessions)
+            + _request(100)
+        )
+        (tmp_path / "c1.jsonl").write_text(_request(500))
+        (tmp_path / "f1.jsonl").write_text(_request(40))
+        (tmp_path / "lost.jsonl").write_text(_request(60))
+        sample = {
+            "fn": "sampleChildren",
+            "args": [{"$ref": "root"}, {"$ref": "scans"}],
+        }
+        lost_only = {"mailboxIds": {"$set": ["c1", "f1"]}}
+        steps: list[dict[str, Any]] = [
+            {"store": {"$map": []}, "as": "scans"},
+            {"fn": "createScan", "args": ["lead"], "as": "root"},
+            {"fn": "readNew", "args": [{"$ref": "root"}, str(lead)]},
+            {**sample, "args": [*sample["args"], lost_only], "as": "first"},
+            {
+                "append": str(tmp_path / "c1.jsonl"),
+                "text": _line({"type": "compaction"}),
+            },
+            {"append": str(tmp_path / "c1.jsonl"), "text": _request(30)},
+            {"append": str(lead), "text": _result("f1", "r2", 10, owner="lead")},
+            {"fn": "readNew", "args": [{"$ref": "root"}, str(lead)]},
+            {**sample, "args": [*sample["args"], lost_only], "as": "second"},
+        ]
+        results = _run(tmp_path, steps)
+        assert results["first"]["tree"]["tokens"] == 100 + 500 + 40 + 60
+        assert results["second"]["tree"]["tokens"] == 100 + 500 + 40 + 60
+        assert results["second"]["unknown"] is False
+
+    def test_peak_survives_compaction_before_first_sample_and_later_shrinking(
+        self, tmp_path: Path
+    ) -> None:
+        sessions = str(tmp_path)
+        lead = tmp_path / "lead.jsonl"
+        lead.write_text(
+            _spawn("c1", "r1", owner="lead", sessions=sessions)
+            + _spawn("lost", "r2", owner="lead", sessions=sessions)
+        )
+        compaction = _line({"type": "compaction"})
+        (tmp_path / "c1.jsonl").write_text(_request(500) + compaction + _request(30))
+        (tmp_path / "lost.jsonl").write_text(_request(60))
+        lost_only = {"mailboxIds": {"$set": ["c1"]}}
+
+        def sample(as_: str, lead_tokens: int | None) -> dict[str, Any]:
+            return {
+                "fn": "sampleChildren",
+                "args": [
+                    {"$ref": "root"},
+                    {"$ref": "scans"},
+                    {**lost_only, "leadTokens": lead_tokens},
+                ],
+                "as": as_,
+            }
+
+        steps: list[dict[str, Any]] = [
+            {"store": {"$map": []}, "as": "scans"},
+            {"fn": "createScan", "args": ["lead"], "as": "root"},
+            {"fn": "readNew", "args": [{"$ref": "root"}, str(lead)]},
+            sample("first", 100),
+            {"append": str(tmp_path / "c1.jsonl"), "text": compaction},
+            sample("compacted", 20),
+            {"truncate": str(tmp_path / "lost.jsonl"), "text": _request(5)},
+            sample("shrunk", None),
+        ]
+        results = _run(tmp_path, steps)
+        assert results["first"]["tree"]["tokens"] == 100 + 500 + 60
+        assert results["compacted"]["tree"]["tokens"] == 100 + 500 + 60
+        assert results["compacted"]["unknown"] is False
+        assert results["shrunk"]["tree"]["tokens"] == 100 + 500 + 60
+        assert results["shrunk"]["unknown"] is False
 
 
 def _node(
@@ -458,8 +656,9 @@ class TestFormatting:
         sample = {
             "nodes": nodes,
             "partial": False,
-            "session": {"tokens": 5000, "cost": 1.2},
+            "session": {"cost": 1.2},
             "tree": {"tokens": 9_000_000, "cost": 8.4},
+            "unknown": True,
         }
         steps: list[dict[str, Any]] = [
             {"fn": "formatReport", "args": [lead, sample], "as": "report"},
@@ -470,8 +669,9 @@ class TestFormatting:
                     {
                         "nodes": [],
                         "partial": True,
-                        "session": {"tokens": 0, "cost": 0},
+                        "session": {"cost": 0},
                         "tree": {"tokens": 0, "cost": 0},
+                        "unknown": False,
                     },
                 ],
                 "as": "bare",
@@ -487,10 +687,10 @@ class TestFormatting:
             "Finished (last known)\n"
             "  c (worker)  400 / 1k (40%)\n"
             "  d (worker)  700 [lost]\n"
-            "Tree cumulative: 9.0M tokens, $8.40\n"
+            "Tree: 9.0M+ tokens, $8.40 cumulative cost\n"
             "Cumulative tokens and cost: /herdsman stats"
         )
-        assert results["footer"] == "agents 2k+ \u00b7 tree 9.0M $1.20/$8.40"
+        assert results["footer"] == "agents 2k+ \u00b7 tree 9.0M+ $1.20/$8.40"
         assert results["bare"] == "agents 0 \u00b7 tree 0 $0.00/$0.00 partial"
 
 
@@ -500,8 +700,9 @@ class TestPublishFooter:
     _SAMPLE: ClassVar[dict[str, Any]] = {
         "nodes": [],
         "partial": False,
-        "session": {"tokens": 0, "cost": 1.2},
-        "tree": {"tokens": 109_600_000, "cost": 8.4},
+        "session": {"cost": 1.2},
+        "tree": {"tokens": 250_000, "cost": 8.4},
+        "unknown": False,
     }
 
     def _publish(
@@ -536,7 +737,7 @@ class TestPublishFooter:
             if event == "zentui:variable"
         ]
         assert published == [
-            (keys[0], "agents 0 \u00b7 tree 109.6M"),
+            (keys[0], "agents 0 \u00b7 tree 250k"),
             (keys[1], "$1.20/$8.40"),
         ]
         assert status == [["context-total", None]]
@@ -546,7 +747,7 @@ class TestPublishFooter:
     ) -> None:
         emitted, status = self._publish(tmp_path, [])
         assert not [e for e, _ in emitted if e == "zentui:variable"]
-        assert status == [["context-total", "agents 0 \u00b7 tree 109.6M $1.20/$8.40"]]
+        assert status == [["context-total", "agents 0 \u00b7 tree 250k $1.20/$8.40"]]
 
 
 class TestLeadTracker:

@@ -45,7 +45,7 @@ Added by llm-prompts, no README. MUST verify each against installed files first.
 - **tower-do-patch**
   - Adds `tower_do_patch`: change single tasks, no replay.
 - **context-total**
-  - `/context-total`: live context of session and agents. `footer on|off` toggles footer `agents Nk / tree N` (live agents without lead; tree tokens). `context-total.json`: `footer`, `intervalSeconds`.
+  - `/context-total`: live context of session and agents. `footer on|off` toggles footer `agents Nk / tree N` (live agents without lead; tree = sum of peak context of lead and every agent, never decreases; `+` = some unknown). `context-total.json`: `footer`, `intervalSeconds`.
 - **pane-reaper**
   - Lead in herdr only. Closes finished idle lead-less panes. Only reports merged clean worktrees (any repo; `gh` check for GitHub origin only) and other orphans. Outside herdr: warns once.
   - `/pane-reaper` checks now, `on|off` toggles, `close <pane-id>` closes a reported one.

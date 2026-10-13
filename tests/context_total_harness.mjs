@@ -3,6 +3,7 @@
 // config: { script, agentDir, steps }; prints { results, error } as JSON.
 // step: { fn, args, as } calls an export and stores the result, { append | truncate, text } edits a file.
 // step: { sleep: ms } waits.
+// step: { store: value, as } stores a resolved value, such as a { $map } later steps share by { $ref }.
 // step: { utime, seconds } sets a file's access and modification time (Unix seconds).
 // step: { emit, pi, payload, ctx, as } runs the handlers a { $pi: name } fake pi collected for an event and stores the last result.
 // step: { sent: name, as } stores the [content, options] pairs a fake pi was asked to send as user messages; { $pi: name, commands: [names] } sets the slash commands it reports.
@@ -90,6 +91,7 @@ try {
   for (const step of steps) {
     if (step.append) appendFileSync(step.append, step.text)
     else if (step.truncate) writeFileSync(step.truncate, step.text)
+    else if ('store' in step) results[step.as] = resolve(step.store)
     else if (step.sleep) await new Promise(done => setTimeout(done, step.sleep))
     else if (step.utime) utimesSync(step.utime, step.seconds, step.seconds)
     else if (step.emitted) results[step.as] = pis[step.emitted].emitted
