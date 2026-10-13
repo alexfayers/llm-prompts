@@ -45,7 +45,13 @@ Workflows are markdown files that define multi-step procedures the agent can fol
 
 ### Skills
 
-Skills are directories containing a `SKILL.md` file that the agent reads before performing a specific action. They provide just-in-time guidance for tasks like git operations, session management, or plan refinement. Skills are installed as symlinks, so edits to the source are picked up immediately.
+Skills are directories containing a `SKILL.md` file that the agent reads before performing a specific action. They provide just-in-time guidance for tasks like git operations, session management, or plan refinement. Skills are installed as directories with template variables substituted. Skills from plugins are installed as symlinks.
+
+A skill's `metadata` frontmatter can make the cline-hooks `SkillStartupBlocks` plugin inject its text as a `Startup block` at session start:
+
+- `inject_at_start: true` injects the skill at a fresh start of the main agent.
+- `inject_subagents: true` also injects it at the start of a subagent.
+- `inject_resume: true` also injects it on resume and compact.
 
 ### Agents
 

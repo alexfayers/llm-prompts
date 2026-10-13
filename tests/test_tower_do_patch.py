@@ -287,3 +287,214 @@ class TestPatchTool:
             },
         ]
         assert "stale tower-do revision" in _run(tmp_path, steps)["result"]["threw"]
+
+
+def _task(key: str, status: str, owner: str | None = None) -> dict[str, Any]:
+    return {"key": key, "status": status, **({"owner": owner} if owner else {})}
+
+
+class TestBoardSummary:
+    """Tests for the first-turn board summary text."""
+
+    def _summary(self, tmp_path: Path, tasks: list[dict[str, Any]]) -> str | None:
+        steps: list[dict[str, Any]] = [
+            {"fn": "boardSummary", "args": [tasks], "as": "summary"}
+        ]
+        summary: str | None = _run(tmp_path, steps).get("summary")
+        return summary
+
+    def test_an_empty_board_gives_no_summary(self, tmp_path: Path) -> None:
+        assert self._summary(tmp_path, []) is None
+
+    def test_counts_by_status_and_lists_open_tasks_with_owner(
+        self, tmp_path: Path
+    ) -> None:
+        tasks = [
+            _task("a", "in_progress", "me"),
+            _task("b", "pending"),
+            _task("c", "completed", "me"),
+            _task("d", "completed"),
+        ]
+
+        assert self._summary(tmp_path, tasks) == (
+            "Task board: 1 in_progress, 1 pending, 2 completed.\n"
+            "Open: a in_progress @me; b pending"
+        )
+
+    def test_a_board_of_only_completed_tasks_lists_no_open_tasks(
+        self, tmp_path: Path
+    ) -> None:
+        assert self._summary(tmp_path, [_task("a", "completed")]) == (
+            "Task board: 1 completed."
+        )
+
+    def test_a_long_open_list_is_cut_to_the_cap_with_a_count_of_the_rest(
+        self, tmp_path: Path
+    ) -> None:
+        tasks = [_task(f"task-number-{n:03}", "pending", "owner") for n in range(100)]
+
+        summary = self._summary(tmp_path, tasks)
+
+        assert summary is not None
+        assert len(summary) <= 600
+        assert summary.startswith("Task board: 100 pending.\nOpen: task-number-000")
+        assert summary.endswith(" more")
+
+
+_MAIN_SESSION: dict[str, Any] = {"PI_SUBAGENT_CHILD": None, "PI_HERDSMAN_MAILBOX": None}
+_START_CTX = {"cwd": "/proj"}
+_TASKS = [_task("a", "in_progress", "me"), _task("b", "completed")]
+
+
+def _first_turn(
+    tmp_path: Path,
+    board: dict[str, Any],
+    *starts: dict[str, Any],
+) -> list[Any]:
+    pi = {"$pi": "pi", "board": board}
+    steps: list[dict[str, Any]] = [{"register": pi}]
+    steps += [
+        {
+            "emit": "before_agent_start",
+            "pi": "pi",
+            "ctx": _START_CTX,
+            "as": f"s{n}",
+            **env,
+        }
+        for n, env in enumerate(starts)
+    ]
+    results = _run(tmp_path, steps)
+    return [results.get(f"s{n}") for n in range(len(starts))]
+
+
+class TestFirstTurnBoardSummary:
+    """Tests for the board summary injected at the first agent start of a main session."""
+
+    def test_the_first_main_session_start_gets_a_hidden_board_summary_and_later_starts_do_not(
+        self, tmp_path: Path
+    ) -> None:
+        board = {"revision": 3, "keys": ["a", "b"], "tasks": _TASKS}
+        main = {"env": _MAIN_SESSION}
+
+        first, second = _first_turn(tmp_path, board, main, main)
+
+        assert first == {
+            "message": {
+                "customType": "tower-do-first-turn-board",
+                "content": "Task board: 1 in_progress, 1 completed.\nOpen: a in_progress @me",
+                "display": False,
+            }
+        }
+        assert second is None
+
+    @pytest.mark.parametrize("variable", ["PI_SUBAGENT_CHILD", "PI_HERDSMAN_MAILBOX"])
+    def test_a_subagent_or_herdsman_child_gets_no_summary(
+        self, tmp_path: Path, variable: str
+    ) -> None:
+        board = {"revision": 3, "keys": ["a", "b"], "tasks": _TASKS}
+
+        (result,) = _first_turn(
+            tmp_path, board, {"env": {**_MAIN_SESSION, variable: "1"}}
+        )
+
+        assert result is None
+
+    @pytest.mark.parametrize(
+        "board",
+        [
+            {"revision": 0, "keys": [], "tasks": []},
+            {"revision": 1, "keys": ["a"], "fails": True},
+        ],
+        ids=["empty", "unreadable"],
+    )
+    def test_an_empty_or_unreadable_board_gives_no_summary(
+        self, tmp_path: Path, board: dict[str, Any]
+    ) -> None:
+        (result,) = _first_turn(tmp_path, board, {"env": _MAIN_SESSION})
+
+        assert result is None
+
+    @pytest.mark.parametrize(
+        ("reason", "summarised"),
+        [
+            ("startup", True),
+            ("new", True),
+            ("reload", False),
+            ("resume", False),
+            ("fork", False),
+        ],
+    )
+    def test_only_a_fresh_session_start_re_arms_the_summary(
+        self, tmp_path: Path, reason: str, summarised: bool
+    ) -> None:
+        board = {"revision": 3, "keys": ["a", "b"], "tasks": _TASKS}
+        steps: list[dict[str, Any]] = [
+            {"register": {"$pi": "pi", "board": board}},
+            {
+                "emit": "before_agent_start",
+                "pi": "pi",
+                "ctx": _START_CTX,
+                "env": _MAIN_SESSION,
+            },
+            {
+                "emit": "session_start",
+                "pi": "pi",
+                "ctx": _START_CTX,
+                "event": {"reason": reason},
+            },
+            {
+                "emit": "before_agent_start",
+                "pi": "pi",
+                "ctx": _START_CTX,
+                "env": _MAIN_SESSION,
+                "as": "again",
+            },
+        ]
+
+        again = _run(tmp_path, steps).get("again")
+
+        assert (again is not None) is summarised
+
+    def test_an_unreadable_board_is_reported_to_the_ui(self, tmp_path: Path) -> None:
+        board = {"revision": 1, "keys": ["a"], "fails": True}
+        ctx = {"$ctx": "ui", "cwd": "/proj", "hasUI": True}
+        steps: list[dict[str, Any]] = [
+            {"register": {"$pi": "pi", "board": board}},
+            {
+                "emit": "before_agent_start",
+                "pi": "pi",
+                "ctx": ctx,
+                "env": _MAIN_SESSION,
+                "as": "result",
+            },
+            {"notifications": "ui", "as": "notes"},
+        ]
+
+        results = _run(tmp_path, steps)
+
+        assert results.get("result") is None
+        assert [
+            (level, "unreadable board" in text) for text, level in results["notes"]
+        ] == [("warning", True)]
+
+    def test_a_cwd_whose_board_file_cannot_be_derived_gives_no_summary_and_no_crash(
+        self, tmp_path: Path
+    ) -> None:
+        board = {"revision": 1, "keys": ["a"], "tasks": _TASKS, "fileFails": True}
+        ctx = {"$ctx": "ui", "cwd": str(tmp_path / "not-a-git-repo"), "hasUI": True}
+        steps: list[dict[str, Any]] = [
+            {"register": {"$pi": "pi", "board": board}},
+            {
+                "emit": "before_agent_start",
+                "pi": "pi",
+                "ctx": ctx,
+                "env": _MAIN_SESSION,
+                "as": "result",
+            },
+            {"notifications": "ui", "as": "notes"},
+        ]
+
+        results = _run(tmp_path, steps)
+
+        assert results.get("result") is None
+        assert [level for _, level in results["notes"]] == ["warning"]
