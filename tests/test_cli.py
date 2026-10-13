@@ -643,7 +643,7 @@ class TestUpdateCommandPullsPlugins:
             patch("llm_prompts.cli._pull_local_sources"),
             patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
-            patch("llm_prompts.setup.run_setup") as mock_setup,
+            patch("llm_prompts.setup.run_setup", return_value=False) as mock_setup,
             patch("llm_prompts.install.main", return_value=frozenset()) as mock_install,
             patch("llm_prompts.cli._restart_memory_service"),
             patch("llm_prompts.plugins.pull_plugin_sources") as mock_pull,
@@ -669,7 +669,7 @@ class TestUpdateCommandPullsPlugins:
                 "llm_prompts.setup.detect_stale_local_tools",
                 return_value={"cline-hooks"},
             ),
-            patch("llm_prompts.setup.run_setup") as mock_setup,
+            patch("llm_prompts.setup.run_setup", return_value=False) as mock_setup,
             patch("llm_prompts.install.main", return_value=frozenset()),
             patch("llm_prompts.cli._restart_memory_service"),
             patch("llm_prompts.plugins.pull_plugin_sources"),
@@ -689,7 +689,7 @@ class TestUpdateCommandPullsPlugins:
             patch("llm_prompts.cli._pull_local_sources"),
             patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
-            patch("llm_prompts.setup.run_setup") as mock_setup,
+            patch("llm_prompts.setup.run_setup", return_value=False) as mock_setup,
             patch("llm_prompts.install.main", return_value=frozenset()),
             patch("llm_prompts.cli._restart_memory_service"),
             patch("llm_prompts.plugins.pull_plugin_sources"),
@@ -698,6 +698,38 @@ class TestUpdateCommandPullsPlugins:
             main()
 
         mock_setup.assert_called_once_with(force_reinstall=None)
+
+
+class TestUpdateReexecsAfterUpgradingItself:
+    def test_upgrade_restarts_update_and_the_restart_resumes_from_the_passed_state(
+        self,
+    ) -> None:
+        baseline = {Path("/synthetic/rule.md"): "digest"}
+
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={"kiro": {"files": []}},
+            ),
+            patch("llm_prompts.cli._pull_local_sources", return_value={"core"}),
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+            patch("llm_prompts.setup.run_setup", return_value=True),
+            patch("llm_prompts.install.main", return_value=False) as mock_install,
+            patch("llm_prompts.cli._reconfigure_agents"),
+            patch("llm_prompts.plugins.pull_plugin_sources"),
+            patch("llm_prompts.size_guard.snapshot_sources", return_value=baseline),
+            patch("os.execvp", side_effect=SystemExit) as mock_exec,
+            patch.dict("os.environ"),
+        ):
+            mock_config.exists.return_value = True
+            with pytest.raises(SystemExit):
+                main()
+            main()
+
+        mock_exec.assert_called_once_with("llm-prompts", ["llm-prompts", "update"])
+        mock_install.assert_called_once_with(["kiro"], size_baseline=baseline)
 
 
 class TestRestartMemoryService:
@@ -735,7 +767,7 @@ class TestUpdateRestartsMemoryOnlyWhenItChanged:
             ),
             patch("llm_prompts.cli._pull_local_sources", return_value=changed),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
-            patch("llm_prompts.setup.run_setup"),
+            patch("llm_prompts.setup.run_setup", return_value=False),
             patch("llm_prompts.install.main", return_value=frozenset()),
             patch("llm_prompts.cli._auto_migrate_memory_db") as mock_migrate,
             patch("llm_prompts.cli._restart_memory_service") as mock_restart,
@@ -762,7 +794,7 @@ class TestUpdateRestartsMemoryOnlyWhenItChanged:
             patch("llm_prompts.cli._pull_local_sources", return_value=set()),
             patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
-            patch("llm_prompts.setup.run_setup"),
+            patch("llm_prompts.setup.run_setup", return_value=False),
             patch("llm_prompts.install.main", return_value=frozenset()),
             patch(
                 "llm_prompts.cli._get_installed_dist",
@@ -802,7 +834,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             ),
             patch("llm_prompts.cli._pull_local_sources", return_value=changed),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
-            patch("llm_prompts.setup.run_setup"),
+            patch("llm_prompts.setup.run_setup", return_value=False),
             patch("llm_prompts.install.main", return_value=frozenset()),
             patch("llm_prompts.cli._get_installed_dist", return_value=None),
             patch("llm_prompts.cli._restart_memory_service"),
@@ -867,7 +899,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.cli._pull_local_sources", return_value=set()),
             patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
-            patch("llm_prompts.setup.run_setup"),
+            patch("llm_prompts.setup.run_setup", return_value=False),
             patch("llm_prompts.install.main", return_value=False),
             patch(
                 "llm_prompts.cli._get_installed_dist",
@@ -955,7 +987,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.cli._pull_local_sources", return_value=set()),
             patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
-            patch("llm_prompts.setup.run_setup"),
+            patch("llm_prompts.setup.run_setup", return_value=False),
             patch("llm_prompts.install.main", return_value=False),
             patch(
                 "llm_prompts.cli._get_installed_dist",
@@ -1037,7 +1069,7 @@ class TestUpdateSizeGuardSkipExitCode:
             ),
             patch("llm_prompts.cli._pull_local_sources", return_value=changed),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
-            patch("llm_prompts.setup.run_setup"),
+            patch("llm_prompts.setup.run_setup", return_value=False),
             patch("llm_prompts.install.main", return_value=size_guard_failed),
             patch("llm_prompts.cli._get_installed_dist", return_value=None),
             patch("llm_prompts.cli._restart_memory_service"),

@@ -357,6 +357,15 @@ class TestRunSetup:
         assert "--reinstall-package" not in second
         assert not fake_subprocess.matching("uv", "tool", "install")
 
+    def test_upgrade_reports_a_change_unless_uv_says_there_was_nothing_to_upgrade(
+        self, tools_dir: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        fake_subprocess.on("uv", "tool", "upgrade", stderr="Nothing to upgrade\n")
+        assert setup.run_setup() is False
+
+        fake_subprocess.on("uv", "tool", "upgrade", stdout="Updated core\n")
+        assert setup.run_setup() is True
+
     def test_named_tool_forces_a_full_reinstall_of_the_shared_env(
         self, tools_dir: Path, fake_subprocess: FakeSubprocess
     ) -> None:

@@ -700,7 +700,7 @@ def run_setup(
             env.upgrade_cmd, check=False, capture_output=True, text=True
         )
         if result.returncode == 0:
-            if "Nothing to upgrade" not in result.stdout:
+            if "Nothing to upgrade" not in result.stderr:
                 print(result.stdout, end="")
                 changed = True
             needs_install = _has_drifted(env)
