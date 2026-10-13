@@ -1915,17 +1915,17 @@ def _herdsman_agent_content(
             lines.append(f"thinking: {value}")
         elif key in _HERDSMAN_ARRAY_KEYS:
             names = [name.strip() for name in value.split(",")]
-            if key == "disallowedTools":
+            if key != "allowed_subagents":
                 names = [
                     herdsman
                     for name in names
                     for herdsman in tool_names.get(
-                        name, [name] if name.islower() else []
+                        name,
+                        [name]
+                        if name.islower()
+                        and (key == "disallowedTools" or not name.startswith("mcp__"))
+                        else [],
                     )
-                ]
-            elif key != "allowed_subagents":
-                names = [
-                    herdsman for name in names for herdsman in tool_names.get(name, [])
                 ]
             if names:
                 lines.append(
