@@ -71,7 +71,7 @@ test('missing body does not throw', () => {
   assert.equal(hasBreakingChange('feat: add widget', undefined), false);
 });
 
-function blockedFixture({ reviewDecision = null, dependencyCheck = null, labels = [], state = 'OPEN', createLabelError = null, checkRunsOverride = null }) {
+function blockedFixture({ reviewDecision = null, labels = [], state = 'OPEN', createLabelError = null }) {
   const calls = [];
   const issues = {
     createLabel: async (args) => {
@@ -81,9 +81,6 @@ function blockedFixture({ reviewDecision = null, dependencyCheck = null, labels 
     addLabels: async (args) => calls.push(['addLabels', args.labels]),
     removeLabel: async (args) => calls.push(['removeLabel', args.name]),
   };
-  const checkRuns = checkRunsOverride ?? (dependencyCheck
-    ? [{ id: 1, status: 'completed', conclusion: dependencyCheck, started_at: '2026-10-11T10:00:00Z' }]
-    : []);
   const github = {
     graphql: async () => ({
       repository: {
@@ -100,10 +97,6 @@ function blockedFixture({ reviewDecision = null, dependencyCheck = null, labels 
     }),
     rest: {
       issues,
-      checks: {
-        listForRef: async () => ({ data: { check_runs: checkRuns } }),
-        listAnnotations: async () => ({ data: [] }),
-      },
     },
   };
   const context = { repo: { owner: 'o', repo: 'r' }, payload: { pull_request: { number: 7 } } };
@@ -112,44 +105,13 @@ function blockedFixture({ reviewDecision = null, dependencyCheck = null, labels 
 }
 
 test('blocked PR gets the blocked label, creating it first', async () => {
-  const { github, context, core, calls } = blockedFixture({ dependencyCheck: 'failure' });
+  const { github, context, core, calls } = blockedFixture({ reviewDecision: 'CHANGES_REQUESTED' });
   await labelBlocked({ github, context, core });
   assert.deepEqual(calls, [['createLabel', 'blocked'], ['addLabels', ['blocked']]]);
 });
 
-test('PR with requested changes gets the blocked label', async () => {
-  const { github, context, core, calls } = blockedFixture({ reviewDecision: 'CHANGES_REQUESTED' });
-  await labelBlocked({ github, context, core });
-  assert.deepEqual(calls.at(-1), ['addLabels', ['blocked']]);
-});
-
 test('already-labelled blocked PR is left alone', async () => {
-  const { github, context, core, calls } = blockedFixture({ dependencyCheck: 'failure', labels: ['blocked'] });
-  await labelBlocked({ github, context, core });
-  assert.deepEqual(calls, []);
-});
-
-test('PR no longer blocked loses the blocked label', async () => {
-  const { github, context, core, calls } = blockedFixture({ dependencyCheck: 'success', labels: ['blocked', 'chore'] });
-  await labelBlocked({ github, context, core });
-  assert.deepEqual(calls, [['removeLabel', 'blocked']]);
-});
-
-test('labelled PR keeps the label while the dependency check has not completed', async () => {
-  const pending = { id: 2, status: 'in_progress', conclusion: null, started_at: '2026-10-11T10:00:00Z' };
-  for (const checkRunsOverride of [[], [pending]]) {
-    const { github, context, core, calls } = blockedFixture({ labels: ['blocked'], checkRunsOverride });
-    await labelBlocked({ github, context, core });
-    assert.deepEqual(calls, []);
-  }
-});
-
-test('labelled PR keeps the label while a rerun is pending after a completed failure', async () => {
-  const checkRunsOverride = [
-    { id: 1, status: 'completed', conclusion: 'failure', started_at: '2026-10-11T10:00:00Z' },
-    { id: 2, status: 'in_progress', conclusion: null, started_at: '2026-10-11T10:05:00Z' },
-  ];
-  const { github, context, core, calls } = blockedFixture({ labels: ['blocked'], checkRunsOverride });
+  const { github, context, core, calls } = blockedFixture({ reviewDecision: 'CHANGES_REQUESTED', labels: ['blocked'] });
   await labelBlocked({ github, context, core });
   assert.deepEqual(calls, []);
 });
@@ -161,14 +123,14 @@ test('unblocked PR without the label is left alone', async () => {
 });
 
 test('closed PR is left alone', async () => {
-  const { github, context, core, calls } = blockedFixture({ state: 'CLOSED', dependencyCheck: 'failure' });
+  const { github, context, core, calls } = blockedFixture({ state: 'CLOSED', reviewDecision: 'CHANGES_REQUESTED' });
   await labelBlocked({ github, context, core });
   assert.deepEqual(calls, []);
 });
 
 test('existing blocked label does not stop labelling', async () => {
   const { github, context, core, calls } = blockedFixture({
-    dependencyCheck: 'failure',
+    reviewDecision: 'CHANGES_REQUESTED',
     createLabelError: Object.assign(new Error('already exists'), { status: 422 }),
   });
   await labelBlocked({ github, context, core });

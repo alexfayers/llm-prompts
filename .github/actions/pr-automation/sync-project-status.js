@@ -1,7 +1,6 @@
 // Re-derive these IDs with: gh project field-list 4 --owner alexfayers --format json
 const PROJECT_ID = 'PVT_kwHOAuJVkc4Bg4S7';
 const STATUS_FIELD_ID = 'PVTSSF_lAHOAuJVkc4Bg4S7zhf2L34';
-const DEPENDENCY_CHECK_NAME = 'check-dependencies';
 const STATUS_OPTION = {
   IN_PROGRESS: '47fc9ee4',
   REVIEW: '432b1b61',
@@ -9,13 +8,8 @@ const STATUS_OPTION = {
   DONE: '98236657',
 };
 
-function latestCheck(checkRuns) {
-  const completed = checkRuns.filter((run) => run.status === 'completed');
-  return completed.reduce((latest, run) => (!latest || run.started_at > latest.started_at ? run : latest), null);
-}
-
 function isBlocked(pr) {
-  return pr.dependencyCheck === 'failure' || pr.reviewDecision === 'CHANGES_REQUESTED';
+  return pr.reviewDecision === 'CHANGES_REQUESTED';
 }
 
 function resolveStatus(pr) {
@@ -68,17 +62,6 @@ async function setStatus(github, contentId, optionId) {
   );
 }
 
-async function findDependencyCheck(github, core, { owner, repo }, sha) {
-  const { data } = await github.rest.checks.listForRef({ owner, repo, ref: sha, check_name: DEPENDENCY_CHECK_NAME });
-  const check = latestCheck(data.check_runs);
-  if (check?.conclusion === 'failure') {
-    const { data: annotations } = await github.rest.checks.listAnnotations({ owner, repo, check_run_id: check.id });
-    const blockers = annotations.filter((annotation) => annotation.annotation_level === 'failure');
-    core.info(`Blocked by: ${blockers.map((annotation) => annotation.message).join(', ')} (${check.html_url})`);
-  }
-  return check?.conclusion ?? null;
-}
-
 async function findPullRequestNumber(github, { payload, repo }) {
   if (payload.pull_request) {
     return payload.pull_request.number;
@@ -104,4 +87,4 @@ async function sync({ github, context, core }) {
   await setStatus(github, pr.id, resolveStatus(pr));
 }
 
-module.exports = { findDependencyCheck, findPr, isBlocked, latestCheck, resolveStatus, sync };
+module.exports = { findPr, isBlocked, resolveStatus, sync };

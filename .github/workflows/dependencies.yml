@@ -8,12 +8,11 @@ jobs:
   check-dependencies:
     runs-on: ubuntu-latest
     permissions:
-      issues: read
+      issues: write
+      statuses: write
       pull-requests: read
     steps:
-      - uses: gregsdennis/dependencies-action@v1.4.3
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+      - uses: alexfayers/llm-prompts/.github/actions/check-dependencies@main
 
   rerun-dependents:
     if: github.event.action == 'closed'

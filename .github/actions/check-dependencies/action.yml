@@ -1,0 +1,12 @@
+name: Check dependencies
+description: Set a pending dependencies commit status and the blocked label while "Depends on" or "Blocked by" links are open.
+runs:
+  using: composite
+  steps:
+    - uses: actions/github-script@v9
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      with:
+        script: |
+          const { check } = require(`${process.env.ACTION_PATH}/check-dependencies.js`)
+          await check({ github, context, core })

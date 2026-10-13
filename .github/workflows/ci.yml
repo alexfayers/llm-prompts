@@ -82,4 +82,4 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - run: node --test .github/actions/pr-automation/*.test.js
+      - run: node --test .github/actions/*/*.test.js
