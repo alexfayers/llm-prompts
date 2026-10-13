@@ -1,20 +1,20 @@
 const { BLOCKED_LABEL, ensureLabel } = require('../pr-automation/label-pr.js');
 
 const STATUS_CONTEXT = 'dependencies';
+const DISPATCH_EVENT = 'dependencies-recheck';
 const DEPENDENCY = /(?:depends on|blocked by)\s+(?:https:\/\/github\.com\/)?([\w.-]+\/[\w.-]+)?(?:#|\/(?:pull|issues)\/)(\d+)/gi;
 
-async function setStatus(github, context, state, description) {
+async function setStatus(github, context, pr, state, description) {
   await github.rest.repos.createCommitStatus({
     ...context.repo,
-    sha: context.payload.pull_request.head.sha,
+    sha: pr.head.sha,
     context: STATUS_CONTEXT,
     state,
     description,
   });
 }
 
-async function evaluate({ github, context, core }) {
-  const pr = context.payload.pull_request;
+async function evaluate({ github, context, core }, pr) {
   const { owner, repo } = context.repo;
   const open = [];
   for (const [, slug, number] of (pr.body || '').matchAll(DEPENDENCY)) {
@@ -26,7 +26,7 @@ async function evaluate({ github, context, core }) {
   }
 
   const target = { owner, repo, issue_number: pr.number };
-  await setStatus(github, context, open.length > 0 ? 'pending' : 'success', open.length > 0 ? `Waiting on ${open.join(', ')}` : 'No open dependencies');
+  await setStatus(github, context, pr, open.length > 0 ? 'pending' : 'success', open.length > 0 ? `Waiting on ${open.join(', ')}` : 'No open dependencies');
   const labelled = pr.labels.some(({ name }) => name === BLOCKED_LABEL.name);
   if (open.length > 0) {
     if (!labelled) {
@@ -44,12 +44,73 @@ async function evaluate({ github, context, core }) {
   }
 }
 
-async function check({ github, context, core }) {
-  try {
-    await evaluate({ github, context, core });
-  } catch (error) {
-    await setStatus(github, context, 'error', 'Dependency check failed to run');
-    throw error;
+async function isPending(github, context, pr) {
+  if (pr.labels.some(({ name }) => name === BLOCKED_LABEL.name)) {
+    return true;
+  }
+  const { data } = await github.rest.repos.listCommitStatusesForRef({ ...context.repo, ref: pr.head.sha });
+  return data.find((status) => status.context === STATUS_CONTEXT)?.state === 'pending';
+}
+
+function dependsOn(pr, { owner, repo }, target) {
+  return [...(pr.body || '').matchAll(DEPENDENCY)].some(([, slug, number]) => `${slug || `${owner}/${repo}`}#${number}` === target);
+}
+
+async function pullsToCheck({ github, context }) {
+  const event = context.payload.pull_request;
+  if (event && context.payload.action !== 'closed') {
+    return [event];
+  }
+  const pulls = await github.paginate(github.rest.pulls.list, { ...context.repo, state: 'open' });
+  if (event) {
+    const target = `${context.repo.owner}/${context.repo.repo}#${event.number}`;
+    return [event, ...pulls.filter((pr) => dependsOn(pr, context.repo, target))];
+  }
+  const verdicts = await Promise.all(pulls.map((pr) => isPending(github, context, pr)));
+  return pulls.filter((_, index) => verdicts[index]);
+}
+
+async function dispatchCrossRepoDependents({ context, core, client }) {
+  const { owner, repo } = context.repo;
+  const { number } = context.payload.pull_request;
+  const target = `${owner}/${repo}#${number}`;
+  const items = [];
+  for (const phrase of [target, `https://github.com/${owner}/${repo}/pull/${number}`]) {
+    items.push(...await client.paginate(client.rest.search.issuesAndPullRequests, { q: `"${phrase}" is:pr is:open user:${owner} in:body` }));
+  }
+  const repos = new Set();
+  for (const item of items) {
+    const slug = item.repository_url.split('/repos/')[1];
+    const [itemOwner, itemRepo] = slug.split('/');
+    if (slug !== `${owner}/${repo}` && dependsOn(item, { owner: itemOwner, repo: itemRepo }, target)) {
+      repos.add(slug);
+    }
+  }
+  for (const slug of repos) {
+    const [depOwner, depRepo] = slug.split('/');
+    try {
+      await client.rest.repos.createDispatchEvent({ owner: depOwner, repo: depRepo, event_type: DISPATCH_EVENT });
+    } catch (error) {
+      core.warning(`Could not dispatch ${DISPATCH_EVENT} to ${slug}: ${error.message}`);
+    }
+  }
+}
+
+async function check({ github, context, core, getOctokit, token }) {
+  let failure;
+  for (const pr of await pullsToCheck({ github, context })) {
+    try {
+      await evaluate({ github, context, core }, pr);
+    } catch (error) {
+      await setStatus(github, context, pr, 'error', 'Dependency check failed to run');
+      failure ??= error;
+    }
+  }
+  if (token && context.payload.action === 'closed') {
+    await dispatchCrossRepoDependents({ context, core, client: getOctokit(token) });
+  }
+  if (failure) {
+    throw failure;
   }
 }
 
