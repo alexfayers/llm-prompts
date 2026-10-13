@@ -1,6 +1,7 @@
 {
   "promptMaxRows": 1000000,
   "promptFieldMaxWidth": 1000000,
+  "forwardingTimeoutMs": 9007199254740991,
   "authorizerChain": ["diff-preview"],
   "permission": {
     "*": "allow",

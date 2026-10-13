@@ -17,8 +17,7 @@ session and need to write the doc.
    Before concluding none exists, MUST check every workspace root:
    `find <roots> -maxdepth 3 -iname 'HANDOFF*.md'`.
 2. Delete it as its own tool call, never chained (e.g. `rm HANDOFF.md && git
-   status`) - a chained command fails as a unit if the other half trips a
-   gate, silently leaving the doc undeleted.
+   status`).
 3. Check for a workspace-level operating-rules file (e.g. a `RULES.md` or
    equivalent at the workspace root) and read it in full before taking any
    other action - it can only narrow process/delegation (who does which work,
@@ -41,11 +40,8 @@ act on it, not to verify or rewrite it.
 
 ## Do not re-verify claims the handoff or memory already states as fact
 
-You have no prior context by design - the handoff doc and the memory
-entities it points to ARE the full record. Re-running `git status`/`git log`/an
-audit/a full re-fetch of already-quoted entity content "just to confirm" is
-redundant (the writing session already did it) and loops sessions into
-re-deriving the starting state instead of advancing the task.
+MUST treat the handoff doc and the memory entities it points to as the full record.
+MUST NOT re-run `git status`/`git log`/an audit/a full re-fetch of already-quoted entity content to confirm.
 
 Trust stated facts (branch, commit, test status, prior session's findings) as
 given. The only reason to re-check something is if the handoff itself flags it

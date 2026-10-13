@@ -16,7 +16,7 @@ Before you begin the implementation (when the user switches to {{ACT_MODE}}), yo
 
 ## TDD
 
-When writing code (new features, bug fixes, tests), you **MUST** load the `tdd` skill before writing any test or implementation code, and MUST follow its vertical-slice workflow (one test -> one implementation -> repeat). MUST NOT batch all tests first then implement.
+Before writing code for new behaviour or a reported bug, you **MUST** load the `tdd` skill and follow its vertical-slice workflow. MUST NOT batch all tests first then implement.
 
 ## Session End
 
