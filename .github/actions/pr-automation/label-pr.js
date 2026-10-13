@@ -2,30 +2,7 @@ const { findPr, isBlocked } = require('./sync-project-status.js');
 
 const BLOCKED_LABEL = { name: 'blocked', color: 'd73a4a', description: 'Open dependencies or changes requested' };
 
-const TYPE_TO_LABEL = {
-  feat: 'enhancement',
-  fix: 'bug',
-  docs: 'documentation',
-  chore: 'chore',
-  refactor: 'refactor',
-  ci: 'ci',
-  build: 'chore',
-  style: 'chore',
-  perf: null,
-  test: null,
-};
-
-const MANAGED_TYPE_LABELS = ['enhancement', 'bug', 'documentation', 'chore', 'refactor', 'ci'];
-
 const CONVENTIONAL_PREFIX = /^(\w+)(\([^)]*\))?(!)?:\s/;
-
-function resolveTypeLabel(title) {
-  const match = CONVENTIONAL_PREFIX.exec(title);
-  if (!match) {
-    return null;
-  }
-  return TYPE_TO_LABEL[match[1].toLowerCase()] ?? null;
-}
 
 function hasBreakingChange(title, body) {
   const match = CONVENTIONAL_PREFIX.exec(title);
@@ -63,26 +40,11 @@ async function ensureLabel(github, core, { owner, repo }, { name, color, descrip
 
 async function label({ github, context, core }) {
   const pr = context.payload.pull_request;
-  const typeLabel = resolveTypeLabel(pr.title);
-  const breaking = hasBreakingChange(pr.title, pr.body);
-  const target = { ...context.repo, issue_number: pr.number };
-
-  if (context.payload.action === 'edited') {
-    const current = pr.labels.map((l) => l.name);
-    const toRemove = current.filter(
-      (name) => MANAGED_TYPE_LABELS.includes(name) && name !== typeLabel
-    );
-    for (const name of toRemove) {
-      await removeLabel(github, core, target, name);
-    }
-  }
-
-  const toAdd = [typeLabel, breaking ? 'breaking' : null].filter(Boolean);
-  if (toAdd.length === 0) {
+  if (!hasBreakingChange(pr.title, pr.body)) {
     return;
   }
 
-  await addLabels(github, core, target, toAdd);
+  await addLabels(github, core, { ...context.repo, issue_number: pr.number }, ['breaking']);
 }
 
 async function labelBlocked({ github, context, core }) {
@@ -100,4 +62,4 @@ async function labelBlocked({ github, context, core }) {
   }
 }
 
-module.exports = { resolveTypeLabel, hasBreakingChange, label, labelBlocked, ensureLabel, BLOCKED_LABEL };
+module.exports = { hasBreakingChange, label, labelBlocked, ensureLabel, BLOCKED_LABEL };

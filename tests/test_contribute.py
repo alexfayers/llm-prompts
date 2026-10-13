@@ -4021,7 +4021,8 @@ class TestPrTemplate:
     ) -> None:
         fake_subprocess.on("show", returncode=128)
         assert (
-            pr_template(tmp_path, "origin/main") == "## What\n\n## Why\n\n## Testing\n"
+            pr_template(tmp_path, "origin/main")
+            == "## What\n\n## Why\n\n## Dependencies\n\n## Issues\n"
         )
 
 

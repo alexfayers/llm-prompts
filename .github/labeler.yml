@@ -1,18 +1,10 @@
 rules:
   - changed-files:
-      - any-glob-to-any-file: 'src/llm_prompts/prompts/*/rules/**'
-
-skills:
-  - changed-files:
-      - any-glob-to-any-file: 'src/llm_prompts/prompts/*/skills/**'
-
-workflows:
-  - changed-files:
-      - any-glob-to-any-file: 'src/llm_prompts/prompts/*/workflows/**'
-
-agents:
-  - changed-files:
-      - any-glob-to-any-file: 'src/llm_prompts/prompts/*/agents/**'
+      - any-glob-to-any-file:
+          - 'src/llm_prompts/prompts/*/rules/**'
+          - 'src/llm_prompts/prompts/*/skills/**'
+          - 'src/llm_prompts/prompts/*/workflows/**'
+          - 'src/llm_prompts/prompts/*/agents/**'
 
 tooling:
   - changed-files:
@@ -27,3 +19,7 @@ tooling:
 tests:
   - changed-files:
       - any-glob-to-any-file: 'tests/**'
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: '.github/**'
