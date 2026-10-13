@@ -1105,7 +1105,8 @@ class TestHerdsmanAgents:
         assert installed.read_text(encoding="utf-8") == (
             "---\nname: orchestrator-lead\n"
             "tools: [read, ls, find, grep, codemode, tower_do, "
-            "tower_do_patch, tower_do_status, tower_do_talk, ask_user, compact_now]\n---\n"
+            "tower_do_patch, tower_do_status, tower_do_talk, ask_user, compact_now, "
+            "change_dir, notify]\n---\n"
         )
 
     def test_agents_install_in_herdsman_dialect(
