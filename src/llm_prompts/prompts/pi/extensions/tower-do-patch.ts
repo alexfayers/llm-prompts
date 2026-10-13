@@ -1,7 +1,8 @@
 // Adds the tower_do_patch tool, which changes single tasks on the board without resending all of them.
+// Also gives the first agent start of a main session a short board summary.
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 export type TaskRow = { key: string; [field: string]: unknown };
@@ -51,6 +52,29 @@ export async function applyPatch(params: PatchParams, deps: PatchDeps): Promise<
 	}
 }
 
+export type BoardTask = { key: string; status: string; owner?: string };
+
+export const SUMMARY_MAX_CHARS = 600;
+const STATUS_ORDER = ["in_progress", "pending", "blocked", "completed"];
+const DONE_STATUS = "completed";
+
+export function boardSummary(tasks: BoardTask[], maxChars = SUMMARY_MAX_CHARS): string | undefined {
+	if (tasks.length === 0) return undefined;
+	const counts = new Map<string, number>();
+	for (const task of tasks) counts.set(task.status, (counts.get(task.status) ?? 0) + 1);
+	const statuses = [...counts.keys()].sort((a, b) => STATUS_ORDER.indexOf(a) - STATUS_ORDER.indexOf(b));
+	const head = `Task board: ${statuses.map((status) => `${counts.get(status)} ${status}`).join(", ")}.`;
+	const open = tasks
+		.filter((task) => task.status !== DONE_STATUS)
+		.map((task) => `${task.key} ${task.status}${task.owner ? ` @${task.owner}` : ""}`);
+	if (open.length === 0) return head;
+	const render = (shown: number) =>
+		`${head}\nOpen: ${open.slice(0, shown).join("; ")}${shown < open.length ? `; +${open.length - shown} more` : ""}`;
+	let shown = open.length;
+	while (shown > 0 && render(shown).length > maxChars) shown--;
+	return shown > 0 ? render(shown) : `${head}\n${open.length} open`;
+}
+
 const PARAMETERS = Type.Object({
 	tasks: Type.Optional(
 		Type.Array(Type.Object({ key: Type.String() }, { additionalProperties: true }), {
@@ -65,14 +89,24 @@ const PARAMETERS = Type.Object({
 	as: Type.Optional(Type.String({ description: "Identity to act as, as in tower_do." })),
 });
 
-type BoardModule = { TowerBoard: new (file: string) => { fold(): Promise<{ revision: number; tasks: { key: string }[] }> } };
+type BoardModule = {
+	TowerBoard: new (file: string) => { fold(): Promise<{ revision: number; tasks: BoardTask[] }> };
+};
+type TowerDoModule = { boardFileFor(cwd: string): string };
+
+const FIRST_TURN_MESSAGE_TYPE = "tower-do-first-turn-board";
+
+export function isMainSession(env: NodeJS.ProcessEnv): boolean {
+	return !env.PI_SUBAGENT_CHILD && !env.PI_HERDSMAN_MAILBOX;
+}
 
 export default function (pi: ExtensionAPI) {
-	const loadBoardModule = async (): Promise<BoardModule> => {
+	const loadTowerDoModule = async <T>(file: string): Promise<T> => {
 		const source = pi.getAllTools().find((tool) => tool.name === "tower_do")?.sourceInfo.path;
 		if (source === undefined) throw new Error("tower_do_patch: the tower_do tool is not available");
-		return import(pathToFileURL(join(dirname(source), "board.ts")).href);
+		return import(pathToFileURL(join(dirname(source), file)).href);
 	};
+	const loadBoardModule = () => loadTowerDoModule<BoardModule>("board.ts");
 
 	const depsFor = (ctx: ExtensionToolContext): PatchDeps => ({
 		async readBoard() {
@@ -84,6 +118,30 @@ export default function (pi: ExtensionAPI) {
 			return { revision: view.revision, keys: view.tasks.map((task) => task.key) };
 		},
 		write: (args) => ctx.executeTool("tower_do", args),
+	});
+
+	const readTasks = async (ctx: ExtensionContext): Promise<BoardTask[]> => {
+		try {
+			const { boardFileFor } = await loadTowerDoModule<TowerDoModule>("index.ts");
+			const { TowerBoard } = await loadBoardModule();
+			return (await new TowerBoard(boardFileFor(ctx.cwd)).fold()).tasks;
+		} catch (error) {
+			if (ctx.hasUI) ctx.ui.notify(`tower_do_patch: could not read the board: ${String(error)}`, "warning");
+			return [];
+		}
+	};
+
+	let firstStartPending = true;
+	pi.on("session_start", (event) => {
+		firstStartPending = event.reason === "startup" || event.reason === "new";
+	});
+	pi.on("before_agent_start", async (_event, ctx) => {
+		if (!firstStartPending) return;
+		firstStartPending = false;
+		if (!isMainSession(process.env)) return;
+		const content = boardSummary(await readTasks(ctx));
+		if (content === undefined) return;
+		return { message: { customType: FIRST_TURN_MESSAGE_TYPE, content, display: false } };
 	});
 
 	pi.registerTool({

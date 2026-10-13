@@ -102,6 +102,28 @@ def split_frontmatter(content: str) -> tuple[list[str], str] | None:
     return match.group(1).splitlines(), content[match.end() :]
 
 
+def nested_frontmatter(frontmatter_lines: list[str], key: str) -> dict[str, str]:
+    """Read the indented ``name: value`` lines nested under a frontmatter key.
+
+    Args:
+        frontmatter_lines: Frontmatter lines, as returned by split_frontmatter.
+        key: Parent key whose indented child lines to read.
+
+    Returns:
+        Mapping of child key to value; empty when the key is absent.
+    """
+    nested: dict[str, str] = {}
+    in_key = False
+    for line in frontmatter_lines:
+        if line.startswith((" ", "\t")):
+            if in_key:
+                child, _, value = line.partition(": ")
+                nested[child.strip()] = value.strip().strip("'\"")
+        else:
+            in_key = line.rstrip() == f"{key}:"
+    return nested
+
+
 _BLOCK_SCALAR_INDICATOR = re.compile(r"[>|][+-]?")
 
 

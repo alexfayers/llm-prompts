@@ -1,15 +1,21 @@
 ---
 name: session-start
-description: Check memory for in-progress tasks and active TODOs at the start of each session. Use at the beginning of every new conversation.
+description: Start-up checks. Load only when no start-up blocks were injected.
+metadata:
+  inject_at_start: true
 ---
 
 # session-start
 
 At the start of every session, before responding to the user's first message, check memory for in-progress work using **compact mode** to minimise token usage:
 
+{% if AGENT not in ["claude-code", "pi"] %}
 0. If a `HANDOFF.md` is in the workspace root, stop this checklist and run the `pickup` skill instead - it covers reading, deleting, and resuming the doc, and includes its own memory lookups. Do not run the rest of this checklist first.
+{% endif %}
 0.5. Check for a workspace-level operating-rules file (e.g. a `RULES.md` or equivalent at the workspace root) and read it in full before taking any other action - it may constrain how you are permitted to work in ways that override your usual defaults (e.g. who may touch files, tools, or commands).
+{% if AGENT not in ["claude-code", "pi"] %}
 1. `read_graph(project="<repo-name>")` for recent entities in the current workspace.
+{% endif %}
 2. Run this scan only when the opening message asks about outstanding work (e.g. "anything to pick up?"). Otherwise skip it. The "Before starting a task" ritual still searches memory for the ask.
    - Run `search_all_projects(query="task", projects=["global", "<repo-name>"], expand_groups=True, entityType="task", status=["in-progress", "planned"], names_only=True, limit=500)`. `expand_groups=True` resolves group siblings server-side (no separate `get_group_members` call); the `status` list ORs both states. Results come back grouped by project, names only. `read_graph` only returns 10 recent entities from one project and misses other scopes - not a substitute here.
      To scan every project, omit `projects`/`expand_groups` (status list still applies). Reserve this for an explicit "what's outstanding everywhere?" ask.
@@ -27,5 +33,7 @@ At the start of every session, before responding to the user's first message, ch
 5. Before drafting your first reply, look through the context already injected at session start for a source-update note. Where any package reports updates, summarize them in plain language and flag breaking changes in that same reply - never just say updates exist. Where none, say nothing. Applies even where the opening message names an unrelated task.
 6. Call memory tools (`read_graph`, `search_all_projects`, `search_nodes`, etc.) directly{% if AGENT == "pi" %} - they are MCP tools, which pi runs in codemode; call them through it{% else %} - ordinary tools in your catalog{% endif %}. Do NOT run a tool-discovery step to "find" or "check availability of" memory first (e.g. `list_mcp_resources`, listing servers) - that lists resources, not tools, and an empty result does not mean memory is unavailable.{% if AGENT != "pi" %} Only if your harness hides tool schemas behind an explicit `ToolSearch`/deferred-tools step (Claude Code), pre-load once with `select:mcp__memory__add_observations,mcp__memory__read_graph,mcp__memory__search_nodes,mcp__memory__create_entities,mcp__memory__set_entity_status,mcp__memory__trim_observations_to_outcome,SendMessage,TaskStop` - every deferred tool the session will reliably need goes in this one call, never one call per tool; otherwise just call the tools.{% endif +%}
 7. (Optional) If the user's first message asks about outstanding work (e.g. "what's left?", "any todos?"), run the `todos` skill. Skip by default - the memory task summary above already covers in-progress/planned work; this is only for file/code-level TODOs when specifically relevant.
+{% if AGENT not in ["claude-code", "pi"] %}
 8. If the workspace is a git repo, check for unmerged local branches with `git branch -v --no-merged <main-branch>` (or `git -P log --all --oneline --not --remotes --not <main-branch>` for commits reachable from no branch's remote tracking ref). Memory only records what a session chose to persist - a branch can hold real, tested, unpushed work with no memory entity. Do this once per repo per session. If found and it looks like real work (not throwaway/experiment), mention it alongside the memory-derived tasks - the user decides, but only after being told. A tip commit far behind main is likely stale/superseded rather than actionable - note that distinction.
+{% endif %}
 9. MUST follow `rules/anti-yap.md` in every message this session.

@@ -43,7 +43,7 @@ Added by llm-prompts, no README. MUST verify each against installed files first.
 - **compact-now**
   - Adds `compact_now`: `instructions` summary replaces old context. Auto-continues.
 - **tower-do-patch**
-  - Adds `tower_do_patch`: change single tasks, no replay.
+  - Adds `tower_do_patch`: change single tasks, no replay. First agent start of the main session also gets a hidden board summary (task counts, open tasks).
 - **context-total**
   - `/context-total`: live context of session and agents. `footer on|off` toggles footer `agents Nk / tree N` (live agents without lead; tree tokens). `context-total.json`: `footer`, `intervalSeconds`.
 - **pane-reaper**
