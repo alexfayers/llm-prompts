@@ -1,6 +1,6 @@
-const { findDependencyCheck, findPr, isBlocked } = require('./sync-project-status.js');
+const { findPr, isBlocked } = require('./sync-project-status.js');
 
-const BLOCKED_LABEL = { name: 'blocked', color: 'd73a4a', description: 'Failed dependency check or changes requested' };
+const BLOCKED_LABEL = { name: 'blocked', color: 'd73a4a', description: 'Open dependencies or changes requested' };
 
 const TYPE_TO_LABEL = {
   feat: 'enhancement',
@@ -90,17 +90,14 @@ async function labelBlocked({ github, context, core }) {
   if (!pr || pr.state !== 'OPEN') {
     return;
   }
-  const dependencyCheck = await findDependencyCheck(github, core, context.repo, pr.headRefOid);
-  const blocked = isBlocked({ ...pr, dependencyCheck });
+  const blocked = isBlocked(pr);
   const labelled = pr.labels.nodes.some(({ name }) => name === BLOCKED_LABEL.name);
   const target = { ...context.repo, issue_number: pr.number };
 
   if (blocked && !labelled) {
     await ensureLabel(github, core, context.repo, BLOCKED_LABEL);
     await addLabels(github, core, target, [BLOCKED_LABEL.name]);
-  } else if (!blocked && labelled && dependencyCheck !== null) {
-    await removeLabel(github, core, target, BLOCKED_LABEL.name);
   }
 }
 
-module.exports = { resolveTypeLabel, hasBreakingChange, label, labelBlocked };
+module.exports = { resolveTypeLabel, hasBreakingChange, label, labelBlocked, ensureLabel, BLOCKED_LABEL };
