@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import fcntl
+import json
 import logging
+import os
 import subprocess
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from cline_hooks.core.plugin import HookResult, HooksPlugin, UserFacingNote
@@ -19,8 +24,19 @@ _WRITE_TOOLS = frozenset(
 )
 _GATED_EDIT_TOOLS = frozenset({"Write", "write_to_file", "Edit"})
 _GATED_PARENT_DIRS = frozenset({"rules", "workflows", "skills", "agents"})
-_UPDATE_CHECK_INTERVAL = 60 * 60
+_UPDATE_CHECK_INTERVAL = 2 * 60 * 60
+_LOCK_WAIT_SECONDS = 5.0
+_LOCK_POLL_SECONDS = 0.05
 _DEBOUNCED_TASK_START_SOURCES = frozenset({"resume", "compact"})
+_HEADLESS_ENTRYPOINTS = frozenset({"sdk-cli", "sdk-ts", "sdk-py"})
+
+
+def _is_headless() -> bool:
+    """Return True when the session is headless or has opted out of update checks."""
+    return (
+        os.environ.get("CLAUDE_CODE_ENTRYPOINT") in _HEADLESS_ENTRYPOINTS
+        or os.environ.get("LLM_PROMPTS_NO_UPDATE_CHECK") == "1"
+    )
 
 
 def _looks_like_prompt_source(path: Path) -> bool:
@@ -119,6 +135,8 @@ class _ReinstallDebouncer:
 
             stamp_path = Path(user_data_dir("cline-hooks")) / stamp_name
         self._stamp = stamp_path
+        self._notice_cache = stamp_path.with_name(stamp_path.name + ".notice")
+        self._lock = stamp_path.with_name(stamp_path.name + ".lock")
         self._interval_seconds = interval_seconds
 
     def should_run(self) -> bool:
@@ -135,6 +153,41 @@ class _ReinstallDebouncer:
         """Record that a run just happened."""
         self._stamp.parent.mkdir(parents=True, exist_ok=True)
         self._stamp.write_text(str(time.time()), encoding="utf-8")
+
+    @contextmanager
+    def single_flight(self) -> Iterator[bool]:
+        """Yield True once this process holds the cross-process check lock, False if it stays taken."""
+        self._lock.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock.open("a") as lock_file:
+            deadline = time.monotonic() + _LOCK_WAIT_SECONDS
+            while True:
+                try:
+                    fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        yield False
+                        return
+                    time.sleep(_LOCK_POLL_SECONDS)
+                else:
+                    yield True
+                    return
+
+    def store_notice(self, messages: list[str]) -> None:
+        """Cache the update messages, or clear the cache when there are none."""
+        if messages:
+            self._notice_cache.write_text(json.dumps(messages), encoding="utf-8")
+        else:
+            self._notice_cache.unlink(missing_ok=True)
+
+    def cached_notice(self) -> list[str]:
+        """Return the cached update messages."""
+        try:
+            cached: list[str] = json.loads(
+                self._notice_cache.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            return []
+        return cached
 
 
 class AutoReinstallPlugin(HooksPlugin):
@@ -171,31 +224,32 @@ class AutoReinstallPlugin(HooksPlugin):
         """Check for llm-prompts source updates and report any as session notes.
 
         Args:
-            source: The TaskStart source (e.g. "", "resume", "compact"). A
-                genuine fresh start always runs the check, bypassing the
-                debounce that otherwise throttles resume/compact firings.
+            source: The TaskStart source (e.g. "", "resume", "compact"). Within
+                the check interval a fresh start re-emits the cached notice
+                while resume/compact emit nothing.
             agent_type: Non-empty when this TaskStart fired inside a subagent
                 rather than the main session; the update check never runs
                 for subagents regardless of source.
         """
-        if agent_type:
-            return None
-
-        if (
-            source in _DEBOUNCED_TASK_START_SOURCES
-            and not self._update_check_debouncer.should_run()
-        ):
+        if agent_type or _is_headless():
             return None
 
         from .cli import _collect_update_messages
 
-        try:
-            messages = _collect_update_messages()
-        except (Exception, SystemExit):
-            logger.warning("Failed to check for llm-prompts updates")
-            return None
+        with self._update_check_debouncer.single_flight() as holds_lock:
+            if holds_lock and self._update_check_debouncer.should_run():
+                try:
+                    messages = _collect_update_messages()
+                except (Exception, SystemExit):
+                    logger.warning("Failed to check for llm-prompts updates")
+                    return None
+                self._update_check_debouncer.mark_run()
+                self._update_check_debouncer.store_notice(messages)
+            elif source in _DEBOUNCED_TASK_START_SOURCES:
+                return None
+            else:
+                messages = self._update_check_debouncer.cached_notice()
 
-        self._update_check_debouncer.mark_run()
         if not messages:
             return None
         stripped = "\n\n".join(
