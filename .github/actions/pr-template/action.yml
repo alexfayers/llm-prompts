@@ -1,0 +1,12 @@
+name: PR template check
+description: Check the PR body against the repository's PULL_REQUEST_TEMPLATE.md and label wordy or large PRs as yappy.
+runs:
+  using: composite
+  steps:
+    - uses: actions/github-script@v9
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      with:
+        script: |
+          const { check } = require(`${process.env.ACTION_PATH}/check-pr-template.js`)
+          await check({ github, context, core })

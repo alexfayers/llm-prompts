@@ -50,7 +50,7 @@ _HEADING = re.compile(r"^## ", re.MULTILINE)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _BLANK_LINES = re.compile(r"\n{3,}")
 _PR_TEMPLATE_PATH = ".github/PULL_REQUEST_TEMPLATE.md"
-_FALLBACK_TEMPLATE = "## What\n\n## Why\n\n## Testing\n"
+_FALLBACK_TEMPLATE = "## What\n\n## Why\n\n## Dependencies\n\n## Issues\n"
 _SLUG_MAX_LEN = 50
 _TRANSIENT_FAILURE = re.compile(
     r"could not resolve host|unable to access|failed to connect|connection reset"

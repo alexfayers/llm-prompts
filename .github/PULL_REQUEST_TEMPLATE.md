@@ -6,10 +6,10 @@
 
 <!-- Why it changed. -->
 
-## Testing
+## Dependencies
 
-<!-- How this was tested (e.g. `just` passes, ran with prompt change for x days, etc). For prompt changes, note it should be reinstalled and exercised locally. -->
+<!-- Optional. e.g. Depends on #N -->
 
-## Checks
+## Issues
 
-- [ ] Any new/changed rule, skill, workflow, or agent file stays within its prompt size budget
+<!-- Optional. e.g. Closes #N -->
