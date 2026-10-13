@@ -62,7 +62,7 @@ Added by llm-prompts, no README. MUST verify each against installed files first.
   - `PI_POPUP_DEFER_MS`: pause in ms, `0` off. `/popup-defer on|off|<ms>` sets it per session.
 - **Seed configs**
   - Written only when absent.
-  - `extensions/pi-permission-system/config.json`: allow by default. `ask` for `git push`, forced or `-c` git, mutating `llm-prompts`/`gh`, edits to `rules`/`skills`/`workflows`/`agents` `.md`. `promptMaxRows`/`promptFieldMaxWidth` 1000000: prompt starts expanded.
+  - `extensions/pi-permission-system/config.json`: allow by default. `ask` for `git push`, forced or `-c` git, mutating `llm-prompts`/`gh`, edits to `rules`/`skills`/`workflows`/`agents` `.md`. `promptMaxRows`/`promptFieldMaxWidth` 1000000: prompt starts expanded. `forwardingTimeoutMs` max: no ask timeout.
   - `zentui.json`: `starship` footer: cwd, git, model, context, tokens, cost. Editor, user-message, selector-border restyle off.
   - `compact-tools.json`: `"style": "compact"` rows.
 - **Packages**
