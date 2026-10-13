@@ -1104,7 +1104,7 @@ class TestHerdsmanAgents:
         installed = home / ".pi" / "agent" / "agents" / "orchestrator-lead.md"
         assert installed.read_text(encoding="utf-8") == (
             "---\nname: orchestrator-lead\n"
-            "tools: [read, ls, find, grep, codemode, tower_do, "
+            "tools: [read, codemode, tower_do, "
             "tower_do_patch, tower_do_status, tower_do_talk, ask_user, compact_now]\n---\n"
         )
 
