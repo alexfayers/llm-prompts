@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import importlib
 import io
+import json
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -22,7 +26,8 @@ from .setup import (
     _extract_git_url,
     _format_update_message,
     _remote_commit_subjects,
-    _remote_head,
+    _remote_head_or_failure,
+    _run_git_or_failure,
 )
 
 if TYPE_CHECKING:
@@ -32,6 +37,7 @@ if TYPE_CHECKING:
 _AGENTS = tuple(AGENT_CLASSES)
 _MEMORY_TOOL = "mcp-memory"
 _RUN_SETUP_TRACKED_TOOLS = (_MEMORY_TOOL, "cline-hooks")
+_UPDATE_RESUME_ENV = "LLM_PROMPTS_UPDATE_RESUME"
 
 
 def _get_root_dir() -> Path:
@@ -170,6 +176,50 @@ def _run_extension_factory_check() -> None:
         sys.exit(1)
 
 
+def _preload_modules_used_before_reexec() -> None:
+    """Import the modules `update` loads lazily before it may restart on new code."""
+    for module in ("main_sync", "plugins"):
+        importlib.import_module(f".{module}", __package__)
+
+
+def _reexec_update(changed_sources: set[str], size_baseline: dict[Path, str]) -> None:
+    """Restart `update` on the upgraded code, handing over the work done so far."""
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".json", delete=False, encoding="utf-8"
+    ) as state:
+        json.dump(
+            {
+                "changed_sources": sorted(changed_sources),
+                "size_baseline": {str(path): h for path, h in size_baseline.items()},
+            },
+            state,
+        )
+    os.environ[_UPDATE_RESUME_ENV] = state.name
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        os.execvp(sys.argv[0], sys.argv)
+    except OSError:
+        Path(state.name).unlink()
+        del os.environ[_UPDATE_RESUME_ENV]
+        raise
+
+
+def _take_resumed_update() -> tuple[set[str], dict[Path, str]] | None:
+    """Return the work handed over by `_reexec_update`, or None when not resumed."""
+    state_file = os.environ.pop(_UPDATE_RESUME_ENV, None)
+    if state_file is None:
+        return None
+    state_path = Path(state_file)
+    state_text = state_path.read_text(encoding="utf-8")
+    state_path.unlink()
+    state = json.loads(state_text)
+    return (
+        set(state["changed_sources"]),
+        {Path(path): h for path, h in state["size_baseline"].items()},
+    )
+
+
 def _get_installed_commit(package_name: str) -> str | None:
     """Get the installed commit hash from direct_url.json in a uv tool env."""
     installed = _get_installed_dist(package_name)
@@ -217,8 +267,10 @@ def _remote_source_messages(name: str, source: str) -> list[str]:
     if not installed_commit:
         return [f"[{name}] not installed (run `llm-prompts setup` first)"]
 
-    remote_commit = _remote_head(git_url, None)
-    if remote_commit is None or remote_commit == installed_commit:
+    remote_commit, failure = _remote_head_or_failure(git_url, None)
+    if remote_commit is None:
+        return [f"[{name}] update check failed: {failure}"]
+    if remote_commit == installed_commit:
         return []
 
     subjects = _remote_commit_subjects(git_url, installed_commit, remote_commit)
@@ -237,19 +289,16 @@ def _local_source_messages(name: str, source: str) -> list[str]:
     if not (repo / ".git").is_dir():
         return []
 
-    subprocess.run(
-        ["git", "-C", str(repo), "fetch", "--quiet"],
-        check=False,
-        capture_output=True,
-        timeout=GIT_TIMEOUT,
+    fetched, failure = _run_git_or_failure(
+        "fetch", ["git", "-C", str(repo), "fetch", "--quiet"]
     )
-    result = subprocess.run(
-        ["git", "-C", str(repo), "rev-list", "--count", "HEAD..@{u}"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=GIT_TIMEOUT,
+    if fetched is None:
+        return [f"[{name}] update check failed: {failure}"]
+    result, failure = _run_git_or_failure(
+        "rev-list", ["git", "-C", str(repo), "rev-list", "--count", "HEAD..@{u}"]
     )
+    if result is None:
+        return [f"[{name}] update check failed: {failure}"]
     if result.returncode != 0:
         return []
 
@@ -925,24 +974,31 @@ def main() -> int | None:
         if only_source is not None:
             sys.exit(1 if install_main(list(manifest), only=only_source) else 0)
 
-        from .size_guard import snapshot_sources
+        resumed = _take_resumed_update()
+        if resumed is None:
+            _preload_modules_used_before_reexec()
 
-        size_baseline = snapshot_sources(_size_guard_roots())
-        changed_sources = _pull_local_sources()
+            from .size_guard import snapshot_sources
 
-        from .plugins import pull_plugin_sources
+            size_baseline = snapshot_sources(_size_guard_roots())
+            changed_sources = _pull_local_sources()
 
-        pull_plugin_sources()
+            from .plugins import pull_plugin_sources
 
-        dists_before_setup = {
-            name: _get_installed_dist(name) for name in _RUN_SETUP_TRACKED_TOOLS
-        }
-        stale = detect_stale_local_tools()
-        if CONFIG_PATH.exists():
-            run_setup(force_reinstall=stale or None)
-        for name in _RUN_SETUP_TRACKED_TOOLS:
-            if _get_installed_dist(name) != dists_before_setup[name]:
-                changed_sources.add(name)
+            pull_plugin_sources()
+
+            dists_before_setup = {
+                name: _get_installed_dist(name) for name in _RUN_SETUP_TRACKED_TOOLS
+            }
+            stale = detect_stale_local_tools()
+            upgraded = CONFIG_PATH.exists() and run_setup(force_reinstall=stale or None)
+            for name in _RUN_SETUP_TRACKED_TOOLS:
+                if _get_installed_dist(name) != dists_before_setup[name]:
+                    changed_sources.add(name)
+            if upgraded:
+                _reexec_update(changed_sources, size_baseline)
+        else:
+            changed_sources, size_baseline = resumed
 
         size_guard_failed = install_main(list(manifest), size_baseline=size_baseline)
 

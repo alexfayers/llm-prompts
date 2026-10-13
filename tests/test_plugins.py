@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -461,6 +462,23 @@ class TestPluginSourceMessages:
 
         assert plugins.plugin_source_messages(plugin) == []
 
+    def test_failed_ls_remote_reports_check_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_subprocess: FakeSubprocess,
+    ) -> None:
+        monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
+        plugin = {"name": "p", "source": f"git+file://{tmp_path / 'upstream'}"}
+        (plugins._checkout_dir("p") / ".git").mkdir(parents=True)
+
+        fake_subprocess.on("rev-parse", "HEAD", stdout="aaaaaaa\n")
+        fake_subprocess.on("ls-remote", returncode=128, stderr="fatal: no access\n")
+
+        assert plugins.plugin_source_messages(plugin) == [
+            "[p] update check failed: fatal: no access"
+        ]
+
     def test_update_available_lists_commit_subjects(
         self,
         tmp_path: Path,
@@ -496,6 +514,35 @@ class TestPluginSourceMessages:
         fake_subprocess.on("rev-parse", "HEAD", stdout="aaaaaaa\n")
         fake_subprocess.on("ls-remote", stdout="bbbbbbb\tHEAD\n")
         return {"name": "p", "source": f"git+file://{tmp_path / 'upstream'}"}
+
+    @pytest.mark.parametrize(
+        ("tokens", "effect", "reason"),
+        [
+            (
+                ("rev-parse", "HEAD"),
+                subprocess.TimeoutExpired("git", setup.GIT_TIMEOUT),
+                f"git rev-parse timed out after {setup.GIT_TIMEOUT}s",
+            ),
+            (
+                ("fetch",),
+                FileNotFoundError("git missing"),
+                "git fetch could not run: git missing",
+            ),
+        ],
+    )
+    def test_git_timeout_or_oserror_reports_check_failure(
+        self,
+        outdated_plugin: dict[str, str],
+        fake_subprocess: FakeSubprocess,
+        tokens: tuple[str, ...],
+        effect: BaseException,
+        reason: str,
+    ) -> None:
+        fake_subprocess.on(*tokens, side_effect=effect)
+
+        assert plugins.plugin_source_messages(outdated_plugin) == [
+            f"[p] update check failed: {reason}"
+        ]
 
     def test_no_commits_touching_installed_files_reports_nothing(
         self, outdated_plugin: dict[str, str], fake_subprocess: FakeSubprocess

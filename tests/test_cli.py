@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import subprocess
+import sys
 import threading
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 from conftest import FakeSubprocess, run_capturing_exit
 
+import llm_prompts
 from llm_prompts import cli
 from llm_prompts.cli import (
     _check_for_updates,
@@ -34,6 +39,7 @@ from llm_prompts.contribute import Report
 from llm_prompts.main_sync import SyncResult
 from llm_prompts.setup import (
     _UPDATE_INSTRUCTION,
+    GIT_TIMEOUT,
     SharedEnv,
     _extract_git_url,
     _format_update_message,
@@ -43,6 +49,17 @@ from llm_prompts.setup import (
 )
 from llm_prompts.size_guard import ALLOWANCES_FILENAME, CHECKED_TARGETS, Artifact
 from llm_prompts.size_limits import FINALS, RULE_BYTES
+
+
+@pytest.fixture(autouse=True)
+def no_exec(tmp_path: Path) -> Iterator[MagicMock]:
+    """Stop any test replacing the pytest process or leaking its restart state."""
+    with (
+        patch("os.execvp") as mock_exec,
+        patch.dict("os.environ"),
+        patch("tempfile.tempdir", str(tmp_path)),
+    ):
+        yield mock_exec
 
 
 class TestExtractGitUrl:
@@ -157,7 +174,10 @@ class TestRemoteSourceMessages:
     def test_up_to_date(self) -> None:
         with (
             patch("llm_prompts.cli._get_installed_commit", return_value="abc123"),
-            patch("llm_prompts.cli._remote_head", return_value="abc123"),
+            patch(
+                "llm_prompts.cli._remote_head_or_failure",
+                return_value=("abc123", None),
+            ),
         ):
             result = _remote_source_messages(
                 "pkg", "git+https://github.com/user/repo.git"
@@ -167,7 +187,10 @@ class TestRemoteSourceMessages:
     def test_update_available_lists_commit_subjects(self) -> None:
         with (
             patch("llm_prompts.cli._get_installed_commit", return_value="abc123aa"),
-            patch("llm_prompts.cli._remote_head", return_value="def456bb"),
+            patch(
+                "llm_prompts.cli._remote_head_or_failure",
+                return_value=("def456bb", None),
+            ),
             patch(
                 "llm_prompts.cli._remote_commit_subjects",
                 return_value=["Add X", "Fix Y"],
@@ -181,7 +204,10 @@ class TestRemoteSourceMessages:
     def test_update_available_falls_back_to_shas_when_clone_fails(self) -> None:
         with (
             patch("llm_prompts.cli._get_installed_commit", return_value="abc123aa"),
-            patch("llm_prompts.cli._remote_head", return_value="def456bb"),
+            patch(
+                "llm_prompts.cli._remote_head_or_failure",
+                return_value=("def456bb", None),
+            ),
             patch("llm_prompts.cli._remote_commit_subjects", return_value=None),
         ):
             result = _remote_source_messages(
@@ -192,12 +218,15 @@ class TestRemoteSourceMessages:
     def test_ls_remote_fails(self) -> None:
         with (
             patch("llm_prompts.cli._get_installed_commit", return_value="abc123"),
-            patch("llm_prompts.cli._remote_head", return_value=None),
+            patch(
+                "llm_prompts.cli._remote_head_or_failure",
+                return_value=(None, "network down"),
+            ),
         ):
             result = _remote_source_messages(
                 "pkg", "git+https://github.com/user/repo.git"
             )
-            assert result == []
+            assert result == ["[pkg] update check failed: network down"]
 
 
 class TestLocalSourceMessages:
@@ -232,6 +261,34 @@ class TestLocalSourceMessages:
         fake_subprocess.on("rev-list", "--count", returncode=128)
         result = _local_source_messages("core", str(tmp_path))
         assert result == []
+
+    @pytest.mark.parametrize(
+        ("verb", "effect", "reason"),
+        [
+            (
+                "fetch",
+                subprocess.TimeoutExpired("git", GIT_TIMEOUT),
+                f"git fetch timed out after {GIT_TIMEOUT}s",
+            ),
+            (
+                "rev-list",
+                FileNotFoundError("git missing"),
+                "git rev-list could not run: git missing",
+            ),
+        ],
+    )
+    def test_git_timeout_or_oserror_reports_check_failure(
+        self,
+        tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
+        verb: str,
+        effect: BaseException,
+        reason: str,
+    ) -> None:
+        (tmp_path / ".git").mkdir()
+        fake_subprocess.on(verb, side_effect=effect)
+        result = _local_source_messages("core", str(tmp_path))
+        assert result == [f"[core] update check failed: {reason}"]
 
     def test_log_failure_falls_back_to_bare_message(
         self, tmp_path: Path, fake_subprocess: FakeSubprocess
@@ -632,6 +689,64 @@ class TestCollectUpdateMessages:
         mock_plugin.assert_called_once_with(plugin)
 
 
+class TestCollectUpdateMessagesRemoteFailure:
+    def test_failed_ls_remote_is_reported_while_other_sources_check(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        config = [
+            {"name": "source-a", "source": "git+https://example.invalid/a.git"},
+            {"name": "source-b", "source": "git+https://example.invalid/b.git"},
+        ]
+        fake_subprocess.on_match(
+            lambda argv: (
+                "ls-remote" in argv and "https://example.invalid/a.git" in argv
+            ),
+            returncode=128,
+            stderr="fatal: unable to access 'https://example.invalid/a.git'\nhint\n",
+        )
+        fake_subprocess.on_match(
+            lambda argv: (
+                "ls-remote" in argv and "https://example.invalid/b.git" in argv
+            ),
+            stdout="abc123\tHEAD\n",
+        )
+        with (
+            patch("llm_prompts.setup._load_config", return_value=config),
+            patch("llm_prompts.plugins._load_plugins", return_value=[]),
+            patch("llm_prompts.cli._get_installed_commit", return_value="abc123"),
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+        ):
+            mock_config.exists.return_value = True
+            result = _collect_update_messages()
+
+        assert result == [
+            (
+                "[source-a] update check failed: "
+                "fatal: unable to access 'https://example.invalid/a.git'"
+            ),
+            _UPDATE_INSTRUCTION,
+        ]
+
+    def test_transient_ls_remote_failure_is_retried_silently(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        config = [{"name": "source-a", "source": "git+https://example.invalid/a.git"}]
+        fake_subprocess.on(
+            "ls-remote",
+            stdout=["", "abc123\tHEAD\n"],
+            returncode=[128, 0],
+            stderr=["fatal: transient", ""],
+        )
+        with (
+            patch("llm_prompts.setup._load_config", return_value=config),
+            patch("llm_prompts.plugins._load_plugins", return_value=[]),
+            patch("llm_prompts.cli._get_installed_commit", return_value="abc123"),
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+        ):
+            mock_config.exists.return_value = True
+            assert _collect_update_messages() == []
+
+
 class TestUpdateCommandPullsPlugins:
     def test_update_invokes_pull_plugin_sources(self) -> None:
         with (
@@ -698,6 +813,188 @@ class TestUpdateCommandPullsPlugins:
             main()
 
         mock_setup.assert_called_once_with(force_reinstall=None)
+
+
+class _Reexec(Exception):
+    """Raised by the patched exec call, which never returns in real use."""
+
+
+class TestUpdateReexecsAfterUpgradingItself:
+    def _run_update(
+        self,
+        upgraded: bool,
+        *,
+        env: dict[str, str] | None = None,
+        exec_env: dict[str, str] | None = None,
+        pulled: set[str] | None = None,
+        baseline: dict[Path, str] | None = None,
+    ) -> dict[str, MagicMock]:
+        """Run `llm-prompts update` where setup reports whether it upgraded.
+
+        Args:
+            upgraded: What the patched setup returns.
+            env: Environment variables set for the run.
+            exec_env: Receives the environment at the moment of the exec.
+            pulled: The sources the patched pull reports as changed.
+            baseline: The size snapshot taken before pulling.
+
+        Returns:
+            The patched exec, setup, pull, install and hooks mocks.
+        """
+
+        def record_exec(*_: object) -> None:
+            if exec_env is not None:
+                exec_env.update(os.environ)
+            raise _Reexec
+
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch.dict("os.environ", env or {}),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={"claude-code": {"files": []}},
+            ),
+            patch(
+                "llm_prompts.cli._pull_local_sources", return_value=pulled or set()
+            ) as mock_pull,
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+            patch("llm_prompts.setup.run_setup", return_value=upgraded) as mock_setup,
+            patch("llm_prompts.install.main", return_value=False) as mock_install,
+            patch("llm_prompts.cli._get_installed_dist", return_value=None),
+            patch("llm_prompts.cli._restart_memory_service"),
+            patch("llm_prompts.plugins.pull_plugin_sources"),
+            patch(
+                "llm_prompts.size_guard.snapshot_sources", return_value=baseline or {}
+            ),
+            patch("llm_prompts.install.try_install_hooks_claude_code") as mock_hooks,
+            patch("llm_prompts.install.try_install_memory_claude_code"),
+            patch("llm_prompts.install.try_allow_update_claude_code"),
+            patch("os.execvp", side_effect=record_exec) as mock_exec,
+        ):
+            mock_config.exists.return_value = True
+            with contextlib.suppress(_Reexec):
+                main()
+        return {
+            "exec": mock_exec,
+            "setup": mock_setup,
+            "pull": mock_pull,
+            "install": mock_install,
+            "hooks": mock_hooks,
+        }
+
+    def test_upgrade_restarts_the_same_command_before_anything_else_runs(
+        self,
+    ) -> None:
+        mocks = self._run_update(upgraded=True)
+
+        mocks["exec"].assert_called_once_with("llm-prompts", ["llm-prompts", "update"])
+        mocks["install"].assert_not_called()
+
+    def test_no_upgrade_continues_in_the_same_process(self) -> None:
+        mocks = self._run_update(upgraded=False)
+
+        mocks["exec"].assert_not_called()
+        mocks["install"].assert_called_once_with(["claude-code"], size_baseline={})
+
+    def test_restarted_command_resumes_with_the_work_done_before_the_upgrade(
+        self, tmp_path: Path
+    ) -> None:
+        baseline = {Path("/synthetic/rule.md"): "digest"}
+        exec_env: dict[str, str] = {}
+        self._run_update(
+            upgraded=True, exec_env=exec_env, pulled={"cline-hooks"}, baseline=baseline
+        )
+
+        mocks = self._run_update(upgraded=True, env=exec_env)
+
+        mocks["exec"].assert_not_called()
+        mocks["pull"].assert_not_called()
+        mocks["setup"].assert_not_called()
+        mocks["install"].assert_called_once_with(
+            ["claude-code"], size_baseline=baseline
+        )
+        mocks["hooks"].assert_called_once_with()
+        assert not list(tmp_path.glob("*.json"))
+
+
+class TestUpdateLoadsItsModulesBeforePullingSources:
+    def test_modules_used_before_the_restart_are_loaded_before_any_pull(
+        self,
+    ) -> None:
+        unloaded = ("llm_prompts.plugins", "llm_prompts.main_sync")
+        loaded_at_pull: list[bool] = []
+
+        def unload_modules(*_: object) -> dict[str, dict[str, list[str]]]:
+            for name in unloaded:
+                sys.modules.pop(name)
+            return {"claude-code": {"files": []}}
+
+        def record_loaded_modules() -> set[str]:
+            loaded_at_pull.extend(name in sys.modules for name in unloaded)
+            return set()
+
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch.dict("sys.modules"),
+            patch.object(llm_prompts, "plugins"),
+            patch.object(llm_prompts, "main_sync"),
+            patch("llm_prompts.manifest.read_manifest", side_effect=unload_modules),
+            patch(
+                "llm_prompts.cli._pull_local_sources",
+                side_effect=record_loaded_modules,
+            ),
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+            patch("llm_prompts.install.main", return_value=False),
+            patch("llm_prompts.size_guard.snapshot_sources", return_value={}),
+        ):
+            mock_config.exists.return_value = False
+            main()
+
+        assert loaded_at_pull == [True, True]
+
+
+class TestReexecUpdate:
+    def test_buffered_output_is_flushed_before_the_process_is_replaced(
+        self,
+    ) -> None:
+        flushed: list[str] = []
+        stdout, stderr = MagicMock(), MagicMock()
+        stdout.flush.side_effect = lambda: flushed.append("stdout")
+        stderr.flush.side_effect = lambda: flushed.append("stderr")
+
+        with (
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", stderr),
+            patch("os.execvp", side_effect=lambda *_: flushed.append("exec")),
+        ):
+            cli._reexec_update(set(), {})
+
+        assert flushed[-1] == "exec"
+        assert set(flushed[:-1]) == {"stdout", "stderr"}
+
+    def test_failed_exec_leaves_no_state_behind(self, tmp_path: Path) -> None:
+        with (
+            patch("os.execvp", side_effect=OSError),
+            pytest.raises(OSError),
+        ):
+            cli._reexec_update({"tool-a"}, {})
+
+        assert not list(tmp_path.glob("*.json"))
+        assert "LLM_PROMPTS_UPDATE_RESUME" not in os.environ
+
+    def test_corrupt_state_is_still_removed_after_reading(self, tmp_path: Path) -> None:
+        state = tmp_path / "state.json"
+        state.write_text("{")
+
+        with (
+            patch.dict("os.environ", {"LLM_PROMPTS_UPDATE_RESUME": str(state)}),
+            pytest.raises(ValueError),
+        ):
+            cli._take_resumed_update()
+
+        assert not state.exists()
 
 
 class TestRestartMemoryService:

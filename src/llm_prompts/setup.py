@@ -21,6 +21,7 @@ from .squash_subject import squash_pr_number
 _CONFIG_DIR = Path.home() / ".config" / "llm-prompts"
 CONFIG_PATH = _CONFIG_DIR / "config.toml"
 GIT_TIMEOUT = 30
+_LS_REMOTE_ATTEMPTS = 2
 
 _DEFAULT_CONFIG = """\
 # llm-prompts setup configuration
@@ -104,6 +105,68 @@ def _format_update_message(
     return ["\n".join(lines)]
 
 
+def _run_git_or_failure(
+    verb: str, argv: list[str]
+) -> tuple[subprocess.CompletedProcess[str] | None, str | None]:
+    """Run a git command, converting a timeout or launch error into a reason.
+
+    Args:
+        verb: The git subcommand name, used in the failure reason.
+        argv: The full command line to run.
+
+    Returns:
+        A ``(result, None)`` pair, or ``(None, reason)`` if the command timed out
+        or could not run.
+    """
+    try:
+        result = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=GIT_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return None, f"git {verb} timed out after {GIT_TIMEOUT}s"
+    except OSError as exc:
+        return None, f"git {verb} could not run: {exc}"
+    return result, None
+
+
+def _remote_head_or_failure(
+    git_url: str, ref: str | None
+) -> tuple[str | None, str | None]:
+    """Resolve a remote git ref via ls-remote, retrying once on failure.
+
+    Args:
+        git_url: The remote git URL to query.
+        ref: The remote ref to resolve; defaults to ``HEAD``.
+
+    Returns:
+        A ``(sha, None)`` pair on success, or ``(None, reason)`` on failure.
+    """
+    reason = ""
+    for _ in range(_LS_REMOTE_ATTEMPTS):
+        result, failure = _run_git_or_failure(
+            "ls-remote", ["git", "ls-remote", git_url, ref or "HEAD"]
+        )
+        if result is None:
+            reason = failure or ""
+            continue
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.split()[0], None
+        stderr_lines = result.stderr.strip().splitlines()
+        if result.returncode != 0:
+            reason = (
+                stderr_lines[0].strip()
+                if stderr_lines
+                else f"git ls-remote exited {result.returncode}"
+            )
+        else:
+            reason = f"git ls-remote returned no commit for {ref or 'HEAD'}"
+    return None, reason
+
+
 def _remote_head(git_url: str, ref: str | None) -> str | None:
     """Return the commit SHA a remote git ref points at, via ls-remote.
 
@@ -114,16 +177,7 @@ def _remote_head(git_url: str, ref: str | None) -> str | None:
     Returns:
         The remote commit SHA, or ``None`` if the query fails or is empty.
     """
-    result = subprocess.run(
-        ["git", "ls-remote", git_url, ref or "HEAD"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=GIT_TIMEOUT,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        return None
-    return result.stdout.split()[0]
+    return _remote_head_or_failure(git_url, ref)[0]
 
 
 _SQUASHED_MERGE_PREFIX = "* Merge "
@@ -168,7 +222,8 @@ def _commit_subjects_between(
         command fails.
     """
     pathspec = ["--", *paths] if paths else []
-    result = subprocess.run(
+    result, _ = _run_git_or_failure(
+        "log",
         [
             "git",
             "-C",
@@ -179,12 +234,8 @@ def _commit_subjects_between(
             f"{from_sha}..{to_sha}",
             *pathspec,
         ],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=GIT_TIMEOUT,
     )
-    if result.returncode != 0:
+    if result is None or result.returncode != 0:
         return None
     messages = (
         record.strip("\n").splitlines() for record in result.stdout.split("\x1e")
@@ -700,7 +751,7 @@ def run_setup(
             env.upgrade_cmd, check=False, capture_output=True, text=True
         )
         if result.returncode == 0:
-            if "Nothing to upgrade" not in result.stdout:
+            if "Nothing to upgrade" not in result.stderr:
                 print(result.stdout, end="")
                 changed = True
             needs_install = _has_drifted(env)

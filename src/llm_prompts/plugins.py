@@ -15,7 +15,8 @@ from .setup import (
     _commit_subjects_between,
     _extract_git_url,
     _format_update_message,
-    _remote_head,
+    _remote_head_or_failure,
+    _run_git_or_failure,
     _run_parallel_ordered,
 )
 
@@ -283,27 +284,26 @@ def plugin_source_messages(plugin: dict[str, Any]) -> list[str]:
     if git_url is None:
         return []
 
-    local = subprocess.run(
-        ["git", "-C", str(checkout), "rev-parse", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=GIT_TIMEOUT,
+    local, failure = _run_git_or_failure(
+        "rev-parse", ["git", "-C", str(checkout), "rev-parse", "HEAD"]
     )
+    if local is None:
+        return [f"[{name}] update check failed: {failure}"]
     if local.returncode != 0:
         return []
     local_sha = local.stdout.strip()
 
-    remote_sha = _remote_head(git_url, plugin.get("ref"))
-    if remote_sha is None or remote_sha == local_sha:
+    remote_sha, failure = _remote_head_or_failure(git_url, plugin.get("ref"))
+    if remote_sha is None:
+        return [f"[{name}] update check failed: {failure}"]
+    if remote_sha == local_sha:
         return []
 
-    subprocess.run(
-        ["git", "-C", str(checkout), "fetch", "--quiet"],
-        check=False,
-        capture_output=True,
-        timeout=GIT_TIMEOUT,
+    fetched, failure = _run_git_or_failure(
+        "fetch", ["git", "-C", str(checkout), "fetch", "--quiet"]
     )
+    if fetched is None:
+        return [f"[{name}] update check failed: {failure}"]
     subjects = _commit_subjects_between(
         checkout, local_sha, "FETCH_HEAD", _installed_pathspecs(plugin.get("skills"))
     )

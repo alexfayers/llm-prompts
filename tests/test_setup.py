@@ -357,6 +357,15 @@ class TestRunSetup:
         assert "--reinstall-package" not in second
         assert not fake_subprocess.matching("uv", "tool", "install")
 
+    def test_upgrade_reports_a_change_unless_uv_says_there_was_nothing_to_upgrade(
+        self, tools_dir: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        fake_subprocess.on("uv", "tool", "upgrade", stderr="Nothing to upgrade\n")
+        assert setup.run_setup() is False
+
+        fake_subprocess.on("uv", "tool", "upgrade", stdout="Updated core\n")
+        assert setup.run_setup() is True
+
     def test_named_tool_forces_a_full_reinstall_of_the_shared_env(
         self, tools_dir: Path, fake_subprocess: FakeSubprocess
     ) -> None:
@@ -453,6 +462,62 @@ class TestRemoteHead:
     ) -> None:
         fake_subprocess.on("ls-remote", stdout="")
         assert setup._remote_head("https://x/repo.git", "main") is None
+
+
+class TestRemoteHeadOrFailure:
+    def test_success_has_no_failure_reason(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        fake_subprocess.on("ls-remote", stdout="deadbeef\tHEAD\n")
+        assert setup._remote_head_or_failure("https://x/repo.git", None) == (
+            "deadbeef",
+            None,
+        )
+
+    def test_retries_once_then_succeeds(self, fake_subprocess: FakeSubprocess) -> None:
+        fake_subprocess.on(
+            "ls-remote",
+            stdout=["", "deadbeef\tHEAD\n"],
+            returncode=[128, 0],
+            stderr=["fatal: transient", ""],
+        )
+        assert setup._remote_head_or_failure("https://x/repo.git", None) == (
+            "deadbeef",
+            None,
+        )
+        assert len(fake_subprocess.matching("ls-remote")) == 2
+
+    @pytest.mark.parametrize(
+        ("route", "reason"),
+        [
+            (
+                {"returncode": 128, "stderr": "  fatal: no access \nhint: more\n"},
+                "fatal: no access",
+            ),
+            ({"returncode": 128}, "git ls-remote exited 128"),
+            ({"stdout": ""}, "git ls-remote returned no commit for main"),
+            (
+                {"side_effect": subprocess.TimeoutExpired("git", setup.GIT_TIMEOUT)},
+                f"git ls-remote timed out after {setup.GIT_TIMEOUT}s",
+            ),
+            (
+                {"side_effect": FileNotFoundError("git missing")},
+                "git ls-remote could not run: git missing",
+            ),
+        ],
+    )
+    def test_reports_reason_after_two_failed_attempts(
+        self,
+        fake_subprocess: FakeSubprocess,
+        route: dict[str, Any],
+        reason: str,
+    ) -> None:
+        fake_subprocess.on("ls-remote", **route)
+        assert setup._remote_head_or_failure("https://x/repo.git", "main") == (
+            None,
+            reason,
+        )
+        assert len(fake_subprocess.matching("ls-remote")) == 2
 
 
 class TestCommitSubjectsBetween:
