@@ -15,6 +15,7 @@ kiro_file_match_pattern: '**/*.sh, **/*.bash, **/*.zsh'
 - MUST NOT use `rm -rf`; use `rm -r`.
 - MUST NOT kill processes by port number (e.g. `kill $(lsof -ti:PORT)`) - this can kill unrelated processes (e.g. VS Code extensions). MUST kill by specific PID.
 - MUST NOT run `docker compose down -v` (or any other command that deletes a Docker volume) just to reset state or clean up test data - it destroys the named volume, which may hold real pre-existing data the current session didn't create. MUST delete only the specific test rows/records, or confirm first that the volume is known-disposable (e.g. verified created fresh earlier in the same session).
+- MUST NOT run a fixed `sleep` or poll in a loop. As a subagent, MUST run long commands in the foreground in one bash call with an explicit `timeout` (seconds), and MUST NOT background a command then end the turn. Where a foreground run is impossible, MUST use one blocking wait with a timeout: `herdr pane wait-output --timeout`, `herdr agent wait --timeout` or `tmux wait-for`. A lead with the `process` tool MAY use `process start` with notify, then end the turn.
 {% if AGENT == "pi" %}
 - To run a long command (server, watcher, long build) in the background while you keep working, SHOULD use the `process` tool, not a blocking `bash`.
 {% endif %}

@@ -1020,6 +1020,23 @@ class TestPiAgents:
         }
         assert spawners == {"reasoner", "coordinator"}
 
+    def test_worker_surveyor_reviewer_and_coordinator_are_told_not_to_sleep_or_poll(
+        self, pi_home: Path
+    ) -> None:
+        agent_dir = pi_home / ".pi" / "agent"
+        for name in (
+            "worker-sonnet-low",
+            "surveyor-sonnet-low",
+            "reviewer-opus-high",
+            "coordinator-sonnet-low",
+        ):
+            rules = _references(agent_dir / "agents" / f"{name}.md")
+            text = "".join(
+                (agent_dir / "rules" / rule).read_text(encoding="utf-8")
+                for rule in rules
+            )
+            assert "MUST NOT run a fixed `sleep` or poll in a loop" in text, name
+
     def test_overlay_models_resolve_tiers_last_overlay_winning(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
