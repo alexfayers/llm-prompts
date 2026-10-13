@@ -1,6 +1,6 @@
 ---
 name: session-start
-description: Check memory for in-progress tasks and active TODOs at the start of each session. Use at the beginning of every new conversation.
+description: Start-up checks. Load only when no start-up blocks were injected.
 metadata:
   inject_at_start: true
 ---
