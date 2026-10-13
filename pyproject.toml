@@ -22,6 +22,7 @@ packages = ["src/llm_prompts"]
 
 [project.entry-points.cline_hooks]
 llm-prompts = "llm_prompts.hooks:AutoReinstallPlugin"
+llm-prompts-skill-attach = "llm_prompts.skill_attach:SkillAttach"
 
 [tool.ruff.lint]
 ignore = [

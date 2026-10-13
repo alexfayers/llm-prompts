@@ -47,6 +47,11 @@ Workflows are markdown files that define multi-step procedures the agent can fol
 
 Skills are directories containing a `SKILL.md` file that the agent reads before performing a specific action. They provide just-in-time guidance for tasks like git operations, session management, or plan refinement. Skills are installed as symlinks, so edits to the source are picked up immediately.
 
+The `SkillAttach` plugin suggests skills in a spawned subagent's task (at most 3, never one the task already names):
+
+- `attach_triggers: a, b` suggests the skill where the task mentions any of these comma-separated phrases.
+- `attach_roles: a, b` suggests the skill to these comma-separated agent types.
+
 ### Agents
 
 Agents are custom subagent definitions - single markdown files with YAML frontmatter (`name`, `description`, `model`, etc.) that define a specialised subagent. Agents in `shared/agents/` are installed for `claude-code` and `pi`; agents in `claude-code/agents/` are installed for `claude-code`, and for `pi` when they ship with this repo. They are installed as files with template variables substituted; for `pi` they are written with pi's frontmatter keys and tool names.
