@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches:
       - main
@@ -30,6 +31,7 @@ jobs:
       - run: just type-check
 
   test:
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'blocked') }}
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -74,6 +76,7 @@ jobs:
             pr-number
 
   pr-automation-test:
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'blocked') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
