@@ -4,6 +4,10 @@ on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review, edited]
 
+concurrency:
+  group: pr-template-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
 jobs:
   pr-template-check:
     runs-on: ubuntu-latest
