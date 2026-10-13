@@ -34,7 +34,13 @@ async function evaluate({ github, context, core }) {
       await github.rest.issues.addLabels({ ...target, labels: [BLOCKED_LABEL.name] });
     }
   } else if (labelled) {
-    await github.rest.issues.removeLabel({ ...target, name: BLOCKED_LABEL.name });
+    try {
+      await github.rest.issues.removeLabel({ ...target, name: BLOCKED_LABEL.name });
+    } catch (error) {
+      if (error.status !== 404) {
+        throw error;
+      }
+    }
   }
 }
 
