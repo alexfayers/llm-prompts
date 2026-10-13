@@ -300,7 +300,7 @@ def plugin_source_messages(plugin: dict[str, Any]) -> list[str]:
 
     subprocess.run(
         ["git", "-C", str(checkout), "fetch", "--quiet"],
-        check=False,
+        check=True,
         capture_output=True,
         timeout=GIT_TIMEOUT,
     )

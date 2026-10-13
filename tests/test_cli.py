@@ -580,6 +580,26 @@ class TestCollectUpdateMessages:
             "remote-pkg", "git+https://github.com/user/repo.git"
         )
 
+    def test_failed_check_is_reported_without_credentials(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        source = "git+https://user:secret@example.invalid/r.git"
+        fake_subprocess.on("ls-remote", returncode=128)
+        with (
+            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch(
+                "llm_prompts.setup._load_config",
+                return_value=[{"name": "pkg", "source": source}],
+            ),
+            patch("llm_prompts.plugins._load_plugins", return_value=[]),
+            patch("llm_prompts.cli._get_installed_commit", return_value="abc123"),
+        ):
+            mock_config.exists.return_value = True
+            result = _collect_update_messages()
+
+        assert result[0].startswith("[pkg] update check failed: ")
+        assert "secret" not in result[0]
+
     def test_update_instruction_appears_once_after_all_packages(self) -> None:
         config = [
             {"name": "pkg-a", "source": "~/git/pkg-a"},
