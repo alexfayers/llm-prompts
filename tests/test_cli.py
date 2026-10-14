@@ -880,7 +880,6 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.install.try_install_memory_claude_code") as memory,
             patch("llm_prompts.install.try_allow_update_claude_code") as allow,
             patch("llm_prompts.install.try_install_memory_codex") as codex,
-            patch("llm_prompts.install.try_install_hooks_pi") as pi_hooks,
             patch("llm_prompts.install.try_install_memory_pi") as pi_memory,
             patch("llm_prompts.cli._auto_migrate_memory_db") as migrate,
         ):
@@ -890,7 +889,6 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             "memory": memory,
             "allow": allow,
             "codex": codex,
-            "pi_hooks": pi_hooks,
             "pi_memory": pi_memory,
             "migrate": migrate,
         }
@@ -904,7 +902,6 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
         mocks = self._run_update({"cline-hooks"})
         mocks["hooks"].assert_called_once_with()
         mocks["allow"].assert_called_once_with()
-        mocks["pi_hooks"].assert_called_once_with()
 
     def test_memory_config_and_db_wait_for_a_memory_change(self) -> None:
         mocks = self._run_update({"cline-hooks"})
@@ -952,7 +949,6 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.install.try_install_memory_claude_code") as memory,
             patch("llm_prompts.install.try_allow_update_claude_code") as allow,
             patch("llm_prompts.install.try_install_memory_codex") as codex,
-            patch("llm_prompts.install.try_install_hooks_pi") as pi_hooks,
             patch("llm_prompts.install.try_install_memory_pi") as pi_memory,
             patch("llm_prompts.cli._auto_migrate_memory_db") as migrate,
             patch("llm_prompts.cli._restart_memory_service") as restart,
@@ -962,7 +958,6 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
 
         hooks.assert_called_once_with()
         allow.assert_called_once_with()
-        pi_hooks.assert_called_once_with()
         memory.assert_not_called()
         codex.assert_not_called()
         pi_memory.assert_not_called()
@@ -1040,7 +1035,6 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.install.try_install_memory_claude_code") as memory,
             patch("llm_prompts.install.try_allow_update_claude_code") as allow,
             patch("llm_prompts.install.try_install_memory_codex") as codex,
-            patch("llm_prompts.install.try_install_hooks_pi") as pi_hooks,
             patch("llm_prompts.install.try_install_memory_pi") as pi_memory,
             patch("llm_prompts.cli._auto_migrate_memory_db") as migrate,
             patch("llm_prompts.cli._restart_memory_service") as restart,
@@ -1053,7 +1047,6 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             memory,
             allow,
             codex,
-            pi_hooks,
             pi_memory,
             migrate,
             restart,
@@ -1115,7 +1108,6 @@ class TestUpdateSizeGuardSkipExitCode:
             patch("llm_prompts.install.try_install_memory_claude_code") as memory,
             patch("llm_prompts.install.try_allow_update_claude_code") as allow,
             patch("llm_prompts.install.try_install_memory_codex") as codex,
-            patch("llm_prompts.install.try_install_hooks_pi") as pi_hooks,
             patch("llm_prompts.install.try_install_memory_pi") as pi_memory,
             patch("llm_prompts.cli._auto_migrate_memory_db") as migrate,
         ):
@@ -1125,7 +1117,6 @@ class TestUpdateSizeGuardSkipExitCode:
             "memory": memory,
             "allow": allow,
             "codex": codex,
-            "pi_hooks": pi_hooks,
             "pi_memory": pi_memory,
             "migrate": migrate,
         }
@@ -1139,7 +1130,6 @@ class TestUpdateSizeGuardSkipExitCode:
         assert exit_code == 1
         mocks["hooks"].assert_called_once_with()
         mocks["allow"].assert_called_once_with()
-        mocks["pi_hooks"].assert_called_once_with()
 
     def test_no_skip_exits_with_code_0(self) -> None:
         exit_code, _ = self._run_update(False, set())
@@ -1989,11 +1979,9 @@ class TestInstallRoot:
         with (
             patch("sys.argv", argv),
             patch("llm_prompts.install.main", return_value=False) as install,
-            patch("llm_prompts.install.try_install_hooks_pi") as hooks,
             patch("llm_prompts.install.try_install_memory_pi") as memory,
         ):
             main()
 
         install.assert_called_once_with(["pi"], verbose=False, root=tmp_path)
-        hooks.assert_not_called()
         memory.assert_not_called()

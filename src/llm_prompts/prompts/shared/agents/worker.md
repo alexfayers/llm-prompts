@@ -1,9 +1,10 @@
 ---
 name: worker
 description: Generic mechanical executor for well-specified, no-judgment tasks (apply an edit pattern, run a bounded search, execute a decided step).
-disallowedTools: Agent{{ ", ask_user, source_check, process" if AGENT == "pi" else "" }}
+disallowedTools: Agent{{ ", ask_user, source_check" if AGENT == "pi" else "" }}
 {% if AGENT == "pi" %}
 pi_skills: git-usage, tdd
+extensions: [@aliou/pi-processes?]
 {% endif %}
 generate_variants: sonnet-low,sonnet-medium,sonnet-high,haiku-low,haiku-medium,haiku-high
 pi_extra_variants: terra-low,terra-medium,terra-high,luna-low,luna-medium,luna-high

@@ -6,6 +6,7 @@ tools: Read, Grep, Glob, LS, lsp_symbols, lsp_definition, lsp_references, lsp_ho
 model: haiku
 effort: off
 skills: true
+extensions: [pi-lsp-extension?, lsp-defaults?]
 omitClaudeMd: true
 ---
 

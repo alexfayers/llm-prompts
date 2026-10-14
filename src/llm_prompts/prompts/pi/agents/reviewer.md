@@ -3,6 +3,7 @@ name: reviewer
 description: Read-only reviewer of a finished diff, plan or implementation for correctness, missing cases, regressions, scope. Reports findings, never edits or runs the gate.
 disallowedTools: Agent, Write, Edit, NotebookEdit, ask_user, source_check, process
 pi_skills: git-usage
+extensions: []
 generate_variants: opus-medium,opus-high
 color: red
 ---
