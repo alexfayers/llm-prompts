@@ -5,14 +5,16 @@ const path = require('node:path');
 const { isBlocked, resolveStatus } = require('./sync-project-status.js');
 
 const openPr = { state: 'OPEN', isDraft: false, reviewDecision: null };
+const reviewedAs = (...states) => ({ latestOpinionatedReviews: { nodes: states.map((state) => ({ state })) } });
 
 test('open draft PR maps to In Progress and open ready PR to Review', () => {
   assert.equal(resolveStatus({ ...openPr, isDraft: true }), '47fc9ee4');
   assert.equal(resolveStatus(openPr), '432b1b61');
 });
 
-test('approved PR maps to Approved', () => {
-  assert.equal(resolveStatus({ ...openPr, reviewDecision: 'APPROVED' }), 'c6f50cd1');
+test('approved PR maps to Approved unless changes are also requested', () => {
+  assert.equal(resolveStatus({ ...openPr, ...reviewedAs('APPROVED') }), 'c6f50cd1');
+  assert.equal(resolveStatus({ ...openPr, ...reviewedAs('APPROVED', 'CHANGES_REQUESTED') }), '432b1b61');
 });
 
 test('blocked PRs keep their draft, review or approved status', () => {
@@ -20,7 +22,7 @@ test('blocked PRs keep their draft, review or approved status', () => {
     assert.equal(resolveStatus({ ...openPr, ...blocker }), '432b1b61');
     assert.equal(resolveStatus({ ...openPr, ...blocker, isDraft: true }), '47fc9ee4');
   }
-  assert.equal(resolveStatus({ ...openPr, reviewDecision: 'APPROVED' }), 'c6f50cd1');
+  assert.equal(resolveStatus({ ...openPr, ...reviewedAs('APPROVED'), isDraft: true }), '47fc9ee4');
 });
 
 test('closed or merged PR maps to Done even with requested changes', () => {
