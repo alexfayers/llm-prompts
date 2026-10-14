@@ -7,6 +7,7 @@ const eligible = {
   isDraft: false,
   isCrossRepository: false,
   mergeable: 'MERGEABLE',
+  labels: { nodes: [] },
 };
 
 test('auto-merge PR that is mergeable is a candidate', () => {
@@ -65,7 +66,7 @@ test('open PRs are listed for the pushed base branch', async () => {
 });
 
 test('eligible PRs are rebased in order and others are skipped', async () => {
-  const { calls, github, core } = setup([pr(1), pr(2, { autoMergeRequest: null }), pr(3)]);
+  const { calls, github, core } = setup([pr(1), pr(2, { autoMergeRequest: null }), pr(3), pr(4, { labels: { nodes: [{ name: 'blocked' }] } })]);
   await rebase({ github, context, core });
   assert.deepEqual(
     calls.slice(1).map((call) => call.vars),

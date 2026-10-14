@@ -1,7 +1,9 @@
+const { BLOCKED_LABEL } = require('./label-pr.js');
+
 const LIST_OPEN_PRS = `query($owner: String!, $repo: String!, $base: String!) {
   repository(owner: $owner, name: $repo) {
     pullRequests(states: OPEN, baseRefName: $base, first: 100) {
-      nodes { id number headRefOid isDraft isCrossRepository mergeable autoMergeRequest { enabledAt } }
+      nodes { id number headRefOid isDraft isCrossRepository mergeable autoMergeRequest { enabledAt } labels(first: 50) { nodes { name } } }
     }
   }
 }`;
@@ -17,7 +19,8 @@ function isRebaseCandidate(pr) {
     pr.autoMergeRequest !== null &&
     !pr.isDraft &&
     !pr.isCrossRepository &&
-    pr.mergeable !== 'CONFLICTING'
+    pr.mergeable !== 'CONFLICTING' &&
+    !pr.labels.nodes.some(({ name }) => name === BLOCKED_LABEL.name)
   );
 }
 

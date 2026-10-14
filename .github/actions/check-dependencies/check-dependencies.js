@@ -1,4 +1,5 @@
 const { BLOCKED_LABEL, ensureLabel } = require('../pr-automation/label-pr.js');
+const { fetchPr, isBlocked } = require('../pr-automation/sync-project-status.js');
 
 const STATUS_CONTEXT = 'dependencies';
 const DISPATCH_EVENT = 'dependencies-recheck';
@@ -33,7 +34,7 @@ async function evaluate({ github, context, core }, pr) {
       await ensureLabel(github, core, context.repo, BLOCKED_LABEL);
       await github.rest.issues.addLabels({ ...target, labels: [BLOCKED_LABEL.name] });
     }
-  } else if (labelled) {
+  } else if (labelled && !isBlocked(await fetchPr(github, { owner, repo, number: pr.number }))) {
     try {
       await github.rest.issues.removeLabel({ ...target, name: BLOCKED_LABEL.name });
     } catch (error) {
