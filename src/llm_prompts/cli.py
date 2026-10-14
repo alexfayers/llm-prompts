@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import json
+import os
 import shutil
 import subprocess
 import sys
@@ -32,6 +34,7 @@ if TYPE_CHECKING:
 _AGENTS = tuple(AGENT_CLASSES)
 _MEMORY_TOOL = "mcp-memory"
 _RUN_SETUP_TRACKED_TOOLS = (_MEMORY_TOOL, "cline-hooks")
+_UPDATE_RESUME_ENV = "LLM_PROMPTS_UPDATE_RESUME"
 
 
 def _get_root_dir() -> Path:
@@ -168,6 +171,19 @@ def _run_extension_factory_check() -> None:
         print(f"{extension}: no default factory function")
     if missing:
         sys.exit(1)
+
+
+def _reexec_update(changed_sources: set[str], size_baseline: dict[Path, str]) -> None:
+    """Restart `update` on the upgraded code, handing over the work done so far."""
+    os.environ[_UPDATE_RESUME_ENV] = json.dumps(
+        {
+            "changed_sources": sorted(changed_sources),
+            "size_baseline": {str(path): h for path, h in size_baseline.items()},
+        }
+    )
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execvp(sys.argv[0], sys.argv)
 
 
 def _get_installed_commit(package_name: str) -> str | None:
@@ -925,24 +941,33 @@ def main() -> int | None:
         if only_source is not None:
             sys.exit(1 if install_main(list(manifest), only=only_source) else 0)
 
-        from .size_guard import snapshot_sources
+        resumed = os.environ.pop(_UPDATE_RESUME_ENV, None)
+        if resumed is None:
+            from .size_guard import snapshot_sources
 
-        size_baseline = snapshot_sources(_size_guard_roots())
-        changed_sources = _pull_local_sources()
+            size_baseline = snapshot_sources(_size_guard_roots())
+            changed_sources = _pull_local_sources()
 
-        from .plugins import pull_plugin_sources
+            from .plugins import pull_plugin_sources
 
-        pull_plugin_sources()
+            pull_plugin_sources()
 
-        dists_before_setup = {
-            name: _get_installed_dist(name) for name in _RUN_SETUP_TRACKED_TOOLS
-        }
-        stale = detect_stale_local_tools()
-        if CONFIG_PATH.exists():
-            run_setup(force_reinstall=stale or None)
-        for name in _RUN_SETUP_TRACKED_TOOLS:
-            if _get_installed_dist(name) != dists_before_setup[name]:
-                changed_sources.add(name)
+            dists_before_setup = {
+                name: _get_installed_dist(name) for name in _RUN_SETUP_TRACKED_TOOLS
+            }
+            stale = detect_stale_local_tools()
+            upgraded = CONFIG_PATH.exists() and run_setup(force_reinstall=stale or None)
+            for name in _RUN_SETUP_TRACKED_TOOLS:
+                if _get_installed_dist(name) != dists_before_setup[name]:
+                    changed_sources.add(name)
+            if upgraded:
+                _reexec_update(changed_sources, size_baseline)
+        else:
+            state = json.loads(resumed)
+            changed_sources = set(state["changed_sources"])
+            size_baseline = {
+                Path(path): h for path, h in state["size_baseline"].items()
+            }
 
         size_guard_failed = install_main(list(manifest), size_baseline=size_baseline)
 
