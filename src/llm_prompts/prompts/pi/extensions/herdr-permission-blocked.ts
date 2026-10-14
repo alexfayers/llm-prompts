@@ -7,7 +7,12 @@ type PromptEvent = { requestId: string };
 
 export default function (pi: ExtensionAPI) {
 	const waiting = new Set<string>();
+	let tui = false;
+	pi.on("session_start", (_event, ctx) => {
+		tui = ctx.mode === "tui";
+	});
 	pi.events.on("permissions:ui_prompt", (data) => {
+		if (!tui) return;
 		const { requestId } = data as PromptEvent;
 		if (waiting.has(requestId)) return;
 		waiting.add(requestId);

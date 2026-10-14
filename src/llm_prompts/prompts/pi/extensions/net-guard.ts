@@ -235,7 +235,7 @@ export default function (pi: ExtensionAPI) {
 	install();
 	patchDispatchers();
 	pi.on("session_start", (_event, ctx) => {
-		notifyContext = ctx;
+		notifyContext = ctx.mode === "tui" ? ctx : undefined;
 		loadConfig(ctx.cwd);
 		patchDispatchers();
 	});

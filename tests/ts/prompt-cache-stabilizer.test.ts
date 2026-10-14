@@ -82,3 +82,23 @@ describe("merged head", () => {
 		});
 	}
 });
+
+const MID_CONVO_MODEL = { api: "anthropic-messages", compat: { supportsMidConvoSystemMessages: true } };
+const cwdSection = (path: string) => `<cwd>\n${path}\n</cwd>`;
+const withCwd = (path: string) => [system(1, { skills: "S", cwd: cwdSection(path) }, "base"), user(2)];
+const systemText = (messages: any[]) => JSON.stringify([messages.filter((m) => m.role === "system").map((m) => m.content), folded(messages)]);
+
+describe("cwd move", () => {
+	test("system text is identical across working directories", async () => {
+		for (const model of [FOLDING_MODEL, MID_CONVO_MODEL]) {
+			const outs = [];
+			for (const path of ["/work/one", "/work/two"]) {
+				const out = await handle(model, withCwd(path), true);
+				assert.ok(out);
+				outs.push(out.messages);
+			}
+			assert.equal(systemText(outs[0]), systemText(outs[1]));
+			assert.ok(!systemText(outs[0]).includes("cwd"));
+		}
+	});
+});

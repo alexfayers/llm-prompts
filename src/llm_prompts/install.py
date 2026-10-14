@@ -1331,7 +1331,8 @@ def _apply_variant_frontmatter(
     """Rewrite a template's frontmatter for one generated model/effort variant.
 
     Overrides ``name`` to the variant's own name, appends a ``[model, effort
-    effort]`` suffix to ``description``, and adds ``model``/``effort`` keys.
+    effort]`` suffix (``[model, thinking off]`` when ``effort_value`` is ``off``)
+    to ``description``, and adds ``model``/``effort`` keys.
     A ``note`` replaces the suffix, keeps the bare ``stem`` name and sets no
     ``model`` or ``effort``.
     All other frontmatter keys and the body are carried verbatim. A block-scalar
@@ -1355,7 +1356,11 @@ def _apply_variant_frontmatter(
     if split is None:
         return content
     frontmatter_lines, body = split
-    suffix = note or f"[{model}, {effort} effort]"
+    suffix = note or (
+        f"[{model}, thinking off]"
+        if effort_value == "off"
+        else f"[{model}, {effort} effort]"
+    )
     lines = []
     in_description_block = False
     description_indent = "  "

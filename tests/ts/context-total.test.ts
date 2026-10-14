@@ -250,3 +250,32 @@ test("config clamps the interval and rewrites the footer keeping other keys", ()
 	assert.deepEqual(ext.module.readConfig(file), { footer: true, intervalSeconds: 2 });
 	assert.deepEqual(JSON.parse(memory.read(file)), { footer: true, intervalSeconds: 1, x: 1 });
 });
+
+describe("headless modes", () => {
+	const SETTLE_MS = 300;
+
+	async function runSession(mode: string) {
+		memory.write(join(dir, "agent/context-total.json"), '{"footer":true}');
+		const ctx = ext.makeCtx({
+			mode,
+			sessionManager: { getSessionId: () => "lead", getEntries: () => [] } as any,
+			modelRegistry: { find: () => undefined } as any,
+			getContextUsage: () => undefined,
+		});
+		await ext.fire("session_start", {}, ctx);
+		await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
+		await ext.runCommand("context-total", "", ctx);
+		await ext.fire("session_shutdown", {}, ctx);
+		return { emitted: ext.pi.emitted, status: ctx.statuses, notices: ctx.notices };
+	}
+
+	test("footer, report and cleanup do nothing without the terminal UI", async () => {
+		for (const mode of ["rpc", "json", "print"]) {
+			const { emitted, status, notices } = await runSession(mode);
+			assert.deepEqual(emitted.filter(([event]) => event === "zentui:variable"), []);
+			assert.deepEqual(status, []);
+			assert.deepEqual(notices, []);
+		}
+	});
+
+});
