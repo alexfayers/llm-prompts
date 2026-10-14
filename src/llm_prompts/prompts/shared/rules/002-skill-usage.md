@@ -2,8 +2,10 @@
 
 ## Session Start
 
+{% if AGENT not in ["claude-code", "pi"] %}
 At the start of every new conversation, you **MUST** use the `session-start` skill before responding to the user's first message. Your first tool call in a new conversation MUST be invoking `session-start`, before any file read, edit, search, or other tool use, even when the request points straight at a specific file or action.
 
+{% endif %}
 A subagent (started by another agent) MUST NOT run `session-start`.
 
 ## Planning

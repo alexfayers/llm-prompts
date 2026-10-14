@@ -283,3 +283,22 @@ class TestPlanningRuleLinesAreClaudeCodeOnly:
 
     def test_pi_agent_teams_names_tower_do_patch(self) -> None:
         assert "tower_do_patch" in self._render("rules/agent-teams.md", "pi")
+
+
+class TestStartUpStepsAreHookDriven:
+    SHARED = Path(__file__).parent.parent / "src/llm_prompts/prompts/shared"
+
+    @pytest.mark.parametrize(
+        ("agent", "kept"), [("claude-code", False), ("pi", False), ("kiro", True)]
+    )
+    def test_only_legacy_agents_keep_the_start_up_instructions(
+        self, agent: str, kept: bool
+    ) -> None:
+        def render(source: str) -> str:
+            text = (self.SHARED / source).read_text(encoding="utf-8")
+            return substitute_variables(text, {"AGENT": agent})
+
+        assert ("first tool call" in render("rules/002-skill-usage.md")) is kept
+        assert (
+            "`read_graph(project=" in render("skills/session-start/SKILL.md")
+        ) is kept

@@ -47,6 +47,10 @@ Workflows are markdown files that define multi-step procedures the agent can fol
 
 Skills are directories containing a `SKILL.md` file that the agent reads before performing a specific action. They provide just-in-time guidance for tasks like git operations, session management, or plan refinement. Skills are installed as symlinks, so edits to the source are picked up immediately.
 
+A skill's `metadata` frontmatter can make the cline-hooks `SkillStartupBlocks` plugin inject its text as a `Startup block` at the fresh start of a main session:
+
+- `inject_at_start: true` injects the skill.
+
 ### Agents
 
 Agents are custom subagent definitions - single markdown files with YAML frontmatter (`name`, `description`, `model`, etc.) that define a specialised subagent. Agents in `shared/agents/` are installed for `claude-code` and `pi`; agents in `claude-code/agents/` are installed for `claude-code`, and for `pi` when they ship with this repo. They are installed as files with template variables substituted; for `pi` they are written with pi's frontmatter keys and tool names.
