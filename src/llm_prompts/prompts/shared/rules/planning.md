@@ -73,3 +73,4 @@ Before plan mode, in order: Explore agents, one per independent dimension, for e
 - SHOULD spin up a fresh lead session per phase.
 - The plan's persisted state (plan-file status markers, a memory entity) MUST be what a fresh lead re-reads to resume, never state held only in the outgoing lead's conversation.
 - Before ending a lead session at a phase boundary, MUST confirm the finished phase's implementer reported back and its status is marked done, then stop.
+- In an unattended run, MUST persist memory, and write a fresh `HANDOFF.md` at each phase boundary and before any multi-agent loop (e.g. repeated `refine-plan` passes) - long running sessions may end without warning.
