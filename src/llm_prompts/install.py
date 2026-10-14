@@ -1,5 +1,6 @@
 """Install Cline and Copilot rules, workflows, skills, and prompts."""
 
+import hashlib
 import json
 import os
 import re
@@ -2144,6 +2145,25 @@ def _mcp_server_pattern(server: str, naming: _McpNaming) -> str:
     return f"{prefix[: naming.limit - _MCP_HASH_SUFFIX_LENGTH]}*"
 
 
+def _pi_mcp_tool_name(name: str) -> str:
+    """Return pi's name for an ``mcp__`` tool or ``mcp__<server>__*`` pattern; others unchanged.
+
+    An over-long exact name gets pi's hash suffix.
+    """
+    if not name.startswith("mcp__"):
+        return name
+    if name.endswith("__*"):
+        return _mcp_server_pattern(name[len("mcp__") : -len("__*")], _PI_MCP_NAMING)
+    sanitised = re.sub(r"[^A-Za-z0-9_*]", "_", name)
+    if len(sanitised) <= _PI_MCP_NAMING.limit or "*" in name:
+        return sanitised
+    server, _, tool = name[len("mcp__") :].partition("__")
+    digest = hashlib.sha256(f"{server}\0{tool}".encode()).hexdigest()[
+        : _MCP_HASH_SUFFIX_LENGTH - 1
+    ]
+    return f"{sanitised[: _PI_MCP_NAMING.limit - _MCP_HASH_SUFFIX_LENGTH]}_{digest}"
+
+
 def _pi_mcp_namespaces(server: str) -> dict[str, Any]:
     """Return the entry of a server in pi's ``mcp.json``, keyed by its tool namespace."""
     entry = _read_mcp_servers(_pi_agent_dir() / "mcp.json", "mcp.json").get(server, {})
@@ -2355,17 +2375,17 @@ def _herdsman_agent_content(
         elif key == "effort":
             lines.append(f"thinking: {value}")
         elif key in _HERDSMAN_ARRAY_KEYS:
-            names = [name.strip() for name in value.split(",")]
+            names = [
+                _pi_mcp_tool_name(name)
+                for name in (name.strip() for name in value.split(","))
+            ]
             if key != "allowed_subagents":
                 names = [
                     herdsman
                     for name in names
                     for herdsman in tool_names.get(
                         name,
-                        [name]
-                        if name.islower()
-                        and (key == "disallowedTools" or not name.startswith("mcp__"))
-                        else [],
+                        [name] if name.islower() or name.startswith("mcp__") else [],
                     )
                 ]
             if key == "disallowedTools":
