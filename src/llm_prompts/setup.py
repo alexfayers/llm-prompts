@@ -69,6 +69,15 @@ _UPDATE_INSTRUCTION = (
 )
 
 
+SHIPPED_PATHS = [
+    "src",
+    "pyproject.toml",
+    "uv.lock",
+    "package.json",
+    "package-lock.json",
+]
+
+
 def _format_update_message(
     name: str,
     subjects: list[str] | None,
@@ -233,7 +242,7 @@ def _remote_commit_subjects(
                     file=sys.stderr,
                 )
                 return None
-            return _commit_subjects_between(Path(tmp), from_sha, to_sha)
+            return _commit_subjects_between(Path(tmp), from_sha, to_sha, SHIPPED_PATHS)
     except subprocess.TimeoutExpired:
         print(
             f"Warning: timed out cloning {git_url} for commit subjects",

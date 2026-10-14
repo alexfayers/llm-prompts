@@ -21,6 +21,7 @@ from .install import AGENT_CLASSES, prompts_dir
 from .setup import (
     _UPDATE_INSTRUCTION,
     GIT_TIMEOUT,
+    SHIPPED_PATHS,
     _commit_subjects_between,
     _extract_git_url,
     _format_update_message,
@@ -240,6 +241,8 @@ def _remote_source_messages(name: str, source: str) -> list[str]:
         return []
 
     subjects = _remote_commit_subjects(git_url, installed_commit, remote_commit)
+    if subjects == []:
+        return []
     return _format_update_message(name, subjects, installed_commit, remote_commit)
 
 
@@ -288,7 +291,10 @@ def _local_source_messages(name: str, source: str) -> list[str]:
     if count == 0:
         return []
 
-    return _format_update_message(name, _commit_subjects_between(repo, "HEAD", "@{u}"))
+    subjects = _commit_subjects_between(repo, "HEAD", "@{u}", SHIPPED_PATHS)
+    if subjects == []:
+        return []
+    return _format_update_message(name, subjects)
 
 
 def _prompts_prefix(repo: Path) -> str | None:
