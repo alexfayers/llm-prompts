@@ -12,6 +12,11 @@ function isBlocked(pr) {
   return pr.reviewDecision === 'CHANGES_REQUESTED';
 }
 
+function isApproved(pr) {
+  const states = (pr.latestOpinionatedReviews?.nodes ?? []).map(({ state }) => state);
+  return states.includes('APPROVED') && !states.includes('CHANGES_REQUESTED');
+}
+
 function resolveStatus(pr) {
   if (pr.state !== 'OPEN') {
     return STATUS_OPTION.DONE;
@@ -19,14 +24,14 @@ function resolveStatus(pr) {
   if (pr.isDraft) {
     return STATUS_OPTION.IN_PROGRESS;
   }
-  return pr.reviewDecision === 'APPROVED' ? STATUS_OPTION.APPROVED : STATUS_OPTION.REVIEW;
+  return isApproved(pr) ? STATUS_OPTION.APPROVED : STATUS_OPTION.REVIEW;
 }
 
 async function fetchPr(github, { owner, repo, number }) {
   const { repository } = await github.graphql(
     `query($owner: String!, $repo: String!, $number: Int!) {
       repository(owner: $owner, name: $repo) {
-        pullRequest(number: $number) { id number state isDraft reviewDecision headRefOid labels(first: 50) { nodes { name } } }
+        pullRequest(number: $number) { id number state isDraft reviewDecision latestOpinionatedReviews(first: 50) { nodes { state } } headRefOid labels(first: 50) { nodes { name } } }
       }
     }`,
     { owner, repo, number }
