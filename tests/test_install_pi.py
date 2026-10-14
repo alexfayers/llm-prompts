@@ -20,6 +20,7 @@ from llm_prompts.install import (
     _linked_content,
     _parse_roles,
     _requirements_met,
+    _split_npm_source,
     get_managed_dirs,
     prompts_dir,
     uninstall,
@@ -1973,3 +1974,96 @@ class TestPiPackageInstall:
         _, failed = self._run(tmp_path, "npm:acme-ext@1.0.0", returncode=1)
 
         assert failed
+
+
+class TestPiPackageRemoval:
+    def _install(
+        self, tmp_path: Path, packages: list[str], *, broken: str = ""
+    ) -> list[list[str]]:
+        """Install the given overlay packages with a fake pi whose `broken` command fails, returning the pi commands run."""
+        home = tmp_path / "home"
+        home.mkdir(exist_ok=True)
+        calls: list[list[str]] = []
+
+        def run(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+            calls.append(cmd)
+            name, version = _split_npm_source(cmd[2])
+            package = home / ".pi" / "agent" / "npm" / "node_modules" / name
+            if cmd[1] == broken:
+                pass
+            elif cmd[1] == "remove":
+                shutil.rmtree(package)
+            else:
+                package.mkdir(parents=True, exist_ok=True)
+                (package / "package.json").write_text(json.dumps({"version": version}))
+            return subprocess.CompletedProcess(cmd, int(cmd[1] == broken))
+
+        with patch("llm_prompts.install.subprocess.run", side_effect=run):
+            _install(
+                home,
+                tmp_path / "installed.json",
+                [_overlay(tmp_path / "overlay", packages)],
+                pi="/usr/bin/pi",
+            )
+        return calls
+
+    def test_dropped_owned_package_is_removed_until_gone(self, tmp_path: Path) -> None:
+        self._install(tmp_path, ["npm:acme-ext"])
+        with patch(
+            "llm_prompts.size_guard.resolve_skip_set",
+            return_value=({}, frozenset({"pi"})),
+        ):
+            self._install(tmp_path, [])
+        self._install(tmp_path, [], broken="remove")
+
+        calls = self._install(tmp_path, [])
+
+        assert ["/usr/bin/pi", "remove", "npm:acme-ext"] in calls
+
+    @pytest.mark.parametrize(
+        ("listed", "disk", "source", "broken"),
+        [
+            (True, False, "npm:acme-ext", ""),
+            (True, False, "npm:acme-ext@1.0.0", ""),
+            (False, True, "npm:acme-ext", ""),
+            (False, True, "npm:acme-ext@1.0.0", ""),
+            (False, False, "npm:acme-ext", "install"),
+        ],
+    )
+    def test_dropped_unowned_package_is_only_unlisted(
+        self, tmp_path: Path, listed: bool, disk: bool, source: str, broken: str
+    ) -> None:
+        settings = tmp_path / "home" / ".pi" / "agent" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        if listed:
+            settings.write_text(json.dumps({"packages": ["npm:acme-ext"]}))
+        if disk:
+            _installed_package(tmp_path / "home", "acme-ext", "0.9.0")
+        self._install(tmp_path, [source], broken=broken)
+
+        calls = self._install(tmp_path, [])
+
+        assert not [c for c in calls if c[1] == "remove"]
+
+    def test_uninstall_removes_only_owned_packages(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _installed_package(tmp_path / "home", "user-ext", None)
+        self._install(tmp_path, ["npm:acme-ext", "npm:user-ext"])
+        calls: list[list[str]] = []
+
+        with (
+            patch("llm_prompts.install.Path.home", return_value=tmp_path / "home"),
+            patch("llm_prompts.install.shutil.which", return_value="/usr/bin/pi"),
+            patch("llm_prompts.manifest.MANIFEST_PATH", tmp_path / "installed.json"),
+            patch(
+                "llm_prompts.install.subprocess.run",
+                side_effect=lambda cmd, **_: calls.append(cmd),
+            ),
+        ):
+            uninstall(["pi"])
+
+        removed = [c[2] for c in calls if c[1] == "remove"]
+        assert "npm:acme-ext" in removed
+        assert "npm:user-ext" not in removed
+        assert "`pi remove npm:acme-ext`" in capsys.readouterr().err
