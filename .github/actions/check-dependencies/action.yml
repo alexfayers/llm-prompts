@@ -1,12 +1,17 @@
 name: Check dependencies
 description: Set a pending dependencies commit status and the blocked label while "Depends on" or "Blocked by" links are open.
+inputs:
+  projects-token:
+    description: Token that can search and dispatch events to the other repos, used to recheck their dependents when a PR closes.
+    required: false
 runs:
   using: composite
   steps:
     - uses: actions/github-script@v9
       env:
         ACTION_PATH: ${{ github.action_path }}
+        PROJECTS_TOKEN: ${{ inputs.projects-token }}
       with:
         script: |
           const { check } = require(`${process.env.ACTION_PATH}/check-dependencies.js`)
-          await check({ github, context, core })
+          await check({ github, context, core, getOctokit, token: process.env.PROJECTS_TOKEN })
