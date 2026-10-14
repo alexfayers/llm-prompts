@@ -1456,8 +1456,11 @@ class TestRunExtensionFactoryCheck:
     ) -> None:
         extensions = tmp_path / "pi" / "extensions"
         extensions.mkdir(parents=True)
-        (extensions / "good.ts").write_text("export default function () {}\n")
+        (extensions / "good.ts").write_text(
+            "// Summary.\nexport default function () {}\n"
+        )
         (extensions / "bad.ts").write_text("export function factory() {}\n")
+        (extensions / "bare.ts").write_text("export default function () {}\n")
 
         with (
             patch("llm_prompts.cli._size_guard_roots", return_value=[tmp_path]),
@@ -1467,13 +1470,16 @@ class TestRunExtensionFactoryCheck:
 
         assert exc_info.value.code == 1
         out = capsys.readouterr().out
-        assert "bad.ts" in out
+        assert "bad.ts: no default factory function" in out
+        assert "bare.ts: missing summary header" in out
         assert "good.ts" not in out
 
     def test_all_extensions_with_default_factory_passes(self, tmp_path: Path) -> None:
         extensions = tmp_path / "pi" / "extensions"
         extensions.mkdir(parents=True)
-        (extensions / "good.ts").write_text("export default function () {}\n")
+        (extensions / "good.ts").write_text(
+            "// Summary.\nexport default function () {}\n"
+        )
 
         with patch("llm_prompts.cli._size_guard_roots", return_value=[tmp_path]):
             _run_extension_factory_check()

@@ -166,13 +166,20 @@ def _run_size_check() -> None:
 
 
 def _run_extension_factory_check() -> None:
-    """Report pi extensions lacking a default factory function and exit 1 if any."""
-    from .extension_factories import find_missing_default_factory
+    """Report pi extensions lacking a default factory or summary header and exit 1 if any."""
+    from .extension_factories import (
+        find_missing_default_factory,
+        find_missing_summary_header,
+    )
 
-    missing = find_missing_default_factory(_size_guard_roots())
+    roots = _size_guard_roots()
+    missing = find_missing_default_factory(roots)
+    unsummarised = find_missing_summary_header(roots)
     for extension in missing:
         print(f"{extension}: no default factory function")
-    if missing:
+    for extension in unsummarised:
+        print(f"{extension}: missing summary header")
+    if missing or unsummarised:
         sys.exit(1)
 
 
@@ -750,7 +757,7 @@ def main() -> int | None:
     )
     subparsers.add_parser(
         "check",
-        help="Check prompt sizes against size_limits.py's thresholds and pi extensions for default factories.",
+        help="Check prompt sizes against size_limits.py's thresholds and pi extensions for default factories and summary headers.",
     )
     size_report_parser = subparsers.add_parser(
         "size-report",

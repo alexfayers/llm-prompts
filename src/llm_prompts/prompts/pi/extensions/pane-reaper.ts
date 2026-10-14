@@ -1,5 +1,10 @@
 // Closes finished agent panes in Herdr and reports merged worktrees and other orphans.
-// Adds a /pane-reaper command.
+// Commands: /pane-reaper on|off|close <pane-id>
+// Config: pane-reaper.json keys enabled, graceSeconds, intervalSeconds
+// Env: HERDR_ENV (1 when running inside Herdr)
+// Env: PI_HERDSMAN_MAILBOX (set for managed agents, which never run the periodic check)
+// Env: PI_SUBAGENT_CHILD (set for subagents, which never run the periodic check)
+// Env: PI_SESSION_ID (own session id, kept out of the sweep)
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from llm_prompts.extension_factories import find_missing_default_factory
+from llm_prompts.extension_factories import (
+    find_missing_default_factory,
+    find_missing_summary_header,
+)
 
 
 def _write_extension(root: Path, name: str, source: str) -> Path:
@@ -24,3 +27,12 @@ def test_lists_only_extensions_without_a_default_factory(tmp_path: Path) -> None
 
 def test_root_without_extensions_dir_is_ignored(tmp_path: Path) -> None:
     assert find_missing_default_factory([tmp_path]) == []
+
+
+def test_lists_only_extensions_not_starting_with_a_summary(tmp_path: Path) -> None:
+    _write_extension(tmp_path, "good", "// Does a thing.\n// Env: X (y)\n")
+    no_comment = _write_extension(tmp_path, "bare", "import x from 'x';\n")
+    env_first = _write_extension(tmp_path, "env", "// Env: X (y)\n")
+    empty = _write_extension(tmp_path, "empty", "// \n// Does a thing.\n")
+
+    assert find_missing_summary_header([tmp_path]) == [no_comment, empty, env_first]

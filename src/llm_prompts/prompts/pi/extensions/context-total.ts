@@ -1,5 +1,6 @@
 // Shows live context size and cost for the session and its agents.
-// Adds a /context-total command and a footer variable.
+// Commands: /context-total [footer on|off]
+// Config: context-total.json keys footer, intervalSeconds
 import fs from "node:fs";
 import path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";

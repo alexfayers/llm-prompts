@@ -1,4 +1,5 @@
-// Switches Python projects to the ty or ruff language server when installed and no Python server is configured.
+// Uses installed ty or ruff when pyright is absent and no Python server is configured.
+// Config: .pi-lsp.json keys servers
 import { accessSync, constants, readFileSync } from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
