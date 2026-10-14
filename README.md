@@ -6,7 +6,7 @@
 |------------------------------------------------------------------------------ | -------: | -------: | ------: | --------: |
 | src/llm\_prompts/\_\_init\_\_.py                                              |        0 |        0 |    100% |           |
 | src/llm\_prompts/batching.py                                                  |      138 |        1 |     99% |       129 |
-| src/llm\_prompts/cli.py                                                       |      479 |       71 |     85% |85-86, 110-123, 217-218, 307-308, 436, 439, 488, 563-565, 601-603, 613-616, 635-644, 828-848, 867-869, 872-878, 881-884, 887-900, 909, 911-916, 919-920, 931-935, 1017-1018, 1023 |
+| src/llm\_prompts/cli.py                                                       |      489 |       71 |     85% |87-88, 112-125, 219-220, 322-323, 451, 454, 503, 582-584, 620-622, 632-635, 654-663, 847-867, 886-888, 891-897, 900-903, 906-919, 928, 930-935, 938-939, 950-954, 1036-1037, 1042 |
 | src/llm\_prompts/collection\_size.py                                          |      115 |        5 |     96% |178, 238-239, 389, 446 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/contribute.py                                                |      875 |       12 |     99% |149, 176, 318, 1141, 1166, 1366, 1383-1384, 1474-1476, 1817 |
@@ -28,7 +28,7 @@
 | src/llm\_prompts/prompts/shared/skills/tidy-code/check\_reduction.py          |       42 |        1 |     98% |        97 |
 | src/llm\_prompts/prompts/shared/skills/todos/find\_todos.py                   |       44 |        7 |     84% |96-98, 103-105, 109 |
 | src/llm\_prompts/render\_template.py                                          |      182 |       15 |     92% |149, 318, 454-455, 464-482, 494-498, 502 |
-| src/llm\_prompts/setup.py                                                     |      319 |       56 |     82% |212-241, 283-286, 293-294, 334, 337, 358-359, 398-399, 548, 574-586, 596, 607-613, 643-644, 647, 676-678, 697-698, 710-712 |
+| src/llm\_prompts/setup.py                                                     |      319 |       56 |     82% |215-244, 286-289, 296-297, 337, 340, 361-362, 401-402, 551, 577-589, 599, 610-616, 646-647, 650, 679-681, 700-701, 713-715 |
 | src/llm\_prompts/size\_guard.py                                               |      351 |       11 |     97% |242-243, 350, 421-423, 458, 480, 484-486 |
 | src/llm\_prompts/size\_limits.py                                              |       61 |        1 |     98% |       138 |
 | src/llm\_prompts/size\_report.py                                              |      172 |        3 |     98% |134, 188, 190 |
@@ -39,7 +39,7 @@
 | tests/test\_cd.py                                                             |       38 |        0 |    100% |           |
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
 | tests/test\_check\_repos\_script.py                                           |       67 |        0 |    100% |           |
-| tests/test\_cli.py                                                            |      790 |        0 |    100% |           |
+| tests/test\_cli.py                                                            |      798 |        0 |    100% |           |
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
 | tests/test\_codemode\_error\_header.py                                        |       45 |        1 |     98% |        28 |
 | tests/test\_conftest.py                                                       |       60 |        0 |    100% |           |
@@ -72,14 +72,14 @@
 | tests/test\_render\_template.py                                               |      126 |        0 |    100% |           |
 | tests/test\_retrospective\_extract.py                                         |       90 |        0 |    100% |           |
 | tests/test\_rewrite\_range\_script.py                                         |       68 |        0 |    100% |           |
-| tests/test\_setup.py                                                          |      269 |        0 |    100% |           |
+| tests/test\_setup.py                                                          |      266 |        0 |    100% |           |
 | tests/test\_size\_guard.py                                                    |       93 |        0 |    100% |           |
 | tests/test\_size\_report.py                                                   |      190 |        0 |    100% |           |
 | tests/test\_squash\_subject.py                                                |        7 |        0 |    100% |           |
 | tests/test\_todos\_script.py                                                  |       87 |        0 |    100% |           |
 | tests/test\_tower\_do\_patch.py                                               |       78 |        1 |     99% |        28 |
 | tests/test\_uninstall.py                                                      |      118 |        0 |    100% |           |
-| **TOTAL**                                                                     | **18610** |  **552** | **97%** |           |
+| **TOTAL**                                                                     | **18625** |  **552** | **97%** |           |
 
 
 ## Setup coverage badge
