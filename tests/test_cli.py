@@ -1191,6 +1191,17 @@ class TestCollectSourcesOverlayPrecedence:
 
         assert sources["agents/collide.md"].read_text() == "OVERLAY\n"
 
+    def test_last_overlay_wins_for_extensions(self, tmp_path: Path) -> None:
+        dirs = [tmp_path / "base", tmp_path / "overlay"]
+        for root in dirs:
+            (root / "pi" / "extensions").mkdir(parents=True)
+            (root / "pi" / "extensions" / "e.ts").write_text(root.name)
+        with (
+            patch("llm_prompts.cli._get_root_dir", return_value=dirs[0]),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=dirs[1:]),
+        ):
+            assert _collect_sources("pi")["extensions/e.ts"].read_text() == "overlay"
+
 
 class TestDetectStaleLocalTools:
     def _write_tool(self, tmp_path: Path, name: str, content: str) -> dict[str, str]:
