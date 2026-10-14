@@ -57,7 +57,7 @@
 | tests/test\_install\_pi.py                                                    |      997 |        0 |    100% |           |
 | tests/test\_links.py                                                          |      160 |        0 |    100% |           |
 | tests/test\_listing.py                                                        |       48 |        0 |    100% |           |
-| tests/test\_lsp\_defaults.py                                                  |       64 |        1 |     98% |        29 |
+| tests/test\_lsp\_defaults.py                                                  |       65 |        1 |     98% |        29 |
 | tests/test\_main\_sync.py                                                     |      243 |        0 |    100% |           |
 | tests/test\_manifest.py                                                       |       73 |        0 |    100% |           |
 | tests/test\_pane\_reaper.py                                                   |      460 |        1 |     99% |        71 |
@@ -78,7 +78,7 @@
 | tests/test\_todos\_script.py                                                  |       87 |        0 |    100% |           |
 | tests/test\_tower\_do\_patch.py                                               |       78 |        1 |     99% |        28 |
 | tests/test\_uninstall.py                                                      |      118 |        0 |    100% |           |
-| **TOTAL**                                                                     | **18489** |  **552** | **97%** |           |
+| **TOTAL**                                                                     | **18490** |  **552** | **97%** |           |
 
 
 ## Setup coverage badge
