@@ -88,17 +88,20 @@ def _sent_after_prompts(
 
 
 class TestPythonFallback:
-    """Tests for switching Python to ty when pyright is missing."""
+    """Tests for switching Python to ty or ruff when pyright is missing."""
 
-    def test_ty_replaces_missing_pyright_once_per_session(self, tmp_path: Path) -> None:
-        ty_only = _binary_dir(tmp_path, "bin", "ty")
+    @pytest.mark.parametrize("server", ["ty", "ruff"])
+    def test_fallback_replaces_missing_pyright_once_per_session(
+        self, tmp_path: Path, server: str
+    ) -> None:
+        only = _binary_dir(tmp_path, "bin", server)
         sent = _sent_after_prompts(
             tmp_path,
-            [ty_only],
+            [only],
             events=("session_start", "before_agent_start", "before_agent_start"),
         )
         assert sent == [
-            ["/lsp-config python ty server", {"expandPromptTemplates": True}]
+            [f"/lsp-config python {server} server", {"expandPromptTemplates": True}]
         ]
 
     def test_nothing_is_sent_when_pyright_is_installed(self, tmp_path: Path) -> None:
