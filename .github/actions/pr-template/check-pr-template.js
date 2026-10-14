@@ -119,16 +119,20 @@ async function checkYappy({ github, context }) {
     }
   }
 
-  if (tier) {
-    const existing = await findStickyComment(github, context, YAPPY_MARKER);
-    await github.rest.issues.addLabels({ ...issue, labels: [tier.label] });
-    await upsertStickyComment(
-      github,
-      context,
-      YAPPY_MARKER,
-      `This PR is ${tier.label}.\n\n- What + Why: ${words} words (${tier.label} above ${tier.words})\n- Added lines: ${added.code} code, ${added.test} test (${tier.label} above ${tier.lines} total, lockfiles excluded)`,
-      existing
-    );
+  const moreTests = added.test > added.code;
+  const existing = await findStickyComment(github, context, YAPPY_MARKER);
+  if (tier || moreTests) {
+    const lines = [];
+    if (tier) {
+      await github.rest.issues.addLabels({ ...issue, labels: [tier.label] });
+      lines.push(`This PR is ${tier.label}.\n`, `- What + Why: ${words} words (${tier.label} above ${tier.words})`);
+    }
+    const tierSuffix = tier ? `${tier.label} above ${tier.lines} total, ` : '';
+    lines.push(`- Added lines: ${added.code} code, ${added.test} test (${tierSuffix}lockfiles excluded)`);
+    if (moreTests) lines.push('- More test lines than code is kinda CRAZY');
+    await upsertStickyComment(github, context, YAPPY_MARKER, lines.join('\n'), existing);
+  } else if (existing) {
+    await upsertStickyComment(github, context, YAPPY_MARKER, 'This PR is no longer yappy.', existing);
   }
 }
 

@@ -66,37 +66,57 @@ Added a new widget.
   assert.match(issues[0], /## Rationale/);
 });
 
-test('check labels the PR with the worst yappy tier and posts one comment', async () => {
+const lines = (prefix, count) => Array.from({ length: count }, (_, i) => `+${prefix} ${i}`).join('\n');
+const MARKER = '<!-- pr-yappy-check -->\n';
+
+async function runCheck({ files, body = '## What\n\nA.\n\n## Why\n\nB.', labels = [], comments = [] }) {
   const calls = [];
-  const files = [
-    { filename: 'src/app.js', patch: Array.from({ length: 150 }, (_, i) => `+code ${i}`).join('\n') + '\n+moved line\n+\n+}' },
-    { filename: 'src/old.js', patch: '-moved line\n-}' },
-    { filename: 'tests/app.test.js', patch: Array.from({ length: 60 }, (_, i) => `+test ${i}`).join('\n') },
-    { filename: 'package-lock.json', patch: '+lock' },
-  ];
+  const record = (name, key) => async (args) => calls.push([name, args[key]]);
   const github = {
-    paginate: async (method) => (method === github.rest.pulls.listFiles ? files : []),
+    paginate: async (method) => (method === github.rest.pulls.listFiles ? files : comments),
     rest: {
       pulls: { listFiles: () => {} },
       issues: {
-        removeLabel: async ({ name }) => calls.push(['removeLabel', name]),
-        addLabels: async ({ labels }) => calls.push(['addLabels', labels]),
-        createComment: async ({ body }) => calls.push(['createComment', body]),
+        removeLabel: record('removeLabel', 'name'),
+        addLabels: record('addLabels', 'labels'),
+        createComment: record('createComment', 'body'),
+        updateComment: record('updateComment', 'body'),
       },
     },
   };
-  const pr = {
-    number: 7,
-    labels: [{ name: 'very yappy' }],
-    body: `## What\n\n${'word '.repeat(130)}\n\n## Why\n\nBecause.`,
-  };
-  const context = { repo: { owner: 'o', repo: 'r' }, payload: { pull_request: pr } };
-  const core = { warning() {}, setFailed() {} };
+  const pull_request = { number: 7, labels: labels.map((name) => ({ name })), body };
+  await check({ github, context: { repo: { owner: 'o', repo: 'r' }, payload: { pull_request } }, core: {} });
+  return calls;
+}
 
-  await check({ github, context, core });
+test('check swaps the yappy label and posts one comment with the tier suffix', async () => {
+  const files = [
+    { filename: 'src/app.js', patch: `${lines('code', 150)}\n+moved line\n+\n+}` },
+    { filename: 'src/old.js', patch: '-moved line\n-}' },
+    { filename: 'tests/app.test.js', patch: lines('test', 60) },
+    { filename: 'package-lock.json', patch: '+lock' },
+  ];
+  const body = `## What\n\n${'word '.repeat(130)}\n\n## Why\n\nBecause.`;
+  const calls = await runCheck({ files, body, labels: ['very yappy'] });
 
   assert.deepEqual(calls.slice(0, 2), [['removeLabel', 'very yappy'], ['addLabels', ['yappy']]]);
   assert.equal(calls.length, 3);
   assert.match(calls[2][1], /131 words/);
-  assert.match(calls[2][1], /152 code, 60 test/);
+  assert.match(calls[2][1], /152 code, 60 test \(yappy above 200 total, lockfiles excluded\)/);
+});
+
+test('check warns about more test lines than code without a tier', async () => {
+  const files = [{ filename: 'src/app.js', patch: '+code' }, { filename: 'tests/app.test.js', patch: lines('test', 2) }];
+  const calls = await runCheck({ files });
+
+  assert.deepEqual(calls.map(([name]) => name), ['createComment']);
+  assert.match(calls[0][1], /1 code, 2 test \(lockfiles excluded\)/);
+  assert.match(calls[0][1], /More test lines than code is kinda CRAZY/);
+});
+
+test('check clears an existing warning once the PR is no longer yappy', async () => {
+  const files = [{ filename: 'src/app.js', patch: lines('code', 2) }];
+  const calls = await runCheck({ files, comments: [{ id: 1, body: `${MARKER}warning` }] });
+
+  assert.deepEqual(calls, [['updateComment', `${MARKER}This PR is no longer yappy.`]]);
 });
