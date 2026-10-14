@@ -22,7 +22,11 @@ from llm_prompts.install import (
     get_managed_dirs,
 )
 from llm_prompts.install import main as install_main
-from llm_prompts.render_template import parse_frontmatter, split_frontmatter
+from llm_prompts.render_template import (
+    parse_frontmatter,
+    resolve_frontmatter,
+    split_frontmatter,
+)
 
 
 def _make_agent(directory: Path, name: str, body: str = "body") -> Path:
@@ -702,10 +706,10 @@ class TestClaudeCodeAgentsInstallLayout:
     ) -> None:
         agents_dir = claude_home / ".claude" / "agents"
 
-        _, frontmatter = parse_frontmatter(
+        lines, _ = split_frontmatter(
             (agents_dir / "surveyor-sonnet-medium.md").read_text(encoding="utf-8")
-        )
-        disallowed = frontmatter["disallowedTools"]
+        ) or ([], "")
+        disallowed = (resolve_frontmatter(lines) or {})["disallowedTools"]
         assert "Write" in disallowed
         assert "Edit" in disallowed
         assert "NotebookEdit" in disallowed

@@ -1167,7 +1167,7 @@ class TestHerdsmanAgents:
         assert coordinator["systemPromptMode"] == "append"
 
         reasoner = _frontmatter(agents / "reasoner-opus-high.md")
-        assert reasoner["excludeTools"] == ["write", "edit"]
+        assert reasoner["excludeTools"][:2] == ["write", "edit"]
         worker = _frontmatter(agents / "worker-sonnet-low.md")
         assert worker["excludeTools"][0] == "agent"
         checker = _frontmatter(agents / "eagle-vision-checker-haiku-low.md")

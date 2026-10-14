@@ -1,7 +1,26 @@
 ---
 name: worker
 description: Generic mechanical executor for well-specified, no-judgment tasks (apply an edit pattern, run a bounded search, execute a decided step).
-disallowedTools: Agent{{ ", ask_user, plan_mode_question, plan_mode_complete, source_check, lsp_rename, lsp_code_actions, lsp_completions, process" if AGENT == "pi" else "" }}
+disallowedTools: >-
+  Agent,{{ " ask_user, plan_mode_question, plan_mode_complete, source_check, lsp_rename, lsp_code_actions, lsp_completions, process," if AGENT == "pi" else "" }}
+  mcp__memory__create_entities,
+  mcp__memory__create_relations,
+  mcp__memory__delete_entity,
+  mcp__memory__delete_relation,
+  mcp__memory__delete_project,
+  mcp__memory__add_observations,
+  mcp__memory__delete_observations,
+  mcp__memory__edit_observation,
+  mcp__memory__set_entity_status,
+  mcp__memory__set_metadata,
+  mcp__memory__move_project_entities,
+  mcp__memory__merge_entities,
+  mcp__memory__merge_observations,
+  mcp__memory__restore_entity,
+  mcp__memory__trim_observations_to_outcome,
+  mcp__memory__rename_entity,
+  mcp__memory__move_entity_cross_scope,
+  mcp__memory__vote
 {% if AGENT == "pi" %}
 pi_skills: git-usage, tdd
 {% endif %}
