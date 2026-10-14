@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { hasBreakingChange, labelBlocked } = require('./label-pr.js');
+const { hasBreakingChange, labelBlocked, labelAutoRebase } = require('./label-pr.js');
 
 test('bang before colon marks breaking regardless of body', () => {
   assert.equal(hasBreakingChange('feat!: drop old api', ''), true);
@@ -90,4 +90,29 @@ test('existing blocked label does not stop labelling', async () => {
   await labelBlocked({ github, context, core });
   assert.deepEqual(calls.at(-1), ['addLabels', ['blocked']]);
   assert.equal(calls.some(([kind]) => kind === 'warning'), false);
+});
+
+function rebaseFixture({ status = 'success', labels = [], draft = false, autoMerge = true }) {
+  const calls = [];
+  const pr = { number: 7, draft, auto_merge: autoMerge && {}, head: { sha: 'abc' }, labels: labels.map((name) => ({ name })) };
+  const rest = {
+    pulls: { get: async () => ({ data: pr }) },
+    repos: { getCombinedStatusForRef: async () => ({ data: { statuses: [{ context: 'codeowner-review', state: status }] } }) },
+    issues: { createLabel: async () => calls.push('createLabel'), addLabels: async (args) => calls.push(args.labels) },
+  };
+  return { github: { rest }, context: { repo: { owner: 'o', repo: 'r' }, payload: { pull_request: { number: 7 } } }, calls };
+}
+
+test('approved ready auto-merge PR gets the auto-rebase label', async () => {
+  const f = rebaseFixture({});
+  await labelAutoRebase(f);
+  assert.deepEqual(f.calls, ['createLabel', ['auto-rebase']]);
+});
+
+test('PR missing any auto-rebase condition is left alone', async () => {
+  for (const options of [{ status: 'pending' }, { labels: ['blocked'] }, { draft: true }, { autoMerge: false }, { labels: ['auto-rebase'] }]) {
+    const f = rebaseFixture(options);
+    await labelAutoRebase(f);
+    assert.deepEqual(f.calls, [], JSON.stringify(options));
+  }
 });
