@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">1493 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">1302<span class="text"> run</span></button>
+            <span class="text">1491 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">1300<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">191<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">2<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_e0ac35ffd7a69d64_links_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-13 23:22 +0000
+            created at 2026-10-14 08:19 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -1997,17 +1997,17 @@
     <p class="run"><span class="n"><a id="t1915" href="#t1915">1915</a></span><span class="t">            <span class="nam">lines</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="fst">f&quot;</span><span class="fst">thinking: </span><span class="op">{</span><span class="nam">value</span><span class="op">}</span><span class="fst">&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1916" href="#t1916">1916</a></span><span class="t">        <span class="key">elif</span> <span class="nam">key</span> <span class="key">in</span> <span class="nam">_HERDSMAN_ARRAY_KEYS</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1917" href="#t1917">1917</a></span><span class="t">            <span class="nam">names</span> <span class="op">=</span> <span class="op">[</span><span class="nam">name</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span> <span class="key">for</span> <span class="nam">name</span> <span class="key">in</span> <span class="nam">value</span><span class="op">.</span><span class="nam">split</span><span class="op">(</span><span class="str">&quot;,&quot;</span><span class="op">)</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1918" href="#t1918">1918</a></span><span class="t">            <span class="key">if</span> <span class="nam">key</span> <span class="op">==</span> <span class="str">&quot;disallowedTools&quot;</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1918" href="#t1918">1918</a></span><span class="t">            <span class="key">if</span> <span class="nam">key</span> <span class="op">!=</span> <span class="str">&quot;allowed_subagents&quot;</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1919" href="#t1919">1919</a></span><span class="t">                <span class="nam">names</span> <span class="op">=</span> <span class="op">[</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t1920" href="#t1920">1920</a></span><span class="t">                    <span class="nam">herdsman</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t1921" href="#t1921">1921</a></span><span class="t">                    <span class="key">for</span> <span class="nam">name</span> <span class="key">in</span> <span class="nam">names</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t1922" href="#t1922">1922</a></span><span class="t">                    <span class="key">for</span> <span class="nam">herdsman</span> <span class="key">in</span> <span class="nam">tool_names</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1923" href="#t1923">1923</a></span><span class="t">                        <span class="nam">name</span><span class="op">,</span> <span class="op">[</span><span class="nam">name</span><span class="op">]</span> <span class="key">if</span> <span class="nam">name</span><span class="op">.</span><span class="nam">islower</span><span class="op">(</span><span class="op">)</span> <span class="key">else</span> <span class="op">[</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1924" href="#t1924">1924</a></span><span class="t">                    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1925" href="#t1925">1925</a></span><span class="t">                <span class="op">]</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1926" href="#t1926">1926</a></span><span class="t">            <span class="key">elif</span> <span class="nam">key</span> <span class="op">!=</span> <span class="str">&quot;allowed_subagents&quot;</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1927" href="#t1927">1927</a></span><span class="t">                <span class="nam">names</span> <span class="op">=</span> <span class="op">[</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1928" href="#t1928">1928</a></span><span class="t">                    <span class="nam">herdsman</span> <span class="key">for</span> <span class="nam">name</span> <span class="key">in</span> <span class="nam">names</span> <span class="key">for</span> <span class="nam">herdsman</span> <span class="key">in</span> <span class="nam">tool_names</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="nam">name</span><span class="op">,</span> <span class="op">[</span><span class="op">]</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1923" href="#t1923">1923</a></span><span class="t">                        <span class="nam">name</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1924" href="#t1924">1924</a></span><span class="t">                        <span class="op">[</span><span class="nam">name</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1925" href="#t1925">1925</a></span><span class="t">                        <span class="key">if</span> <span class="nam">name</span><span class="op">.</span><span class="nam">islower</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1926" href="#t1926">1926</a></span><span class="t">                        <span class="key">and</span> <span class="op">(</span><span class="nam">key</span> <span class="op">==</span> <span class="str">&quot;disallowedTools&quot;</span> <span class="key">or</span> <span class="key">not</span> <span class="nam">name</span><span class="op">.</span><span class="nam">startswith</span><span class="op">(</span><span class="str">&quot;mcp__&quot;</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1927" href="#t1927">1927</a></span><span class="t">                        <span class="key">else</span> <span class="op">[</span><span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1928" href="#t1928">1928</a></span><span class="t">                    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t1929" href="#t1929">1929</a></span><span class="t">                <span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1930" href="#t1930">1930</a></span><span class="t">            <span class="key">if</span> <span class="nam">names</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1931" href="#t1931">1931</a></span><span class="t">                <span class="nam">lines</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
@@ -3632,7 +3632,7 @@
             <a class="nav" href="z_e0ac35ffd7a69d64_links_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-13 23:22 +0000
+            created at 2026-10-14 08:19 +0000
         </p>
     </div>
 </footer>
