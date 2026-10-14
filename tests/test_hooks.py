@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterator
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from cline_hooks.core.plugin import HookResult
 from conftest import FakeSubprocess
 
 from llm_prompts.hooks import (
@@ -590,6 +592,12 @@ class TestPromptSizeGate:
 class TestUpdateCheckOnTaskStart:
     """Tests for the TaskStart update-check dispatch."""
 
+    @pytest.fixture(autouse=True)
+    def _interactive_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("CLAUDE_CODE_ENTRYPOINT", raising=False)
+        monkeypatch.delenv("LLM_PROMPTS_NO_UPDATE_CHECK", raising=False)
+        monkeypatch.setattr("llm_prompts.hooks._LOCK_WAIT_SECONDS", 0.2)
+
     def test_task_start_reports_updates(self, tmp_path: Path) -> None:
         plugin = AutoReinstallPlugin()
         plugin._update_check_debouncer = _ReinstallDebouncer(
@@ -679,19 +687,18 @@ class TestUpdateCheckOnTaskStart:
         assert result is None
         assert not (tmp_path / "update-stamp").exists()
 
-    def test_fresh_start_bypasses_debounce(self, tmp_path: Path) -> None:
+    def test_fresh_start_emits_cached_notice(self, tmp_path: Path) -> None:
         plugin = AutoReinstallPlugin()
         plugin._update_check_debouncer = _ReinstallDebouncer(
             tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
         )
         (tmp_path / "update-stamp").write_text(str(time.time()))
-        with patch(
-            "llm_prompts.cli._collect_update_messages",
-            return_value=["[pkg] update available (a -> b)"],
-        ):
+        plugin._update_check_debouncer.store_notice(["[pkg] update available (a -> b)"])
+        with patch("llm_prompts.cli._collect_update_messages") as mock_collect:
             result = plugin.on_hook(
                 "TaskStart", task_id="t1", workspace_roots=[], source=""
             )
+        mock_collect.assert_not_called()
         assert result is not None
         assert result.notes == ["[pkg] update available (a -> b)"]
         assert len(result.user_notes) == 1
@@ -709,6 +716,63 @@ class TestUpdateCheckOnTaskStart:
                 "TaskStart", task_id="t1", workspace_roots=[], source="resume"
             )
         assert result is None
+        mock_collect.assert_not_called()
+
+    def _fresh_start(self, stamp: Path) -> HookResult | None:
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(stamp)
+        return plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[], source="")
+
+    def test_empty_check_clears_cached_notice(self, tmp_path: Path) -> None:
+        stamp = tmp_path / "update-stamp"
+        _ReinstallDebouncer(stamp).store_notice(["[pkg] update available (a -> b)"])
+        with patch("llm_prompts.cli._collect_update_messages", return_value=[]):
+            assert self._fresh_start(stamp) is None
+        assert self._fresh_start(stamp) is None
+
+    @pytest.mark.parametrize(("finishes", "expected"), [(True, "new"), (False, "old")])
+    def test_start_waits_for_running_check(
+        self, tmp_path: Path, finishes: bool, expected: str
+    ) -> None:
+        stamp = tmp_path / "update-stamp"
+        checker = _ReinstallDebouncer(stamp)
+        checker.store_notice(["old"])
+
+        with ExitStack() as running_check:
+            running_check.enter_context(checker.single_flight())
+
+            def finish_check(_: float) -> None:
+                checker.mark_run()
+                checker.store_notice(["new"])
+                running_check.close()
+
+            with (
+                patch(
+                    "llm_prompts.hooks.time.sleep",
+                    side_effect=finish_check if finishes else None,
+                ),
+                patch("llm_prompts.cli._collect_update_messages") as mock_collect,
+            ):
+                result = self._fresh_start(stamp)
+        mock_collect.assert_not_called()
+        assert result is not None
+        assert result.notes == [expected]
+
+    @pytest.mark.parametrize(
+        ("name", "value"),
+        [
+            ("CLAUDE_CODE_ENTRYPOINT", "sdk-cli"),
+            ("CLAUDE_CODE_ENTRYPOINT", "sdk-ts"),
+            ("CLAUDE_CODE_ENTRYPOINT", "sdk-py"),
+            ("LLM_PROMPTS_NO_UPDATE_CHECK", "1"),
+        ],
+    )
+    def test_headless_start_emits_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, value: str
+    ) -> None:
+        monkeypatch.setenv(name, value)
+        with patch("llm_prompts.cli._collect_update_messages") as mock_collect:
+            assert self._fresh_start(tmp_path / "update-stamp") is None
         mock_collect.assert_not_called()
 
     def test_subagent_task_start_skips_check(self, tmp_path: Path) -> None:
