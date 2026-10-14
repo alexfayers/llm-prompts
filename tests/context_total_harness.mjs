@@ -9,6 +9,7 @@
 // step: { emitted: name, as } stores the [event, payload] pairs a fake pi's event bus carried; { ui: name, as } stores the [key, text] pairs a fake ui was given to setStatus.
 // step: { command, pi, args, ctx } runs a registered slash command handler; { notices: name, as } stores the [message, level] pairs a fake ui was asked to notify.
 // step: { call: tool, pi, params, ctx, as } runs a registered tool's execute. { stored: name, as } stores a fake ctx with the paths it switched to and the messages its replacement session sent.
+// step: { activeTools: name, as } stores the tool names a fake pi has active; { $pi: name, activeTools: [names] } sets them.
 // fake ctx: { $ctx: name, cwd, sessionFile, sessionId } is a command context.
 // fake pi: { $pi: name, active: [keys] } answers a zentui:variable-capability probe as active for those keys. { $ui: name } is a fake ui.
 // args: { $ref } is a stored result, { $fn } a function returning its value, { $set } a Set, { $map } a Map, { $windows } a window lookup by "provider/model".
@@ -74,11 +75,12 @@ const fakeCtx = ({ $ctx: name, cwd, sessionFile = join(cwd, 's.jsonl'), sessionI
       return { cancelled: false }
     },
   })
-const fakePi = (name, commands = [], active = []) => {
+const fakePi = (name, commands = [], active = [], activeTools = []) => {
   pis[name] ??= {
     handlers: {},
     sent: [],
     commands,
+    activeTools,
     emitted: [],
     registered: {},
     events: {
@@ -92,6 +94,8 @@ const fakePi = (name, commands = [], active = []) => {
     registerTool(tool) { this.tools[tool.name] = tool },
     registerCommand(name, options) { this.registered[name] = options },
     on(event, handler) { (this.handlers[event] ??= []).push(handler) },
+    getActiveTools() { return this.activeTools },
+    setActiveTools(names) { this.activeTools = names },
     getCommands() { return this.commands.map(name => ({ name })) },
     async sendUserMessage(...args) { this.sent.push(args) },
   }
@@ -100,7 +104,7 @@ const fakePi = (name, commands = [], active = []) => {
 const resolve = arg => {
   if (Array.isArray(arg)) return arg.map(resolve)
   if (arg === null || typeof arg !== 'object') return arg
-  if ('$pi' in arg) return fakePi(arg.$pi, arg.commands, arg.active)
+  if ('$pi' in arg) return fakePi(arg.$pi, arg.commands, arg.active, arg.activeTools)
   if ('$ctx' in arg) return fakeCtx(arg)
   if ('$ui' in arg) return fakeUi(arg.$ui)
   if ('$ref' in arg) return results[arg.$ref]
@@ -125,6 +129,7 @@ try {
     else if (step.stored) results[step.as] = ctxs[step.stored]
     else if (step.call) results[step.as] = await pis[step.pi].tools[step.call].execute('call-id', resolve(step.params ?? {}), undefined, undefined, resolve(step.ctx ?? {}))
     else if (step.command) await pis[step.pi].registered[step.command].handler(step.args ?? '', resolve(step.ctx ?? {}))
+    else if (step.activeTools) results[step.as] = pis[step.activeTools].activeTools
     else if (step.sent) results[step.as] = pis[step.sent].sent
     else if (step.emit) {
       let value
