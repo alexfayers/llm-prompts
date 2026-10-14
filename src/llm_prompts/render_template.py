@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import json
+import os
 import re
 import shutil
 import sys
@@ -385,6 +387,22 @@ def render_for_codex(body: str) -> str:
     return normalize_whitespace(body)
 
 
+def resolve_source_file(frontmatter: dict[str, str]) -> Path | None:
+    """Find the newest file matching the ``source_file`` glob.
+
+    Args:
+        frontmatter: Parsed frontmatter key-value pairs.
+
+    Returns:
+        The match with the latest mtime (path breaks ties), or None when the key
+        is absent or nothing matches.
+    """
+    matches = glob.glob(os.path.expanduser(frontmatter.get("source_file", "")))
+    return max(
+        map(Path, matches), key=lambda p: (p.stat().st_mtime_ns, p), default=None
+    )
+
+
 def substitute_template(template_path: str, variables_path: str) -> str:
     """Substitute a template file's variables, leaving its frontmatter intact.
 
@@ -418,6 +436,9 @@ def render_template(template_path: str, variables_path: str, target: str) -> str
     body, frontmatter = parse_frontmatter(
         substitute_template(template_path, variables_path)
     )
+    source = resolve_source_file(frontmatter)
+    if source:
+        body = _read_text(source)
 
     # Render based on target
     if target == "cline":

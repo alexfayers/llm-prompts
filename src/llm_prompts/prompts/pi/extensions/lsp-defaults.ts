@@ -1,9 +1,9 @@
-// Switches Python projects to the ty language server when ty is installed and no Python server is configured.
+// Switches Python projects to the ty or ruff language server when installed and no Python server is configured.
 import { accessSync, constants, readFileSync } from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const LANGUAGES = [{ id: "python", default: "pyright-langserver", fallback: ["ty", "server"] }];
+const LANGUAGES = [{ id: "python", default: "pyright-langserver", fallbacks: [["ty", "server"], ["ruff", "server"]] }];
 
 function onPath(binary: string): boolean {
 	return (process.env.PATH ?? "").split(path.delimiter).some((dir) => {
@@ -34,8 +34,9 @@ export default function (pi: ExtensionAPI) {
 		if (applied || !pi.getCommands().some((command) => command.name === "lsp-config")) return;
 		applied = true;
 		for (const language of LANGUAGES) {
-			if (projectConfigures(ctx.cwd, language.id) || onPath(language.default) || !onPath(language.fallback[0])) continue;
-			await pi.sendUserMessage(`/lsp-config ${language.id} ${language.fallback.join(" ")}`, { expandPromptTemplates: true });
+			const fallback = language.fallbacks.find((command) => onPath(command[0]));
+			if (projectConfigures(ctx.cwd, language.id) || onPath(language.default) || !fallback) continue;
+			await pi.sendUserMessage(`/lsp-config ${language.id} ${fallback.join(" ")}`, { expandPromptTemplates: true });
 		}
 	});
 }

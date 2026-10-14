@@ -42,6 +42,8 @@ Added by llm-prompts, no README. MUST verify each against installed files first.
   - Keeps the system prompt stable so the 5-minute cache holds. `cacheWarming` `"idle"` keeps it warm.
 - **compact-now**
   - Adds `compact_now`: `instructions` summary replaces old context. Auto-continues.
+- **cd**
+  - `/cd <dir>` and `change_dir`: move the session (history kept) to `<dir>` after the turn. Refused in a herdsman agent or a lead that owns herdsman agents.
 - **tower-do-patch**
   - Adds `tower_do_patch`: change single tasks, no replay.
 - **context-total**
@@ -54,7 +56,7 @@ Added by llm-prompts, no README. MUST verify each against installed files first.
   - Long-ask preview (pi-compact-tools diff, else text) in the box. Scroll: wheel or Alt+Up/Down. On via `authorizerChain`.
 - **permission-box**: centred accent overlay for prompt and preview.
 - **lsp-defaults**
-  - A Python project with `ty` on PATH and no `pyright-langserver` or Python server in `.pi-lsp.json` gets `/lsp-config python ty server` once per session.
+  - A Python project with `ty` or `ruff` on PATH (`ty` first) and no `pyright-langserver` or Python server in `.pi-lsp.json` gets `/lsp-config python ty server` or `/lsp-config python ruff server` once per session.
 - **codemode-error-header**
   - Failed `codemode` header: `Script failed: <first error line>`.
 - **popup-defer**
