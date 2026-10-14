@@ -453,10 +453,6 @@ class TestRemoteHead:
         fake_subprocess.on("ls-remote", stdout="deadbeef\tHEAD\n")
         assert setup._remote_head("https://x/repo.git", None) == "deadbeef"
 
-    def test_returns_none_on_failure(self, fake_subprocess: FakeSubprocess) -> None:
-        fake_subprocess.on("ls-remote", returncode=128)
-        assert setup._remote_head("https://x/repo.git", None) is None
-
     def test_returns_none_on_empty_output(
         self, fake_subprocess: FakeSubprocess
     ) -> None:

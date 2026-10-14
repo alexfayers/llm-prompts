@@ -7,6 +7,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -35,6 +36,7 @@ _AGENTS = tuple(AGENT_CLASSES)
 _MEMORY_TOOL = "mcp-memory"
 _RUN_SETUP_TRACKED_TOOLS = (_MEMORY_TOOL, "cline-hooks")
 _UPDATE_RESUME_ENV = "LLM_PROMPTS_UPDATE_RESUME"
+_URL_CREDENTIALS = re.compile(r"(://)[^/@\s]+@")
 
 
 def _get_root_dir() -> Path:
@@ -241,6 +243,19 @@ def _remote_source_messages(name: str, source: str) -> list[str]:
     return _format_update_message(name, subjects, installed_commit, remote_commit)
 
 
+def _update_check_or_failure(name: str, check: Callable[[], list[str]]) -> list[str]:
+    """Run an update check, reporting a failed git call as a message.
+
+    Returns:
+        The check's messages, or a single update-check-failed message.
+    """
+    try:
+        return check()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        reason = _URL_CREDENTIALS.sub(r"\1", str(exc))
+        return [f"[{name}] update check failed: {reason}"]
+
+
 def _local_source_messages(name: str, source: str) -> list[str]:
     """Return update-availability messages for a local-path git source.
 
@@ -255,7 +270,7 @@ def _local_source_messages(name: str, source: str) -> list[str]:
 
     subprocess.run(
         ["git", "-C", str(repo), "fetch", "--quiet"],
-        check=False,
+        check=True,
         capture_output=True,
         timeout=GIT_TIMEOUT,
     )
@@ -525,11 +540,15 @@ def _collect_update_messages() -> list[str]:
         name = str(tool.get("name", ""))
         source = str(tool.get("source", ""))
         if _is_local_path(source):
-            checks.append(partial(_local_source_messages, name, source))
+            check = partial(_local_source_messages, name, source)
         else:
-            checks.append(partial(_remote_source_messages, name, source))
+            check = partial(_remote_source_messages, name, source)
+        checks.append(partial(_update_check_or_failure, name, check))
     for plugin in _load_plugins():
-        checks.append(partial(plugin_source_messages, plugin))
+        check = partial(plugin_source_messages, plugin)
+        checks.append(
+            partial(_update_check_or_failure, str(plugin.get("name", "")), check)
+        )
 
     messages: list[str] = []
     for result in _run_parallel_ordered(checks):

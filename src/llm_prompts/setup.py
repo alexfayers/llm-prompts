@@ -112,16 +112,19 @@ def _remote_head(git_url: str, ref: str | None) -> str | None:
         ref: The remote ref to resolve; defaults to ``HEAD``.
 
     Returns:
-        The remote commit SHA, or ``None`` if the query fails or is empty.
+        The remote commit SHA, or ``None`` if the ref resolves to nothing.
+
+    Raises:
+        subprocess.CalledProcessError: If ``git ls-remote`` exits non-zero.
     """
     result = subprocess.run(
         ["git", "ls-remote", git_url, ref or "HEAD"],
         capture_output=True,
         text=True,
-        check=False,
+        check=True,
         timeout=GIT_TIMEOUT,
     )
-    if result.returncode != 0 or not result.stdout.strip():
+    if not result.stdout.strip():
         return None
     return result.stdout.split()[0]
 
