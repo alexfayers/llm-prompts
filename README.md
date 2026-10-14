@@ -6,11 +6,11 @@
 |------------------------------------------------------------------------------ | -------: | -------: | ------: | --------: |
 | src/llm\_prompts/\_\_init\_\_.py                                              |        0 |        0 |    100% |           |
 | src/llm\_prompts/batching.py                                                  |      138 |        1 |     99% |       129 |
-| src/llm\_prompts/cli.py                                                       |      494 |       71 |     86% |88-89, 113-126, 220-221, 328-329, 457, 460, 509, 588-590, 626-628, 638-641, 660-669, 853-873, 892-894, 897-903, 906-909, 912-925, 934, 936-941, 944-945, 956-960, 1042-1043, 1048 |
+| src/llm\_prompts/cli.py                                                       |      498 |       71 |     86% |88-89, 113-126, 227-228, 335-336, 464, 467, 516, 595-597, 633-635, 645-648, 667-676, 860-880, 899-901, 904-910, 913-916, 919-932, 941, 943-948, 951-952, 963-967, 1049-1050, 1055 |
 | src/llm\_prompts/collection\_size.py                                          |      115 |        5 |     96% |178, 238-239, 389, 446 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/contribute.py                                                |      875 |       12 |     99% |149, 176, 318, 1141, 1166, 1366, 1383-1384, 1474-1476, 1817 |
-| src/llm\_prompts/extension\_factories.py                                      |        7 |        0 |    100% |           |
+| src/llm\_prompts/extension\_factories.py                                      |       10 |        0 |    100% |           |
 | src/llm\_prompts/github\_api.py                                               |       96 |        1 |     99% |        71 |
 | src/llm\_prompts/handoff\_block.py                                            |       13 |        1 |     92% |        20 |
 | src/llm\_prompts/herdsman.py                                                  |        8 |        0 |    100% |           |
@@ -41,14 +41,14 @@
 | tests/test\_cd.py                                                             |       38 |        0 |    100% |           |
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
 | tests/test\_check\_repos\_script.py                                           |       67 |        0 |    100% |           |
-| tests/test\_cli.py                                                            |      806 |        0 |    100% |           |
+| tests/test\_cli.py                                                            |      808 |        0 |    100% |           |
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
 | tests/test\_codemode\_error\_header.py                                        |       45 |        1 |     98% |        28 |
 | tests/test\_conftest.py                                                       |       60 |        0 |    100% |           |
 | tests/test\_context\_total.py                                                 |      183 |        1 |     99% |        29 |
 | tests/test\_contribute.py                                                     |     1872 |        0 |    100% |           |
 | tests/test\_diff\_preview.py                                                  |      190 |        1 |     99% |        78 |
-| tests/test\_extension\_factories.py                                           |       15 |        0 |    100% |           |
+| tests/test\_extension\_factories.py                                           |       21 |        0 |    100% |           |
 | tests/test\_focus.py                                                          |     1043 |        0 |    100% |           |
 | tests/test\_github\_api.py                                                    |      123 |        0 |    100% |           |
 | tests/test\_handoff\_block.py                                                 |       14 |        0 |    100% |           |
@@ -83,7 +83,7 @@
 | tests/test\_todos\_script.py                                                  |       87 |        0 |    100% |           |
 | tests/test\_tower\_do\_patch.py                                               |       78 |        1 |     99% |        28 |
 | tests/test\_uninstall.py                                                      |      118 |        0 |    100% |           |
-| **TOTAL**                                                                     | **18754** |  **556** | **97%** |           |
+| **TOTAL**                                                                     | **18769** |  **556** | **97%** |           |
 
 
 ## Setup coverage badge
