@@ -212,7 +212,7 @@ class TestUsageTotals:
         ]
         usage = _run(tmp_path, steps)["usage"]
         assert usage["cost"] == 1.9375
-        assert usage["tokens"] == 4 * 20
+        assert usage["tokens"] == 20
 
 
 class TestReadNew:
@@ -402,7 +402,7 @@ class TestSampleChildren:
         (tmp_path / "c1.jsonl").write_text(
             _costed(2.0) + _spawn("g1", "r3", owner="c1", sessions=sessions)
         )
-        (tmp_path / "g1.jsonl").write_text(_costed(4.0))
+        (tmp_path / "g1.jsonl").write_text(_assistant(50) + _costed(4.0))
         (tmp_path / "f1.jsonl").write_text(
             _costed(0.5) + _spawn("h1", "r4", owner="f1", sessions=sessions)
         )
@@ -417,7 +417,7 @@ class TestSampleChildren:
             },
         ]
         sample = _run(tmp_path, steps)["sample"]
-        assert sample["tree"] == {"tokens": 5 * 20, "cost": 7.75}
+        assert sample["tree"] == {"tokens": 4 * 20 + 50, "cost": 7.75}
         assert sample["session"] == {"tokens": 20, "cost": 1.0}
         assert [node["sessionId"] for node in sample["nodes"]] == ["c1", "g1", "f1"]
 
