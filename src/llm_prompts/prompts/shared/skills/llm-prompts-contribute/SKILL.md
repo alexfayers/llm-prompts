@@ -1,17 +1,17 @@
 ---
 name: llm-prompts-contribute
-description: Open a PR in llm-prompts, cline-hooks, or mcp-memory - `llm-prompts contribute` for rule/skill/workflow/agent sources, gh otherwise, per-repo PR template/CONTRIBUTING.md. Use to open/update a PR.
+description: Open a PR in llm-prompts, cline-hooks, or mcp-memory - `llm-prompts contribute` for rule/skill/workflow/agent sources, gh otherwise. Use to open/update a PR.
 ---
 
 # Opening a PR
 
-Covers llm-prompts, cline-hooks, and mcp-memory - siblings with the same PR template shape and conventions. Read the TARGET repo's own CONTRIBUTING.md and `.github/PULL_REQUEST_TEMPLATE.md`; never assume another repo's copy applies.
+Covers llm-prompts, cline-hooks, and mcp-memory. Read the TARGET repo's own CONTRIBUTING.md and `.github/PULL_REQUEST_TEMPLATE.md`; never assume another repo's copy applies.
 
 - MUST open every PR as a draft (`gh pr create --draft`), and MUST NOT request reviewers unless the user asks.
 
 ## Rule/skill/workflow/agent sources (any repo's `**/prompts/**`)
 
-cline-hooks and mcp-memory each carry their own prompts tree (rules, skills, workflows, agents) feeding the same distributed collection as llm-prompts' own - all three go through `llm-prompts contribute`, never a manual branch:
+cline-hooks and mcp-memory carry their own prompts trees feeding the same collection - all three go through `llm-prompts contribute`, never a manual branch:
 
 - Commit straight to that repo's local `main`.
 - `llm-prompts contribute list` - shows every unmerged commit's batch branch and status (new/current/stale/regressed/in another PR) across configured overlay repos; `--tool NAME` narrows to one.
@@ -30,15 +30,18 @@ cline-hooks and mcp-memory each carry their own prompts tree (rules, skills, wor
 - Marking a contribute PR ready for review enables squash auto-merge.
 - MUST keep each repo's primary checkout on `main`; do branch work in a `git worktree`.
 - Push your own branch, open a PR against `main`.
+- MUST base each PR on main. MUST NOT stack PRs.
+- MUST order PRs only with `Depends on #N` under `## Dependencies`. MUST NOT copy another PR's commits or add rebase notes.
+- Shared CI logic MUST live in llm-prompts. Other repos MUST import it, never copy it.
 - Check push access first: `gh repo view --json viewerPermission`.
   - `WRITE`/`MAINTAIN`/`ADMIN`: `git push -u origin <branch>` then `gh pr create --fill`.
   - Otherwise: `gh repo fork --remote`, push to the fork, `gh pr create --fill --head <username>:<branch>`.
-- A change that builds on one of your open PRs in the same repo MUST go on that PR's branch as a new commit, with a What and a Why bullet added for it.
-- A fix to a commit already on an open PR SHOULD amend it and force-push, per `git-usage`.
+- A change that builds on one of your open PRs MUST be its own PR with `Depends on #N`.
+- To change a PR, MUST force-push with `--force-with-lease` and edit the PR in place, per `git-usage`. MUST close only a dropped PR.
 
 ## Before opening
 
-- Run the target repo's `just` (lint, type-check, test) - its own CONTRIBUTING.md is authority for the exact recipes (e.g. mcp-memory adds a naming-check).
+- Run the target repo's `just` (lint, type-check, test) - its own CONTRIBUTING.md is authority for the exact recipes.
 - Any changed rule/skill/workflow/agent file MUST stay within its prompt size budget.
 - In llm-prompts, CI's size-report job comments each changed prompt's size against main on the PR - SHOULD link the user to that comment after opening, not preview it locally.
 - Before pushing a manual PR branch, MUST confirm `git -P log --oneline origin/main..HEAD` lists only that PR's commits.
@@ -46,7 +49,7 @@ cline-hooks and mcp-memory each carry their own prompts tree (rules, skills, wor
 ## PR content
 
 - Follow the target repo's `.github/PULL_REQUEST_TEMPLATE.md` structure (What/Why, optional Dependencies/Issues).
-- Right after `sync` opens a PR, MUST fill Why via `gh pr edit <url> --body-file -`, at most 3 bullets per section, fewer where possible, each one short line not restating the title - Why gives the reasoning, merging related commits into one bullet. Commits carry no body, so sync cannot write Why. Descriptions MUST be very easy for reluctant reviewers to understand, with clear reasoning.
+- Right after `sync` opens a PR, MUST fill Why via `gh pr edit <url> --body-file -`, at most 3 bullets per section, each one short line not restating the title - Why gives the reasoning, merging related commits into one bullet. Descriptions MUST be very easy for reluctant reviewers to understand.
 - Title: conventional-commit format (`type: subject`).
-- Description: bullet points, not paragraphs, each one full sentence. State WHAT and WHY, not HOW. No restating the diff, no process commentary.
+- Description: bullet points, not paragraphs, each one full sentence. State WHAT and WHY, not HOW. No diff restating or process commentary.
 - Planned with eagle-vision (you built it from a plan directory, or the user names one): once the PR is open, post the plan as a separate comment - `python3 "<base-dir>/../eagle-vision/focus.py" comment <dir> | gh pr comment <pr-url> --body-file -`. Post it once, never in the description.

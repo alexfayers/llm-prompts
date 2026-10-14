@@ -11,7 +11,6 @@ After each change, perform the following steps in order:
 
 1. Review the implementation plan.
 1. Begin making changes, following the plan.
-    1. If tests do not already cover the changes you have made, create them. All new code MUST be covered if applicable. This applies to both unit and integration test.
 1. Run linting/formatting checks to validate your code.
     1. If linting fails, go back to the first step. DO NOT CONTINUE UNLESS LINTING PASSES.
 1. Run unit tests to validate all functionality behaves as expected.

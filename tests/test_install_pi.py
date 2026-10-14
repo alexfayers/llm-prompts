@@ -994,7 +994,10 @@ class TestPiAgents:
     ) -> None:
         path = pi_home / ".pi" / "agent" / "agents" / "Explore.md"
         explore = _frontmatter(path)
-        assert explore["tools"] == ["read", "bash", "grep", "find", "ls"]
+        assert "bash" not in explore["tools"]
+        assert {"lsp_symbols", "lsp_definition", "lsp_references"} <= set(
+            explore["tools"]
+        )
         assert explore["inheritProjectContext"] is False
         assert explore["model"] == "haiku"
         assert "thinking: off\n" in path.read_text(encoding="utf-8")
@@ -1177,7 +1180,6 @@ class TestHerdsmanAgents:
             assert inheriting["inheritProjectContext"] is True
         for frontmatter in (coordinator, reasoner, worker, checker, explore):
             assert frontmatter["systemPromptMode"] == "append"
-        assert explore["tools"] == ["read", "bash", "grep", "find", "ls"]
         for frontmatter in (coordinator, reasoner, worker, checker, explore):
             assert (
                 not {
@@ -1214,12 +1216,11 @@ class TestHerdsmanAgents:
         assert worker["skills"] == [
             skill("git-usage"),
             skill("tdd"),
-            str(packaged / "skills" / "pi-processes" / "SKILL.md"),
         ]
         assert {"agent", "ask_user", "plan_mode_complete", "source_check"} <= set(
             worker["excludeTools"]
         )
-        assert "process" not in worker["excludeTools"]
+        assert "process" in worker["excludeTools"]
         surveyor = _frontmatter(agents / "surveyor-sonnet-low.md")
         assert surveyor["skills"] == [skill("git-usage")]
         assert {"write", "edit", "process", "code_rewrite", "ask_user"} <= set(

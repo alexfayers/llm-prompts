@@ -35,11 +35,11 @@ Added by llm-prompts, no README. MUST verify each against installed files first.
   - After editing extensions, packages, settings, agents, `AGENTS.md`.
 - **Handoff**
   - A handoff starts a new session whose first prompt line is `HANDOFF-ACK <pane-id>`. The old tab stays open until the new session replies with it.
-  - Agents MUST NOT run `herdr agent prompt` on a pane the user may be typing in: it presses Enter and wipes the draft.
+  - Agents MUST NOT run `herdr agent prompt` on a pane the user may be typing in.
 - **net-guard**
   - Blocks and logs network calls from extensions not in `net-guard.json` `allow`. `"mode": "log"` only logs (`net-guard.log`). Not a security boundary.
 - **prompt-cache-stabilizer**
-  - Keeps the system prompt stable so the 5-minute cache holds. `cacheWarming` `"idle"` keeps it warm.
+  - Keeps the system prompt stable. `cacheWarming` `"idle"` keeps it warm.
 - **compact-now**
   - Adds `compact_now`: `instructions` summary replaces old context. Auto-continues.
 - **cd**
@@ -64,8 +64,9 @@ Added by llm-prompts, no README. MUST verify each against installed files first.
   - `PI_POPUP_DEFER_MS`: pause in ms, `0` off. `/popup-defer on|off|<ms>` sets it per session.
 - **Seed configs**
   - Written only when absent.
-  - `extensions/pi-permission-system/config.json`: allow by default. `ask` for `git push`, forced or `-c` git, mutating `llm-prompts`/`gh`, edits to `rules`/`skills`/`workflows`/`agents` `.md`. `promptMaxRows`/`promptFieldMaxWidth` 1000000: prompt starts expanded.
+  - `extensions/pi-permission-system/config.json`: allow by default. `ask` for `git push`, forced or `-c` git, mutating `llm-prompts`/`gh`, edits to `rules`/`skills`/`workflows`/`agents` `.md`. `promptMaxRows`/`promptFieldMaxWidth` 1000000: prompt starts expanded. `forwardingTimeoutMs` max: no ask timeout.
   - `zentui.json`: `starship` footer: cwd, git, model, context, tokens, cost. Editor, user-message, selector-border restyle off.
   - `compact-tools.json`: `"style": "compact"` rows.
+  - `web-search.json`: `tools.sourceCheck.enabled` false, no `source_check` tool.
 - **Packages**
   - Pinned: pi-herdsman (agent fleet), pi-herdr-tools (name/finish conversations), pi-ask-user (`ask_user`), pi-plan-mode (`/plan`), tower-do (task board), pi-notify (alerts), pi-lsp-extension (LSP), pi-permission-system (permissions), pi-zentui (footer), pi-web-access (web), pi-compact-tools (`/compact-tools`), pi-processes (`process`), pi-context-usage (context view), pi-cache-insight (cache misses).

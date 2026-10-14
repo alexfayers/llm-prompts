@@ -20,7 +20,7 @@ Where a recommendation depends on an unverified fact, frame it to hold **either 
 
 ## An exhaustive or exclusive claim needs an enumeration, not a sample
 
-A claim that something exists ONLY in one place, that nothing does X, or that a set is complete asserts something about everything you did NOT look at. MUST enumerate the full candidate set from the authoritative source before stating one - never generalise from instances you happened to encounter. This binds a delegate's report hardest: it reports what it looked at, not proof of absence. Where enumeration is impractical, MUST scope the claim to what was actually checked.
+A claim that something exists ONLY in one place, that nothing does X, or that a set is complete asserts something about everything you did NOT look at. MUST enumerate the full candidate set from the authoritative source before stating one - never generalise from instances you happened to encounter. Where enumeration is impractical, MUST scope the claim to what was actually checked.
 
 ## Never dismiss a user's stated blocker without checking the rule that governs it
 
@@ -38,4 +38,4 @@ An oddity is not one either: MUST NOT chase a discrepancy that does not change t
 
 ## Trace dependents before changing a default or safety behavior
 
-Where a change flips a default, removes a cleanup/guard step, or alters behaviour other code relies on ("skip cleanup by default", "stop seeding X", "drop this validation"), MUST NOT accept the stated rationale ("each stage cleans itself anyway") at face value. Trace what actually depends on the old behaviour - read the consumers, fixtures and downstream stages - and confirm the premise holds for every one of them. Verify the premise yourself in the same turn, before the user has to ask "what are the ramifications?".
+Where a change flips a default, removes a cleanup/guard step, or alters behaviour other code relies on ("skip cleanup by default", "stop seeding X", "drop this validation"), MUST NOT accept the stated rationale ("each stage cleans itself anyway") at face value. Trace what actually depends on the old behaviour - read the consumers, fixtures and downstream stages - and confirm the premise holds for every one of them. Verify the premise yourself in the same turn.
