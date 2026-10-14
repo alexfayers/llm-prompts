@@ -36,6 +36,7 @@
 | tests/conftest.py                                                             |      347 |        2 |     99% |  155, 798 |
 | tests/test\_batching.py                                                       |      314 |        0 |    100% |           |
 | tests/test\_build\_wave.py                                                    |      179 |        0 |    100% |           |
+| tests/test\_cd.py                                                             |       38 |        0 |    100% |           |
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
 | tests/test\_check\_repos\_script.py                                           |       67 |        0 |    100% |           |
 | tests/test\_cli.py                                                            |      790 |        0 |    100% |           |
@@ -78,7 +79,7 @@
 | tests/test\_todos\_script.py                                                  |       87 |        0 |    100% |           |
 | tests/test\_tower\_do\_patch.py                                               |       78 |        1 |     99% |        28 |
 | tests/test\_uninstall.py                                                      |      118 |        0 |    100% |           |
-| **TOTAL**                                                                     | **18490** |  **552** | **97%** |           |
+| **TOTAL**                                                                     | **18528** |  **552** | **97%** |           |
 
 
 ## Setup coverage badge
