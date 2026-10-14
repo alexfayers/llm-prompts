@@ -12,6 +12,7 @@
 | src/llm\_prompts/contribute.py                                                |      875 |       12 |     99% |149, 176, 318, 1141, 1166, 1366, 1383-1384, 1474-1476, 1817 |
 | src/llm\_prompts/extension\_factories.py                                      |        7 |        0 |    100% |           |
 | src/llm\_prompts/github\_api.py                                               |       96 |        1 |     99% |        71 |
+| src/llm\_prompts/handoff\_block.py                                            |       13 |        1 |     92% |        20 |
 | src/llm\_prompts/herdsman.py                                                  |        8 |        0 |    100% |           |
 | src/llm\_prompts/hooks.py                                                     |      204 |       15 |     93% |78, 83, 148-149, 218-219, 309, 317-318, 360, 375-376, 395-397 |
 | src/llm\_prompts/install.py                                                   |     1493 |      192 |     87% |89, 268-269, 311-312, 383-387, 419-421, 424, 449-452, 484, 487-488, 494, 497-498, 615-616, 629, 734-736, 765, 767, 823-824, 940, 950-951, 1024, 1027-1028, 1102-1104, 1138, 1213, 1220-1221, 1332, 1517-1519, 1521, 1564, 1646-1647, 1651-1653, 1804-1805, 1883, 1911, 2063, 2087, 2181-2183, 2249, 2252, 2271, 2312-2315, 2318-2319, 2346-2366, 2375-2382, 2387-2397, 2402-2412, 2446, 2578, 2721, 2780-2787, 2792-2805, 2810-2814, 2823-2832, 2837-2846, 2851-2860, 2865-2877, 2882-2891, 2945-2947, 3048, 3051, 3174, 3252, 3254, 3416, 3532, 3536, 3547 |
@@ -32,6 +33,7 @@
 | src/llm\_prompts/size\_guard.py                                               |      351 |       11 |     97% |242-243, 350, 421-423, 458, 480, 484-486 |
 | src/llm\_prompts/size\_limits.py                                              |       61 |        1 |     98% |       138 |
 | src/llm\_prompts/size\_report.py                                              |      172 |        3 |     98% |134, 188, 190 |
+| src/llm\_prompts/skill\_injection.py                                          |       37 |        2 |     95% |    33, 36 |
 | src/llm\_prompts/squash\_subject.py                                           |        6 |        0 |    100% |           |
 | tests/conftest.py                                                             |      347 |        2 |     99% |  155, 798 |
 | tests/test\_batching.py                                                       |      314 |        0 |    100% |           |
@@ -49,6 +51,7 @@
 | tests/test\_extension\_factories.py                                           |       15 |        0 |    100% |           |
 | tests/test\_focus.py                                                          |     1043 |        0 |    100% |           |
 | tests/test\_github\_api.py                                                    |      123 |        0 |    100% |           |
+| tests/test\_handoff\_block.py                                                 |       14 |        0 |    100% |           |
 | tests/test\_hooks.py                                                          |      378 |        0 |    100% |           |
 | tests/test\_inspect\_range\_script.py                                         |       89 |        0 |    100% |           |
 | tests/test\_install.py                                                        |     1108 |        0 |    100% |           |
@@ -69,17 +72,18 @@
 | tests/test\_popup\_defer.py                                                   |      127 |        1 |     99% |        31 |
 | tests/test\_prompt\_cache\_stabilizer.py                                      |       94 |        2 |     98% |    29, 85 |
 | tests/test\_prompt\_sizes.py                                                  |      638 |        0 |    100% |           |
-| tests/test\_render\_template.py                                               |      126 |        0 |    100% |           |
+| tests/test\_render\_template.py                                               |      135 |        0 |    100% |           |
 | tests/test\_retrospective\_extract.py                                         |       90 |        0 |    100% |           |
 | tests/test\_rewrite\_range\_script.py                                         |       68 |        0 |    100% |           |
 | tests/test\_setup.py                                                          |      266 |        0 |    100% |           |
 | tests/test\_size\_guard.py                                                    |       93 |        0 |    100% |           |
 | tests/test\_size\_report.py                                                   |      190 |        0 |    100% |           |
+| tests/test\_skill\_injection.py                                               |       30 |        0 |    100% |           |
 | tests/test\_squash\_subject.py                                                |        7 |        0 |    100% |           |
 | tests/test\_todos\_script.py                                                  |       87 |        0 |    100% |           |
 | tests/test\_tower\_do\_patch.py                                               |       78 |        1 |     99% |        28 |
 | tests/test\_uninstall.py                                                      |      118 |        0 |    100% |           |
-| **TOTAL**                                                                     | **18625** |  **553** | **97%** |           |
+| **TOTAL**                                                                     | **18728** |  **556** | **97%** |           |
 
 
 ## Setup coverage badge
