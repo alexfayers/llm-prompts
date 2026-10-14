@@ -1,5 +1,6 @@
-// Holds dialogs back while the user is typing until they pause.
-// Adds a /popup-defer command.
+// Defers dialogs while the user types.
+// Commands: /popup-defer on|off|<ms>
+// Env: PI_POPUP_DEFER_MS (quiet time in milliseconds)
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const DEFAULT_DEBOUNCE_MS = 1500;

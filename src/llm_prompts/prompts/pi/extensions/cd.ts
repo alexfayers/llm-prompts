@@ -1,4 +1,6 @@
 // Adds /cd and the change_dir tool, which move the session (history kept) to another working directory.
+// Commands: /cd <dir>
+// Env: PI_HERDSMAN_MAILBOX (set for managed agents, which cannot change directory)
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

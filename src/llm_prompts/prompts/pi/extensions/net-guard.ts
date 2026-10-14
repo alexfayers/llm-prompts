@@ -1,4 +1,5 @@
-// Blocks and logs network calls from extensions that are not on the allow list.
+// Blocks or logs non-local network calls from extensions not in the allowlist.
+// Config: net-guard.json keys mode, allow
 import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
