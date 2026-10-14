@@ -34,6 +34,7 @@ from llm_prompts.contribute import Report
 from llm_prompts.main_sync import SyncResult
 from llm_prompts.setup import (
     _UPDATE_INSTRUCTION,
+    SHIPPED_PATHS,
     SharedEnv,
     _extract_git_url,
     _format_update_message,
@@ -189,6 +190,14 @@ class TestRemoteSourceMessages:
             )
             assert result == ["[pkg] update available (abc123aa -> def456bb)"]
 
+    def test_no_shipped_changes_gives_no_notice(self) -> None:
+        with (
+            patch("llm_prompts.cli._get_installed_commit", return_value="abc123aa"),
+            patch("llm_prompts.cli._remote_head", return_value="def456bb"),
+            patch("llm_prompts.cli._remote_commit_subjects", return_value=[]),
+        ):
+            assert _remote_source_messages("pkg", "git+https://x.io/r.git") == []
+
     def test_ls_remote_fails(self) -> None:
         with (
             patch("llm_prompts.cli._get_installed_commit", return_value="abc123"),
@@ -215,6 +224,14 @@ class TestLocalSourceMessages:
         assert result == [
             ("[core] update available:\n- Add A\n  * Add A2\n- Fix B\n- Tweak C")
         ]
+
+    def test_no_shipped_changes_gives_no_notice(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        (tmp_path / ".git").mkdir()
+        fake_subprocess.on("rev-list", "--count", stdout="2\n")
+        assert _local_source_messages("core", str(tmp_path)) == []
+        assert fake_subprocess.matching("log")[0][-6:] == ["--", *SHIPPED_PATHS]
 
     def test_up_to_date(self, tmp_path: Path, fake_subprocess: FakeSubprocess) -> None:
         (tmp_path / ".git").mkdir()
