@@ -1,5 +1,4 @@
 const STATUS_CONTEXT = 'codeowner-review';
-const PROMPT_PATH = /^src\/[^/]+\/prompts\/(?:.*\/)?(rules|skills|workflows|agents)\//;
 const IGNORED_REVIEW_STATES = ['COMMENTED', 'PENDING'];
 
 async function setStatus(github, context, state, description) {
@@ -12,10 +11,20 @@ async function setStatus(github, context, state, description) {
   });
 }
 
+function patternToRegExp(pattern) {
+  const body = pattern.replace(/^\/|\/$/g, '');
+  const head = pattern.replace(/\/$/, '').includes('/') ? '' : '(?:.*/)?';
+  const tail = pattern.endsWith('/') ? '/.*' : /[*?][^/]*$/.test(body) ? '' : '(?:/.*)?';
+  const source = body.replace(/(^|\/)\*\*(?:\/|$)|\*+|\?|[.+^${}()|[\]\\]/g, (token, lead) => (lead !== undefined ? lead + (token.endsWith('/') ? '(?:.*/)?' : '.*') : token[0] === '*' ? '[^/]*' : token === '?' ? '[^/]' : `\\${token}`));
+  return new RegExp(`^${head}${source}${tail}$`);
+}
+
 async function readCodeOwners(github, { owner, repo }, ref) {
   const { data } = await github.rest.repos.getContent({ owner, repo, path: 'CODEOWNERS', ref });
-  const handles = Buffer.from(data.content, 'base64').toString().match(/@[\w-]+/g) ?? [];
-  return new Set(handles.map((handle) => handle.slice(1).toLowerCase()));
+  return Buffer.from(data.content, 'base64').toString().split('\n')
+    .map((line) => line.replace(/#.*/, '').trim())
+    .filter(Boolean)
+    .map((line) => ({ pattern: patternToRegExp(line.split(/\s+/)[0]), owners: (line.match(/@[\w-]+/g) ?? []).map((handle) => handle.slice(1).toLowerCase()) }));
 }
 
 function latestReviewStates(reviews) {
@@ -33,12 +42,13 @@ async function evaluate({ github, context }) {
   const { owner, repo } = context.repo;
   const author = pr.user.login.toLowerCase();
   const files = await github.paginate(github.rest.pulls.listFiles, { owner, repo, pull_number: pr.number, per_page: 100 });
-  const touchesPrompts = files.some(({ filename, previous_filename }) => PROMPT_PATH.test(filename) || PROMPT_PATH.test(previous_filename ?? ''));
-  if (author === owner.toLowerCase() && !touchesPrompts) {
-    return ['success', 'Owner change outside prompts'];
+  const rules = await readCodeOwners(github, context.repo, pr.base.ref);
+  const needsReview = (path) => rules.findLast(({ pattern }) => pattern.test(path))?.owners.some((handle) => handle !== author);
+  if (!files.some(({ filename, previous_filename }) => [filename, previous_filename].some((path) => path && needsReview(path)))) {
+    return ['success', 'No code owner review needed'];
   }
 
-  const owners = await readCodeOwners(github, context.repo, pr.base.ref);
+  const owners = new Set(rules.flatMap((rule) => rule.owners));
   const reviews = await github.paginate(github.rest.pulls.listReviews, { owner, repo, pull_number: pr.number, per_page: 100 });
   const states = [...latestReviewStates(reviews)].filter(([login]) => owners.has(login) && login !== author);
   if (states.some(([, state]) => state === 'CHANGES_REQUESTED')) {
