@@ -15,6 +15,7 @@ copilot_apply_to: '**'
 - {{ACTION_NO_NARRATE}}
 - MUST write for reuse: merge similar functions or create an interface.
 - MUST make a change once, at its source, not at each place that uses it.
+- MUST make targeted file changes with the edit or write tool, not a script. A script MAY make one mechanical change across many files, and you MUST then check `git diff`.
 - MUST NOT change code the task does not need; leaving code better applies only to code you are already editing.
 - Committed text (docs, CLAUDE.md, design decisions) MUST describe the current state - never a failed approach, a removed feature, or "we tried X then switched to Y".
 - SHOULD NOT assign a variable that adds no clarity; a value used once needs no name.
