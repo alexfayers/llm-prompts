@@ -1,9 +1,9 @@
-const { BLOCKED_LABEL } = require('./label-pr.js');
+const { AUTO_REBASE_LABEL } = require('./label-pr.js');
 
 const LIST_OPEN_PRS = `query($owner: String!, $repo: String!, $base: String!) {
   repository(owner: $owner, name: $repo) {
     pullRequests(states: OPEN, baseRefName: $base, first: 100) {
-      nodes { id number headRefOid isDraft isCrossRepository mergeable autoMergeRequest { enabledAt } labels(first: 50) { nodes { name } } }
+      nodes { id number headRefOid mergeable labels(first: 50) { nodes { name } } }
     }
   }
 }`;
@@ -15,13 +15,7 @@ const REBASE_BRANCH = `mutation($id: ID!, $head: GitObjectID!) {
 }`;
 
 function isRebaseCandidate(pr) {
-  return (
-    pr.autoMergeRequest !== null &&
-    !pr.isDraft &&
-    !pr.isCrossRepository &&
-    pr.mergeable !== 'CONFLICTING' &&
-    !pr.labels.nodes.some(({ name }) => name === BLOCKED_LABEL.name)
-  );
+  return pr.mergeable !== 'CONFLICTING' && pr.labels.nodes.some(({ name }) => name === AUTO_REBASE_LABEL.name);
 }
 
 async function rebase({ github, context, core }) {

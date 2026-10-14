@@ -3,27 +3,16 @@ const assert = require('node:assert/strict');
 const { isRebaseCandidate, rebase } = require('./rebase-prs.js');
 
 const eligible = {
-  autoMergeRequest: { enabledAt: '2026-01-01T00:00:00Z' },
-  isDraft: false,
-  isCrossRepository: false,
   mergeable: 'MERGEABLE',
-  labels: { nodes: [] },
+  labels: { nodes: [{ name: 'auto-rebase' }] },
 };
 
-test('auto-merge PR that is mergeable is a candidate', () => {
+test('labelled mergeable PR is a candidate', () => {
   assert.equal(isRebaseCandidate(eligible), true);
 });
 
-test('PR without auto-merge is rejected', () => {
-  assert.equal(isRebaseCandidate({ ...eligible, autoMergeRequest: null }), false);
-});
-
-test('draft PR is rejected', () => {
-  assert.equal(isRebaseCandidate({ ...eligible, isDraft: true }), false);
-});
-
-test('cross-repository PR is rejected', () => {
-  assert.equal(isRebaseCandidate({ ...eligible, isCrossRepository: true }), false);
+test('PR without the auto-rebase label is rejected', () => {
+  assert.equal(isRebaseCandidate({ ...eligible, labels: { nodes: [] } }), false);
 });
 
 test('conflicting PR is rejected', () => {
@@ -66,7 +55,7 @@ test('open PRs are listed for the pushed base branch', async () => {
 });
 
 test('eligible PRs are rebased in order and others are skipped', async () => {
-  const { calls, github, core } = setup([pr(1), pr(2, { autoMergeRequest: null }), pr(3), pr(4, { labels: { nodes: [{ name: 'blocked' }] } })]);
+  const { calls, github, core } = setup([pr(1), pr(2, { labels: { nodes: [] } }), pr(3)]);
   await rebase({ github, context, core });
   assert.deepEqual(
     calls.slice(1).map((call) => call.vars),
@@ -84,7 +73,7 @@ test('a failed rebase warns and the remaining PRs are still rebased', async () =
 });
 
 test('no candidates runs only the list query', async () => {
-  const { calls, github, core } = setup([pr(1, { isDraft: true })]);
+  const { calls, github, core } = setup([pr(1, { mergeable: 'CONFLICTING' })]);
   await rebase({ github, context, core });
   assert.equal(calls.length, 1);
 });
