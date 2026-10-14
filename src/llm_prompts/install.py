@@ -6,7 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Container, Mapping, Sequence
+from collections.abc import Callable, Container, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache, partial
 from importlib.metadata import distribution, packages_distributions
@@ -2535,9 +2535,34 @@ def _seed_pi_files(dirs: list[Path]) -> None:
             log("success", f"[pi] Seeded {dest}.")
 
 
+def _split_npm_source(source: str) -> tuple[str, str]:
+    """Split an ``npm:`` package source into its name and pinned version.
+
+    Args:
+        source: Package source such as ``npm:name@1.0.0``.
+
+    Returns:
+        The package name and its version, empty when unpinned.
+    """
+    name, _, version = source.removeprefix("npm:").rpartition("@")
+    return (name, version) if name else (source.removeprefix("npm:"), "")
+
+
+def _npm_names(sources: Iterable[str]) -> set[str]:
+    """Return the package names of the ``npm:`` sources among ``sources``."""
+    return {
+        _split_npm_source(source)[0] for source in sources if source.startswith("npm:")
+    }
+
+
+def _pi_package_dir(name: str) -> Path:
+    """Return the directory pi installs the npm package ``name`` into."""
+    return _pi_agent_dir() / "npm" / "node_modules" / name
+
+
 def _sync_pi_packages(
     wanted: list[str], previous: list[str], defaults: dict[str, Any] | None = None
-) -> None:
+) -> set[str]:
     """Make pi's global settings list exactly the managed packages in ``wanted``.
 
     Packages the user added themselves are left alone; a package llm-prompts
@@ -2548,6 +2573,9 @@ def _sync_pi_packages(
         wanted: Package sources llm-prompts now declares.
         previous: Package sources llm-prompts managed at the last install.
         defaults: Default provider, model and tools llm-prompts now declares.
+
+    Returns:
+        Names of the npm packages added to the settings.
     """
     settings_path = _pi_agent_dir() / "settings.json"
     settings: dict[str, Any] = (
@@ -2557,45 +2585,78 @@ def _sync_pi_packages(
     stale = set(previous) - set(wanted)
     packages = [entry for entry in current if _package_source(entry) not in stale]
     present = {_package_source(entry) for entry in packages}
-    packages.extend(source for source in wanted if source not in present)
+    added = [source for source in wanted if source not in present]
+    packages.extend(added)
+    added_names = _npm_names(added) - _npm_names(present)
     missing_defaults = {k: v for k, v in (defaults or {}).items() if k not in settings}
     if packages == current and not missing_defaults:
-        return
+        return added_names
     settings["packages"] = packages
     settings.update(missing_defaults)
     _write_text(settings_path, json.dumps(settings, indent=2) + "\n")
     log("success", f"[pi] Updated packages in {settings_path}.")
+    return added_names
 
 
-def _install_pi_packages(sources: list[str]) -> bool:
+def _install_pi_packages(
+    sources: list[str], adoptable: set[str]
+) -> tuple[bool, set[str]]:
     """Run ``pi install`` for each npm package whose pinned version is not installed.
 
     Args:
         sources: Package sources llm-prompts declares.
+        adoptable: Package names llm-prompts may take ownership of when it installs them.
 
     Returns:
-        Whether any ``pi install`` failed.
+        Whether any ``pi install`` failed, and the adoptable packages it newly installed.
     """
     pi = shutil.which("pi")
     if pi is None:
         log("warn", "[pi] `pi` not found, skipping package installs.")
-        return False
+        return False, set()
     failed = False
+    installed: set[str] = set()
     for source in sources:
         if not source.startswith("npm:"):
             continue
-        name, _, version = source.removeprefix("npm:").rpartition("@")
-        if not name:
-            name, version = source.removeprefix("npm:"), ""
-        manifest = _pi_agent_dir() / "npm" / "node_modules" / name / "package.json"
+        name, version = _split_npm_source(source)
+        manifest = _pi_package_dir(name) / "package.json"
         if manifest.exists() and (
             not version or json.loads(_read_text(manifest)).get("version") == version
         ):
             continue
+        absent = not manifest.parent.exists()
         if subprocess.run([pi, "install", source], check=False).returncode:
             log("error", f"[pi] `pi install {source}` failed.")
             failed = True
-    return failed
+        elif absent and name in adoptable:
+            installed.add(name)
+    return failed, installed
+
+
+def _remove_owned_pi_packages(owned: set[str], wanted: set[str]) -> set[str]:
+    """Run ``pi remove`` for each package llm-prompts installed and no longer declares.
+
+    Args:
+        owned: Package names llm-prompts installed.
+        wanted: Package names llm-prompts now declares.
+
+    Returns:
+        Names of the packages still on disk after removal.
+    """
+    stale = owned - wanted
+    if not stale:
+        return set()
+    pi = shutil.which("pi")
+    if pi is None:
+        log("warn", "[pi] `pi` not found, skipping package removal.")
+        return stale
+    for name in sorted(stale):
+        subprocess.run([pi, "remove", f"npm:{name}"], check=False)
+    kept = {name for name in stale if _pi_package_dir(name).exists()}
+    for name in sorted(kept):
+        log("warn", f"[pi] Could not remove package {name}.")
+    return kept
 
 
 def _enabled_claude_plugin_paths() -> list[Path] | None:
@@ -3061,6 +3122,11 @@ def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) ->
             _disallow_update_claude_code()
         if name == "pi":
             _remove_empty_dir(_pi_rules_dir())
+            owned = set(entry.get("pi_installed_packages", []))
+            for package in sorted(_remove_owned_pi_packages(owned, set())):
+                log(
+                    "warn", f"[pi] Run `pi remove npm:{package}` to finish removing it."
+                )
             _sync_pi_packages([], entry.get("packages", []))
             _sync_pi_skills([], entry.get("skills", []))
             _sync_pi_mcp_permissions({}, entry.get("mcp_permissions", []))
@@ -3370,6 +3436,9 @@ def main(
     from .manifest import write_manifest
 
     pi_packages: list[str] | None = None
+    pi_installed_packages: list[str] | None = previous_manifest.get("pi", {}).get(
+        "pi_installed_packages"
+    )
     pi_skills: list[str] | None = None
     pi_mcp_rules: list[str] | None = None
     pi_rule_roles: dict[str, list[str]] | None = previous_manifest.get("pi", {}).get(
@@ -3389,12 +3458,20 @@ def main(
             d / "pi" / "settings.json" for d in overlay_dirs
         ]
         pi_packages = _pi_packages(pi_fragments)
-        _sync_pi_packages(
+        wanted_names = _npm_names(pi_packages)
+        previous_owned = set(
+            previous_manifest.get("pi", {}).get("pi_installed_packages", [])
+        )
+        retained = _remove_owned_pi_packages(previous_owned, wanted_names)
+        added = _sync_pi_packages(
             pi_packages,
             previous_manifest.get("pi", {}).get("packages", []),
             _pi_defaults(pi_fragments),
         )
-        pi_install_failed = _install_pi_packages(pi_packages)
+        pi_install_failed, newly_owned = _install_pi_packages(pi_packages, added)
+        pi_installed_packages = sorted(
+            (previous_owned & wanted_names) | newly_owned | retained
+        )
         installed_files["pi"].extend(
             _install_pi_extensions(
                 [root_dir / "pi" / "extensions"]
@@ -3431,6 +3508,7 @@ def main(
             name,
             manifest_files,
             packages=pi_packages if name == "pi" else None,
+            pi_installed_packages=pi_installed_packages if name == "pi" else None,
             skills=pi_skills if name == "pi" else None,
             mcp_permissions=pi_mcp_rules if name == "pi" else None,
             pi_rule_roles=pi_rule_roles if name == "pi" else None,
