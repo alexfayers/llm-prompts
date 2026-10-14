@@ -1,7 +1,7 @@
 ---
 name: surveyor
 description: Read-only research/survey agent for gathering facts another teammate's decision depends on. Read-only: cannot write or edit.
-disallowedTools: Agent, Write, Edit, NotebookEdit{{ ", ask_user, plan_mode_question, plan_mode_complete, source_check, lsp_rename, lsp_code_actions, lsp_completions, code_rewrite, process" if AGENT == "pi" else "" }}
+disallowedTools: Agent, Write, Edit, NotebookEdit{{ ", ask_user, source_check, process" if AGENT == "pi" else "" }}
 {% if AGENT == "pi" %}
 pi_skills: git-usage
 {% endif %}

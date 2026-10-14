@@ -1,7 +1,7 @@
 ---
 name: worker
 description: Generic mechanical executor for well-specified, no-judgment tasks (apply an edit pattern, run a bounded search, execute a decided step).
-disallowedTools: Agent{{ ", ask_user, plan_mode_question, plan_mode_complete, source_check, lsp_rename, lsp_code_actions, lsp_completions, process" if AGENT == "pi" else "" }}
+disallowedTools: Agent{{ ", ask_user, source_check, process" if AGENT == "pi" else "" }}
 {% if AGENT == "pi" %}
 pi_skills: git-usage, tdd
 {% endif %}
