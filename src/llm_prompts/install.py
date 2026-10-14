@@ -1847,7 +1847,7 @@ _HERDSMAN_ARRAY_KEYS = {
     "disallowedTools": "excludeTools",
     "allowed_subagents": "agents",
 }
-_HERDSMAN_BOOLEAN_KEYS = {"extensions": "noExtensions", "skills": "inheritSkills"}
+_HERDSMAN_BOOLEAN_KEYS = {"skills": "inheritSkills"}
 
 
 def _pi_skill_paths(
@@ -1937,10 +1937,18 @@ def _herdsman_agent_content(
                 )
         elif key == "pi_skills":
             lines.append(f"skills: {json.dumps(resolve_skills(value))}")
+        elif key == "extensions":
+            names = [
+                n.strip().strip("'\"")
+                for n in value.strip("[]").split(",")
+                if n.strip()
+            ]
+            lines.append("noExtensions: true")
+            if names:
+                lines.append(f"extensions: {json.dumps(names)}")
         elif key in _HERDSMAN_BOOLEAN_KEYS:
-            flag = value == "true"
             lines.append(
-                f"{_HERDSMAN_BOOLEAN_KEYS[key]}: {str(flag if key == 'skills' else not flag).lower()}"
+                f"{_HERDSMAN_BOOLEAN_KEYS[key]}: {str(value == 'true').lower()}"
             )
         elif key not in _PI_DROPPED_FRONTMATTER_KEYS:
             raise ValueError(
