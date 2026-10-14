@@ -1262,6 +1262,15 @@ class TestHerdsmanAgents:
         with pytest.raises(ValueError, match="mystery"):
             _install(tmp_path / "home", tmp_path / "installed.json", [overlay])
 
+    @pytest.mark.parametrize("v", ["[x, y]", "[\"x\", 'y']"])
+    def test_extensions_list_limits_extensions(self, tmp_path: Path, v: str) -> None:
+        agents = tmp_path / "o/shared/agents"
+        agents.mkdir(parents=True)
+        (agents / "a.md").write_text(f"---\nname: a\nextensions: {v}\n---\n\nb\n")
+        _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o"])
+        fm = _frontmatter(tmp_path / "h/.pi/agent/agents/a.md")
+        assert fm["noExtensions"] is True and fm["extensions"] == ["x", "y"]
+
 
 def _frontmatter(path: Path) -> dict[str, Any]:
     """Parse an installed agent's YAML frontmatter."""

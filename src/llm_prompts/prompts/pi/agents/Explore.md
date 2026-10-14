@@ -5,7 +5,6 @@ description: >-
 tools: Read, Grep, Glob, LS, lsp_symbols, lsp_definition, lsp_references, lsp_hover, code_overview, ast_search
 model: haiku
 effort: off
-extensions: true
 skills: true
 omitClaudeMd: true
 ---
