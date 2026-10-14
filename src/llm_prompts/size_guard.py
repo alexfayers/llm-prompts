@@ -921,6 +921,7 @@ _PI_ROLE_SOURCE_DIRS: tuple[str, ...] = (
     "pi/agents",
     "claude-code/agents",
     "pi/agent-models.json",
+    "pi/agent-additions.json",
     ALLOWANCES_FILENAME,
 )
 

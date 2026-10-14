@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Collection, Container, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cache, partial
 from importlib.metadata import distribution, packages_distributions
 from importlib.resources import files
@@ -1389,11 +1389,35 @@ def _frontmatter_tokens(frontmatter: dict[str, str], key: str) -> list[str]:
     return [t.strip() for t in frontmatter.get(key, "").split(",") if t.strip()]
 
 
+def _append_frontmatter_tokens(content: str, additions: dict[str, list[str]]) -> str:
+    """Append tokens to comma-list frontmatter keys, skipping those already there.
+
+    Args:
+        content: Agent source content.
+        additions: Tokens to append for each frontmatter key; a missing key is
+            created.
+
+    Returns:
+        Content with the tokens appended.
+    """
+    if not additions:
+        return content
+    frontmatter = parse_frontmatter(content)[1]
+    merged: dict[str, str] = {}
+    for key, tokens in additions.items():
+        value = frontmatter.get(key, "")
+        existing = [t.strip(" '\"") for t in value.strip("[]").split(",")]
+        joined = ", ".join(dict.fromkeys([*filter(None, existing), *tokens]))
+        merged[key] = f"[{joined}]" if value.startswith("[") else joined
+    return _apply_frontmatter_overrides(content, merged)
+
+
 def _expand_agent_variants(
     src_path: Path,
     resolve_model: Callable[[str], str] | None = None,
     variables: dict[str, str] | None = None,
     target: str = "",
+    additions: dict[str, list[str]] | None = None,
 ) -> list[tuple[str, str]]:
     """Expand a ``generate_variants`` template source into generated variant files.
 
@@ -1410,6 +1434,7 @@ def _expand_agent_variants(
         variables: Variables the source is rendered with before its
             frontmatter is parsed.
         target: Target agent name whose ``<target>_extra_variants`` apply.
+        additions: Frontmatter tokens appended to the source before it is parsed.
 
     Returns:
         List of ``(generated_filename, generated_content)`` pairs.
@@ -1417,7 +1442,9 @@ def _expand_agent_variants(
     Raises:
         TemplateError: If the source is not a valid template.
     """
-    content = substitute_variables(_read_text(src_path), variables or {})
+    content = _append_frontmatter_tokens(
+        substitute_variables(_read_text(src_path), variables or {}), additions or {}
+    )
     _, frontmatter = parse_frontmatter(content)
     tokens = _frontmatter_tokens(frontmatter, "generate_variants")
     extra_tokens = (
@@ -1823,10 +1850,12 @@ class _AgentDialect:
             Claude Code definitions as they are.
         resolve_model: Maps a variant's tier alias to its ``model`` value, or
             ``None`` to use the Claude Code model catalogue.
+        additions: Frontmatter tokens to append, per agent stem and key.
     """
 
     translate: Callable[[str], str] | None = None
     resolve_model: Callable[[str], str] | None = None
+    additions: dict[str, dict[str, list[str]]] = field(default_factory=dict)
 
 
 _CLAUDE_AGENT_DIALECT = _AgentDialect()
@@ -2073,6 +2102,27 @@ def _herdsman_agent_content(
     return "---\n" + "\n".join(lines) + "\n---\n" + split[1]
 
 
+def _pi_agent_additions(fragments: list[Path]) -> dict[str, dict[str, list[str]]]:
+    """Collect the frontmatter tokens declared by every ``pi/agent-additions.json``.
+
+    Args:
+        fragments: Candidate fragment paths, core first, then overlays.
+
+    Returns:
+        Tokens to append for each agent stem and frontmatter key, joined
+        across fragments without duplicates.
+    """
+    additions: dict[str, dict[str, list[str]]] = {}
+    for fragment in fragments:
+        if fragment.is_file():
+            for stem, keys in json.loads(_read_text(fragment)).items():
+                for key, tokens in keys.items():
+                    if tokens:
+                        current = additions.setdefault(stem, {}).get(key, [])
+                        additions[stem][key] = list(dict.fromkeys([*current, *tokens]))
+    return additions
+
+
 def _pi_agent_models(fragments: list[Path]) -> dict[str, str]:
     """Collect the tier-to-model map declared by every ``pi/agent-models.json``.
 
@@ -2199,6 +2249,10 @@ def _pi_agent_dialect(
             ),
         ),
         resolve_model,
+        _pi_agent_additions(
+            [root_dir / "pi" / "agent-additions.json"]
+            + [d / "pi" / "agent-additions.json" for d in overlay_dirs]
+        ),
     )
 
 
@@ -2271,11 +2325,22 @@ def _generated_agents(
     Returns:
         ``(filename, content)`` for each variant, in the target's dialect.
     """
+    additions = dialect.additions.get(src.stem, {})
     frontmatter = parse_frontmatter(rendered)[1]
     files = (
-        _expand_agent_variants(src, dialect.resolve_model, variables, agent_name)
-        if "generate_variants" in frontmatter
-        else [(name, strip_gating_keys(rendered, _GATING_FRONTMATTER_KEYS))]
+        _expand_agent_variants(
+            src, dialect.resolve_model, variables, agent_name, additions
+        )
+        if "generate_variants" in {**frontmatter, **additions}
+        else [
+            (
+                name,
+                strip_gating_keys(
+                    _append_frontmatter_tokens(rendered, additions),
+                    _GATING_FRONTMATTER_KEYS,
+                ),
+            )
+        ]
     )
     generated: list[tuple[str, str]] = []
     for gen_name, gen_content in files:
@@ -2338,7 +2403,10 @@ def _install_agents(
             log("error", f"Failed to render agent '{name}': {e}")
             continue
         _, frontmatter = parse_frontmatter(rendered)
-        has_variants = "generate_variants" in frontmatter
+        has_variants = "generate_variants" in {
+            **frontmatter,
+            **dialect.additions.get(src.stem, {}),
+        }
         if src.resolve() in skip_set:
             previous_files = previous_manifest.get(agent_name, {}).get("files", [])
             if has_variants:
