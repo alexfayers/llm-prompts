@@ -87,4 +87,4 @@ async function sync({ github, context, core }) {
   await setStatus(github, pr.id, resolveStatus(pr));
 }
 
-module.exports = { findPr, isBlocked, resolveStatus, sync };
+module.exports = { findPr, fetchPr, isBlocked, resolveStatus, sync };

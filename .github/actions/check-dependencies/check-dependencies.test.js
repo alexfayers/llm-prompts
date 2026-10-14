@@ -5,6 +5,7 @@ const { check } = require('./check-dependencies.js');
 function fixture({ body, labels = [], states = {} }) {
   const calls = [];
   const github = {
+    graphql: async () => ({ repository: { pullRequest: { reviewDecision: github.reviewDecision } } }),
     rest: {
       pulls: { list() {} },
       repos: { createCommitStatus: async ({ state }) => calls.push(['status', state]) },
@@ -29,10 +30,13 @@ test('open dependencies in every link style add the blocked label and never fail
   assert.deepEqual(calls, [['status', 'pending'], 'createLabel', ['addLabels', ['blocked']]]);
 });
 
-test('cleared dependencies remove the blocked label', async () => {
+test('cleared dependencies remove the blocked label unless changes are requested', async () => {
   const { github, context, core, calls } = fixture({ body: 'Depends on #1', labels: ['blocked'] });
+  github.reviewDecision = 'CHANGES_REQUESTED';
   await check({ github, context, core });
-  assert.deepEqual(calls, [['status', 'success'], ['removeLabel', 'blocked']]);
+  github.reviewDecision = null;
+  await check({ github, context, core });
+  assert.deepEqual(calls, [['status', 'success'], ['status', 'success'], ['removeLabel', 'blocked']]);
 });
 
 test('removing a blocked label that is already gone does not fail', async () => {
