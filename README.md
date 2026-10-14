@@ -6,7 +6,7 @@
 |------------------------------------------------------------------------------ | -------: | -------: | ------: | --------: |
 | src/llm\_prompts/\_\_init\_\_.py                                              |        0 |        0 |    100% |           |
 | src/llm\_prompts/batching.py                                                  |      138 |        1 |     99% |       129 |
-| src/llm\_prompts/cli.py                                                       |      465 |       71 |     85% |82-83, 107-120, 201-202, 291-292, 420, 423, 472, 547-549, 585-587, 597-600, 619-628, 812-832, 851-853, 856-862, 865-868, 871-884, 893, 895-900, 903-904, 915-919, 992-993, 998 |
+| src/llm\_prompts/cli.py                                                       |      479 |       71 |     85% |85-86, 110-123, 217-218, 307-308, 436, 439, 488, 563-565, 601-603, 613-616, 635-644, 828-848, 867-869, 872-878, 881-884, 887-900, 909, 911-916, 919-920, 931-935, 1017-1018, 1023 |
 | src/llm\_prompts/collection\_size.py                                          |      115 |        5 |     96% |178, 238-239, 389, 446 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/contribute.py                                                |      875 |       12 |     99% |149, 176, 318, 1141, 1166, 1366, 1383-1384, 1474-1476, 1817 |
@@ -38,7 +38,7 @@
 | tests/test\_build\_wave.py                                                    |      179 |        0 |    100% |           |
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
 | tests/test\_check\_repos\_script.py                                           |       67 |        0 |    100% |           |
-| tests/test\_cli.py                                                            |      780 |        0 |    100% |           |
+| tests/test\_cli.py                                                            |      790 |        0 |    100% |           |
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
 | tests/test\_codemode\_error\_header.py                                        |       45 |        1 |     98% |        28 |
 | tests/test\_conftest.py                                                       |       60 |        0 |    100% |           |
@@ -71,14 +71,14 @@
 | tests/test\_render\_template.py                                               |      126 |        0 |    100% |           |
 | tests/test\_retrospective\_extract.py                                         |       90 |        0 |    100% |           |
 | tests/test\_rewrite\_range\_script.py                                         |       68 |        0 |    100% |           |
-| tests/test\_setup.py                                                          |      264 |        0 |    100% |           |
+| tests/test\_setup.py                                                          |      269 |        0 |    100% |           |
 | tests/test\_size\_guard.py                                                    |       93 |        0 |    100% |           |
 | tests/test\_size\_report.py                                                   |      190 |        0 |    100% |           |
 | tests/test\_squash\_subject.py                                                |        7 |        0 |    100% |           |
 | tests/test\_todos\_script.py                                                  |       87 |        0 |    100% |           |
 | tests/test\_tower\_do\_patch.py                                               |       78 |        1 |     99% |        28 |
 | tests/test\_uninstall.py                                                      |      118 |        0 |    100% |           |
-| **TOTAL**                                                                     | **18433** |  **552** | **97%** |           |
+| **TOTAL**                                                                     | **18462** |  **552** | **97%** |           |
 
 
 ## Setup coverage badge
