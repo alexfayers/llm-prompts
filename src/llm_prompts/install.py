@@ -29,6 +29,7 @@ from .render_template import (
     parse_frontmatter,
     render_template,
     resolve_frontmatter,
+    resolve_source_file,
     split_frontmatter,
     strip_gating_keys,
     substitute_template,
@@ -279,8 +280,11 @@ def _requirements_met(declared: dict[str, str], target: str = "") -> bool:
 
     Returns:
         True if there are no ``requires_*`` keys, or every present gate is
-        satisfied (env var set / command on or absent from PATH).
+        satisfied (env var set / command on or absent from PATH), and any
+        ``source_file`` glob matches a file.
     """
+    if "source_file" in declared and resolve_source_file(declared) is None:
+        return False
     required_env = _gating_value(declared, "requires_env", target)
     if required_env and not _env_var_set(required_env):
         return False

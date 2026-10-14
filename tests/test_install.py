@@ -287,6 +287,27 @@ class TestCollectContentSrcsEnvGate:
         assert collected_names("claude-code") == ["cc-only.md", "coding.md"]
 
 
+class TestSourceFile:
+    def _install(self, tmp_path: Path) -> Path:
+        shared = tmp_path / "prompts" / "shared" / "rules"
+        _make_rule(shared, "r.md", f"---\nsource_file: {tmp_path}/ext/*.md\n---\n\nx\n")
+        _make_rule(tmp_path / "prompts" / "claude-code", "vars.json", "{}")
+        dest = tmp_path / "dest"
+        dirs = {"claude-code": {"rules": dest}}
+        agent = _Agent(name="claude-code", root_dir=tmp_path / "prompts", dirs=dirs)
+        _install_content(agent, "rules", shared, [], [])
+        return dest / "r.md"
+
+    def test_newest_matching_file_becomes_body(self, tmp_path: Path) -> None:
+        _make_rule(tmp_path / "ext", "a.md", "old")
+        os.utime(tmp_path / "ext" / "a.md", (1, 1))
+        _make_rule(tmp_path / "ext", "b.md", "new")
+        assert self._install(tmp_path).read_text(encoding="utf-8") == "new\n"
+
+    def test_no_match_skips_rule(self, tmp_path: Path) -> None:
+        assert not self._install(tmp_path).exists()
+
+
 class TestTargetsAgent:
     def test_every_agent_when_keys_absent(self, tmp_path: Path) -> None:
         rule = _make_rule(tmp_path, "rule.md", "---\nname: x\n---\n\n# Rule\n")
