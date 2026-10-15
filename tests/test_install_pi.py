@@ -1306,6 +1306,7 @@ class TestHerdsmanAgents:
         assert worker["skills"] == [
             skill("git-usage"),
             skill("tdd"),
+            str(packaged / "skills" / "pi-processes" / "SKILL.md"),
         ]
         assert {"agent", "ask_user", "source_check"} <= set(worker["excludeTools"])
         assert "process" not in worker["excludeTools"]
@@ -1438,6 +1439,79 @@ class TestHerdsmanAgents:
         assert fm["extensions"][0] == str(
             tmp_path / "h/.pi/agent/extensions/net-guard.ts"
         )
+
+    @pytest.mark.parametrize(
+        ("models", "made"), [('{"zeta": "p/z"}', True), ("{}", False)]
+    )
+    def test_additions_add_extra_variants_for_mapped_models(
+        self, tmp_path: Path, models: str, made: bool
+    ) -> None:
+        agents = _install_with_additions(
+            tmp_path,
+            "generate_variants: sonnet-low",
+            {"pi_extra_variants": ["zeta-low"]},
+            models,
+        )
+        assert (agents / "a-zeta-low.md").exists() is made
+
+    def test_additions_append_to_a_skills_list(self, tmp_path: Path) -> None:
+        additions = {"pi_skills": ["tdd", "git-usage"], "generate_variants": []}
+        agents = _install_with_additions(tmp_path, "pi_skills: git-usage", additions)
+        _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o"])
+        assert (agents / "a.md").exists()
+        skills = _frontmatter(agents / "a.md")["skills"]
+        assert [Path(s).parent.name for s in skills] == ["git-usage", "tdd"]
+
+    def test_additions_keep_extension_brackets_without_duplicates(
+        self, tmp_path: Path
+    ) -> None:
+        agents = _install_with_additions(
+            tmp_path,
+            "extensions: [builtin:x]",
+            {"extensions": ["builtin:x", "builtin:z"]},
+        )
+        extensions = _frontmatter(agents / "a.md")["extensions"]
+        assert extensions[:2] == ["builtin:x", "builtin:z"]
+
+    def test_additions_variants_stay_managed_when_the_size_guard_skips_the_agent(
+        self, tmp_path: Path
+    ) -> None:
+        agents = _install_with_additions(
+            tmp_path, "pi_skills: tdd", {"generate_variants": ["sonnet-low"]}
+        )
+        skipped = {"pi": {(tmp_path / "o/shared/agents/a.md").resolve()}}
+        skip = patch("llm_prompts.size_guard.resolve_skip_set")
+        with skip as resolve:
+            resolve.return_value = (skipped, frozenset())
+            _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o"])
+        assert (agents / "a-sonnet-low.md").exists()
+
+    def test_additions_from_several_fragments_join_a_core_agent(
+        self, tmp_path: Path
+    ) -> None:
+        for name, skill in ("o", "pickup"), ("p", "todos"):
+            (tmp_path / name / "pi").mkdir(parents=True)
+            (tmp_path / name / "pi/agent-additions.json").write_text(
+                json.dumps({"worker": {"pi_skills": [skill]}})
+            )
+        _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o", tmp_path / "p"])
+        worker = tmp_path / "h/.pi/agent/agents/worker-sonnet-high.md"
+        skills = [Path(s).parent.name for s in _frontmatter(worker)["skills"]]
+        assert skills == ["git-usage", "tdd", "pickup", "todos"]
+
+
+def _install_with_additions(
+    tmp_path: Path, line: str, additions: dict[str, list[str]], models: str = "{}"
+) -> Path:
+    """Install an overlay agent `a` with `line` plus additions; return the agents dir."""
+    overlay = tmp_path / "o"
+    (overlay / "shared/agents").mkdir(parents=True)
+    (overlay / "pi").mkdir()
+    (overlay / "pi/agent-models.json").write_text(models)
+    (overlay / "pi/agent-additions.json").write_text(json.dumps({"a": additions}))
+    (overlay / "shared/agents/a.md").write_text(f"---\nname: a\n{line}\n---\n\nb\n")
+    _install(tmp_path / "h", tmp_path / "i.json", [overlay])
+    return tmp_path / "h/.pi/agent/agents"
 
 
 def _frontmatter(path: Path) -> dict[str, Any]:
