@@ -6,7 +6,7 @@
 |------------------------------------------------------------------------------ | -------: | -------: | ------: | --------: |
 | src/llm\_prompts/\_\_init\_\_.py                                              |        0 |        0 |    100% |           |
 | src/llm\_prompts/batching.py                                                  |      138 |        1 |     99% |       129 |
-| src/llm\_prompts/cli.py                                                       |      503 |       72 |     86% |88-89, 113-126, 227-228, 335-336, 464, 467, 516, 595-597, 633-635, 645-648, 667-676, 871-891, 913-915, 918-924, 927-930, 933-947, 956, 958-963, 966-967, 978-982, 1066-1067, 1072 |
+| src/llm\_prompts/cli.py                                                       |      511 |       74 |     86% |88-89, 115-116, 123-136, 237-238, 345-346, 474, 477, 526, 605-607, 643-645, 655-658, 677-686, 881-901, 923-925, 928-934, 937-940, 943-957, 966, 968-973, 976-977, 988-992, 1076-1077, 1082 |
 | src/llm\_prompts/collection\_size.py                                          |      115 |        5 |     96% |178, 238-239, 389, 446 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/contribute.py                                                |      875 |       12 |     99% |149, 176, 318, 1141, 1166, 1366, 1383-1384, 1474-1476, 1817 |
@@ -42,7 +42,7 @@
 | tests/test\_cd.py                                                             |       38 |        0 |    100% |           |
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
 | tests/test\_check\_repos\_script.py                                           |       67 |        0 |    100% |           |
-| tests/test\_cli.py                                                            |      816 |        0 |    100% |           |
+| tests/test\_cli.py                                                            |      823 |        0 |    100% |           |
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
 | tests/test\_codemode\_error\_header.py                                        |       45 |        1 |     98% |        28 |
 | tests/test\_conftest.py                                                       |       60 |        0 |    100% |           |
@@ -68,7 +68,6 @@
 | tests/test\_pane\_reaper.py                                                   |      460 |        1 |     99% |        71 |
 | tests/test\_permission\_box.py                                                |      161 |        1 |     99% |        86 |
 | tests/test\_pi\_extension\_factories.py                                       |        8 |        0 |    100% |           |
-| tests/test\_pi\_help\_coverage.py                                             |       20 |        0 |    100% |           |
 | tests/test\_plugins.py                                                        |      254 |        0 |    100% |           |
 | tests/test\_popup\_defer.py                                                   |      127 |        1 |     99% |        31 |
 | tests/test\_prompt\_cache\_stabilizer.py                                      |       94 |        2 |     98% |    29, 85 |
@@ -84,7 +83,7 @@
 | tests/test\_todos\_script.py                                                  |       87 |        0 |    100% |           |
 | tests/test\_tower\_do\_patch.py                                               |       78 |        1 |     99% |        28 |
 | tests/test\_uninstall.py                                                      |      114 |        0 |    100% |           |
-| **TOTAL**                                                                     | **18962** |  **564** | **97%** |           |
+| **TOTAL**                                                                     | **18957** |  **566** | **97%** |           |
 
 
 ## Setup coverage badge
