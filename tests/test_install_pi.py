@@ -805,6 +805,10 @@ class TestPiSeedFiles:
         assert "diff-preview" in seed["authorizerChain"]
         assert seed["promptMaxRows"] == seed["promptFieldMaxWidth"] == 1_000_000
 
+    def test_permission_seed_gates_shell_writes_like_the_write_tool(self) -> None:
+        permission = json.loads(_core_seed().read_text(encoding="utf-8"))["permission"]
+        assert permission["path_write"] == permission["write"]
+
     def test_permission_seed_gates_mutating_llm_prompts_subcommands_but_not_check(
         self,
     ) -> None:
@@ -881,6 +885,62 @@ class TestPiSeedFiles:
         assert (fresh_home / _SEED_RELATIVE).read_text(encoding="utf-8") == (
             '{"overlay": true}'
         )
+
+    def test_seed_adds_only_keys_not_offered_before_in_the_files_own_format(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        home.mkdir()
+        manifest = tmp_path / "installed.json"
+        seeded = home / _SEED_RELATIVE
+        _install(home, manifest)
+        user: dict[str, Any] = {"permission": {"*": "ask", "edit": {"*": "deny"}}}
+        seeded.write_text(json.dumps(user, indent="\t"), encoding="utf-8")
+        newer = (
+            tmp_path
+            / "newer"
+            / "pi"
+            / "seed"
+            / seeded.relative_to(home / ".pi" / "agent")
+        )
+        newer.parent.mkdir(parents=True)
+        newer.write_text(
+            json.dumps(
+                {"permission": {"bash": {"*": "allow"}, "novel": {}}, "newTop": 1}
+            ),
+            encoding="utf-8",
+        )
+
+        _install(home, manifest, [tmp_path / "newer"])
+
+        user["permission"]["novel"] = {}
+        user["newTop"] = 1
+        assert seeded.read_text(encoding="utf-8") == json.dumps(user, indent="\t")
+
+    def test_seed_adds_every_missing_key_once_when_the_manifest_has_no_record(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        home.mkdir()
+        manifest = tmp_path / "installed.json"
+        seeded = home / _SEED_RELATIVE
+        _install(home, manifest)
+        recorded = json.loads(manifest.read_text(encoding="utf-8"))
+        del recorded["agents"]["pi"]["pi_seeded_keys"]
+        manifest.write_text(json.dumps(recorded), encoding="utf-8")
+        seeded.write_text('{"permission": {"*": "ask"}}', encoding="utf-8")
+
+        _install(home, manifest)
+
+        user = json.loads(seeded.read_text(encoding="utf-8"))
+        assert user["permission"]["*"] == "ask"
+        assert "path_write" in user["permission"]
+        del user["permission"]["path_write"]
+        seeded.write_text(json.dumps(user), encoding="utf-8")
+        _install(home, manifest)
+        assert "path_write" not in seeded.read_text(encoding="utf-8")
 
     def test_compact_tools_seed_collapses_every_tool_including_codemode_and_herdsman(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -962,7 +1022,7 @@ class TestPiSeedFiles:
             uninstall(["pi"])
         _install(home, manifest)
 
-        assert seeded.read_text(encoding="utf-8") == '{"edited": true}'
+        assert json.loads(seeded.read_text(encoding="utf-8"))["edited"] is True
 
 
 class TestPiWording:
