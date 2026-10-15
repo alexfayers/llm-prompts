@@ -118,7 +118,6 @@ def _core_packages() -> list[str]:
     return [
         "npm:pi-herdsman@0.22.0",
         "npm:pi-ask-user@0.16.0",
-        "npm:@narumitw/pi-plan-mode@0.59.2",
         "npm:tower-do@0.7.0",
         "npm:pi-notify@1.4.0",
         "npm:pi-lsp-extension@1.4.0",
