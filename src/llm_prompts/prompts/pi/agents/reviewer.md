@@ -4,6 +4,7 @@ description: Read-only reviewer of a finished diff, plan or implementation for c
 disallowedTools: Agent, Write, Edit, NotebookEdit, ask_user, source_check, process
 pi_skills: git-usage
 extensions: []
+mcp_read_only: [memory]
 generate_variants: opus-medium,opus-high
 color: red
 ---

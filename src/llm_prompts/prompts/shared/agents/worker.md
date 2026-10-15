@@ -2,6 +2,7 @@
 name: worker
 description: Generic mechanical executor for well-specified, no-judgment tasks (apply an edit pattern, run a bounded search, execute a decided step).
 disallowedTools: Agent{{ ", ask_user, source_check" if AGENT == "pi" else "" }}
+mcp_read_only: [memory]
 {% if AGENT == "pi" %}
 pi_skills: git-usage, tdd, pi-processes?
 extensions: [@aliou/pi-processes?]
