@@ -14,7 +14,7 @@ copilot_apply_to: '**'
 - MUST NOT {{TOOL_COMPLETE}} until all tasks in the focus chain are done.
 - {{ACTION_NO_NARRATE}}
 - MUST write for reuse: merge similar functions or create an interface.
-- MUST make a change once, at its source, not at each place that uses it.
+- MUST make a change once, at its source, not at each place that uses it. SHOULD keep one source of truth per value and derive the rest from it at use time - never copy it into state that must be kept in sync.
 - MUST NOT change code the task does not need; leaving code better applies only to code you are already editing.
 - Committed text (docs, CLAUDE.md, design decisions) MUST describe the current state - never a failed approach, a removed feature, or "we tried X then switched to Y".
 - SHOULD NOT assign a variable that adds no clarity; a value used once needs no name.
