@@ -4,9 +4,9 @@ roles: lead, worker, reviewer
 
 # Git
 
-- MUST include at least one "Commit changes" item when building a {{TASK_PROGRESS}} checklist, and SHOULD add commit steps throughout it rather than only at the end - committing often is what keeps work saved.
-- Each logical change is ONE commit. Keep that true as you go: fold each new piece into the commit it belongs to rather than piling up ten commits for one feature and squashing at the end.
-- Test: if one commit describes what another commit does, they are the SAME logical change and MUST be one commit, even across unrelated files - splitting leaves the description stale against the commit it describes.
-- A plan's commit split does NOT override that test - an approved plan proposing one commit per step is not licence to ship three commits for one logical change. MUST apply the test to each planned commit as it lands and `--fixup=` into the previous one where it fails.
-- MUST fold into an unpushed commit with `git commit --fixup=<sha>` plus an autosquash rebase, never `--amend`. See the `git-usage` and `git-tidy` skills for the exact commands.
-- Amending and fixup apply ONLY to unpushed commits. `git-tidy`'s bigger reshapes - reorder, drop, reword - are for when that is genuinely what you need, not the normal route to one commit.
+- A logical change is one change that you could revert on its own, and the code would still work.
+- Each logical change MUST be one commit. If one commit describes what another does, they are the SAME logical change and MUST be one commit, even across unrelated files.
+- MUST fold a later edit to unpushed work into the commit of the logical change it belongs to, with `git commit --fixup=<sha>` plus an autosquash rebase, never `--amend`. See `git-usage` and `git-tidy`.
+- A plan's commit split MUST NOT override that rule. MUST apply it to each planned commit and fold it into the matching commit with `--fixup=` if it fails.
+- MUST rewrite only unpushed commits, per `git-usage`. MUST NOT use reorder, drop or reword merely to combine commits.
+- MUST include at least one "Commit changes" item when building a {{TASK_PROGRESS}} checklist, and SHOULD add commit steps throughout it not only at the end.
