@@ -5,13 +5,12 @@ targets: claude-code, pi
 
 # Planning
 
-## When to enter plan mode
+## When to plan
 
 {% if AGENT == "pi" %}
-- For multi-file changes, architectural decisions, a new feature, or unfamiliar code, MUST save memory, then ask the user for `/plan`.
+- For multi-file changes, architectural decisions, a new feature, or unfamiliar code, MUST save memory, then present a plan to the user.
 - SHOULD err on the side of planning.
-- MUST research and design in subagents BEFORE plan mode - it blocks every non-builtin tool.
-- Inside plan mode you MUST only present the finished plan, then call `plan_mode_complete`.
+- MUST research and design in subagents BEFORE presenting the plan.
 {% else %}
 - MUST use `EnterPlanMode` at least once for multi-file changes, architectural decisions, a new feature, or unfamiliar code.
 - SHOULD err on the side of planning.
@@ -21,12 +20,12 @@ targets: claude-code, pi
 
 ## How to plan effectively
 
-Before plan mode, in order: Explore agents, one per independent dimension, for existing patterns and reusable utilities; a named Plan agent for a concrete design; `refine-plan` to score it; then {% if AGENT == "pi" %}`/plan`{% else %}`EnterPlanMode`{% endif %}. No exploration or iteration after that.
+Before planning, in order: Explore agents, one per independent dimension, for existing patterns and reusable utilities; a named Plan agent for a concrete design; `refine-plan` to score it; then {% if AGENT == "pi" %}present the plan{% else %}`EnterPlanMode`{% endif %}. No exploration or iteration after that.
 
 {% if AGENT == "claude-code" %}
 - MUST NOT skip the agent phase and plan in your head.
 {% endif %}
-- Resuming a plan already made and approved (passed `refine-plan`, already exited plan mode - per a handoff doc, memory task-chain, or the plan file's own status) - MUST go straight to execution, not `refine-plan` or {% if AGENT == "pi" %}`/plan`{% else %}`EnterPlanMode`{% endif %} again, unless the record flags a part still needing research.
+- Resuming a plan already made and approved (passed `refine-plan`, already approved - per a handoff doc, memory task-chain, or the plan file's own status) - MUST go straight to execution, not `refine-plan` or {% if AGENT == "pi" %}presenting the plan{% else %}`EnterPlanMode`{% endif %} again, unless the record flags a part still needing research.
 - Where the user declines a design question - a constraint, or a rejection - MUST treat it as the decision and settle the rest yourself. MUST NOT re-ask reformulated options; state the call in one line.
 
 ## Subagent usage during implementation
@@ -58,7 +57,7 @@ Before plan mode, in order: Explore agents, one per independent dimension, for e
 - Keep a session to one coherent change.
 - Once unrelated changes have accumulated, SHOULD commit what is done, record the rest as TODOs, and suggest a new session.
 - MUST NOT start a new large task late in a long or high-context session. Park it; proceed only on the user's explicit override, not a one-line aside.
-- This gates {% if AGENT == "pi" %}`/plan`{% else %}calling `EnterPlanMode`{% endif %} however trivial, before any research or plan-writing spend. A context-usage notice stays live until a new session.
+- This gates {% if AGENT == "pi" %}presenting a plan{% else %}calling `EnterPlanMode`{% endif %} however trivial, before any research or plan-writing spend. A context-usage notice stays live until a new session.
 - Once the user approves continuing past a context-usage notice, that approval stands for the session - MUST NOT re-ask, except on a new signal: a worse notice tier not yet seen, or a task the approval wouldn't cover.
 {% if AGENT == "pi" %}
 - Past the context threshold, MUST compact with `compact_now` and an `instructions` summary naming the open tasks, asks and decisions.

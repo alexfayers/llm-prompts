@@ -7,7 +7,7 @@ targets: claude-code, pi
 
 - Every question to the user - a decision, clarification, confirmation or missing value - MUST go through the `{{TOOL_ASK_QUESTION}}` tool, never plain response text. This is how every "ask the user" in other rules is delivered.
 {% if AGENT == "pi" %}
-- `{{TOOL_ASK_QUESTION}}` takes exactly one of `question` or `questions` (2-4 independent questions per batch); options are `{title, description}`, with `allowMultiple` and `allowFreeform` per question. Plan mode blocks every non-builtin tool, it included: inside plan mode MUST use `plan_mode_question` (1-3 questions, 2-4 options each).
+- `{{TOOL_ASK_QUESTION}}` takes exactly one of `question` or `questions` (2-4 independent questions per batch); options are `{title, description}`, with `allowMultiple` and `allowFreeform` per question.
 {% else %}
 - Where `AskUserQuestion` is deferred, MUST load it via `ToolSearch` with `select:AskUserQuestion` first.
 {% endif %}
@@ -16,7 +16,7 @@ targets: claude-code, pi
 - Statements, status notes and rhetorical phrasing are not questions; MUST NOT end a message with a question outside the tool.
 - A subagent or teammate MUST NOT ask the user - it escalates to its lead per `agent-teams.md` and `stop-on-fail.md`; the session talking to the user asks.
 {% if AGENT == "pi" %}
-- Plan approval goes through `plan_mode_complete` and tool permissions through the harness prompt, not `{{TOOL_ASK_QUESTION}}`; a follow-up question after a denial still uses it.
+- Tool permissions go through the harness prompt, not `{{TOOL_ASK_QUESTION}}`; a follow-up question after a denial still uses it.
 {% else %}
 - Plan approval goes through `ExitPlanMode` and tool permissions through the harness prompt, not `AskUserQuestion`; a follow-up question after a denial still uses it.
 {% endif %}

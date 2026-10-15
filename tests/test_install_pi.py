@@ -1040,7 +1040,6 @@ class TestPiWording:
     def test_rules_carry_pi_question_tools(self, pi_home: Path) -> None:
         rules = (pi_home / ".pi" / "agent" / "AGENTS.md").read_text(encoding="utf-8")
         assert "`ask_user`" in rules
-        assert "`plan_mode_question`" in rules
 
 
 class TestPiAgents:
@@ -1276,22 +1275,16 @@ class TestHerdsmanAgents:
             skill("git-usage"),
             skill("tdd"),
         ]
-        assert {"agent", "ask_user", "plan_mode_complete", "source_check"} <= set(
-            worker["excludeTools"]
-        )
+        assert {"agent", "ask_user", "source_check"} <= set(worker["excludeTools"])
         assert "process" in worker["excludeTools"]
         surveyor = _frontmatter(agents / "surveyor-sonnet-low.md")
         assert surveyor["skills"] == [skill("git-usage")]
-        assert {"write", "edit", "process", "code_rewrite", "ask_user"} <= set(
-            surveyor["excludeTools"]
-        )
+        assert {"write", "edit", "process", "ask_user"} <= set(surveyor["excludeTools"])
         assert "NotebookEdit" not in surveyor["excludeTools"]
         reviewer = _frontmatter(agents / "reviewer-opus-high.md")
         assert reviewer["skills"] == [skill("git-usage")]
         assert reviewer["excludeTools"][:3] == ["agent", "write", "edit"]
-        assert {"process", "code_rewrite", "lsp_rename"} <= set(
-            reviewer["excludeTools"]
-        )
+        assert {"process"} <= set(reviewer["excludeTools"])
         assert reviewer["thinking"] == "high"
 
     def test_unresolvable_required_pi_skill_fails_install(self, tmp_path: Path) -> None:

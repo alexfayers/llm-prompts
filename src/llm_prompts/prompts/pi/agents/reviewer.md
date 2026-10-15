@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Read-only reviewer of a finished diff, plan or implementation for correctness, missing cases, regressions, scope. Reports findings, never edits or runs the gate.
-disallowedTools: Agent, Write, Edit, NotebookEdit, ask_user, plan_mode_question, plan_mode_complete, source_check, lsp_rename, lsp_code_actions, lsp_completions, code_rewrite, process
+disallowedTools: Agent, Write, Edit, NotebookEdit, ask_user, source_check, process
 pi_skills: git-usage
 generate_variants: opus-medium,opus-high
 color: red
