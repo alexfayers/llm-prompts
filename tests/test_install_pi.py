@@ -19,6 +19,7 @@ from llm_prompts.install import (
     _expanded_definition,
     _linked_content,
     _parse_roles,
+    _pi_agent_dir,
     _requirements_met,
     _split_npm_source,
     get_managed_dirs,
@@ -73,9 +74,28 @@ def _install(
             return "/usr/bin/herdr" if herdr else None
         if command == "pi":
             return pi
+        if command == "cline-hook":
+            return None
         return _REAL_WHICH(command)
 
+    outer = subprocess.run
+
+    def run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if cmd[1:] == ["install", "pi"]:
+            extensions = Path(kwargs["env"]["PI_CODING_AGENT_DIR"]) / "extensions"
+            extensions.mkdir(parents=True, exist_ok=True)
+            (extensions / "cline-hooks.ts").touch()
+            return subprocess.CompletedProcess(cmd, 0)
+        result = outer(cmd, **kwargs)
+        if cmd[1:2] == ["install"] and result.returncode == 0:
+            package = _split_npm_source(cmd[2])[0]
+            (_pi_agent_dir() / "npm/node_modules" / package).mkdir(
+                parents=True, exist_ok=True
+            )
+        return result
+
     with (
+        patch("llm_prompts.install.subprocess.run", side_effect=run),
         patch("llm_prompts.install.Path.home", return_value=home),
         patch("llm_prompts.install.shutil.which", side_effect=which),
         patch(
@@ -323,6 +343,12 @@ class TestPiPackages:
         assert fresh_settings["followUpMode"] == "all"
         assert fresh_settings["cacheWarming"] == "idle"
         assert fresh_settings["enableInstallTelemetry"] is False
+        failing: subprocess.CompletedProcess[str] = subprocess.CompletedProcess([], 1)
+        with (
+            patch("llm_prompts.install.subprocess.run", return_value=failing),
+            pytest.raises(ValueError, match="pi-permission-system"),
+        ):
+            _install(tmp_path / "bare", tmp_path / "bare.json", pi="/usr/bin/pi")
 
         home = tmp_path / "home"
         settings_path = home / ".pi" / "agent" / "settings.json"
@@ -408,15 +434,21 @@ class TestPiExtensions:
         overlay = tmp_path / "overlay"
         source = overlay / "pi" / "extensions" / "acme-guard.ts"
         source.parent.mkdir(parents=True)
-        source.write_text("export default () => {};\n", encoding="utf-8")
+        source.write_text("pi.registerProvider(x)\n", encoding="utf-8")
+        agent = overlay / "shared" / "agents" / "a.md"
+        agent.parent.mkdir(parents=True)
+        agent.write_text("---\nname: a\nextensions: []\n---\n\nb\n", encoding="utf-8")
         installed = home / ".pi" / "agent" / "extensions" / "acme-guard.ts"
+        listed = home / ".pi" / "agent" / "agents" / "a.md"
 
         _install(home, manifest, [overlay])
-        assert installed.read_text(encoding="utf-8") == "export default () => {};\n"
+        assert installed.read_text(encoding="utf-8") == "pi.registerProvider(x)\n"
+        assert str(installed) in _frontmatter(listed)["extensions"]
 
         source.unlink()
         _install(home, manifest, [overlay])
         assert not installed.exists()
+        assert str(installed) not in _frontmatter(listed)["extensions"]
 
     def test_core_net_guard_extension_is_installed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1274,9 +1306,10 @@ class TestHerdsmanAgents:
         assert worker["skills"] == [
             skill("git-usage"),
             skill("tdd"),
+            str(packaged / "skills" / "pi-processes" / "SKILL.md"),
         ]
         assert {"agent", "ask_user", "source_check"} <= set(worker["excludeTools"])
-        assert "process" in worker["excludeTools"]
+        assert "process" not in worker["excludeTools"]
         surveyor = _frontmatter(agents / "surveyor-sonnet-low.md")
         assert surveyor["skills"] == [skill("git-usage")]
         assert {"write", "edit", "process", "ask_user"} <= set(surveyor["excludeTools"])
@@ -1319,9 +1352,166 @@ class TestHerdsmanAgents:
         agents = tmp_path / "o/shared/agents"
         agents.mkdir(parents=True)
         (agents / "a.md").write_text(f"---\nname: a\nextensions: {v}\n---\n\nb\n")
+        extensions = tmp_path / "h/.pi/agent/extensions"
+        extensions.mkdir(parents=True)
+        (extensions / "x.ts").touch()
+        (extensions / "y").mkdir()
         _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o"])
         fm = _frontmatter(tmp_path / "h/.pi/agent/agents/a.md")
-        assert fm["noExtensions"] is True and fm["extensions"] == ["x", "y"]
+        assert fm["noExtensions"] is True
+        assert fm["extensions"][:2] == [str(extensions / "x.ts"), str(extensions / "y")]
+
+    def test_missing_extension_fails_unless_optional(self, tmp_path: Path) -> None:
+        agents = tmp_path / "o/shared/agents"
+        agents.mkdir(parents=True)
+        (agents / "a.md").write_text("---\nname: a\nextensions: gone?\n---\n\nb\n")
+        _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o"])
+        assert "gone" not in (tmp_path / "h/.pi/agent/agents/a.md").read_text()
+        (agents / "a.md").write_text("---\nname: a\nextensions: gone\n---\n\nb\n")
+        with pytest.raises(ValueError, match="gone"):
+            _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o"])
+
+    def test_base_extensions_join_every_list_once(self, tmp_path: Path) -> None:
+        (tmp_path / "o/pi").mkdir(parents=True)
+        (tmp_path / "o/pi/agent-extensions.json").write_text('["base", "builtin:a"]')
+        agents = tmp_path / "o/shared/agents"
+        agents.mkdir(parents=True)
+        (agents / "a.md").write_text("---\nname: a\nextensions: builtin:a\n---\n\nb\n")
+        extensions = tmp_path / "h/.pi/agent/extensions"
+        extensions.mkdir(parents=True)
+        (extensions / "base.ts").touch()
+        _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o"])
+        fm = _frontmatter(tmp_path / "h/.pi/agent/agents/a.md")
+        assert fm["extensions"].count("builtin:a") == 1
+        assert str(extensions / "base.ts") in fm["extensions"]
+
+    def test_provider_entries_of_configured_packages_join_every_list(
+        self, tmp_path: Path
+    ) -> None:
+        agents = tmp_path / "o/shared/agents"
+        agents.mkdir(parents=True)
+        (agents / "a.md").write_text("---\nname: a\nextensions: []\n---\n\nb\n")
+        agent_dir = tmp_path / "h/.pi/agent"
+        provider = "pi.registerProvider(x)"
+        manifest = '{"pi": {"extensions": ["./src/i.ts"]}}'
+        for package, source in (
+            ("npm/node_modules/prov", provider),
+            ("npm/node_modules/plain", "x"),
+            ("git/github.com/o/g", provider),
+            ("git/github.com/o/h", provider),
+            ("local", provider),
+        ):
+            (agent_dir / package / "src").mkdir(parents=True)
+            (agent_dir / package / "package.json").write_text(manifest)
+            (agent_dir / package / "src/i.ts").write_text(source)
+        (agent_dir / "npm/node_modules/plain/other.ts").write_text(provider)
+        (agent_dir / "npm/node_modules/bare/extensions").mkdir(parents=True)
+        (agent_dir / "npm/node_modules/bare/extensions/e.ts").write_text(provider)
+        (agent_dir / "extensions").mkdir()
+        (agent_dir / "extensions/p.ts").write_text(provider)
+        sources = [
+            "npm:prov@1",
+            "npm:plain",
+            "npm:bare",
+            "git:https://github.com/o/g",
+            "git:github.com/o/h@feat/x",
+            "./local",
+        ]
+        (agent_dir / "settings.json").write_text(json.dumps({"packages": sources}))
+        _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o"])
+        fm = _frontmatter(agent_dir / "agents/a.md")
+        assert fm["extensions"][-5:] == [
+            str(agent_dir / "npm/node_modules/prov/src/i.ts"),
+            str(agent_dir / "git/github.com/o/g/src/i.ts"),
+            str(agent_dir / "git/github.com/o/h/src/i.ts"),
+            str(agent_dir / "local/src/i.ts"),
+            str(agent_dir / "extensions/p.ts"),
+        ]
+
+    def test_fresh_install_resolves_extensions_it_installs(
+        self, tmp_path: Path
+    ) -> None:
+        agents = tmp_path / "o/shared/agents"
+        agents.mkdir(parents=True)
+        (agents / "a.md").write_text("---\nname: a\nextensions: net-guard\n---\n\nb\n")
+        _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o"])
+        fm = _frontmatter(tmp_path / "h/.pi/agent/agents/a.md")
+        assert fm["extensions"][0] == str(
+            tmp_path / "h/.pi/agent/extensions/net-guard.ts"
+        )
+
+    @pytest.mark.parametrize(
+        ("models", "made"), [('{"zeta": "p/z"}', True), ("{}", False)]
+    )
+    def test_additions_add_extra_variants_for_mapped_models(
+        self, tmp_path: Path, models: str, made: bool
+    ) -> None:
+        agents = _install_with_additions(
+            tmp_path,
+            "generate_variants: sonnet-low",
+            {"pi_extra_variants": ["zeta-low"]},
+            models,
+        )
+        assert (agents / "a-zeta-low.md").exists() is made
+
+    def test_additions_append_to_a_skills_list(self, tmp_path: Path) -> None:
+        additions = {"pi_skills": ["tdd", "git-usage"], "generate_variants": []}
+        agents = _install_with_additions(tmp_path, "pi_skills: git-usage", additions)
+        _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o"])
+        assert (agents / "a.md").exists()
+        skills = _frontmatter(agents / "a.md")["skills"]
+        assert [Path(s).parent.name for s in skills] == ["git-usage", "tdd"]
+
+    def test_additions_keep_extension_brackets_without_duplicates(
+        self, tmp_path: Path
+    ) -> None:
+        agents = _install_with_additions(
+            tmp_path,
+            "extensions: [builtin:x]",
+            {"extensions": ["builtin:x", "builtin:z"]},
+        )
+        extensions = _frontmatter(agents / "a.md")["extensions"]
+        assert extensions[:2] == ["builtin:x", "builtin:z"]
+
+    def test_additions_variants_stay_managed_when_the_size_guard_skips_the_agent(
+        self, tmp_path: Path
+    ) -> None:
+        agents = _install_with_additions(
+            tmp_path, "pi_skills: tdd", {"generate_variants": ["sonnet-low"]}
+        )
+        skipped = {"pi": {(tmp_path / "o/shared/agents/a.md").resolve()}}
+        skip = patch("llm_prompts.size_guard.resolve_skip_set")
+        with skip as resolve:
+            resolve.return_value = (skipped, frozenset())
+            _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o"])
+        assert (agents / "a-sonnet-low.md").exists()
+
+    def test_additions_from_several_fragments_join_a_core_agent(
+        self, tmp_path: Path
+    ) -> None:
+        for name, skill in ("o", "pickup"), ("p", "todos"):
+            (tmp_path / name / "pi").mkdir(parents=True)
+            (tmp_path / name / "pi/agent-additions.json").write_text(
+                json.dumps({"worker": {"pi_skills": [skill]}})
+            )
+        _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o", tmp_path / "p"])
+        worker = tmp_path / "h/.pi/agent/agents/worker-sonnet-high.md"
+        skills = [Path(s).parent.name for s in _frontmatter(worker)["skills"]]
+        assert skills == ["git-usage", "tdd", "pickup", "todos"]
+
+
+def _install_with_additions(
+    tmp_path: Path, line: str, additions: dict[str, list[str]], models: str = "{}"
+) -> Path:
+    """Install an overlay agent `a` with `line` plus additions; return the agents dir."""
+    overlay = tmp_path / "o"
+    (overlay / "shared/agents").mkdir(parents=True)
+    (overlay / "pi").mkdir()
+    (overlay / "pi/agent-models.json").write_text(models)
+    (overlay / "pi/agent-additions.json").write_text(json.dumps({"a": additions}))
+    (overlay / "shared/agents/a.md").write_text(f"---\nname: a\n{line}\n---\n\nb\n")
+    _install(tmp_path / "h", tmp_path / "i.json", [overlay])
+    return tmp_path / "h/.pi/agent/agents"
 
 
 def _frontmatter(path: Path) -> dict[str, Any]:
@@ -1980,7 +2170,7 @@ class TestPiPackageInstall:
 
         def run(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
             calls.append(cmd)
-            return subprocess.CompletedProcess(cmd, returncode)
+            return subprocess.CompletedProcess(cmd, returncode * (source in cmd))
 
         with patch("llm_prompts.install.subprocess.run", side_effect=run):
             failed = _install(
@@ -2039,14 +2229,16 @@ class TestPiPackageRemoval:
             calls.append(cmd)
             name, version = _split_npm_source(cmd[2])
             package = home / ".pi" / "agent" / "npm" / "node_modules" / name
-            if cmd[1] == broken:
+            if cmd[1] == broken and name == "acme-ext":
                 pass
             elif cmd[1] == "remove":
                 shutil.rmtree(package)
             else:
                 package.mkdir(parents=True, exist_ok=True)
                 (package / "package.json").write_text(json.dumps({"version": version}))
-            return subprocess.CompletedProcess(cmd, int(cmd[1] == broken))
+            return subprocess.CompletedProcess(
+                cmd, int(cmd[1] == broken and name == "acme-ext")
+            )
 
         with patch("llm_prompts.install.subprocess.run", side_effect=run):
             _install(

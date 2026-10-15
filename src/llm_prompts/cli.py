@@ -622,7 +622,6 @@ def _reconfigure_agents(
         try_install_hooks,
         try_install_hooks_antigravity,
         try_install_hooks_claude_code,
-        try_install_hooks_pi,
         try_install_memory,
         try_install_memory_antigravity,
         try_install_memory_claude_code,
@@ -644,10 +643,8 @@ def _reconfigure_agents(
         if memory_changed:
             try_install_memory_antigravity()
 
-    if "pi" in manifest:
-        try_install_hooks_pi()
-        if memory_changed:
-            try_install_memory_pi()
+    if "pi" in manifest and memory_changed:
+        try_install_memory_pi()
 
     for entry in manifest.values():
         agent_config = entry.get("agent_config")
@@ -934,9 +931,8 @@ def main() -> int | None:
             try_install_memory_antigravity()
 
         if "pi" in agent_names and not args.root:
-            from .install import try_install_hooks_pi, try_install_memory_pi
+            from .install import try_install_memory_pi
 
-            try_install_hooks_pi()
             try_install_memory_pi()
 
         if args.agent_config:
