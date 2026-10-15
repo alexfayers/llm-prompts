@@ -1,0 +1,12 @@
+[
+  "builtin:mcp",
+  "builtin:codemode",
+  "cline-hooks",
+  "net-guard",
+  "prompt-cache-stabilizer",
+  "codemode-error-header",
+  "compact-now",
+  "tower-do?",
+  "tower-do-patch",
+  "@gotgenes/pi-permission-system"
+]

@@ -7,6 +7,7 @@ allowed_subagents: Explore
 {% endif %}
 {% if AGENT == "pi" %}
 skills: true
+extensions: [pi-web-access?]
 {% endif %}
 generate_variants: opus-medium,opus-high,opus-xhigh
 pi_extra_variants: sol-medium,sol-high,sol-xhigh

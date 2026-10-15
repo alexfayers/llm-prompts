@@ -6,7 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Container, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Container, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache, partial
 from importlib.metadata import distribution, packages_distributions
@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
+from cline_hooks.core.install import resolve_binary
 from jinja2 import TemplateError
 
 from .colors import Color, paint
@@ -1892,11 +1893,113 @@ def _pi_skill_paths(
     return paths
 
 
+def _pi_package_path(source: str, agent_dir: Path) -> Path:
+    """Return where pi keeps a configured package source."""
+    if source.startswith("npm:"):
+        return agent_dir / "npm" / "node_modules" / _split_npm_source(source)[0]
+    if source.startswith((".", "/", "~")):
+        return agent_dir / Path(source).expanduser()
+    remote = re.sub(r"^(?:git:)?(?:\w+://)?(?:[^@/]+@)?", "", source)
+    host, _, path = (
+        remote.partition("@")[0]
+        .removesuffix(".git")
+        .replace(":", "/", 1)
+        .partition("/")
+    )
+    return agent_dir / "git" / host / path
+
+
+def _pi_extension_entries(package: Path) -> list[Path]:
+    """List the extension files a package's ``pi.extensions`` manifest names."""
+    if package.is_file():
+        return [package]
+    manifest = package / "package.json"
+    declared = (
+        json.loads(_read_text(manifest)).get("pi", {}).get("extensions", [])
+        if manifest.is_file()
+        else []
+    )
+    return [path for entry in declared if (path := package / entry).is_file()]
+
+
+def _pi_provider_extensions(agent_dir: Path) -> list[str]:
+    """Find the extension files that register a model provider.
+
+    Args:
+        agent_dir: Pi's config directory, holding its settings and extensions.
+
+    Returns:
+        Paths of the extension files, from the packages in pi's settings and
+        from the agent directory, that call ``registerProvider(``.
+    """
+    settings = agent_dir / "settings.json"
+    sources = (
+        json.loads(_read_text(settings)).get("packages", [])
+        if settings.is_file()
+        else []
+    )
+    entries = [
+        entry
+        for source in sources
+        for entry in _pi_extension_entries(
+            _pi_package_path(_package_source(source), agent_dir)
+        )
+    ] + sorted(
+        [
+            *(agent_dir / "extensions").glob("*.[tj]s"),
+            *(agent_dir / "extensions").glob("*/index.[tj]s"),
+        ]
+    )
+    return [str(e) for e in entries if "registerProvider(" in _read_text(e)]
+
+
+def _pi_extension_paths(
+    names: Sequence[str],
+    agent_dir: Path,
+    base: Sequence[str] = (),
+    providers: Sequence[str] = (),
+    strict: bool = True,
+) -> list[str]:
+    """Resolve the extension names an agent definition lists to loadable paths.
+
+    Args:
+        names: ``builtin:`` names, installed extension names or package names;
+            a trailing ``?`` marks an optional name.
+        agent_dir: Pi's config directory, holding installed extensions and packages.
+        base: Names every agent loads after its own.
+        providers: Paths of model provider extensions every agent loads last.
+        strict: Whether a required name that resolves nowhere is an error.
+
+    Returns:
+        ``builtin:`` names unchanged, else the path of the installed extension,
+        without duplicates.
+
+    Raises:
+        ValueError: A required name resolves nowhere and ``strict`` is set.
+    """
+    paths: list[str] = []
+    for entry in [*names, *base]:
+        name = entry.removesuffix("?")
+        installed = (
+            agent_dir / "extensions" / f"{name}.ts",
+            agent_dir / "extensions" / name,
+            agent_dir / "npm" / "node_modules" / name,
+        )
+        if name.startswith("builtin:"):
+            paths.append(name)
+        elif found := next((path for path in installed if path.exists()), None):
+            paths.append(str(found))
+        elif strict and entry == name:
+            raise ValueError(f"extensions: extension '{name}' not found")
+    return list(dict.fromkeys([*paths, *providers]))
+
+
 def _herdsman_agent_content(
     content: str,
     tool_names: Mapping[str, list[str]],
     resolve_model: Callable[[str], str],
     resolve_skills: Callable[[str], list[str]],
+    resolve_extensions: Callable[[list[str]], list[str]],
 ) -> str:
     """Rewrite a Claude Code subagent definition for the herdsman extension.
 
@@ -1905,6 +2008,7 @@ def _herdsman_agent_content(
         tool_names: Herdsman tool names for each Claude Code tool name.
         resolve_model: Maps the definition's ``model`` tier alias to its model.
         resolve_skills: Maps a ``pi_skills`` value to skill file paths.
+        resolve_extensions: Maps an ``extensions`` list to extension paths.
 
     Returns:
         Content with herdsman's frontmatter and the body unchanged.
@@ -1950,8 +2054,8 @@ def _herdsman_agent_content(
                 if n.strip()
             ]
             lines.append("noExtensions: true")
-            if names:
-                lines.append(f"extensions: {json.dumps(names)}")
+            if paths := resolve_extensions(names):
+                lines.append(f"extensions: {json.dumps(paths)}")
         elif key in _HERDSMAN_BOOLEAN_KEYS:
             lines.append(
                 f"{_HERDSMAN_BOOLEAN_KEYS[key]}: {str(value == 'true').lower()}"
@@ -1983,6 +2087,33 @@ def _pi_agent_models(fragments: list[Path]) -> dict[str, str]:
         if fragment.is_file():
             models.update(json.loads(_read_text(fragment)))
     return models
+
+
+def _pi_base_extensions(fragments: list[Path]) -> list[str]:
+    """Collect the extension names declared by every ``pi/agent-extensions.json``.
+
+    Args:
+        fragments: Candidate fragment paths, core first, then overlays.
+
+    Returns:
+        Names every agent definition's extension list gains, without duplicates.
+    """
+    names: list[str] = []
+    for fragment in fragments:
+        if fragment.is_file():
+            names += json.loads(_read_text(fragment))
+    return list(dict.fromkeys(names))
+
+
+def _pi_core_base_extensions(root_dir: Path) -> list[str]:
+    """Return the core base extensions, optional where this install cannot provide them."""
+    unavailable = {"cline-hooks"} if is_rooted() else set()
+    if not shutil.which("pi"):
+        unavailable.add("@gotgenes/pi-permission-system")
+    return [
+        f"{name}?" if name in unavailable else name
+        for name in _pi_base_extensions([root_dir / "pi" / "agent-extensions.json"])
+    ]
 
 
 def _agent_source_dirs(
@@ -2019,7 +2150,8 @@ def _pi_agent_dialect(
     Args:
         root_dir: This package's own prompts directory.
         overlay_dirs: Overlay prompts directories in priority order.
-        strict_skills: Whether a ``pi_skills`` entry that resolves nowhere fails.
+        strict_skills: Whether a ``pi_skills`` or ``extensions`` entry that resolves
+            nowhere fails.
 
     Returns:
         Dialect translating definitions to pi, with mapped tiers resolved.
@@ -2053,6 +2185,16 @@ def _pi_agent_dialect(
                     *(d / "pi" / "skills" for d in overlay_dirs),
                 ],
                 agent_dir=_pi_agent_dir(),
+                strict=strict_skills,
+            ),
+            resolve_extensions=partial(
+                _pi_extension_paths,
+                agent_dir=_pi_agent_dir(),
+                base=_pi_core_base_extensions(root_dir)
+                + _pi_base_extensions(
+                    [d / "pi" / "agent-extensions.json" for d in overlay_dirs]
+                ),
+                providers=_pi_provider_extensions(_pi_agent_dir()),
                 strict=strict_skills,
             ),
         ),
@@ -2484,11 +2626,12 @@ def _pi_defaults(fragments: list[Path]) -> dict[str, Any]:
 
 
 def _install_pi_extensions(
-    source_dirs: list[Path], dest_dir: Path, previous_files: Container[str]
+    source_dirs: list[Path], dest_dir: Path, previous_files: Collection[str]
 ) -> list[str]:
     """Copy every ``*.ts`` pi extension from the source directories into ``dest_dir``.
 
     A destination file that exists but was not installed by llm-prompts is left alone.
+    A file installed last time and no longer a source is removed.
 
     Args:
         source_dirs: Candidate ``pi/extensions`` directories, core first, then overlays.
@@ -2517,6 +2660,9 @@ def _install_pi_extensions(
             continue
         _write_text(dest, _read_text(path))
         installed.append(str(dest))
+    for stale in set(previous_files) - set(installed):
+        if Path(stale).parent == dest_dir:
+            Path(stale).unlink(missing_ok=True)
     return installed
 
 
@@ -2959,14 +3105,11 @@ def _sync_pi_mcp_servers() -> None:
 
 def try_install_hooks_pi() -> None:
     """Write the cline-hooks bridge extension for pi if available."""
-    import shutil
-    import subprocess
-
-    binary = shutil.which("cline-hook")
-    if not binary:
-        log("debug", "cline-hook not found on PATH, skipping Pi hook injection.")
+    binary = resolve_binary()
+    if not binary.exists():
+        log("debug", f"{binary} not found, skipping Pi hook injection.")
         return
-    subprocess.run([binary, "install", "pi"], check=False)
+    subprocess.run([str(binary), "install", "pi"], env=_pi_env(), check=False)
 
 
 def try_allow_update_claude_code() -> None:
@@ -3462,6 +3605,40 @@ def main(
             f for f in previous_pi_bundle if Path(f).parent == _pi_rules_dir()
         )
 
+    pi_packages: list[str] | None = None
+    pi_installed_packages: list[str] | None = previous_manifest.get("pi", {}).get(
+        "pi_installed_packages"
+    )
+    if "pi" in active_targets:
+        pi_fragments = [root_dir / "pi" / "settings.json"] + [
+            d / "pi" / "settings.json" for d in overlay_dirs
+        ]
+        pi_packages = _pi_packages(pi_fragments)
+        wanted_names = _npm_names(pi_packages)
+        previous_owned = set(
+            previous_manifest.get("pi", {}).get("pi_installed_packages", [])
+        )
+        retained = _remove_owned_pi_packages(previous_owned, wanted_names)
+        added = _sync_pi_packages(
+            pi_packages,
+            previous_manifest.get("pi", {}).get("packages", []),
+            _pi_defaults(pi_fragments),
+        )
+        pi_install_failed, newly_owned = _install_pi_packages(pi_packages, added)
+        pi_installed_packages = sorted(
+            (previous_owned & wanted_names) | newly_owned | retained
+        )
+        installed_files["pi"].extend(
+            _install_pi_extensions(
+                [root_dir / "pi" / "extensions"]
+                + [d / "pi" / "extensions" for d in overlay_dirs],
+                _pi_agent_dir() / "extensions",
+                set(previous_manifest.get("pi", {}).get("files", [])),
+            )
+        )
+        if not is_rooted():
+            try_install_hooks_pi()
+
     for agents_target in ("claude-code", "pi"):
         if agents_target not in active_targets:
             continue
@@ -3552,10 +3729,6 @@ def main(
 
     from .manifest import write_manifest
 
-    pi_packages: list[str] | None = None
-    pi_installed_packages: list[str] | None = previous_manifest.get("pi", {}).get(
-        "pi_installed_packages"
-    )
     pi_skills: list[str] | None = None
     pi_mcp_rules: list[str] | None = None
     pi_rule_roles: dict[str, list[str]] | None = previous_manifest.get("pi", {}).get(
@@ -3572,32 +3745,6 @@ def main(
         )
         if not herdr_available():
             log("warn", "[pi] `herdr` not found on PATH. pi needs herdr to run.")
-        pi_fragments = [root_dir / "pi" / "settings.json"] + [
-            d / "pi" / "settings.json" for d in overlay_dirs
-        ]
-        pi_packages = _pi_packages(pi_fragments)
-        wanted_names = _npm_names(pi_packages)
-        previous_owned = set(
-            previous_manifest.get("pi", {}).get("pi_installed_packages", [])
-        )
-        retained = _remove_owned_pi_packages(previous_owned, wanted_names)
-        added = _sync_pi_packages(
-            pi_packages,
-            previous_manifest.get("pi", {}).get("packages", []),
-            _pi_defaults(pi_fragments),
-        )
-        pi_install_failed, newly_owned = _install_pi_packages(pi_packages, added)
-        pi_installed_packages = sorted(
-            (previous_owned & wanted_names) | newly_owned | retained
-        )
-        installed_files["pi"].extend(
-            _install_pi_extensions(
-                [root_dir / "pi" / "extensions"]
-                + [d / "pi" / "extensions" for d in overlay_dirs],
-                _pi_agent_dir() / "extensions",
-                set(previous_manifest.get("pi", {}).get("files", [])),
-            )
-        )
         pi_seeded_keys = _seed_pi_files([root_dir, *overlay_dirs], pi_seeded_keys or {})
         _sync_pi_mcp_servers()
         pi_skills = _claude_plugin_skill_dirs()
