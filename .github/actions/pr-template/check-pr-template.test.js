@@ -95,6 +95,7 @@ test('check swaps the yappy label and posts one comment with the tier suffix', a
     { filename: 'src/old.js', patch: '-moved line\n-}' },
     { filename: 'tests/app.test.js', patch: lines('test', 60) },
     { filename: 'package-lock.json', patch: '+lock' },
+    { filename: 'pnpm-lock.yaml', patch: '+lock' },
   ];
   const body = `## What\n\n${'word '.repeat(130)}\n\n## Why\n\nBecause.`;
   const calls = await runCheck({ files, body, labels: ['very yappy'] });

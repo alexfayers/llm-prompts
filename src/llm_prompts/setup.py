@@ -74,7 +74,7 @@ SHIPPED_PATHS = [
     "pyproject.toml",
     "uv.lock",
     "package.json",
-    "package-lock.json",
+    "pnpm-lock.yaml",
 ]
 
 
