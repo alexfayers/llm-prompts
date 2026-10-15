@@ -5,12 +5,20 @@ from __future__ import annotations
 import json
 import shutil
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TypedDict
 
-from .setup import _CONFIG_DIR
+from . import home
 
-MANIFEST_PATH = _CONFIG_DIR / "installed.json"
-RENDERED_RULES_DIR = _CONFIG_DIR / "rendered-rules"
+
+def manifest_path() -> Path:
+    """Return the path of the installed agents manifest."""
+    return home.config_dir() / "installed.json"
+
+
+def rendered_rules_dir() -> Path:
+    """Return the directory that caches rendered rules."""
+    return home.config_dir() / "rendered-rules"
 
 
 class AgentManifest(TypedDict, total=False):
@@ -32,10 +40,10 @@ def read_manifest() -> dict[str, AgentManifest]:
     Returns:
         Mapping of agent name to manifest entry.
     """
-    if not MANIFEST_PATH.exists():
+    if not manifest_path().exists():
         return {}
     try:
-        data = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+        data = json.loads(manifest_path().read_text(encoding="utf-8"))
         agents: dict[str, AgentManifest] = data.get("agents", {})
         return agents
     except (json.JSONDecodeError, KeyError):
@@ -86,8 +94,8 @@ def write_manifest(
 
     agents[agent_name] = entry
 
-    MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    MANIFEST_PATH.write_text(
+    manifest_path().parent.mkdir(parents=True, exist_ok=True)
+    manifest_path().write_text(
         json.dumps({"agents": agents}, indent=2) + "\n",
         encoding="utf-8",
     )
@@ -103,8 +111,8 @@ def delete_agent(agent_name: str) -> None:
     if agent_name not in agents:
         return
     del agents[agent_name]
-    MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    MANIFEST_PATH.write_text(
+    manifest_path().parent.mkdir(parents=True, exist_ok=True)
+    manifest_path().write_text(
         json.dumps({"agents": agents}, indent=2) + "\n",
         encoding="utf-8",
     )
@@ -120,7 +128,7 @@ def read_rendered_rule(agent_name: str, name: str) -> str | None:
     Returns:
         The cached rendered text, or None if not cached.
     """
-    path = RENDERED_RULES_DIR / agent_name / name
+    path = rendered_rules_dir() / agent_name / name
     if not path.exists():
         return None
     return path.read_text(encoding="utf-8")
@@ -134,7 +142,7 @@ def write_rendered_rules(agent_name: str, rules: dict[str, str]) -> None:
         rules: Mapping of rule destination name to rendered text.
     """
     delete_rendered_rules(agent_name)
-    agent_dir = RENDERED_RULES_DIR / agent_name
+    agent_dir = rendered_rules_dir() / agent_name
     agent_dir.mkdir(parents=True, exist_ok=True)
     for name, text in rules.items():
         (agent_dir / name).write_text(text, encoding="utf-8")
@@ -146,6 +154,6 @@ def delete_rendered_rules(agent_name: str) -> None:
     Args:
         agent_name: Agent whose cached rules to delete.
     """
-    agent_dir = RENDERED_RULES_DIR / agent_name
+    agent_dir = rendered_rules_dir() / agent_name
     if agent_dir.exists():
         shutil.rmtree(agent_dir)

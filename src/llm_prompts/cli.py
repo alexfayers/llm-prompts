@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import urlparse
 
 from . import github_api
-from .install import AGENT_CLASSES, prompts_dir
+from .install import AGENT_CLASSES, log, prompts_dir
 from .setup import (
     _UPDATE_INSTRUCTION,
     GIT_TIMEOUT,
@@ -510,9 +510,9 @@ def _pull_local_sources() -> set[str]:
     """
     from functools import partial
 
-    from .setup import CONFIG_PATH, _load_config, _run_parallel_ordered
+    from .setup import _load_config, _run_parallel_ordered, config_path
 
-    if not CONFIG_PATH.exists():
+    if not config_path().exists():
         return set()
 
     pulls: list[Callable[[], _PullOutcome]] = [
@@ -543,9 +543,9 @@ def _collect_update_messages() -> list[str]:
     from functools import partial
 
     from .plugins import _load_plugins, plugin_source_messages
-    from .setup import CONFIG_PATH, _is_local_path, _load_config, _run_parallel_ordered
+    from .setup import _is_local_path, _load_config, _run_parallel_ordered, config_path
 
-    if not CONFIG_PATH.exists():
+    if not config_path().exists():
         return []
 
     checks: list[Callable[[], list[str]]] = []
@@ -705,6 +705,12 @@ def main() -> int | None:
         metavar="PATH",
         help="Kiro agent JSON to patch with resource entries.",
     )
+    install_parser.add_argument(
+        "--root",
+        type=Path,
+        metavar="DIR",
+        help="Install root used as the home directory.",
+    )
     source_parser = subparsers.add_parser(
         "source", help="Show source file locations for an agent."
     )
@@ -856,15 +862,20 @@ def main() -> int | None:
         sync_parser.error("--commit cannot be combined with --only or --cleanup.")
 
     if args.command == "install":
-        if not args.no_update:
+        if args.root:
+            log(
+                "info",
+                "[root] Skipping setup, hook and memory installs: they cannot target --root.",
+            )
+        if not args.no_update and not args.root:
             from .setup import (
-                CONFIG_PATH,
+                config_path,
                 detect_stale_local_tools,
                 run_setup,
             )
 
             stale = detect_stale_local_tools()
-            if CONFIG_PATH.exists():
+            if config_path().exists():
                 run_setup(force_reinstall=stale or None)
                 result = subprocess.run(
                     [sys.argv[0], "install", args.agent]
@@ -882,7 +893,9 @@ def main() -> int | None:
         from .install import main as install_main
 
         agent_names = list(_AGENTS) if args.agent == "all" else [args.agent]
-        size_guard_failed = install_main(agent_names, verbose=args.verbose)
+        size_guard_failed = install_main(
+            agent_names, verbose=args.verbose, root=args.root
+        )
 
         if "claude-code" in agent_names:
             from .install import (
@@ -891,16 +904,17 @@ def main() -> int | None:
                 try_install_memory_claude_code,
             )
 
-            try_install_hooks_claude_code()
-            try_install_memory_claude_code()
+            if not args.root:
+                try_install_hooks_claude_code()
+                try_install_memory_claude_code()
             try_allow_update_claude_code()
 
-        if "codex" in agent_names:
+        if "codex" in agent_names and not args.root:
             from .install import try_install_memory_codex
 
             try_install_memory_codex()
 
-        if "antigravity" in agent_names:
+        if "antigravity" in agent_names and not args.root:
             from .install import (
                 try_install_hooks_antigravity,
                 try_install_memory_antigravity,
@@ -909,7 +923,7 @@ def main() -> int | None:
             try_install_hooks_antigravity()
             try_install_memory_antigravity()
 
-        if "pi" in agent_names:
+        if "pi" in agent_names and not args.root:
             from .install import try_install_hooks_pi, try_install_memory_pi
 
             try_install_hooks_pi()
@@ -924,8 +938,9 @@ def main() -> int | None:
             from .manifest import read_manifest, write_manifest
 
             patch_kiro_agent_config(args.agent_config)
-            try_install_hooks(args.agent_config)
-            try_install_memory(args.agent_config)
+            if not args.root:
+                try_install_hooks(args.agent_config)
+                try_install_memory(args.agent_config)
 
             for name in agent_names:
                 existing = read_manifest().get(name, {})
@@ -953,7 +968,7 @@ def main() -> int | None:
 
         from .manifest import read_manifest
         from .setup import (
-            CONFIG_PATH,
+            config_path,
             detect_stale_local_tools,
             run_setup,
         )
@@ -988,7 +1003,9 @@ def main() -> int | None:
                 name: _get_installed_dist(name) for name in _RUN_SETUP_TRACKED_TOOLS
             }
             stale = detect_stale_local_tools()
-            upgraded = CONFIG_PATH.exists() and run_setup(force_reinstall=stale or None)
+            upgraded = config_path().exists() and run_setup(
+                force_reinstall=stale or None
+            )
             for name in _RUN_SETUP_TRACKED_TOOLS:
                 if _get_installed_dist(name) != dists_before_setup[name]:
                     changed_sources.add(name)

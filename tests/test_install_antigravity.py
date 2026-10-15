@@ -46,11 +46,9 @@ def antigravity_home(tmp_path: Path) -> Iterator[Path]:
     """Run `install antigravity` into a fake home with overlays and manifest redirected."""
     home = tmp_path / "home"
     home.mkdir()
-    manifest = tmp_path / "installed.json"
     with (
         patch("llm_prompts.install.Path.home", return_value=home),
         patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-        patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
     ):
         install_main(["antigravity"])
         yield home
@@ -72,12 +70,12 @@ class TestAntigravityInstallLayout:
         ).is_symlink()
 
     def test_reinstall_removes_stale_workflow(
-        self, antigravity_home: Path, tmp_path: Path
+        self, antigravity_home: Path, isolated_config_dir: Path
     ) -> None:
+        manifest = isolated_config_dir / "installed.json"
         stray = antigravity_home / ".gemini" / "config" / "workflows" / "stray.md"
         stray.parent.mkdir(parents=True)
         stray.write_text("stale", encoding="utf-8")
-        manifest = tmp_path / "installed.json"
         import json
 
         data = json.loads(manifest.read_text(encoding="utf-8"))
@@ -87,7 +85,6 @@ class TestAntigravityInstallLayout:
         with (
             patch("llm_prompts.install.Path.home", return_value=antigravity_home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
         ):
             install_main(["antigravity"])
 

@@ -24,7 +24,7 @@ from llm_prompts.manifest import (
 def manifest_path(tmp_path: Path) -> Iterator[Path]:
     """Redirect the manifest to a temp file for the duration of a test."""
     path = tmp_path / "installed.json"
-    with patch("llm_prompts.manifest.MANIFEST_PATH", path):
+    with patch("llm_prompts.manifest.manifest_path", return_value=path):
         yield path
 
 
@@ -32,7 +32,7 @@ def manifest_path(tmp_path: Path) -> Iterator[Path]:
 def rendered_rules_dir(tmp_path: Path) -> Iterator[Path]:
     """Redirect the rendered-rule cache to a temp directory for the duration of a test."""
     path = tmp_path / "rendered-rules"
-    with patch("llm_prompts.manifest.RENDERED_RULES_DIR", path):
+    with patch("llm_prompts.manifest.rendered_rules_dir", return_value=path):
         yield path
 
 

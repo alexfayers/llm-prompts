@@ -16,10 +16,15 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from . import home
 from .squash_subject import squash_pr_number
 
-_CONFIG_DIR = Path.home() / ".config" / "llm-prompts"
-CONFIG_PATH = _CONFIG_DIR / "config.toml"
+
+def config_path() -> Path:
+    """Return the path of the llm-prompts config file."""
+    return home.config_dir() / "config.toml"
+
+
 GIT_TIMEOUT = 30
 
 _DEFAULT_CONFIG = """\
@@ -360,7 +365,7 @@ def detect_stale_local_tools() -> set[str]:
         An empty set if there is no config or no stamp file yet; otherwise the
         names whose current hash is missing from or differs from the stamp.
     """
-    if not CONFIG_PATH.exists():
+    if not config_path().exists():
         return set()
     stamp = _pyproject_stamp_path()
     if not stamp.exists():
@@ -583,14 +588,14 @@ def _has_drifted(env: SharedEnv) -> bool:
 
 def _load_config() -> list[dict[str, Any]]:
     """Load and return the tools list from config."""
-    if not CONFIG_PATH.exists():
+    if not config_path().exists():
         print(
-            f"Config not found at {CONFIG_PATH}\n"
+            f"Config not found at {config_path()}\n"
             f"Run `llm-prompts setup --init` to create one.",
             file=sys.stderr,
         )
         sys.exit(1)
-    config = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    config = tomllib.loads(config_path().read_text(encoding="utf-8"))
     tools = config.get("tools", [])
     if not isinstance(tools, list) or not tools:
         print("Config must contain at least one [[tools]] entry.", file=sys.stderr)
@@ -616,12 +621,12 @@ def _validate_paths(tools: list[dict[str, Any]]) -> list[str]:
 
 def init_config() -> None:
     """Create a starter config file."""
-    if CONFIG_PATH.exists():
-        print(f"Config already exists at {CONFIG_PATH}", file=sys.stderr)
+    if config_path().exists():
+        print(f"Config already exists at {config_path()}", file=sys.stderr)
         sys.exit(1)
-    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(_DEFAULT_CONFIG, encoding="utf-8")
-    print(f"Created {CONFIG_PATH}")
+    config_path().parent.mkdir(parents=True, exist_ok=True)
+    config_path().write_text(_DEFAULT_CONFIG, encoding="utf-8")
+    print(f"Created {config_path()}")
     print("Edit it to add your tools and overlay paths, then run `llm-prompts setup`.")
 
 

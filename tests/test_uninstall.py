@@ -135,11 +135,9 @@ def installed_home(tmp_path: Path) -> Iterator[Path]:
     """Run `install claude-code` into a fake home with overlays/manifest redirected."""
     home = tmp_path / "home"
     home.mkdir()
-    manifest = tmp_path / "installed.json"
     with (
         patch("llm_prompts.install.Path.home", return_value=home),
         patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-        patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
     ):
         install_main(["claude-code"])
         yield home
@@ -149,10 +147,8 @@ class TestUninstallEndToEnd:
     def test_uninstall_single_agent_removes_files_and_manifest(
         self, installed_home: Path, tmp_path: Path
     ) -> None:
-        manifest = tmp_path / "installed.json"
         with (
             patch("llm_prompts.install.Path.home", return_value=installed_home),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
         ):
             entry = read_manifest()["claude-code"]
             assert entry["files"]
@@ -168,10 +164,8 @@ class TestUninstallEndToEnd:
     ) -> None:
         home = tmp_path / "home"
         home.mkdir()
-        manifest = tmp_path / "installed.json"
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
         ):
             write_manifest("kiro", [str(home / "keep.md")])
 
@@ -182,10 +176,8 @@ class TestUninstallEndToEnd:
     def test_uninstall_all_removes_every_agent(self, tmp_path: Path) -> None:
         home = tmp_path / "home"
         home.mkdir()
-        manifest = tmp_path / "installed.json"
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
         ):
             write_manifest("kiro", [])
             write_manifest("codex", [])

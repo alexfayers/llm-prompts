@@ -14,7 +14,6 @@ class TestLoadPlugins:
     def test_no_config_returns_empty(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(setup, "CONFIG_PATH", tmp_path / "config.toml")
         assert plugins._load_plugins() == []
 
     def test_config_without_plugins_returns_empty(
@@ -22,7 +21,7 @@ class TestLoadPlugins:
     ) -> None:
         config = tmp_path / "config.toml"
         config.write_text('[[tools]]\nname = "x"\nsource = "https://x.git"\n')
-        monkeypatch.setattr(setup, "CONFIG_PATH", config)
+        monkeypatch.setattr(setup, "config_path", lambda: config)
         assert plugins._load_plugins() == []
 
     def test_config_with_plugins_returns_all(
@@ -33,7 +32,7 @@ class TestLoadPlugins:
             '[[plugins]]\nname = "a"\nsource = "https://a.git"\n\n'
             '[[plugins]]\nname = "b"\nsource = "https://b.git"\n'
         )
-        monkeypatch.setattr(setup, "CONFIG_PATH", config)
+        monkeypatch.setattr(setup, "config_path", lambda: config)
         result = plugins._load_plugins()
         assert [p["name"] for p in result] == ["a", "b"]
 
@@ -234,7 +233,6 @@ class TestEnsureCloned:
         fake_subprocess: FakeSubprocess,
     ) -> None:
         upstream = tmp_path / "upstream"
-        monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
         plugin = {"name": "p", "source": f"git+file://{upstream}"}
         dest = plugins.ensure_cloned(plugin)
         assert dest is not None
@@ -252,7 +250,6 @@ class TestEnsureCloned:
         monkeypatch: pytest.MonkeyPatch,
         fake_subprocess: FakeSubprocess,
     ) -> None:
-        monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
         plugin = {"name": "p", "source": f"git+file://{tmp_path / 'upstream'}"}
         dest = plugins._checkout_dir("p")
         (dest / ".git").mkdir(parents=True)
@@ -268,7 +265,6 @@ class TestEnsureCloned:
         monkeypatch: pytest.MonkeyPatch,
         fake_subprocess: FakeSubprocess,
     ) -> None:
-        monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
         fake_subprocess.on("clone", returncode=1, stderr="fatal: repository not found")
         plugin = {"name": "p", "source": f"git+file://{tmp_path / 'does-not-exist'}"}
         assert plugins.ensure_cloned(plugin) is None
@@ -287,8 +283,7 @@ class TestPullPluginSources:
         config.write_text(
             f'[[plugins]]\nname = "p"\nsource = "git+file://{upstream}"\n'
         )
-        monkeypatch.setattr(setup, "CONFIG_PATH", config)
-        monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
+        monkeypatch.setattr(setup, "config_path", lambda: config)
         dest = plugins._checkout_dir("p")
         (dest / ".git").mkdir(parents=True)
 
@@ -322,8 +317,7 @@ class TestPullPluginSources:
         config.write_text(
             f'[[plugins]]\nname = "p"\nsource = "git+file://{upstream}"\n'
         )
-        monkeypatch.setattr(setup, "CONFIG_PATH", config)
-        monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
+        monkeypatch.setattr(setup, "config_path", lambda: config)
         dest = plugins._checkout_dir("p")
         (dest / ".git").mkdir(parents=True)
 
@@ -346,8 +340,7 @@ class TestPullPluginSources:
         config.write_text(
             f'[[plugins]]\nname = "p"\nsource = "git+file://{upstream}"\n'
         )
-        monkeypatch.setattr(setup, "CONFIG_PATH", config)
-        monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
+        monkeypatch.setattr(setup, "config_path", lambda: config)
         dest = plugins._checkout_dir("p")
         (dest / ".git").mkdir(parents=True)
 
@@ -379,8 +372,7 @@ class TestPullPluginSources:
         config.write_text(
             f'[[plugins]]\nname = "p"\nsource = "git+file://{upstream}"\n'
         )
-        monkeypatch.setattr(setup, "CONFIG_PATH", config)
-        monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
+        monkeypatch.setattr(setup, "config_path", lambda: config)
         dest = plugins._checkout_dir("p")
         (dest / ".git").mkdir(parents=True)
 
@@ -409,8 +401,7 @@ class TestPullPluginSources:
                 for name in names
             )
         )
-        monkeypatch.setattr(setup, "CONFIG_PATH", config)
-        monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
+        monkeypatch.setattr(setup, "config_path", lambda: config)
 
         for name in names:
             dest = plugins._checkout_dir(name)
@@ -438,7 +429,6 @@ class TestPluginSourceMessages:
     def test_not_cloned_reports_missing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
         messages = plugins.plugin_source_messages(
             {"name": "p", "source": "https://x.git"}
         )
@@ -451,7 +441,6 @@ class TestPluginSourceMessages:
         monkeypatch: pytest.MonkeyPatch,
         fake_subprocess: FakeSubprocess,
     ) -> None:
-        monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
         plugin = {"name": "p", "source": f"git+file://{tmp_path / 'upstream'}"}
         dest = plugins._checkout_dir("p")
         (dest / ".git").mkdir(parents=True)
@@ -467,7 +456,6 @@ class TestPluginSourceMessages:
         monkeypatch: pytest.MonkeyPatch,
         fake_subprocess: FakeSubprocess,
     ) -> None:
-        monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
         plugin = {"name": "p", "source": f"git+file://{tmp_path / 'upstream'}"}
         dest = plugins._checkout_dir("p")
         (dest / ".git").mkdir(parents=True)
@@ -491,7 +479,6 @@ class TestPluginSourceMessages:
         monkeypatch: pytest.MonkeyPatch,
         fake_subprocess: FakeSubprocess,
     ) -> dict[str, str]:
-        monkeypatch.setattr(plugins, "_PLUGIN_DIR", tmp_path / "checkouts")
         (plugins._checkout_dir("p") / ".git").mkdir(parents=True)
         fake_subprocess.on("rev-parse", "HEAD", stdout="aaaaaaa\n")
         fake_subprocess.on("ls-remote", stdout="bbbbbbb\tHEAD\n")

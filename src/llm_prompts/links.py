@@ -13,12 +13,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from .batching import SelectionError
-from .setup import _CONFIG_DIR
+from .home import config_dir
 
 if TYPE_CHECKING:
     from .contribute import Commit
 
-LINKS_PATH = _CONFIG_DIR / "contribute-links.json"
+LINKS_PATH = config_dir() / "contribute-links.json"
 HELD_STAGES = frozenset({"local only", "needs sync"})
 _MERGED_STAGE = "merged"
 
