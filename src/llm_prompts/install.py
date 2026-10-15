@@ -2520,12 +2520,101 @@ def _install_pi_extensions(
     return installed
 
 
-def _seed_pi_files(dirs: list[Path]) -> None:
-    """Copy ``pi/seed/`` files into the pi agent directory where absent.
+def _descends(value: Any) -> bool:
+    """Tell whether a seed value is a dict holding other dicts."""
+    return isinstance(value, dict) and any(
+        isinstance(inner, dict) for inner in value.values()
+    )
+
+
+def _seed_key_paths(seed: dict[str, Any], prefix: str = "") -> list[str]:
+    """Return the dotted path of every key of ``seed`` that merging can add."""
+    paths: list[str] = []
+    for key, value in seed.items():
+        paths.append(prefix + key)
+        if _descends(value):
+            paths += _seed_key_paths(value, f"{prefix}{key}.")
+    return paths
+
+
+def _fill_missing_keys(
+    current: dict[str, Any],
+    seed: dict[str, Any],
+    offered: Container[str],
+    prefix: str = "",
+) -> list[str]:
+    """Add the keys of ``seed`` that ``current`` lacks and has not been offered.
+
+    A key ``current`` has is never changed. Only a dict holding other dicts is
+    descended into; a map of rules or values is added or kept whole.
+
+    Args:
+        current: The user's config, updated in place.
+        seed: The shipped config.
+        offered: Dotted paths of the seed keys offered at earlier installs.
+        prefix: Dotted path of ``current`` within the whole config.
+
+    Returns:
+        Dotted paths of the keys added.
+    """
+    added: list[str] = []
+    for key, value in seed.items():
+        path = prefix + key
+        if key not in current:
+            if path not in offered:
+                current[key] = value
+                added.append(path)
+        elif _descends(value) and isinstance(current[key], dict):
+            added += _fill_missing_keys(current[key], value, offered, f"{path}.")
+    return added
+
+
+def _add_seed_keys(dest: Path, seed: dict[str, Any], offered: Container[str]) -> bool:
+    """Add the seed keys not yet offered to a JSON file, keeping its indent and final newline.
+
+    Args:
+        dest: The user's JSON config; rewritten only when a key is added.
+        seed: The shipped config.
+        offered: Dotted paths of the seed keys offered at earlier installs.
+
+    Returns:
+        Whether ``dest`` was a JSON object that could be checked.
+    """
+    text = _read_text(dest)
+    try:
+        current = json.loads(text)
+    except json.JSONDecodeError:
+        current = None
+    if not isinstance(current, dict):
+        log("warn", f"[pi] Skipped adding missing keys to {dest}: not a JSON object.")
+        return False
+    added = _fill_missing_keys(current, seed, offered)
+    if added:
+        indent = re.search(r"^[ \t]+(?=\S)", text, re.MULTILINE)
+        dumped = json.dumps(
+            current, indent=indent.group() if indent else None, ensure_ascii=False
+        )
+        _write_text(dest, dumped + ("\n" if text.endswith("\n") else ""))
+        log("success", f"[pi] Added {', '.join(added)} to {dest}.")
+    return True
+
+
+def _seed_pi_files(
+    dirs: list[Path], offered_before: Mapping[str, list[str]]
+) -> dict[str, list[str]]:
+    """Copy ``pi/seed/`` files into the pi agent directory, or add their new keys.
+
+    A JSON file already there keeps every key it has and gains the seed keys
+    not offered at an earlier install. A file with no record of earlier offers
+    gains every missing seed key once.
 
     Args:
         dirs: Prompts directories, core first, then overlays; a later directory
             replaces an earlier one's file at the same relative path.
+        offered_before: Dotted seed keys offered at earlier installs, by seed file path.
+
+    Returns:
+        The same record, updated with the keys offered now.
     """
     seeds: dict[Path, Path] = {}
     for prompts_dir in dirs:
@@ -2533,12 +2622,23 @@ def _seed_pi_files(dirs: list[Path]) -> None:
         for source in sorted(seed_dir.rglob("*")):
             if source.is_file():
                 seeds[source.relative_to(seed_dir)] = source
+    offered = dict(offered_before)
     for relative, source in seeds.items():
         dest = _pi_agent_dir() / relative
-        if not dest.exists():
+        name = relative.as_posix()
+        fresh = not dest.exists()
+        if fresh:
             dest.parent.mkdir(parents=True, exist_ok=True)
             _write_text(dest, _read_text(source))
             log("success", f"[pi] Seeded {dest}.")
+        if source.suffix != ".json":
+            continue
+        seed = json.loads(_read_text(source))
+        known = set(offered.get(name, ()))
+        if not fresh and not _add_seed_keys(dest, seed, known):
+            continue
+        offered[name] = sorted(known | set(_seed_key_paths(seed)))
+    return offered
 
 
 def _split_npm_source(source: str) -> tuple[str, str]:
@@ -3461,6 +3561,7 @@ def main(
     pi_rule_roles: dict[str, list[str]] | None = previous_manifest.get("pi", {}).get(
         "pi_rule_roles"
     )
+    pi_seeded_keys = previous_manifest.get("pi", {}).get("pi_seeded_keys")
     if "pi" in active_targets:
         pi_rule_roles = (
             None
@@ -3497,7 +3598,7 @@ def main(
                 set(previous_manifest.get("pi", {}).get("files", [])),
             )
         )
-        _seed_pi_files([root_dir, *overlay_dirs])
+        pi_seeded_keys = _seed_pi_files([root_dir, *overlay_dirs], pi_seeded_keys or {})
         _sync_pi_mcp_servers()
         pi_skills = _claude_plugin_skill_dirs()
         if pi_skills is None:
@@ -3529,6 +3630,7 @@ def main(
             skills=pi_skills if name == "pi" else None,
             mcp_permissions=pi_mcp_rules if name == "pi" else None,
             pi_rule_roles=pi_rule_roles if name == "pi" else None,
+            pi_seeded_keys=pi_seeded_keys if name == "pi" else None,
         )
 
     for source in sorted(all_skipped):

@@ -73,6 +73,13 @@
       "*/skills/*.md": "ask",
       "*/workflows/*.md": "ask",
       "*/agents/*.md": "ask"
+    },
+    "path_write": {
+      "*": "allow",
+      "*/rules/*.md": "ask",
+      "*/skills/*.md": "ask",
+      "*/workflows/*.md": "ask",
+      "*/agents/*.md": "ask"
     }
   }
 }
