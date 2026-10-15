@@ -65,7 +65,7 @@ const YAPPY_TIERS = [
   { label: 'yappy', words: 200, lines: 200 },
   { label: 'very yappy', words: 300, lines: 400 },
 ];
-const LOCKFILE = /(^|\/)(package-lock\.json|uv\.lock)$/;
+const LOCKFILE = /(^|\/)(package-lock\.json|pnpm-lock\.yaml|uv\.lock)$/;
 const TEST_FILE = /(^|\/)(tests?|__tests__)\/|(^|\/)test_[^/]*$|[._-]tests?\.[^/]+$/;
 
 function countWords(prBody) {
