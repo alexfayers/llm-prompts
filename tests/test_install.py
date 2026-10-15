@@ -14,8 +14,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from conftest import run_capturing_exit
 
+from llm_prompts.home import config_dir, set_root
 from llm_prompts.install import (
     _GATING_FRONTMATTER_KEYS,
+    AGENT_CLASSES,
     _Agent,
     _carry_forward,
     _cleanup_stale,
@@ -26,6 +28,7 @@ from llm_prompts.install import (
     _install_agents,
     _install_content,
     _install_linked,
+    _install_pi_packages,
     _install_plugin_skills,
     _install_rendered,
     _install_skills,
@@ -701,11 +704,9 @@ class TestMainValidatesPlugins:
     ) -> None:
         home = tmp_path / "home"
         home.mkdir()
-        manifest = tmp_path / "installed.json"
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
             patch(
                 "llm_prompts.plugins._load_plugins",
                 return_value=[{"source": "https://x.git"}],
@@ -719,7 +720,6 @@ class TestMainValidatesPlugins:
     def test_frontmatter_overrides_scoped_per_skill_name(self, tmp_path: Path) -> None:
         home = tmp_path / "home"
         home.mkdir()
-        manifest = tmp_path / "installed.json"
         checkout = tmp_path / "checkout"
         (checkout / "skills" / "skill-a").mkdir(parents=True)
         (checkout / "skills" / "skill-a" / "SKILL.md").write_text(
@@ -733,7 +733,6 @@ class TestMainValidatesPlugins:
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
             patch(
                 "llm_prompts.plugins._load_plugins",
                 return_value=[
@@ -771,7 +770,6 @@ class TestMainReadCache:
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", tmp_path / "installed.json"),
             patch("llm_prompts.plugins._load_plugins", return_value=[]),
         ):
             install_main(["claude-code"])
@@ -787,7 +785,6 @@ class TestMainRunsSizeGuard:
 
         home = tmp_path / "home"
         home.mkdir()
-        manifest = tmp_path / "installed.json"
         failing_result = CheckResult(
             passed=False,
             artifacts=[],
@@ -797,7 +794,6 @@ class TestMainRunsSizeGuard:
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
             patch("llm_prompts.size_guard.check", return_value=failing_result),
         ):
             install_main(["claude-code"])
@@ -810,7 +806,6 @@ class TestMainRunsSizeGuard:
 
         home = tmp_path / "home"
         home.mkdir()
-        manifest = tmp_path / "installed.json"
         violation = Violation(
             metric=COLLECTION_BYTES,
             target="claude-code",
@@ -825,7 +820,6 @@ class TestMainRunsSizeGuard:
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
             patch("llm_prompts.size_guard.check", return_value=failing_result),
         ):
             dirs = _get_dirs()
@@ -840,7 +834,6 @@ class TestMainRunsSizeGuard:
 
         home = tmp_path / "home"
         home.mkdir()
-        manifest = tmp_path / "installed.json"
         violation = Violation(
             metric=COLLECTION_BYTES,
             target="claude-code",
@@ -855,7 +848,6 @@ class TestMainRunsSizeGuard:
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
             patch("llm_prompts.size_guard.check", return_value=failing_result),
             patch("llm_prompts.install.log") as mock_log,
         ):
@@ -872,7 +864,6 @@ class TestMainRunsSizeGuard:
 
         home = tmp_path / "home"
         home.mkdir()
-        manifest = tmp_path / "installed.json"
         violation = Violation(
             metric=COLLECTION_BYTES,
             target="claude-code",
@@ -887,7 +878,6 @@ class TestMainRunsSizeGuard:
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
             patch("llm_prompts.size_guard.check", return_value=failing_result),
         ):
             result = install_main(["claude-code"])
@@ -901,7 +891,6 @@ class TestMainRunsSizeGuard:
 
         home = tmp_path / "home"
         home.mkdir()
-        manifest = tmp_path / "installed.json"
         violation = self._violation(tmp_path / "a.md")
         failing_result = CheckResult(
             passed=False, artifacts=[], violations=[violation], report="failed"
@@ -909,7 +898,6 @@ class TestMainRunsSizeGuard:
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
             patch("llm_prompts.size_guard.check", return_value=failing_result),
             patch("llm_prompts.install.log") as mock_log,
         ):
@@ -929,7 +917,6 @@ class TestMainRunsSizeGuard:
 
         home = tmp_path / "home"
         home.mkdir()
-        manifest = tmp_path / "installed.json"
         skill_src = tmp_path / "skills" / "big-skill" / "SKILL.md"
         skill_src.parent.mkdir(parents=True)
         skill_src.write_text("Body\n", encoding="utf-8")
@@ -947,7 +934,6 @@ class TestMainRunsSizeGuard:
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
             patch("llm_prompts.size_guard.check", return_value=failing_result),
             patch("llm_prompts.install.log") as mock_log,
         ):
@@ -967,7 +953,6 @@ class TestMainRunsSizeGuard:
 
         home = tmp_path / "home"
         home.mkdir()
-        manifest = tmp_path / "installed.json"
         overlay_root = tmp_path / "overlay"
         rule_src = _make_rule(
             overlay_root / "shared" / "rules", "shared.md", "new content"
@@ -989,7 +974,6 @@ class TestMainRunsSizeGuard:
                 "llm_prompts.install._discover_overlay_paths",
                 return_value=[overlay_root],
             ),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
             patch("llm_prompts.size_guard.check", return_value=failing_result),
         ):
             dirs = _get_dirs()
@@ -1005,7 +989,6 @@ class TestMainRunsSizeGuard:
 
         home = tmp_path / "home"
         home.mkdir()
-        manifest = tmp_path / "installed.json"
         violation_source = tmp_path / "a.md"
         failing_result = CheckResult(
             passed=False,
@@ -1016,7 +999,6 @@ class TestMainRunsSizeGuard:
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
             patch("llm_prompts.size_guard.check", return_value=failing_result),
             patch("llm_prompts.install.log") as mock_log,
         ):
@@ -1036,7 +1018,6 @@ class TestMainRunsSizeGuard:
 
         home = tmp_path / "home"
         home.mkdir()
-        manifest = tmp_path / "installed.json"
         overlay_root = tmp_path / "overlay"
         rule_src = _make_rule(
             overlay_root / "shared" / "rules", "synthetic-carry.md", "new content"
@@ -1054,7 +1035,6 @@ class TestMainRunsSizeGuard:
                 "llm_prompts.install._discover_overlay_paths",
                 return_value=[overlay_root],
             ),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
             patch("llm_prompts.size_guard.check", return_value=failing_result),
         ):
             dest = _get_dirs()["claude-code"]["rules"] / "synthetic-carry.md"
@@ -1091,7 +1071,6 @@ class TestMainRunsSizeGuard:
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", tmp_path / "installed.json"),
             patch("llm_prompts.size_guard.check", return_value=failing_result),
             patch("llm_prompts.install.log") as mock_log,
         ):
@@ -1149,11 +1128,9 @@ class TestMainRunsSizeGuard:
     def test_size_check_passes_for_own_prompts_dir(self, tmp_path: Path) -> None:
         home = tmp_path / "home"
         home.mkdir()
-        manifest = tmp_path / "installed.json"
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
         ):
             install_main(["claude-code"])
 
@@ -1167,7 +1144,6 @@ class TestMainRunsSizeGuard:
 
         home = tmp_path / "home"
         home.mkdir()
-        manifest = tmp_path / "installed.json"
         artifact = Artifact(
             RULE_BYTES,
             "claude-code",
@@ -1184,7 +1160,6 @@ class TestMainRunsSizeGuard:
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
             patch("llm_prompts.size_guard.check", return_value=passing_result),
             patch("llm_prompts.install.log") as mock_log,
         ):
@@ -1207,7 +1182,6 @@ class TestMainRunsSizeGuard:
 
         home = tmp_path / "home"
         home.mkdir()
-        manifest = tmp_path / "installed.json"
         failing_result = CheckResult(
             passed=False,
             artifacts=[],
@@ -1219,7 +1193,6 @@ class TestMainRunsSizeGuard:
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
             patch("llm_prompts.size_guard.check", return_value=failing_result),
             patch("llm_prompts.install.log") as mock_log,
             pytest.raises(SystemExit),
@@ -1237,7 +1210,6 @@ class TestMainRunsSizeGuard:
 
         home = tmp_path / "home"
         home.mkdir()
-        manifest = tmp_path / "installed.json"
         passing_result = CheckResult(
             passed=True,
             artifacts=[],
@@ -1248,7 +1220,6 @@ class TestMainRunsSizeGuard:
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
             patch("llm_prompts.size_guard.check", return_value=passing_result),
             patch("llm_prompts.install.log") as mock_log,
         ):
@@ -2035,7 +2006,6 @@ class TestSkipFailingPrompt:
         home = tmp_path / "home"
         home.mkdir()
         overlay_root = tmp_path / "overlay"
-        manifest_path = tmp_path / "installed.json"
 
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
@@ -2043,7 +2013,6 @@ class TestSkipFailingPrompt:
                 "llm_prompts.install._discover_overlay_paths",
                 return_value=[overlay_root],
             ),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest_path),
         ):
             self._write_sources(overlay_root, self._OVERSIZED_DESCRIPTION)
             dest = self._seed_previous_install(home)
@@ -2052,7 +2021,6 @@ class TestSkipFailingPrompt:
         return {
             "home": home,
             "overlay_root": overlay_root,
-            "manifest_path": manifest_path,
             "dest": dest,
             "exit_code": exit_code,
         }
@@ -2092,7 +2060,6 @@ class TestSkipFailingPrompt:
                 "llm_prompts.install._discover_overlay_paths",
                 return_value=[overlay_root],
             ),
-            patch("llm_prompts.manifest.MANIFEST_PATH", state["manifest_path"]),
         ):
             self._write_sources(overlay_root, self._SHORT_DESCRIPTION)
             exit_code = self._run_update()
@@ -2117,7 +2084,6 @@ class TestMainOnly:
         return {
             "home": home,
             "overlay": overlay,
-            "manifest": tmp_path / "installed.json",
             "edited_src": rules / "edited.md",
             "edited_dest": dest_rules / "edited.md",
             "other_dest": dest_rules / "other.md",
@@ -2126,14 +2092,13 @@ class TestMainOnly:
     def _seed(self, env: dict[str, Path], extra_files: list[str] | None = None) -> None:
         from llm_prompts.manifest import write_manifest
 
-        with patch("llm_prompts.manifest.MANIFEST_PATH", env["manifest"]):
-            for key in ("edited_dest", "other_dest"):
-                env[key].parent.mkdir(parents=True, exist_ok=True)
-                env[key].write_text(f"old {key}", encoding="utf-8")
-            write_manifest(
-                "claude-code",
-                [str(env["edited_dest"]), str(env["other_dest"]), *(extra_files or [])],
-            )
+        for key in ("edited_dest", "other_dest"):
+            env[key].parent.mkdir(parents=True, exist_ok=True)
+            env[key].write_text(f"old {key}", encoding="utf-8")
+        write_manifest(
+            "claude-code",
+            [str(env["edited_dest"]), str(env["other_dest"]), *(extra_files or [])],
+        )
 
     def _run(self, env: dict[str, Path]) -> bool:
         with (
@@ -2146,7 +2111,6 @@ class TestMainOnly:
                 "llm_prompts.size_guard._discover_overlay_paths",
                 return_value=[env["overlay"]],
             ),
-            patch("llm_prompts.manifest.MANIFEST_PATH", env["manifest"]),
         ):
             return install_main(["claude-code"], only=env["edited_src"])
 
@@ -2166,8 +2130,7 @@ class TestMainOnly:
         assert env["edited_dest"].read_text(encoding="utf-8").strip() == "new edited"
         assert env["other_dest"].read_text(encoding="utf-8") == "old other_dest"
         assert orphan.read_text(encoding="utf-8") == "orphan"
-        with patch("llm_prompts.manifest.MANIFEST_PATH", env["manifest"]):
-            files = read_manifest()["claude-code"]["files"]
+        files = read_manifest()["claude-code"]["files"]
         assert set(files) >= {
             str(orphan),
             str(env["edited_dest"]),
@@ -2205,7 +2168,6 @@ class TestPartialSource:
             patch("llm_prompts.size_guard._own_root_dir", return_value=root),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
             patch("llm_prompts.size_guard._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", tmp_path / "installed.json"),
         ):
             yield root
 
@@ -2272,3 +2234,38 @@ class TestPromptsDir:
         prompts_dir.cache_clear()
 
         assert prompts_dir("pkgdemo") == tmp_path / expected
+
+
+class TestInstallRoot:
+    @pytest.fixture(autouse=True)
+    def reset_root(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("llm_prompts.home._HOME.root", None)
+        monkeypatch.setattr("llm_prompts.home.config_dir", config_dir)
+
+    @pytest.mark.parametrize("agent", list(AGENT_CLASSES))
+    def test_main_writes_everything_under_the_root(
+        self, agent: str, tmp_path: Path, isolated_config_dir: Path
+    ) -> None:
+        real_home = tmp_path / "real"
+        with (
+            patch("llm_prompts.install.Path.home", return_value=real_home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+        ):
+            install_main([agent], root=tmp_path / "root")
+
+        assert (tmp_path / "root/.config/llm-prompts/installed.json").exists()
+        assert not real_home.exists() and not any(isolated_config_dir.iterdir())
+
+    def test_pi_runs_against_the_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path / "elsewhere"))
+        with (
+            patch("llm_prompts.install.shutil.which", return_value="pi"),
+            patch("llm_prompts.install.subprocess.run") as run,
+        ):
+            set_root(tmp_path)
+            _install_pi_packages(["npm:demo@1.0.0"], set())
+
+        env = run.call_args.kwargs["env"]
+        assert env["PI_CODING_AGENT_DIR"] == str(tmp_path / ".pi" / "agent")

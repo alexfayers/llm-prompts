@@ -9,8 +9,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from . import home
 from .setup import (
-    _CONFIG_DIR,
     GIT_TIMEOUT,
     _commit_subjects_between,
     _extract_git_url,
@@ -19,9 +19,13 @@ from .setup import (
     _run_parallel_ordered,
 )
 
-_PLUGIN_DIR = _CONFIG_DIR / "plugin-sources"
 _SKILLS_DIR = "skills"
 _SKILL_FILE = "SKILL.md"
+
+
+def plugin_dir() -> Path:
+    """Return the directory that holds the plugin git checkouts."""
+    return home.config_dir() / "plugin-sources"
 
 
 def _load_plugins() -> list[dict[str, Any]]:
@@ -31,11 +35,11 @@ def _load_plugins() -> list[dict[str, Any]]:
         The ``[[plugins]]`` entries, or an empty list if config or the key is
         absent. Independent of the ``[[tools]]`` list, which is optional here.
     """
-    from .setup import CONFIG_PATH
+    from .setup import config_path
 
-    if not CONFIG_PATH.exists():
+    if not config_path().exists():
         return []
-    config = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    config = tomllib.loads(config_path().read_text(encoding="utf-8"))
     plugins = config.get("plugins", [])
     if not isinstance(plugins, list):
         return []
@@ -104,7 +108,7 @@ def _checkout_dir(name: str) -> Path:
     Returns:
         The path where the plugin's git checkout lives.
     """
-    return _PLUGIN_DIR / name
+    return plugin_dir() / name
 
 
 def ensure_cloned(plugin: dict[str, Any]) -> Path | None:

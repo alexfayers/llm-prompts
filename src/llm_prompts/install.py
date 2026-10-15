@@ -20,6 +20,7 @@ from jinja2 import TemplateError
 
 from .colors import Color, paint
 from .herdsman import HERDSMAN_DISABLED_DEFINITIONS, herdr_available
+from .home import is_rooted, set_root, user_home
 from .render_template import (
     _read_text,
     clear_read_cache,
@@ -95,10 +96,15 @@ def _pi_agent_dir() -> Path:
     """Return pi's config directory.
 
     Returns:
-        ``$PI_CODING_AGENT_DIR`` where set, else ``~/.pi/agent``.
+        ``$PI_CODING_AGENT_DIR`` where set and no install root is given, else
+        ``~/.pi/agent`` under the home directory.
     """
     override = os.environ.get("PI_CODING_AGENT_DIR")
-    return Path(override).expanduser() if override else Path.home() / ".pi" / "agent"
+    return (
+        Path(override).expanduser()
+        if override and not is_rooted()
+        else user_home() / ".pi" / "agent"
+    )
 
 
 def _get_dirs() -> dict[str, dict[str, Path]]:
@@ -107,7 +113,7 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
     Returns:
         Mapping of agent names to their content directories.
     """
-    home = Path.home()
+    home = user_home()
     cline_merged = home / ".cline_merged"
     pi_agent = _pi_agent_dir()
     return {
@@ -180,7 +186,7 @@ def _get_cline_extra_dirs() -> tuple[Path, dict[str, Path]]:
     Returns:
         Tuple of (agents_dir, symlink_targets).
     """
-    home = Path.home()
+    home = user_home()
     cline_base = (
         (home / "Cline") if sys.platform == "linux" else (home / "Documents" / "Cline")
     )
@@ -214,7 +220,7 @@ def _env_var_set(name: str) -> bool:
     """
     if os.environ.get(name):
         return True
-    settings_path = Path.home() / ".claude" / "settings.json"
+    settings_path = user_home() / ".claude" / "settings.json"
     if not settings_path.exists():
         return False
     try:
@@ -1246,7 +1252,7 @@ def _claude_model_catalogue() -> dict[str, str]:
     """
     try:
         settings = json.loads(
-            (Path.home() / ".claude" / "settings.json").read_text(encoding="utf-8")
+            (user_home() / ".claude" / "settings.json").read_text(encoding="utf-8")
         )
     except (OSError, json.JSONDecodeError):
         return {}
@@ -2598,6 +2604,11 @@ def _sync_pi_packages(
     return added_names
 
 
+def _pi_env() -> dict[str, str]:
+    """Return the environment that points ``pi`` at the agent directory in use."""
+    return {**os.environ, "PI_CODING_AGENT_DIR": str(_pi_agent_dir())}
+
+
 def _install_pi_packages(
     sources: list[str], adoptable: set[str]
 ) -> tuple[bool, set[str]]:
@@ -2626,7 +2637,9 @@ def _install_pi_packages(
         ):
             continue
         absent = not manifest.parent.exists()
-        if subprocess.run([pi, "install", source], check=False).returncode:
+        if subprocess.run(
+            [pi, "install", source], env=_pi_env(), check=False
+        ).returncode:
             log("error", f"[pi] `pi install {source}` failed.")
             failed = True
         elif absent and name in adoptable:
@@ -2652,7 +2665,7 @@ def _remove_owned_pi_packages(owned: set[str], wanted: set[str]) -> set[str]:
         log("warn", "[pi] `pi` not found, skipping package removal.")
         return stale
     for name in sorted(stale):
-        subprocess.run([pi, "remove", f"npm:{name}"], check=False)
+        subprocess.run([pi, "remove", f"npm:{name}"], env=_pi_env(), check=False)
     kept = {name for name in stale if _pi_package_dir(name).exists()}
     for name in sorted(kept):
         log("warn", f"[pi] Could not remove package {name}.")
@@ -2665,7 +2678,7 @@ def _enabled_claude_plugin_paths() -> list[Path] | None:
     Returns:
         Existing install directories, or None when a Claude file is unparseable.
     """
-    claude_dir = Path.home() / ".claude"
+    claude_dir = user_home() / ".claude"
     settings_path = claude_dir / "settings.json"
     installed_path = claude_dir / "plugins" / "installed_plugins.json"
     if not settings_path.exists() or not installed_path.exists():
@@ -2731,7 +2744,7 @@ def _claude_mcp_permissions() -> dict[str, str] | None:
     Returns:
         Ordered pi rules (last match wins), or None when Claude's settings are unparseable.
     """
-    settings_path = Path.home() / ".claude" / "settings.json"
+    settings_path = user_home() / ".claude" / "settings.json"
     if not settings_path.exists():
         return {}
     try:
@@ -2815,7 +2828,7 @@ def _sync_pi_mcp_servers() -> None:
     plugins. Servers pi cannot run are skipped. Only server names are logged,
     since entries may hold secrets.
     """
-    candidates = _read_mcp_servers(Path.home() / ".claude.json", ".claude.json")
+    candidates = _read_mcp_servers(user_home() / ".claude.json", ".claude.json")
     plugin_paths = _enabled_claude_plugin_paths() or []
     plugin_sets = [
         _read_mcp_servers(path / ".mcp.json", f"{path.name}/.mcp.json")
@@ -2860,7 +2873,7 @@ def try_allow_update_claude_code() -> None:
     """Add Bash(llm-prompts update *) to Claude Code permissions.allow."""
     import json
 
-    settings_path = Path.home() / ".claude" / "settings.json"
+    settings_path = user_home() / ".claude" / "settings.json"
     if not settings_path.exists():
         return
     settings = json.loads(settings_path.read_text(encoding="utf-8"))
@@ -3076,7 +3089,7 @@ def _unpatch_kiro_agent_config(agent_config_path: str) -> None:
 
 def _disallow_update_claude_code() -> None:
     """Remove Bash(llm-prompts update *) from Claude Code permissions.allow."""
-    settings_path = Path.home() / ".claude" / "settings.json"
+    settings_path = user_home() / ".claude" / "settings.json"
     if not settings_path.exists():
         return
     settings = json.loads(settings_path.read_text(encoding="utf-8"))
@@ -3140,6 +3153,7 @@ def main(
     verbose: bool = False,
     size_baseline: dict[Path, str] | None = None,
     only: Path | None = None,
+    root: Path | None = None,
 ) -> bool:
     """Run the installation workflow.
 
@@ -3150,6 +3164,7 @@ def main(
             sources; violations in files changed since then only warn.
         only: Source file to reinstall alone; every other prompt is left
             untouched and the manifest keeps its previous files.
+        root: Directory to install under instead of the home directory.
 
     Returns:
         Whether any prompt was skipped or any agent frozen due to a size
@@ -3157,6 +3172,8 @@ def main(
     """
     global _verbose
     _verbose = verbose
+    if root is not None:
+        set_root(root)
     clear_read_cache()
     root_dir = prompts_dir("llm_prompts")
     dirs = _get_dirs()

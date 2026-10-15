@@ -81,7 +81,7 @@ def _install(
         patch(
             "llm_prompts.install._discover_overlay_paths", return_value=overlays or []
         ),
-        patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+        patch("llm_prompts.manifest.manifest_path", return_value=manifest),
     ):
         return install_main(targets or ["pi"], only=only)
 
@@ -392,7 +392,7 @@ class TestPiPackages:
 
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+            patch("llm_prompts.manifest.manifest_path", return_value=manifest),
         ):
             uninstall(["pi"])
 
@@ -540,7 +540,7 @@ class TestPiPluginSkills:
 
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+            patch("llm_prompts.manifest.manifest_path", return_value=manifest),
         ):
             uninstall(["pi"])
 
@@ -957,7 +957,7 @@ class TestPiSeedFiles:
 
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+            patch("llm_prompts.manifest.manifest_path", return_value=manifest),
         ):
             uninstall(["pi"])
         _install(home, manifest)
@@ -1008,7 +1008,6 @@ class TestPiAgents:
         with (
             patch("llm_prompts.install.Path.home", return_value=claude_home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", tmp_path / "claude.json"),
         ):
             install_main(["claude-code"])
         assert not (claude_home / ".claude" / "agents" / "Explore.md").exists()
@@ -1310,7 +1309,6 @@ class TestSharedAgents:
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=overlays),
-            patch("llm_prompts.manifest.MANIFEST_PATH", tmp_path / "installed.json"),
         ):
             install_main(["claude-code"])
 
@@ -1445,7 +1443,7 @@ class TestPiMcpPermissions:
 
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+            patch("llm_prompts.manifest.manifest_path", return_value=manifest),
         ):
             uninstall(["pi"])
 
@@ -1745,7 +1743,7 @@ class TestPiRoleLifecycle:
 
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
+            patch("llm_prompts.manifest.manifest_path", return_value=manifest),
         ):
             uninstall(["pi"])
 
@@ -1788,7 +1786,7 @@ class TestPiRoleLifecycle:
         ]
         for path in sentinels:
             path.write_text("SENTINEL", encoding="utf-8")
-        shutil.rmtree(manifest_module.RENDERED_RULES_DIR / "pi")
+        shutil.rmtree(manifest_module.rendered_rules_dir() / "pi")
         skipped = overlay / "shared" / "rules" / "zz_core.md"
         violation = Violation(RULE_BYTES, "pi", "zz_core.md", 9, 1, skipped)
 
@@ -2055,7 +2053,10 @@ class TestPiPackageRemoval:
         with (
             patch("llm_prompts.install.Path.home", return_value=tmp_path / "home"),
             patch("llm_prompts.install.shutil.which", return_value="/usr/bin/pi"),
-            patch("llm_prompts.manifest.MANIFEST_PATH", tmp_path / "installed.json"),
+            patch(
+                "llm_prompts.manifest.manifest_path",
+                return_value=tmp_path / "installed.json",
+            ),
             patch(
                 "llm_prompts.install.subprocess.run",
                 side_effect=lambda cmd, **_: calls.append(cmd),

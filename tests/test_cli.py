@@ -275,8 +275,8 @@ class TestPullLocalSources:
         fake_subprocess.on("rebase", "--quiet", returncode=0)
 
         config = [{"name": "core", "source": str(clone)}]
-        with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
-            mock_config.exists.return_value = True
+        with patch("llm_prompts.setup.config_path") as mock_config:
+            mock_config.return_value.exists.return_value = True
             with patch("llm_prompts.setup._load_config", return_value=config):
                 _pull_local_sources()
 
@@ -360,8 +360,8 @@ class TestPullLocalSources:
         fake_subprocess.on("pull", "--ff-only", returncode=0)
 
         config = [{"name": "core", "source": str(clone)}]
-        with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
-            mock_config.exists.return_value = True
+        with patch("llm_prompts.setup.config_path") as mock_config:
+            mock_config.return_value.exists.return_value = True
             with patch("llm_prompts.setup._load_config", return_value=config):
                 _pull_local_sources()
 
@@ -383,8 +383,8 @@ class TestPullLocalSources:
         fake_subprocess.on("merge-base", returncode=1)
 
         config = [{"name": "core", "source": str(clone)}]
-        with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
-            mock_config.exists.return_value = True
+        with patch("llm_prompts.setup.config_path") as mock_config:
+            mock_config.return_value.exists.return_value = True
             with patch("llm_prompts.setup._load_config", return_value=config):
                 _pull_local_sources()
 
@@ -421,8 +421,8 @@ class TestPullLocalSources:
         config = [
             {"name": name, "source": str(clone)} for name, clone in clones.items()
         ]
-        with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
-            mock_config.exists.return_value = True
+        with patch("llm_prompts.setup.config_path") as mock_config:
+            mock_config.return_value.exists.return_value = True
             with patch("llm_prompts.setup._load_config", return_value=config):
                 _pull_local_sources()
 
@@ -447,8 +447,8 @@ class TestPullLocalSources:
             {"name": "changed", "source": str(changed)},
             {"name": "current", "source": str(current)},
         ]
-        with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
-            mock_config.exists.return_value = True
+        with patch("llm_prompts.setup.config_path") as mock_config:
+            mock_config.return_value.exists.return_value = True
             with patch("llm_prompts.setup._load_config", return_value=config):
                 assert _pull_local_sources() == {"changed"}
 
@@ -473,8 +473,8 @@ class TestPullLocalSources:
             {"name": "conflict", "source": str(conflict)},
             {"name": "ff", "source": str(ff)},
         ]
-        with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
-            mock_config.exists.return_value = True
+        with patch("llm_prompts.setup.config_path") as mock_config:
+            mock_config.return_value.exists.return_value = True
             with patch("llm_prompts.setup._load_config", return_value=config):
                 _pull_local_sources()
 
@@ -522,11 +522,11 @@ class TestPullLocalSources:
 
         config = [{"name": "core", "source": str(clone)}]
         with (
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup._load_config", return_value=config),
             patch("llm_prompts.main_sync.sync_diverged", return_value=result),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             assert _pull_local_sources() == {"core"}
 
         assert capsys.readouterr().out.splitlines() == [expected]
@@ -544,14 +544,14 @@ class TestPullLocalSources:
 
         config = [{"name": "core", "source": str(clone)}]
         with (
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup._load_config", return_value=config),
             patch(
                 "llm_prompts.main_sync.sync_diverged",
                 return_value=SyncResult("failed", detail="conflict"),
             ),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             assert _pull_local_sources() == set()
 
         assert capsys.readouterr().out.splitlines() == [
@@ -562,8 +562,8 @@ class TestPullLocalSources:
 
 class TestCollectUpdateMessages:
     def test_no_config(self) -> None:
-        with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
-            mock_config.exists.return_value = False
+        with patch("llm_prompts.setup.config_path") as mock_config:
+            mock_config.return_value.exists.return_value = False
             assert _collect_update_messages() == []
 
     def test_mixed_sources(self) -> None:
@@ -571,8 +571,8 @@ class TestCollectUpdateMessages:
             {"name": "core", "source": "~/git/llm-prompts"},
             {"name": "remote-pkg", "source": "git+https://github.com/user/repo.git"},
         ]
-        with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
-            mock_config.exists.return_value = True
+        with patch("llm_prompts.setup.config_path") as mock_config:
+            mock_config.return_value.exists.return_value = True
             with (
                 patch("llm_prompts.setup._load_config", return_value=config),
                 patch("llm_prompts.plugins._load_plugins", return_value=[]),
@@ -603,7 +603,7 @@ class TestCollectUpdateMessages:
         source = "git+https://user:secret@example.invalid/r.git"
         fake_subprocess.on("ls-remote", returncode=128)
         with (
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch(
                 "llm_prompts.setup._load_config",
                 return_value=[{"name": "pkg", "source": source}],
@@ -611,7 +611,7 @@ class TestCollectUpdateMessages:
             patch("llm_prompts.plugins._load_plugins", return_value=[]),
             patch("llm_prompts.cli._get_installed_commit", return_value="abc123"),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             result = _collect_update_messages()
 
         assert result[0].startswith("[pkg] update check failed: ")
@@ -622,8 +622,8 @@ class TestCollectUpdateMessages:
             {"name": "pkg-a", "source": "~/git/pkg-a"},
             {"name": "pkg-b", "source": "~/git/pkg-b"},
         ]
-        with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
-            mock_config.exists.return_value = True
+        with patch("llm_prompts.setup.config_path") as mock_config:
+            mock_config.return_value.exists.return_value = True
             with (
                 patch("llm_prompts.setup._load_config", return_value=config),
                 patch("llm_prompts.plugins._load_plugins", return_value=[]),
@@ -645,8 +645,8 @@ class TestCollectUpdateMessages:
     def test_plugin_messages_appended_after_tools(self) -> None:
         config = [{"name": "core", "source": "~/git/llm-prompts"}]
         plugin = {"name": "p", "source": "https://github.com/u/r.git"}
-        with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
-            mock_config.exists.return_value = True
+        with patch("llm_prompts.setup.config_path") as mock_config:
+            mock_config.return_value.exists.return_value = True
             with (
                 patch("llm_prompts.setup._load_config", return_value=config),
                 patch(
@@ -678,7 +678,7 @@ class TestUpdateCommandPullsPlugins:
                 return_value={"kiro": {"files": []}},
             ),
             patch("llm_prompts.cli._pull_local_sources"),
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup", return_value=False) as mock_setup,
             patch("llm_prompts.install.main", return_value=frozenset()) as mock_install,
@@ -686,7 +686,7 @@ class TestUpdateCommandPullsPlugins:
             patch("llm_prompts.plugins.pull_plugin_sources") as mock_pull,
             patch("llm_prompts.size_guard.snapshot_sources", return_value={}),
         ):
-            mock_config.exists.return_value = False
+            mock_config.return_value.exists.return_value = False
             main()
 
         mock_pull.assert_called_once_with()
@@ -701,7 +701,7 @@ class TestUpdateCommandPullsPlugins:
                 return_value={"kiro": {"files": []}},
             ),
             patch("llm_prompts.cli._pull_local_sources"),
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch(
                 "llm_prompts.setup.detect_stale_local_tools",
                 return_value={"cline-hooks"},
@@ -711,7 +711,7 @@ class TestUpdateCommandPullsPlugins:
             patch("llm_prompts.cli._restart_memory_service"),
             patch("llm_prompts.plugins.pull_plugin_sources"),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             main()
 
         mock_setup.assert_called_once_with(force_reinstall={"cline-hooks"})
@@ -724,14 +724,14 @@ class TestUpdateCommandPullsPlugins:
                 return_value={"kiro": {"files": []}},
             ),
             patch("llm_prompts.cli._pull_local_sources"),
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup", return_value=False) as mock_setup,
             patch("llm_prompts.install.main", return_value=frozenset()),
             patch("llm_prompts.cli._restart_memory_service"),
             patch("llm_prompts.plugins.pull_plugin_sources"),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             main()
 
         mock_setup.assert_called_once_with(force_reinstall=None)
@@ -750,7 +750,7 @@ class TestUpdateReexecsAfterUpgradingItself:
                 return_value={"kiro": {"files": []}},
             ),
             patch("llm_prompts.cli._pull_local_sources", return_value={"core"}),
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup", return_value=True),
             patch("llm_prompts.install.main", return_value=False) as mock_install,
@@ -760,7 +760,7 @@ class TestUpdateReexecsAfterUpgradingItself:
             patch("os.execvp", side_effect=SystemExit) as mock_exec,
             patch.dict("os.environ"),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             with pytest.raises(SystemExit):
                 main()
             main()
@@ -829,7 +829,7 @@ class TestUpdateRestartsMemoryOnlyWhenItChanged:
                 return_value={"kiro": {"files": []}},
             ),
             patch("llm_prompts.cli._pull_local_sources", return_value=set()),
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup", return_value=False),
             patch("llm_prompts.install.main", return_value=frozenset()),
@@ -846,7 +846,7 @@ class TestUpdateRestartsMemoryOnlyWhenItChanged:
             patch("llm_prompts.cli._restart_memory_service") as mock_restart,
             patch("llm_prompts.plugins.pull_plugin_sources"),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             main()
 
         mock_restart.assert_called_once_with()
@@ -934,7 +934,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
                 },
             ),
             patch("llm_prompts.cli._pull_local_sources", return_value=set()),
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup", return_value=False),
             patch("llm_prompts.install.main", return_value=False),
@@ -957,7 +957,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.cli._auto_migrate_memory_db") as migrate,
             patch("llm_prompts.cli._restart_memory_service") as restart,
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             main()
 
         hooks.assert_called_once_with()
@@ -997,7 +997,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.cli.Path.home", return_value=tmp_path),
             patch("llm_prompts.cli._RUN_SETUP_TRACKED_TOOLS", ("my-tool",)),
             patch("llm_prompts.cli._pull_local_sources", return_value=set()),
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup", side_effect=move_into_shared_env),
             patch("llm_prompts.install.main", return_value=False),
@@ -1005,7 +1005,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.install.try_install_hooks_claude_code") as hooks,
             patch("llm_prompts.install.try_allow_update_claude_code"),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             main()
 
         hooks.assert_called_once_with()
@@ -1022,7 +1022,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
                 },
             ),
             patch("llm_prompts.cli._pull_local_sources", return_value=set()),
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup", return_value=False),
             patch("llm_prompts.install.main", return_value=False),
@@ -1045,7 +1045,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.cli._auto_migrate_memory_db") as migrate,
             patch("llm_prompts.cli._restart_memory_service") as restart,
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             main()
 
         for mock in (
@@ -1200,32 +1200,32 @@ class TestDetectStaleLocalTools:
         return {"name": name, "source": str(repo)}
 
     def test_no_config_returns_empty(self, tmp_path: Path) -> None:
-        with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
-            mock_config.exists.return_value = False
+        with patch("llm_prompts.setup.config_path") as mock_config:
+            mock_config.return_value.exists.return_value = False
             assert detect_stale_local_tools() == set()
 
     def test_no_stamp_file_returns_empty(self, tmp_path: Path) -> None:
         tool = self._write_tool(tmp_path, "core", "[project]\nname='core'\n")
         with (
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup._load_config", return_value=[tool]),
             patch(
                 "llm_prompts.setup._pyproject_stamp_path",
                 return_value=tmp_path / "stamp.json",
             ),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             assert detect_stale_local_tools() == set()
 
     def test_matching_hash_is_not_stale(self, tmp_path: Path) -> None:
         tool = self._write_tool(tmp_path, "core", "[project]\nname='core'\n")
         stamp = tmp_path / "stamp.json"
         with (
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup._load_config", return_value=[tool]),
             patch("llm_prompts.setup._pyproject_stamp_path", return_value=stamp),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             write_pyproject_stamp()
             assert detect_stale_local_tools() == set()
 
@@ -1233,11 +1233,11 @@ class TestDetectStaleLocalTools:
         tool = self._write_tool(tmp_path, "core", "[project]\nname='core'\n")
         stamp = tmp_path / "stamp.json"
         with (
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup._load_config", return_value=[tool]),
             patch("llm_prompts.setup._pyproject_stamp_path", return_value=stamp),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             write_pyproject_stamp()
             (tmp_path / "core" / "pyproject.toml").write_text("[project]\nname='x'\n")
             assert detect_stale_local_tools() == {"core"}
@@ -1246,10 +1246,10 @@ class TestDetectStaleLocalTools:
         first = self._write_tool(tmp_path, "core", "[project]\nname='core'\n")
         stamp = tmp_path / "stamp.json"
         with (
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup._pyproject_stamp_path", return_value=stamp),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             with patch("llm_prompts.setup._load_config", return_value=[first]):
                 write_pyproject_stamp()
             second = self._write_tool(tmp_path, "hooks", "[project]\nname='hooks'\n")
@@ -1265,11 +1265,11 @@ class TestWritePyprojectStamp:
         tool = {"name": "core", "source": str(repo)}
         stamp = tmp_path / "sub" / "stamp.json"
         with (
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup._load_config", return_value=[tool]),
             patch("llm_prompts.setup._pyproject_stamp_path", return_value=stamp),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             write_pyproject_stamp()
             recorded = json.loads(stamp.read_text())
             assert set(recorded) == {"core"}
@@ -1526,8 +1526,8 @@ class TestContributeTarget:
     def test_resolves_local_source_from_config(self, tmp_path: Path) -> None:
         (tmp_path / "src" / "pkg" / "prompts").mkdir(parents=True)
         config = [{"name": "llm-prompts", "source": str(tmp_path)}]
-        with patch("llm_prompts.setup.CONFIG_PATH") as mock_config:
-            mock_config.exists.return_value = True
+        with patch("llm_prompts.setup.config_path") as mock_config:
+            mock_config.return_value.exists.return_value = True
             with patch("llm_prompts.setup._load_config", return_value=config):
                 assert _contribute_target("llm-prompts") == (
                     tmp_path,
@@ -1537,31 +1537,31 @@ class TestContributeTarget:
     def test_exits_when_source_is_not_local(self) -> None:
         config = [{"name": "llm-prompts", "source": "git+https://example.com/x.git"}]
         with (
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup._load_config", return_value=config),
             pytest.raises(SystemExit),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             _contribute_target("llm-prompts")
 
     def test_exits_when_no_llm_prompts_entry(self) -> None:
         config = [{"name": "other-tool", "source": "/tmp/other"}]
         with (
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup._load_config", return_value=config),
             pytest.raises(SystemExit),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             _contribute_target("llm-prompts")
 
     def test_exits_when_no_prompts_dir_matches(self, tmp_path: Path) -> None:
         config = [{"name": "llm-prompts", "source": str(tmp_path)}]
         with (
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup._load_config", return_value=config),
             pytest.raises(SystemExit),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             _contribute_target("llm-prompts")
 
     def test_exits_when_multiple_prompts_dirs_match(self, tmp_path: Path) -> None:
@@ -1569,11 +1569,11 @@ class TestContributeTarget:
         (tmp_path / "src" / "pkg_two" / "prompts").mkdir(parents=True)
         config = [{"name": "llm-prompts", "source": str(tmp_path)}]
         with (
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup._load_config", return_value=config),
             pytest.raises(SystemExit),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             _contribute_target("llm-prompts")
 
 
@@ -1591,10 +1591,10 @@ class TestContributeTargets:
             "remote", "-v", stdout="origin\thttps://github.com/user/repo.git (fetch)\n"
         )
         with (
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup._load_config", return_value=config),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             targets = _contribute_targets()
         assert targets == [
             _ContributeTarget("local-tool", local_repo, "src/pkg/prompts/")
@@ -1607,11 +1607,11 @@ class TestContributeTargets:
         config = [{"name": "llm-prompts", "source": str(tmp_path)}]
         fake_subprocess.on("remote", "-v", stdout="")
         with (
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup._load_config", return_value=config),
             pytest.raises(SystemExit),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             _contribute_targets()
 
     def test_skips_repo_with_no_prompts_dirs(
@@ -1622,11 +1622,11 @@ class TestContributeTargets:
             "remote", "-v", stdout="origin\thttps://github.com/user/repo.git (fetch)\n"
         )
         with (
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup._load_config", return_value=config),
             pytest.raises(SystemExit),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             _contribute_targets()
 
     def test_skips_repo_with_multiple_prompts_dirs(
@@ -1639,11 +1639,11 @@ class TestContributeTargets:
             "remote", "-v", stdout="origin\thttps://github.com/user/repo.git (fetch)\n"
         )
         with (
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup._load_config", return_value=config),
             pytest.raises(SystemExit),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             _contribute_targets()
 
     def test_preserves_config_order(
@@ -1661,10 +1661,10 @@ class TestContributeTargets:
             "remote", "-v", stdout="origin\thttps://github.com/user/repo.git (fetch)\n"
         )
         with (
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup._load_config", return_value=config),
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             targets = _contribute_targets()
         assert [target.name for target in targets] == ["b-tool", "a-tool"]
 
@@ -1673,11 +1673,11 @@ class TestContributeTargets:
     ) -> None:
         config = [{"name": "remote-tool", "source": "git+https://example.com/x.git"}]
         with (
-            patch("llm_prompts.setup.CONFIG_PATH") as mock_config,
+            patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup._load_config", return_value=config),
             pytest.raises(SystemExit) as exc_info,
         ):
-            mock_config.exists.return_value = True
+            mock_config.return_value.exists.return_value = True
             _contribute_targets()
         assert exc_info.value.code == 1
         assert (
@@ -1968,3 +1968,21 @@ class TestUpdateOnly:
         mock_setup.assert_not_called()
         mock_reconfigure.assert_not_called()
         assert exit_code == 0
+
+
+class TestInstallRoot:
+    def test_root_is_passed_on_and_machine_wide_installs_are_skipped(
+        self, tmp_path: Path
+    ) -> None:
+        argv = ["llm-prompts", "install", "pi", "--root", str(tmp_path)]
+        with (
+            patch("sys.argv", argv),
+            patch("llm_prompts.install.main", return_value=False) as install,
+            patch("llm_prompts.install.try_install_hooks_pi") as hooks,
+            patch("llm_prompts.install.try_install_memory_pi") as memory,
+        ):
+            main()
+
+        install.assert_called_once_with(["pi"], verbose=False, root=tmp_path)
+        hooks.assert_not_called()
+        memory.assert_not_called()

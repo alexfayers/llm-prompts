@@ -151,7 +151,7 @@ class TestCodexAgentsMdConcat:
 def rendered_rules_dir(tmp_path: Path) -> Iterator[Path]:
     """Redirect the rendered-rule cache to a temp directory for the duration of a test."""
     path = tmp_path / "rendered-rules"
-    with patch("llm_prompts.manifest.RENDERED_RULES_DIR", path):
+    with patch("llm_prompts.manifest.rendered_rules_dir", return_value=path):
         yield path
 
 
@@ -289,11 +289,9 @@ def codex_home(tmp_path: Path) -> Iterator[Path]:
     """Run `install codex` into a fake home with overlays and manifest redirected."""
     home = tmp_path / "home"
     home.mkdir()
-    manifest = tmp_path / "installed.json"
     with (
         patch("llm_prompts.install.Path.home", return_value=home),
         patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-        patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
     ):
         install_main(["codex"])
         yield home
@@ -315,12 +313,10 @@ class TestCodexInstallLayout:
     def test_ask_codex_excluded_from_codex_skills(self, tmp_path: Path) -> None:
         home = tmp_path / "home"
         home.mkdir()
-        manifest = tmp_path / "installed.json"
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
             patch("llm_prompts.install.shutil.which", return_value="/usr/bin/codex"),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
         ):
             install_main(["codex"])
 
@@ -329,12 +325,12 @@ class TestCodexInstallLayout:
         assert not (skills / "ask-codex").exists()
 
     def test_reinstall_removes_stale_prompt(
-        self, codex_home: Path, tmp_path: Path
+        self, codex_home: Path, isolated_config_dir: Path
     ) -> None:
+        manifest = isolated_config_dir / "installed.json"
         stray = codex_home / ".codex" / "prompts" / "stray.md"
         stray.parent.mkdir(parents=True)
         stray.write_text("stale", encoding="utf-8")
-        manifest = tmp_path / "installed.json"
         import json
 
         data = json.loads(manifest.read_text(encoding="utf-8"))
@@ -344,7 +340,6 @@ class TestCodexInstallLayout:
         with (
             patch("llm_prompts.install.Path.home", return_value=codex_home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
         ):
             install_main(["codex"])
 
@@ -407,11 +402,9 @@ class TestCodexDocLimit:
             'model = "gpt-5"\n\n[mcp_servers.foo]\ncommand = "foo"\n',
             encoding="utf-8",
         )
-        manifest = tmp_path / "installed.json"
         with (
             patch("llm_prompts.install.Path.home", return_value=home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-            patch("llm_prompts.manifest.MANIFEST_PATH", manifest),
         ):
             install_main(["codex"])
 

@@ -209,6 +209,7 @@ cline-hook install kiro ~/.kiro/agents/my-agent.json
 llm-prompts install <agent>                    # install rules/workflows/skills
 llm-prompts install kiro --agent-config PATH   # also patch agent JSON with resources
 llm-prompts install <agent> --no-update        # skip auto-update
+llm-prompts install <agent> --root DIR         # use DIR as the home directory
 llm-prompts update                             # pull tool/plugin sources, reinstall every configured agent
 llm-prompts update --check                     # report available updates without applying them
 llm-prompts update --only PATH                 # reinstall only the prompt built from this edited file
