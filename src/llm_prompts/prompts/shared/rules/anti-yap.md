@@ -22,4 +22,4 @@ MUST open with ONE plain sentence: what you did and how. MUST assume zero recall
 
 # Pending asks
 
-Where something awaits the user's decision, MUST restate EVERY pending ask in full in each message until it is answered - MUST NOT back-reference them ("the two from earlier", "the previous proposal"). Where nothing is pending, say nothing - MUST NOT add a "nothing awaiting your decision" line. This overrides brevity. An ask is pending ONLY where the user raised it or it blocks the work.
+Where something awaits the user's decision, MUST restate EVERY pending ask in full in each message until it is answered - MUST NOT back-reference them ("the two from earlier", "the previous proposal"). Where nothing is pending, say nothing - MUST NOT add a "nothing awaiting your decision" line. This overrides brevity. An ask is pending ONLY where the user raised it or it blocks the work. Status reports and blocker lists MUST lead with any next action for the reader, after any milestone opener. MUST number multi-step actions despite the sentence cap. Each blocker MUST name who acts.
