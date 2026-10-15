@@ -28,10 +28,10 @@ Guided tour of this pi setup. Plain words.
 Added by llm-prompts, no README. MUST verify each against installed files first.
 
 - **Lead and agents**
-  - Your session is the lead and hands work to background agents. pi needs Herdr: outside it, pi and installs warn.
+  - You are the lead and hand work to background agents. pi needs Herdr: outside it, pi and installs warn.
   - Roles: `coordinator` (splits plans into tasks), `worker` (mechanical edits), `surveyor` (read-only research), `reasoner` (design, root cause), `reviewer` (read-only review), `Explore` (quick search).
   - Names are `<kind>-<model>-<effort>`. MUST check `/agents` or installed definitions, MUST NOT state model names from memory.
-  - An agent definition MAY set `extensions: [a, b]` to load only those extensions, or `extensions: []` to load none. Absent loads all.
+  - An agent definition MAY set `extensions: [a, b]` to load only those, or `extensions: []` for none. Absent loads all.
 - **`/reload`**
   - After editing extensions, packages, settings, agents, `AGENTS.md`.
 - **Handoff**
