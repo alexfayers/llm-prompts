@@ -21,7 +21,8 @@ After editing any source file, run `llm-prompts update` to reinstall. MUST use t
 
 {% if AGENT == "pi" %}
 After changing pi extensions, packages, settings, agent definitions or AGENTS.md, MUST tell the user to run `/reload`.
-A change that adds or changes llm-prompts-managed pi config (extension, seed file, pinned package, slash command) MUST update the `pi-help` skill source in the same change.
+A new pi extension MUST start with a `// <one-sentence summary>` header, optionally followed by `// Commands:`, `// Config:` and `// Env:` lines.
+Changes that invalidate a hand-written `pi-help` fact MUST update that fact.
 {% endif %}
 
 For initial setup or full reinstall of all tools and overlays, use `llm-prompts setup`. Config is at `~/.config/llm-prompts/config.toml` - run `llm-prompts setup --init` to create it.

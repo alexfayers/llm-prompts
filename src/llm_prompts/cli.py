@@ -98,12 +98,22 @@ def _collect_sources(agent: str) -> dict[str, Path]:
                 if skill_file.is_file():
                     sources.setdefault(f"skills/{skill_dir.name}", skill_file)
 
-    # Agents (claude-code only)
-    if agent == "claude-code":
+    # Agents
+    if agent in ("claude-code", "pi"):
         for agents_src in _agent_source_dirs(root, overlay_dirs, agent):
             if agents_src.is_dir():
                 for f in sorted(agents_src.glob("*.md")):
                     sources.setdefault(f"agents/{f.name}", f)
+
+    # Extensions and seed files (pi only); the last overlay wins, as when installed
+    if agent == "pi":
+        for prompts in [root, *overlay_dirs]:
+            for ext in sorted((prompts / "pi" / "extensions").glob("*.ts")):
+                sources[f"extensions/{ext.name}"] = ext
+            seed_dir = prompts / "pi" / "seed"
+            for seed in sorted(seed_dir.rglob("*")):
+                if seed.is_file():
+                    sources[f"seed/{seed.relative_to(seed_dir)}"] = seed
 
     return sources
 
