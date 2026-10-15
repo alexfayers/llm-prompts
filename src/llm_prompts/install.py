@@ -26,10 +26,12 @@ from .herdsman import (
     herdr_available,
 )
 from .home import is_rooted, set_root, user_home
+from .mcp import CLAUDE_NAMING, PI_NAMING, McpSources, exclusions_resolver
 from .render_template import (
     _read_text,
     clear_read_cache,
     find_unreplaced_variables,
+    frontmatter_list,
     load_vars,
     normalize_whitespace,
     parse_frontmatter,
@@ -1959,8 +1961,6 @@ class _AgentDialect:
     additions: dict[str, dict[str, list[str]]] = field(default_factory=dict)
 
 
-_CLAUDE_AGENT_DIALECT = _AgentDialect()
-
 _PI_TOOL_NAMES = {
     "Read": ["read"],
     "Write": ["write"],
@@ -1975,7 +1975,7 @@ _PI_TOOL_NAMES = {
     "TaskList": ["ext:tower-do/tower_do_status"],
     "SendMessage": ["ext:tower-do/tower_do_talk"],
 }
-_PI_DROPPED_FRONTMATTER_KEYS = {"color", "omitClaudeMd", "skills"}
+_PI_DROPPED_FRONTMATTER_KEYS = {"color", "omitClaudeMd", "skills", "mcp_read_only"}
 
 
 _HERDSMAN_STRING_KEYS = {"name", "description", "model"}
@@ -2123,10 +2123,65 @@ def _pi_extension_paths(
     return list(dict.fromkeys([*paths, *providers]))
 
 
+def _pi_mcp_sources() -> McpSources:
+    """Read the MCP servers of pi's ``mcp.json``."""
+    return [(None, _read_mcp_servers(_pi_agent_dir() / "mcp.json", "mcp.json"))]
+
+
+def _claude_mcp_sources() -> McpSources:
+    """Read the MCP servers of Claude's user config, then of each enabled plugin."""
+    return [
+        (None, _read_mcp_servers(user_home() / ".claude.json", ".claude.json")),
+        *(
+            (plugin, _read_mcp_servers(path / ".mcp.json", f"{path.name}/.mcp.json"))
+            for plugin, path in (_enabled_claude_plugin_paths() or {}).items()
+        ),
+    ]
+
+
+def _claude_agent_content(
+    content: str, resolve_mcp_exclusions: Callable[[str], Sequence[str]]
+) -> str:
+    """Move a Claude Code agent's ``mcp_read_only`` servers' hidden tools into ``disallowedTools``."""
+    split = split_frontmatter(content)
+    if split is None:
+        return content
+    frontmatter = resolve_frontmatter(split[0]) or {}
+    excluded = resolve_mcp_exclusions(frontmatter.get("mcp_read_only", ""))
+    if not excluded:
+        return strip_gating_keys(content, {"mcp_read_only"})
+    lines, body = split_frontmatter(
+        strip_gating_keys(content, {"mcp_read_only", "disallowedTools"})
+    ) or ([], content)
+    tools = [*frontmatter_list(frontmatter.get("disallowedTools", "")), *excluded]
+    return (
+        "---\n"
+        + "\n".join([*lines, f"disallowedTools: {', '.join(tools)}"])
+        + "\n---\n"
+        + body
+    )
+
+
+def _claude_agent_dialect(strict: bool = True) -> _AgentDialect:
+    """Build the Claude Code subagent dialect, hiding ``mcp_read_only`` servers' write tools."""
+    return _AgentDialect(
+        partial(
+            _claude_agent_content,
+            resolve_mcp_exclusions=exclusions_resolver(
+                CLAUDE_NAMING, _claude_mcp_sources, strict, partial(log, "warn")
+            ),
+        )
+    )
+
+
+_CLAUDE_AGENT_DIALECT = _claude_agent_dialect(strict=False)
+
+
 def _herdsman_agent_content(
     content: str,
     tool_names: Mapping[str, list[str]],
     resolve_model: Callable[[str], str],
+    resolve_mcp_exclusions: Callable[[str], Sequence[str]],
     resolve_skills: Callable[[str], list[str]],
     resolve_extensions: Callable[[list[str]], list[str]],
 ) -> str:
@@ -2136,6 +2191,8 @@ def _herdsman_agent_content(
         content: Installed Claude Code agent content.
         tool_names: Herdsman tool names for each Claude Code tool name.
         resolve_model: Maps the definition's ``model`` tier alias to its model.
+        resolve_mcp_exclusions: Maps an ``mcp_read_only`` value to the pi names
+            of its servers' tools to hide.
         resolve_skills: Maps a ``pi_skills`` value to skill file paths.
         resolve_extensions: Maps an ``extensions`` list to extension paths.
 
@@ -2149,6 +2206,9 @@ def _herdsman_agent_content(
     if split is None:
         return content
     frontmatter = resolve_frontmatter(split[0]) or {}
+    mcp_excluded = resolve_mcp_exclusions(frontmatter.get("mcp_read_only", ""))
+    if mcp_excluded:
+        frontmatter.setdefault("disallowedTools", "")
     lines: list[str] = []
     for key, value in frontmatter.items():
         if key in _HERDSMAN_STRING_KEYS:
@@ -2170,6 +2230,8 @@ def _herdsman_agent_content(
                         else [],
                     )
                 ]
+            if key == "disallowedTools":
+                names += mcp_excluded
             if names:
                 lines.append(
                     f"{_HERDSMAN_ARRAY_KEYS[key]}: {json.dumps(list(dict.fromkeys(names)))}"
@@ -2177,11 +2239,7 @@ def _herdsman_agent_content(
         elif key == "pi_skills":
             lines.append(f"skills: {json.dumps(resolve_skills(value))}")
         elif key == "extensions":
-            names = [
-                n.strip().strip("'\"")
-                for n in value.strip("[]").split(",")
-                if n.strip()
-            ]
+            names = frontmatter_list(value)
             if _PI_SWITCHED_ROLES & {
                 n.strip() for n in frontmatter.get("allowed_subagents", "").split(",")
             }:
@@ -2308,7 +2366,7 @@ def _pi_agent_dialect(
         root_dir: This package's own prompts directory.
         overlay_dirs: Overlay prompts directories in priority order.
         strict_skills: Whether a ``pi_skills`` or ``extensions`` entry that resolves
-            nowhere fails.
+            nowhere fails and an ``mcp_read_only`` server is queried for its tools.
 
     Returns:
         Dialect translating definitions to pi, with mapped tiers resolved.
@@ -2333,6 +2391,9 @@ def _pi_agent_dialect(
             _herdsman_agent_content,
             tool_names=tool_names,
             resolve_model=resolve_model,
+            resolve_mcp_exclusions=exclusions_resolver(
+                PI_NAMING, _pi_mcp_sources, strict_skills, partial(log, "warn")
+            ),
             resolve_skills=partial(
                 _pi_skill_paths,
                 skill_sources=[
@@ -3093,29 +3154,30 @@ def _remove_owned_pi_packages(owned: set[str], wanted: set[str]) -> set[str]:
     return kept
 
 
-def _enabled_claude_plugin_paths() -> list[Path] | None:
+def _enabled_claude_plugin_paths() -> dict[str, Path] | None:
     """Return install paths of the Claude plugins enabled in the user's settings.
 
     Returns:
-        Existing install directories, or None when a Claude file is unparseable.
+        Existing install directories by plugin name, or None when a Claude file
+        is unparseable.
     """
     claude_dir = user_home() / ".claude"
     settings_path = claude_dir / "settings.json"
     installed_path = claude_dir / "plugins" / "installed_plugins.json"
     if not settings_path.exists() or not installed_path.exists():
-        return []
+        return {}
     try:
         enabled = json.loads(_read_text(settings_path)).get("enabledPlugins", {})
         installed = json.loads(_read_text(installed_path)).get("plugins", {})
     except json.JSONDecodeError:
         log("warn", "[pi] Could not parse Claude plugin files, skipping plugins.")
         return None
-    paths: list[Path] = []
+    paths: dict[str, Path] = {}
     for key in (key for key, on in enabled.items() if on):
         records = installed.get(key) or [{}]
         path = Path(records[0].get("installPath", ""))
         if path.is_absolute() and path.is_dir():
-            paths.append(path)
+            paths[key.split("@")[0]] = path
         else:
             log("warn", f"[pi] Plugin {key} is not installed, skipping.")
     return paths
@@ -3126,7 +3188,7 @@ def _claude_plugin_skill_dirs() -> list[str] | None:
     plugin_paths = _enabled_claude_plugin_paths()
     if plugin_paths is None:
         return None
-    return [str(p / "skills") for p in plugin_paths if (p / "skills").is_dir()]
+    return [str(p / "skills") for p in plugin_paths.values() if (p / "skills").is_dir()]
 
 
 def _sync_pi_skills(wanted: list[str], previous: list[str]) -> None:
@@ -3249,12 +3311,6 @@ def _sync_pi_mcp_servers() -> None:
     plugins. Servers pi cannot run are skipped. Only server names are logged,
     since entries may hold secrets.
     """
-    candidates = _read_mcp_servers(user_home() / ".claude.json", ".claude.json")
-    plugin_paths = _enabled_claude_plugin_paths() or []
-    plugin_sets = [
-        _read_mcp_servers(path / ".mcp.json", f"{path.name}/.mcp.json")
-        for path in plugin_paths
-    ]
     mcp_path = _pi_agent_dir() / "mcp.json"
     config: dict[str, Any] = (
         json.loads(_read_text(mcp_path)) if mcp_path.exists() else {}
@@ -3262,7 +3318,7 @@ def _sync_pi_mcp_servers() -> None:
     servers: dict[str, Any] = config.setdefault("mcpServers", {})
     added = []
     for name, entry in [
-        item for source in (candidates, *plugin_sets) for item in source.items()
+        item for _, source in _claude_mcp_sources() for item in source.items()
     ]:
         if name in servers:
             continue
@@ -3817,6 +3873,8 @@ def main(
     for agents_target in ("claude-code", "pi"):
         if agents_target not in active_targets:
             continue
+        if agents_target == "pi":
+            _sync_pi_mcp_servers()
         agents_dest = dirs[agents_target]["agents"]
         agent_dirs = _agent_source_dirs(root_dir, overlay_dirs, agents_target)
         target_skip_set = skip_by_agent.get(agents_target, frozenset())
@@ -3840,7 +3898,7 @@ def main(
                 agents_target,
                 _pi_agent_dialect(root_dir, overlay_dirs)
                 if agents_target == "pi"
-                else _CLAUDE_AGENT_DIALECT,
+                else _claude_agent_dialect(),
                 _builtin_skill_vars(all_agents[agents_target].vars_path()),
                 bundle=pi_bundle if agents_target == "pi" else None,
             )
@@ -3937,7 +3995,6 @@ def main(
         if not herdr_available():
             log("warn", "[pi] `herdr` not found on PATH. pi needs herdr to run.")
         pi_seeded_keys = _seed_pi_files([root_dir, *overlay_dirs], pi_seeded_keys or {})
-        _sync_pi_mcp_servers()
         pi_skills = _claude_plugin_skill_dirs()
         if pi_skills is None:
             pi_skills = previous_manifest.get("pi", {}).get("skills", [])
