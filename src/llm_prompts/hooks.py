@@ -11,6 +11,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 from cline_hooks.core.plugin import HookResult, HooksPlugin, UserFacingNote
 
@@ -139,9 +140,12 @@ class _ReinstallDebouncer:
         self._lock = stamp_path.with_name(stamp_path.name + ".lock")
         self._interval_seconds = interval_seconds
 
-    def should_run(self) -> bool:
-        """Return True if enough time has passed since the last reinstall."""
-        if not self._stamp.exists():
+    def should_run(self, fingerprint: str = "") -> bool:
+        """Return True if enough time has passed since the last run or the installed versions moved."""
+        if (
+            not self._stamp.exists()
+            or self._cache().get("fingerprint", "") != fingerprint
+        ):
             return True
         try:
             last_run = float(self._stamp.read_text(encoding="utf-8").strip())
@@ -172,22 +176,25 @@ class _ReinstallDebouncer:
                     yield True
                     return
 
-    def store_notice(self, messages: list[str]) -> None:
-        """Cache the update messages, or clear the cache when there are none."""
-        if messages:
-            self._notice_cache.write_text(json.dumps(messages), encoding="utf-8")
-        else:
-            self._notice_cache.unlink(missing_ok=True)
+    def store_notice(self, messages: list[str], fingerprint: str = "") -> None:
+        """Cache the update messages with the installed-version fingerprint they were checked at."""
+        self._notice_cache.write_text(
+            json.dumps({"fingerprint": fingerprint, "messages": messages}),
+            encoding="utf-8",
+        )
 
     def cached_notice(self) -> list[str]:
         """Return the cached update messages."""
+        messages: list[str] = self._cache().get("messages", [])
+        return messages
+
+    def _cache(self) -> dict[str, Any]:
+        """Return the cached notice record, or an empty one when absent or unreadable."""
         try:
-            cached: list[str] = json.loads(
-                self._notice_cache.read_text(encoding="utf-8")
-            )
+            cache = json.loads(self._notice_cache.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return []
-        return cached
+            return {}
+        return cache if isinstance(cache, dict) else {}
 
 
 class AutoReinstallPlugin(HooksPlugin):
@@ -234,17 +241,27 @@ class AutoReinstallPlugin(HooksPlugin):
         if agent_type or _is_headless():
             return None
 
-        from .cli import _collect_update_messages
+        from .cli import (
+            UpdateCheckFailure,
+            _collect_update_messages,
+            _installed_fingerprint,
+        )
 
+        try:
+            fingerprint = _installed_fingerprint()
+        except (Exception, SystemExit):
+            logger.warning("Failed to read installed llm-prompts versions")
+            return None
         with self._update_check_debouncer.single_flight() as holds_lock:
-            if holds_lock and self._update_check_debouncer.should_run():
+            if holds_lock and self._update_check_debouncer.should_run(fingerprint):
                 try:
                     messages = _collect_update_messages()
                 except (Exception, SystemExit):
                     logger.warning("Failed to check for llm-prompts updates")
                     return None
-                self._update_check_debouncer.mark_run()
-                self._update_check_debouncer.store_notice(messages)
+                if not any(isinstance(m, UpdateCheckFailure) for m in messages):
+                    self._update_check_debouncer.mark_run()
+                    self._update_check_debouncer.store_notice(messages, fingerprint)
             elif source in _DEBOUNCED_TASK_START_SOURCES:
                 return None
             else:

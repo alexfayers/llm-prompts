@@ -730,6 +730,55 @@ class TestUpdateCheckOnTaskStart:
             assert self._fresh_start(stamp) is None
         assert self._fresh_start(stamp) is None
 
+    def test_failed_check_is_reported_but_not_cached(self, tmp_path: Path) -> None:
+        stamp = tmp_path / "update-stamp"
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch(
+                "llm_prompts.setup._load_config",
+                return_value=[{"name": "pkg", "source": "~/git/pkg"}],
+            ),
+            patch("llm_prompts.plugins._load_plugins", return_value=[]),
+            patch("llm_prompts.cli._installed_fingerprint", return_value="a"),
+            patch(
+                "llm_prompts.cli._local_source_messages",
+                side_effect=OSError("offline"),
+            ),
+        ):
+            mock_config.return_value.exists.return_value = True
+            failed = self._fresh_start(stamp)
+        assert failed is not None
+        assert "[pkg] update check failed" in failed.notes[0]
+
+        with (
+            patch("llm_prompts.cli._installed_fingerprint", return_value="a"),
+            patch(
+                "llm_prompts.cli._collect_update_messages", return_value=[]
+            ) as mock_collect,
+        ):
+            assert self._fresh_start(stamp) is None
+        mock_collect.assert_called_once()
+
+    def test_installed_update_invalidates_cached_notice(self, tmp_path: Path) -> None:
+        stamp = tmp_path / "update-stamp"
+        with (
+            patch("llm_prompts.cli._installed_fingerprint", return_value="a"),
+            patch(
+                "llm_prompts.cli._collect_update_messages",
+                return_value=["[pkg] update available (a -> b)"],
+            ),
+        ):
+            assert self._fresh_start(stamp) is not None
+
+        with (
+            patch("llm_prompts.cli._installed_fingerprint", return_value="b"),
+            patch(
+                "llm_prompts.cli._collect_update_messages", return_value=[]
+            ) as mock_collect,
+        ):
+            assert self._fresh_start(stamp) is None
+        mock_collect.assert_called_once()
+
     @pytest.mark.parametrize(("finishes", "expected"), [(True, "new"), (False, "old")])
     def test_start_waits_for_running_check(
         self, tmp_path: Path, finishes: bool, expected: str
