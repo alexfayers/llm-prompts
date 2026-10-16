@@ -73,6 +73,7 @@ async function labelAutoRebase({ github, context, core }) {
   }
   await ensureLabel(github, core, context.repo, AUTO_REBASE_LABEL);
   await addLabels(github, core, { ...context.repo, issue_number: pr.number }, [AUTO_REBASE_LABEL.name]);
+  core.setOutput('labelled', 'true');
 }
 
 module.exports = { hasBreakingChange, label, labelBlocked, labelAutoRebase, ensureLabel, BLOCKED_LABEL, AUTO_REBASE_LABEL };
