@@ -17,7 +17,7 @@ All three repos' prompts trees go through `llm-prompts contribute`, never a manu
 
 - Commit straight to that repo's local `main`.
 - `llm-prompts contribute list` - shows each unmerged commit's batch branch and status (new/current/stale/regressed/in another PR) across overlay repos. `--tool NAME` narrows to one.
-- Pending commits group into batches of up to 5, appended in order to the newest `<login>/contribute/<slug>` branch with no PR or a draft PR and room. A full, merged or ready-for-review batch starts a new one.
+- Pending commits group into batches of up to 5, appended to the newest `<login>/contribute/<slug>` branch with no PR or a draft PR and room. A full, merged or ready-for-review batch starts a new one.
 - `llm-prompts contribute sync --apply` - a batch whose commits are all current gets new ones cherry-picked on top and pushed. A batch with an amended or missing commit is rebuilt from `main` and pushed with `--force-with-lease`. It opens a draft PR, no reviewers, for each pushed batch branch lacking one. The body follows the repo's template, with What listing the batch's commit subjects.
 - `llm-prompts contribute sync --commit SHA` (repeatable) - syncs only batches holding those commits, appending to the newest draft or PR-less batch with room or starting a new one. The rest stay local.
 - `llm-prompts contribute update --apply` - rebases your open PRs behind `main`.
@@ -29,7 +29,7 @@ All three repos' prompts trees go through `llm-prompts contribute`, never a manu
 ## Everything else
 
 - `llm-prompts contribute` works without gh given GH_TOKEN or GITHUB_TOKEN.
-- MUST keep each repo's primary checkout on `main`. MUST put each change on its own `git worktree` branch off `origin/main`, never merged into local `main`.
+- MUST keep each repo's primary checkout on `main`. MUST put each change on its own `git worktree` branch off `origin/main`. MUST merge a code PR's commit into local `main` to live-test.
 - Push your own branch, open a PR against `main`. MUST NOT stack PRs.
 - MUST order PRs only with `Depends on #N` under `## Dependencies`. A change building on one of your open PRs MUST be its own PR. MUST NOT copy another PR's commits or add rebase notes.
 - Shared CI logic MUST live in llm-prompts. Other repos MUST import it, never copy it.
