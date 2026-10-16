@@ -93,6 +93,8 @@ Rules:
 After all tests pass, look for [refactor candidates](refactoring.md):
 
 - [ ] Extract duplication
+- [ ] Merge or delete overlapping tests - one behaviour per test, no two covering the same path
+- [ ] Test code SHOULD stay smaller than the code it covers - no custom test harness unless unavoidable
 - [ ] Deepen modules (move complexity behind simple interfaces)
 - [ ] Apply SOLID principles where natural
 - [ ] Consider what new code reveals about existing code
