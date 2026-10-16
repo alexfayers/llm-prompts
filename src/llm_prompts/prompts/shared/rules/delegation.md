@@ -51,7 +51,7 @@ State the change concisely, not derivable mechanics unless risky/ambiguous. {% i
 Every spawn prompt MUST specify:
 
 {% if AGENT == "pi" %}
-- the memory/MCP facts it needs (it has no such tools);
+- the memory/MCP facts it needs;
 {% endif %}
 - source order - local checkout, internal/official docs, public web last - report back if unanswered, never widen silently;
 - for a tracked task (memory `task/`, plan slice, ticket): decisions recorded against it;
