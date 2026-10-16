@@ -20,12 +20,12 @@ Run `llm-prompts source {{AGENT}}` to see the source file paths for all installe
 After editing any source file, run `llm-prompts update` to reinstall. MUST use the installed `llm-prompts` (PATH), never `uv run llm-prompts` - it can miss overlays and delete their installed files.
 
 {% if AGENT == "pi" %}
-After changing pi extensions, packages, settings, agent definitions or AGENTS.md, MUST tell the user to run `/reload`.
+After changing pi extensions, packages, settings, agent definitions or AGENTS.md, MUST tell the user to run `/reload`. `/reload` refreshes the current session only. New sessions and delegates pick up changes on their own. The user MAY `/reload` while delegates are running.
 A new pi extension MUST start with a `// <one-sentence summary>` header, optionally followed by `// Commands:`, `// Config:` and `// Env:` lines.
 Changes that invalidate a hand-written `pi-help` fact MUST update that fact.
 {% endif %}
 
-For initial setup or full reinstall of all tools and overlays, use `llm-prompts setup`. Config is at `~/.config/llm-prompts/config.toml` - run `llm-prompts setup --init` to create it.
+Use `llm-prompts setup` for initial setup only. `llm-prompts update` reinstalls every tool, including local changes, from its sources. Config is at `~/.config/llm-prompts/config.toml` - run `llm-prompts setup --init` to create it.
 
 ## Rules request, hooks enforce
 

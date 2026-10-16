@@ -1350,6 +1350,7 @@ class TestHerdsmanAgents:
             "tower_do_talk",
             "mcp__memory__*",
             "mcp__memory_agent__*",
+            "codemode",
         ]
         assert coordinator["thinking"] == "low"
         assert coordinator["inheritGlobalContext"] is False
@@ -1818,6 +1819,7 @@ class TestRoles:
         ("frontmatter", "expected"),
         [
             ("", {"core"}),
+            ("roles: all\n", {"core"}),
             ("roles: lead, worker\n", {"lead", "worker"}),
             ("roles: 'reasoner,reviewer'\n", {"reasoner", "reviewer"}),
         ],
