@@ -1302,7 +1302,7 @@ class TestHerdsmanAgents:
         for name in ("reasoner-opus-high",):
             assert _frontmatter(agents / f"{name}.md")["inheritSkills"] is True
         worker = _frontmatter(agents / "worker-sonnet-low.md")
-        assert "inheritSkills" not in worker
+        assert worker["inheritSkills"] is True
         assert worker["skills"] == [
             skill("git-usage"),
             skill("tdd"),
