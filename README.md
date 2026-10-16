@@ -53,6 +53,7 @@
 | tests/test\_focus.py                                                          |     1043 |        0 |    100% |           |
 | tests/test\_github\_api.py                                                    |      123 |        0 |    100% |           |
 | tests/test\_handoff\_block.py                                                 |       14 |        0 |    100% |           |
+| tests/test\_herdr\_permission\_blocked.py                                     |       11 |        0 |    100% |           |
 | tests/test\_hide\_tools.py                                                    |       20 |        0 |    100% |           |
 | tests/test\_hooks.py                                                          |      378 |        0 |    100% |           |
 | tests/test\_inspect\_range\_script.py                                         |       89 |        0 |    100% |           |
@@ -84,7 +85,7 @@
 | tests/test\_todos\_script.py                                                  |       87 |        0 |    100% |           |
 | tests/test\_tower\_do\_patch.py                                               |       78 |        1 |     99% |        28 |
 | tests/test\_uninstall.py                                                      |      114 |        0 |    100% |           |
-| **TOTAL**                                                                     | **19157** |  **559** | **97%** |           |
+| **TOTAL**                                                                     | **19168** |  **559** | **97%** |           |
 
 
 ## Setup coverage badge
