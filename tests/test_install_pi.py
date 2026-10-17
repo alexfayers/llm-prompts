@@ -1312,12 +1312,13 @@ class TestHerdsmanAgents:
         assert "process" not in worker["excludeTools"]
         surveyor = _frontmatter(agents / "surveyor-sonnet-low.md")
         assert surveyor["skills"] == [skill("git-usage")]
-        assert {"write", "edit", "process", "ask_user"} <= set(surveyor["excludeTools"])
+        assert {"write", "edit", "ask_user"} <= set(surveyor["excludeTools"])
+        assert "process" not in surveyor["excludeTools"]
         assert "NotebookEdit" not in surveyor["excludeTools"]
         reviewer = _frontmatter(agents / "reviewer-opus-high.md")
         assert reviewer["skills"] == [skill("git-usage")]
         assert reviewer["excludeTools"][:3] == ["agent", "write", "edit"]
-        assert {"process"} <= set(reviewer["excludeTools"])
+        assert "process" not in reviewer["excludeTools"]
         assert reviewer["thinking"] == "high"
 
     def test_unresolvable_required_pi_skill_fails_install(self, tmp_path: Path) -> None:
