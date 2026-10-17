@@ -1,6 +1,6 @@
 ---
 name: llm-prompts-edit
-description: Author or edit llm-prompts' own rule, skill, workflow, or agent source files under src/llm_prompts/prompts/. Use before proposing or writing any change there.
+description: Edit llm-prompts' own rule, skill, workflow, or agent sources under src/llm_prompts/prompts/. Use before proposing or writing any change there.
 ---
 
 # llm-prompts Source Editing

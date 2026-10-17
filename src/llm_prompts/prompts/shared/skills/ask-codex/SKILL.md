@@ -1,6 +1,6 @@
 ---
 name: ask-codex
-description: Delegate to codex, a separate CLI agent running a different engine, for an independent or adversarial second opinion on a diff, plan, or piece of work. Use when you want a different model's review.
+description: Get an independent or adversarial second opinion on a diff, plan, or work from codex, a separate CLI agent.
 requires_command: codex
 exclude_targets: codex
 ---

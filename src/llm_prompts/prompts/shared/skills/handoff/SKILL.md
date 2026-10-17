@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Write a handoff doc for a fresh session to resume work. Use when ending mid-effort, context high, or user says hand off/over/prepare next session. Resuming an existing HANDOFF.md uses `pickup`.
+description: Write a handoff doc for a fresh session to resume work. Use when ending mid-effort, context high, or user says hand off. Resuming uses `pickup`.
 ---
 
 # handoff

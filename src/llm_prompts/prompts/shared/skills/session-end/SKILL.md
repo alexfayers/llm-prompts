@@ -1,6 +1,6 @@
 ---
 name: session-end
-description: Checklist for wrapping up a session - persist memory, check TODOs, and ensure nothing is lost. Use before marking a task complete or ending a conversation.
+description: Wrap-up checklist - persist memory, check TODOs, leave nothing lost. Use before marking a task complete or ending a conversation.
 ---
 
 # session-end

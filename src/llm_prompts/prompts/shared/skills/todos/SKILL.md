@@ -1,6 +1,6 @@
 ---
 name: todos
-description: Find outstanding TODOs across a workspace - scans TODO.md files and TODO/FIXME/HACK/XXX/BUG markers in code. Use whenever the user asks about TODOs, outstanding work, or "any todos in X".
+description: Find outstanding TODOs in a workspace (TODO.md files, TODO/FIXME/HACK/XXX/BUG markers). Use when asked about TODOs or outstanding work.
 ---
 
 # todos
