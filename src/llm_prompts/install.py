@@ -1874,7 +1874,7 @@ _PI_TOOL_NAMES = {
     "TaskList": ["ext:tower-do/tower_do_status"],
     "SendMessage": ["ext:tower-do/tower_do_talk"],
 }
-_PI_DROPPED_FRONTMATTER_KEYS = {"color", "omitClaudeMd"}
+_PI_DROPPED_FRONTMATTER_KEYS = {"color", "omitClaudeMd", "skills"}
 
 
 _HERDSMAN_STRING_KEYS = {"name", "description", "model"}
@@ -1883,7 +1883,6 @@ _HERDSMAN_ARRAY_KEYS = {
     "disallowedTools": "excludeTools",
     "allowed_subagents": "agents",
 }
-_HERDSMAN_BOOLEAN_KEYS = {"skills": "inheritSkills"}
 
 
 def _pi_skill_paths(
@@ -2085,16 +2084,13 @@ def _herdsman_agent_content(
             lines.append("noExtensions: true")
             if paths := resolve_extensions(names):
                 lines.append(f"extensions: {json.dumps(paths)}")
-        elif key in _HERDSMAN_BOOLEAN_KEYS:
-            lines.append(
-                f"{_HERDSMAN_BOOLEAN_KEYS[key]}: {str(value == 'true').lower()}"
-            )
         elif key not in _PI_DROPPED_FRONTMATTER_KEYS:
             raise ValueError(
                 f"No herdsman equivalent for agent frontmatter key '{key}'"
             )
     inherit = str(frontmatter.get("omitClaudeMd") != "true").lower()
     lines += [
+        "inheritSkills: true",
         "systemPromptMode: append",
         "inheritGlobalContext: false",
         f"inheritProjectContext: {inherit}",

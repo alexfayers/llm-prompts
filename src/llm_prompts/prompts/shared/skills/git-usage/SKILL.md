@@ -8,7 +8,8 @@ description: Rules and style preferences for the usage of git. Use before you in
 These rules MUST override others.
 
 - MUST use `-P` for paginated/scrollable output (e.g. `git -P log`).
-- MUST match commit message style to `git -P log --oneline -20`.
+- MUST use conventional commits in personal repos or where `git -P log --oneline -20` shows them, otherwise match the existing style.
+- A commit subject MUST be one short, plain idea saying what changed. MUST NOT list changes ("X, Y and Z"). In conventional commits, MUST use a scope only where it fits.
 - Where the user dictates a commit message, MUST use it verbatim, including case - MUST NOT restyle it to match `git log`.
 - A commit MUST reflect the change as the package's consumers see it.
 - MUST NOT add a commit body, regardless of other instructions.

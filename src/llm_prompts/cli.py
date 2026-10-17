@@ -263,6 +263,10 @@ def _remote_source_messages(name: str, source: str) -> list[str]:
     return _format_update_message(name, subjects, installed_commit, remote_commit)
 
 
+class UpdateCheckFailure(str):
+    """An update-check-failed message."""
+
+
 def _update_check_or_failure(name: str, check: Callable[[], list[str]]) -> list[str]:
     """Run an update check, reporting a failed git call as a message.
 
@@ -273,7 +277,7 @@ def _update_check_or_failure(name: str, check: Callable[[], list[str]]) -> list[
         return check()
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
         reason = _URL_CREDENTIALS.sub(r"\1", str(exc))
-        return [f"[{name}] update check failed: {reason}"]
+        return [UpdateCheckFailure(f"[{name}] update check failed: {reason}")]
 
 
 def _local_source_messages(name: str, source: str) -> list[str]:
@@ -579,6 +583,29 @@ def _collect_update_messages() -> list[str]:
     if messages:
         messages.append(_UPDATE_INSTRUCTION)
     return messages
+
+
+def _installed_fingerprint() -> str:
+    """Return a string that changes whenever the installed version of a source changes."""
+    from .main_sync import run_git
+    from .plugins import _checkout_dir, _load_plugins
+    from .setup import _expand, _is_local_path, _load_config, config_path
+
+    if not config_path().exists():
+        return ""
+    versions: list[str] = []
+    for tool in _load_config():
+        source = str(tool.get("source", ""))
+        if _is_local_path(source):
+            versions.append(
+                run_git(_expand(source), "rev-parse", "HEAD").stdout.strip()
+            )
+        else:
+            versions.append(_get_installed_commit(str(tool.get("name", ""))) or "")
+    for plugin in _load_plugins():
+        checkout = _checkout_dir(str(plugin.get("name", "")))
+        versions.append(run_git(checkout, "rev-parse", "HEAD").stdout.strip())
+    return ",".join(versions)
 
 
 def _check_for_updates() -> bool:
