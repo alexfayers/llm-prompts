@@ -14,6 +14,12 @@ const REBASE_BRANCH = `mutation($id: ID!, $head: GitObjectID!) {
   }
 }`;
 
+const GET_PR = `query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) { id number baseRefName headRefOid mergeable labels(first: 50) { nodes { name } } }
+  }
+}`;
+
 function isRebaseCandidate(pr) {
   return pr.mergeable !== 'CONFLICTING' && pr.labels.nodes.some(({ name }) => name === AUTO_REBASE_LABEL.name);
 }
@@ -27,12 +33,31 @@ async function rebase({ github, context, core }) {
   });
 
   for (const pr of repository.pullRequests.nodes.filter(isRebaseCandidate)) {
-    try {
-      await github.graphql(REBASE_BRANCH, { id: pr.id, head: pr.headRefOid });
-    } catch (error) {
-      core.warning(`Failed to rebase #${pr.number}: ${error.message}`);
-    }
+    await rebaseBranch(github, core, pr);
   }
 }
 
-module.exports = { isRebaseCandidate, rebase };
+async function rebaseBranch(github, core, pr) {
+  try {
+    await github.graphql(REBASE_BRANCH, { id: pr.id, head: pr.headRefOid });
+  } catch (error) {
+    core.warning(`Failed to rebase #${pr.number}: ${error.message}`);
+  }
+}
+
+async function rebaseLabelled({ github, context, core }) {
+  const { repository } = await github.graphql(GET_PR, { ...context.repo, number: context.payload.pull_request.number });
+  const pr = repository.pullRequest;
+  if (!isRebaseCandidate(pr)) {
+    return;
+  }
+  const { data: { behind_by: behindBy } } = await github.rest.repos.compareCommitsWithBasehead({
+    ...context.repo,
+    basehead: `${pr.baseRefName}...${pr.headRefOid}`,
+  });
+  if (behindBy > 0) {
+    await rebaseBranch(github, core, pr);
+  }
+}
+
+module.exports = { isRebaseCandidate, rebase, rebaseLabelled };

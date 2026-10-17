@@ -100,13 +100,16 @@ function rebaseFixture({ status = 'success', labels = [], draft = false, autoMer
     repos: { getCombinedStatusForRef: async () => ({ data: { statuses: [{ context: 'codeowner-review', state: status }] } }) },
     issues: { createLabel: async () => calls.push('createLabel'), addLabels: async (args) => calls.push(args.labels) },
   };
-  return { github: { rest }, context: { repo: { owner: 'o', repo: 'r' }, payload: { pull_request: { number: 7 } } }, calls };
+  const outputs = {};
+  const core = { setOutput: (name, value) => { outputs[name] = value; } };
+  return { github: { rest }, core, outputs, context: { repo: { owner: 'o', repo: 'r' }, payload: { pull_request: { number: 7 } } }, calls };
 }
 
 test('approved ready auto-merge PR gets the auto-rebase label', async () => {
   const f = rebaseFixture({});
   await labelAutoRebase(f);
   assert.deepEqual(f.calls, ['createLabel', ['auto-rebase']]);
+  assert.deepEqual(f.outputs, { labelled: 'true' });
 });
 
 test('PR missing any auto-rebase condition is left alone', async () => {

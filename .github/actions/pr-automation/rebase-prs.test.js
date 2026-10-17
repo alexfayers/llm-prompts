@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { isRebaseCandidate, rebase } = require('./rebase-prs.js');
+const { isRebaseCandidate, rebase, rebaseLabelled } = require('./rebase-prs.js');
 
 const eligible = {
   mergeable: 'MERGEABLE',
@@ -76,4 +76,38 @@ test('no candidates runs only the list query', async () => {
   const { calls, github, core } = setup([pr(1, { mergeable: 'CONFLICTING' })]);
   await rebase({ github, context, core });
   assert.equal(calls.length, 1);
+});
+
+const labelContext = { repo: { owner: 'octo', repo: 'r' }, payload: { pull_request: { number: 7 } } };
+
+function setupLabelled(behindBy) {
+  const calls = [];
+  const github = {
+    graphql: async (query, vars) => {
+      calls.push({ query, vars });
+      return query.includes('updatePullRequestBranch') ? {} : { repository: { pullRequest: pr(7, { baseRefName: 'main' }) } };
+    },
+    rest: {
+      repos: {
+        compareCommitsWithBasehead: async (params) => {
+          calls.push({ compare: params });
+          return { data: { behind_by: behindBy } };
+        },
+      },
+    },
+  };
+  return { calls, github };
+}
+
+test('a labelled PR that is behind is rebased', async () => {
+  const { calls, github } = setupLabelled(2);
+  await rebaseLabelled({ github, context: labelContext, core: {} });
+  assert.deepEqual(calls[1].compare, { owner: 'octo', repo: 'r', basehead: 'main...oid7' });
+  assert.deepEqual(calls[2].vars, { id: 'id7', head: 'oid7' });
+});
+
+test('a labelled PR that is up to date is not rebased', async () => {
+  const { calls, github } = setupLabelled(0);
+  await rebaseLabelled({ github, context: labelContext, core: {} });
+  assert.equal(calls.length, 2);
 });
