@@ -48,6 +48,6 @@ All three repos' prompts trees go through `llm-prompts contribute`, never a manu
 
 - Follow the target repo's `.github/PULL_REQUEST_TEMPLATE.md` structure (What/Why, optional Dependencies/Issues).
 - After `sync` opens a PR, MUST fill Why via `gh pr edit <url> --body-file -`. Use at most 3 short bullets per section, not restating the title. Why gives the reasoning. Descriptions MUST be easy for reluctant reviewers to follow.
-- Title: conventional-commit format (`type: subject`).
+- Title: the commit subject, unchanged (`type: subject`).
 - Description: bullet points, not paragraphs, each a full sentence. State WHAT and WHY, not HOW. No restating the diff, no process commentary.
 - If you used an eagle-vision plan directory or the user names one, MUST post the plan once as a separate PR comment: `python3 "<base-dir>/../eagle-vision/focus.py" comment <dir> | gh pr comment <pr-url> --body-file -`. MUST NOT put it in the description.
