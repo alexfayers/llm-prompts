@@ -29,7 +29,7 @@ session and need to write the doc.
 A handoff that arrived as a prompt has no file: MUST skip the search in step 1
 and the delete in step 2.
 {% if has_command("herdr") %}
-Where the first line is `HANDOFF-ACK <id>` and `<id>` is not your own pane or name, MUST first reply `HANDOFF-ACK <id>` as the only tool call, on the channel the handoff came by: `herdr agent prompt <id> "HANDOFF-ACK <id>"` for a prompt{% if AGENT == "claude-code" %}, `SendMessage` to the sender for a message{% endif %}. Without a shell tool, MUST instead make that one call a subagent spawn ({% if AGENT == "pi" %}`delegate_agent` with a definition that has `bash`{% else %}`Agent`{% endif %}) whose task is only to run that exact command. Other tools stay blocked until it succeeds.
+Where the first line is `HANDOFF-ACK <id>` and `<id>` is not your own pane or name, MUST first reply `HANDOFF-ACK <id>` as the only tool call, on the channel the handoff came by: {% if AGENT == "claude-code" %}`SendMessage` to the sender when it came by `SendMessage`, else {% endif %}`herdr agent prompt <id> "HANDOFF-ACK <id>"`. For the `herdr agent prompt` reply without a shell tool, MUST instead make that one call a subagent spawn ({% if AGENT == "pi" %}`delegate_agent` with a definition that has `bash`{% else %}`Agent`{% endif %}) whose task is only to run that exact command. Other tools stay blocked until it succeeds.
 {% endif %}
 
 Only fall back to the `handoff` skill's write flow if the user's wording is
