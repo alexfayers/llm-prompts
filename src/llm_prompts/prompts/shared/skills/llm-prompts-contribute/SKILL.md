@@ -29,7 +29,7 @@ All three repos' prompts trees go through `llm-prompts contribute`, never a manu
 ## Everything else
 
 - `llm-prompts contribute` works without gh given GH_TOKEN or GITHUB_TOKEN.
-- MUST keep each repo's primary checkout on `main`. MUST put each change on its own `git worktree` branch off `origin/main`, never merged into local `main`.
+- MUST keep each repo's primary checkout on `main`. MUST put each change on its own `git worktree` branch off `origin/main`. MUST merge a code PR's commit into local `main` to live-test.
 - Push your own branch, open a PR against `main`. MUST NOT stack PRs.
 - MUST order PRs only with `Depends on #N` under `## Dependencies`. A change building on one of your open PRs MUST be its own PR. MUST NOT copy another PR's commits or add rebase notes.
 - Shared CI logic MUST live in llm-prompts. Other repos MUST import it, never copy it.
