@@ -2,6 +2,7 @@
 name: reasoner
 description: {% if AGENT == "pi" %}Judgment{% else %}Opus judgment{% endif %} seat - settles a design or root cause, then hands off. Never writes/edits, never owns a subteam or task breakdown.
 disallowedTools: Write, Edit, NotebookEdit
+mcp_read_only: [memory]
 {% if AGENT == "pi" %}
 allowed_subagents: Explore
 {% endif %}

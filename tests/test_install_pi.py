@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import shutil
@@ -1202,7 +1203,7 @@ class TestHerdsmanAgents:
             "change_dir]\n---\n"
         )
 
-    def test_agent_tools_pass_pi_names_but_not_mcp_names(
+    def test_agent_tools_pass_pi_and_mcp_names(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
@@ -1210,12 +1211,172 @@ class TestHerdsmanAgents:
         agents = tmp_path / "overlay" / "shared" / "agents"
         agents.mkdir(parents=True)
         (agents / "searcher.md").write_text(
-            "---\nname: searcher\ntools: lsp_symbols, mcp__acme__thing\n---\n\nbody\n",
+            f"---\nname: searcher\ntools: lsp_symbols, mcp__acme__thing, mcp__acme__GetItem, mcp__my-srv__Get-{'x' * 60}, mcp__{'s' * 60}__*\n---\n\nbody\n",
             encoding="utf-8",
         )
         _install(home, tmp_path / "installed.json", [tmp_path / "overlay"])
         installed = home / ".pi" / "agent" / "agents" / "searcher.md"
-        assert _frontmatter(installed)["tools"] == ["lsp_symbols"]
+        assert _frontmatter(installed)["tools"] == [
+            "lsp_symbols",
+            "mcp__acme__thing",
+            "mcp__acme__GetItem",
+            f"mcp__my_srv__Get_{'x' * 38}_6b156abf",
+            f"mcp__{'s' * 50}*",
+        ]
+
+    @pytest.mark.parametrize(
+        ("target", "agents_dir", "key", "server_key", "base"),
+        [
+            ("pi", ".pi/agent/agents", "excludeTools", "m_x", "write"),
+            ("claude-code", ".claude/agents", "disallowedTools", "m-x", "Write"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("servers", "tool", "warns"),
+        [
+            ({"m-x": {"url": "http://mcp.test/mcp"}}, "put", False),
+            ({}, "*", True),
+        ],
+    )
+    def test_mcp_read_only_excludes_unannotated_tools(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        target: str,
+        agents_dir: str,
+        key: str,
+        server_key: str,
+        base: str,
+        servers: dict[str, Any],
+        tool: str,
+        warns: bool,
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        servers_path = (
+            home / ".claude.json"
+            if target == "claude-code"
+            else home / ".pi" / "agent" / "mcp.json"
+        )
+        servers_path.parent.mkdir(parents=True, exist_ok=True)
+        servers_path.write_text(json.dumps({"mcpServers": servers}), encoding="utf-8")
+        agents = tmp_path / "overlay" / "shared" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "searcher.md").write_text(
+            "---\nname: searcher\ndisallowedTools: Write\nmcp_read_only: [m-x]\n---\n\nbody\n",
+            encoding="utf-8",
+        )
+        listing = {
+            "tools": [
+                {"name": "get", "annotations": {"readOnlyHint": True}},
+                {"name": "put"},
+            ]
+        }
+        replies = {
+            "initialize": '{"id": 1, "result": {"protocolVersion": "2025-06-18"}}',
+            "tools/list": f"event: message\ndata: {json.dumps({'id': 2, 'result': listing})}\n",
+        }
+
+        def urlopen(request: Any, timeout: float) -> Any:
+            response = io.BytesIO(
+                replies.get(json.loads(request.data).get("method"), "").encode()
+            )
+            response.headers = {}  # type: ignore[attr-defined]
+            return response
+
+        with patch("llm_prompts.install.urlopen", urlopen):
+            _install(
+                home,
+                tmp_path / "installed.json",
+                [tmp_path / "overlay"],
+                targets=[target],
+            )
+        installed = _frontmatter(home / agents_dir / "searcher.md")
+        names = installed[key]
+        assert (names.split(", ") if isinstance(names, str) else names) == [
+            base,
+            f"mcp__{server_key}__{tool}",
+        ]
+        assert "mcp_read_only" not in installed
+        assert ("Could not read MCP server m-x" in capsys.readouterr().err) is warns
+
+    def test_pi_mcp_read_only_reads_servers_synced_from_claude_on_first_install(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / ".claude.json").write_text(
+            json.dumps({"mcpServers": {"m-x": {"url": "http://mcp.test/mcp"}}}),
+            encoding="utf-8",
+        )
+        agents = tmp_path / "overlay" / "shared" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "searcher.md").write_text(
+            "---\nname: searcher\nmcp_read_only: [m-x]\n---\n\nbody\n",
+            encoding="utf-8",
+        )
+        listing = {"tools": [{"name": "put"}]}
+        replies = {
+            "initialize": '{"id": 1, "result": {"protocolVersion": "2025-06-18"}}',
+            "tools/list": json.dumps({"id": 2, "result": listing}),
+        }
+
+        def urlopen(request: Any, timeout: float) -> Any:
+            response = io.BytesIO(
+                replies.get(json.loads(request.data).get("method"), "").encode()
+            )
+            response.headers = {}  # type: ignore[attr-defined]
+            return response
+
+        with patch("llm_prompts.install.urlopen", urlopen):
+            _install(home, tmp_path / "installed.json", [tmp_path / "overlay"])
+
+        installed = _frontmatter(home / ".pi" / "agent" / "agents" / "searcher.md")
+        assert installed["excludeTools"] == ["mcp__m_x__put"]
+
+    def test_pi_mcp_read_only_pattern_survives_name_truncation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        agents = tmp_path / "overlay" / "shared" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "searcher.md").write_text(
+            f"---\nname: searcher\nmcp_read_only: [{'s' * 60}]\n---\n\nbody\n",
+            encoding="utf-8",
+        )
+        _install(home, tmp_path / "installed.json", [tmp_path / "overlay"])
+        installed = _frontmatter(home / ".pi" / "agent" / "agents" / "searcher.md")
+        assert installed["excludeTools"][-1] == f"mcp__{'s' * 50}*"
+
+    def test_claude_mcp_read_only_hides_plugin_server_tools(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        plugin = _plugin_dir(tmp_path, "alpha")
+        (plugin / ".mcp.json").write_text(
+            json.dumps({"mcpServers": {"m-x": {"command": "x"}}}), encoding="utf-8"
+        )
+        _claude_plugins(home, {"alpha@acme": True}, {"alpha@acme": plugin})
+        agents = tmp_path / "overlay" / "shared" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "searcher.md").write_text(
+            "---\nname: searcher\ndisallowedTools: [Write]\nmcp_read_only: [m-x]\n---\n\nbody\n",
+            encoding="utf-8",
+        )
+
+        _install(
+            home,
+            tmp_path / "installed.json",
+            [tmp_path / "overlay"],
+            targets=["claude-code"],
+        )
+
+        installed = _frontmatter(home / ".claude" / "agents" / "searcher.md")
+        assert installed["disallowedTools"] == "Write, mcp__plugin_alpha_m-x__*"
 
     def test_agents_install_in_herdsman_dialect(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1250,6 +1411,8 @@ class TestHerdsmanAgents:
             "tower_do_patch",
             "tower_do_status",
             "tower_do_talk",
+            "mcp__memory__*",
+            "mcp__memory_agent__*",
         ]
         assert coordinator["thinking"] == "low"
         assert coordinator["inheritGlobalContext"] is False
@@ -1257,7 +1420,7 @@ class TestHerdsmanAgents:
         assert coordinator["systemPromptMode"] == "append"
 
         reasoner = _frontmatter(agents / "reasoner-opus-high.md")
-        assert reasoner["excludeTools"] == ["write", "edit"]
+        assert reasoner["excludeTools"] == ["write", "edit", "mcp__memory__*"]
         worker = _frontmatter(agents / "worker-sonnet-low.md")
         assert worker["excludeTools"][0] == "agent"
         checker = _frontmatter(agents / "eagle-vision-checker-haiku-low.md")
@@ -1543,20 +1706,37 @@ class TestSharedAgents:
         assert (agents / "shared-helper.md").is_file()
         assert not (agents / "cc-only.md").exists()
 
-    def test_claude_code_installs_shared_and_own_agents(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("target", "agents_dir", "installs_cc_only"),
+        [("claude-code", ".claude/agents", True), ("pi", ".pi/agent/agents", False)],
+    )
+    def test_target_installs_its_agents_without_mcp_read_only(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        target: str,
+        agents_dir: str,
+        installs_cc_only: bool,
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
         home = tmp_path / "home"
         home.mkdir()
-        overlays = [_agent_overlay(tmp_path / "o")]
 
-        with (
-            patch("llm_prompts.install.Path.home", return_value=home),
-            patch("llm_prompts.install._discover_overlay_paths", return_value=overlays),
-        ):
-            install_main(["claude-code"])
+        _install(
+            home,
+            tmp_path / "installed.json",
+            [_agent_overlay(tmp_path / "o")],
+            targets=[target],
+        )
 
-        agents = home / ".claude" / "agents"
+        agents = home / agents_dir
         assert (agents / "shared-helper.md").is_file()
-        assert (agents / "cc-only.md").is_file()
+        assert (agents / "cc-only.md").exists() is installs_cc_only
+        assert not [
+            path
+            for path in agents.glob("*.md")
+            if "mcp_read_only" in path.read_text(encoding="utf-8")
+        ]
 
 
 class TestPiMcpPermissions:

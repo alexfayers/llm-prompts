@@ -1,5 +1,6 @@
 """Install Cline and Copilot rules, workflows, skills, and prompts."""
 
+import hashlib
 import json
 import os
 import re
@@ -12,9 +13,9 @@ from functools import cache, partial
 from importlib.metadata import distribution, packages_distributions
 from importlib.resources import files
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple
 from urllib.parse import urlparse
-from urllib.request import url2pathname
+from urllib.request import Request, url2pathname, urlopen
 
 from cline_hooks.core.install import resolve_binary
 from jinja2 import TemplateError
@@ -1858,8 +1859,6 @@ class _AgentDialect:
     additions: dict[str, dict[str, list[str]]] = field(default_factory=dict)
 
 
-_CLAUDE_AGENT_DIALECT = _AgentDialect()
-
 _PI_TOOL_NAMES = {
     "Read": ["read"],
     "Write": ["write"],
@@ -1874,7 +1873,7 @@ _PI_TOOL_NAMES = {
     "TaskList": ["ext:tower-do/tower_do_status"],
     "SendMessage": ["ext:tower-do/tower_do_talk"],
 }
-_PI_DROPPED_FRONTMATTER_KEYS = {"color", "omitClaudeMd", "skills"}
+_PI_DROPPED_FRONTMATTER_KEYS = {"color", "omitClaudeMd", "skills", "mcp_read_only"}
 
 
 _HERDSMAN_STRING_KEYS = {"name", "description", "model"}
@@ -2022,10 +2021,321 @@ def _pi_extension_paths(
     return list(dict.fromkeys([*paths, *providers]))
 
 
+_MCP_TIMEOUT_SECONDS = 5
+
+
+class _McpNaming(NamedTuple):
+    """How a frontend names MCP tools: characters it replaces and its length limit."""
+
+    invalid: str
+    limit: int
+
+
+_MCP_HASH_SUFFIX_LENGTH = 9
+_PI_MCP_NAMING = _McpNaming(r"[^A-Za-z0-9_]", 64)
+_CLAUDE_MCP_NAMING = _McpNaming(r"[^A-Za-z0-9_-]", 128)
+
+
+def _frontmatter_list(value: str) -> list[str]:
+    """Split a flat frontmatter list such as ``[a, b]`` into its items."""
+    return [n.strip().strip("'\"") for n in value.strip("[]").split(",") if n.strip()]
+
+
+def _mcp_post(
+    url: str, message: dict[str, Any], headers: dict[str, str]
+) -> tuple[dict[str, Any], str | None]:
+    """POST one JSON-RPC message to an MCP HTTP endpoint.
+
+    Args:
+        url: Endpoint URL.
+        message: JSON-RPC request or notification.
+        headers: Session headers to send.
+
+    Returns:
+        The reply matching the message id (empty for a notification) and the
+        ``Mcp-Session-Id`` response header.
+    """
+    request = Request(
+        url,
+        json.dumps(message).encode(),
+        {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            **headers,
+        },
+    )
+    with urlopen(request, timeout=_MCP_TIMEOUT_SECONDS) as response:
+        body = response.read().decode()
+        session = response.headers.get("Mcp-Session-Id")
+    payloads = (
+        [body]
+        if body.startswith("{")
+        else [
+            line.removeprefix("data:").strip()
+            for line in body.splitlines()
+            if line.startswith("data:")
+        ]
+    )
+    replies = [json.loads(p) for p in payloads]
+    return next((r for r in replies if r.get("id") == message.get("id")), {}), session
+
+
+def _mcp_tools(url: str) -> list[dict[str, Any]]:
+    """List every tool an MCP HTTP server offers.
+
+    Args:
+        url: Server endpoint URL.
+
+    Returns:
+        The ``tools/list`` entries, following pagination.
+    """
+    reply, session = _mcp_post(
+        url,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "llm-prompts", "version": "0"},
+            },
+        },
+        {},
+    )
+    headers = {"MCP-Protocol-Version": reply["result"]["protocolVersion"]}
+    if session:
+        headers["Mcp-Session-Id"] = session
+    _mcp_post(url, {"jsonrpc": "2.0", "method": "notifications/initialized"}, headers)
+    tools: list[dict[str, Any]] = []
+    cursor: str | None = None
+    request_id = 2
+    while True:
+        params = {"cursor": cursor} if cursor else {}
+        reply, _ = _mcp_post(
+            url,
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "tools/list",
+                "params": params,
+            },
+            headers,
+        )
+        result = reply["result"]
+        tools += result["tools"]
+        cursor = result.get("nextCursor")
+        if not cursor:
+            return tools
+        request_id += 1
+
+
+def _mcp_tool_name(server: str, tool: str, naming: _McpNaming) -> str:
+    """Return a frontend's name for an MCP tool, ``mcp__<server>__<tool>`` sanitised."""
+    return re.sub(naming.invalid, "_", f"mcp__{server}__{tool}")
+
+
+def _mcp_server_pattern(server: str, naming: _McpNaming) -> str:
+    """Return the exclusion pattern matching every tool of an MCP server.
+
+    Frontends cut an over-long tool name and add a hash suffix, so the prefix is
+    cut to what survives.
+    """
+    prefix = _mcp_tool_name(server, "", naming)
+    return f"{prefix[: naming.limit - _MCP_HASH_SUFFIX_LENGTH]}*"
+
+
+def _pi_mcp_tool_name(name: str) -> str:
+    """Return pi's name for an ``mcp__`` tool or ``mcp__<server>__*`` pattern; others unchanged.
+
+    An over-long exact name gets pi's hash suffix.
+    """
+    if not name.startswith("mcp__"):
+        return name
+    if name.endswith("__*"):
+        return _mcp_server_pattern(name[len("mcp__") : -len("__*")], _PI_MCP_NAMING)
+    sanitised = re.sub(r"[^A-Za-z0-9_*]", "_", name)
+    if len(sanitised) <= _PI_MCP_NAMING.limit or "*" in name:
+        return sanitised
+    server, _, tool = name[len("mcp__") :].partition("__")
+    digest = hashlib.sha256(f"{server}\0{tool}".encode()).hexdigest()[
+        : _MCP_HASH_SUFFIX_LENGTH - 1
+    ]
+    return f"{sanitised[: _PI_MCP_NAMING.limit - _MCP_HASH_SUFFIX_LENGTH]}_{digest}"
+
+
+def _pi_mcp_namespaces(server: str) -> dict[str, Any]:
+    """Return the entry of a server in pi's ``mcp.json``, keyed by its tool namespace."""
+    entry = _read_mcp_servers(_pi_agent_dir() / "mcp.json", "mcp.json").get(server, {})
+    return {server: entry}
+
+
+def _claude_mcp_servers() -> dict[str, Any]:
+    """Read the MCP servers from Claude's user config and enabled plugins.
+
+    Claude's user config wins over plugins.
+    """
+    sources = [_read_mcp_servers(user_home() / ".claude.json", ".claude.json")]
+    sources += [
+        _read_mcp_servers(path / ".mcp.json", f"{path.name}/.mcp.json")
+        for path in (_enabled_claude_plugin_paths() or {}).values()
+    ]
+    servers: dict[str, Any] = {}
+    for source in sources:
+        for name, entry in source.items():
+            servers.setdefault(name, entry)
+    return servers
+
+
+def _claude_mcp_namespaces(server: str) -> dict[str, Any]:
+    """Return a server's entries in Claude's user config and enabled plugins.
+
+    Keyed by tool namespace: the user's entry by name, each plugin's as
+    ``plugin_<plugin>_<server>``.
+    """
+    user = _read_mcp_servers(user_home() / ".claude.json", ".claude.json")
+    namespaces: dict[str, Any] = {}
+    plugin_servers = {
+        f"plugin_{plugin}_{server}": entry
+        for plugin, path in (_enabled_claude_plugin_paths() or {}).items()
+        if (
+            entry := _read_mcp_servers(
+                path / ".mcp.json", f"{path.name}/.mcp.json"
+            ).get(server)
+        )
+    }
+    if server in user or not plugin_servers:
+        namespaces[server] = user.get(server, {})
+    return namespaces | plugin_servers
+
+
+def _mcp_excluded_tools(
+    namespace: str, entry: dict[str, Any], naming: _McpNaming
+) -> tuple[str, ...]:
+    """Return a frontend's names for an MCP server's tools not marked read-only.
+
+    Args:
+        namespace: Server name as it appears in the frontend's tool names.
+        entry: The server's entry in the frontend's MCP config.
+        naming: How the frontend names MCP tools.
+
+    Returns:
+        Names of the tools lacking ``readOnlyHint``, or every tool of the
+        server (``mcp__<server>__*``) where its tools cannot be listed.
+    """
+    tools: list[dict[str, Any]] | None = None
+    if entry.get("url") and not entry.keys() & {"headers", "oauth"}:
+        try:
+            tools = _mcp_tools(entry["url"])
+            names = [_mcp_tool_name(namespace, tool["name"], naming) for tool in tools]
+        except (OSError, ValueError, KeyError, TypeError):
+            tools = None
+    if (
+        tools is None
+        or len(set(names)) < len(names)
+        or any(len(name) > naming.limit for name in names)
+    ):
+        log(
+            "warn",
+            f"Could not read MCP server {namespace}'s tool annotations; agents with mcp_read_only exclude all its tools.",
+        )
+        return (_mcp_server_pattern(namespace, naming),)
+    return tuple(
+        name
+        for name, tool in zip(names, tools, strict=True)
+        if tool.get("annotations", {}).get("readOnlyHint") is not True
+    )
+
+
+def _mcp_exclusions_resolver(
+    naming: _McpNaming,
+    read_namespaces: Callable[[str], dict[str, Any]],
+    strict: bool,
+) -> Callable[[str], Sequence[str]]:
+    """Return a per-run resolver of the MCP tools an ``mcp_read_only`` server hides.
+
+    Args:
+        naming: How the frontend names MCP tools.
+        read_namespaces: Reads a server's entries in the frontend's MCP config by tool namespace.
+        strict: Whether to list the server's tools; otherwise it hides them all.
+    """
+
+    def resolve(server: str) -> tuple[str, ...]:
+        return tuple(
+            tool
+            for namespace, entry in read_namespaces(server).items()
+            for tool in (
+                _mcp_excluded_tools(namespace, entry, naming)
+                if strict
+                else (_mcp_server_pattern(namespace, naming),)
+            )
+        )
+
+    return cache(resolve) if strict else resolve
+
+
+def _claude_agent_content(
+    content: str, resolve_mcp_exclusions: Callable[[str], Sequence[str]]
+) -> str:
+    """Move a Claude Code agent's ``mcp_read_only`` servers into its ``disallowedTools``.
+
+    Args:
+        content: Installed Claude Code agent content.
+        resolve_mcp_exclusions: Maps an ``mcp_read_only`` server to the tool
+            names to hide.
+
+    Returns:
+        Content without ``mcp_read_only``, the excluded tools added to ``disallowedTools``.
+    """
+    split = split_frontmatter(content)
+    if split is None:
+        return content
+    servers = _frontmatter_list(
+        (resolve_frontmatter(split[0]) or {}).get("mcp_read_only", "")
+    )
+    excluded = [tool for server in servers for tool in resolve_mcp_exclusions(server)]
+    stripped = strip_gating_keys(content, {"mcp_read_only"})
+    if not excluded:
+        return stripped
+    lines, body = split_frontmatter(stripped) or ([], stripped)
+    merged = [
+        f"disallowedTools: {', '.join([*_frontmatter_list(line.removeprefix('disallowedTools: ')), *excluded])}"
+        if line.startswith("disallowedTools: ")
+        else line
+        for line in lines
+    ]
+    if merged == lines:
+        merged.append(f"disallowedTools: {', '.join(excluded)}")
+    return "---\n" + "\n".join(merged) + "\n---\n" + body
+
+
+def _claude_agent_dialect(strict: bool = True) -> _AgentDialect:
+    """Build the Claude Code subagent dialect.
+
+    Args:
+        strict: Whether an ``mcp_read_only`` server is queried for its tools.
+
+    Returns:
+        Dialect hiding the opted-in MCP servers' non-read-only tools.
+    """
+    return _AgentDialect(
+        partial(
+            _claude_agent_content,
+            resolve_mcp_exclusions=_mcp_exclusions_resolver(
+                _CLAUDE_MCP_NAMING, _claude_mcp_namespaces, strict
+            ),
+        )
+    )
+
+
+_CLAUDE_AGENT_DIALECT = _claude_agent_dialect(strict=False)
+
+
 def _herdsman_agent_content(
     content: str,
     tool_names: Mapping[str, list[str]],
     resolve_model: Callable[[str], str],
+    resolve_mcp_exclusions: Callable[[str], Sequence[str]],
     resolve_skills: Callable[[str], list[str]],
     resolve_extensions: Callable[[list[str]], list[str]],
 ) -> str:
@@ -2035,6 +2345,8 @@ def _herdsman_agent_content(
         content: Installed Claude Code agent content.
         tool_names: Herdsman tool names for each Claude Code tool name.
         resolve_model: Maps the definition's ``model`` tier alias to its model.
+        resolve_mcp_exclusions: Maps an ``mcp_read_only`` server to the pi names
+            of its tools to hide.
         resolve_skills: Maps a ``pi_skills`` value to skill file paths.
         resolve_extensions: Maps an ``extensions`` list to extension paths.
 
@@ -2048,6 +2360,13 @@ def _herdsman_agent_content(
     if split is None:
         return content
     frontmatter = resolve_frontmatter(split[0]) or {}
+    mcp_excluded = [
+        tool
+        for server in _frontmatter_list(frontmatter.get("mcp_read_only", ""))
+        for tool in resolve_mcp_exclusions(server)
+    ]
+    if mcp_excluded:
+        frontmatter.setdefault("disallowedTools", "")
     lines: list[str] = []
     for key, value in frontmatter.items():
         if key in _HERDSMAN_STRING_KEYS:
@@ -2056,19 +2375,21 @@ def _herdsman_agent_content(
         elif key == "effort":
             lines.append(f"thinking: {value}")
         elif key in _HERDSMAN_ARRAY_KEYS:
-            names = [name.strip() for name in value.split(",")]
+            names = [
+                _pi_mcp_tool_name(name)
+                for name in (name.strip() for name in value.split(","))
+            ]
             if key != "allowed_subagents":
                 names = [
                     herdsman
                     for name in names
                     for herdsman in tool_names.get(
                         name,
-                        [name]
-                        if name.islower()
-                        and (key == "disallowedTools" or not name.startswith("mcp__"))
-                        else [],
+                        [name] if name.islower() or name.startswith("mcp__") else [],
                     )
                 ]
+            if key == "disallowedTools":
+                names += mcp_excluded
             if names:
                 lines.append(
                     f"{_HERDSMAN_ARRAY_KEYS[key]}: {json.dumps(list(dict.fromkeys(names)))}"
@@ -2076,11 +2397,7 @@ def _herdsman_agent_content(
         elif key == "pi_skills":
             lines.append(f"skills: {json.dumps(resolve_skills(value))}")
         elif key == "extensions":
-            names = [
-                n.strip().strip("'\"")
-                for n in value.strip("[]").split(",")
-                if n.strip()
-            ]
+            names = _frontmatter_list(value)
             lines.append("noExtensions: true")
             if paths := resolve_extensions(names):
                 lines.append(f"extensions: {json.dumps(paths)}")
@@ -2197,7 +2514,7 @@ def _pi_agent_dialect(
         root_dir: This package's own prompts directory.
         overlay_dirs: Overlay prompts directories in priority order.
         strict_skills: Whether a ``pi_skills`` or ``extensions`` entry that resolves
-            nowhere fails.
+            nowhere fails and an ``mcp_read_only`` server is queried for its tools.
 
     Returns:
         Dialect translating definitions to pi, with mapped tiers resolved.
@@ -2222,6 +2539,9 @@ def _pi_agent_dialect(
             _herdsman_agent_content,
             tool_names=tool_names,
             resolve_model=resolve_model,
+            resolve_mcp_exclusions=_mcp_exclusions_resolver(
+                _PI_MCP_NAMING, _pi_mcp_namespaces, strict_skills
+            ),
             resolve_skills=partial(
                 _pi_skill_paths,
                 skill_sources=[
@@ -2982,29 +3302,30 @@ def _remove_owned_pi_packages(owned: set[str], wanted: set[str]) -> set[str]:
     return kept
 
 
-def _enabled_claude_plugin_paths() -> list[Path] | None:
+def _enabled_claude_plugin_paths() -> dict[str, Path] | None:
     """Return install paths of the Claude plugins enabled in the user's settings.
 
     Returns:
-        Existing install directories, or None when a Claude file is unparseable.
+        Existing install directories by plugin name, or None when a Claude file
+        is unparseable.
     """
     claude_dir = user_home() / ".claude"
     settings_path = claude_dir / "settings.json"
     installed_path = claude_dir / "plugins" / "installed_plugins.json"
     if not settings_path.exists() or not installed_path.exists():
-        return []
+        return {}
     try:
         enabled = json.loads(_read_text(settings_path)).get("enabledPlugins", {})
         installed = json.loads(_read_text(installed_path)).get("plugins", {})
     except json.JSONDecodeError:
         log("warn", "[pi] Could not parse Claude plugin files, skipping plugins.")
         return None
-    paths: list[Path] = []
+    paths: dict[str, Path] = {}
     for key in (key for key, on in enabled.items() if on):
         records = installed.get(key) or [{}]
         path = Path(records[0].get("installPath", ""))
         if path.is_absolute() and path.is_dir():
-            paths.append(path)
+            paths[key.split("@")[0]] = path
         else:
             log("warn", f"[pi] Plugin {key} is not installed, skipping.")
     return paths
@@ -3015,7 +3336,7 @@ def _claude_plugin_skill_dirs() -> list[str] | None:
     plugin_paths = _enabled_claude_plugin_paths()
     if plugin_paths is None:
         return None
-    return [str(p / "skills") for p in plugin_paths if (p / "skills").is_dir()]
+    return [str(p / "skills") for p in plugin_paths.values() if (p / "skills").is_dir()]
 
 
 def _sync_pi_skills(wanted: list[str], previous: list[str]) -> None:
@@ -3138,21 +3459,13 @@ def _sync_pi_mcp_servers() -> None:
     plugins. Servers pi cannot run are skipped. Only server names are logged,
     since entries may hold secrets.
     """
-    candidates = _read_mcp_servers(user_home() / ".claude.json", ".claude.json")
-    plugin_paths = _enabled_claude_plugin_paths() or []
-    plugin_sets = [
-        _read_mcp_servers(path / ".mcp.json", f"{path.name}/.mcp.json")
-        for path in plugin_paths
-    ]
     mcp_path = _pi_agent_dir() / "mcp.json"
     config: dict[str, Any] = (
         json.loads(_read_text(mcp_path)) if mcp_path.exists() else {}
     )
     servers: dict[str, Any] = config.setdefault("mcpServers", {})
     added = []
-    for name, entry in [
-        item for source in (candidates, *plugin_sets) for item in source.items()
-    ]:
+    for name, entry in _claude_mcp_servers().items():
         if name in servers:
             continue
         if entry.get("type") == "sse" or not (entry.get("command") or entry.get("url")):
@@ -3706,6 +4019,8 @@ def main(
     for agents_target in ("claude-code", "pi"):
         if agents_target not in active_targets:
             continue
+        if agents_target == "pi":
+            _sync_pi_mcp_servers()
         agents_dest = dirs[agents_target]["agents"]
         agent_dirs = _agent_source_dirs(root_dir, overlay_dirs, agents_target)
         target_skip_set = skip_by_agent.get(agents_target, frozenset())
@@ -3729,7 +4044,7 @@ def main(
                 agents_target,
                 _pi_agent_dialect(root_dir, overlay_dirs)
                 if agents_target == "pi"
-                else _CLAUDE_AGENT_DIALECT,
+                else _claude_agent_dialect(),
                 _builtin_skill_vars(all_agents[agents_target].vars_path()),
                 bundle=pi_bundle if agents_target == "pi" else None,
             )
@@ -3810,7 +4125,6 @@ def main(
         if not herdr_available():
             log("warn", "[pi] `herdr` not found on PATH. pi needs herdr to run.")
         pi_seeded_keys = _seed_pi_files([root_dir, *overlay_dirs], pi_seeded_keys or {})
-        _sync_pi_mcp_servers()
         pi_skills = _claude_plugin_skill_dirs()
         if pi_skills is None:
             pi_skills = previous_manifest.get("pi", {}).get("skills", [])

@@ -3,6 +3,7 @@ name: eagle-vision-checker
 description: Spawned only by eagle-vision's Autonomy check. Judges one node brief from plan text alone - no rules, no code access. Returns the blockers, if any.
 omitClaudeMd: true
 tools: StructuredOutput, Read
+mcp_read_only: [memory]
 generate_variants: haiku-low
 color: green
 ---
