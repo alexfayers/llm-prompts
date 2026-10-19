@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Callable, Sequence
@@ -105,6 +106,25 @@ def _server_pattern(server: str, naming: McpNaming) -> str:
     """
     prefix = _tool_name(server, "", naming)
     return f"{prefix[: naming.limit - _HASH_SUFFIX_LENGTH]}*"
+
+
+def pi_tool_name(name: str) -> str:
+    """Return pi's name for an ``mcp__`` tool or ``mcp__<server>__*`` pattern; others unchanged.
+
+    An over-long exact name gets pi's hash suffix.
+    """
+    if not name.startswith("mcp__"):
+        return name
+    if name.endswith("__*"):
+        return _server_pattern(name[len("mcp__") : -len("__*")], PI_NAMING)
+    sanitised = re.sub(r"[^A-Za-z0-9_*]", "_", name)
+    if len(sanitised) <= PI_NAMING.limit or "*" in name:
+        return sanitised
+    server, _, tool = name[len("mcp__") :].partition("__")
+    digest = hashlib.sha256(f"{server}\0{tool}".encode()).hexdigest()[
+        : _HASH_SUFFIX_LENGTH - 1
+    ]
+    return f"{sanitised[: PI_NAMING.limit - _HASH_SUFFIX_LENGTH]}_{digest}"
 
 
 def _namespaces(server: str, sources: McpSources) -> dict[str, Any]:

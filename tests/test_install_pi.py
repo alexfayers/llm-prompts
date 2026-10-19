@@ -1222,7 +1222,7 @@ class TestHerdsmanAgents:
             "change_dir]\n---\n"
         )
 
-    def test_agent_tools_pass_pi_names_but_not_mcp_names(
+    def test_agent_tools_pass_pi_and_mcp_names(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
@@ -1230,12 +1230,18 @@ class TestHerdsmanAgents:
         agents = tmp_path / "overlay" / "shared" / "agents"
         agents.mkdir(parents=True)
         (agents / "searcher.md").write_text(
-            "---\nname: searcher\ntools: lsp_symbols, mcp__acme__thing\n---\n\nbody\n",
+            f"---\nname: searcher\ntools: lsp_symbols, mcp__acme__thing, mcp__acme__GetItem, mcp__my-srv__Get-{'x' * 60}, mcp__{'s' * 60}__*\n---\n\nbody\n",
             encoding="utf-8",
         )
         _install(home, tmp_path / "installed.json", [tmp_path / "overlay"])
         installed = home / ".pi" / "agent" / "agents" / "searcher.md"
-        assert _frontmatter(installed)["tools"] == ["lsp_symbols"]
+        assert _frontmatter(installed)["tools"] == [
+            "lsp_symbols",
+            "mcp__acme__thing",
+            "mcp__acme__GetItem",
+            f"mcp__my_srv__Get_{'x' * 38}_6b156abf",
+            f"mcp__{'s' * 50}*",
+        ]
 
     @staticmethod
     def _mcp_agent(tmp_path: Path, frontmatter: str) -> Path:
@@ -1355,6 +1361,8 @@ class TestHerdsmanAgents:
             "tower_do_patch",
             "tower_do_status",
             "tower_do_talk",
+            "mcp__memory__*",
+            "mcp__memory_agent__*",
         ]
         assert coordinator["thinking"] == "low"
         assert coordinator["inheritGlobalContext"] is False

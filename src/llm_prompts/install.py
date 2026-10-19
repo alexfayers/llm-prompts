@@ -26,7 +26,13 @@ from .herdsman import (
     herdr_available,
 )
 from .home import is_rooted, set_root, user_home
-from .mcp import CLAUDE_NAMING, PI_NAMING, McpSources, exclusions_resolver
+from .mcp import (
+    CLAUDE_NAMING,
+    PI_NAMING,
+    McpSources,
+    exclusions_resolver,
+    pi_tool_name,
+)
 from .render_template import (
     _read_text,
     clear_read_cache,
@@ -2217,17 +2223,17 @@ def _herdsman_agent_content(
         elif key == "effort":
             lines.append(f"thinking: {value}")
         elif key in _HERDSMAN_ARRAY_KEYS:
-            names = [name.strip() for name in value.split(",")]
+            names = [
+                pi_tool_name(name)
+                for name in (name.strip() for name in value.split(","))
+            ]
             if key != "allowed_subagents":
                 names = [
                     herdsman
                     for name in names
                     for herdsman in tool_names.get(
                         name,
-                        [name]
-                        if name.islower()
-                        and (key == "disallowedTools" or not name.startswith("mcp__"))
-                        else [],
+                        [name] if name.islower() or name.startswith("mcp__") else [],
                     )
                 ]
             if key == "disallowedTools":
