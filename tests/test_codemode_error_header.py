@@ -114,3 +114,16 @@ def test_whole_first_error_line_is_passed_through_without_a_cap(
     long_error = "Error: " + "x" * 500
     [result] = _handle(tmp_path, [_failed(f"Script error:\n{long_error}\n    at y")])
     assert result["content"][0]["text"].startswith(f"Script failed: {long_error}\n")
+
+
+_RET = "return [typeof tools.nope, await tools.real(1)]"
+_PROLOGUE = f'// @options: {{"timeout_ms": 1}}\n// note\n"use strict";\nif (this) throw Error("sloppy")\n{_RET}'
+_CONTINUED = f'"ab"\n[0].toUpperCase()\n{_RET}'
+
+
+@pytest.mark.parametrize("code", [_RET, _PROLOGUE, _CONTINUED])
+def test_missing_tool_read_gives_undefined(tmp_path: Path, code: str) -> None:
+    event = {"type": "tool_call", "toolName": "codemode", "input": {"code": code}}
+    [(rewritten, value)] = _handle(tmp_path, [event])
+    assert value == ["undefined", 1]
+    assert ("@options" in code) == rewritten.startswith("// @options")

@@ -1,10 +1,23 @@
-// Puts the first error line of a failed codemode script into the result header.
+// Puts the first error line of a failed codemode script into the result header and makes reading a missing tool give undefined.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const FAILED_HEADER = "Script failed";
 const ERROR_MARKER = "Script error:";
 
+const OPTIONS_PREFIX = "// @options:";
+const DIRECTIVE_PROLOGUE = /^(?:\s*(?:\/\/[^\n]*\n\s*)*(?:"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')[ \t]*;)*/;
+const SHADOW_TOOLS = ';tools=new Proxy(tools,{get:(t,p)=>typeof p!=="string"||p in t?t[p]:void 0});';
+
 type Block = { type: string; text?: string };
+
+function shadowTools(code: string): string {
+	const lines = code.split("\n");
+	const bodyStart = lines[0].trimStart().startsWith(OPTIONS_PREFIX) ? lines[0].length + 1 : 0;
+	const misplacedOptions = lines.slice(1).some((line) => line.trimStart().startsWith(OPTIONS_PREFIX));
+	if (misplacedOptions || bodyStart >= code.length) return code;
+	const insertAt = bodyStart + (DIRECTIVE_PROLOGUE.exec(code.slice(bodyStart))?.[0].length ?? 0);
+	return code.slice(0, insertAt) + SHADOW_TOOLS + code.slice(insertAt);
+}
 
 function firstErrorLine(content: Block[]): string | undefined {
 	const lines = content.flatMap((block) => (block.type === "text" ? (block.text ?? "").split("\n") : []));
@@ -13,6 +26,10 @@ function firstErrorLine(content: Block[]): string | undefined {
 }
 
 export default function (pi: ExtensionAPI) {
+	pi.on("tool_call", (event) => {
+		if (event.toolName !== "codemode" || typeof event.input.code !== "string") return;
+		event.input.code = shadowTools(event.input.code);
+	});
 	pi.on("tool_result", (event) => {
 		if (event.toolName !== "codemode" || !event.isError) return;
 		const [header, ...rest] = event.content as Block[];
