@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import shutil
@@ -1221,7 +1222,7 @@ class TestHerdsmanAgents:
             "change_dir]\n---\n"
         )
 
-    def test_agent_tools_pass_pi_names_but_not_mcp_names(
+    def test_agent_tools_pass_pi_and_mcp_names(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
@@ -1229,12 +1230,121 @@ class TestHerdsmanAgents:
         agents = tmp_path / "overlay" / "shared" / "agents"
         agents.mkdir(parents=True)
         (agents / "searcher.md").write_text(
-            "---\nname: searcher\ntools: lsp_symbols, mcp__acme__thing\n---\n\nbody\n",
+            f"---\nname: searcher\ntools: lsp_symbols, mcp__acme__thing, mcp__acme__GetItem, mcp__my-srv__Get-{'x' * 60}, mcp__{'s' * 60}__*\n---\n\nbody\n",
             encoding="utf-8",
         )
         _install(home, tmp_path / "installed.json", [tmp_path / "overlay"])
         installed = home / ".pi" / "agent" / "agents" / "searcher.md"
-        assert _frontmatter(installed)["tools"] == ["lsp_symbols"]
+        assert _frontmatter(installed)["tools"] == [
+            "lsp_symbols",
+            "mcp__acme__thing",
+            "mcp__acme__GetItem",
+            f"mcp__my_srv__Get_{'x' * 38}_6b156abf",
+            f"mcp__{'s' * 50}*",
+        ]
+
+    @staticmethod
+    def _mcp_agent(tmp_path: Path, frontmatter: str) -> Path:
+        agents = tmp_path / "overlay" / "shared" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "searcher.md").write_text(
+            f"---\nname: searcher\n{frontmatter}\n---\n\nbody\n", encoding="utf-8"
+        )
+        return tmp_path / "overlay"
+
+    @staticmethod
+    def _mcp_server(tools: list[dict[str, Any]]) -> Any:
+        replies = {
+            "initialize": {"protocolVersion": "1"},
+            "tools/list": {"tools": tools},
+        }
+
+        def urlopen(request: Any, timeout: float) -> Any:
+            method = json.loads(request.data)["method"]
+            body = json.dumps({"id": method, "result": replies.get(method)})
+            response = io.BytesIO(body.encode() if method in replies else b"")
+            response.headers = {}  # type: ignore[attr-defined]
+            return response
+
+        return patch("llm_prompts.mcp.urlopen", urlopen)
+
+    @pytest.mark.parametrize(
+        ("target", "agents_dir", "key", "base", "server"),
+        [
+            ("pi", ".pi/agent/agents", "excludeTools", "write", "m_x"),
+            ("claude-code", ".claude/agents", "disallowedTools", "Write", "m-x"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("servers", "excluded", "warns"),
+        [
+            ({"m-x": {"url": "http://mcp.test/mcp"}}, "put", False),
+            ({}, "*", True),
+        ],
+    )
+    def test_mcp_read_only_hides_unannotated_tools(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        target: str,
+        agents_dir: str,
+        key: str,
+        base: str,
+        server: str,
+        servers: dict[str, Any],
+        excluded: str,
+        warns: bool,
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / ".claude.json").write_text(
+            json.dumps({"mcpServers": servers}), encoding="utf-8"
+        )
+        overlay = self._mcp_agent(
+            tmp_path, "disallowedTools: Write\nmcp_read_only: [m-x]"
+        )
+
+        with self._mcp_server(
+            [{"name": "get", "annotations": {"readOnlyHint": True}}, {"name": "put"}]
+        ):
+            _install(home, tmp_path / "installed.json", [overlay], targets=[target])
+
+        installed = _frontmatter(home / agents_dir / "searcher.md")
+        names = installed[key]
+        assert (names.split(", ") if isinstance(names, str) else names) == [
+            base,
+            f"mcp__{server}__{excluded}",
+        ]
+        assert "mcp_read_only" not in installed
+        assert ("Could not read MCP server m-x" in capsys.readouterr().err) is warns
+
+    def test_mcp_read_only_pattern_survives_name_truncation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        overlay = self._mcp_agent(tmp_path, f"mcp_read_only: [{'s' * 60}]")
+        _install(tmp_path / "home", tmp_path / "installed.json", [overlay])
+        installed = _frontmatter(tmp_path / "home/.pi/agent/agents/searcher.md")
+        assert installed["excludeTools"][-1] == f"mcp__{'s' * 50}*"
+
+    def test_claude_mcp_read_only_hides_plugin_server_tools(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        plugin = _plugin_dir(tmp_path, "alpha")
+        (plugin / ".mcp.json").write_text(
+            json.dumps({"mcpServers": {"m-x": {"command": "x"}}}), encoding="utf-8"
+        )
+        _claude_plugins(home, {"alpha@acme": True}, {"alpha@acme": plugin})
+        overlay = self._mcp_agent(tmp_path, "mcp_read_only: [m-x]")
+
+        _install(home, tmp_path / "installed.json", [overlay], targets=["claude-code"])
+
+        installed = _frontmatter(home / ".claude" / "agents" / "searcher.md")
+        assert installed["disallowedTools"] == "mcp__plugin_alpha_m-x__*"
 
     def test_agents_install_in_herdsman_dialect(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1251,6 +1361,8 @@ class TestHerdsmanAgents:
             "tower_do_patch",
             "tower_do_status",
             "tower_do_talk",
+            "mcp__memory__*",
+            "mcp__memory_agent__*",
         ]
         assert coordinator["thinking"] == "low"
         assert coordinator["inheritGlobalContext"] is False
@@ -1258,7 +1370,7 @@ class TestHerdsmanAgents:
         assert coordinator["systemPromptMode"] == "append"
 
         reasoner = _frontmatter(agents / "reasoner.md")
-        assert reasoner["excludeTools"] == ["write", "edit"]
+        assert reasoner["excludeTools"] == ["write", "edit", "mcp__memory__*"]
         worker = _frontmatter(agents / "worker.md")
         assert worker["excludeTools"][0] == "agent"
         checker = _frontmatter(agents / "eagle-vision-checker-haiku-low.md")
