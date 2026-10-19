@@ -6,6 +6,7 @@
   "prompt-cache-stabilizer",
   "codemode-error-header",
   "compact-now",
+  "codemode-sleep",
   "tower-do?",
   "tower-do-patch",
   "@gotgenes/pi-permission-system"
