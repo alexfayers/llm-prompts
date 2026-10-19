@@ -11,7 +11,7 @@ tools: Agent, ToolSearch, TaskCreate, TaskGet, TaskList, TaskUpdate, SendMessage
 {% if AGENT == "pi" %}
 extensions: []
 {% if AGENT == "pi" and TOOL_AGENT == "delegate_agent" %}
-allowed_subagents: Explore, worker-sonnet-low, worker-sonnet-medium, worker-sonnet-high, worker-haiku-low, worker-haiku-medium, worker-haiku-high, worker-terra-low, worker-terra-medium, worker-terra-high, worker-luna-low, worker-luna-medium, worker-luna-high, surveyor-sonnet-low, surveyor-sonnet-medium, surveyor-sonnet-high, surveyor-haiku-low, surveyor-haiku-medium, surveyor-haiku-high, surveyor-terra-low, surveyor-terra-medium, surveyor-terra-high, surveyor-luna-low, surveyor-luna-medium, surveyor-luna-high, reasoner-opus-medium, reasoner-opus-high, reasoner-opus-xhigh, reasoner-sol-medium, reasoner-sol-high, reasoner-sol-xhigh, reviewer-opus-medium, reviewer-opus-high
+allowed_subagents: Explore, worker, surveyor, reasoner, reviewer
 {% else %}
 allowed_subagents: Explore
 {% endif %}

@@ -15,9 +15,12 @@ HERDSMAN_DISABLED_DEFINITIONS: tuple[str, ...] = (
     "generalist",
     "implementer",
     "researcher",
-    "reviewer",
     "scout",
 )
+
+HERDSMAN_BUNDLED_RESETS: dict[str, dict[str, list[str] | bool]] = {
+    "reviewer": {"agents": [], "noSkills": False, "tools": ["*"]},
+}
 
 
 def herdr_available() -> bool:
