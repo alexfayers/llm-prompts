@@ -44,7 +44,7 @@
 | tests/test\_check\_repos\_script.py                                           |       67 |        0 |    100% |           |
 | tests/test\_cli.py                                                            |      819 |        0 |    100% |           |
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
-| tests/test\_codemode\_error\_header.py                                        |       45 |        1 |     98% |        28 |
+| tests/test\_codemode\_error\_header.py                                        |       54 |        1 |     98% |        28 |
 | tests/test\_conftest.py                                                       |       60 |        0 |    100% |           |
 | tests/test\_context\_total.py                                                 |      183 |        1 |     99% |        29 |
 | tests/test\_contribute.py                                                     |     1872 |        0 |    100% |           |
@@ -86,7 +86,7 @@
 | tests/test\_todos\_script.py                                                  |       87 |        0 |    100% |           |
 | tests/test\_tower\_do\_patch.py                                               |       78 |        1 |     99% |        28 |
 | tests/test\_uninstall.py                                                      |      114 |        0 |    100% |           |
-| **TOTAL**                                                                     | **19319** |  **574** | **97%** |           |
+| **TOTAL**                                                                     | **19328** |  **574** | **97%** |           |
 
 
 ## Setup coverage badge

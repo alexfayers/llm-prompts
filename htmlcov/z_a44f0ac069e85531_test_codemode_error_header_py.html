@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">45 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">44<span class="text"> run</span></button>
+            <span class="text">54 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">53<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">1<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_a44f0ac069e85531_test_conftest_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-19 14:33 +0000
+            created at 2026-10-19 15:23 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -196,6 +196,19 @@
     <p class="run"><span class="n"><a id="t114" href="#t114">114</a></span><span class="t">    <span class="nam">long_error</span> <span class="op">=</span> <span class="str">&quot;Error: &quot;</span> <span class="op">+</span> <span class="str">&quot;x&quot;</span> <span class="op">*</span> <span class="num">500</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t115" href="#t115">115</a></span><span class="t">    <span class="op">[</span><span class="nam">result</span><span class="op">]</span> <span class="op">=</span> <span class="nam">_handle</span><span class="op">(</span><span class="nam">tmp_path</span><span class="op">,</span> <span class="op">[</span><span class="nam">_failed</span><span class="op">(</span><span class="fst">f&quot;</span><span class="fst">Script error:\n</span><span class="op">{</span><span class="nam">long_error</span><span class="op">}</span><span class="fst">\n    at y</span><span class="fst">&quot;</span><span class="op">)</span><span class="op">]</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t116" href="#t116">116</a></span><span class="t">    <span class="key">assert</span> <span class="nam">result</span><span class="op">[</span><span class="str">&quot;content&quot;</span><span class="op">]</span><span class="op">[</span><span class="num">0</span><span class="op">]</span><span class="op">[</span><span class="str">&quot;text&quot;</span><span class="op">]</span><span class="op">.</span><span class="nam">startswith</span><span class="op">(</span><span class="fst">f&quot;</span><span class="fst">Script failed: </span><span class="op">{</span><span class="nam">long_error</span><span class="op">}</span><span class="fst">\n</span><span class="fst">&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t117" href="#t117">117</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t118" href="#t118">118</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t119" href="#t119">119</a></span><span class="t"><span class="nam">_RET</span> <span class="op">=</span> <span class="str">&quot;return [typeof tools.nope, await tools.real(1)]&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t120" href="#t120">120</a></span><span class="t"><span class="nam">_PROLOGUE</span> <span class="op">=</span> <span class="fst">f&#x27;</span><span class="fst">// @options: {{</span><span class="fst">&quot;timeout_ms&quot;: 1}}</span><span class="fst">\n// note\n&quot;use strict&quot;;\nif (this) throw Error(&quot;sloppy&quot;)\n</span><span class="op">{</span><span class="nam">_RET</span><span class="op">}</span><span class="fst">&#x27;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t121" href="#t121">121</a></span><span class="t"><span class="nam">_CONTINUED</span> <span class="op">=</span> <span class="fst">f&#x27;</span><span class="fst">&quot;ab&quot;\n[0].toUpperCase()\n</span><span class="op">{</span><span class="nam">_RET</span><span class="op">}</span><span class="fst">&#x27;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t122" href="#t122">122</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t123" href="#t123">123</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t124" href="#t124">124</a></span><span class="t"><span class="op">@</span><span class="nam">pytest</span><span class="op">.</span><span class="nam">mark</span><span class="op">.</span><span class="nam">parametrize</span><span class="op">(</span><span class="str">&quot;code&quot;</span><span class="op">,</span> <span class="op">[</span><span class="nam">_RET</span><span class="op">,</span> <span class="nam">_PROLOGUE</span><span class="op">,</span> <span class="nam">_CONTINUED</span><span class="op">]</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t125" href="#t125">125</a></span><span class="t"><span class="key">def</span> <span class="nam">test_missing_tool_read_gives_undefined</span><span class="op">(</span><span class="nam">tmp_path</span><span class="op">:</span> <span class="nam">Path</span><span class="op">,</span> <span class="nam">code</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t126" href="#t126">126</a></span><span class="t">    <span class="nam">event</span> <span class="op">=</span> <span class="op">{</span><span class="str">&quot;type&quot;</span><span class="op">:</span> <span class="str">&quot;tool_call&quot;</span><span class="op">,</span> <span class="str">&quot;toolName&quot;</span><span class="op">:</span> <span class="str">&quot;codemode&quot;</span><span class="op">,</span> <span class="str">&quot;input&quot;</span><span class="op">:</span> <span class="op">{</span><span class="str">&quot;code&quot;</span><span class="op">:</span> <span class="nam">code</span><span class="op">}</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t127" href="#t127">127</a></span><span class="t">    <span class="op">[</span><span class="op">(</span><span class="nam">rewritten</span><span class="op">,</span> <span class="nam">value</span><span class="op">)</span><span class="op">]</span> <span class="op">=</span> <span class="nam">_handle</span><span class="op">(</span><span class="nam">tmp_path</span><span class="op">,</span> <span class="op">[</span><span class="nam">event</span><span class="op">]</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t128" href="#t128">128</a></span><span class="t">    <span class="key">assert</span> <span class="nam">value</span> <span class="op">==</span> <span class="op">[</span><span class="str">&quot;undefined&quot;</span><span class="op">,</span> <span class="num">1</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t129" href="#t129">129</a></span><span class="t">    <span class="key">assert</span> <span class="op">(</span><span class="str">&quot;@options&quot;</span> <span class="key">in</span> <span class="nam">code</span><span class="op">)</span> <span class="op">==</span> <span class="nam">rewritten</span><span class="op">.</span><span class="nam">startswith</span><span class="op">(</span><span class="str">&quot;// @options&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -205,7 +218,7 @@
             <a class="nav" href="z_a44f0ac069e85531_test_conftest_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-19 14:33 +0000
+            created at 2026-10-19 15:23 +0000
         </p>
     </div>
 </footer>
