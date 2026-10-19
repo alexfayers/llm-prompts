@@ -12,7 +12,7 @@ from functools import cache, partial
 from importlib.metadata import distribution, packages_distributions
 from importlib.resources import files
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
@@ -20,7 +20,11 @@ from cline_hooks.core.install import resolve_binary
 from jinja2 import TemplateError
 
 from .colors import Color, paint
-from .herdsman import HERDSMAN_DISABLED_DEFINITIONS, herdr_available
+from .herdsman import (
+    HERDSMAN_BUNDLED_RESETS,
+    HERDSMAN_DISABLED_DEFINITIONS,
+    herdr_available,
+)
 from .home import is_rooted, set_root, user_home
 from .render_template import (
     _read_text,
@@ -1304,20 +1308,24 @@ def _resolve_variant_model(alias: str, catalogue: dict[str, str]) -> str:
 
 
 _THINKING_OFF_VARIANT_MODELS = {"pi": frozenset({"haiku"})}
+_PI_SWITCHED_ROLES = frozenset({"worker", "surveyor", "reasoner", "reviewer"})
 
 
 def _apply_variant_frontmatter(
     content: str,
     stem: str,
-    model: str,
-    effort: str,
-    model_value: str,
+    model: str = "",
+    effort: str = "",
+    model_value: str = "",
     effort_value: str = "",
+    note: str = "",
 ) -> str:
     """Rewrite a template's frontmatter for one generated model/effort variant.
 
     Overrides ``name`` to the variant's own name, appends a ``[model, effort
     effort]`` suffix to ``description``, and adds ``model``/``effort`` keys.
+    A ``note`` replaces the suffix, keeps the bare ``stem`` name and sets no
+    ``model`` or ``effort``.
     All other frontmatter keys and the body are carried verbatim. A block-scalar
     (``>-``, ``|-``, etc.) description gets the suffix as a trailing continuation
     line, folded into the value by the YAML parser, rather than appended onto
@@ -1330,6 +1338,7 @@ def _apply_variant_frontmatter(
         effort: Effort level for this variant.
         model_value: Value to emit as the ``model`` key.
         effort_value: Value to emit as the ``effort`` key; defaults to ``effort``.
+        note: Description suffix of a role spawned by name instead.
 
     Returns:
         Content with the variant's frontmatter applied.
@@ -1338,7 +1347,7 @@ def _apply_variant_frontmatter(
     if split is None:
         return content
     frontmatter_lines, body = split
-    suffix = f"[{model}, {effort} effort]"
+    suffix = note or f"[{model}, {effort} effort]"
     lines = []
     in_description_block = False
     description_indent = "  "
@@ -1359,7 +1368,7 @@ def _apply_variant_frontmatter(
 
         key = line.partition(": ")[0].strip()
         if key == "name":
-            lines.append(f"name: {stem}-{model}-{effort}")
+            lines.append(f"name: {stem if note else f'{stem}-{model}-{effort}'}")
         elif key == "description":
             value = line.partition(": ")[2].strip()
             if re.fullmatch(r"[>|][+-]?", value):
@@ -1371,8 +1380,9 @@ def _apply_variant_frontmatter(
             lines.append(line)
     close_description_block()
 
-    lines.append(f"model: {model_value}")
-    lines.append(f"effort: {effort_value or effort}")
+    if not note:
+        lines.append(f"model: {model_value}")
+        lines.append(f"effort: {effort_value or effort}")
     return "---\n" + "\n".join(lines) + "\n---\n" + body
 
 
@@ -1412,6 +1422,77 @@ def _append_frontmatter_tokens(content: str, additions: dict[str, list[str]]) ->
     return _apply_frontmatter_overrides(content, merged)
 
 
+class _VariantSpec(NamedTuple):
+    """One model/effort variant a template generates."""
+
+    model: str
+    effort: str
+    model_value: str
+    effort_value: str
+
+
+def _variant_specs(
+    content: str,
+    src_name: str,
+    resolve_model: Callable[[str], str] | None,
+    target: str,
+) -> list[_VariantSpec]:
+    """List the variants a rendered template generates for a target.
+
+    Parses the flat, comma-separated ``generate_variants`` frontmatter key
+    (each token a ``<model>-<effort>`` pair), except that a thinking-off model
+    keeps only its first token. Malformed tokens are logged and skipped.
+    The target's ``<target>_extra_variants`` tokens are added too, but only
+    those whose model alias ``resolve_model`` maps to something else.
+
+    Args:
+        content: Template content after variable substitution.
+        src_name: Template filename, for log messages.
+        resolve_model: Maps a variant's tier alias to its ``model`` value;
+            defaults to the Claude Code model catalogue.
+        target: Target agent name whose ``<target>_extra_variants`` apply.
+
+    Returns:
+        The variants, in declaration order.
+    """
+    _, frontmatter = parse_frontmatter(content)
+    tokens = _frontmatter_tokens(frontmatter, "generate_variants")
+    extra_tokens = (
+        _frontmatter_tokens(frontmatter, _override_key(target, "extra_variants"))
+        if target
+        else []
+    )
+    if resolve_model is None:
+        resolve_model = partial(
+            _resolve_variant_model, catalogue=_claude_model_catalogue()
+        )
+    specs: list[_VariantSpec] = []
+    thinking_off_models = _THINKING_OFF_VARIANT_MODELS.get(target, frozenset())
+    seen_thinking_off: set[str] = set()
+    for token in [*tokens, *extra_tokens]:
+        parts = token.split("-")
+        if len(parts) != 2:
+            log("warn", f"Skipping malformed variant token '{token}' in {src_name}")
+            continue
+        model, effort = parts
+        resolved_model = resolve_model(model)
+        if token in extra_tokens and resolved_model == model:
+            continue
+        if model in thinking_off_models:
+            if model in seen_thinking_off:
+                continue
+            seen_thinking_off.add(model)
+        specs.append(
+            _VariantSpec(
+                model,
+                effort,
+                resolved_model,
+                "off" if model in thinking_off_models else "",
+            )
+        )
+    return specs
+
+
 def _expand_agent_variants(
     src_path: Path,
     resolve_model: Callable[[str], str] | None = None,
@@ -1421,11 +1502,9 @@ def _expand_agent_variants(
 ) -> list[tuple[str, str]]:
     """Expand a ``generate_variants`` template source into generated variant files.
 
-    Parses the flat, comma-separated ``generate_variants`` frontmatter key
-    (each token a ``<model>-<effort>`` pair) and produces one generated file
-    per token. Malformed tokens are logged and skipped rather than raising.
-    The target's ``<target>_extra_variants`` tokens are added too, but only
-    those whose model alias ``resolve_model`` maps to something else.
+    Produces one generated file per variant from :func:`_variant_specs`. For
+    pi, a worker, surveyor, reasoner or reviewer yields one definition without a
+    model or effort, whose description lists the variants to spawn by name.
 
     Args:
         src_path: Template source file path.
@@ -1445,49 +1524,71 @@ def _expand_agent_variants(
     content = _append_frontmatter_tokens(
         substitute_variables(_read_text(src_path), variables or {}), additions or {}
     )
-    _, frontmatter = parse_frontmatter(content)
-    tokens = _frontmatter_tokens(frontmatter, "generate_variants")
-    extra_tokens = (
-        _frontmatter_tokens(frontmatter, _override_key(target, "extra_variants"))
-        if target
-        else []
-    )
     stripped = strip_gating_keys(content, _GATING_FRONTMATTER_KEYS)
     stem = src_path.stem
-    if resolve_model is None:
-        resolve_model = partial(
-            _resolve_variant_model, catalogue=_claude_model_catalogue()
+    specs = _variant_specs(content, src_path.name, resolve_model, target)
+    if target == "pi" and stem in _PI_SWITCHED_ROLES:
+        efforts: dict[str, list[str]] = {}
+        for spec in specs:
+            efforts.setdefault(spec.model, []).append(
+                f"{spec.effort} (thinking off)" if spec.effort_value else spec.effort
+            )
+        listed = ", ".join(f"{model} {'/'.join(e)}" for model, e in efforts.items())
+        note = f"[spawn as {stem}@<model>:<effort> - {listed}]"
+        return [(f"{stem}.md", _apply_variant_frontmatter(stripped, stem, note=note))]
+    return [
+        (
+            f"{stem}-{spec.model}-{spec.effort}.md",
+            _apply_variant_frontmatter(
+                stripped,
+                stem,
+                spec.model,
+                spec.effort,
+                spec.model_value,
+                spec.effort_value,
+            ),
         )
+        for spec in specs
+    ]
 
-    generated: list[tuple[str, str]] = []
-    for token in [*tokens, *extra_tokens]:
-        parts = token.split("-")
-        if len(parts) != 2:
-            log(
-                "warn", f"Skipping malformed variant token '{token}' in {src_path.name}"
-            )
+
+_ROLE_VARIANTS_FILE = "agent-role-variants.json"
+_ROLE_SWITCH_EXTENSION = "role-switch"
+
+
+def _pi_role_variants(
+    candidate_dirs: list[Path], dialect: "_AgentDialect", variables: dict[str, str]
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Map each switched pi role's models to their model value and thinking per effort.
+
+    Args:
+        candidate_dirs: Source agent directories in priority order (first wins).
+        dialect: The pi subagent definition dialect.
+        variables: Variables the sources are rendered with.
+
+    Returns:
+        ``role -> model alias -> {"model": value, "efforts": {effort: thinking}}``.
+    """
+    table: dict[str, dict[str, dict[str, Any]]] = {}
+    for _, src in _resolve_priority_sources(
+        candidate_dirs, lambda d: sorted(d.glob("*.md")), lambda p: p.name
+    ):
+        if src.stem not in _PI_SWITCHED_ROLES:
             continue
-        model, effort = parts
-        resolved_model = resolve_model(model)
-        if token in extra_tokens and resolved_model == model:
-            continue
-        filename = f"{stem}-{model}-{effort}.md"
-        generated.append(
-            (
-                filename,
-                _apply_variant_frontmatter(
-                    stripped,
-                    stem,
-                    model,
-                    effort,
-                    resolved_model,
-                    "off"
-                    if model in _THINKING_OFF_VARIANT_MODELS.get(target, ())
-                    else "",
-                ),
+        try:
+            content = _append_frontmatter_tokens(
+                substitute_variables(_read_text(src), variables),
+                dialect.additions.get(src.stem, {}),
             )
-        )
-    return generated
+        except TemplateError:
+            continue
+        models = table.setdefault(src.stem, {})
+        for spec in _variant_specs(content, src.name, dialect.resolve_model, "pi"):
+            entry = models.setdefault(
+                spec.model, {"model": spec.model_value, "efforts": {}}
+            )
+            entry["efforts"][spec.effort] = spec.effort_value or spec.effort
+    return table
 
 
 @dataclass(frozen=True)
@@ -2081,6 +2182,10 @@ def _herdsman_agent_content(
                 for n in value.strip("[]").split(",")
                 if n.strip()
             ]
+            if _PI_SWITCHED_ROLES & {
+                n.strip() for n in frontmatter.get("allowed_subagents", "").split(",")
+            }:
+                names = [_ROLE_SWITCH_EXTENSION, *names]
             lines.append("noExtensions: true")
             if paths := resolve_extensions(names):
                 lines.append(f"extensions: {json.dumps(paths)}")
@@ -2088,6 +2193,12 @@ def _herdsman_agent_content(
             raise ValueError(
                 f"No herdsman equivalent for agent frontmatter key '{key}'"
             )
+    lines += [
+        f"{key}: {json.dumps(value)}"
+        for key, value in HERDSMAN_BUNDLED_RESETS.get(
+            frontmatter.get("name", ""), {}
+        ).items()
+    ]
     inherit = str(frontmatter.get("omitClaudeMd") != "true").lower()
     lines += [
         "inheritSkills: true",
@@ -3733,6 +3844,22 @@ def main(
                 _builtin_skill_vars(all_agents[agents_target].vars_path()),
                 bundle=pi_bundle if agents_target == "pi" else None,
             )
+            if agents_target == "pi":
+                variants_path = agents_dest.parent / _ROLE_VARIANTS_FILE
+                _write_if_changed(
+                    variants_path,
+                    json.dumps(
+                        _pi_role_variants(
+                            agent_dirs,
+                            _pi_agent_dialect(root_dir, overlay_dirs),
+                            _builtin_skill_vars(all_agents[agents_target].vars_path()),
+                        ),
+                        indent=2,
+                    )
+                    + "\n",
+                    _ROLE_VARIANTS_FILE,
+                )
+                installed_files["pi"].append(str(variants_path))
         if agents_target == "pi":
             managed_agents |= _install_disabled_definitions(agents_dest)
             managed_agents |= _install_herdsman_overlays(

@@ -1107,11 +1107,27 @@ class TestPiAgents:
     ) -> None:
         agents = pi_home / ".pi" / "agent" / "agents"
         spawners = {
-            path.name.split("-")[0]
-            for path in agents.glob("*-*.md")
+            path.name.split("-")[0].removesuffix(".md")
+            for path in agents.glob("*.md")
             if "Explore" in _frontmatter(path).get("agents", [])
         }
         assert spawners == {"reasoner", "coordinator"}
+
+    @pytest.mark.parametrize("role", ["worker", "surveyor", "reasoner", "reviewer"])
+    def test_each_role_installs_one_definition_and_a_variants_entry(
+        self, pi_home: Path, role: str
+    ) -> None:
+        agent_dir = pi_home / ".pi" / "agent"
+        agents = agent_dir / "agents"
+        variants = json.loads((agent_dir / "agent-role-variants.json").read_text())
+        coordinator = _frontmatter(agents / "coordinator-sonnet-low.md")
+        definition = _frontmatter(agents / f"{role}.md")
+        assert not list(agents.glob(f"{role}-*.md"))
+        assert not {"model", "thinking"} & definition.keys()
+        assert f"[spawn as {role}@<model>:<effort> - " in definition["description"]
+        assert variants[role]
+        assert role in coordinator["agents"]
+        assert coordinator["extensions"][0].endswith("role-switch.ts")
 
     def test_overlay_models_resolve_tiers_last_overlay_winning(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1132,14 +1148,17 @@ class TestPiAgents:
 
         _install(home, tmp_path / "installed.json", overlays)
 
-        agents = home / ".pi" / "agent" / "agents"
-        assert _frontmatter(agents / "worker-sonnet-low.md")["model"] == "acme/small"
-        assert (
-            _frontmatter(agents / "reasoner-opus-high.md")["model"]
-            == "acme/second-large"
+        agent_dir = home / ".pi" / "agent"
+        variants = json.loads(
+            (agent_dir / "agent-role-variants.json").read_text(encoding="utf-8")
         )
-        for fast in ("worker-haiku-low.md", "Explore.md"):
-            assert _frontmatter(agents / fast)["model"] == "acme/fast"
+        assert variants["worker"]["sonnet"]["model"] == "acme/small"
+        assert variants["reasoner"]["opus"]["model"] == "acme/second-large"
+        assert variants["worker"]["haiku"] == {
+            "model": "acme/fast",
+            "efforts": {"low": "off"},
+        }
+        assert _frontmatter(agent_dir / "agents" / "Explore.md")["model"] == "acme/fast"
 
 
 class TestHerdsmanAgents:
@@ -1156,8 +1175,8 @@ class TestHerdsmanAgents:
         for text in (
             rules,
             (agents / "coordinator-sonnet-low.md").read_text(encoding="utf-8"),
-            (agents / "worker-sonnet-low.md").read_text(encoding="utf-8"),
-            (agents / "surveyor-sonnet-low.md").read_text(encoding="utf-8"),
+            (agents / "worker.md").read_text(encoding="utf-8"),
+            (agents / "surveyor.md").read_text(encoding="utf-8"),
         ):
             assert "AGENT REQUEST" not in text
             assert "killable" not in text
@@ -1182,7 +1201,7 @@ class TestHerdsmanAgents:
         _install(home, tmp_path / "installed.json")
 
         agents = home / ".pi" / "agent" / "agents"
-        for name in ("generalist", "implementer", "researcher", "reviewer", "scout"):
+        for name in ("generalist", "implementer", "researcher", "scout"):
             assert (agents / f"{name}.md").read_text(encoding="utf-8") == (
                 f"---\nname: {name}\nenabled: false\n---\n"
             )
@@ -1226,24 +1245,6 @@ class TestHerdsmanAgents:
         agents = home / ".pi" / "agent" / "agents"
 
         coordinator = _frontmatter(agents / "coordinator-sonnet-low.md")
-        assert coordinator["agents"][0] == "Explore"
-        assert {
-            "worker-haiku-high",
-            "surveyor-sonnet-medium",
-            "reasoner-opus-xhigh",
-            "reviewer-opus-high",
-            "worker-terra-low",
-            "worker-luna-high",
-            "surveyor-terra-medium",
-            "surveyor-luna-low",
-            "reasoner-sol-medium",
-            "reasoner-sol-xhigh",
-        } <= set(coordinator["agents"])
-        assert all(
-            (agents / f"{n}.md").exists()
-            for n in coordinator["agents"][1:]
-            if n.split("-")[1] not in ("terra", "luna", "sol")
-        )
         assert coordinator["tools"] == [
             "agent",
             "tower_do",
@@ -1256,9 +1257,9 @@ class TestHerdsmanAgents:
         assert coordinator["inheritProjectContext"] is True
         assert coordinator["systemPromptMode"] == "append"
 
-        reasoner = _frontmatter(agents / "reasoner-opus-high.md")
+        reasoner = _frontmatter(agents / "reasoner.md")
         assert reasoner["excludeTools"] == ["write", "edit"]
-        worker = _frontmatter(agents / "worker-sonnet-low.md")
+        worker = _frontmatter(agents / "worker.md")
         assert worker["excludeTools"][0] == "agent"
         checker = _frontmatter(agents / "eagle-vision-checker-haiku-low.md")
         explore = _frontmatter(agents / "Explore.md")
@@ -1299,9 +1300,8 @@ class TestHerdsmanAgents:
         def skill(name: str) -> str:
             return str(agent_dir / "skills" / name / "SKILL.md")
 
-        for name in ("reasoner-opus-high",):
-            assert _frontmatter(agents / f"{name}.md")["inheritSkills"] is True
-        worker = _frontmatter(agents / "worker-sonnet-low.md")
+        assert _frontmatter(agents / "reasoner.md")["inheritSkills"] is True
+        worker = _frontmatter(agents / "worker.md")
         assert worker["inheritSkills"] is True
         assert worker["skills"] == [
             skill("git-usage"),
@@ -1310,15 +1310,14 @@ class TestHerdsmanAgents:
         ]
         assert {"agent", "ask_user", "source_check"} <= set(worker["excludeTools"])
         assert "process" not in worker["excludeTools"]
-        surveyor = _frontmatter(agents / "surveyor-sonnet-low.md")
+        surveyor = _frontmatter(agents / "surveyor.md")
         assert surveyor["skills"] == [skill("git-usage")]
         assert {"write", "edit", "process", "ask_user"} <= set(surveyor["excludeTools"])
         assert "NotebookEdit" not in surveyor["excludeTools"]
-        reviewer = _frontmatter(agents / "reviewer-opus-high.md")
+        reviewer = _frontmatter(agents / "reviewer.md")
         assert reviewer["skills"] == [skill("git-usage")]
         assert reviewer["excludeTools"][:3] == ["agent", "write", "edit"]
         assert {"process"} <= set(reviewer["excludeTools"])
-        assert reviewer["thinking"] == "high"
 
     def test_unresolvable_required_pi_skill_fails_install(self, tmp_path: Path) -> None:
         overlay = tmp_path / "o"
@@ -1330,13 +1329,13 @@ class TestHerdsmanAgents:
         with pytest.raises(ValueError, match="nonexistent-skill"):
             _install(tmp_path / "home", tmp_path / "installed.json", [overlay])
 
-    def test_reviewer_variants_install_beside_a_disabled_bare_definition(
+    def test_reviewer_overrides_every_key_of_the_bundled_definition(
         self, pi_home: Path, tmp_path: Path
     ) -> None:
-        agents = pi_home / ".pi" / "agent" / "agents"
-        assert (agents / "reviewer-opus-medium.md").exists()
-        assert (agents / "reviewer-opus-high.md").exists()
-        assert "enabled: false" in (agents / "reviewer.md").read_text(encoding="utf-8")
+        reviewer = _frontmatter(pi_home / ".pi" / "agent" / "agents" / "reviewer.md")
+        assert reviewer["agents"] == []
+        assert reviewer["noSkills"] is False
+        assert reviewer["tools"] == ["*"]
 
     def test_unmapped_frontmatter_key_fails_install(self, tmp_path: Path) -> None:
         overlay = tmp_path / "o"
@@ -1495,7 +1494,7 @@ class TestHerdsmanAgents:
                 json.dumps({"worker": {"pi_skills": [skill]}})
             )
         _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o", tmp_path / "p"])
-        worker = tmp_path / "h/.pi/agent/agents/worker-sonnet-high.md"
+        worker = tmp_path / "h/.pi/agent/agents/worker.md"
         skills = [Path(s).parent.name for s in _frontmatter(worker)["skills"]]
         assert skills == ["git-usage", "tdd", "pickup", "todos"]
 
@@ -1785,9 +1784,7 @@ class TestPiRoleRules:
     def test_definitions_reference_their_roles_rules_without_inlining_them(
         self, herdsman_home: Path
     ) -> None:
-        worker = (herdsman_home / "agents" / "worker-sonnet-low.md").read_text(
-            encoding="utf-8"
-        )
+        worker = (herdsman_home / "agents" / "worker.md").read_text(encoding="utf-8")
         body = worker.split("---\n", 2)[2]
         lines = body.splitlines()
         assert "@../rules/zz_worker.md" in lines
@@ -1803,10 +1800,10 @@ class TestPiRoleRules:
         "definition",
         [
             "coordinator-sonnet-low",
-            "reasoner-opus-medium",
-            "worker-sonnet-low",
-            "surveyor-sonnet-low",
-            "reviewer-opus-medium",
+            "reasoner",
+            "worker",
+            "surveyor",
+            "reviewer",
         ],
     )
     def test_rule_without_roles_reaches_every_role(
@@ -1820,7 +1817,7 @@ class TestPiRoleRules:
     def test_global_context_is_not_inherited_but_project_context_is(
         self, herdsman_home: Path
     ) -> None:
-        worker = _frontmatter(herdsman_home / "agents" / "worker-sonnet-low.md")
+        worker = _frontmatter(herdsman_home / "agents" / "worker.md")
         assert worker["inheritGlobalContext"] is False
         assert worker["inheritProjectContext"] is True
 
@@ -1864,7 +1861,7 @@ class TestPiRoleSizes:
                 for line in body.split("\n")
             )
             assert measured[path.name] == len(expanded.encode()), path.name
-        assert {"worker-sonnet-low.md", "reasoner-opus-high.md"} <= measured.keys()
+        assert {"worker.md", "reasoner.md"} <= measured.keys()
         assert "Explore.md" in measured
 
 
@@ -1907,17 +1904,10 @@ class TestPiRoleSelection:
         _install(home, tmp_path / "installed.json", [overlay])
         return home / ".pi" / "agent"
 
-    def test_variants_of_one_source_share_a_selection(self, agent_dir: Path) -> None:
-        agents = agent_dir / "agents"
-        for role in ("worker", "reasoner", "surveyor", "coordinator", "reviewer"):
-            variants = sorted(agents.glob(f"{role}-*.md"))
-            assert variants
-            assert len({tuple(_references(v)) for v in variants}) == 1, role
-
     def test_roles_differ_by_their_selectors(self, agent_dir: Path) -> None:
         agents = agent_dir / "agents"
         coordinator = _references(agents / "coordinator-sonnet-low.md")
-        worker = _references(agents / "worker-sonnet-low.md")
+        worker = _references(agents / "worker.md")
         assert "delegation.md" in coordinator
         assert "delegation.md" not in worker
         assert "git.md" in worker
@@ -1946,7 +1936,7 @@ class TestPiRoleSelection:
         _install(home, tmp_path / "installed.json")
 
         assert (agent_dir / "rules" / "coding.md").is_file()
-        assert "coding.md" in _references(agent_dir / "agents" / "worker-sonnet-low.md")
+        assert "coding.md" in _references(agent_dir / "agents" / "worker.md")
         assert not (home / ".pi").exists()
 
 
@@ -1973,7 +1963,7 @@ class TestPiRoleLifecycle:
 
         assert not rule_file.exists()
         assert "zz_worker.md" not in _references(
-            home / ".pi" / "agent" / "agents" / "worker-sonnet-low.md"
+            home / ".pi" / "agent" / "agents" / "worker.md"
         )
 
     def test_uninstall_removes_rule_files_and_their_directory(
@@ -2022,7 +2012,7 @@ class TestPiRoleLifecycle:
         _install(home, manifest, [overlay])
         agent_dir = home / ".pi" / "agent"
         sentinels = [
-            agent_dir / "agents" / "worker-sonnet-low.md",
+            agent_dir / "agents" / "worker.md",
             agent_dir / "rules" / "zz_core.md",
             agent_dir / "AGENTS.md",
         ]

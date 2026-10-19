@@ -4,12 +4,14 @@
 // step: { fn, args, as } calls an export and stores the result, { append | truncate, text } edits a file.
 // step: { sleep: ms } waits.
 // step: { utime, seconds } sets a file's access and modification time (Unix seconds).
-// step: { emit, pi, payload, ctx, as } runs the handlers a { $pi: name } fake pi collected for an event and stores the last result.
+// step: { emit, pi, payload, ctx, as, payloadAs } (payloadAs stores the payload as the handlers left it) runs the handlers a { $pi: name } fake pi collected for an event and stores the last result.
 // step: { sent: name, as } stores the [content, options] pairs a fake pi was asked to send as user messages; { $pi: name, commands: [names] } sets the slash commands it reports.
 // step: { emitted: name, as } stores the [event, payload] pairs a fake pi's event bus carried; { ui: name, as } stores the [key, text] pairs a fake ui was given to setStatus.
 // step: { command, pi, args, ctx } runs a registered slash command handler; { notices: name, as } stores the [message, level] pairs a fake ui was asked to notify.
 // step: { call: tool, pi, params, ctx, as } runs a registered tool's execute. { stored: name, as } stores a fake ctx with the paths it switched to and the messages its replacement session sent.
-// step: { activeTools: name, as } stores the tool names a fake pi has active; { $pi: name, activeTools: [names] } sets them.
+// step: { activeTools: name, as } stores the tool names a fake pi has active; { $pi: name, activeTools: [names] } sets them; { $pi: name, allTools: [tool infos] } sets what getAllTools reports; { allToolsOf: name, as } stores it.
+// step: { switches: name, as } stores a fake pi's { model, thinking } as setModel and setThinkingLevel left them.
+// fake pi: { $pi: name, state: { model, thinking, refuse: [model ids setModel ignores] } } gives it a model; { $modelCtx: name } is a ctx whose model follows that pi.
 // fake ctx: { $ctx: name, cwd, sessionFile, sessionId } is a command context.
 // fake pi: { $pi: name, active: [keys] } answers a zentui:variable-capability probe as active for those keys. { $ui: name } is a fake ui.
 // args: { $ref } is a stored result, { $fn } a function returning its value, { $set } a Set, { $map } a Map, { $windows } a window lookup by "provider/model".
@@ -75,12 +77,14 @@ const fakeCtx = ({ $ctx: name, cwd, sessionFile = join(cwd, 's.jsonl'), sessionI
       return { cancelled: false }
     },
   })
-const fakePi = (name, commands = [], active = [], activeTools = []) => {
+const fakePi = (name, commands = [], active = [], activeTools = [], allTools = [], state = {}) => {
   pis[name] ??= {
+    ...state,
     handlers: {},
     sent: [],
     commands,
     activeTools,
+    allTools,
     emitted: [],
     registered: {},
     events: {
@@ -95,7 +99,14 @@ const fakePi = (name, commands = [], active = [], activeTools = []) => {
     registerCommand(name, options) { this.registered[name] = options },
     on(event, handler) { (this.handlers[event] ??= []).push(handler) },
     getActiveTools() { return this.activeTools },
+    getAllTools() { return this.allTools },
     setActiveTools(names) { this.activeTools = names },
+    async setModel(model) {
+      if (!(this.refuse ?? []).includes(model.id)) this.model = model
+      return true
+    },
+    getThinkingLevel() { return this.thinking },
+    setThinkingLevel(level) { this.thinking = level },
     getCommands() { return this.commands.map(name => ({ name })) },
     async sendUserMessage(...args) { this.sent.push(args) },
   }
@@ -104,7 +115,13 @@ const fakePi = (name, commands = [], active = [], activeTools = []) => {
 const resolve = arg => {
   if (Array.isArray(arg)) return arg.map(resolve)
   if (arg === null || typeof arg !== 'object') return arg
-  if ('$pi' in arg) return fakePi(arg.$pi, arg.commands, arg.active, arg.activeTools)
+  if ('$pi' in arg) return fakePi(arg.$pi, arg.commands, arg.active, arg.activeTools, arg.allTools, arg.state)
+  if ('$modelCtx' in arg)
+    return {
+      get model() { return pis[arg.$modelCtx].model },
+      modelRegistry: { find: (provider, id) => ({ provider, id }) },
+      ui: fakeUi(arg.$modelCtx),
+    }
   if ('$ctx' in arg) return fakeCtx(arg)
   if ('$ui' in arg) return fakeUi(arg.$ui)
   if ('$ref' in arg) return results[arg.$ref]
@@ -123,6 +140,7 @@ try {
     else if (step.truncate) writeFileSync(step.truncate, step.text)
     else if (step.sleep) await new Promise(done => setTimeout(done, step.sleep))
     else if (step.utime) utimesSync(step.utime, step.seconds, step.seconds)
+    else if (step.switches) results[step.as] = (({ model, thinking }) => ({ model, thinking }))(pis[step.switches])
     else if (step.emitted) results[step.as] = pis[step.emitted].emitted
     else if (step.ui) results[step.as] = uis[step.ui].calls
     else if (step.notices) results[step.as] = uis[step.notices].notices
@@ -130,10 +148,13 @@ try {
     else if (step.call) results[step.as] = await pis[step.pi].tools[step.call].execute('call-id', resolve(step.params ?? {}), undefined, undefined, resolve(step.ctx ?? {}))
     else if (step.command) await pis[step.pi].registered[step.command].handler(step.args ?? '', resolve(step.ctx ?? {}))
     else if (step.activeTools) results[step.as] = pis[step.activeTools].activeTools
+    else if (step.allToolsOf) results[step.as] = pis[step.allToolsOf].allTools
     else if (step.sent) results[step.as] = pis[step.sent].sent
     else if (step.emit) {
       let value
-      for (const handler of pis[step.pi].handlers[step.emit] ?? []) value = (await handler(resolve(step.payload ?? {}), resolve(step.ctx ?? {}))) ?? value
+      const payload = resolve(step.payload ?? {})
+      if (step.payloadAs) results[step.payloadAs] = payload
+      for (const handler of pis[step.pi].handlers[step.emit] ?? []) value = (await handler(payload, resolve(step.ctx ?? {}))) ?? value
       if (step.as) results[step.as] = value
     } else {
       const value = await module[step.fn](...resolve(step.args ?? []))

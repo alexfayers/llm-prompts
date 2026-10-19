@@ -414,7 +414,7 @@ class TestExpandAgentVariants:
 
 class TestExtraVariants:
     def _template(self, tmp_path: Path) -> Path:
-        src = _make_variant_template(tmp_path, "worker.md", "worker", "sonnet-low")
+        src = _make_variant_template(tmp_path, "scout.md", "scout", "sonnet-low")
         text = src.read_text(encoding="utf-8").replace(
             "generate_variants: sonnet-low",
             "generate_variants: sonnet-low\npi_extra_variants: zed-low,zed-high",
@@ -434,11 +434,11 @@ class TestExtraVariants:
         )
 
         assert set(generated) == {
-            "worker-sonnet-low.md",
-            "worker-zed-low.md",
-            "worker-zed-high.md",
+            "scout-sonnet-low.md",
+            "scout-zed-low.md",
+            "scout-zed-high.md",
         }
-        _, frontmatter = parse_frontmatter(generated["worker-zed-high.md"])
+        _, frontmatter = parse_frontmatter(generated["scout-zed-high.md"])
         assert frontmatter["model"] == "acme/zed"
         assert "pi_extra_variants" not in frontmatter
 
@@ -447,22 +447,41 @@ class TestExtraVariants:
 
         generated = dict(_expand_agent_variants(src, lambda t: t, None, "pi"))
 
-        assert set(generated) == {"worker-sonnet-low.md"}
+        assert set(generated) == {"scout-sonnet-low.md"}
 
     def test_haiku_variants_have_thinking_off_for_pi_only(self, tmp_path: Path) -> None:
-        src = tmp_path / "worker.md"
+        src = tmp_path / "scout.md"
         src.write_text(
-            "---\nname: worker\ndescription: D\ngenerate_variants: haiku-high\n---\n\nB.\n"
+            "---\nname: scout\ndescription: D\ngenerate_variants: haiku-high\n---\n\nB.\n"
         )
 
         pi = dict(_expand_agent_variants(src, lambda t: t, None, "pi"))
         other = dict(_expand_agent_variants(src, lambda t: t, None, "codex"))
 
-        _, pi_frontmatter = parse_frontmatter(pi["worker-haiku-high.md"])
-        _, other_frontmatter = parse_frontmatter(other["worker-haiku-high.md"])
+        _, pi_frontmatter = parse_frontmatter(pi["scout-haiku-high.md"])
+        _, other_frontmatter = parse_frontmatter(other["scout-haiku-high.md"])
         assert pi_frontmatter["effort"] == "off"
-        assert pi_frontmatter["name"] == "worker-haiku-high"
+        assert pi_frontmatter["name"] == "scout-haiku-high"
         assert other_frontmatter["effort"] == "high"
+
+    def test_pi_emits_one_model_free_definition_for_a_switched_role(
+        self, tmp_path: Path
+    ) -> None:
+        src = tmp_path / "worker.md"
+        src.write_text(
+            "---\nname: worker\ndescription: D\n"
+            "generate_variants: haiku-low,haiku-high,sonnet-low,sonnet-high\n---\n\nB.\n"
+        )
+
+        pi = dict(_expand_agent_variants(src, lambda t: t, None, "pi"))
+
+        assert set(pi) == {"worker.md"}
+        _, frontmatter = parse_frontmatter(pi["worker.md"])
+        assert frontmatter["name"] == "worker"
+        assert not {"model", "effort"} & frontmatter.keys()
+        assert frontmatter["description"] == (
+            "D [spawn as worker@<model>:<effort> - haiku low (thinking off), sonnet low/high]"
+        )
 
     def test_extra_variants_ignored_for_other_targets(self, tmp_path: Path) -> None:
         src = self._template(tmp_path)
@@ -470,9 +489,9 @@ class TestExtraVariants:
         generated = dict(_expand_agent_variants(src, lambda t: "m", None, "codex"))
         no_target = dict(_expand_agent_variants(src))
 
-        assert set(generated) == {"worker-sonnet-low.md"}
-        assert set(no_target) == {"worker-sonnet-low.md"}
-        _, frontmatter = parse_frontmatter(no_target["worker-sonnet-low.md"])
+        assert set(generated) == {"scout-sonnet-low.md"}
+        assert set(no_target) == {"scout-sonnet-low.md"}
+        _, frontmatter = parse_frontmatter(no_target["scout-sonnet-low.md"])
         assert "pi_extra_variants" not in frontmatter
 
 

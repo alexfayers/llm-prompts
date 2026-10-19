@@ -29,7 +29,7 @@ targets: claude-code, pi
 ## Who holds `{{TOOL_AGENT}}`
 
 {% if TOOL_AGENT == "delegate_agent" %}
-- MUST use only named tiers, passing the installed `<tier>-<model>-<effort>` name (e.g. `reasoner-opus-high`), never the bare tier - `reasoner` ({% if AGENT == "pi" %}judgment{% else %}Opus{% endif %}), `worker` (mechanical), `surveyor` (read-only), `reviewer` (read-only review), `coordinator` (breakdown, spawns all of these and `Explore`); never `general-purpose`.
+- MUST use only named tiers, passing the `<tier>@<model>:<effort>` name from the tier's description (e.g. `reasoner@opus:high`), never the bare tier - `reasoner` ({% if AGENT == "pi" %}judgment{% else %}Opus{% endif %}), `worker` (mechanical), `surveyor` (read-only), `reviewer` (read-only review), `coordinator` (breakdown, spawns all of these and `Explore`); never `general-purpose`.
 {% else %}
 - MUST use only named tiers, passing the installed `<tier>-<model>-<effort>` name (e.g. `reasoner-opus-high`), never the bare tier - `reasoner` ({% if AGENT == "pi" %}judgment{% else %}Opus{% endif %}, holds `{{TOOL_AGENT}}`{% if AGENT == "pi" %}, `Explore` only{% endif %}), `worker` (mechanical), `surveyor` (read-only), `coordinator` (breakdown, `Explore`-only `{{TOOL_AGENT}}`); never `general-purpose`.
 {% endif %}
