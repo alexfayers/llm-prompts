@@ -8,7 +8,7 @@ roles: lead
 
 **Trigger:** Before you {{TOOL_COMPLETE}} for any task that involved user feedback at any point during the conversation, or involved multiple non-trivial steps.
 
-**Immediate Corrections:** When the user corrects a mistake mid-conversation, do NOT wait until task completion. Immediately persist the correction to memory - this needs no permission. Where it is a repeatable behaviour affecting every user, follow the `llm-prompts-edit` skill to propose a {{RULE_FILES}}/skill edit.
+**Immediate Corrections:** When the user corrects a mistake mid-conversation, do NOT wait until task completion. Immediately persist the correction to memory per `memory.md` - this needs no permission. Where it is a repeatable behaviour affecting every user, follow the `llm-prompts-edit` skill to propose a {{RULE_FILES}}/skill edit.
 
 **Self-Resolved Mistakes:** When you make a mistake and fix it yourself, persist the learning to memory immediately. If it reveals a missing process step that should be enforced for every user, follow `llm-prompts-edit` to propose one.
 
