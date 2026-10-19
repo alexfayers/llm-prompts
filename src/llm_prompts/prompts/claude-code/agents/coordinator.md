@@ -8,6 +8,7 @@ description: >-
   an AGENT REQUEST per teammate for main to spawn. Never spawns teammates, designs, reads or edits.
 {% endif %}
 tools: Agent, ToolSearch, TaskCreate, TaskGet, TaskList, TaskUpdate, SendMessage, mcp__memory__*, mcp__memory-agent__*
+mcp_read_only: [memory]
 {% if AGENT == "pi" %}
 extensions: []
 {% if AGENT == "pi" and TOOL_AGENT == "delegate_agent" %}

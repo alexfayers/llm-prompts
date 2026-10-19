@@ -152,6 +152,11 @@ def resolve_frontmatter(frontmatter_lines: list[str]) -> dict[str, str] | None:
     return resolved
 
 
+def frontmatter_list(value: str) -> list[str]:
+    """Split a flat frontmatter list such as ``[a, b]`` into its items."""
+    return [n.strip().strip("'\"") for n in value.strip("[]").split(",") if n.strip()]
+
+
 def strip_gating_keys(content: str, keys: set[str]) -> str:
     """Remove gating frontmatter keys from content, preserving other keys verbatim.
 
