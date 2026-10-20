@@ -29,6 +29,13 @@ jobs:
       - uses: extractions/setup-just@v3
       - run: uv sync --locked
       - run: just type-check
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm type-check
 
   test:
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'blocked') }}
@@ -48,6 +55,22 @@ jobs:
         with:
           GITHUB_TOKEN: ${{ github.token }}
           ANNOTATE_MISSING_LINES: true
+
+  test-ts:
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'blocked') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: extractions/setup-just@v3
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: just test-ts
 
   size-report:
     if: github.event_name == 'pull_request'

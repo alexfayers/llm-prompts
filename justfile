@@ -1,4 +1,4 @@
-@_default: lint type-check test test-actions check
+@_default: lint type-check test test-actions test-ts check
 
 @_uv:
     uv -V 2> /dev/null || { echo 'Please install uv: https://docs.astral.sh/uv/getting-started/installation/'; exit 1;}
@@ -18,6 +18,9 @@ test: _uv
 
 test-actions:
     node --test .github/actions/*/*.test.js
+
+test-ts:
+    pnpm test-ts
 
 check: _uv
     uv run llm-prompts check
