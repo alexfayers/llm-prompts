@@ -69,7 +69,7 @@ Added a new widget.
 const lines = (prefix, count) => Array.from({ length: count }, (_, i) => `+${prefix} ${i}`).join('\n');
 const MARKER = '<!-- pr-yappy-check -->\n';
 
-async function runCheck({ files, body = '## What\n\nA.\n\n## Why\n\nB.', labels = [], comments = [] }) {
+async function runCheck({ files, body = '## What\n\nA.\n\n## Why\n\nB.', labels = [], comments = [], user }) {
   const calls = [];
   const record = (name, key) => async (args) => calls.push([name, args[key]]);
   const github = {
@@ -84,7 +84,7 @@ async function runCheck({ files, body = '## What\n\nA.\n\n## Why\n\nB.', labels 
       },
     },
   };
-  const pull_request = { number: 7, labels: labels.map((name) => ({ name })), body };
+  const pull_request = { number: 7, labels: labels.map((name) => ({ name })), body, user };
   await check({ github, context: { repo: { owner: 'o', repo: 'r' }, payload: { pull_request } }, core: {} });
   return calls;
 }
@@ -120,4 +120,10 @@ test('check clears an existing warning once the PR is no longer yappy', async ()
   const calls = await runCheck({ files, comments: [{ id: 1, body: `${MARKER}warning` }] });
 
   assert.deepEqual(calls, [['updateComment', `${MARKER}This PR is no longer yappy.`]]);
+});
+
+test('check passes a bot PR whose body ignores the template', async () => {
+  const calls = await runCheck({ files: [], body: 'Update dependency', user: { type: 'Bot' } });
+
+  assert.deepEqual(calls, []);
 });
