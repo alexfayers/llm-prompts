@@ -1,4 +1,5 @@
 const STATUS_CONTEXT = 'codeowner-review';
+const RENOVATE_LOGIN = 'renovate[bot]';
 const IGNORED_REVIEW_STATES = ['COMMENTED', 'PENDING'];
 
 async function setStatus(github, context, state, description) {
@@ -40,6 +41,9 @@ function latestReviewStates(reviews) {
 async function evaluate({ github, context }) {
   const pr = context.payload.pull_request;
   const { owner, repo } = context.repo;
+  if (pr.user.login === RENOVATE_LOGIN) {
+    return ['success', 'Renovate PR needs no code owner review'];
+  }
   const author = pr.user.login.toLowerCase();
   const files = await github.paginate(github.rest.pulls.listFiles, { owner, repo, pull_number: pr.number, per_page: 100 });
   const rules = await readCodeOwners(github, context.repo, pr.base.ref);
