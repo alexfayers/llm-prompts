@@ -72,6 +72,14 @@ test('a failed rebase warns and the remaining PRs are still rebased', async () =
   assert.deepEqual(calls[2].vars, { id: 'id3', head: 'oid3' });
 });
 
+test('Renovate PRs are not rebased', async () => {
+  for (const login of ['renovate', 'renovate[bot]', 'app/renovate']) {
+    const { calls, github, core } = setup([pr(1, { author: { login } }), pr(2, { author: { login: 'alice' } })]);
+    await rebase({ github, context, core });
+    assert.deepEqual(calls.slice(1).map((call) => call.vars), [{ id: 'id2', head: 'oid2' }], login);
+  }
+});
+
 test('no candidates runs only the list query', async () => {
   const { calls, github, core } = setup([pr(1, { mergeable: 'CONFLICTING' })]);
   await rebase({ github, context, core });

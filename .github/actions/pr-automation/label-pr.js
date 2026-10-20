@@ -3,6 +3,10 @@ const { findPr, isBlocked } = require('./sync-project-status.js');
 const BLOCKED_LABEL = { name: 'blocked', color: 'd73a4a', description: 'Open dependencies or changes requested' };
 const AUTO_REBASE_LABEL = { name: 'auto-rebase', color: '0e8a16', description: 'Rebased automatically when the base branch moves' };
 
+const RENOVATE_LOGIN = /^(app\/)?renovate(\[bot\])?$/;
+
+const isRenovate = (login) => RENOVATE_LOGIN.test(login);
+
 const CONVENTIONAL_PREFIX = /^(\w+)(\([^)]*\))?(!)?:\s/;
 
 function hasBreakingChange(title, body) {
@@ -68,7 +72,7 @@ async function labelAutoRebase({ github, context, core }) {
   const { data: { statuses } } = await github.rest.repos.getCombinedStatusForRef({ ...context.repo, ref: pr.head.sha });
   const approved = statuses.some(({ context: name, state }) => name === 'codeowner-review' && state === 'success');
   const names = pr.labels.map(({ name }) => name);
-  if (!approved || pr.draft || !pr.auto_merge || names.includes(BLOCKED_LABEL.name) || names.includes(AUTO_REBASE_LABEL.name)) {
+  if (isRenovate(pr.user.login) || !approved || pr.draft || !pr.auto_merge || names.includes(BLOCKED_LABEL.name) || names.includes(AUTO_REBASE_LABEL.name)) {
     return;
   }
   await ensureLabel(github, core, context.repo, AUTO_REBASE_LABEL);
@@ -76,4 +80,4 @@ async function labelAutoRebase({ github, context, core }) {
   core.setOutput('labelled', 'true');
 }
 
-module.exports = { hasBreakingChange, label, labelBlocked, labelAutoRebase, ensureLabel, addLabels, removeLabel, BLOCKED_LABEL, AUTO_REBASE_LABEL };
+module.exports = { isRenovate, hasBreakingChange, label, labelBlocked, labelAutoRebase, ensureLabel, addLabels, removeLabel, BLOCKED_LABEL, AUTO_REBASE_LABEL };
