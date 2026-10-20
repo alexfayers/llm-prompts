@@ -5,6 +5,9 @@
     "group:allNonMajor"
   ],
   "minimumReleaseAge": "3 days",
+  "prConcurrentLimit": 4,
+  "automerge": true,
+  "platformAutomerge": true,
   "lockFileMaintenance": {
     "enabled": true
   },
@@ -22,15 +25,25 @@
   ],
   "packageRules": [
     {
-      "matchUpdateTypes": [
-        "minor",
-        "patch",
-        "pin",
-        "digest",
-        "lockFileMaintenance"
+      "matchManagers": [
+        "github-actions"
       ],
-      "automerge": true,
-      "platformAutomerge": true
+      "groupName": "github actions",
+      "groupSlug": "github-actions"
+    },
+    {
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "matchManagers": [
+        "!github-actions",
+        "!custom.regex"
+      ],
+      "groupName": "major updates",
+      "groupSlug": "major-updates",
+      "addLabels": [
+        "needs-review"
+      ]
     },
     {
       "matchManagers": [
@@ -38,7 +51,9 @@
       ],
       "groupName": "pi extensions",
       "groupSlug": "pi-extensions",
-      "automerge": false
+      "addLabels": [
+        "needs-review"
+      ]
     }
   ]
 }
