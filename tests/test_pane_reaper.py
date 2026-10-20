@@ -41,6 +41,16 @@ case "$1 $2" in
   *) echo '{"result":{"type":"ok"}}' ;;
 esac
 """
+_GIT_STUB = """#!/bin/sh
+case "$1" in
+  worktree) cat "$GIT_FAKE/worktrees" ;;
+  status) ;;
+  reflog) printf 'a\\nb\\n' ;;
+  log) echo 1577836800 ;;
+  for-each-ref) cat "$GIT_FAKE/contained-$3" 2>/dev/null || true ;;
+  *) exit 1 ;;
+esac
+"""
 
 
 def _git(cwd: Path, *args: str, date: str | None = _AGED_DATE) -> str:
@@ -184,6 +194,25 @@ class _Fixture:
             _git(repo, "merge", "--ff-only", f"feat/{name}")
         if aged:
             os.utime(path, (_AGED_SECONDS, _AGED_SECONDS))
+        return path
+
+    def fake_git(self, main_head: str, branch: str, *, merged: bool) -> Path:
+        """Put a git on PATH that lists a main checkout and one clean linked worktree."""
+        path = self.tmp_path / "elsewhere" / "done"
+        path.mkdir(parents=True)
+        os.utime(path, (_AGED_SECONDS, _AGED_SECONDS))
+        fake = self.tmp_path / "git-fake"
+        fake.mkdir()
+        (fake / "worktrees").write_text(
+            f"worktree {self.tmp_path}\nHEAD aaa\n{main_head}\n\n"
+            f"worktree {path}\nHEAD bbb\nbranch refs/heads/{branch}\n"
+        )
+        if merged:
+            (fake / "contained-bbb").write_text("refs/heads/main\n")
+        stub = self.tmp_path / "bin" / "git"
+        stub.write_text(_GIT_STUB)
+        stub.chmod(0o755)
+        self.monkeypatch.setenv("GIT_FAKE", str(fake))
         return path
 
     def declare_workspace(self, workspace_id: str, path: Path) -> dict[str, Any]:
@@ -347,26 +376,6 @@ class TestSweepWorktreesKeepsWhatIsNotSafe:
 class TestSweepWorktreesKeepsWorktreesItShouldNotTouch:
     """Tests for worktrees kept because they are not clearly finished or not Herdr's."""
 
-    def test_worktree_outside_the_herdr_worktrees_directory_is_kept(
-        self, fixture: _Fixture
-    ) -> None:
-        repo = fixture.make_repo()
-        path = fixture.add_worktree(
-            repo,
-            "foreign",
-            commits=1,
-            merged=True,
-            under=fixture.tmp_path / "elsewhere",
-        )
-        fixture.set_workspaces([fixture.declare_workspace("w9", path)])
-        result = fixture.run([{"fn": "sweepWorktrees", "as": "worktrees"}])["worktrees"]
-        assert result["candidates"] == []
-        assert [(w["path"], w["reason"]) for w in result["kept"]] == [
-            (str(path), "outside herdr worktrees")
-        ]
-        assert not any("worktree" in call for call in fixture.herdr_calls())
-        assert path.exists()
-
     def test_branch_that_never_had_a_commit_of_its_own_is_kept(
         self, fixture: _Fixture
     ) -> None:
@@ -522,20 +531,47 @@ class TestSweepWorktreesKeepsWorktreesInUse:
         assert path.exists()
 
 
-class TestSweepWorktreesStopsWhenUncertain:
-    """Tests for worktrees kept because a check says the main checkout is unsure."""
+def _judged_cases() -> dict[str, tuple[str, str, bool, str | None]]:
+    return {
+        "worktree outside herdr, main checkout on main": (
+            "branch refs/heads/main",
+            "feat/done",
+            True,
+            None,
+        ),
+        "main checkout on another branch": (
+            "branch refs/heads/other",
+            "feat/done",
+            True,
+            None,
+        ),
+        "main checkout detached": ("detached", "feat/done", True, None),
+        "branch not merged": (
+            "detached",
+            "feat/done",
+            False,
+            "branch is not merged into main",
+        ),
+        "worktree is on main": ("detached", "main", True, "branch is main"),
+    }
 
-    def test_main_checkout_off_main_keeps_every_worktree(
-        self, fixture: _Fixture
+
+class TestSweepWorktreesJudgesEachWorktreeOnItsOwn:
+    """Tests for worktrees judged by their own state, wherever they are and whatever the main checkout has."""
+
+    @pytest.mark.parametrize("case", _judged_cases())
+    def test_worktree_is_reported_or_kept_by_its_own_merged_state(
+        self, fixture: _Fixture, case: str
     ) -> None:
-        repo = fixture.make_repo()
-        path = fixture.add_worktree(repo, "done", commits=1, merged=True)
-        _git(repo, "checkout", "-b", "other")
-        fixture.set_workspaces([fixture.declare_workspace("w9", path)])
+        main_head, branch, merged, kept_reason = _judged_cases()[case]
+        path = fixture.fake_git(main_head, branch, merged=merged)
         result = fixture.run([{"fn": "sweepWorktrees", "as": "worktrees"}])["worktrees"]
-        assert result["candidates"] == []
-        assert [w["path"] for w in result["kept"]] == [str(path)]
-        assert path.exists()
+        assert [w["path"] for w in result["candidates"]] == (
+            [] if kept_reason else [str(path)]
+        )
+        assert [(w["path"], w["reason"]) for w in result["kept"]] == (
+            [(str(path), kept_reason)] if kept_reason else []
+        )
 
 
 def _silent_cases() -> dict[str, tuple[list[dict[str, Any]], dict[str, Any]]]:

@@ -7,7 +7,6 @@
 // Env: PI_SESSION_ID (own session id, kept out of the sweep)
 import { execFile } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -55,10 +54,9 @@ const CLOSE_FAILED_REASON = "closing it failed";
 const CANDIDATE_REASON = "merged into main and clean";
 const NO_COMMITS_REASON = "branch has no commits of its own";
 const BRANCH_PREFIX = "refs/heads/";
-const MAIN_BRANCH = /^(main|master)$/;
+const MAIN_REFS = ["main", "master"].flatMap((name) => [`${BRANCH_PREFIX}${name}`, `refs/remotes/origin/${name}`]);
 const GITHUB_HOST = "github.com";
 const SCP_REMOTE = /^(?:[^@/:]+@)?([^:/]+):(?!\/\/)/;
-const HERDR_WORKTREES = path.join(".herdr", "worktrees");
 
 async function herdr(args: string[]): Promise<string> {
 	return (await execFileAsync("herdr", args, { timeout: HERDR_TIMEOUT_MS })).stdout;
@@ -183,13 +181,7 @@ async function workspaceFor(checkout: Checkout): Promise<Workspace | undefined> 
 }
 
 async function isAncestor(main: Checkout, checkout: Checkout): Promise<boolean> {
-	try {
-		await git(main.path, ["merge-base", "--is-ancestor", checkout.head, main.head]);
-	} catch (error) {
-		if ((error as { code?: number }).code === 1) return false;
-		throw error;
-	}
-	return true;
+	return (await git(main.path, ["for-each-ref", "--contains", checkout.head, "--format=%(refname)", ...MAIN_REFS])).trim() !== "";
 }
 
 function remoteHost(url: string): string {
@@ -221,9 +213,8 @@ async function hasMergedPullRequest(main: Checkout, branch: string): Promise<boo
 }
 
 async function gitKeepReason(main: Checkout, checkout: Checkout): Promise<string | undefined> {
-	if (!MAIN_BRANCH.test(main.branch)) return "main checkout is not on main";
-	if (!isInside(checkout.path, path.join(os.homedir(), HERDR_WORKTREES))) return "outside herdr worktrees";
 	if (!checkout.branch) return "head is detached";
+	if (MAIN_REFS.includes(`${BRANCH_PREFIX}${checkout.branch}`)) return "branch is main";
 	if ((await git(checkout.path, ["status", "--porcelain"])).trim()) return "has uncommitted or untracked files";
 	if ((await git(main.path, ["reflog", "show", "--format=%H", `${BRANCH_PREFIX}${checkout.branch}`])).trim().split("\n").length === 1) return NO_COMMITS_REASON;
 	const merged = await isAncestor(main, checkout);
