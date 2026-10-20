@@ -4,7 +4,7 @@ const { gate } = require('./codeowner-review.js');
 
 const CODEOWNERS = '*.md @Owner\n/src/*/prompts/**/rules/ @Owner @friend\n/src/*/prompts/**/skills/ @Owner @friend\n/src/*/prompts/**/skills/pi-help/ @Owner\n/src/*/prompts/**/rules/hooks*.md @Owner\na**b/ @friend\na?c @friend\n';
 
-function fixture({ author, files, reviews = [], labels = [] }) {
+function fixture({ author, files, reviews = [], labels = [], branch = 'feature' }) {
   const calls = [];
   const github = {
     paginate: async (method) => method.items,
@@ -16,7 +16,7 @@ function fixture({ author, files, reviews = [], labels = [] }) {
       },
     },
   };
-  const context = { repo: { owner: 'owner', repo: 'r' }, payload: { pull_request: { number: 7, user: { login: author }, labels: labels.map((name) => ({ name })), head: { sha: 'abc' }, base: { ref: 'main' } } } };
+  const context = { repo: { owner: 'owner', repo: 'r' }, payload: { pull_request: { number: 7, user: { login: author }, labels: labels.map((name) => ({ name })), head: { sha: 'abc', ref: branch }, base: { ref: 'main' } } } };
   return { github, context, calls };
 }
 
@@ -63,17 +63,22 @@ test('other author needs a code owner approval even outside prompts', async () =
   assert.deepEqual(approved.calls, [['abc', 'codeowner-review', 'success']]);
 });
 
-test('renovate bot PRs pass without review unless labelled needs-review', async () => {
-  for (const [author, labels, reviews, state] of [
-    ['renovate[bot]', ['ci'], [], 'success'],
-    ['renovate[bot]', ['ci', 'needs-review'], [], 'pending'],
-    ['renovate[bot]', ['needs-review'], [['owner', 'APPROVED']], 'success'],
-    ['dependabot[bot]', [], [], 'pending'],
-    ['stranger', ['needs-review'], [], 'pending'],
+test('renovate bot PRs pass without review only from known-safe branches', async () => {
+  for (const [author, branch, labels, reviews, state] of [
+    ['renovate[bot]', 'renovate/all-minor-patch', [], [], 'success'],
+    ['renovate[bot]', 'renovate/github-actions', [], [], 'success'],
+    ['renovate[bot]', 'renovate/lock-file-maintenance', ['ci'], [], 'success'],
+    ['renovate[bot]', 'renovate/pi-extensions', [], [], 'pending'],
+    ['renovate[bot]', 'renovate/major-updates', ['needs-review'], [], 'pending'],
+    ['renovate[bot]', 'renovate/major-updates', [], [['owner', 'APPROVED']], 'success'],
+    ['renovate[bot]', 'renovate/all-minor-patch-2', [], [], 'pending'],
+    ['renovate[bot]', 'feature/all-minor-patch', [], [], 'pending'],
+    ['dependabot[bot]', 'renovate/all-minor-patch', [], [], 'pending'],
+    ['stranger', 'renovate/all-minor-patch', [], [], 'pending'],
   ]) {
-    const f = fixture({ author, files: ['README.md'], labels, reviews });
+    const f = fixture({ author, files: ['README.md'], labels, reviews, branch });
     await gate(f);
-    assert.deepEqual(f.calls, [['abc', 'codeowner-review', state]], `${author} ${labels} ${JSON.stringify(reviews)}`);
+    assert.deepEqual(f.calls, [['abc', 'codeowner-review', state]], `${author} ${branch} ${labels} ${JSON.stringify(reviews)}`);
   }
 });
 

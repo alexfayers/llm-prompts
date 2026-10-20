@@ -1,6 +1,6 @@
 const STATUS_CONTEXT = 'codeowner-review';
 const RENOVATE_LOGIN = 'renovate[bot]';
-const NEEDS_REVIEW_LABEL = 'needs-review';
+const SAFE_RENOVATE_BRANCHES = ['renovate/all-minor-patch', 'renovate/github-actions', 'renovate/lock-file-maintenance'];
 const IGNORED_REVIEW_STATES = ['COMMENTED', 'PENDING'];
 
 async function setStatus(github, context, state, description) {
@@ -42,7 +42,7 @@ function latestReviewStates(reviews) {
 async function evaluate({ github, context }) {
   const pr = context.payload.pull_request;
   const { owner, repo } = context.repo;
-  if (pr.user.login === RENOVATE_LOGIN && !pr.labels.some(({ name }) => name === NEEDS_REVIEW_LABEL)) {
+  if (pr.user.login === RENOVATE_LOGIN && SAFE_RENOVATE_BRANCHES.includes(pr.head.ref)) {
     return ['success', 'Renovate PR needs no code owner review'];
   }
   const author = pr.user.login.toLowerCase();
