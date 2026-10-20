@@ -40,23 +40,16 @@
 | tests/conftest.py                                                             |      343 |        2 |     99% |  155, 788 |
 | tests/test\_batching.py                                                       |      314 |        0 |    100% |           |
 | tests/test\_build\_wave.py                                                    |      179 |        0 |    100% |           |
-| tests/test\_cd.py                                                             |       38 |        0 |    100% |           |
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
 | tests/test\_check\_repos\_script.py                                           |       67 |        0 |    100% |           |
 | tests/test\_cli.py                                                            |      819 |        0 |    100% |           |
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
-| tests/test\_codemode\_error\_header.py                                        |       54 |        1 |     98% |        28 |
-| tests/test\_codemode\_sleep.py                                                |       10 |        0 |    100% |           |
 | tests/test\_conftest.py                                                       |       60 |        0 |    100% |           |
-| tests/test\_context\_total.py                                                 |      183 |        1 |     99% |        29 |
 | tests/test\_contribute.py                                                     |     1872 |        0 |    100% |           |
-| tests/test\_diff\_preview.py                                                  |      190 |        1 |     99% |        78 |
 | tests/test\_extension\_factories.py                                           |       21 |        0 |    100% |           |
 | tests/test\_focus.py                                                          |     1043 |        0 |    100% |           |
 | tests/test\_github\_api.py                                                    |      123 |        0 |    100% |           |
 | tests/test\_handoff\_block.py                                                 |       14 |        0 |    100% |           |
-| tests/test\_herdr\_permission\_blocked.py                                     |       11 |        0 |    100% |           |
-| tests/test\_hide\_tools.py                                                    |       20 |        0 |    100% |           |
 | tests/test\_hooks.py                                                          |      395 |        0 |    100% |           |
 | tests/test\_inspect\_range\_script.py                                         |       89 |        0 |    100% |           |
 | tests/test\_install.py                                                        |     1110 |        0 |    100% |           |
@@ -66,29 +59,22 @@
 | tests/test\_install\_pi.py                                                    |     1259 |        0 |    100% |           |
 | tests/test\_links.py                                                          |      160 |        0 |    100% |           |
 | tests/test\_listing.py                                                        |       48 |        0 |    100% |           |
-| tests/test\_lsp\_defaults.py                                                  |       65 |        1 |     98% |        29 |
 | tests/test\_main\_sync.py                                                     |      243 |        0 |    100% |           |
 | tests/test\_manifest.py                                                       |       73 |        0 |    100% |           |
-| tests/test\_pane\_reaper.py                                                   |      466 |        1 |     99% |        81 |
-| tests/test\_permission\_box.py                                                |      161 |        1 |     99% |        86 |
 | tests/test\_pi\_extension\_factories.py                                       |        8 |        0 |    100% |           |
 | tests/test\_plugins.py                                                        |      254 |        0 |    100% |           |
-| tests/test\_popup\_defer.py                                                   |      127 |        1 |     99% |        31 |
-| tests/test\_prompt\_cache\_stabilizer.py                                      |       94 |        2 |     98% |    29, 85 |
 | tests/test\_prompt\_sizes.py                                                  |      638 |        0 |    100% |           |
 | tests/test\_render\_template.py                                               |      135 |        0 |    100% |           |
 | tests/test\_retrospective\_extract.py                                         |       90 |        0 |    100% |           |
 | tests/test\_rewrite\_range\_script.py                                         |       68 |        0 |    100% |           |
-| tests/test\_role\_switch.py                                                   |       58 |        0 |    100% |           |
 | tests/test\_setup.py                                                          |      266 |        0 |    100% |           |
 | tests/test\_size\_guard.py                                                    |       93 |        0 |    100% |           |
 | tests/test\_size\_report.py                                                   |      190 |        0 |    100% |           |
 | tests/test\_skill\_injection.py                                               |       30 |        0 |    100% |           |
 | tests/test\_squash\_subject.py                                                |        7 |        0 |    100% |           |
 | tests/test\_todos\_script.py                                                  |       87 |        0 |    100% |           |
-| tests/test\_tower\_do\_patch.py                                               |       78 |        1 |     99% |        28 |
 | tests/test\_uninstall.py                                                      |      114 |        0 |    100% |           |
-| **TOTAL**                                                                     | **19492** |  **578** | **97%** |           |
+| **TOTAL**                                                                     | **17937** |  **568** | **97%** |           |
 
 
 ## Setup coverage badge
