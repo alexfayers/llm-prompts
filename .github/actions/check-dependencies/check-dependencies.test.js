@@ -5,10 +5,12 @@ const { check } = require('./check-dependencies.js');
 function fixture({ body, labels = [], states = {} }) {
   const calls = [];
   const github = {
-    graphql: async () => ({ repository: { pullRequest: { reviewDecision: github.reviewDecision } } }),
+    graphql: async () => ({ repository: { pullRequest: { reviewDecision: github.reviewDecision, mergeable: github.mergeable ?? 'MERGEABLE' } } }),
+    paginate: async (fn) => (fn === github.rest.repos.getBranchRules ? [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'ci' }] } }] : fn === github.rest.checks.listForRef ? [{ name: 'ci', conclusion: github.ciConclusion ?? 'success' }] : []),
     rest: {
       pulls: { list() {} },
-      repos: { createCommitStatus: async ({ state }) => calls.push(['status', state]) },
+      checks: { listForRef() {} },
+      repos: { getBranchRules() {}, createCommitStatus: async ({ state }) => calls.push(['status', state]) },
       issues: {
         get: async ({ owner, repo, issue_number }) => ({ data: { state: states[`${owner}/${repo}#${issue_number}`] ?? 'closed' } }),
         createLabel: async () => calls.push('createLabel'),
@@ -17,7 +19,7 @@ function fixture({ body, labels = [], states = {} }) {
       },
     },
   };
-  const context = { repo: { owner: 'o', repo: 'r' }, payload: { pull_request: { number: 7, head: { sha: 'abc' }, body, labels: labels.map((name) => ({ name })) } } };
+  const context = { repo: { owner: 'o', repo: 'r' }, payload: { pull_request: { number: 7, head: { sha: 'abc' }, base: { ref: 'main' }, body, labels: labels.map((name) => ({ name })) } } };
   const core = { warning() {} };
   return { github, context, core, calls };
 }
@@ -39,6 +41,20 @@ test('cleared dependencies remove the blocked label unless changes are requested
   assert.deepEqual(calls, [['status', 'success'], ['status', 'success'], ['removeLabel', 'blocked']]);
 });
 
+for (const [name, state, removed] of [
+  ['a merge conflict', { mergeable: 'CONFLICTING' }, false],
+  ['an unknown merge state', { mergeable: 'UNKNOWN' }, false],
+  ['a failed required check', { ciConclusion: 'failure' }, false],
+  ['a mergeable PR with passing checks', {}, true],
+]) {
+  test(`cleared dependencies ${removed ? 'remove' : 'keep'} the blocked label for ${name}`, async () => {
+    const { github, context, core, calls } = fixture({ body: 'Depends on #1', labels: ['blocked'] });
+    Object.assign(github, state);
+    await check({ github, context, core, delay: async () => {} });
+    assert.deepEqual(calls, removed ? [['status', 'success'], ['removeLabel', 'blocked']] : [['status', 'success']]);
+  });
+}
+
 test('removing a blocked label that is already gone does not fail', async () => {
   const { github, context, core, calls } = fixture({ body: 'Depends on #1', labels: ['blocked'] });
   github.rest.issues.removeLabel = async () => { throw Object.assign(new Error('Label does not exist'), { status: 404 }); };
@@ -54,7 +70,7 @@ test('an API error sets the error status and still fails', async () => {
 });
 
 test('a scheduled run rechecks open PRs that are blocked or pending and skips the rest', async () => {
-  const pull = (number, labels, body = 'Depends on #1') => ({ number, head: { sha: `sha${number}` }, body, labels: labels.map((name) => ({ name })) });
+  const pull = (number, labels, body = 'Depends on #1') => ({ number, head: { sha: `sha${number}` }, base: { ref: 'main' }, body, labels: labels.map((name) => ({ name })) });
   const { github, context, core, calls } = fixture({ body: '' });
   delete context.payload.pull_request;
   const pulls = [pull(1, ['blocked']), pull(2, []), pull(3, [])];
