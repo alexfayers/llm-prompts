@@ -120,7 +120,7 @@ runs:
     - name: Label auto-rebase PR
       id: label-auto-rebase
       if: |
-        (github.event_name == 'pull_request_target' && contains(fromJSON('["opened", "reopened", "synchronize", "ready_for_review", "edited"]'), github.event.action)) ||
+        (github.event_name == 'pull_request_target' && contains(fromJSON('["opened", "reopened", "synchronize", "ready_for_review", "edited", "auto_merge_enabled"]'), github.event.action)) ||
         (github.event_name == 'pull_request_review' && contains(fromJSON('["submitted", "dismissed"]'), github.event.action))
       uses: actions/github-script@v9
       env:

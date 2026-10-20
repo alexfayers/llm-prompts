@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request_target:
-    types: [opened, reopened, ready_for_review, converted_to_draft, edited, closed, synchronize, labeled]
+    types: [opened, reopened, ready_for_review, converted_to_draft, edited, closed, synchronize, labeled, auto_merge_enabled]
   pull_request_review:
     types: [submitted, dismissed]
   workflow_run:
