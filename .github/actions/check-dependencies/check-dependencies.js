@@ -1,5 +1,5 @@
 const { BLOCKED_LABEL, ensureLabel } = require('../pr-automation/label-pr.js');
-const { fetchPr, isBlocked } = require('../pr-automation/sync-project-status.js');
+const { fetchPr, requiredCheckFailed, clearsBlock } = require('../pr-automation/label-conflicts.js');
 
 const STATUS_CONTEXT = 'dependencies';
 const DISPATCH_EVENT = 'dependencies-recheck';
@@ -15,7 +15,12 @@ async function setStatus(github, context, pr, state, description) {
   });
 }
 
-async function evaluate({ github, context, core }, pr) {
+async function canUnblock(github, context, delay, pr) {
+  const current = await fetchPr(github, context, pr.number, delay);
+  return clearsBlock(current, await requiredCheckFailed(github, context.repo, pr));
+}
+
+async function evaluate({ github, context, core, delay }, pr) {
   const { owner, repo } = context.repo;
   const open = [];
   for (const [, slug, number] of (pr.body || '').matchAll(DEPENDENCY)) {
@@ -34,7 +39,7 @@ async function evaluate({ github, context, core }, pr) {
       await ensureLabel(github, core, context.repo, BLOCKED_LABEL);
       await github.rest.issues.addLabels({ ...target, labels: [BLOCKED_LABEL.name] });
     }
-  } else if (labelled && !isBlocked(await fetchPr(github, { owner, repo, number: pr.number }))) {
+  } else if (labelled && await canUnblock(github, context, delay, pr)) {
     try {
       await github.rest.issues.removeLabel({ ...target, name: BLOCKED_LABEL.name });
     } catch (error) {
@@ -97,11 +102,11 @@ async function dispatchCrossRepoDependents({ context, core, client }) {
   }
 }
 
-async function check({ github, context, core, getOctokit, token }) {
+async function check({ github, context, core, getOctokit, token, delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
   let failure;
   for (const pr of await pullsToCheck({ github, context })) {
     try {
-      await evaluate({ github, context, core }, pr);
+      await evaluate({ github, context, core, delay }, pr);
     } catch (error) {
       await setStatus(github, context, pr, 'error', 'Dependency check failed to run');
       failure ??= error;

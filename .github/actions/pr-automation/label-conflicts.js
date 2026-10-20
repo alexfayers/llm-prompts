@@ -31,6 +31,10 @@ async function requiredCheckFailed(github, repo, { head, base }) {
   return runs.some(({ name, conclusion }) => required.includes(name) && FAILED_CONCLUSIONS.includes(conclusion));
 }
 
+function clearsBlock(pr, failed) {
+  return pr.mergeable === 'MERGEABLE' && !failed && pr.reviewDecision !== 'CHANGES_REQUESTED';
+}
+
 async function labelConflicts({ github, removeClient = github, context, core, delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
   const { payload, repo, ref } = context;
   const headSha = payload.workflow_run?.head_sha;
@@ -48,10 +52,10 @@ async function labelConflicts({ github, removeClient = github, context, core, de
     if ((pr.mergeable === 'CONFLICTING' || failed) && !labelled) {
       await ensureLabel(github, core, repo, BLOCKED_LABEL);
       await addLabels(github, core, target, [BLOCKED_LABEL.name]);
-    } else if (pr.mergeable === 'MERGEABLE' && !failed && labelled && pr.reviewDecision !== 'CHANGES_REQUESTED' && await labelledByBot(github, target)) {
+    } else if (labelled && clearsBlock(pr, failed) && await labelledByBot(github, target)) {
       await removeLabel(removeClient, core, target, BLOCKED_LABEL.name);
     }
   }
 }
 
-module.exports = { labelConflicts };
+module.exports = { labelConflicts, fetchPr, requiredCheckFailed, clearsBlock };
