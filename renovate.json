@@ -36,6 +36,8 @@
       "matchManagers": [
         "custom.regex"
       ],
+      "groupName": "pi extensions",
+      "groupSlug": "pi-extensions",
       "automerge": false
     }
   ]
