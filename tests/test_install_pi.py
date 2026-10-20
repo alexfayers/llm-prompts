@@ -136,21 +136,8 @@ def _core_seed() -> Path:
 
 def _core_packages() -> list[str]:
     """Return the core packages pi installs."""
-    return [
-        "npm:pi-herdsman@0.22.0",
-        "npm:pi-ask-user@0.16.0",
-        "npm:tower-do@0.7.0",
-        "npm:pi-notify@1.4.0",
-        "npm:pi-lsp-extension@1.4.0",
-        "npm:@henryqw/pi-herdr-tools@1.0.5",
-        "npm:@gotgenes/pi-permission-system@40.1.1",
-        "npm:pi-zentui@0.30.0",
-        "npm:pi-web-access@0.38.0",
-        "npm:pi-compact-tools@0.14.2",
-        "npm:@aliou/pi-processes@0.13.2",
-        "npm:pi-context-usage@2.1.0",
-        "npm:pi-cache-insight@1.1.0",
-    ]
+    packages: list[str] = json.loads(_CORE_FRAGMENT.read_text())["packages"]
+    return packages
 
 
 @pytest.fixture
