@@ -56,7 +56,7 @@
 | tests/test\_install\_agents.py                                                |      583 |        0 |    100% |           |
 | tests/test\_install\_antigravity.py                                           |       60 |        4 |     93% |     18-21 |
 | tests/test\_install\_codex.py                                                 |      234 |        0 |    100% |           |
-| tests/test\_install\_pi.py                                                    |     1259 |        0 |    100% |           |
+| tests/test\_install\_pi.py                                                    |     1260 |        0 |    100% |           |
 | tests/test\_links.py                                                          |      160 |        0 |    100% |           |
 | tests/test\_listing.py                                                        |       48 |        0 |    100% |           |
 | tests/test\_main\_sync.py                                                     |      243 |        0 |    100% |           |
@@ -74,7 +74,7 @@
 | tests/test\_squash\_subject.py                                                |        7 |        0 |    100% |           |
 | tests/test\_todos\_script.py                                                  |       87 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      114 |        0 |    100% |           |
-| **TOTAL**                                                                     | **17937** |  **568** | **97%** |           |
+| **TOTAL**                                                                     | **17938** |  **568** | **97%** |           |
 
 
 ## Setup coverage badge
