@@ -1,5 +1,5 @@
 name: PR automation
-description: Sync PR status onto the llm-prompts ecosystem project board, enable squash auto-merge on ready contribute PRs, assign the PR author, apply a breaking label from the PR title or body, label blocked PRs, apply path-based area labels, report a codeowner-review commit status, and label PRs ready to auto-rebase, and rebase auto-rebase PRs onto the base branch when it moves or when the label is added.
+description: Sync PR status onto the llm-prompts ecosystem project board, enable squash auto-merge on ready contribute PRs, assign the PR author, apply a breaking label from the PR title or body, label blocked PRs, label PRs with merge conflicts as blocked, apply path-based area labels, report a codeowner-review commit status, and label PRs ready to auto-rebase, and rebase auto-rebase PRs onto the base branch when it moves or when the label is added.
 inputs:
   projects-token:
     description: Token for the Project GraphQL status sync and for enabling auto-merge.
@@ -88,6 +88,17 @@ runs:
         script: |
           const { labelBlocked } = require(`${process.env.ACTION_PATH}/label-pr.js`)
           await labelBlocked({ github, context, core })
+
+    - name: Label conflicting PR
+      if: github.event_name == 'push' || (github.event_name == 'pull_request_target' && contains(fromJSON('["opened", "reopened", "synchronize", "edited"]'), github.event.action))
+      uses: actions/github-script@v9
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const { labelConflicts } = require(`${process.env.ACTION_PATH}/label-conflicts.js`)
+          await labelConflicts({ github, context, core })
 
     - name: Codeowner review gate
       if: |
