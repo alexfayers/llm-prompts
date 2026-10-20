@@ -51,7 +51,7 @@ jobs:
       - uses: extractions/setup-just@v3
       - run: uv sync --locked
       - run: just test
-      - uses: py-cov-action/python-coverage-comment-action@v4.3
+      - uses: py-cov-action/python-coverage-comment-action@v4.5
         with:
           GITHUB_TOKEN: ${{ github.token }}
           ANNOTATE_MISSING_LINES: true
