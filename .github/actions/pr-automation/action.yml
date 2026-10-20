@@ -132,7 +132,7 @@ runs:
           await labelAutoRebase({ github, context, core })
 
     - name: Rebase newly labelled PR
-      if: steps.label-auto-rebase.outputs.labelled == 'true'
+      if: steps.label-auto-rebase.outputs.labelled == 'true' || (github.event_name == 'pull_request_target' && github.event.action == 'labeled' && github.event.label.name == 'auto-rebase')
       uses: actions/github-script@v9
       env:
         ACTION_PATH: ${{ github.action_path }}
