@@ -63,6 +63,16 @@ test('other author needs a code owner approval even outside prompts', async () =
   assert.deepEqual(approved.calls, [['abc', 'codeowner-review', 'success']]);
 });
 
+test('renovate bot PRs pass without review but other bots do not', async () => {
+  const renovate = fixture({ author: 'renovate[bot]', files: ['README.md'] });
+  await gate(renovate);
+  assert.deepEqual(renovate.calls, [['abc', 'codeowner-review', 'success']]);
+
+  const other = fixture({ author: 'dependabot[bot]', files: ['README.md'] });
+  await gate(other);
+  assert.deepEqual(other.calls, [['abc', 'codeowner-review', 'pending']]);
+});
+
 test('requested changes keep the status pending until the review is dismissed', async () => {
   const blocked = fixture({ author: 'stranger', files: ['README.md'], reviews: [['owner', 'APPROVED'], ['friend', 'CHANGES_REQUESTED']] });
   await gate(blocked);
