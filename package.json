@@ -4,7 +4,8 @@
   "packageManager": "pnpm@10.32.1",
   "type": "module",
   "scripts": {
-    "type-check": "tsc -p tsconfig.json"
+    "type-check": "tsc -p tsconfig.json",
+    "test-ts": "node --test --experimental-test-module-mocks tests/ts/*.test.ts"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "^1.1.0",
