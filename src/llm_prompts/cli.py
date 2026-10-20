@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import urlparse
 
-from . import github_api
+from . import github_api, telemetry
 from .install import AGENT_CLASSES, log, prompts_dir
 from .setup import (
     _UPDATE_INSTRUCTION,
@@ -193,12 +193,17 @@ def _run_extension_factory_check() -> None:
         sys.exit(1)
 
 
-def _reexec_update(changed_sources: set[str], size_baseline: dict[Path, str]) -> None:
+def _reexec_update(
+    changed_sources: set[str],
+    size_baseline: dict[Path, str],
+    run: telemetry.Run,
+) -> None:
     """Restart `update` on the upgraded code, handing over the work done so far."""
     os.environ[_UPDATE_RESUME_ENV] = json.dumps(
         {
             "changed_sources": sorted(changed_sources),
             "size_baseline": {str(path): h for path, h in size_baseline.items()},
+            "telemetry": run.hand_over(),
         }
     )
     sys.stdout.flush()
@@ -711,7 +716,25 @@ def _get_gh_login() -> str:
 
 
 def main() -> int | None:
-    """Run the llm-prompts CLI."""
+    """Run the llm-prompts CLI, reporting anonymous telemetry when it finishes."""
+    with telemetry.Run(_get_installed_commit) as run:
+        return _run_command(run)
+
+
+def _flag_names(parser: argparse.ArgumentParser, argv: list[str]) -> list[str]:
+    """Return the sorted known option names present in argv, without their values."""
+    known: set[str] = set()
+    pending = [parser]
+    while pending:
+        for action in pending.pop()._actions:
+            known.update(action.option_strings)
+            if isinstance(action, argparse._SubParsersAction):
+                pending.extend(action.choices.values())
+    return sorted({t for a in argv if (t := a.split("=", 1)[0]) in known})
+
+
+def _run_command(run: telemetry.Run) -> int | None:
+    """Parse the command line and run the chosen command."""
     parser = argparse.ArgumentParser(
         prog="llm-prompts",
         description="Manage LLM prompt rules, workflows, and skills.",
@@ -895,6 +918,9 @@ def main() -> int | None:
     ):
         sync_parser.error("--commit cannot be combined with --only or --cleanup.")
 
+    if args.command:
+        run.begin(args.command, _flag_names(parser, sys.argv[1:]))
+
     if args.command == "install":
         if args.root:
             log(
@@ -911,6 +937,10 @@ def main() -> int | None:
             stale = detect_stale_local_tools()
             if config_path().exists():
                 run_setup(force_reinstall=stale or None)
+                child_env = {
+                    **os.environ,
+                    telemetry.RESUME_ENV: json.dumps(run.hand_over()),
+                }
                 result = subprocess.run(
                     [sys.argv[0], "install", args.agent]
                     + (["--verbose"] if args.verbose else [])
@@ -921,6 +951,7 @@ def main() -> int | None:
                     )
                     + ["--no-update"],
                     check=False,
+                    env=child_env,
                 )
                 sys.exit(result.returncode)
 
@@ -984,6 +1015,7 @@ def main() -> int | None:
                 )
 
         if size_guard_failed:
+            run.outcome = "size_guard_failed"
             sys.exit(1)
     elif args.command == "source":
         _print_sources(args.agent)
@@ -1043,9 +1075,10 @@ def main() -> int | None:
                 if _get_installed_dist(name) != dists_before_setup[name]:
                     changed_sources.add(name)
             if upgraded:
-                _reexec_update(changed_sources, size_baseline)
+                _reexec_update(changed_sources, size_baseline, run)
         else:
             state = json.loads(resumed)
+            run.restore(state.get("telemetry"))
             changed_sources = set(state["changed_sources"])
             size_baseline = {
                 Path(path): h for path, h in state["size_baseline"].items()
@@ -1061,6 +1094,7 @@ def main() -> int | None:
             _restart_memory_service()
 
         if size_guard_failed:
+            run.outcome = "size_guard_failed"
             sys.exit(1)
     elif args.command == "uninstall":
         from .install import uninstall
