@@ -17,7 +17,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "sleep",
 		label: "Sleep",
-		description: `Wait \`ms\` milliseconds (up to ${MAX_SLEEP_MS}). For codemode scripts that poll a changing result.`,
+		description: `Wait \`ms\` milliseconds (up to ${MAX_SLEEP_MS}). For codemode scripts that poll a changing result, or use \`waitUntil(() => check, { intervalMs, timeoutMs })\`.`,
 		parameters: PARAMETERS,
 		exposure: "codemode",
 		async execute(_toolCallId, params, signal) {

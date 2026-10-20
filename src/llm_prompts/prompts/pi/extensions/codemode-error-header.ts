@@ -10,13 +10,13 @@ const SHADOW_TOOLS = ';tools=new Proxy(tools,{get:(t,p)=>typeof p!=="string"||p 
 
 type Block = { type: string; text?: string };
 
-function shadowTools(code: string): string {
+export function prependToScript(code: string, snippet: string): string {
 	const lines = code.split("\n");
 	const bodyStart = lines[0].trimStart().startsWith(OPTIONS_PREFIX) ? lines[0].length + 1 : 0;
 	const misplacedOptions = lines.slice(1).some((line) => line.trimStart().startsWith(OPTIONS_PREFIX));
 	if (misplacedOptions || bodyStart >= code.length) return code;
 	const insertAt = bodyStart + (DIRECTIVE_PROLOGUE.exec(code.slice(bodyStart))?.[0].length ?? 0);
-	return code.slice(0, insertAt) + SHADOW_TOOLS + code.slice(insertAt);
+	return code.slice(0, insertAt) + snippet + code.slice(insertAt);
 }
 
 function firstErrorLine(content: Block[]): string | undefined {
@@ -28,7 +28,7 @@ function firstErrorLine(content: Block[]): string | undefined {
 export default function (pi: ExtensionAPI) {
 	pi.on("tool_call", (event) => {
 		if (event.toolName !== "codemode" || typeof event.input.code !== "string") return;
-		event.input.code = shadowTools(event.input.code);
+		event.input.code = prependToScript(event.input.code, SHADOW_TOOLS);
 	});
 	pi.on("tool_result", (event) => {
 		if (event.toolName !== "codemode" || !event.isError) return;
