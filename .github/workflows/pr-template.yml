@@ -15,6 +15,6 @@ jobs:
       issues: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: node --test .github/scripts/*.test.js
       - uses: ./.github/actions/pr-template
