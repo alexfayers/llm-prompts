@@ -145,7 +145,7 @@ async function check({ github, context, core }) {
       core.warning(`Yappy check skipped: ${error.message}`);
     }
   }
-  if (!pr || !pr.body || !pr.body.trim()) {
+  if (!pr || pr.user?.type === 'Bot' || !pr.body || !pr.body.trim()) {
     return;
   }
 
