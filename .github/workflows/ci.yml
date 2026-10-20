@@ -82,4 +82,5 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - run: node --test .github/actions/*/*.test.js
+      - uses: extractions/setup-just@v3
+      - run: just test-actions
