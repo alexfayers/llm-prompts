@@ -1,5 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "dependencyDashboardLabels": ["dependency-dashboard"],
   "extends": [
     "config:recommended",
     "group:allNonMajor"
