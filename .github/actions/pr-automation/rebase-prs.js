@@ -1,9 +1,9 @@
-const { AUTO_REBASE_LABEL } = require('./label-pr.js');
+const { AUTO_REBASE_LABEL, isRenovate } = require('./label-pr.js');
 
 const LIST_OPEN_PRS = `query($owner: String!, $repo: String!, $base: String!) {
   repository(owner: $owner, name: $repo) {
     pullRequests(states: OPEN, baseRefName: $base, first: 100) {
-      nodes { id number headRefOid mergeable labels(first: 50) { nodes { name } } }
+      nodes { id number headRefOid mergeable author { login } labels(first: 50) { nodes { name } } }
     }
   }
 }`;
@@ -16,12 +16,12 @@ const REBASE_BRANCH = `mutation($id: ID!, $head: GitObjectID!) {
 
 const GET_PR = `query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
-    pullRequest(number: $number) { id number baseRefName headRefOid mergeable labels(first: 50) { nodes { name } } }
+    pullRequest(number: $number) { id number baseRefName headRefOid mergeable author { login } labels(first: 50) { nodes { name } } }
   }
 }`;
 
 function isRebaseCandidate(pr) {
-  return pr.mergeable !== 'CONFLICTING' && pr.labels.nodes.some(({ name }) => name === AUTO_REBASE_LABEL.name);
+  return !isRenovate(pr.author?.login) && pr.mergeable !== 'CONFLICTING' && pr.labels.nodes.some(({ name }) => name === AUTO_REBASE_LABEL.name);
 }
 
 async function rebase({ github, context, core }) {

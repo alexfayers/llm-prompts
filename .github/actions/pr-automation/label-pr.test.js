@@ -92,9 +92,9 @@ test('existing blocked label does not stop labelling', async () => {
   assert.equal(calls.some(([kind]) => kind === 'warning'), false);
 });
 
-function rebaseFixture({ status = 'success', labels = [], draft = false, autoMerge = true }) {
+function rebaseFixture({ login = 'alice', status = 'success', labels = [], draft = false, autoMerge = true }) {
   const calls = [];
-  const pr = { number: 7, draft, auto_merge: autoMerge && {}, head: { sha: 'abc' }, labels: labels.map((name) => ({ name })) };
+  const pr = { number: 7, user: { login }, draft, auto_merge: autoMerge && {}, head: { sha: 'abc' }, labels: labels.map((name) => ({ name })) };
   const rest = {
     pulls: { get: async () => ({ data: pr }) },
     repos: { getCombinedStatusForRef: async () => ({ data: { statuses: [{ context: 'codeowner-review', state: status }] } }) },
@@ -117,5 +117,13 @@ test('PR missing any auto-rebase condition is left alone', async () => {
     const f = rebaseFixture(options);
     await labelAutoRebase(f);
     assert.deepEqual(f.calls, [], JSON.stringify(options));
+  }
+});
+
+test('Renovate PRs never get the auto-rebase label', async () => {
+  for (const login of ['renovate[bot]', 'renovate']) {
+    const f = rebaseFixture({ login });
+    await labelAutoRebase(f);
+    assert.deepEqual(f.calls, [], login);
   }
 });
