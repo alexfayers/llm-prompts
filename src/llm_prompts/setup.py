@@ -586,6 +586,14 @@ def _has_drifted(env: SharedEnv) -> bool:
     )
 
 
+def read_config() -> dict[str, Any]:
+    """Return the parsed config file, or an empty dict when it does not exist."""
+    if not config_path().exists():
+        return {}
+    config: dict[str, Any] = tomllib.loads(config_path().read_text(encoding="utf-8"))
+    return config
+
+
 def _load_config() -> list[dict[str, Any]]:
     """Load and return the tools list from config."""
     if not config_path().exists():
@@ -595,7 +603,7 @@ def _load_config() -> list[dict[str, Any]]:
             file=sys.stderr,
         )
         sys.exit(1)
-    config = tomllib.loads(config_path().read_text(encoding="utf-8"))
+    config = read_config()
     tools = config.get("tools", [])
     if not isinstance(tools, list) or not tools:
         print("Config must contain at least one [[tools]] entry.", file=sys.stderr)

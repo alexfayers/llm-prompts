@@ -102,6 +102,28 @@ llm-prompts setup --dry-run    # preview commands without running
 
 `setup` installs or upgrades the tools in `config.toml`. Name a tool to reinstall the whole shared environment from scratch, preview the commands with `--dry-run`, or create the starter config with `--init`.
 
+## Telemetry
+
+Every command sends one anonymous event to PostHog (EU). The first run sends nothing and prints a notice.
+
+- Sent:
+  - the command and the sorted names of its flags (never their values)
+  - tool versions before and after, each with:
+    - `commit`
+    - `local`: installed from a path
+    - `dirty`: uncommitted changes in a local git checkout, `false` for remote sources, `null` for a local path that is not a checkout
+    - `ahead`: commits beyond `origin/main` in a local git checkout, `null` if not counted or not local
+  - agent names
+  - overlay count, and the version of each overlay installed from a github.com source
+  - outcome, duration, OS and Python version
+  - schema version
+  - a random install id
+- Sent on failure: a second event with the exception type and the function, module and line number of each llm-prompts frame in its traceback.
+- Never sent: paths, usernames, hostnames, repo names, names of overlays not installed from github.com, prompt or config contents, error messages.
+- Off with `DO_NOT_TRACK=1`, `LLM_PROMPTS_NO_TELEMETRY=1`, `CI`, or `[telemetry]` with `enabled = false` in `config.toml`.
+- `LLM_PROMPTS_TELEMETRY_DEBUG=1` prints each event and sends it before the command exits.
+- Public totals: https://eu.posthog.com/shared/qdUBSB6XFctcGy5jzZ4TCqeNN3UXcQ
+
 ## Plugin sources
 
 `[[plugins]]` tracks raw git repos that ship Claude Code plugin/marketplace skills (a `skills/**/SKILL.md` layout, no Python packaging) and fans their skills out to every agent you've installed, the same way built-in and overlay skills are:

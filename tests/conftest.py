@@ -12,6 +12,7 @@ from collections.abc import Callable, Sequence
 from email.message import Message
 from pathlib import Path
 from typing import Any, Self, cast
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -817,3 +818,32 @@ def fake_github(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     monkeypatch.setattr(github_api, "urlopen", fake)
     monkeypatch.setenv("GH_TOKEN", "test-token")
     return fake
+
+
+@pytest.fixture(autouse=True)
+def telemetry_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Opt tests out of telemetry and fail any that sends or spawns."""
+
+    def forbidden(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("telemetry reached the network or spawned a process")
+
+    monkeypatch.setenv("LLM_PROMPTS_NO_TELEMETRY", "1")
+    monkeypatch.setattr("llm_prompts.telemetry.Popen", forbidden)
+    monkeypatch.setattr("llm_prompts.telemetry.urlopen", forbidden)
+
+
+@pytest.fixture
+def telemetry_popen(
+    monkeypatch: pytest.MonkeyPatch, isolated_config_dir: Path
+) -> MagicMock:
+    """Enable telemetry for a known install and return the mocked sender spawn."""
+    for name in ("DO_NOT_TRACK", "LLM_PROMPTS_NO_TELEMETRY", "CI"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("llm_prompts.telemetry.read_config", dict)
+    monkeypatch.setattr("llm_prompts.telemetry.read_manifest", dict)
+    (isolated_config_dir / "telemetry.json").write_text(
+        json.dumps({"install_id": "synthetic-id"}), encoding="utf-8"
+    )
+    popen = MagicMock()
+    monkeypatch.setattr("llm_prompts.telemetry.Popen", popen)
+    return popen
