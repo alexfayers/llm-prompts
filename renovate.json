@@ -6,6 +6,7 @@
     "group:allNonMajor"
   ],
   "minimumReleaseAge": "3 days",
+  "groupSingleUpdates": true,
   "prConcurrentLimit": 4,
   "automerge": true,
   "platformAutomerge": true,
@@ -40,7 +41,6 @@
         "!github-actions",
         "!custom.regex"
       ],
-      "groupName": "major updates",
       "groupSlug": "major-updates",
       "addLabels": [
         "needs-review"
@@ -52,7 +52,6 @@
       ],
       "groupName": "pi extensions",
       "groupSlug": "pi-extensions",
-      "groupSingleUpdates": true,
       "separateMajorMinor": false,
       "addLabels": [
         "needs-review"
