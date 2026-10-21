@@ -11,7 +11,7 @@
     "npm:pi-notify@1.4.0",
     "npm:pi-lsp-extension@1.4.0",
     "npm:@henryqw/pi-herdr-tools@1.5.0",
-    "npm:@gotgenes/pi-permission-system@40.3.0",
+    "npm:@gotgenes/pi-permission-system@41.0.0",
     "npm:pi-zentui@0.31.1",
     "npm:pi-web-access@0.42.0",
     "npm:pi-compact-tools@0.16.2",
