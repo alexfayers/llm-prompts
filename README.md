@@ -37,7 +37,7 @@
 | src/llm\_prompts/size\_report.py                                              |      172 |        3 |     98% |134, 188, 190 |
 | src/llm\_prompts/skill\_injection.py                                          |       37 |        2 |     95% |    33, 36 |
 | src/llm\_prompts/squash\_subject.py                                           |        6 |        0 |    100% |           |
-| src/llm\_prompts/telemetry.py                                                 |      137 |        6 |     96% |85-86, 123-124, 133, 273 |
+| src/llm\_prompts/telemetry.py                                                 |      141 |        5 |     96% |88-89, 126-127, 282 |
 | tests/conftest.py                                                             |      361 |        3 |     99% |156, 789, 828 |
 | tests/test\_batching.py                                                       |      314 |        0 |    100% |           |
 | tests/test\_build\_wave.py                                                    |      179 |        0 |    100% |           |
@@ -73,10 +73,10 @@
 | tests/test\_size\_report.py                                                   |      190 |        0 |    100% |           |
 | tests/test\_skill\_injection.py                                               |       30 |        0 |    100% |           |
 | tests/test\_squash\_subject.py                                                |        7 |        0 |    100% |           |
-| tests/test\_telemetry.py                                                      |      180 |        0 |    100% |           |
+| tests/test\_telemetry.py                                                      |      193 |        0 |    100% |           |
 | tests/test\_todos\_script.py                                                  |       87 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      114 |        0 |    100% |           |
-| **TOTAL**                                                                     | **18296** |  **568** | **97%** |           |
+| **TOTAL**                                                                     | **18313** |  **567** | **97%** |           |
 
 
 ## Setup coverage badge
