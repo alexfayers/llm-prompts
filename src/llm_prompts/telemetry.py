@@ -6,6 +6,7 @@ import json
 import os
 import platform
 import re
+import ssl
 import sys
 import time
 import tomllib
@@ -17,6 +18,8 @@ from subprocess import DEVNULL, Popen, SubprocessError, run
 from types import TracebackType
 from typing import Any
 from urllib.request import Request, urlopen
+
+import truststore
 
 from . import home
 from .install import log
@@ -129,9 +132,15 @@ def post(body: str) -> bool:
     """POST a capture body to PostHog, returning whether it succeeded."""
     request = Request(POSTHOG_URL, body.encode(), {"Content-Type": "application/json"})
     try:
-        with urlopen(request, timeout=_SEND_TIMEOUT_SECONDS):
+        with urlopen(
+            request,
+            timeout=_SEND_TIMEOUT_SECONDS,
+            context=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
+        ):
             return True
-    except Exception:
+    except Exception as error:
+        if _is_set("LLM_PROMPTS_TELEMETRY_DEBUG"):
+            print(f"telemetry error: {error}", file=sys.stderr)
         return False
 
 
