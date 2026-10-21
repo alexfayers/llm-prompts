@@ -29,7 +29,11 @@ def _props(popen: MagicMock) -> dict[str, Any]:
 
 
 def _events(popen: MagicMock) -> list[dict[str, Any]]:
-    return [json.loads(call.args[0][3]) for call in popen.call_args_list]
+    """Return the sent events, with placeholders resolved as the detached sender does."""
+    return [
+        json.loads(telemetry._resolve_checkouts(call.args[0][3]))
+        for call in popen.call_args_list
+    ]
 
 
 def _from_to(popen: MagicMock) -> tuple[str, str]:
@@ -78,8 +82,9 @@ def test_event_carries_only_allowlisted_properties(
     ]
     monkeypatch.setattr("llm_prompts.telemetry.read_config", lambda: {"tools": tools})
 
+    monkeypatch.setattr("llm_prompts.cli._get_installed_commit", lambda _: A)
     with telemetry.Run(lambda _: A) as run:
-        run.begin("update", [])
+        run.begin("update", [], installs=True)
 
     posted = MagicMock()
     monkeypatch.setattr("llm_prompts.telemetry.post", posted)
@@ -403,5 +408,39 @@ def test_a_command_that_continues_in_a_new_process_reports_once_from_the_last(
         stubbed_cli.return_value = False
         _main(*second)
 
-    assert telemetry_popen.call_count == 1
-    assert _from_to(telemetry_popen) == (A, B)
+        assert telemetry_popen.call_count == 1
+        assert _from_to(telemetry_popen) == (A, B)
+
+
+def test_the_parent_never_looks_up_versions_unless_the_command_installs(
+    telemetry_popen: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lookups = MagicMock(return_value=A)
+    with telemetry.Run(lookups) as run:
+        run.begin("startup-check", [])
+    lookups.assert_not_called()
+
+    monkeypatch.setattr("llm_prompts.cli._get_installed_commit", lambda _: B)
+    posted = MagicMock()
+    monkeypatch.setattr("llm_prompts.telemetry.post", posted)
+    telemetry.deliver(telemetry_popen.call_args.args[0][3])
+    properties = json.loads(posted.call_args.args[0])["properties"]
+    assert properties["from"]["llm-prompts"]["commit"] == B
+    assert properties["to"]["llm-prompts"]["commit"] == B
+
+
+def test_an_installing_command_captures_from_before_it_runs(
+    telemetry_popen: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installed = {"commit": A}
+    with telemetry.Run(lambda _: installed["commit"]) as run:
+        run.begin("update", [], installs=True)
+        installed["commit"] = B
+
+    monkeypatch.setattr("llm_prompts.cli._get_installed_commit", lambda _: B)
+    posted = MagicMock()
+    monkeypatch.setattr("llm_prompts.telemetry.post", posted)
+    telemetry.deliver(telemetry_popen.call_args.args[0][3])
+    properties = json.loads(posted.call_args.args[0])["properties"]
+    assert properties["from"]["llm-prompts"]["commit"] == A
+    assert properties["to"]["llm-prompts"]["commit"] == B
