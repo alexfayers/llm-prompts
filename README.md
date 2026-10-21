@@ -6,7 +6,7 @@
 |------------------------------------------------------------------------------ | -------: | -------: | ------: | --------: |
 | src/llm\_prompts/\_\_init\_\_.py                                              |        0 |        0 |    100% |           |
 | src/llm\_prompts/batching.py                                                  |      138 |        1 |     99% |       129 |
-| src/llm\_prompts/cli.py                                                       |      525 |       83 |     84% |88-89, 115-116, 123-136, 237-238, 349-350, 478, 481, 530, 596-608, 632-634, 669-671, 679-682, 701-710, 905-925, 947-949, 952-958, 961-963, 966-980, 989, 991-996, 999-1000, 1011-1015, 1099-1100, 1105 |
+| src/llm\_prompts/cli.py                                                       |      543 |       72 |     87% |88-89, 115-116, 123-136, 242-243, 354-355, 483, 486, 535, 601-613, 637-639, 674-676, 684-687, 706-715, 978-980, 983-989, 992-994, 997-1011, 1021, 1026, 1043-1047, 1133-1134, 1139 |
 | src/llm\_prompts/collection\_size.py                                          |      115 |        5 |     96% |178, 238-239, 389, 446 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/contribute.py                                                |      875 |       12 |     99% |149, 176, 318, 1141, 1166, 1366, 1383-1384, 1474-1476, 1817 |
@@ -31,13 +31,14 @@
 | src/llm\_prompts/prompts/shared/skills/tidy-code/check\_reduction.py          |       42 |        1 |     98% |        97 |
 | src/llm\_prompts/prompts/shared/skills/todos/find\_todos.py                   |       44 |        7 |     84% |96-98, 103-105, 109 |
 | src/llm\_prompts/render\_template.py                                          |      184 |       15 |     92% |149, 323, 459-460, 469-487, 499-503, 507 |
-| src/llm\_prompts/setup.py                                                     |      321 |       56 |     83% |229-258, 300-303, 310-311, 351, 354, 375-376, 415-416, 565, 591-603, 613, 624-630, 660-661, 664, 693-695, 714-715, 727-729 |
+| src/llm\_prompts/setup.py                                                     |      326 |       60 |     82% |229-258, 300-303, 310-311, 351, 354, 375-376, 415-416, 565, 591-594, 599-611, 621, 632-638, 668-669, 672, 701-703, 722-723, 735-737 |
 | src/llm\_prompts/size\_guard.py                                               |      351 |       11 |     97% |242-243, 350, 421-423, 458, 480, 484-486 |
 | src/llm\_prompts/size\_limits.py                                              |       61 |        1 |     98% |       138 |
 | src/llm\_prompts/size\_report.py                                              |      172 |        3 |     98% |134, 188, 190 |
 | src/llm\_prompts/skill\_injection.py                                          |       37 |        2 |     95% |    33, 36 |
 | src/llm\_prompts/squash\_subject.py                                           |        6 |        0 |    100% |           |
-| tests/conftest.py                                                             |      343 |        2 |     99% |  155, 788 |
+| src/llm\_prompts/telemetry.py                                                 |      137 |        6 |     96% |85-86, 123-124, 133, 273 |
+| tests/conftest.py                                                             |      361 |        3 |     99% |156, 789, 828 |
 | tests/test\_batching.py                                                       |      314 |        0 |    100% |           |
 | tests/test\_build\_wave.py                                                    |      179 |        0 |    100% |           |
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
@@ -72,9 +73,10 @@
 | tests/test\_size\_report.py                                                   |      190 |        0 |    100% |           |
 | tests/test\_skill\_injection.py                                               |       30 |        0 |    100% |           |
 | tests/test\_squash\_subject.py                                                |        7 |        0 |    100% |           |
+| tests/test\_telemetry.py                                                      |      180 |        0 |    100% |           |
 | tests/test\_todos\_script.py                                                  |       87 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      114 |        0 |    100% |           |
-| **TOTAL**                                                                     | **17938** |  **568** | **97%** |           |
+| **TOTAL**                                                                     | **18296** |  **568** | **97%** |           |
 
 
 ## Setup coverage badge
