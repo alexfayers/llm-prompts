@@ -52,6 +52,7 @@
       ],
       "groupName": "pi extensions",
       "groupSlug": "pi-extensions",
+      "separateMajorMinor": false,
       "addLabels": [
         "needs-review"
       ]
