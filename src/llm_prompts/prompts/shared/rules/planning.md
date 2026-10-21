@@ -55,9 +55,9 @@ Before planning, in order: Explore agents, one per independent dimension, for ex
 ## Session scope discipline
 
 - Keep a session to one coherent change.
-- Once unrelated changes have accumulated, SHOULD commit what is done, record the rest as TODOs, and suggest a new session.
+- Once unrelated changes have accumulated, SHOULD commit what is done, record the rest as TODOs, and {% if AGENT == "pi" %}compact with `compact_now`{% else %}suggest a new session{% endif %}.
 - MUST NOT start a new large task late in a long or high-context session. Park it; proceed only on the user's explicit override, not a one-line aside.
-- This gates {% if AGENT == "pi" %}presenting a plan{% else %}calling `EnterPlanMode`{% endif %} however trivial, before any research or plan-writing spend. A context-usage notice stays live until a new session.
+- This gates {% if AGENT == "pi" %}presenting a plan{% else %}calling `EnterPlanMode`{% endif %} however trivial, before any research or plan-writing spend. A context-usage notice stays live until {% if AGENT == "pi" %}compaction{% else %}a new session{% endif %}.
 - Once the user approves continuing past a context-usage notice, that approval stands for the session - MUST NOT re-ask, except on a new signal: a worse notice tier not yet seen, or a task the approval wouldn't cover.
 {% if AGENT == "pi" %}
 - Past the context threshold, MUST compact with `compact_now` and an `instructions` summary naming the open tasks, asks and decisions.

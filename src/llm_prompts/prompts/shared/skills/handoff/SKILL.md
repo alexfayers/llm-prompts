@@ -5,12 +5,15 @@ description: Write a handoff doc for a fresh session to resume work. Use when en
 
 # handoff
 
-Produce a single self-contained handoff document that lets a brand-new session
+Produce one self-contained handoff document that lets a brand-new session
 resume the work with no prior context, then stop. Write the shortest document
-that lets someone rebuild your mental model - not a diary.
+that rebuilds your mental model - not a diary.
 
 ## Where it goes
 
+{% if AGENT == "pi" %}
+In pi, MUST write the handoff per this skill, omit Step 0, and pass it as the `compact_now` `instructions`. MUST NOT write `HANDOFF.md` or start a new session unless the user asks. Then the rest of this section applies.
+{% endif %}
 {% if has_command("herdr") %}
 Inside Herdr (`test "${HERDR_ENV:-}" = 1`), MUST send the doc live per the herdr rule and omit Step 0, unless the user asks for a disk handoff or has opted out. Otherwise:
 
@@ -27,10 +30,9 @@ stale `HANDOFF.md` that is no longer relevant.
 
 ## Two directions: writing vs. resuming
 
-This skill covers *writing* a handoff at session end. "do/resume/pick up the
-handoff" means an existing `HANDOFF.md` should be *executed*, not rewritten -
-use the `pickup` skill instead. If in doubt, treat "do the handoff" for an
-existing doc as a `pickup` instruction, not a rewrite.
+This skill *writes* a handoff. "do/resume/pick up the handoff" means *execute*
+an existing `HANDOFF.md` - use `pickup`. If in doubt, treat "do the handoff"
+for an existing doc as `pickup`, not a rewrite.
 
 ## Required structure
 
@@ -91,8 +93,7 @@ Then include, in order:
   task status) MUST already be in the memory graph before you write the
   handoff - the doc only points at it. If not yet persisted, do so now (see
   the `session-end` skill).
-- Do not dump the diff or the play-by-play. Link the commit; summarise intent.
-- Keep it scannable: bullets, short sections.
+- No diff dump or play-by-play. Link the commit; summarise intent. Use bullets.
 - Point to the plan file if one exists for the effort.
 - MUST point the resuming session at the governing rules file for the
   workspace (if any) and at the authoritative memory entity for the effort -

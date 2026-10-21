@@ -11,9 +11,9 @@ requires_command: herdr
 - Herdr links a worktree only into a workspace of the same git repo - MUST check its `repo_key` in `herdr workspace list` first.
 - `agent start` returning `agent_not_ready` on a new path usually means a folder-trust prompt - MUST hand it to the user.
 {% if AGENT == "pi" %}
-- MUST hand off to a new Herdr session only when the cwd, worktree, env or process must change. Otherwise MUST compact with `compact_now`.
+- Handoff means writing it via the `handoff` skill and passing it to `compact_now`. MUST hand off to a new Herdr session only when the user asks for one, or the cwd, worktree, env or process must change.
 {% endif %}
-- Every handoff MUST go live to a new Herdr session, not to `HANDOFF.md`, unless the user asks for a disk handoff or has opted out in conversation or memory.
+- Every handoff to a new session MUST go live to a new Herdr session, not to `HANDOFF.md`, unless the user asks for a disk handoff or has opted out in conversation or memory.
 - Live handoff: MUST write the doc via the `handoff` skill, start an agent of the same kind in a new pane of the current tab, and send the doc as its prompt. The prompt MUST tell it to use `pickup` and to confirm its understanding of the asks to this session at the address below.
 {% if AGENT == "claude-code" %}
   - MUST start the new session with `herdr agent start <new-name> --kind claude --pane <new-pane-id> -- --name <new-name>`, where `<new-pane-id>` is the new pane. Without `--name`, `ListAgents` shows it unnamed and `SendMessage` cannot reach it - the herdr name is only a pane label.
