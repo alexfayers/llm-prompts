@@ -429,6 +429,33 @@ class TestRunSetup:
         assert "No tool named 'missing'" in capsys.readouterr().err
         assert not fake_subprocess.commands
 
+    def test_config_name_differing_from_the_package_name_does_not_drift(
+        self,
+        tools_dir: Path,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        source = tmp_path / "camel"
+        source.mkdir()
+        (source / "pyproject.toml").write_text('[project]\nname = "Camel_Tool"\n')
+        tools: list[dict[str, Any]] = [
+            {"name": "core", "source": str(tmp_path / "core")},
+            {"name": "CamelTool", "source": str(source)},
+        ]
+        monkeypatch.setattr(setup, "_load_config", lambda: tools)
+        self.write_receipt(tools_dir, ["core"])
+        receipt = tools_dir / "core" / "uv-receipt.toml"
+        receipt.write_text(
+            receipt.read_text().replace('{ name = "cli" }', '{ name = "camel-tool" }')
+        )
+
+        setup.run_setup()
+
+        assert not fake_subprocess.matching("uv", "tool", "install")
+        install_cmd = setup._build_commands(tools, set()).install_cmd
+        assert install_cmd[-4:-2] == ["--no-sources-package", "camel-tool"]
+
     def test_upgrade_that_drops_scripts_falls_back_to_a_full_install(
         self, tools_dir: Path, fake_subprocess: FakeSubprocess
     ) -> None:
