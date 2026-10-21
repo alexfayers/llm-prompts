@@ -5,6 +5,7 @@
   "net-guard",
   "prompt-cache-stabilizer",
   "codemode-error-header",
+  "mcp-hints",
   "compact-now",
   "codemode-sleep",
   "codemode-wait-until",

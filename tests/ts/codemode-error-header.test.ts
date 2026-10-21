@@ -6,6 +6,7 @@ const text = (value: string) => ({ type: "text", text: value });
 const failed = (output: string, toolName = "codemode") => ({
 	toolName,
 	isError: true,
+	input: { code: "return 1" },
 	content: [text("Script failed\nWall time 0.1 seconds\nOutput:\n"), text(output)],
 });
 const ext = await loadExtension("codemode-error-header");
@@ -40,5 +41,28 @@ for (const [label, code] of [
 		await ext.fire("tool_call", { toolName: "codemode", input });
 		assert.deepEqual(await new AsyncFunction("tools", input.code)(tools), ["undefined", 1]);
 		assert.equal(input.code.startsWith("// @options"), code.includes("@options"));
+	});
+}
+
+const UNDEFINED_READ = "TypeError: Cannot read properties of undefined (reading 'slice')";
+const READ_ACTIONS = { name: "mcp__docs__ReadActions", parameters: { properties: { action: {}, stage: {} }, required: ["action"] } };
+const VALIDATION = 'Error: Validation failed for tool "mcp__docs__ReadActions":\n  - stage: bad';
+
+for (const [label, output, code, hint, tools = []] of [
+	["redefinition", "Script error:\nSyntaxError: invalid redefinition of parameter name", "", "`tools` is reserved"],
+	["mcp-timeout", "Script error:\nError: MCP request timed out", "", "MCP call timed out"],
+	["structured-content-read", `Script error:\n${UNDEFINED_READ}`, "return r.structuredContent.slice(0, 5)", "read r.content[0].text"],
+	["mcp-not-a-function", "Script error:\nTypeError: not a function", "return (await tools.mcp__srv__search({})).slice(0, 5)", "an MCP result is an object"],
+	["other-error", `Script error:\nError: boom`, "return r.structuredContent.id"],
+	["validation-known-tool", `Script error:\n${VALIDATION}`, "", "ReadActions args: action, stage (required: action)", [READ_ACTIONS]],
+	["object-printed", "a :: [object Object]", "", "a value printed as [object Object]"],
+] as [string, string, string, string?, object[]?][]) {
+	test(`a codemode result gets the matching hint: ${label}`, async () => {
+		ext.pi.allTools = tools as typeof ext.pi.allTools;
+		const isError = output.startsWith("Script error:");
+		const header = `${isError ? "Script failed" : "Script completed"}\nWall time 0.1 seconds\nOutput:\n`;
+		const event = { toolName: "codemode", isError, input: { code }, content: [text(header), text(output)] };
+		const lines = (await ext.fire("tool_result", event))?.content[0].text.split("\n");
+		assert.ok(lines?.[1].startsWith("Hint:") ? lines[1].includes(hint ?? "\0") : hint === undefined);
 	});
 }
