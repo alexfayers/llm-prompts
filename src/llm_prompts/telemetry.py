@@ -31,6 +31,7 @@ POSTHOG_TOKEN = "phc_u9CarYTyF9mvobdXzSZ7bCv9DVNj8yF3JFzzD2j3ixgS"
 RESUME_ENV = "LLM_PROMPTS_TELEMETRY_RESUME"
 _SEND_TIMEOUT_SECONDS = 3
 _CHECKOUT_KEY = "checkout"
+_INSTALLED_KEY = "installed"
 _GITHUB_SOURCE = re.compile(r"^(git\+)?(https://|ssh://git@|git@)github\.com[/:]")
 _PACKAGE = __name__.partition(".")[0]
 _TRACKED = ("llm-prompts", "cline-hooks", "mcp-memory")
@@ -94,13 +95,21 @@ def _local(source: str) -> dict[str, str]:
     return {_CHECKOUT_KEY: str(_expand(source))}
 
 
+def _installed(package: str) -> dict[str, str]:
+    """Return a placeholder the detached sender replaces with the package's installed version."""
+    return {_INSTALLED_KEY: package}
+
+
 def _resolve_checkouts(body: str) -> str:
-    """Replace every checkout placeholder in a JSON body with its git state."""
+    """Replace every placeholder in a JSON body with its checkout or installed state."""
+    from .cli import _get_installed_commit
 
     def resolve(node: Any) -> Any:
         if isinstance(node, dict):
             if _CHECKOUT_KEY in node:
                 return _checkout_state(node[_CHECKOUT_KEY])
+            if _INSTALLED_KEY in node:
+                return _remote(_get_installed_commit(node[_INSTALLED_KEY]))
             return {k: resolve(v) for k, v in node.items()}
         return node
 
@@ -189,8 +198,15 @@ class Run(AbstractContextManager["Run"]):
         """Return the installed commit of every tracked package."""
         return {name: self._installed_commit(name) for name in _TRACKED}
 
-    def begin(self, command: str, flags: list[str]) -> None:
-        """Start tracking `command` unless opted out, taking over state from `RESUME_ENV`."""
+    def begin(self, command: str, flags: list[str], installs: bool = False) -> None:
+        """Start tracking `command` unless opted out, taking over state from `RESUME_ENV`.
+
+        Args:
+            command: The command name.
+            flags: The sorted flag names.
+            installs: Whether the command can change installed versions, so their
+                starting state is captured now.
+        """
         handed_over = os.environ.pop(RESUME_ENV, "null")
         try:
             if enabled():
@@ -199,7 +215,7 @@ class Run(AbstractContextManager["Run"]):
                     "flags": flags,
                     "started_at": time.time(),
                 }
-                self._begun["commits"] = self._commits()
+                self._begun["commits"] = self._commits() if installs else None
                 self.restore(json.loads(handed_over))
         except Exception as error:
             self._begun = None
@@ -250,18 +266,22 @@ class Run(AbstractContextManager["Run"]):
             if _is_local_path(str(t.get("source")))
         }
 
-        def commits(found: dict[str, str | None]) -> dict[str, dict[str, Any]]:
-            return {n: local.get(n) or _remote(found.get(n)) for n in _TRACKED}
+        def commits(found: dict[str, str | None] | None) -> dict[str, dict[str, Any]]:
+            return {
+                n: local.get(n)
+                or (_remote(found.get(n)) if found is not None else _installed(n))
+                for n in _TRACKED
+            }
 
         properties = {
             "command": begun["command"],
             "flags": begun["flags"],
             "from": commits(begun["commits"]),
-            "to": commits(self._commits()),
+            "to": commits(None),
             "agents": sorted(read_manifest()),
             "overlay_count": sum(t.get("name") not in _TRACKED for t in tools),
             "overlays": {
-                n: local.get(n) or _remote(self._installed_commit(n))
+                n: local.get(n) or _installed(n)
                 for t in tools
                 if (n := t.get("name")) not in _TRACKED
                 and _GITHUB_SOURCE.match(str(t.get("source")))

@@ -37,6 +37,7 @@ _AGENTS = tuple(AGENT_CLASSES)
 _MEMORY_TOOL = "mcp-memory"
 _RUN_SETUP_TRACKED_TOOLS = (_MEMORY_TOOL, "cline-hooks")
 _UPDATE_RESUME_ENV = "LLM_PROMPTS_UPDATE_RESUME"
+_INSTALLING_COMMANDS = frozenset({"install", "setup", "update"})
 _URL_CREDENTIALS = re.compile(r"(://)[^/@\s]+@")
 
 
@@ -919,7 +920,11 @@ def _run_command(run: telemetry.Run) -> int | None:
         sync_parser.error("--commit cannot be combined with --only or --cleanup.")
 
     if args.command:
-        run.begin(args.command, _flag_names(parser, sys.argv[1:]))
+        run.begin(
+            args.command,
+            _flag_names(parser, sys.argv[1:]),
+            installs=args.command in _INSTALLING_COMMANDS,
+        )
 
     if args.command == "install":
         if args.root:

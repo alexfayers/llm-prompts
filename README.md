@@ -106,7 +106,7 @@ llm-prompts setup --dry-run    # preview commands without running
 
 Every command sends one anonymous event to PostHog (EU). The first run sends nothing and prints a notice.
 
-- Sent:
+- Sent for every command and for the session start check (`startup-check`, with `--cached` when it reuses the last result):
   - the command and the sorted names of its flags (never their values)
   - tool versions before and after, each with:
     - `commit`

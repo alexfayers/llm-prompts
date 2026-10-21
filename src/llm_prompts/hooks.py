@@ -15,6 +15,7 @@ from typing import Any
 
 from cline_hooks.core.plugin import HookResult, HooksPlugin, UserFacingNote
 
+from . import telemetry
 from .manifest import read_manifest
 from .setup import _UPDATE_INSTRUCTION
 
@@ -244,6 +245,7 @@ class AutoReinstallPlugin(HooksPlugin):
         from .cli import (
             UpdateCheckFailure,
             _collect_update_messages,
+            _get_installed_commit,
             _installed_fingerprint,
         )
 
@@ -252,8 +254,12 @@ class AutoReinstallPlugin(HooksPlugin):
         except (Exception, SystemExit):
             logger.warning("Failed to read installed llm-prompts versions")
             return None
-        with self._update_check_debouncer.single_flight() as holds_lock:
+        with (
+            telemetry.Run(_get_installed_commit) as run,
+            self._update_check_debouncer.single_flight() as holds_lock,
+        ):
             if holds_lock and self._update_check_debouncer.should_run(fingerprint):
+                run.begin("startup-check", [])
                 try:
                     messages = _collect_update_messages()
                 except (Exception, SystemExit):
@@ -265,6 +271,7 @@ class AutoReinstallPlugin(HooksPlugin):
             elif source in _DEBOUNCED_TASK_START_SOURCES:
                 return None
             else:
+                run.begin("startup-check", ["--cached"])
                 messages = self._update_check_debouncer.cached_notice()
 
         if not messages:

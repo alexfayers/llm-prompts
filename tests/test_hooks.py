@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Iterator
 from contextlib import ExitStack
@@ -704,6 +705,32 @@ class TestUpdateCheckOnTaskStart:
         assert len(result.user_notes) == 1
         note = result.user_notes[0]
         assert note.user_text == _format_user_text("[pkg] update available (a -> b)")
+
+    @pytest.mark.parametrize(
+        ("cached", "flags"),
+        [(False, []), (True, ["--cached"])],
+        ids=["fresh", "cached"],
+    )
+    def test_task_start_reports_telemetry(
+        self,
+        tmp_path: Path,
+        telemetry_popen: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        cached: bool,
+        flags: list[str],
+    ) -> None:
+        monkeypatch.setattr("llm_prompts.cli._get_installed_commit", lambda _: None)
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        if cached:
+            (tmp_path / "update-stamp").write_text(str(time.time()))
+        with patch("llm_prompts.cli._collect_update_messages", return_value=[]):
+            plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[], source="")
+        event = json.loads(telemetry_popen.call_args.args[0][3])
+        assert event["properties"]["command"] == "startup-check"
+        assert event["properties"]["flags"] == flags
 
     def test_resume_source_still_debounced(self, tmp_path: Path) -> None:
         plugin = AutoReinstallPlugin()
