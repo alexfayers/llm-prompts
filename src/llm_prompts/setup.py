@@ -508,13 +508,17 @@ def _build_commands(tools: list[dict[str, Any]], changed_local: set[str]) -> Sha
         the env must expose.
     """
     owner, *members = tools
-    name = str(owner["name"])
-    member_names = [str(member["name"]) for member in members]
-    scripts = {str(tool["name"]): _script_names(tool) for tool in tools}
+    name = _package_name(owner)
+    member_names = [_package_name(member) for member in members]
+    scripts = {_package_name(tool): _script_names(tool) for tool in tools}
     return SharedEnv(
         name,
         _build_install_cmd(owner, members, [n for n in member_names if scripts[n]]),
-        _build_upgrade_cmd(name, member_names, changed_local),
+        _build_upgrade_cmd(
+            name,
+            member_names,
+            {_package_name(t) for t in tools if str(t["name"]) in changed_local},
+        ),
         member_names,
         [script for names in scripts.values() for script in names],
     )
@@ -531,9 +535,15 @@ def _build_install_cmd(
         cmd.extend(["--with-executables-from", ",".join(executable_members)])
     for package in [owner, *members]:
         if _is_local_path(str(package["source"])):
-            cmd.extend(["--no-sources-package", str(package["name"])])
+            cmd.extend(["--no-sources-package", _package_name(package)])
     cmd.extend(["--reinstall", "--force"])
     return cmd
+
+
+def _package_name(tool: dict[str, Any]) -> str:
+    """Return the canonical package name of a tool, falling back to its config name."""
+    project = (_read_pyproject(tool) or {}).get("project", {})
+    return re.sub(r"[-_.]+", "-", str(project.get("name", tool["name"]))).lower()
 
 
 def _install_source(source: str) -> str:
