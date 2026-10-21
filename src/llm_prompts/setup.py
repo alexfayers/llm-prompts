@@ -718,6 +718,8 @@ def run_setup(
             print(f"No tool named '{tool_filter}' in config.", file=sys.stderr)
             sys.exit(1)
         force_reinstall = {str(tools[0]["name"])}
+    package_names = {str(tool["name"]): _package_name(tool) for tool in tools}
+    force_reinstall = {package_names.get(n, n) for n in force_reinstall}
 
     env = _build_commands(tools, detect_changed_local_tools(tools))
     name = env.name
