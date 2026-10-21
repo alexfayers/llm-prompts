@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 from urllib.error import URLError
 
 import pytest
+import truststore
 from conftest import run_capturing_exit
 
 from llm_prompts import cli, telemetry
@@ -169,6 +170,32 @@ def test_a_git_checkout_source_reports_its_head_and_whether_it_is_dirty(
             "ahead": None,
         }
         assert str(tmp_path) not in posted.call_args.args[0]
+
+
+def test_post_verifies_certificates_with_the_system_trust_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    urlopen = MagicMock()
+    monkeypatch.setattr("llm_prompts.telemetry.urlopen", urlopen)
+
+    assert telemetry.post("{}") is True
+
+    assert isinstance(urlopen.call_args.kwargs["context"], truststore.SSLContext)
+
+
+def test_debug_mode_shows_why_a_post_failed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("LLM_PROMPTS_TELEMETRY_DEBUG", "1")
+    monkeypatch.setattr(
+        "llm_prompts.telemetry.urlopen", MagicMock(side_effect=URLError("no cert"))
+    )
+
+    telemetry.send(EVENT, "id-1")
+
+    err = capsys.readouterr().err
+    assert "telemetry sent: False" in err
+    assert "no cert" in err
 
 
 @pytest.mark.parametrize("debug", ["0", "1"])

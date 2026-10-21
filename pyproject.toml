@@ -8,6 +8,7 @@ dependencies = [
     "cline-hooks",
     "jinja2>=3.1.6",
     "platformdirs>=4.11.7",
+    "truststore>=0.10.5",
 ]
 
 [project.scripts]
