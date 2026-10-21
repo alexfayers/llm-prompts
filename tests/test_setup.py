@@ -456,6 +456,10 @@ class TestRunSetup:
         install_cmd = setup._build_commands(tools, set()).install_cmd
         assert install_cmd[-4:-2] == ["--no-sources-package", "camel-tool"]
 
+        setup.run_setup(force_reinstall={"CamelTool"})
+
+        assert len(fake_subprocess.matching("uv", "tool", "install")) == 1
+
     def test_upgrade_that_drops_scripts_falls_back_to_a_full_install(
         self, tools_dir: Path, fake_subprocess: FakeSubprocess
     ) -> None:
