@@ -5,6 +5,7 @@
   "cacheWarming": "idle",
   "enableInstallTelemetry": false,
   "packages": [
+    "npm:@earendil-works/pi-coding-agent@1.2.0",
     "npm:pi-herdsman@0.31.0",
     "npm:pi-ask-user@0.17.0",
     "npm:tower-do@0.8.1",

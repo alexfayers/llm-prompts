@@ -114,6 +114,9 @@ def log(level: LogLevel, message: str) -> None:
         print(f"{_PLAIN_SYMBOLS[level]} {message}", file=sys.stderr)
 
 
+_PI_PACKAGE = "@earendil-works/pi-coding-agent"
+
+
 def _pi_agent_dir() -> Path:
     """Return pi's config directory.
 
@@ -3135,6 +3138,41 @@ def _sync_pi_packages(
     return added_names
 
 
+def _version_key(version: str) -> tuple[int, ...]:
+    """Return the numeric components of ``version`` for ordering."""
+    return tuple(int(part) for part in re.findall(r"\d+", version))
+
+
+def _warn_pi_version_drift(sources: Iterable[str]) -> None:
+    """Print a dim note when the installed pi differs from the pinned version.
+
+    Args:
+        sources: Package sources llm-prompts declares.
+    """
+    version_file = _pi_agent_dir() / "install" / "current-version"
+    pinned = next(
+        (
+            version
+            for name, version in map(_split_npm_source, sources)
+            if name == _PI_PACKAGE
+        ),
+        "",
+    )
+    if not pinned or not version_file.exists():
+        return
+    installed = _read_text(version_file).strip()
+    if _version_key(installed) == _version_key(pinned):
+        return
+    if _version_key(installed) < _version_key(pinned):
+        message = f"pi {installed} is behind the tested {pinned}, run pi update"
+    else:
+        message = (
+            f"pi {installed} is newer than tested {pinned} - if extensions break, "
+            "report it with the llm-prompts-report-issue skill"
+        )
+    print(paint(f"[llm-prompts] {message}", "grey"), file=sys.stderr)
+
+
 def _pi_env() -> dict[str, str]:
     """Return the environment that points ``pi`` at the agent directory in use."""
     return {**os.environ, "PI_CODING_AGENT_DIR": str(_pi_agent_dir())}
@@ -3162,6 +3200,8 @@ def _install_pi_packages(
         if not source.startswith("npm:"):
             continue
         name, version = _split_npm_source(source)
+        if name == _PI_PACKAGE:
+            continue
         manifest = _pi_package_dir(name) / "package.json"
         if manifest.exists() and (
             not version or json.loads(_read_text(manifest)).get("version") == version
@@ -3905,6 +3945,7 @@ def main(
             _pi_defaults(pi_fragments),
         )
         pi_install_failed, newly_owned = _install_pi_packages(pi_packages, added)
+        _warn_pi_version_drift(pi_packages)
         pi_installed_packages = sorted(
             (previous_owned & wanted_names) | newly_owned | retained
         )
