@@ -346,7 +346,9 @@ def test_the_event_lists_sorted_flag_names_and_never_their_values(
 
 
 def test_a_failed_command_also_sends_an_exception_event_without_paths_or_message(
-    telemetry_popen: MagicMock, stubbed_cli: MagicMock
+    telemetry_popen: MagicMock,
+    stubbed_cli: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     home = str(Path.home())
     failure = ValueError(f"cannot read {home}/secret.md")
@@ -356,6 +358,7 @@ def test_a_failed_command_also_sends_an_exception_event_without_paths_or_message
         contextlib.suppress(ValueError),
     ):
         _main("update")
+    monkeypatch.setattr("llm_prompts.cli._get_installed_commit", lambda _: A)
 
     raised = next(e for e in _events(telemetry_popen) if e["event"] == "$exception")
     (item,) = raised["properties"]["$exception_list"]
@@ -365,11 +368,31 @@ def test_a_failed_command_also_sends_an_exception_event_without_paths_or_message
     assert {f["module"] for f in frames} <= {
         m for m in sys.modules if m.startswith("llm_prompts")
     }
-    assert all(set(f) == {"module", "function", "lineno"} for f in frames)
+    assert all(set(f) == {"filename", "module", "function", "lineno"} for f in frames)
+    assert "llm_prompts/cli.py" in {f["filename"] for f in frames}
+    assert not any(Path(f["filename"]).is_absolute() for f in frames)
+    assert raised["properties"]["command"] == "update"
+    assert raised["properties"]["llm_prompts_commit"]["commit"] == A
     sent = json.dumps(_events(telemetry_popen))
     assert home not in sent
     assert "secret.md" not in sent
     assert "cannot read" not in sent
+
+
+@pytest.mark.usefixtures("stubbed_cli")
+@pytest.mark.parametrize(
+    "quiet", [SystemExit(0), SystemExit(None), SystemExit(1), KeyboardInterrupt()]
+)
+def test_an_exit_or_interrupt_sends_no_exception_event(
+    telemetry_popen: MagicMock, quiet: BaseException
+) -> None:
+    with (
+        patch("llm_prompts.install.main", side_effect=quiet),
+        contextlib.suppress(BaseException),
+    ):
+        _main("update")
+
+    assert "$exception" not in [e["event"] for e in _events(telemetry_popen)]
 
 
 @pytest.mark.parametrize(
