@@ -5,8 +5,8 @@ on:
     types: [opened, edited, synchronize, closed, reopened]
   pull_request_review:
     types: [submitted, dismissed]
-  schedule:
-    - cron: '*/15 * * * *'
+  issues:
+    types: [closed, reopened]
   workflow_dispatch:
   repository_dispatch:
     types: [dependencies-recheck]

@@ -2,7 +2,7 @@ name: Check dependencies
 description: Set a pending dependencies commit status and the blocked label while "Depends on" or "Blocked by" links are open.
 inputs:
   projects-token:
-    description: Token that can search and dispatch events to the other repos, used to recheck their dependents when a PR closes.
+    description: Token that can search and dispatch events to the other repos, used to recheck their dependents when a PR or issue closes, and to remove the blocked label so CI re-runs.
     required: false
 runs:
   using: composite
