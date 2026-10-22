@@ -7,6 +7,7 @@ copilot_apply_to: '**'
 # Coding guidelines
 
 - MUST keep code concise but readable, and any change minimal.
+- A size limit (lines, words) is a ceiling, never a target. MUST make the smallest change that delivers the behaviour and remove redundant code.
 - Code MUST be self-documenting with descriptive names and minimal comments. MUST NOT add a comment that refers to the change you are making, explains why, or names other code that uses it - comments describe the code, only where genuinely complex.
 - MUST add new imports at THE SAME TIME as the code that uses them.
 - When a change adds, or newly requires, an environment variable, config key or setting, MUST update every doc, template and manifest that lists it in the SAME change.
