@@ -118,7 +118,7 @@ Every command sends one anonymous event to PostHog (EU). The first run sends not
   - outcome, duration, OS and Python version
   - schema version
   - a random install id
-- Sent on failure: a second event with the exception type and the function, module and line number of each llm-prompts frame in its traceback.
+- Sent on failure: a second event with the exception type, the command, the llm-prompts commit, and the package-relative file, function, module and line number of each llm-prompts frame in its traceback. Not sent for an exit (the `outcome` records it) or Ctrl-C.
 - Never sent: paths, usernames, hostnames, repo names, names of overlays not installed from github.com, prompt or config contents, error messages.
 - Off with `DO_NOT_TRACK=1`, `LLM_PROMPTS_NO_TELEMETRY=1`, `CI`, or `[telemetry]` with `enabled = false` in `config.toml`.
 - `LLM_PROMPTS_TELEMETRY_DEBUG=1` prints each event and sends it before the command exits.

@@ -14,6 +14,7 @@ import traceback
 import uuid
 from collections.abc import Callable
 from contextlib import AbstractContextManager
+from pathlib import Path
 from subprocess import DEVNULL, Popen, SubprocessError, run
 from types import TracebackType
 from typing import Any
@@ -34,6 +35,7 @@ _CHECKOUT_KEY = "checkout"
 _INSTALLED_KEY = "installed"
 _GITHUB_SOURCE = re.compile(r"^(git\+)?(https://|ssh://git@|git@)github\.com[/:]")
 _PACKAGE = __name__.partition(".")[0]
+_ROOT = Path(__file__).parent.parent
 _TRACKED = ("llm-prompts", "cline-hooks", "mcp-memory")
 _NOTICE = (
     "llm-prompts sends anonymous usage telemetry after each command. "
@@ -167,10 +169,18 @@ def send(event: dict[str, Any], install_id: str) -> None:
     Popen(cmd, stdout=DEVNULL, stderr=DEVNULL, start_new_session=True, env=env)
 
 
-def _exception_event(exc: BaseException) -> dict[str, Any]:
+def _reportable(exc: BaseException) -> bool:
+    """Return whether an exception is a crash rather than an exit or interrupt."""
+    return not isinstance(exc, SystemExit | KeyboardInterrupt)
+
+
+def _exception_event(
+    exc: BaseException, command: str, commit: dict[str, str]
+) -> dict[str, Any]:
     """Build a PostHog exception event with the type and this package's frames only."""
     frames = [
         {
+            "filename": (Path(frame.f_code.co_filename).relative_to(_ROOT)).as_posix(),
             "module": frame.f_globals.get("__name__"),
             "function": frame.f_code.co_name,
             "lineno": lineno,
@@ -181,7 +191,12 @@ def _exception_event(exc: BaseException) -> dict[str, Any]:
     item = {"type": type(exc).__name__, "stacktrace": {"frames": frames}}
     return {
         "event": "$exception",
-        "properties": {"$exception_list": [item], "$process_person_profile": False},
+        "properties": {
+            "$exception_list": [item],
+            "command": command,
+            "llm_prompts_commit": commit,
+            "$process_person_profile": False,
+        },
     }
 
 
@@ -294,8 +309,11 @@ class Run(AbstractContextManager["Run"]):
             "$process_person_profile": False,
         }
         send({"event": "command_run", "properties": properties}, install_id)
-        if self.outcome.startswith("error:") and exc:
-            send(_exception_event(exc), install_id)
+        if self.outcome.startswith("error:") and exc and _reportable(exc):
+            send(
+                _exception_event(exc, begun["command"], commits(None)["llm-prompts"]),
+                install_id,
+            )
 
 
 if __name__ == "__main__":
