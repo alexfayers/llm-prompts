@@ -8,6 +8,7 @@ extensions: []
 {% endif %}
 mcp_read_only: [memory]
 generate_variants: opus-medium,opus-high
+claude_code_generate_variants: opus-medium
 color: red
 ---
 

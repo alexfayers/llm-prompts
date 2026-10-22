@@ -8,6 +8,7 @@ pi_skills: git-usage, tdd, pi-processes?
 extensions: [@aliou/pi-processes?]
 {% endif %}
 generate_variants: sonnet-low,sonnet-medium,sonnet-high,haiku-low,haiku-medium,haiku-high
+claude_code_generate_variants: sonnet-low,sonnet-medium,sonnet-high,haiku-low,haiku-medium
 pi_extra_variants: terra-low,terra-medium,terra-high,luna-low,luna-medium,luna-high
 color: blue
 ---

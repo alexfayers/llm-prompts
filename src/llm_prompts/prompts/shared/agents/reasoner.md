@@ -11,6 +11,7 @@ skills: true
 extensions: [pi-web-access?]
 {% endif %}
 generate_variants: opus-medium,opus-high,opus-xhigh
+claude_code_generate_variants: opus-medium,opus-high
 pi_extra_variants: sol-medium,sol-high,sol-xhigh
 color: green
 ---

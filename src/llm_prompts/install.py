@@ -62,6 +62,7 @@ _TARGET_GATING_KEYS = {
     "targets",
     "exclude_targets",
     "extra_variants",
+    "generate_variants",
 }
 
 _COLORS: dict[LogLevel, Color] = {
@@ -1447,8 +1448,8 @@ def _variant_specs(
 ) -> list[_VariantSpec]:
     """List the variants a rendered template generates for a target.
 
-    Parses the flat, comma-separated ``generate_variants`` frontmatter key
-    (each token a ``<model>-<effort>`` pair), except that a thinking-off model
+    Parses the flat, comma-separated ``generate_variants`` frontmatter key,
+    or the target's ``<target>_generate_variants`` override (each token a ``<model>-<effort>`` pair), except that a thinking-off model
     keeps only its first token. Malformed tokens are logged and skipped.
     The target's ``<target>_extra_variants`` tokens are added too, but only
     those whose model alias ``resolve_model`` maps to something else.
@@ -1464,7 +1465,11 @@ def _variant_specs(
         The variants, in declaration order.
     """
     _, frontmatter = parse_frontmatter(content)
-    tokens = _frontmatter_tokens(frontmatter, "generate_variants")
+    tokens = [
+        t.strip()
+        for t in _gating_value(frontmatter, "generate_variants", target).split(",")
+        if t.strip()
+    ]
     extra_tokens = (
         _frontmatter_tokens(frontmatter, _override_key(target, "extra_variants"))
         if target

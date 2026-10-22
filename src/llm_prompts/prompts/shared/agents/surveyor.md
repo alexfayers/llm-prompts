@@ -8,6 +8,7 @@ pi_skills: git-usage
 extensions: [pi-web-access?]
 {% endif %}
 generate_variants: sonnet-low,sonnet-medium,sonnet-high,haiku-low,haiku-medium,haiku-high
+claude_code_generate_variants: sonnet-low,sonnet-medium,sonnet-high,haiku-low
 pi_extra_variants: terra-low,terra-medium,terra-high,luna-low,luna-medium,luna-high
 color: yellow
 ---

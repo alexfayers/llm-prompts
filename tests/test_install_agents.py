@@ -449,6 +449,24 @@ class TestExtraVariants:
 
         assert set(generated) == {"scout-sonnet-low.md"}
 
+    def test_target_generate_variants_overrides_base(self, tmp_path: Path) -> None:
+        src = tmp_path / "scout.md"
+        src.write_text(
+            "---\nname: scout\ndescription: D\n"
+            "generate_variants: sonnet-low,sonnet-high\n"
+            "codex_generate_variants: sonnet-low\n---\n\nB.\n"
+        )
+
+        codex = dict(_expand_agent_variants(src, lambda t: t, None, "codex"))
+        other = dict(_expand_agent_variants(src, lambda t: t, None, "claude-code"))
+
+        assert set(codex) == {"scout-sonnet-low.md"}
+        assert set(other) == {"scout-sonnet-low.md", "scout-sonnet-high.md"}
+        assert (
+            "codex_generate_variants"
+            not in parse_frontmatter(codex["scout-sonnet-low.md"])[1]
+        )
+
     def test_haiku_variants_have_thinking_off_for_pi_only(self, tmp_path: Path) -> None:
         src = tmp_path / "scout.md"
         src.write_text(
@@ -684,10 +702,8 @@ class TestClaudeCodeAgentsInstallLayout:
             "worker-sonnet-high.md",
             "worker-haiku-low.md",
             "worker-haiku-medium.md",
-            "worker-haiku-high.md",
             "reasoner-opus-medium.md",
             "reasoner-opus-high.md",
-            "reasoner-opus-xhigh.md",
             "coordinator-sonnet-low.md",
             "surveyor-sonnet-low.md",
             "surveyor-sonnet-medium.md",
@@ -746,7 +762,6 @@ class TestClaudeCodeAgentsInstallLayout:
         for name in (
             "reasoner-opus-medium.md",
             "reasoner-opus-high.md",
-            "reasoner-opus-xhigh.md",
         ):
             split = split_frontmatter((agents_dir / name).read_text(encoding="utf-8"))
             assert split is not None
