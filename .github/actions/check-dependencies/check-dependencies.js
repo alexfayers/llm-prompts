@@ -20,7 +20,7 @@ async function canUnblock(github, context, delay, pr) {
   return clearsBlock(current, await requiredCheckFailed(github, context.repo, pr));
 }
 
-async function evaluate({ github, context, core, delay }, pr) {
+async function evaluate({ github, removeClient, context, core, delay }, pr) {
   const { owner, repo } = context.repo;
   const open = [];
   for (const [, slug, number] of (pr.body || '').matchAll(DEPENDENCY)) {
@@ -41,7 +41,7 @@ async function evaluate({ github, context, core, delay }, pr) {
     }
   } else if (labelled && await canUnblock(github, context, delay, pr)) {
     try {
-      await github.rest.issues.removeLabel({ ...target, name: BLOCKED_LABEL.name });
+      await removeClient.rest.issues.removeLabel({ ...target, name: BLOCKED_LABEL.name });
     } catch (error) {
       if (error.status !== 404) {
         throw error;
@@ -63,14 +63,16 @@ function dependsOn(pr, { owner, repo }, target) {
 }
 
 async function pullsToCheck({ github, context }) {
-  const event = context.payload.pull_request;
-  if (event && context.payload.action !== 'closed') {
+  const { pull_request: event, issue, action } = context.payload;
+  if (event && action !== 'closed') {
     return [event];
   }
   const pulls = await github.paginate(github.rest.pulls.list, { ...context.repo, state: 'open' });
-  if (event) {
-    const target = `${context.repo.owner}/${context.repo.repo}#${event.number}`;
-    return [event, ...pulls.filter((pr) => dependsOn(pr, context.repo, target))];
+  const changed = event ?? issue;
+  if (changed) {
+    const target = `${context.repo.owner}/${context.repo.repo}#${changed.number}`;
+    const dependents = pulls.filter((pr) => dependsOn(pr, context.repo, target));
+    return event ? [event, ...dependents] : dependents;
   }
   const verdicts = await Promise.all(pulls.map((pr) => isPending(github, context, pr)));
   return pulls.filter((_, index) => verdicts[index]);
@@ -78,10 +80,11 @@ async function pullsToCheck({ github, context }) {
 
 async function dispatchCrossRepoDependents({ context, core, client }) {
   const { owner, repo } = context.repo;
-  const { number } = context.payload.pull_request;
+  const { pull_request: pull, issue } = context.payload;
+  const number = (pull ?? issue).number;
   const target = `${owner}/${repo}#${number}`;
   const items = [];
-  for (const phrase of [target, `https://github.com/${owner}/${repo}/pull/${number}`]) {
+  for (const phrase of [target, `https://github.com/${owner}/${repo}/${pull ? 'pull' : 'issues'}/${number}`]) {
     items.push(...await client.paginate(client.rest.search.issuesAndPullRequests, { q: `"${phrase}" is:pr is:open user:${owner} in:body` }));
   }
   const repos = new Set();
@@ -104,16 +107,17 @@ async function dispatchCrossRepoDependents({ context, core, client }) {
 
 async function check({ github, context, core, getOctokit, token, delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
   let failure;
+  const removeClient = token ? getOctokit(token) : github;
   for (const pr of await pullsToCheck({ github, context })) {
     try {
-      await evaluate({ github, context, core, delay }, pr);
+      await evaluate({ github, removeClient, context, core, delay }, pr);
     } catch (error) {
       await setStatus(github, context, pr, 'error', 'Dependency check failed to run');
       failure ??= error;
     }
   }
-  if (token && context.payload.action === 'closed') {
-    await dispatchCrossRepoDependents({ context, core, client: getOctokit(token) });
+  if (token && (context.payload.issue || context.payload.action === 'closed')) {
+    await dispatchCrossRepoDependents({ context, core, client: removeClient });
   }
   if (failure) {
     throw failure;

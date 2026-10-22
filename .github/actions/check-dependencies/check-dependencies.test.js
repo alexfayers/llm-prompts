@@ -15,13 +15,13 @@ function fixture({ body, labels = [], states = {} }) {
         get: async ({ owner, repo, issue_number }) => ({ data: { state: states[`${owner}/${repo}#${issue_number}`] ?? 'closed' } }),
         createLabel: async () => calls.push('createLabel'),
         addLabels: async ({ labels }) => calls.push(['addLabels', labels]),
-        removeLabel: async ({ name }) => calls.push(['removeLabel', name]),
       },
     },
   };
+  const removeClient = { rest: { issues: { removeLabel: async ({ name }) => calls.push(['removeLabel', name]) } } };
   const context = { repo: { owner: 'o', repo: 'r' }, payload: { pull_request: { number: 7, head: { sha: 'abc' }, base: { ref: 'main' }, body, labels: labels.map((name) => ({ name })) } } };
   const core = { warning() {} };
-  return { github, context, core, calls };
+  return { github, context, core, calls, getOctokit: () => removeClient, token: 'actions-token', removeClient };
 }
 
 test('open dependencies in every link style add the blocked label and never fail', async () => {
@@ -33,11 +33,11 @@ test('open dependencies in every link style add the blocked label and never fail
 });
 
 test('cleared dependencies remove the blocked label unless changes are requested', async () => {
-  const { github, context, core, calls } = fixture({ body: 'Depends on #1', labels: ['blocked'] });
+  const { github, context, core, calls, getOctokit, token } = fixture({ body: 'Depends on #1', labels: ['blocked'] });
   github.reviewDecision = 'CHANGES_REQUESTED';
-  await check({ github, context, core });
+  await check({ github, context, core, getOctokit, token });
   github.reviewDecision = null;
-  await check({ github, context, core });
+  await check({ github, context, core, getOctokit, token });
   assert.deepEqual(calls, [['status', 'success'], ['status', 'success'], ['removeLabel', 'blocked']]);
 });
 
@@ -48,17 +48,17 @@ for (const [name, state, removed] of [
   ['a mergeable PR with passing checks', {}, true],
 ]) {
   test(`cleared dependencies ${removed ? 'remove' : 'keep'} the blocked label for ${name}`, async () => {
-    const { github, context, core, calls } = fixture({ body: 'Depends on #1', labels: ['blocked'] });
+    const { github, context, core, calls, getOctokit, token } = fixture({ body: 'Depends on #1', labels: ['blocked'] });
     Object.assign(github, state);
-    await check({ github, context, core, delay: async () => {} });
+    await check({ github, context, core, getOctokit, token, delay: async () => {} });
     assert.deepEqual(calls, removed ? [['status', 'success'], ['removeLabel', 'blocked']] : [['status', 'success']]);
   });
 }
 
 test('removing a blocked label that is already gone does not fail', async () => {
-  const { github, context, core, calls } = fixture({ body: 'Depends on #1', labels: ['blocked'] });
-  github.rest.issues.removeLabel = async () => { throw Object.assign(new Error('Label does not exist'), { status: 404 }); };
-  await check({ github, context, core });
+  const { github, context, core, calls, getOctokit, token, removeClient } = fixture({ body: 'Depends on #1', labels: ['blocked'] });
+  removeClient.rest.issues.removeLabel = async () => { throw Object.assign(new Error('Label does not exist'), { status: 404 }); };
+  await check({ github, context, core, getOctokit, token });
   assert.deepEqual(calls, [['status', 'success']]);
 });
 
@@ -69,15 +69,15 @@ test('an API error sets the error status and still fails', async () => {
   assert.deepEqual(calls, [['status', 'error']]);
 });
 
-test('a scheduled run rechecks open PRs that are blocked or pending and skips the rest', async () => {
+test('a manual run rechecks open PRs that are blocked or pending and skips the rest', async () => {
   const pull = (number, labels, body = 'Depends on #1') => ({ number, head: { sha: `sha${number}` }, base: { ref: 'main' }, body, labels: labels.map((name) => ({ name })) });
-  const { github, context, core, calls } = fixture({ body: '' });
+  const { github, context, core, calls, getOctokit, token } = fixture({ body: '' });
   delete context.payload.pull_request;
   const pulls = [pull(1, ['blocked']), pull(2, []), pull(3, [])];
   github.paginate = async (fn, params) => (fn === github.rest.pulls.list && params.state === 'open' ? pulls : []);
   github.rest.repos.createCommitStatus = async ({ sha, state }) => calls.push(['status', sha, state]);
   github.rest.repos.listCommitStatusesForRef = async ({ ref }) => ({ data: ref === 'sha2' ? [{ context: 'dependencies', state: 'pending' }] : [] });
-  await check({ github, context, core });
+  await check({ github, context, core, getOctokit, token });
   assert.deepEqual(calls, [['status', 'sha1', 'success'], ['removeLabel', 'blocked'], ['status', 'sha2', 'success']]);
 });
 
@@ -131,4 +131,20 @@ test('a refused dispatch only warns', async () => {
   client.rest.repos.createDispatchEvent = async () => { throw new Error('Forbidden'); };
   await check({ github, context, core, getOctokit: () => client, token: 't' });
   assert.match(warnings[0], /o\/x.*Forbidden/);
+});
+
+test('closing an issue rechecks the open PRs that depend on it and dispatches to other repos', async () => {
+  const pull = (number, body) => ({ number, head: { sha: `sha${number}` }, body, labels: [] });
+  const { github, context, core, calls } = fixture({ body: '' });
+  delete context.payload.pull_request;
+  context.payload.action = 'closed';
+  context.payload.issue = { number: 5 };
+  github.paginate = async () => [pull(6, 'Depends on #5'), pull(7, 'Depends on a/b#5'), pull(8, 'Depends on o/r#4')];
+  github.rest.repos.createCommitStatus = async ({ sha, state }) => calls.push(['status', sha, state]);
+  const client = searchClient(calls, {
+    '"o/r#5" is:pr is:open user:o in:body': [item('o/x', 'Depends on o/r#5')],
+    '"https://github.com/o/r/issues/5" is:pr is:open user:o in:body': [item('o/z', 'blocked by https://github.com/o/r/issues/5')],
+  });
+  await check({ github, context, core, getOctokit: () => client, token: 't' });
+  assert.deepEqual(calls.filter(([type]) => type !== 'search'), [['status', 'sha6', 'success'], ['dispatch', 'x', 'dependencies-recheck'], ['dispatch', 'z', 'dependencies-recheck']]);
 });
