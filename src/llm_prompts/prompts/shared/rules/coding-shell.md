@@ -3,6 +3,7 @@ description: Shell-specific coding guidelines
 copilot_apply_to: '**'
 kiro_inclusion: fileMatch
 kiro_file_match_pattern: '**/*.sh, **/*.bash, **/*.zsh'
+roles: lead, reasoner, worker, surveyor, reviewer
 ---
 
 # Shell coding guidelines
