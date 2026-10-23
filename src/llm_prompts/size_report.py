@@ -8,7 +8,7 @@ variables.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .cli import _size_guard_roots
@@ -23,6 +23,7 @@ from .size_limits import (
     ON_DEMAND_ROLE_RULE_BYTES,
     ON_DEMAND_SKILL_BODY_BYTES,
     ON_DEMAND_WORKFLOW_BYTES,
+    PI_ROLE_PROMPT_BYTES,
     START_BYTES,
 )
 
@@ -75,11 +76,11 @@ class Row:
 _Key = tuple[str, str, str]
 _Values = tuple[str, str, str, int | None, int | None, int | None]
 _SMALLER = "&#x1F7E2;"
-_LARGER = "&#x1F534;"
+_LARGER = "&#x1F7E1;"
 _NEW = "&#x1F195;"
 _REMOVED = "&#x1F5D1;&#xFE0F;"
 _UNCHANGED = "&#x26AA;"
-_OVER_LIMIT = "&#x26A0;&#xFE0F;"
+_OVER_LIMIT = "&#x1F534;"
 _BADGE_ESCAPES = str.maketrans(
     {"-": "--", "_": "__", " ": "_", "%": "%25", "+": "%2B", "<": "%3C"}
 )
@@ -102,7 +103,16 @@ _COLUMN_METRICS = {
 _COLUMN_OF = {
     metric: column for column, metrics in _COLUMN_METRICS.items() for metric in metrics
 }
-_SUMMARY_COLUMNS = ("rules", "frontmatter", "bodies", "start", "worst case")
+_ROLE_NOTE = "pi role prompts grew because their inlined rules changed:"
+_SUMMARY_COLUMNS = (
+    "rules",
+    "frontmatter",
+    "bodies",
+    "agent bodies",
+    "start",
+    "worst case",
+)
+_BADGE_COLUMNS = ("worst case", "agent bodies", "role-only rules")
 _SIZE_COLUMNS = frozenset({"start", "worst case"})
 _SUMMARY_HEADER = ["", "target", *_SUMMARY_COLUMNS]
 _DETAIL_HEADER = ["", "target", *_COLUMN_METRICS]
@@ -201,6 +211,15 @@ def _trend(delta: int) -> str:
     return _LARGER if delta else _UNCHANGED
 
 
+def _badge_row(collection: Row, columns: dict[str, list[int]]) -> Row:
+    parts = [columns[name] for name in _BADGE_COLUMNS[1:] if name in columns]
+    return replace(
+        collection,
+        base=(collection.base or 0) + sum(part[0] for part in parts),
+        head=(collection.head or 0) + sum(part[1] for part in parts),
+    )
+
+
 def _badge(target: str, row: Row) -> str:
     colour = "brightgreen" if row.delta < 0 else "red" if row.delta else "lightgrey"
     label, message = (text.translate(_BADGE_ESCAPES) for text in (target, _pct(row)))
@@ -238,6 +257,8 @@ def _targets(targets: Sequence[str]) -> str:
 
 
 def _file(row: Row) -> str:
+    if row.metric == PI_ROLE_PROMPT_BYTES:
+        return f"{Path(row.file).stem} (pi, rules inlined)"
     root, separator, path = row.file.rpartition(":")
     file = f"{root}{separator}{path.removeprefix('shared/')}"
     if row.metric == COLLECTION_BYTES or not row.name:
@@ -347,6 +368,15 @@ def _detail_lines(sizes: _Sizes, totals: dict[str, Row]) -> list[list[str]]:
     ]
 
 
+def _changed_files_tables(changed: Sequence[Row]) -> list[str]:
+    roles = [row for row in changed if row.metric == PI_ROLE_PROMPT_BYTES]
+    others = [row for row in changed if row.metric != PI_ROLE_PROMPT_BYTES]
+    lines = _table(_ROW_HEADER, _row_lines(others)) if others else []
+    if roles:
+        lines += ["", _ROLE_NOTE, "", *_table(_ROW_HEADER, _row_lines(roles))]
+    return lines
+
+
 def _details(summary: str, table: list[str]) -> str:
     body = "\n".join(table)
     return f"<details>\n<summary>{summary}</summary>\n\n{body}\n\n</details>"
@@ -371,14 +401,18 @@ def render_markdown(rows: Sequence[Row]) -> str:
         key=lambda r: -abs(r.delta),
     )
     badges = " ".join(
-        _badge(target, row) for row in collection for target in row.targets
+        _badge(target, _badge_row(row, sizes.get(target, {})))
+        for row in collection
+        for target in row.targets
     )
     changed_files = {row.file for row in changed}
+    over_files = {row.file for row in changed if row.over}
     headline = (
-        f"**Prompt size** {_trend(sum(row.delta for row in changed))} "
+        f"**Prompt size** "
+        f"{_OVER_LIMIT if over_files else _trend(sum(row.delta for row in changed))} "
         f"{len(changed_files)} {'file' if len(changed_files) == 1 else 'files'} "
         f"changed size in this PR, "
-        f"{len({row.file for row in changed if row.over})} over the limit"
+        f"{len(over_files)} over the limit"
     )
     if not changed:
         return f"{badges}\n\n{headline}\n\nThis PR changes no prompt sizes.\n"
@@ -387,7 +421,7 @@ def render_markdown(rows: Sequence[Row]) -> str:
         headline,
         "\n".join(_table(_SUMMARY_HEADER, _summary_lines(sizes, totals))),
         _details("Details", _table(_DETAIL_HEADER, _detail_lines(sizes, totals))),
-        _details("Changed files", _table(_ROW_HEADER, _row_lines(changed))),
+        _details("Changed files", _changed_files_tables(changed)),
     ]
     return "\n\n".join(sections) + "\n"
 
