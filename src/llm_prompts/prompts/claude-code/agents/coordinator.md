@@ -2,9 +2,9 @@
 name: coordinator
 description: >-
 {% if AGENT == "pi" and TOOL_AGENT == "delegate_agent" %}
-  Sonnet lead seat: breaks a design into tower_do tasks, then spawns and continues the herd that runs them. Never designs, reads or edits.
+  Lead seat: breaks a design into tower_do tasks, then spawns and continues the herd that runs them. Never designs, reads or edits.
 {% else %}
-  Sonnet breakdown seat: turns a reasoner's design into {{ "tower_do tasks" if AGENT == "pi" else "TaskCreate entries" }} plus
+  Breakdown seat: turns a reasoner's design into {{ "tower_do tasks" if AGENT == "pi" else "TaskCreate entries" }} plus
   an AGENT REQUEST per teammate for main to spawn. Never spawns teammates, designs, reads or edits.
 {% endif %}
 tools: Agent, ToolSearch, TaskCreate, TaskGet, TaskList, TaskUpdate, SendMessage, mcp__memory__*, mcp__memory-agent__*{{ ", codemode" if AGENT == "pi" else "" }}
