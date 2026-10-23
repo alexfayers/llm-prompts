@@ -1,6 +1,6 @@
 ---
 name: llm-prompts-request
-description: Request a feature in llm-prompts, cline-hooks, or mcp-memory as a GitHub issue. Use when the user wants something added or changed in a rule, skill, hook, memory tool or CLI.
+description: Request a feature in llm-prompts, cline-hooks, or mcp-memory as a GitHub issue. Use when the user wants a rule, skill, hook, memory tool or CLI changed.
 ---
 
 # Requesting a feature

@@ -1,6 +1,7 @@
 ---
 name: pi-help
 description: Walk a new user through what is installed in pi and answer questions about it. Use when the user asks what is set up, how pi works here, or what a command, extension or agent does.
+disable-model-invocation: true
 ---
 
 # pi-help

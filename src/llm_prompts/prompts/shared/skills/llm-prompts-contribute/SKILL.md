@@ -1,6 +1,6 @@
 ---
 name: llm-prompts-contribute
-description: Open a PR in llm-prompts, cline-hooks, or mcp-memory - `llm-prompts contribute` for rule/skill/workflow/agent sources, gh otherwise. Use to open/update a PR.
+description: Open a PR in llm-prompts, cline-hooks, or mcp-memory. Use to open or update a PR.
 ---
 
 # Opening a PR
