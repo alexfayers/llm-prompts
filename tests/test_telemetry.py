@@ -318,6 +318,7 @@ def stubbed_cli(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         (["update", "--only", "/synthetic/rule.md"], False, "ok"),
         (["setup", "--dry-run"], False, "ok"),
         (["check"], False, "ok"),
+        (["update", "--only", "/synthetic/rule.md"], True, "size_guard_failed"),
     ],
 )
 def test_a_command_sends_at_most_one_event_naming_its_outcome(
@@ -472,3 +473,26 @@ def test_an_installing_command_captures_from_before_it_runs(
     properties = json.loads(posted.call_args.args[0])["properties"]
     assert properties["from"]["llm-prompts"]["commit"] == A
     assert properties["to"]["llm-prompts"]["commit"] == B
+
+
+@pytest.mark.usefixtures("stubbed_cli")
+@pytest.mark.parametrize(
+    ("argv", "outcome"),
+    [(["check"], "check_failed"), (["contribute", "list"], "usage_error")],
+)
+def test_a_failed_gate_or_usage_error_is_not_reported_as_an_error(
+    telemetry_popen: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
+    outcome: str,
+) -> None:
+    monkeypatch.setattr(
+        "llm_prompts.size_guard.check",
+        lambda _: MagicMock(passed=False, report=""),
+    )
+    monkeypatch.setattr("llm_prompts.setup._load_config", list)
+
+    assert _main(*argv) == 1
+
+    assert telemetry_popen.call_count == 1
+    assert _props(telemetry_popen)["outcome"] == outcome

@@ -1078,7 +1078,10 @@ def _run_command(run: telemetry.Run) -> int | None:
 
         only_source = partial_source(args.only) if args.only else None
         if only_source is not None:
-            sys.exit(1 if install_main(list(manifest), only=only_source) else 0)
+            if install_main(list(manifest), only=only_source):
+                run.outcome = "size_guard_failed"
+                sys.exit(1)
+            sys.exit(0)
 
         resumed = os.environ.pop(_UPDATE_RESUME_ENV, None)
         if resumed is None:
@@ -1130,8 +1133,9 @@ def _run_command(run: telemetry.Run) -> int | None:
 
         uninstall(None if args.agent == "all" else [args.agent], verbose=args.verbose)
     elif args.command == "check":
-        _run_size_check()
-        _run_extension_factory_check()
+        with run.exit_outcome("check_failed"):
+            _run_size_check()
+            _run_extension_factory_check()
     elif args.command == "size-report":
         from .size_report import build_report
 
@@ -1139,11 +1143,12 @@ def _run_command(run: telemetry.Run) -> int | None:
     elif args.command == "contribute":
         from .contribute import list_targets, sync_targets, update_targets
 
-        if args.tool is not None:
-            repo, prefix = _contribute_target(args.tool)
-            targets = [_ContributeTarget(args.tool, repo, prefix)]
-        else:
-            targets = _contribute_targets()
+        with run.exit_outcome("usage_error"):
+            if args.tool is not None:
+                repo, prefix = _contribute_target(args.tool)
+                targets = [_ContributeTarget(args.tool, repo, prefix)]
+            else:
+                targets = _contribute_targets()
         login = _get_gh_login()
         if args.contribute_command == "list":
             return list_targets(targets, login, _contribute_targets)

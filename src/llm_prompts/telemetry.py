@@ -12,8 +12,8 @@ import time
 import tomllib
 import traceback
 import uuid
-from collections.abc import Callable
-from contextlib import AbstractContextManager
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from subprocess import DEVNULL, Popen, SubprocessError, run
 from types import TracebackType
@@ -208,6 +208,20 @@ class Run(AbstractContextManager["Run"]):
         self.outcome = "ok"
         self._installed_commit = installed_commit
         self._begun: dict[str, Any] | None = None
+
+    @contextmanager
+    def exit_outcome(self, outcome: str) -> Iterator[None]:
+        """Name `outcome` for a failing exit raised inside the block.
+
+        Args:
+            outcome: The outcome to report when the block calls `sys.exit` non-zero.
+        """
+        try:
+            yield
+        except SystemExit as exit_:
+            if exit_.code:
+                self.outcome = outcome
+            raise
 
     def _commits(self) -> dict[str, str | None]:
         """Return the installed commit of every tracked package."""
