@@ -32,3 +32,15 @@ test("a non-local call from an extension is blocked and logged in every mode, an
 		assert.deepEqual(notices.map(([, level]) => level), notified ? ["warning"] : []);
 	}
 });
+
+test("a call from pi itself is not blocked when pi is listed as a package", async () => {
+	const core = "@earendil-works/pi-coding-agent";
+	const file = join(work, "node_modules", core, "probe.mjs");
+	fs.mkdirSync(join(work, "node_modules", core), { recursive: true });
+	fs.writeFileSync(file, "export const call = () => fetch('http://pi-core.invalid/')\n");
+	fs.writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ packages: [`npm:${core}@1.0.0`] }));
+	await ext.fire("session_start", {}, ext.makeCtx({ mode: "rpc", cwd: work }));
+	const probe = await import(pathToFileURL(file).href);
+	const error = await probe.call().then(() => "", (reason: Error) => String(reason.message));
+	assert.ok(!error.includes("net-guard"));
+});
