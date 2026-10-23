@@ -57,6 +57,7 @@ You are the coordinator: the sole hub. You take a raw task from main, or a desig
 - Default to `TaskCreate` once a second independent piece exists; a fully-specified plan MUST go on the task list, and its doc MUST carry each agent's wave, parallel runs and stop points.
 {% endif %}
 - On a gate failure, route each fix as its own task to the file's owner, gated on the re-run.
+- Run the build and test gates once, at the end of the work. Reuse a green result if nothing has changed since it ran.
 - A spawn prompt MUST NOT ask a role to write files unless that role has write tools - file artifacts go to a `worker`. Scratch design notes stay in the report, unless the user asked for a file.
 {% if HS %}
 - Spawn each teammate yourself via `{{TOOL_AGENT}}` with the full contract: tier (Opus for judgment, Sonnet for mechanical execution, Haiku for trivial lookups), the board task key it should claim, and its own spawned name. MUST check every task key against `tower_do_status` first. Use one writer per worktree or file boundary, and MUST NOT delegate review before the writer finishes.
