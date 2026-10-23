@@ -38,6 +38,7 @@ from llm_prompts.install import (
     _passes_requires_gate,
     _rendered_content,
     _targets_agent,
+    _warn_pi_version_drift,
     get_source_for_managed_file,
     partial_source,
     prompts_dir,
@@ -2269,3 +2270,59 @@ class TestInstallRoot:
 
         env = run.call_args.kwargs["env"]
         assert env["PI_CODING_AGENT_DIR"] == str(tmp_path / ".pi" / "agent")
+
+    def test_pi_itself_is_never_installed(self, tmp_path: Path) -> None:
+        with (
+            patch("llm_prompts.install.shutil.which", return_value="pi"),
+            patch("llm_prompts.install.subprocess.run") as run,
+        ):
+            set_root(tmp_path)
+            failed, installed = _install_pi_packages(
+                ["npm:@earendil-works/pi-coding-agent@1.2.0"],
+                {"@earendil-works/pi-coding-agent"},
+            )
+
+        run.assert_not_called()
+        assert not failed and not installed
+
+
+class TestPiVersionDrift:
+    @pytest.fixture(autouse=True)
+    def reset_root(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("llm_prompts.home._HOME.root", None)
+
+    @pytest.mark.parametrize(
+        ("installed", "expected"),
+        [
+            (
+                "1.1.9",
+                "[llm-prompts] pi 1.1.9 is behind the tested 1.2.0, run pi update",
+            ),
+            (
+                "1.10.0",
+                (
+                    "[llm-prompts] pi 1.10.0 is newer than tested 1.2.0 - if extensions break, "
+                    "report it with the llm-prompts-report-issue skill"
+                ),
+            ),
+            ("1.2.0\n", None),
+            (None, None),
+        ],
+    )
+    def test_reports_drift_from_the_pinned_version(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        installed: str | None,
+        expected: str | None,
+    ) -> None:
+        set_root(tmp_path)
+        if installed is not None:
+            version_file = tmp_path / ".pi" / "agent" / "install" / "current-version"
+            version_file.parent.mkdir(parents=True)
+            version_file.write_text(installed, encoding="utf-8")
+
+        _warn_pi_version_drift(["npm:@earendil-works/pi-coding-agent@1.2.0"])
+
+        err = capsys.readouterr().err
+        assert (expected in err) if expected else (err == "")
