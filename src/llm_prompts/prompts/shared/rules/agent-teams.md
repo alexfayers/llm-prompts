@@ -16,6 +16,7 @@ targets: claude-code, pi
 - MUST start one named `coordinator` per independent batch of asks, in parallel - MUST NOT route unrelated asks through one `coordinator`. Follow-ups within a batch MUST go to that batch's `coordinator` via `continue_agent`.
 - Main MUST route chained follow-ups on one problem (e.g. root cause, fix, verify, tidy) to a `coordinator`, not a chain of single leaves.
 - Teammate-side duties (claiming, reporting, handoff, rotation) live in agent definitions.
+- A read-only call (`gh`, `--help`, CR, file read) is done inline by main, never by a `coordinator`/agent.
 {% if AGENT == "pi" and TOOL_AGENT == "delegate_agent" %}
 - Flow: `coordinator` scopes the raw task via unnamed `Explore`, then spawns and owns `reasoner`/`worker`/`surveyor`/`reviewer` via `{{TOOL_AGENT}}`, reusing a finished one with `continue_agent`. Main spawns `coordinator` for 2+ units. For a genuinely single-unit ask, main MAY spawn one `worker`, `surveyor` or `reasoner` directly. Agents an agent starts are leaves. One job per tier, never another's.
 {% else %}
