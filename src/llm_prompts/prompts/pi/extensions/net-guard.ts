@@ -16,7 +16,7 @@ type Dispatcher = { dispatch: (options: { origin?: string | URL }, handler: unkn
 const INSTALLED = Symbol.for("llm-prompts.net-guard");
 const DISPATCHER_KEYS = ["undici.globalDispatcher.1", "undici.globalDispatcher.2"];
 const STACK_DEPTH = 100;
-const ALWAYS_ALLOWED = ["net-guard"];
+const ALWAYS_ALLOWED = ["net-guard", "@earendil-works/pi-coding-agent"];
 const LOCAL_HOST = /^(localhost|.*\.localhost|127(\.\d+){3}|::1|\[::1\]|0\.0\.0\.0|)$/i;
 const FRAME_PATH = /(?:\(|\s)(?:file:\/\/)?(\/[^\s():]+?)(?::\d+){0,2}\)?$/;
 
