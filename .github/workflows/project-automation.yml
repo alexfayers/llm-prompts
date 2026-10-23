@@ -12,7 +12,7 @@ on:
     types: [completed]
 
 concurrency:
-  group: project-automation-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_sha || github.ref }}
+  group: project-automation-${{ github.event_name == 'workflow_run' && format('run-{0}', github.event.workflow_run.head_sha) || github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
