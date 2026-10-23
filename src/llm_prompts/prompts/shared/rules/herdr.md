@@ -24,6 +24,9 @@ requires_command: herdr
 - MUST confirm the new agent is running from `herdr agent get`, not from its own words.
 - MUST NOT close the old session's pane until a reply containing `HANDOFF-ACK <id>` has arrived. Where the reply asks for more, MUST answer and wait for the next reply. Once a reply needs nothing more, MUST close only its own pane (`herdr pane close <id>`) as the last step.
 - On any failure, or if the reply never arrives, MUST keep the old pane open and report to the user. MUST NOT resend a stalled prompt.
+{% if AGENT == "pi" %}
+- MUST update pi-herdsman or other pi packages only when no agents are running, then restart pi. A mid-session update blocks `delegate_agent` until restart.
+{% endif %}
 
 ## Feature worktrees
 
