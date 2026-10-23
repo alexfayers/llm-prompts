@@ -62,9 +62,28 @@ async function evaluate({ github, context }) {
   return states.some(([, state]) => state === 'APPROVED') ? ['success', 'Approved by a code owner'] : ['pending', 'Needs a code owner approval'];
 }
 
+function minReviews(labels) {
+  const counts = labels.map(({ name }) => /^min-reviews:([12])$/.exec(name)?.[1]).filter(Boolean).map(Number);
+  return counts.length ? Math.max(...counts) : 0;
+}
+
+async function evaluateMinReviews({ github, context }) {
+  const pr = context.payload.pull_request;
+  const needed = minReviews(pr.labels ?? []);
+  if (needed === 0) {
+    return null;
+  }
+  const reviews = await github.paginate(github.rest.pulls.listReviews, { ...context.repo, pull_number: pr.number, per_page: 100 });
+  const author = pr.user.login.toLowerCase();
+  const approvals = [...latestReviewStates(reviews)].filter(([login, state]) => login !== author && state === 'APPROVED').length;
+  return approvals >= needed ? null : ['pending', `Needs ${needed} approval${needed > 1 ? 's' : ''} (${approvals} so far)`];
+}
+
 async function gate({ github, context }) {
   try {
-    await setStatus(github, context, ...(await evaluate({ github, context })));
+    const result = await evaluate({ github, context });
+    const required = result[0] === 'success' ? await evaluateMinReviews({ github, context }) : null;
+    await setStatus(github, context, ...(required ?? result));
   } catch (error) {
     await setStatus(github, context, 'error', 'Code owner review check failed to run');
     throw error;

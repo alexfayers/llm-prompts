@@ -92,6 +92,22 @@ test('requested changes keep the status pending until the review is dismissed', 
   assert.deepEqual(dismissed.calls, [['abc', 'codeowner-review', 'success']]);
 });
 
+test('a min-reviews label needs that many approvals from anyone but the author', async () => {
+  const owner = ['owner', 'APPROVED'];
+  for (const [reviews, labels, state] of [
+    [[owner], ['min-reviews:2'], 'pending'],
+    [[owner, ['stranger', 'APPROVED']], ['min-reviews:2'], 'pending'],
+    [[owner, ['alice', 'APPROVED']], ['min-reviews:2'], 'success'],
+    [[owner, ['alice', 'APPROVED'], ['alice', 'CHANGES_REQUESTED']], ['min-reviews:2'], 'pending'],
+    [[owner, ['alice', 'APPROVED']], ['min-reviews:1'], 'success'],
+    [[owner], [], 'success'],
+  ]) {
+    const f = fixture({ author: 'stranger', files: ['README.md'], reviews, labels });
+    await gate(f);
+    assert.deepEqual(f.calls, [['abc', 'codeowner-review', state]], JSON.stringify([reviews, labels]));
+  }
+});
+
 test('an API error sets the error status and still fails', async () => {
   const { github, context, calls } = fixture({ author: 'stranger', files: [] });
   github.paginate = async () => { throw new Error('boom'); };
