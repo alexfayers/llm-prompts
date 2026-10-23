@@ -1,12 +1,21 @@
 """Install Cline and Copilot rules, workflows, skills, and prompts."""
 
+import contextlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Collection, Container, Iterable, Mapping, Sequence
+from collections.abc import (
+    Callable,
+    Collection,
+    Container,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from dataclasses import dataclass, field
 from functools import cache, partial
 from importlib.metadata import distribution, packages_distributions
@@ -270,6 +279,32 @@ def _gating_value(frontmatter: dict[str, str], key: str, target: str) -> str:
     return frontmatter.get(_override_key(target, key), frontmatter.get(key, ""))
 
 
+_ASSUMED_COMMANDS: set[str] = set()
+
+
+@contextlib.contextmanager
+def assume_commands(*commands: str) -> Iterator[None]:
+    """Treat the given commands as on PATH for ``requires_*`` gates.
+
+    Args:
+        *commands: Command names to treat as present.
+
+    Yields:
+        Control, with the commands assumed present until the block exits.
+    """
+    added = set(commands) - _ASSUMED_COMMANDS
+    _ASSUMED_COMMANDS.update(added)
+    try:
+        yield
+    finally:
+        _ASSUMED_COMMANDS.difference_update(added)
+
+
+def _command_on_path(command: str) -> bool:
+    """Report whether a command is on PATH or assumed present."""
+    return command in _ASSUMED_COMMANDS or shutil.which(command) is not None
+
+
 def _passes_requires_gate(src: Path, target: str = "") -> bool:
     """Check a source file's ``requires_*`` frontmatter gates, if present.
 
@@ -308,10 +343,10 @@ def _requirements_met(declared: dict[str, str], target: str = "") -> bool:
     if required_env and not _env_var_set(required_env):
         return False
     required_command = _gating_value(declared, "requires_command", target)
-    if required_command and shutil.which(required_command) is None:
+    if required_command and not _command_on_path(required_command):
         return False
     absent_command = _gating_value(declared, "requires_absent_command", target)
-    return not (absent_command and shutil.which(absent_command) is not None)
+    return not (absent_command and _command_on_path(absent_command))
 
 
 def _target_names(src: Path, key: str, target: str = "") -> set[str]:
