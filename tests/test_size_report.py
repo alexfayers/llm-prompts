@@ -20,6 +20,7 @@ from llm_prompts.size_limits import (
     ON_DEMAND_ROLE_RULE_BYTES,
     ON_DEMAND_SKILL_BODY_BYTES,
     ON_DEMAND_WORKFLOW_BYTES,
+    PI_ROLE_PROMPT_BYTES,
     RULE_BYTES,
     RULE_LINES,
     START_BYTES,
@@ -241,6 +242,18 @@ class TestRenderMarkdown:
             in changed
         )
 
+    def test_pi_role_prompts_are_grouped_and_labelled_as_inlined_rules(self) -> None:
+        role = Row(
+            PI_ROLE_PROMPT_BYTES, ("pi",), "", "shared/agents/worker.md", 10, 12, 50_000
+        )
+        changed = render_markdown([_row(1, 2), role]).split("<details>")[2]
+        assert (
+            changed.index("rules/a.md")
+            < changed.index("pi role prompts grew because their inlined rules changed:")
+            < changed.index("| worker (pi, rules inlined) |")
+        )
+        assert "agents/worker.md" not in changed
+
     def test_all_checked_targets_render_as_all(self) -> None:
         row = Row(RULE_BYTES, CHECKED_TARGETS, "", "shared/rules/a.md", 1, 2, 5_000)
         assert "| rule_bytes | all |" in render_markdown([row])
@@ -258,7 +271,7 @@ class TestRenderMarkdown:
 
     def test_row_over_its_limit_gets_the_over_limit_emoji(self) -> None:
         assert (
-            "| &#x26A0;&#xFE0F; | rules/a.md | rule_bytes | claude-code | 1 | 5,001 | +5,000 | +500000.0% | 5,000 |"
+            "| &#x1F534; | rules/a.md | rule_bytes | claude-code | 1 | 5,001 | +5,000 | +500000.0% | 5,000 |"
             in render_markdown([_row(1, 5_001)])
         )
 
@@ -294,9 +307,9 @@ class TestRenderSummary:
         )
 
         assert self._blocks(report)[2] == (
-            "| | target | rules | frontmatter | bodies | start | worst case |\n"
-            "| :-: | --- | ---: | ---: | ---: | ---: | ---: |\n"
-            f"| &#x1F534; | claude-code | +10 | +3 | +10 | 126 (+9.6%)<br>{_tok(126)} "
+            "| | target | rules | frontmatter | bodies | agent bodies | start | worst case |\n"
+            "| :-: | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n"
+            f"| &#x1F7E1; | claude-code | +10 | +3 | +10 | - | 126 (+9.6%)<br>{_tok(126)} "
             f"| 180 (+12.5%)<br>{_tok(180)} |"
         )
 
@@ -312,7 +325,7 @@ class TestRenderSummary:
         )
 
         assert (
-            f"| &#x1F7E2; | kiro | -10 | - | - | 90 (-10.0%)<br>{_tok(90)} "
+            f"| &#x1F7E2; | kiro | -10 | - | - | - | 90 (-10.0%)<br>{_tok(90)} "
             f"| 90 (-10.0%)<br>{_tok(90)} |" in report
         )
 
@@ -342,7 +355,10 @@ class TestRenderSummary:
             ]
         )
 
-        assert f"| kiro | - | +40 | - | 40<br>{_tok(40)} | 40<br>{_tok(40)} |" in report
+        assert (
+            f"| kiro | - | +40 | - | - | 40<br>{_tok(40)} | 40<br>{_tok(40)} |"
+            in report
+        )
 
     def test_targets_with_identical_changes_share_a_row(self) -> None:
         report = render_markdown(
@@ -355,7 +371,7 @@ class TestRenderSummary:
         )
 
         assert (
-            f"| &#x1F534; | kiro, copilot | +10 | - | - | 110 (+10.0%)<br>{_tok(110)} "
+            f"| &#x1F7E1; | kiro, copilot | +10 | - | - | - | 110 (+10.0%)<br>{_tok(110)} "
             f"| 110 (+10.0%)<br>{_tok(110)} |" in self._blocks(report)[2]
         )
 
@@ -373,7 +389,7 @@ class TestRenderSummary:
         )
 
         assert (
-            f"| &#x1F534; | kiro, copilot | +10 | - | - | 110 (+10.0%)<br>{_tok(110)} "
+            f"| &#x1F7E1; | kiro, copilot | +10 | - | - | - | 110 (+10.0%)<br>{_tok(110)} "
             "| +10 |" in report
         )
 
@@ -392,10 +408,46 @@ class TestRenderSummary:
         assert "| kiro | +10 |" in summary
         assert "| copilot | +20 |" in summary
 
+    def test_a_target_changing_only_in_agent_bodies_is_in_the_summary(self) -> None:
+        report = render_markdown(
+            [
+                _collection(100, 100, "pi"),
+                _part(ON_DEMAND_AGENT_BODY_BYTES, 20, 30, "pi"),
+                _row(1, 2),
+            ]
+        )
+
+        summary = self._blocks(report)[2]
+        assert "| | target | rules | frontmatter | bodies | agent bodies |" in summary
+        assert "| pi | - | - | - | +10 |" in summary
+
+    def test_growth_within_the_limit_is_not_red(self) -> None:
+        report = render_markdown(
+            [
+                _collection(100, 110, "kiro"),
+                _part(ALWAYS_RULE_BYTES, 100, 110, "kiro"),
+                _row(100, 110),
+            ]
+        )
+
+        assert "&#x1F534;" not in report
+        assert "0 over the limit" in report
+
+    def test_badge_shows_the_change_in_parts_outside_the_worst_case(self) -> None:
+        report = render_markdown(
+            [
+                _collection(100, 100, "pi"),
+                _part(ON_DEMAND_AGENT_BODY_BYTES, 100, 110, "pi"),
+                _row(1, 2),
+            ]
+        )
+
+        assert "badge/pi-%2B5.0%25-" in report
+
     def test_worst_case_over_its_limit_gets_the_over_limit_emoji(self) -> None:
         over = Row(COLLECTION_BYTES, ("kiro",), "kiro", "-", 100, 60_000, 50_000)
 
-        assert "| &#x26A0;&#xFE0F; | kiro |" in render_markdown([over, _row(1, 2)])
+        assert "| &#x1F534; | kiro |" in render_markdown([over, _row(1, 2)])
 
     def test_details_hold_before_and_after_and_the_uncounted_parts(self) -> None:
         report = render_markdown(
@@ -418,25 +470,24 @@ class TestRenderSummary:
             "| role-only rules | start | worst case |" in details
         )
         assert (
-            "| &#x1F534; | kiro | 100 -> 110 (+10) | - | - | 20 -> 30 (+10) "
+            "| &#x1F7E1; | kiro | 100 -> 110 (+10) | - | - | 20 -> 30 (+10) "
             "| 0 -> 4 (+4) | 100 -> 110 (+10) | 100 -> 110 (+10) |" in details
         )
         assert "| copilot |" in details
         assert "codex" not in details
 
-    def test_agent_bodies_and_role_only_rules_are_not_in_the_summary(self) -> None:
+    def test_role_only_rules_are_not_in_the_summary(self) -> None:
         report = render_markdown(
             [
                 _collection(100, 110, "kiro"),
                 _part(ALWAYS_RULE_BYTES, 100, 110, "kiro"),
                 _part(ON_DEMAND_AGENT_BODY_BYTES, 20, 90, "kiro"),
-                _part(ON_DEMAND_ROLE_RULE_BYTES, 0, 70, "kiro"),
+                _part(ON_DEMAND_ROLE_RULE_BYTES, 0, 75, "kiro"),
                 _row(1, 2),
             ]
         )
 
-        assert "+90" not in self._blocks(report)[2]
-        assert "+70" not in self._blocks(report)[2]
+        assert "+75" not in self._blocks(report)[2]
 
     def test_tokens_are_estimated_from_one_bytes_per_token_constant(self) -> None:
         rows = [
