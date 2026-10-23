@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from functools import cache
 from itertools import takewhile
 from pathlib import Path
 from typing import Literal, NamedTuple
@@ -32,6 +33,13 @@ class SyncResult(NamedTuple):
     mode: Literal["reset", "rebased", "squash-synced", "failed"]
     replayed: int = 0
     detail: str = ""
+
+
+class _OpenPrCommit(NamedTuple):
+    """A commit of an open pull request and the head it belongs to."""
+
+    sha: str
+    head: str
 
 
 class LocalCommit(NamedTuple):
@@ -146,6 +154,10 @@ class _Bail(Exception):
     """A step could not prove the sync safe, so nothing may change; the message says why."""
 
 
+class _ReplayConflict(_Bail):
+    """A local commit conflicts with the upstream it is replayed onto."""
+
+
 class _Conflict(_Bail):
     """A three-way merge left conflicts in these paths."""
 
@@ -198,13 +210,22 @@ def _cherry(repo: Path, upstream: str, head: str, mark: str) -> list[str]:
 
 
 def _pull_heads(repo: Path, remote: str, refs: Sequence[str]) -> dict[str, str]:
-    heads = {
-        ref: sha
-        for sha, ref in (
-            line.split()
-            for line in _read(repo, "ls-remote", remote, *refs).splitlines()
-        )
-    }
+    return _fetch_missing(
+        repo,
+        remote,
+        {
+            ref: sha
+            for sha, ref in (
+                line.split()
+                for line in _read(repo, "ls-remote", remote, *refs).splitlines()
+            )
+        },
+    )
+
+
+def _fetch_missing(repo: Path, remote: str, heads: dict[str, str]) -> dict[str, str]:
+    if not heads:
+        return heads
     checked = _read(
         repo,
         "cat-file",
@@ -277,6 +298,40 @@ def _merged_pr_commits(
     return accepted, pr_commits
 
 
+def _open_pr_commits(repo: Path, remote: str) -> dict[_Identity, _OpenPrCommit]:
+    """Map each commit of an open pull request, by identity, to its current head version.
+
+    A pull request is open when its head is also the tip of a branch on the remote.
+    """
+    listing = [
+        line.split()
+        for line in _read(
+            repo, "ls-remote", remote, "refs/pull/*/head", "refs/heads/*"
+        ).splitlines()
+    ]
+    branch_tips = {sha for sha, ref in listing if ref.startswith("refs/heads/")}
+    heads = _fetch_missing(
+        repo,
+        remote,
+        {
+            ref: sha
+            for sha, ref in listing
+            if ref.startswith("refs/pull/") and sha in branch_tips
+        },
+    )
+    shas: dict[_Identity, str] = {}
+    commits: dict[_Identity, _OpenPrCommit] = {}
+    for head in heads.values():
+        for line in _read(
+            repo, "log", "--no-merges", "--format=%H%x09%at%x09%s", f"@{{u}}..{head}"
+        ).splitlines():
+            sha, _, rest = line.partition("\t")
+            identity = _identity(rest)
+            _record(shas, identity, sha)
+            commits.setdefault(identity, _OpenPrCommit(sha, head))
+    return commits
+
+
 def _merge_tree(repo: Path, base: str, ours: str, theirs: str) -> str:
     result = run_git(
         repo,
@@ -329,11 +384,37 @@ def _replay(repo: Path, tip: str, commit: LocalCommit) -> str:
     try:
         tree = _merge_tree(repo, f"{commit.sha}^", tip, commit.sha)
     except _Conflict as conflict:
-        raise _Bail(
+        raise _ReplayConflict(
             f"local commit {commit.sha[:12]} ({commit.subject}) conflicts with upstream"
             f" in {', '.join(conflict.paths)}"
         ) from conflict
     return _commit_as(repo, tree, tip, commit.sha)
+
+
+def _holds_every_change(repo: Path, commit: LocalCommit, head: str) -> bool:
+    try:
+        tree = _merge_tree(repo, f"{commit.sha}^", head, commit.sha)
+    except _Conflict:
+        return False
+    return tree == _read(repo, "rev-parse", f"{head}^{{tree}}").strip()
+
+
+def _replay_or_open_pr_version(
+    repo: Path,
+    tip: str,
+    commit: LocalCommit,
+    open_pr_commits: Callable[[], dict[_Identity, _OpenPrCommit]],
+) -> str:
+    try:
+        return _replay(repo, tip, commit)
+    except _ReplayConflict as conflict:
+        pr_commit = open_pr_commits().get((commit.authored_at, commit.subject))
+        if pr_commit is None or not _holds_every_change(repo, commit, pr_commit.head):
+            raise
+        try:
+            return _replay(repo, tip, commit._replace(sha=pr_commit.sha))
+        except _ReplayConflict:
+            raise conflict from None
 
 
 def _fixup_target(subject: str) -> str | None:
@@ -383,8 +464,12 @@ def _build_sync(repo: Path) -> SyncResult:
         if not _equivalent(repo, commit, pr_commits)
     ]
     tip = _read(repo, "rev-parse", "@{u}").strip()
+    open_pr_commits = cache(lambda: _open_pr_commits(repo, remote))
+    local_shas = {commit.sha for commit in local}
     for commit in replayed:
-        tip = _replay(repo, tip, commit)
+        tip = _replay_or_open_pr_version(
+            repo, tip, commit, open_pr_commits if commit.sha in local_shas else dict
+        )
     reset = run_git(repo, "reset", "--keep", tip)
     if reset.returncode != 0:
         return SyncResult("failed", detail=reset.stderr.strip())
