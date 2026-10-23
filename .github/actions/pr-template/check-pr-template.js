@@ -77,27 +77,35 @@ function countWords(prBody) {
     .filter(Boolean).length;
 }
 
-function countAddedLines(files) {
+function countChangedLines(files) {
   const kept = files.filter((f) => !LOCKFILE.test(f.filename));
+  const deleted = kept.filter((f) => f.status === 'removed');
+  const edited = kept.filter((f) => f.status !== 'removed');
+  const kindOf = (file) => (TEST_FILE.test(file.filename) ? 'test' : 'code');
   const lines = (file, sign) => (file.patch || '').split('\n').filter((l) => l[0] === sign).map((l) => l.slice(1).trim());
   const removed = new Map();
-  for (const text of kept.flatMap((f) => lines(f, '-')).filter((t) => /\w/.test(t))) {
-    removed.set(text, (removed.get(text) || 0) + 1);
-  }
-  const added = { code: 0, test: 0 };
-  for (const file of kept) {
-    const kind = TEST_FILE.test(file.filename) ? 'test' : 'code';
-    if (file.patch === undefined) added[kind] += file.additions;
-    for (const text of lines(file, '+')) {
-      if (removed.get(text) > 0) removed.set(text, removed.get(text) - 1);
-      else added[kind] += 1;
+  const changed = { code: 0, test: 0 };
+  for (const file of deleted) changed[kindOf(file)] += 1;
+  for (const file of edited) {
+    if (file.patch === undefined) changed[kindOf(file)] += file.additions + file.deletions;
+    for (const text of lines(file, '-')) {
+      removed.set(text, [...(removed.get(text) || []), kindOf(file)]);
     }
   }
-  return added;
+  for (const file of edited) {
+    for (const text of lines(file, '+')) {
+      if (removed.get(text)?.length && /\w/.test(text)) removed.get(text).pop();
+      else changed[kindOf(file)] += 1;
+    }
+  }
+  for (const kinds of removed.values()) {
+    for (const kind of kinds) changed[kind] += 1;
+  }
+  return changed;
 }
 
-function findYappyTier(words, addedLines) {
-  return YAPPY_TIERS.filter((t) => words > t.words || addedLines > t.lines).pop();
+function findYappyTier(words, changedLines) {
+  return YAPPY_TIERS.filter((t) => words > t.words || changedLines > t.lines).pop();
 }
 
 async function checkYappy({ github, context }) {
@@ -109,8 +117,8 @@ async function checkYappy({ github, context }) {
     per_page: 100,
   });
   const words = countWords(pr.body || '');
-  const added = countAddedLines(files);
-  const tier = findYappyTier(words, added.code + added.test);
+  const changed = countChangedLines(files);
+  const tier = findYappyTier(words, changed.code + changed.test);
   const issue = { owner: context.repo.owner, repo: context.repo.repo, issue_number: pr.number };
 
   for (const { name } of pr.labels || []) {
@@ -119,7 +127,7 @@ async function checkYappy({ github, context }) {
     }
   }
 
-  const moreTests = added.test > added.code;
+  const moreTests = changed.test > changed.code;
   const existing = await findStickyComment(github, context, YAPPY_MARKER);
   if (tier || moreTests) {
     const lines = [];
@@ -128,7 +136,7 @@ async function checkYappy({ github, context }) {
       lines.push(`This PR is ${tier.label}.\n`, `- What + Why: ${words} words (${tier.label} above ${tier.words})`);
     }
     const tierSuffix = tier ? `${tier.label} above ${tier.lines} total, ` : '';
-    lines.push(`- Added lines: ${added.code} code, ${added.test} test (${tierSuffix}lockfiles excluded)`);
+    lines.push(`- Changed lines: ${changed.code} code, ${changed.test} test (${tierSuffix}lockfiles excluded)`);
     if (moreTests) lines.push('- More test lines than code is kinda CRAZY');
     await upsertStickyComment(github, context, YAPPY_MARKER, lines.join('\n'), existing);
   } else if (existing) {

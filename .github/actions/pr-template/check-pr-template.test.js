@@ -103,7 +103,17 @@ test('check swaps the yappy label and posts one comment with the tier suffix', a
   assert.deepEqual(calls.slice(0, 2), [['removeLabel', 'very yappy'], ['addLabels', ['yappy']]]);
   assert.equal(calls.length, 3);
   assert.match(calls[2][1], /131 words/);
-  assert.match(calls[2][1], /152 code, 60 test \(yappy above 200 total, lockfiles excluded\)/);
+  assert.match(calls[2][1], /153 code, 60 test \(yappy above 200 total, lockfiles excluded\)/);
+});
+
+test('check counts a whole deleted file as one changed line', async () => {
+  const files = [
+    { filename: 'src/gone.js', status: 'removed', patch: lines('gone', 150).replaceAll('+', '-') },
+    { filename: 'src/app.js', patch: '+code' },
+  ];
+  const calls = await runCheck({ files });
+
+  assert.deepEqual(calls, []);
 });
 
 test('check warns about more test lines than code without a tier', async () => {
