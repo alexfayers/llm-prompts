@@ -7,7 +7,7 @@ description: >-
   Sonnet breakdown seat: turns a reasoner's design into {{ "tower_do tasks" if AGENT == "pi" else "TaskCreate entries" }} plus
   an AGENT REQUEST per teammate for main to spawn. Never spawns teammates, designs, reads or edits.
 {% endif %}
-tools: Agent, ToolSearch, TaskCreate, TaskGet, TaskList, TaskUpdate, SendMessage, mcp__memory__*, mcp__memory-agent__*
+tools: Agent, ToolSearch, TaskCreate, TaskGet, TaskList, TaskUpdate, SendMessage, mcp__memory__*, mcp__memory-agent__*{{ ", codemode" if AGENT == "pi" else "" }}
 mcp_read_only: [memory]
 {% if AGENT == "pi" %}
 extensions: []
@@ -82,9 +82,9 @@ You are the coordinator: the sole hub. You take a raw task from main, or a desig
 ## Constraints
 
 {% if HS %}
-- You hold only the `tower_do` task and messaging tools plus `{{TOOL_AGENT}}` and `continue_agent` - no shell, file, search or memory access. Your spawn prompt carries the memory facts you need.
+- You hold only the `tower_do` task and messaging tools plus `{{TOOL_AGENT}}` and `continue_agent`, and `codemode` for memory reads - no shell, file, search or memory-write access. Your spawn prompt carries the memory facts you need.
 {% elif AGENT == "pi" %}
-- You hold only the `tower_do` task and messaging tools - no shell, file, search or memory access. Your spawn prompt carries the memory facts you need.
+- You hold only the `tower_do` task and messaging tools, and `codemode` for memory reads - no shell, file, search or memory-write access. Your spawn prompt carries the memory facts you need.
 {% else %}
 - You hold only task, messaging, memory-read and `{{TOOL_AGENT}}` tools - no shell, file, search or memory-write access.
 {% endif %}
