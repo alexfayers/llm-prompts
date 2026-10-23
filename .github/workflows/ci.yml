@@ -15,7 +15,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
-      - uses: extractions/setup-just@v4
+      - uses: ./.github/actions/setup-just
       - run: uv sync --locked
       - run: just lint-check
 
@@ -26,7 +26,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
-      - uses: extractions/setup-just@v4
+      - uses: ./.github/actions/setup-just
       - run: uv sync --locked
       - run: just type-check
       - uses: pnpm/action-setup@v6
@@ -48,7 +48,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
-      - uses: extractions/setup-just@v4
+      - uses: ./.github/actions/setup-just
       - run: uv sync --locked
       - run: just test
       - uses: py-cov-action/python-coverage-comment-action@v4.5
@@ -63,7 +63,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
-      - uses: extractions/setup-just@v4
+      - uses: ./.github/actions/setup-just
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
@@ -105,5 +105,5 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
-      - uses: extractions/setup-just@v4
+      - uses: ./.github/actions/setup-just
       - run: just test-actions
