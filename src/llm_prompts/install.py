@@ -699,7 +699,8 @@ def _parse_roles(content: str, label: str) -> frozenset[str]:
         label: Rule name for error messages.
 
     Returns:
-        The declared roles, or ``{"core"}`` when the rule declares none.
+        The declared roles, or ``{"core"}`` when the rule declares none or
+        declares ``all``.
 
     Raises:
         ValueError: ``roles`` is empty, malformed, or names an unknown role
@@ -714,11 +715,13 @@ def _parse_roles(content: str, label: str) -> frozenset[str]:
     if not declared:
         return frozenset({"core"})
     tokens = [t.strip() for t in declared[0].strip().strip("'\"").split(",")]
+    if tokens == ["all"]:
+        return frozenset({"core"})
     roles = frozenset(tokens)
     if "" in roles or not roles <= _RULE_ROLES:
         raise ValueError(
             f"{label}: invalid roles '{declared[0].strip()}' - "
-            f"omit roles for a core rule, or use any of {sorted(_RULE_ROLES)}"
+            f"use 'all' (or omit roles) for a core rule, or any of {sorted(_RULE_ROLES)}"
         )
     return roles
 
