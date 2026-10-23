@@ -11,7 +11,7 @@ targets: claude-code, pi
 {% else %}
 - Where `AskUserQuestion` is deferred, MUST load it via `ToolSearch` with `select:AskUserQuestion` first.
 {% endif %}
-- MUST list the recommended option first. MUST put context the answer depends on in the question or option descriptions.
+- MUST list the recommended option first. MUST put context the answer depends on in the question or option descriptions. MUST NOT rely on reply text above the question - the dialog hides it. Where the context is the decision (a plan, a diff), MUST {% if AGENT == "pi" %}pass it with `contextExpanded: true`{% else %}put it in the question itself{% endif %}.
 - Re-asking a pending ask per `anti-yap.md` MUST use the tool again.
 - Statements, status notes and rhetorical phrasing are not questions; MUST NOT end a message with a question outside the tool.
 - A subagent or teammate MUST NOT ask the user - it escalates to its lead per `agent-teams.md` and `stop-on-fail.md`; the session talking to the user asks.
