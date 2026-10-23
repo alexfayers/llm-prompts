@@ -13,7 +13,7 @@ targets: claude-code, pi
 {% endif %}
   - A foreseeable-blocker stop (size/lint gate, permission denial, build slot) implies follow-up: name it.
 {% if AGENT == "pi" %}
-  - By job, the cheapest installed model that meets it; escalate on evidence. A model is not a role.
+  - By job, the cheapest installed model that meets it; escalate on evidence.
   - Judgment (`opus`-class) - design, architecture, root-cause work, debugging, planning, synthesis.
   - Mechanical (`sonnet`-class) - decided parallel work: edit pattern, bounded search.
   - Lookup (`haiku`-class) - a lookup, exact change, known shell recipe; never real reasoning.
@@ -22,7 +22,7 @@ targets: claude-code, pi
   - **Sonnet** - parallel mechanical work Opus decided: edit pattern, bounded search.
   - **Haiku** - trivial work: a lookup, exact change, known shell recipe. Judgment, not file count, sets tier; never real reasoning.
 {% endif %}
-- A known target (file, symbol, doc) is a trivial lookup: SHOULD go to {% if AGENT == "pi" %}the lookup agent{% else %}Haiku{% endif %}, or read it yourself if cheaper; MUST NOT let it become "go find out about X". 2+ units go to `coordinator`.
+- A known target (file, symbol, doc) is a trivial lookup: SHOULD go to {% if AGENT == "pi" %}the lookup agent{% else %}Haiku{% endif %}, or read it yourself if cheaper; MUST NOT let it become "find out about X". 2+ units go to `coordinator`.
 - A spawn commits that dimension: MUST NOT resume reads on it or re-read its report; {% if AGENT == "pi" %}`{{TOOL_STEER}}`{% else %}`SendMessage`{% endif %} instead.
 - Design/editor agents MUST NOT run tests.
 
@@ -33,7 +33,7 @@ targets: claude-code, pi
 {% else %}
 - MUST use only named tiers, passing the installed `<tier>-<model>-<effort>` name (e.g. `reasoner-opus-high`), never the bare tier - `reasoner` ({% if AGENT == "pi" %}judgment{% else %}Opus{% endif %}, holds `{{TOOL_AGENT}}`{% if AGENT == "pi" %}, `Explore` only{% endif %}), `worker` (mechanical), `surveyor` (read-only), `coordinator` (breakdown, `Explore`-only `{{TOOL_AGENT}}`); never `general-purpose`.
 {% endif %}
-- `Explore`/`Plan` inherit no rules: their prompt MUST carry every binding constraint. SHOULD prefer `Explore` over `surveyor` for bounded read-only search.
+- `Explore`/`Plan` inherit no rules: their prompt MUST carry every binding constraint. SHOULD prefer `Explore` to `surveyor` for bounded read-only search.
 {% if AGENT == "pi" %}
 {% if TOOL_AGENT == "delegate_agent" %}
 - Main spawns `coordinator` or `reasoner`; `coordinator` spawns the rest. `Explore` runs foreground, result inline. Children are leaves.
@@ -51,42 +51,42 @@ State the change concisely, not derivable mechanics unless risky/ambiguous. {% i
 Every spawn prompt MUST specify:
 
 {% if AGENT == "pi" %}
-- the memory/MCP facts it needs (it has no such tools);
+- the memory/MCP facts it needs (no such tools);
 {% endif %}
-- source order - local checkout, internal/official docs, public web last - report back if unanswered, never widen silently;
+- source order - local checkout, internal/official docs, public web last - report back if unanswered, never widen;
 - for a tracked task (memory `task/`, plan slice, ticket): decisions recorded against it;
 - the scope boundary it MUST NOT cross - remote/live systems: read-only, naming disallowed mutations;
-- lint/formatting/test conventions: package config (`pyproject.toml` or equiv) is authority - MUST match the file edited, not memory/global preferences;
-- where the prompt pins a shape (signature, return type, format) and says match a sibling, MUST reconcile the two, not leave a contradiction;
+- lint/format/test conventions: package config (`pyproject.toml` or equiv) is authority, not memory/global preferences - MUST match the file edited;
+- where the prompt pins a shape (signature, return type, format) and says match a sibling, MUST reconcile the two;
 - for code/prose, the output-size limit - minimal diff, no unrequested comments/refactors/reformatting, terse report.
-- for a UI/visual change: coding.md's rendered check, reported as seen - MUST NOT accept "done" from a test pass or a "folded into another slice" claim.
-- for a shell-restricted delegate: name {% if AGENT == "pi" %}`read`/`grep`/`find`{% else %}Read/Grep/Glob{% endif %} for investigation, plus exactly which command it MAY still run - an unstated need never authorizes {% if AGENT == "pi" %}`bash`{% else %}Bash{% endif %}.
+- for a UI/visual change: coding.md's rendered check, reported as seen - MUST NOT accept "done" from a test pass or "folded into another slice".
+- for a shell-restricted delegate: name {% if AGENT == "pi" %}`read`/`grep`/`find`{% else %}Read/Grep/Glob{% endif %} for investigation, and exactly which command it MAY run - never implicit {% if AGENT == "pi" %}`bash`{% else %}Bash{% endif %}.
 - MUST NOT ask a role without write tools to write files - artifacts go to a `worker`. Scratch notes stay in the report unless a file was requested.
-- a delegate asked a question MUST report the answer, never raw output or verbatim file text, except a failure, error or named value. A drafted edit returns new wording only.
-
+- a delegate asked a question MUST report the answer, never raw output or file text, except a failure, error or named value. A drafted edit returns new wording only.
 - For a code comment, state policy/convention, not draft prose.
 - A design/planning prompt MUST route full output to implementers, plus a few lines to main: what changes, what it buys, the risk. MUST NOT make it main's deliverable.
 
 ## Parallelise by default
 
-- SHOULD parallelise decomposable work, design and research included; serial only where a step needs prior output.
+- SHOULD parallelise decomposable work, design and research included; serial only when a step needs prior output.
 - On an open design question, SHOULD dispatch a few {% if AGENT == "pi" %}judgment{% else %}Opus{% endif %} delegates on different angles and synthesize.
 
 ## Effort, not model tier
 
 - Unset, a delegate inherits the spawner's effort: {% if AGENT == "pi" %}a mechanical/lookup agent SHOULD run `low`/`medium`{% else %}a mechanical Sonnet/Haiku SHOULD run `low`/`medium`{% endif %}.
-- Within {% if AGENT == "pi" %}judgment{% else %}Opus{% endif %}: a quick or two-option call is `medium`; `high`/`xhigh` only for architecture, hard root cause, or cross-source synthesis.
+- Within {% if AGENT == "pi" %}judgment{% else %}Opus{% endif %}: a quick or two-option call is `medium`; `high`/`xhigh` only for architecture, hard root cause, cross-source synthesis.
 - {% if AGENT != "pi" %}`{{TOOL_AGENT}}` has no `effort` param - a{% else %}A{% endif %} delegate runs at its `subagent_type`'s pin{% if TOOL_WORKFLOW %}; `{{TOOL_WORKFLOW}}`'s `agent()` takes `opts.effort`{% if AGENT == "pi" %} (minimal/low/medium/high/xhigh/max){% endif %}{% endif %}.
 
 ## Escalation and waiting
 
-- A delegate stuck on ambiguity or needing a user-only preference SHOULD escalate.
-- A delegate whose work outgrows its own estimate (more steps, files or phases than assumed) MUST stop and escalate up the ownership edge, stating that more agents may be faster. MUST NOT grind on alone.
-- MUST NOT idle-wait on a background agent/command, `sleep` or placeholder - completion re-invokes you; do other work or end the turn.{% if AGENT == "pi" %} Under `pi -p`, MUST `{{TOOL_AGENT_RESULT}}` each background agent first.{% else %} Exception: while a delegate runs, MUST keep a background `sleep 300` armed; if it fires with no update, MUST `SendMessage` it for status.{% endif +%}
+- A delegate stuck on ambiguity or needing a user preference SHOULD escalate.
+- A delegate whose work outgrows its estimate (more steps, files or phases) MUST stop and escalate up the ownership edge, noting more agents may be faster. MUST NOT grind on alone.
+- MUST NOT idle-wait on a background agent/command, `sleep` or placeholder - completion re-invokes you; work on or end the turn.{% if AGENT == "pi" %} Under `pi -p`, MUST `{{TOOL_AGENT_RESULT}}` each background agent first.{% else %} Exception: while a delegate runs, MUST keep a background `sleep 300` armed; if it fires with no update, MUST `SendMessage` it for status.{% endif +%}
 {% if AGENT == "pi" %}
 {% if TOOL_AGENT == 'delegate_agent' %}
-- MUST `continue_agent` a finished agent's exact session for same-scope follow-up (fix, gate retry, missing section), never a fresh delegate/re-derive.
-- Results arrive on their own. A `Plan` agent means a named `reasoner`. Outside a Herdr pane `delegate_agent` is unavailable; work inline.
+- MUST `continue_agent` a finished agent's exact session for same-scope follow-up (fix, gate retry, missing section), never a fresh delegate.
+- Results arrive on their own. `Plan` means a named `reasoner`. Outside a Herdr pane `delegate_agent` is unavailable; work inline.
+- On "input contains a N-byte line ... 1024-byte limit" from `delegate_agent` or `continue_agent`, MUST retry `delegate_agent` once with the earlier result ref in `files`.
 {% else %}
 - Resume a finished NAMED delegate with `{{TOOL_AGENT}}` - ask for a missing/truncated section, not a re-derive.
 {% endif %}
