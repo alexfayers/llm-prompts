@@ -387,6 +387,32 @@ class TestSquashSync:
             "tree-l4",
         ]
 
+    def test_conflicting_commit_of_an_open_pull_request_is_replaced_by_its_head_commit(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        _route_open_pull_request(fake_subprocess, local_change_tree="tree-h9")
+
+        assert sync_diverged(REPO) == SyncResult("squash-synced", replayed=1)
+
+        (replay,) = _commit_tree_calls(fake_subprocess)
+        assert replay[0][-5:] == ["tree-o1", "-p", "tip0", "-F", "-"]
+        assert fake_subprocess.matching("log", "-1")[0][-1] == "o1"
+        assert fake_subprocess.matching(
+            "merge-tree", "--write-tree", "--name-only", "--merge-base=o1^"
+        )[0][-2:] == ["tip0", "o1"]
+        assert fake_subprocess.commands[-1][-3:] == ["reset", "--keep", "tip1"]
+
+    def test_a_local_change_missing_from_the_pull_request_is_kept_and_sync_stops(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        _route_open_pull_request(fake_subprocess, local_change_tree="tree-with-fix")
+
+        _assert_untouched_bail(
+            fake_subprocess,
+            "local commit l1 (local work) conflicts with upstream in a.txt",
+        )
+        assert _commit_tree_calls(fake_subprocess) == []
+
     def test_failed_keep_reset_is_reported_without_a_soft_reset(
         self, fake_subprocess: FakeSubprocess
     ) -> None:
@@ -420,6 +446,40 @@ def _route_fixup_group(fake: FakeSubprocess) -> None:
     )
     fake.on("commit-tree", stdout=["g1\n", "tip1\n"])
     fake.on("rev-parse", "g1^{tree}", stdout="tree-l3\n")
+
+
+def _route_open_pull_request(fake: FakeSubprocess, local_change_tree: str) -> None:
+    """Route l1 as conflicting upstream, with open PR 9 (head h9) holding its version o1.
+
+    Replaying l1 onto h9 gives local_change_tree, to compare with h9's tree.
+    """
+    _route_divergence(fake)
+    fake.on(
+        "merge-tree",
+        "--write-tree",
+        "--name-only",
+        "--merge-base=l1^",
+        returncode=1,
+        stdout="tree\na.txt\n",
+    )
+    fake.on(
+        "merge-tree",
+        "--write-tree",
+        "--name-only",
+        "--merge-base=o1^",
+        stdout="tree-o1\n",
+    )
+    fake.on_match(
+        lambda argv: "merge-tree" in argv and argv[-2:] == ["h9", "l1"],
+        stdout=f"{local_change_tree}\n",
+    )
+    fake.on("rev-parse", "h9^{tree}", stdout="tree-h9\n")
+    fake.on_match(
+        lambda argv: "refs/heads/*" in argv,
+        stdout="h9\trefs/pull/9/head\nh9\trefs/heads/me/contribute/work\n"
+        "h8\trefs/pull/8/head\n",
+    )
+    fake.on_match(lambda argv: "@{u}..h9" in argv, stdout="o1\t100\tlocal work\n")
 
 
 def _assert_untouched_bail(fake: FakeSubprocess, reason: str) -> None:
