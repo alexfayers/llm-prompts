@@ -42,6 +42,7 @@ from .install import (
     _rendered_content,
     _resolve_priority_sources,
     _targets_agent,
+    assume_commands,
     content_subdirs,
     prompts_dir,
 )
@@ -124,6 +125,9 @@ class CheckResult:
     report: str
     declaration_errors: list[str] = field(default_factory=list)
     stale: list[str] = field(default_factory=list)
+
+
+MEASURED_AS_PRESENT = ("herdr",)
 
 
 def _own_root_dir() -> Path:
@@ -842,19 +846,20 @@ def check(
     """
     from .collection_size import collection_artifacts, evaluate_collection
 
-    roots = list(roots)
-    declaration_errors = []
-    for root in roots:
-        _, errors = _declared_allowances(root)
-        declaration_errors.extend(errors)
-    artifacts = list(iter_artifacts(roots, targets, vars_root))
-    if "pi" in targets:
-        artifacts.extend(_iter_pi_role_artifacts(roots, vars_root))
-    violations = evaluate(artifacts)
-    collection = collection_artifacts(roots, targets, vars_root)
-    artifacts.extend(collection)
-    violations.extend(evaluate_collection(collection))
-    stale = stale_allowance_lines(roots, artifacts)
+    with assume_commands(*MEASURED_AS_PRESENT):
+        roots = list(roots)
+        declaration_errors = []
+        for root in roots:
+            _, errors = _declared_allowances(root)
+            declaration_errors.extend(errors)
+        artifacts = list(iter_artifacts(roots, targets, vars_root))
+        if "pi" in targets:
+            artifacts.extend(_iter_pi_role_artifacts(roots, vars_root))
+        violations = evaluate(artifacts)
+        collection = collection_artifacts(roots, targets, vars_root)
+        artifacts.extend(collection)
+        violations.extend(evaluate_collection(collection))
+        stale = stale_allowance_lines(roots, artifacts)
     return CheckResult(
         passed=not violations and not declaration_errors,
         artifacts=artifacts,
@@ -1048,18 +1053,19 @@ def check_source(
     root = _owning_root(source)
     if root is None:
         return CheckResult(True, [], [], format_report([]))
-    rel_parts = source.relative_to(root).parts
-    allowances, _ = _declared_allowances(root)
+    with assume_commands(*MEASURED_AS_PRESENT):
+        rel_parts = source.relative_to(root).parts
+        allowances, _ = _declared_allowances(root)
 
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        artifacts = list(
-            _iter_source_artifacts(
-                Path(tmp_dir), rel_parts, content, targets, allowances
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            artifacts = list(
+                _iter_source_artifacts(
+                    Path(tmp_dir), rel_parts, content, targets, allowances
+                )
             )
-        )
-    if "pi" in targets and _affects_pi_roles(rel_parts):
-        artifacts.extend(_iter_pi_role_artifacts_with(source, content, rel_parts))
-    artifacts = [replace(a, source=source) for a in artifacts]
+        if "pi" in targets and _affects_pi_roles(rel_parts):
+            artifacts.extend(_iter_pi_role_artifacts_with(source, content, rel_parts))
+        artifacts = [replace(a, source=source) for a in artifacts]
 
     violations = evaluate(artifacts)
     return CheckResult(
