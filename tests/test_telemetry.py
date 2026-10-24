@@ -100,19 +100,27 @@ def test_event_carries_only_allowlisted_properties(
     }
     assert properties["from"]["cline-hooks"] == {
         "commit": None,
+        "base": None,
         "local": True,
         "dirty": None,
         "ahead": None,
     }
     assert properties["from"]["llm-prompts"] == {
         "commit": A,
+        "base": A,
         "local": False,
         "dirty": False,
         "ahead": None,
     }
     assert properties["overlay_count"] == 4
     assert properties["overlays"] == {
-        "pub-overlay": {"commit": A, "local": False, "dirty": False, "ahead": None}
+        "pub-overlay": {
+            "commit": A,
+            "base": A,
+            "local": False,
+            "dirty": False,
+            "ahead": None,
+        }
     }
     assert properties["schema"] == 2
     assert "acme-internal" not in json.dumps(properties)
@@ -127,7 +135,7 @@ def _git(repo: Path, *args: str) -> str:
 
 
 @pytest.mark.real_io
-def test_a_git_checkout_source_reports_its_head_and_whether_it_is_dirty(
+def test_a_git_checkout_source_reports_its_base_on_origin_main_and_whether_it_is_dirty(
     telemetry_popen: MagicMock, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The detached sender inspects local checkouts, not the command."""
@@ -148,6 +156,7 @@ def test_a_git_checkout_source_reports_its_head_and_whether_it_is_dirty(
         "x",
     )
     _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    base = _git(repo, "rev-parse", "HEAD")
     commit = ("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q")
     _git(repo, *commit, "--allow-empty", "-m", "y")
     head = _git(repo, "rev-parse", "HEAD")
@@ -170,16 +179,42 @@ def test_a_git_checkout_source_reports_its_head_and_whether_it_is_dirty(
         telemetry.deliver(telemetry_popen.call_args.args[0][3])
         sent = json.loads(posted.call_args.args[0])["properties"]
         telemetry_popen.reset_mock()
-        expected = {"commit": head, "local": True, "dirty": dirty, "ahead": 1}
+        expected = {
+            "commit": None,
+            "base": base,
+            "local": True,
+            "dirty": dirty,
+            "ahead": 1,
+        }
         assert sent["from"]["cline-hooks"] == expected
         assert sent["to"]["cline-hooks"] == expected
         assert sent["from"]["mcp-memory"] == {
             "commit": None,
+            "base": None,
             "local": True,
             "dirty": None,
             "ahead": None,
         }
         assert str(tmp_path) not in posted.call_args.args[0]
+        assert head not in posted.call_args.args[0]
+
+
+@pytest.mark.real_io
+def test_a_checkout_without_origin_main_names_no_commit(tmp_path: Path) -> None:
+    _git(tmp_path, "init", "-q")
+    identity = ("-c", "user.name=t", "-c", "user.email=t@t")
+    _git(tmp_path, *identity, "commit", "-q", "--allow-empty", "-m", "x")
+    (tmp_path / "f").write_text("x")
+
+    state = telemetry._checkout_state(str(tmp_path))
+
+    assert state == {
+        "commit": None,
+        "base": None,
+        "local": True,
+        "dirty": True,
+        "ahead": None,
+    }
 
 
 def test_post_verifies_certificates_with_the_system_trust_store(
@@ -380,6 +415,7 @@ def test_a_failed_command_also_sends_an_exception_event_without_paths_or_message
     assert not any(Path(f["filename"]).is_absolute() for f in frames)
     assert raised["properties"]["command"] == "update"
     assert raised["properties"]["llm_prompts_commit"]["commit"] == A
+    assert raised["properties"]["llm_prompts_commit"]["base"] == A
     sent = json.dumps(_events(telemetry_popen))
     assert home not in sent
     assert "secret.md" not in sent
