@@ -62,8 +62,27 @@ Added a new widget.
 `;
 
   const issues = findBodyIssues(parsed, body);
+  assert.ok(issues.some((issue) => /## Rationale.*empty/.test(issue)));
+});
+
+test('findBodyIssues fails when a placeholder comment is left in a filled body', () => {
+  const parsed = parseTemplateSections(TEMPLATE);
+  const body = `## Summary
+
+Added a new widget.
+
+## Rationale
+
+Users asked for it.
+
+## Dependencies
+
+<!-- Depends on #N -->
+`;
+
+  const issues = findBodyIssues(parsed, body);
   assert.equal(issues.length, 1);
-  assert.match(issues[0], /## Rationale/);
+  assert.match(issues[0], /<!--/);
 });
 
 const lines = (prefix, count) => Array.from({ length: count }, (_, i) => `+${prefix} ${i}`).join('\n');

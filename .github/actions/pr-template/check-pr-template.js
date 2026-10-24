@@ -40,6 +40,10 @@ function findBodyIssues(templateSections, prBody) {
   const prSections = parseSections(prBody);
   const issues = [];
 
+  if (prBody.includes('<!--')) {
+    issues.push('Remove every leftover "<!--" placeholder comment');
+  }
+
   for (const templateSection of sections) {
     if (OPTIONAL_SECTIONS.includes(templateSection.heading)) {
       continue;

@@ -32,8 +32,6 @@ requires_command: herdr
 
 - A coordinator running a parallel feature agent SHOULD open it in its own worktree with `herdr worktree open --workspace <id>` on branch `feat/<name>`.
 - Children inherit the coordinator's cwd. MUST start the coordinator inside the worktree.
-- Each worktree agent MUST make at most one commit and MUST NOT push.
-- Main integrates that commit by fast-forward, rebase or cherry-pick. A fixup onto the unpushed commit is fine.
 - A worktree agent MUST NOT run `llm-prompts update`. Main runs it after merging, because the install comes from the main checkout.
 - A worktree needs its own `uv sync` and `uv run` venv.
 - The pane-reaper extension only reports clean merged worktrees as safe to remove. Main MUST remove them, after merging: run `herdr worktree remove --workspace <id>`, then `git branch -d` the branch. Herdr keeps the branch.
