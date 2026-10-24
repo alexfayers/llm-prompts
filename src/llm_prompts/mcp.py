@@ -7,6 +7,7 @@ import json
 import re
 from collections.abc import Callable, Sequence
 from functools import cache
+from http.client import HTTPException
 from typing import Any, NamedTuple
 from urllib.request import Request, urlopen
 
@@ -151,11 +152,13 @@ def _excluded_tools(
     """
     tools: list[dict[str, Any]] = []
     if entry.get("url") and not entry.keys() & {"headers", "oauth"}:
-        try:
-            tools = _tools(entry["url"])
-            names = [_tool_name(namespace, tool["name"], naming) for tool in tools]
-        except (OSError, ValueError, KeyError, TypeError):
-            tools = []
+        for _ in range(2):
+            try:
+                tools = _tools(entry["url"])
+                names = [_tool_name(namespace, tool["name"], naming) for tool in tools]
+                break
+            except (HTTPException, OSError, ValueError, KeyError, TypeError):
+                tools = []
     if not tools or any(len(name) > naming.limit for name in names):
         warn(
             f"Could not read MCP server {namespace}'s tool annotations; agents with mcp_read_only exclude all its tools."
