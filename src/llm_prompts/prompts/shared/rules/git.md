@@ -10,3 +10,8 @@ roles: lead, worker, reviewer
 - A plan's commit split MUST NOT override that rule. MUST apply it to each planned commit and fold it into the matching commit with `--fixup=` if it fails.
 - MUST rewrite only unpushed commits, per `git-usage`. MUST NOT use reorder, drop or reword merely to combine commits.
 - MUST include at least one "Commit changes" item when building a {{TASK_PROGRESS}} checklist, and SHOULD add commit steps throughout it not only at the end.
+- A PR SHOULD be one self-contained change, often one part of a feature, with its related tests.
+- ~100 changed lines is usually fine and ~1000 usually too large. This is a guideline, not a target, and the reviewer decides.
+- Many files make a change bigger. A deleted file or a trusted tool-generated refactor counts as small.
+- Refactors SHOULD go in a separate PR.
+- One logical change stays one commit.
