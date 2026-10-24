@@ -88,13 +88,13 @@ Users asked for it.
 const lines = (prefix, count) => Array.from({ length: count }, (_, i) => `+${prefix} ${i}`).join('\n');
 const MARKER = '<!-- pr-yappy-check -->\n';
 
-async function runCheck({ files, body = '## What\n\nA.\n\n## Why\n\nB.', labels = [], comments = [], user }) {
+async function runCheck({ files, body = '## What\n\nA.\n\n## Why\n\nB.', staleBody = body, labels = [], comments = [], user, core = {} }) {
   const calls = [];
   const record = (name, key) => async (args) => calls.push([name, args[key]]);
   const github = {
     paginate: async (method) => (method === github.rest.pulls.listFiles ? files : comments),
     rest: {
-      pulls: { listFiles: () => {} },
+      pulls: { listFiles: () => {}, get: async () => ({ data: { body } }) },
       issues: {
         removeLabel: record('removeLabel', 'name'),
         addLabels: record('addLabels', 'labels'),
@@ -103,8 +103,8 @@ async function runCheck({ files, body = '## What\n\nA.\n\n## Why\n\nB.', labels 
       },
     },
   };
-  const pull_request = { number: 7, labels: labels.map((name) => ({ name })), body, user };
-  await check({ github, context: { repo: { owner: 'o', repo: 'r' }, payload: { pull_request } }, core: {} });
+  const pull_request = { number: 7, labels: labels.map((name) => ({ name })), body: staleBody, user };
+  await check({ github, context: { repo: { owner: 'o', repo: 'r' }, payload: { pull_request } }, core });
   return calls;
 }
 
@@ -188,4 +188,13 @@ test('check passes a bot PR whose body ignores the template', async () => {
   const calls = await runCheck({ files: [], body: 'Update dependency', user: { type: 'Bot' } });
 
   assert.deepEqual(calls, []);
+});
+
+test('check validates the live PR body, not the event payload body', async () => {
+  const failures = [];
+  const calls = await runCheck({ files: [], body: '## What\n\nA.', staleBody: '## What\n\nA.\n\n## Why\n\nB.', core: { setFailed: (message) => failures.push(message) } });
+
+  assert.equal(failures.length, 1);
+  assert.match(failures[0], /Missing section: "## Why"/);
+  assert.deepEqual(calls.map(([name]) => name), ['createComment']);
 });
