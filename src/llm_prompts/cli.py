@@ -27,6 +27,7 @@ from .setup import (
     _format_update_message,
     _remote_commit_subjects,
     _remote_head,
+    _uv_tools_dir,
 )
 
 if TYPE_CHECKING:
@@ -688,6 +689,17 @@ def _reconfigure_agents(
                 try_install_memory(agent_config)
 
 
+def _standalone_tool_envs() -> set[str]:
+    """Return the tracked tools that still have a uv tool env of their own.
+
+    Setup removes these once the tools share one env, which moves their
+    binaries and leaves agent hooks and memory servers pointing at nothing.
+    """
+    return {
+        name for name in _RUN_SETUP_TRACKED_TOOLS if (_uv_tools_dir() / name).is_dir()
+    }
+
+
 def _restart_memory_service() -> None:
     """Restart the mcp-memory background service if installed."""
     binary = shutil.which("mcp-memory")
@@ -1030,7 +1042,17 @@ def _run_command(run: telemetry.Run) -> int | None:
         if args.init:
             init_config()
         else:
+            standalone_before_setup = _standalone_tool_envs()
             run_setup(args.tool, dry_run=args.dry_run)
+            moved = standalone_before_setup - _standalone_tool_envs()
+            if moved:
+                from .manifest import read_manifest
+
+                manifest = read_manifest()
+                if manifest:
+                    _reconfigure_agents(manifest, memory_changed=_MEMORY_TOOL in moved)
+                if _MEMORY_TOOL in moved:
+                    _restart_memory_service()
     elif args.command == "update":
         if args.check:
             _check_for_updates()
@@ -1072,6 +1094,7 @@ def _run_command(run: telemetry.Run) -> int | None:
             dists_before_setup = {
                 name: _get_installed_dist(name) for name in _RUN_SETUP_TRACKED_TOOLS
             }
+            standalone_before_setup = _standalone_tool_envs()
             stale = detect_stale_local_tools()
             upgraded = config_path().exists() and run_setup(
                 force_reinstall=stale or None
@@ -1079,6 +1102,7 @@ def _run_command(run: telemetry.Run) -> int | None:
             for name in _RUN_SETUP_TRACKED_TOOLS:
                 if _get_installed_dist(name) != dists_before_setup[name]:
                     changed_sources.add(name)
+            changed_sources |= standalone_before_setup - _standalone_tool_envs()
             if upgraded:
                 _reexec_update(changed_sources, size_baseline, run)
         else:

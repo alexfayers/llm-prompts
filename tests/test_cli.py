@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import threading
+from collections.abc import Set as AbstractSet
 from pathlib import Path
 from unittest.mock import ANY, MagicMock, patch
 
@@ -853,8 +854,10 @@ class TestUpdateRestartsMemoryOnlyWhenItChanged:
 
 
 class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
-    def _run_update(self, changed: set[str]) -> dict[str, MagicMock]:
-        """Run `llm-prompts update` with the given set of changed sources.
+    def _run_update(
+        self, changed: set[str], removed_envs: AbstractSet[str] = frozenset()
+    ) -> dict[str, MagicMock]:
+        """Run `llm-prompts update` with the given changed sources and removed tool envs.
 
         Returns:
             The patched post-install configuration mocks, keyed by name.
@@ -874,6 +877,10 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.setup.run_setup", return_value=False),
             patch("llm_prompts.install.main", return_value=frozenset()),
             patch("llm_prompts.cli._get_installed_dist", return_value=None),
+            patch(
+                "llm_prompts.cli._standalone_tool_envs",
+                side_effect=[set(removed_envs), set()],
+            ),
             patch("llm_prompts.cli._restart_memory_service"),
             patch("llm_prompts.plugins.pull_plugin_sources"),
             patch("llm_prompts.install.try_install_hooks_claude_code") as hooks,
@@ -916,6 +923,31 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
         mocks["codex"].assert_called_once_with()
         mocks["pi_memory"].assert_called_once_with()
         mocks["migrate"].assert_called_once_with()
+
+    def test_setup_removing_the_hooks_env_reconfigures_hooks(self) -> None:
+        mocks = self._run_update(set(), removed_envs={"cline-hooks"})
+        mocks["hooks"].assert_called_once_with()
+        mocks["memory"].assert_not_called()
+
+    def test_setup_removing_the_memory_env_reconfigures_memory(self) -> None:
+        mocks = self._run_update(set(), removed_envs={"mcp-memory"})
+        mocks["memory"].assert_called_once_with()
+        mocks["migrate"].assert_called_once_with()
+
+    def test_setup_command_reconfigures_agents_after_removing_a_tool_env(self) -> None:
+        manifest: dict[str, object] = {"claude-code": {"files": []}}
+        with (
+            patch("sys.argv", ["llm-prompts", "setup"]),
+            patch("llm_prompts.setup.run_setup", return_value=True),
+            patch(
+                "llm_prompts.cli._standalone_tool_envs",
+                side_effect=[{"cline-hooks"}, set()],
+            ),
+            patch("llm_prompts.manifest.read_manifest", return_value=manifest),
+            patch("llm_prompts.cli._reconfigure_agents") as reconfigure,
+        ):
+            main()
+        reconfigure.assert_called_once_with(manifest, memory_changed=False)
 
     def test_a_cline_hooks_reinstall_via_run_setup_reconfigures_agents_but_not_memory(
         self,
