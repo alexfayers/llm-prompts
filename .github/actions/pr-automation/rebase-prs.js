@@ -8,11 +8,14 @@ const LIST_OPEN_PRS = `query($owner: String!, $repo: String!, $base: String!) {
   }
 }`;
 
-const REBASE_BRANCH = `mutation($id: ID!, $head: GitObjectID!) {
-  updatePullRequestBranch(input: {pullRequestId: $id, expectedHeadOid: $head, updateMethod: REBASE}) {
+const updateBranch = (method) => `mutation($id: ID!, $head: GitObjectID!) {
+  updatePullRequestBranch(input: {pullRequestId: $id, expectedHeadOid: $head, updateMethod: ${method}}) {
     clientMutationId
   }
 }`;
+
+const REBASE_BRANCH = updateBranch('REBASE');
+const MERGE_BRANCH = updateBranch('MERGE');
 
 const GET_PR = `query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
@@ -38,10 +41,17 @@ async function rebase({ github, context, core }) {
 }
 
 async function rebaseBranch(github, core, pr) {
+  const variables = { id: pr.id, head: pr.headRefOid };
   try {
-    await github.graphql(REBASE_BRANCH, { id: pr.id, head: pr.headRefOid });
+    await github.graphql(REBASE_BRANCH, variables);
+    return;
   } catch (error) {
-    core.warning(`Failed to rebase #${pr.number}: ${error.message}`);
+    core.info(`Rebase of #${pr.number} failed, updating by merge: ${error.message}`);
+  }
+  try {
+    await github.graphql(MERGE_BRANCH, variables);
+  } catch (error) {
+    core.warning(`Failed to update #${pr.number}: ${error.message}`);
   }
 }
 
