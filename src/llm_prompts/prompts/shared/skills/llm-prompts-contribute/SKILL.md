@@ -24,7 +24,7 @@ All three repos' prompts trees go through `llm-prompts contribute`, never a manu
 - `sync --commit A --commit B` naming commits in different repos links them. The first named is the dependency. Its repo syncs first. The dependent's batch stays local until then.
 - `list` prints each linked commit's dependency on its own line, `-> depends on <pr url>` (or `<tool>: unpushed`/`no PR yet`), red when it blocks. `sync` writes it at the bottom of the PR body as `Depends on <url>`. When a batch's commits change, it rewrites only the `What` section and those lines.
 - A commit already in another of your open PRs is skipped.
-- MUST NOT commit directly to a batch branch. `sync` may rebuild it from `main` and overwrite it.
+- MUST NOT commit directly to a batch branch. `sync` may overwrite it.
 
 ## Everything else
 
@@ -40,7 +40,7 @@ All three repos' prompts trees go through `llm-prompts contribute`, never a manu
 
 ## Before opening
 
-- Run the target repo's `just` (lint, type-check, test), per its CONTRIBUTING.md.
+- Run the target repo's `just` (lint, type-check, test).
 - Changed rule/skill/workflow/agent files MUST stay within their prompt size budget. In llm-prompts, SHOULD link the user to CI's size-report comment after opening.
 - Before each push, MUST pass the repo's gate, then run the leak scan in a separate tool call. Manual PR branches MUST contain exactly one commit in `origin/main..HEAD`. MUST push with a timeout, using `--force-with-lease` only after rewriting. After each PR create or update, MUST watch CI and fix failures.
 
