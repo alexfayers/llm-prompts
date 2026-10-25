@@ -12,17 +12,18 @@ These rules MUST override others.
 - A commit subject MUST be one short, plain idea saying what changed. MUST NOT list changes ("X, Y and Z"). In conventional commits, MUST use a scope only where it fits.
 - Where the user dictates a commit message, MUST use it verbatim, including case - MUST NOT restyle it to match `git log`.
 - A commit MUST reflect the change as the package's consumers see it.
-- MUST NOT add a commit body, regardless of other instructions.
+- MUST NOT add a commit body.
 - SHOULD commit early and often, right after each change; rule/skill/workflow/agent source edits MUST commit same-turn.
 - MUST run `git add` and `git commit` in one command via `&&`.
-- After staging explicit paths (not `git add -A`) and committing, MUST re-check `git -P status --short`. Anything still modified/untracked was missed - MUST `--fixup=<sha>` it in. A green test run does NOT confirm it.
-- Before staging an edited file, MUST run `git -P diff <path>` for foreign unstaged hunks - `git add <path>` stages the WHOLE file (tell-tale: more insertions than written). MUST stage only your hunks with `git add -p <path>`, confirm with `git -P diff --cached <path>`. If a foreign hunk already reached an unpushed commit, MUST `git reset --soft HEAD~1` then re-stage with `-p`.
+- After staging explicit paths (not `git add -A`) and committing, MUST re-check `git -P status --short`. Anything still modified/untracked was missed - MUST `--fixup=<sha>` it in.
+- Before staging an edited file, MUST run `git -P diff <path>` for foreign unstaged hunks - `git add <path>` stages the WHOLE file (tell-tale: extra insertions). MUST stage only your hunks with `git add -p <path>`, confirm with `git -P diff --cached <path>`. If a foreign hunk already reached an unpushed commit, MUST `git reset --soft HEAD~1` then re-stage with `-p`.
 - An unpushed commit (`git -P log --oneline @{u}..HEAD`) is not final - MAY amend, reword, squash, reorder, or drop.
 - New work that is the same logical change as an unpushed commit MUST fold into it, never a new standalone commit: `--fixup=<sha>`/`--squash=<sha>` + `git-tidy` autosquash, never `--amend`; autosquash only if every commit above the target is yours. Exception: the overlap is coincidental.
-- Same logical change also covers same-topic-different-angle, not just a bug fix - MUST fold a same-goal commit immediately: `--squash=<target>` when directly correcting (keeps both messages), `--fixup=<target>` for another angle (keeps the better message).
+- Same logical change also covers same-topic-different-angle, not just a bug fix - MUST fold it immediately: `--squash=<target>` when directly correcting (keeps both messages), `--fixup=<target>` for another angle (keeps the better message).
 - Before amending, MUST check `git -P log --oneline @{u}..HEAD`. Empty output means HEAD is already pushed - MUST NOT amend; make a new commit instead.
 - If using a focus chain, the last task MUST be committing the changes.
-- MUST keep history linear - MUST NOT create a merge commit. MUST fold one branch into another via `git rebase` or fast-forward; `git merge` only for an already-pushed/shared branch you can't rewrite. MUST rebase away an accidental unpushed merge commit.
+- MUST work in a `git worktree` on your own unpushed branch, then squash it into local `main` as one commit (a fixup onto it is fine). PRs come from local `main` via `llm-prompts contribute`. MUST NOT use a fresh clone.
+- MUST keep history linear, no merge commits. MUST fold one branch into another via `git rebase` or fast-forward; `git merge` only for an already-pushed/shared branch you can't rewrite. MUST rebase away an accidental unpushed merge commit.
 - MUST resolve conflicts with `git checkout <ref> -- <file>`, MUST NOT `--ours`/`--theirs` - `--ours` = base in `git rebase` but current branch in `git merge`. Name the ref (e.g. `origin/main`) instead.
 
 Before making a commit, MUST tell the user: "I am following the predefined git rules".
@@ -30,7 +31,7 @@ Before making a commit, MUST tell the user: "I am following the predefined git r
 ## Pushing
 
 - MUST NOT push without explicit user permission - MUST ask first.
-- MUST classify internal vs public by remote host, MUST NOT by name - run `git remote get-url origin`, inspect the host; a personal/public-looking name can still push to an internal host, and vice versa.
+- MUST classify internal vs public by remote host (`git remote get-url origin`), MUST NOT by name.
 - Before pushing, MUST run `git grep -n '^<<<<<<<' HEAD` for conflict markers in tracked files - if found, MUST NOT push; fix first.
 - Before pushing to a public remote (github.com, pypi, npm, etc.), MUST scan the diff and commit messages of `@{u}..HEAD` for internal/proprietary identifiers (hostnames/URLs, employer project/package names, employee aliases, ticket IDs, cloud account IDs). Internal/corporate hosts are exempt. If anything matches, MUST NOT push; fix it first. An active no-internal-leakage rule defines the exact patterns.
 
@@ -40,10 +41,10 @@ To squash, fixup, reorder, reword, or drop unpushed commits, MUST use `git-tidy`
 
 ## Checking for uncommitted/unpushed changes across repos
 
-The co-located `check_repos.py` sweeps every named workspace root for uncommitted and unpushed changes. MUST NOT run unasked - MAY use it to check outstanding changes across repos, or confirm a repo is clean before ending a session:
+The co-located `check_repos.py` sweeps every named workspace root for uncommitted and unpushed changes. MUST NOT run unasked. MAY use it to check outstanding changes or confirm a repo is clean before ending a session:
 
 ```bash
 python3 "<base-dir>/check_repos.py" [--workspace <path>]
 ```
 
-`--workspace` defaults to the current directory; MUST pass it explicitly once per additional touched repo root. It auto-adds prompt/skill source repos too (via `llm-prompts source <agent>`). Prints JSON with a `repos` list (each `{path, uncommitted, unpushed, no_upstream}`) and a top-level `clean` flag, exiting non-zero when anything is outstanding (`no_upstream` is informational only). MUST commit `uncommitted` entries; MUST surface `unpushed` entries and ask how to submit (push or later). If any repo reports an `error`, MUST investigate before proceeding.
+`--workspace` defaults to the current directory. MUST pass it once per additional touched repo root. It auto-adds prompt/skill source repos (via `llm-prompts source <agent>`). Prints JSON with a `repos` list (each `{path, uncommitted, unpushed, no_upstream}`) and a top-level `clean` flag, exiting non-zero when anything is outstanding (`no_upstream` is informational only). MUST commit `uncommitted` entries; MUST surface `unpushed` entries and ask how to submit (push or later). If any repo reports an `error`, MUST investigate before proceeding.

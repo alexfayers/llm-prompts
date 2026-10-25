@@ -1,6 +1,6 @@
 ---
 name: tidy-code
-description: "Reduce code in a changeset or file - remove duplication, dead code, redundancy, and verbosity - while preserving behaviour. Use when asked to tidy, shrink, deduplicate, DRY up, or simplify code."
+description: "Shrink code in a changeset or file - remove duplication, dead code, verbosity - keeping behaviour. Use to tidy, deduplicate, or simplify code."
 ---
 
 # Tidy Code

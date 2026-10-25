@@ -1,6 +1,6 @@
 ---
 name: refine-plan
-description: Evaluate and refine a plan before implementation begins. Use once you think you are  ready to present a plan or design to the user.
+description: Evaluate and refine a plan before implementation. Use when ready to present a plan or design to the user.
 ---
 
 # Refine Plan

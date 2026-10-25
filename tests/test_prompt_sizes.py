@@ -1369,3 +1369,20 @@ class TestCheckSourceMeasuresDependentPiRoles:
             (PI_ROLE_PROMPT_BYTES, "helper.md")
         ]
         assert "B" * 500 not in source.read_text(encoding="utf-8")
+
+
+class TestHerdrGatedRulesMeasuredOnPi:
+    def test_check_measures_herdr_gated_rule_without_herdr_on_path(
+        self, tmp_path: Path
+    ) -> None:
+        _make_prompts_tree(tmp_path, targets=("pi",))
+        _write(
+            tmp_path / "shared" / "rules" / "gated.md",
+            "---\nrequires_command: herdr\n---\n\n# Gated\n",
+        )
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check([tmp_path], targets=("pi",))
+
+        measured = {a.dest_name for a in result.artifacts if a.metric == RULE_BYTES}
+        assert "gated.md" in measured

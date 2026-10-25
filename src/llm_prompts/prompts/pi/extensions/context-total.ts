@@ -465,16 +465,19 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	pi.on("session_start", (_event, ctx) => {
+		if (ctx.mode !== "tui") return;
 		scans.clear();
 		if (readConfig(configPath).footer) startSampler(ctx);
 	});
 	pi.on("session_shutdown", (_event, ctx) => {
+		if (ctx.mode !== "tui") return;
 		stopSampler();
 		clearFooter(pi, ctx.ui);
 	});
 	pi.registerCommand("context-total", {
 		description: "Live context total of this session and its running agents. `footer on|off` toggles the status line.",
 		handler: async (args, ctx) => {
+			if (ctx.mode !== "tui") return;
 			const [word, value = ""] = args.trim().split(/\s+/);
 			if (word === "footer") return setFooter(ctx, value);
 			if (word) {

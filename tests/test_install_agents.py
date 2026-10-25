@@ -462,6 +462,8 @@ class TestExtraVariants:
         _, other_frontmatter = parse_frontmatter(other["scout-haiku-high.md"])
         assert pi_frontmatter["effort"] == "off"
         assert pi_frontmatter["name"] == "scout-haiku-high"
+        assert pi_frontmatter["description"] == "D [haiku, thinking off]"
+        assert other_frontmatter["description"] == "D [haiku, high effort]"
         assert other_frontmatter["effort"] == "high"
 
     def test_pi_emits_one_model_free_definition_for_a_switched_role(

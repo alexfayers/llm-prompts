@@ -12,6 +12,7 @@ const AGED_SECONDS = 1_577_836_800;
 const LIVE_OWNER = "01a00000-0000-7000-8000-00000000000a";
 const DEAD_OWNER = "01a00000-0000-7000-8000-00000000000d";
 const SELF = "01a00000-0000-7000-8000-0000000000e5";
+const WORKSPACE = "w1";
 const REQUEST = "f42f4a53-9d3c-435b-95b4-509250f47ae5";
 const GITHUB_PR = '[{"number": 7}]';
 
@@ -29,10 +30,12 @@ function run(command: string, args: string[], cwd?: string): string {
 	if (command === "herdr") {
 		world.herdr.push(line);
 		if (line === "pane list") return JSON.stringify({ result: { panes: world.panes } });
+		if (line === "pane current --current") return JSON.stringify({ result: { pane: { workspace_id: WORKSPACE } } });
 		if (line === "workspace list") return JSON.stringify({ result: { workspaces: world.workspaces } });
 		if (args[1] === "close" && world.failClose) throw new Error("close failed");
 		return "{}";
 	}
+	if (command === "ps") return "";
 	if (command === "gh") {
 		world.ghCalls.push(line);
 		if (world.gh === undefined) throw new Error("gh failed");
@@ -92,7 +95,7 @@ function addWorktree(name: string, options: Partial<Worktree> & { fresh?: boolea
 }
 
 const declareWorkspace = (id: string, worktree: Worktree) => world.workspaces.push({ workspace_id: id, worktree: { checkout_path: worktree.path } });
-const sweep = (ext: Awaited<ReturnType<typeof load>>) => ext.module.sweep({ now: NOW, graceSeconds: 900, selfSessionId: SELF });
+const sweep = (ext: Awaited<ReturnType<typeof load>>) => ext.module.sweep({ now: NOW, graceSeconds: 900, selfSessionId: SELF, workspaceId: WORKSPACE });
 const sweepWorktrees = async () => (await load()).module.sweepWorktrees();
 const settle = () => new Promise(setImmediate);
 const notices = (ext: Awaited<ReturnType<typeof load>>) => ext.ctx.notices;
@@ -160,6 +163,7 @@ describe("sweep ignores panes that are not orphans", () => {
 		["owner pane is live", () => [orphan(), pane("w1:p1", "w1:t1", { managed: false, session: LIVE_OWNER })], { owner: LIVE_OWNER }],
 		["owner is this session", () => [orphan()], { owner: SELF }],
 		["pane is not managed", () => [pane("w1:p2", "w1:t2", { managed: false })], {}],
+		["pane is in another workspace", () => [pane("w2:p2", "w2:t2", { workspace: "w2" })], {}],
 		["pane is inside the grace period", () => [pane("w1:p2", "w1:t2", { started: NOW - 5 * MINUTE_MS })], {}],
 	] as const) {
 		test(label, async () => {
@@ -307,7 +311,7 @@ describe("session start", () => {
 		addState("w1:p3");
 		const ext = await load();
 		await start(ext);
-		assert.deepEqual(world.herdr, ["pane list", "tab close w1:t2"]);
+		assert.deepEqual(world.herdr, ["pane current --current", "pane list", "tab close w1:t2", "pane list"]);
 		assert.deepEqual(notices(ext).map(([text, level]) => [level, text.includes("w1:p2"), text.includes("w1:p3")]), [["info", true, false], ["warning", false, true]]);
 	});
 
@@ -373,7 +377,7 @@ describe("/pane-reaper", () => {
 		world.panes = [pane("w1:p2", "w1:t2", recent())];
 		addState("w1:p2");
 		assert.deepEqual((await command(ext, "")).map(([, level]) => level), ["info"]);
-		assert.equal(world.herdr.at(-1), "tab close w1:t2");
+		assert.equal(world.herdr.at(-2), "tab close w1:t2");
 	});
 
 	test("check now reports candidate and kept worktrees", async () => {
@@ -411,4 +415,17 @@ test("config interval is clamped", async () => {
 	const file = join(root, "pane-reaper.json");
 	memory.write(file, JSON.stringify({ enabled: false, graceSeconds: 30, intervalSeconds: 1 }));
 	assert.deepEqual(readConfig(file), { enabled: false, graceSeconds: 30, intervalSeconds: 10 });
+});
+
+test("a marked agent process whose pane is dead in this workspace is killed", async () => {
+	const orphan = { pid: 445, uid: 501, ppid: 1, pgid: 4000, state: "S", cpuPercent: 0, cpuSeconds: 1, started: "Wed Oct 14 09:55:00 2026", command: "/usr/bin/some-mcp-server --stdio" };
+	const deps = {
+		list: async () => [orphan],
+		recheck: async () => orphan,
+		kill: () => {},
+		marker: async () => ({ agent: true, paneId: "w1:p1" }),
+		livePaneIds: async () => ["w1:p2"],
+	};
+	const result = await (await load()).module.sweepOrphans({ selfPids: [9000], uid: 501, workspaceId: WORKSPACE }, false, deps);
+	assert.deepEqual(result.killed.map((killed: Json) => killed.proc.pid), [445]);
 });

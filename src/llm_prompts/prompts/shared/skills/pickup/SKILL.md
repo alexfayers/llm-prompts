@@ -1,6 +1,6 @@
 ---
 name: pickup
-description: Resume work from an existing HANDOFF.md. Use when a HANDOFF.md is present in the workspace, the user says "do/resume/pick up the handoff", or points you at a handoff doc.
+description: Resume work from an existing HANDOFF.md. Use when a HANDOFF.md is present, or the user says resume or pick up the handoff.
 ---
 
 # pickup

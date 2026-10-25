@@ -16,4 +16,5 @@ copilot_apply_to: '**'
 - Where memory conflicts with what you observe live, MUST surface the discrepancy to the user rather than quietly overriding either side, per `verify-before-acting.md`.
 - Another agent session you can message is a remote source too: MUST NOT message one for anything memory, the repo, or your own tools can answer.
 - Public web search MUST have one of: the user's explicit direction, memory already recording the web as the right source for this, or the user naming the web when you asked. MUST NOT default to it otherwise.
+- For a one-off lookup of data not already local, MUST read it from a known source through a remote read tool (MCP, API, web page) - MUST NOT clone or download the whole source.
 - When delegating a lookup to a subagent (per `delegation.md`), MUST resolve the source yourself first via the steps above - memory, then a known target, then asking the user if neither applies - before spawning anything. A delegate SHOULD receive an already-resolved source in its spawn prompt, never an open question you have not resolved yourself.

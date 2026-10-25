@@ -1,6 +1,6 @@
 ---
 name: llm-prompts-report-issue
-description: Report a bug or annoyance in llm-prompts, cline-hooks, or mcp-memory as a GitHub issue. Use when a rule, skill, hook, memory tool or CLI misbehaves and the user wants it reported.
+description: Report a bug in llm-prompts, cline-hooks, or mcp-memory as a GitHub issue. Use when a rule, skill, hook, memory tool or CLI misbehaves.
 ---
 
 # Reporting an issue

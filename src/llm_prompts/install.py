@@ -1,12 +1,21 @@
 """Install Cline and Copilot rules, workflows, skills, and prompts."""
 
+import contextlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Collection, Container, Iterable, Mapping, Sequence
+from collections.abc import (
+    Callable,
+    Collection,
+    Container,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from dataclasses import dataclass, field
 from functools import cache, partial
 from importlib.metadata import distribution, packages_distributions
@@ -103,6 +112,9 @@ def log(level: LogLevel, message: str) -> None:
         print(paint(f"{_SYMBOLS[level]} {message}", _COLORS[level]), file=sys.stderr)
     else:
         print(f"{_PLAIN_SYMBOLS[level]} {message}", file=sys.stderr)
+
+
+_PI_PACKAGE = "@earendil-works/pi-coding-agent"
 
 
 def _pi_agent_dir() -> Path:
@@ -270,6 +282,32 @@ def _gating_value(frontmatter: dict[str, str], key: str, target: str) -> str:
     return frontmatter.get(_override_key(target, key), frontmatter.get(key, ""))
 
 
+_ASSUMED_COMMANDS: set[str] = set()
+
+
+@contextlib.contextmanager
+def assume_commands(*commands: str) -> Iterator[None]:
+    """Treat the given commands as on PATH for ``requires_*`` gates.
+
+    Args:
+        *commands: Command names to treat as present.
+
+    Yields:
+        Control, with the commands assumed present until the block exits.
+    """
+    added = set(commands) - _ASSUMED_COMMANDS
+    _ASSUMED_COMMANDS.update(added)
+    try:
+        yield
+    finally:
+        _ASSUMED_COMMANDS.difference_update(added)
+
+
+def _command_on_path(command: str) -> bool:
+    """Report whether a command is on PATH or assumed present."""
+    return command in _ASSUMED_COMMANDS or shutil.which(command) is not None
+
+
 def _passes_requires_gate(src: Path, target: str = "") -> bool:
     """Check a source file's ``requires_*`` frontmatter gates, if present.
 
@@ -308,10 +346,10 @@ def _requirements_met(declared: dict[str, str], target: str = "") -> bool:
     if required_env and not _env_var_set(required_env):
         return False
     required_command = _gating_value(declared, "requires_command", target)
-    if required_command and shutil.which(required_command) is None:
+    if required_command and not _command_on_path(required_command):
         return False
     absent_command = _gating_value(declared, "requires_absent_command", target)
-    return not (absent_command and shutil.which(absent_command) is not None)
+    return not (absent_command and _command_on_path(absent_command))
 
 
 def _target_names(src: Path, key: str, target: str = "") -> set[str]:
@@ -699,7 +737,8 @@ def _parse_roles(content: str, label: str) -> frozenset[str]:
         label: Rule name for error messages.
 
     Returns:
-        The declared roles, or ``{"core"}`` when the rule declares none.
+        The declared roles, or ``{"core"}`` when the rule declares none or
+        declares ``all``.
 
     Raises:
         ValueError: ``roles`` is empty, malformed, or names an unknown role
@@ -714,11 +753,13 @@ def _parse_roles(content: str, label: str) -> frozenset[str]:
     if not declared:
         return frozenset({"core"})
     tokens = [t.strip() for t in declared[0].strip().strip("'\"").split(",")]
+    if tokens == ["all"]:
+        return frozenset({"core"})
     roles = frozenset(tokens)
     if "" in roles or not roles <= _RULE_ROLES:
         raise ValueError(
             f"{label}: invalid roles '{declared[0].strip()}' - "
-            f"omit roles for a core rule, or use any of {sorted(_RULE_ROLES)}"
+            f"use 'all' (or omit roles) for a core rule, or any of {sorted(_RULE_ROLES)}"
         )
     return roles
 
@@ -1331,7 +1372,8 @@ def _apply_variant_frontmatter(
     """Rewrite a template's frontmatter for one generated model/effort variant.
 
     Overrides ``name`` to the variant's own name, appends a ``[model, effort
-    effort]`` suffix to ``description``, and adds ``model``/``effort`` keys.
+    effort]`` suffix (``[model, thinking off]`` when ``effort_value`` is ``off``)
+    to ``description``, and adds ``model``/``effort`` keys.
     A ``note`` replaces the suffix, keeps the bare ``stem`` name and sets no
     ``model`` or ``effort``.
     All other frontmatter keys and the body are carried verbatim. A block-scalar
@@ -1355,7 +1397,11 @@ def _apply_variant_frontmatter(
     if split is None:
         return content
     frontmatter_lines, body = split
-    suffix = note or f"[{model}, {effort} effort]"
+    suffix = note or (
+        f"[{model}, thinking off]"
+        if effort_value == "off"
+        else f"[{model}, {effort} effort]"
+    )
     lines = []
     in_description_block = False
     description_indent = "  "
@@ -3092,6 +3138,41 @@ def _sync_pi_packages(
     return added_names
 
 
+def _version_key(version: str) -> tuple[int, ...]:
+    """Return the numeric components of ``version`` for ordering."""
+    return tuple(int(part) for part in re.findall(r"\d+", version))
+
+
+def _warn_pi_version_drift(sources: Iterable[str]) -> None:
+    """Print a dim note when the installed pi differs from the pinned version.
+
+    Args:
+        sources: Package sources llm-prompts declares.
+    """
+    version_file = _pi_agent_dir() / "install" / "current-version"
+    pinned = next(
+        (
+            version
+            for name, version in map(_split_npm_source, sources)
+            if name == _PI_PACKAGE
+        ),
+        "",
+    )
+    if not pinned or not version_file.exists():
+        return
+    installed = _read_text(version_file).strip()
+    if _version_key(installed) == _version_key(pinned):
+        return
+    if _version_key(installed) < _version_key(pinned):
+        message = f"pi {installed} is behind the tested {pinned}, run pi update"
+    else:
+        message = (
+            f"pi {installed} is newer than tested {pinned} - if extensions break, "
+            "report it with the llm-prompts-report-issue skill"
+        )
+    print(paint(f"[llm-prompts] {message}", "grey"), file=sys.stderr)
+
+
 def _pi_env() -> dict[str, str]:
     """Return the environment that points ``pi`` at the agent directory in use."""
     return {**os.environ, "PI_CODING_AGENT_DIR": str(_pi_agent_dir())}
@@ -3119,6 +3200,8 @@ def _install_pi_packages(
         if not source.startswith("npm:"):
             continue
         name, version = _split_npm_source(source)
+        if name == _PI_PACKAGE:
+            continue
         manifest = _pi_package_dir(name) / "package.json"
         if manifest.exists() and (
             not version or json.loads(_read_text(manifest)).get("version") == version
@@ -3862,6 +3945,7 @@ def main(
             _pi_defaults(pi_fragments),
         )
         pi_install_failed, newly_owned = _install_pi_packages(pi_packages, added)
+        _warn_pi_version_drift(pi_packages)
         pi_installed_packages = sorted(
             (previous_owned & wanted_names) | newly_owned | retained
         )

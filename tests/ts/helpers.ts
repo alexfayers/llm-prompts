@@ -32,6 +32,8 @@ export interface FakePi {
 	tools: Record<string, Tool>;
 	/** [content, options] pairs passed to sendUserMessage */
 	sent: unknown[][];
+	/** [customType, data] pairs passed to appendEntry */
+	appended: [string, unknown][];
 	/** [event, payload] pairs put on the event bus */
 	emitted: [string, unknown][];
 	activeTools: string[];
@@ -75,6 +77,7 @@ export function makeCtx(overrides: Partial<FakeCtx> = {}): FakeCtx & ExtensionCo
 	const ctx: FakeCtx = {
 		cwd: "/",
 		hasUI: true,
+		mode: "tui",
 		notices: [],
 		statuses: [],
 		switched: [],
@@ -85,6 +88,7 @@ export function makeCtx(overrides: Partial<FakeCtx> = {}): FakeCtx & ExtensionCo
 		},
 		sessionManager: {
 			getSessionId: () => "session-id",
+			getBranch: () => [],
 			getSessionFile: () => join(ctx.cwd, "s.jsonl"),
 			usesDefaultSessionDir: () => true,
 		},
@@ -104,6 +108,7 @@ function makePi(state: Partial<FakePi>): FakePi & ExtensionAPI {
 		commands: {},
 		tools: {},
 		sent: [],
+		appended: [],
 		emitted: [],
 		activeTools: [],
 		allTools: [],
@@ -124,6 +129,7 @@ function makePi(state: Partial<FakePi>): FakePi & ExtensionAPI {
 		setThinkingLevel: (level: string) => void (pi.thinking = level),
 		setModel: async (model: unknown) => ((pi.model = model), true),
 		sendUserMessage: async (...args: unknown[]) => void pi.sent.push(args),
+		appendEntry: (customType: string, data: unknown) => void pi.appended.push([customType, data]),
 	};
 	return pi as FakePi & ExtensionAPI;
 }

@@ -1,6 +1,6 @@
 ---
 name: pre-implementation
-description: Guidelines for proper implementation and workflow for making code changes. Use once the user confirms that they are ready to start the implementation of a plan.
+description: Implementation workflow for code changes. Use once the user confirms they are ready to start implementing a plan.
 ---
 
 # pre-implementation
