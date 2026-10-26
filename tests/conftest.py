@@ -223,7 +223,7 @@ def no_real_io(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) 
         return
     monkeypatch.setattr(subprocess, "run", _forbid_spawn)
     monkeypatch.setattr(subprocess, "Popen", _forbid_spawn)
-    monkeypatch.setattr("llm_prompts.contribute._RETRY_DELAY_SECONDS", 0)
+    monkeypatch.setattr("llm_prompts.network.RETRY_DELAY_SECONDS", 0)
 
 
 @pytest.fixture

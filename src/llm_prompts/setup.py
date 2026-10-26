@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from . import home
+from .network import run_with_retries
 from .squash_subject import squash_pr_number
 
 
@@ -131,7 +132,7 @@ def _remote_head(git_url: str, ref: str | None) -> str | None:
     Raises:
         subprocess.CalledProcessError: If ``git ls-remote`` exits non-zero.
     """
-    result = subprocess.run(
+    result = run_with_retries(
         ["git", "ls-remote", git_url, ref or "HEAD"],
         capture_output=True,
         text=True,
@@ -234,7 +235,7 @@ def _remote_commit_subjects(
         return None
     try:
         with tempfile.TemporaryDirectory() as tmp:
-            result = subprocess.run(
+            result = run_with_retries(
                 ["git", "clone", "--filter=tree:0", "--no-checkout", git_url, tmp],
                 capture_output=True,
                 text=True,
@@ -284,7 +285,7 @@ def _fetch_remote_pyproject(git_url: str) -> dict[str, Any] | None:
         return None
     try:
         with tempfile.TemporaryDirectory() as tmp:
-            result = subprocess.run(
+            result = run_with_retries(
                 ["git", "clone", "--depth", "1", git_url, tmp],
                 capture_output=True,
                 text=True,

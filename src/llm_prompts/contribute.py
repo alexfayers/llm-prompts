@@ -15,7 +15,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -36,6 +35,7 @@ from .batching import (
     select_groups,
 )
 from .listing import Entry, classify, pr_only_warning, render
+from .network import run_with_retries, with_retries
 from .size_guard import check
 from .squash_subject import squash_pr_number
 
@@ -52,14 +52,6 @@ _BLANK_LINES = re.compile(r"\n{3,}")
 _PR_TEMPLATE_PATH = ".github/PULL_REQUEST_TEMPLATE.md"
 _FALLBACK_TEMPLATE = "## What\n\n## Why\n\n## Dependencies\n\n## Issues\n"
 _SLUG_MAX_LEN = 50
-_TRANSIENT_FAILURE = re.compile(
-    r"could not resolve host|unable to access|failed to connect|connection reset"
-    r"|connection refused|connection timed out|operation timed out|timeout|early eof"
-    r"|rpc failed|tls handshake|http 5|502|503|504",
-    re.IGNORECASE,
-)
-_NETWORK_ATTEMPTS = 3
-_RETRY_DELAY_SECONDS = 1.0
 
 
 class Commit(NamedTuple):
@@ -137,27 +129,11 @@ def _git(*args: str, repo: Path) -> str:
     return completed.stdout.strip()
 
 
-def _with_retries[T](call: Callable[[], T]) -> T:
-    """Run a network call and return its result, retrying transient failures with backoff."""
-    for attempt in range(1, _NETWORK_ATTEMPTS):
-        try:
-            return call()
-        except subprocess.CalledProcessError as error:
-            if not _TRANSIENT_FAILURE.search(error.stderr or ""):
-                raise
-            time.sleep(_RETRY_DELAY_SECONDS * attempt)
-    return call()
-
-
 def _run_with_retries(argv: list[str], cwd: Path) -> str:
     """Run a network command in ``cwd`` and return its stdout, retrying transient failures with backoff."""
-    return _with_retries(
-        lambda: (
-            subprocess.run(
-                argv, cwd=cwd, capture_output=True, text=True, check=True
-            ).stdout
-        )
-    )
+    return run_with_retries(
+        argv, cwd=cwd, capture_output=True, text=True, check=True
+    ).stdout
 
 
 def _git_network(*args: str, repo: Path) -> str:
@@ -199,7 +175,7 @@ def _pr_list(repo: Path, state: str, fields: str) -> list[Any]:
                 repo=repo,
             )
         )
-    return _with_retries(
+    return with_retries(
         partial(github_api.pr_list, repo, _API_PR_QUALIFIERS[state], fields.split(","))
     )
 
@@ -208,7 +184,7 @@ def _pr_view(repo: Path, number: int, fields: str) -> Any:
     """Fetch ``fields`` of PR ``number``, through gh or the GitHub API."""
     if _gh_installed():
         return _gh_json("pr", "view", str(number), "--json", fields, repo=repo)
-    return _with_retries(partial(github_api.pr_view, repo, number, fields.split(",")))
+    return with_retries(partial(github_api.pr_view, repo, number, fields.split(",")))
 
 
 def slug_for(subject: str) -> str:
@@ -487,7 +463,7 @@ def push_remote(repo: Path) -> tuple[str, bool]:
         view = _gh_json("repo", "view", "--json", "viewerPermission", repo=repo)
         permission = view.get("viewerPermission")
     else:
-        permission = _with_retries(partial(github_api.viewer_permission, repo))
+        permission = with_retries(partial(github_api.viewer_permission, repo))
     if permission in ("WRITE", "MAINTAIN", "ADMIN"):
         return "origin", False
     if _gh_installed():
@@ -589,7 +565,7 @@ def open_draft_pr(repo: Path, base: str, head: str, title: str, body: str) -> st
     """Open a draft PR against ``base`` from ``head`` and return its URL."""
     branch = base.split("/", 1)[1]
     if not _gh_installed():
-        return _with_retries(
+        return with_retries(
             partial(github_api.create_draft_pr, repo, branch, head, title, body)
         )
     argv = ["gh", "pr", "create", "--draft", "--base", branch]
@@ -681,7 +657,7 @@ def edit_pr(repo: Path, number: int, title: str, body: str) -> None:
             ["gh", "pr", "edit", str(number), "--title", title, "--body", body], repo
         )
     else:
-        _with_retries(partial(github_api.edit_pr, repo, number, title, body))
+        with_retries(partial(github_api.edit_pr, repo, number, title, body))
 
 
 def update_pr_branch(repo: Path, number: int) -> None:
@@ -689,7 +665,7 @@ def update_pr_branch(repo: Path, number: int) -> None:
     if _gh_installed():
         _run_with_retries(["gh", "pr", "update-branch", str(number), "--rebase"], repo)
     else:
-        _with_retries(partial(github_api.update_pr_branch, repo, number))
+        with_retries(partial(github_api.update_pr_branch, repo, number))
 
 
 def _refresh_pr_whats(
