@@ -57,6 +57,18 @@ test('blocked label follows failing required checks on the head commit', async (
   }
 });
 
+test('only the newest run of each required check counts', async () => {
+  const old = { name: 'test', started_at: '2026-01-01T00:00:00Z' };
+  const recent = { name: 'test', started_at: '2026-01-02T00:00:00Z' };
+  const cases = [
+    [{ runs: [{ ...recent, conclusion: 'success' }, { ...old, conclusion: 'failure' }], labels: ['blocked'] }, [['removeLabel', 7, 'blocked']]],
+    [{ runs: [{ ...old, conclusion: 'success' }, { ...recent, conclusion: 'failure' }] }, added],
+  ];
+  for (const [options, expected] of cases) {
+    assert.deepEqual(await run({ mergeable: 'MERGEABLE', rules: required, ...options }), expected, JSON.stringify(options));
+  }
+});
+
 test('a finished CI run checks only the PR with that head commit', async () => {
   const open = [3, 7].map((number) => ({ number, head: { sha: `sha${number}` }, base: { ref: 'main' } }));
   const options = { mergeable: 'MERGEABLE', rules: required, runs: [{ name: 'test', conclusion: 'failure' }], open, payload: { workflow_run: { head_sha: 'sha7' } } };
