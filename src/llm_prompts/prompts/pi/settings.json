@@ -11,7 +11,7 @@
     "npm:tower-do@0.8.1",
     "npm:pi-notify@1.4.0",
     "npm:pi-lsp-extension@1.4.0",
-    "npm:@henryqw/pi-herdr-tools@1.6.0",
+    "npm:@henryqw/pi-herdr-tools@1.6.5",
     "npm:@gotgenes/pi-permission-system@41.0.0",
     "npm:pi-zentui@0.32.0",
     "npm:pi-web-access@0.44.0",
