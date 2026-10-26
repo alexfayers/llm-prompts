@@ -6,7 +6,7 @@
 |------------------------------------------------------------------------------ | -------: | -------: | ------: | --------: |
 | src/llm\_prompts/\_\_init\_\_.py                                              |        0 |        0 |    100% |           |
 | src/llm\_prompts/batching.py                                                  |      138 |        1 |     99% |       129 |
-| src/llm\_prompts/cli.py                                                       |      557 |       73 |     87% |90-91, 117-118, 125-138, 244-245, 356-357, 485, 488, 537, 603-615, 639-641, 676-678, 686-689, 719-728, 995-997, 1000-1006, 1009-1011, 1014-1028, 1038, 1043, 1055, 1070-1074, 1162-1163, 1168 |
+| src/llm\_prompts/cli.py                                                       |      562 |       73 |     87% |90-91, 117-118, 125-138, 244-245, 356-357, 485, 488, 537, 603-615, 639-641, 676-678, 686-689, 719-728, 995-997, 1000-1006, 1009-1011, 1014-1028, 1038, 1043, 1055, 1070-1074, 1167-1168, 1173 |
 | src/llm\_prompts/collection\_size.py                                          |      115 |        5 |     96% |178, 238-239, 389, 446 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/contribute.py                                                |      875 |       12 |     99% |149, 176, 318, 1141, 1166, 1366, 1383-1384, 1474-1476, 1817 |
@@ -37,7 +37,7 @@
 | src/llm\_prompts/size\_report.py                                              |      187 |        3 |     98% |144, 198, 200 |
 | src/llm\_prompts/skill\_injection.py                                          |       37 |        2 |     95% |    33, 36 |
 | src/llm\_prompts/squash\_subject.py                                           |        6 |        0 |    100% |           |
-| src/llm\_prompts/telemetry.py                                                 |      151 |        5 |     97% |91-92, 137-138, 320 |
+| src/llm\_prompts/telemetry.py                                                 |      159 |        5 |     97% |91-92, 137-138, 334 |
 | tests/conftest.py                                                             |      434 |        3 |     99% |158, 862, 901 |
 | tests/test\_batching.py                                                       |      314 |        0 |    100% |           |
 | tests/test\_build\_wave.py                                                    |      282 |        1 |     99% |       112 |
@@ -74,10 +74,10 @@
 | tests/test\_size\_report.py                                                   |      206 |        0 |    100% |           |
 | tests/test\_skill\_injection.py                                               |       30 |        0 |    100% |           |
 | tests/test\_squash\_subject.py                                                |        7 |        0 |    100% |           |
-| tests/test\_telemetry.py                                                      |      232 |        0 |    100% |           |
+| tests/test\_telemetry.py                                                      |      240 |        0 |    100% |           |
 | tests/test\_todos\_script.py                                                  |       88 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      114 |        0 |    100% |           |
-| **TOTAL**                                                                     | **18958** |  **562** | **97%** |           |
+| **TOTAL**                                                                     | **18979** |  **562** | **97%** |           |
 
 
 ## Setup coverage badge
