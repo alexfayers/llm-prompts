@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from . import home
+from .network import run_with_retries
 from .setup import (
     GIT_TIMEOUT,
     _commit_subjects_between,
@@ -138,7 +139,7 @@ def ensure_cloned(plugin: dict[str, Any]) -> Path | None:
         return None
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(
+    result = run_with_retries(
         ["git", "clone", url, str(dest)],
         capture_output=True,
         text=True,
@@ -219,7 +220,7 @@ def _pull_one_plugin_source(plugin: dict[str, Any]) -> list[str]:
         timeout=GIT_TIMEOUT,
     ).stdout.strip()
 
-    fetch = subprocess.run(
+    fetch = run_with_retries(
         ["git", "-C", str(checkout), "fetch", "--quiet"],
         check=False,
         capture_output=True,
@@ -302,7 +303,7 @@ def plugin_source_messages(plugin: dict[str, Any]) -> list[str]:
     if remote_sha is None or remote_sha == local_sha:
         return []
 
-    subprocess.run(
+    run_with_retries(
         ["git", "-C", str(checkout), "fetch", "--quiet"],
         check=True,
         capture_output=True,

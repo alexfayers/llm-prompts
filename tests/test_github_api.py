@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from conftest import FakeGitHub, FakeSubprocess, http_error
 
-from llm_prompts import contribute, github_api
+from llm_prompts import github_api, network
 
 
 @pytest.fixture(autouse=True)
@@ -130,7 +130,7 @@ class TestRequest:
         with pytest.raises(subprocess.CalledProcessError) as caught:
             github_api.request("GET", "/user")
 
-        assert contribute._TRANSIENT_FAILURE.search(caught.value.stderr)
+        assert network.TRANSIENT_FAILURE.search(caught.value.stderr)
 
     def test_token_never_reaches_a_subprocess(
         self, fake_github: FakeGitHub, fake_subprocess: FakeSubprocess
