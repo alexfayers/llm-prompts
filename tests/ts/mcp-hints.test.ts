@@ -104,6 +104,11 @@ test("the names list is grouped per server and holds only new, undeclared MCP na
 	assert.deepEqual((await play(steps, [], ["read", "mcp__wiki__find_page"])).map(names), [[], ["docs: search_pages, GetPage"], [], [], ["docs: put_page"], [], ["docs: search_pages, GetPage, put_page"]]);
 });
 
+test("the names header says MCP tools are codemode only", async () => {
+	const [result] = await play([ask("hi")], [tool("docs", "GetPage")]);
+	assert.match(parts(result)[0], /^MCP tools, callable ONLY inside codemode as tools\.mcp__<server>__<tool>\(args\), never as direct tool calls:/);
+});
+
 const schema = (properties: string[], required: string[]) => ({ type: "object", properties: Object.fromEntries(properties.map((name) => [name, { type: "string" }])), required });
 
 test("the names list marks required args, taking them from the cache only without a live schema", async () => {
