@@ -50,46 +50,42 @@ def _is_set(name: str) -> bool:
     return os.environ.get(name, "0") not in ("", "0")
 
 
+def _git(repo: str, *args: str) -> str:
+    """Return the output of a git command run in `repo`."""
+    return run(
+        ["git", "-C", repo, *args],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=_SEND_TIMEOUT_SECONDS,
+    ).stdout
+
+
 def _checkout_state(repo: str) -> dict[str, Any]:
-    """Return the version entry of a local git checkout."""
+    """Return the version entry of a local git checkout, naming only a commit on origin/main."""
     try:
-        head = run(
-            ["git", "-C", repo, "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=_SEND_TIMEOUT_SECONDS,
-        ).stdout.strip()
-        status = run(
-            ["git", "-C", repo, "status", "--porcelain"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=_SEND_TIMEOUT_SECONDS,
-        ).stdout
+        dirty = bool(_git(repo, "status", "--porcelain").strip())
     except (OSError, ValueError, SubprocessError):
-        return {"commit": None, "local": True, "dirty": None, "ahead": None}
+        return _local_state(None, None, None)
+    try:
+        base = _git(repo, "merge-base", "HEAD", "origin/main").strip()
+        ahead = int(_git(repo, "rev-list", "--count", f"{base}..HEAD"))
+    except (OSError, ValueError, SubprocessError):
+        return _local_state(None, dirty, None)
+    return _local_state(base, dirty, ahead)
+
+
+def _local_state(
+    base: str | None, dirty: bool | None, ahead: int | None
+) -> dict[str, Any]:
+    """Return a local checkout's entry, which never names a commit missing from origin/main."""
     return {
-        "commit": head,
+        "commit": None,
+        "base": base,
         "local": True,
-        "dirty": bool(status.strip()),
-        "ahead": _commits_ahead(repo),
+        "dirty": dirty,
+        "ahead": ahead,
     }
-
-
-def _commits_ahead(repo: str) -> int | None:
-    """Return how many commits HEAD has over origin/main, or None if that cannot be counted."""
-    try:
-        counted = run(
-            ["git", "-C", repo, "rev-list", "--count", "origin/main..HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=_SEND_TIMEOUT_SECONDS,
-        ).stdout
-        return int(counted)
-    except (OSError, ValueError, SubprocessError):
-        return None
 
 
 def _local(source: str) -> dict[str, str]:
@@ -125,7 +121,13 @@ def deliver(body: str) -> None:
 
 def _remote(commit: str | None) -> dict[str, Any]:
     """Return the version entry of a source installed from git."""
-    return {"commit": commit, "local": False, "dirty": False, "ahead": None}
+    return {
+        "commit": commit,
+        "base": commit,
+        "local": False,
+        "dirty": False,
+        "ahead": None,
+    }
 
 
 def enabled() -> bool:

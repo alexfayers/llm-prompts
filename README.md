@@ -109,10 +109,11 @@ Every command sends one anonymous event to PostHog (EU). The first run sends not
 - Sent for every command and for the session start check (`startup-check`, with `--cached` when it reuses the last result):
   - the command and the sorted names of its flags (never their values)
   - tool versions before and after, each with:
-    - `commit`
+    - `commit`: the installed commit of a remote source, `null` for a local path
+    - `base`: the newest `origin/main` commit the installed version contains, `null` if it cannot be found. A local commit that is not on `origin/main` is never sent
     - `local`: installed from a path
     - `dirty`: uncommitted changes in a local git checkout, `false` for remote sources, `null` for a local path that is not a checkout
-    - `ahead`: commits beyond `origin/main` in a local git checkout, `null` if not counted or not local
+    - `ahead`: commits beyond `base` in a local git checkout, `null` if not counted or not local
   - agent names
   - overlay count, and the version of each overlay installed from a github.com source
   - outcome, duration, OS and Python version
