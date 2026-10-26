@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 
 from . import github_api, telemetry
 from .install import AGENT_CLASSES, log, prompts_dir
+from .network import run_with_retries
 from .setup import (
     _UPDATE_INSTRUCTION,
     GIT_TIMEOUT,
@@ -299,7 +300,7 @@ def _local_source_messages(name: str, source: str) -> list[str]:
     if not (repo / ".git").is_dir():
         return []
 
-    subprocess.run(
+    run_with_retries(
         ["git", "-C", str(repo), "fetch", "--quiet"],
         check=True,
         capture_output=True,

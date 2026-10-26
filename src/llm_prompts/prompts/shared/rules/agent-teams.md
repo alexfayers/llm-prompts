@@ -73,6 +73,7 @@ targets: claude-code, pi
 - A teammate ends when its run finishes; a handoff or context limit is not 'done' - checkpoint via `{{TOOL_STEER}}` first.
 {% else %}
 - The shared `TaskList` is the team's coordination substrate - main polls it, `coordinator` populates it.
+- Where the `Task*` tools are absent, every `TaskCreate`/`TaskGet`/`TaskList`/`TaskUpdate` step in a rule, skill or agent MUST use memory `task/` entities instead, and each teammate's contract MUST travel in its spawn prompt.
 
 ## Stopping and persistence - `TaskList` dies with the session
 

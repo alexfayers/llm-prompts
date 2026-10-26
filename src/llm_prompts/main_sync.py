@@ -11,6 +11,7 @@ from itertools import takewhile
 from pathlib import Path
 from typing import Literal, NamedTuple
 
+from .network import run_with_retries
 from .setup import GIT_TIMEOUT
 from .squash_subject import squash_pr_number
 
@@ -25,6 +26,7 @@ _OPERATION_MARKERS = (
     ("REVERT_HEAD", "revert"),
 )
 _FIXUP_PREFIXES = ("fixup! ", "squash! ", "amend! ")
+_NETWORK_COMMANDS = frozenset({"fetch", "pull", "ls-remote"})
 
 
 class SyncResult(NamedTuple):
@@ -57,8 +59,9 @@ def run_git(
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     argv = ["git", "-C", str(repo), *args]
+    run = run_with_retries if args[0] in _NETWORK_COMMANDS else subprocess.run
     try:
-        return subprocess.run(
+        return run(
             argv,
             input=input,
             env={**os.environ, **env} if env else None,

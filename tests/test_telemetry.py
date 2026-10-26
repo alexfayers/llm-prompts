@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import contextlib
+import http.client
 import json
 import os
+import platform
+import re
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -16,7 +20,7 @@ import pytest
 import truststore
 from conftest import FakeSubprocess, run_capturing_exit
 
-from llm_prompts import cli, telemetry
+from llm_prompts import cli, github_api, mcp, telemetry
 
 A, B = "a" * 40, "b" * 40
 EVENT: dict[str, Any] = {"event": "command_run", "properties": {}}
@@ -96,6 +100,7 @@ def test_event_carries_only_allowlisted_properties(
     properties = json.loads(posted.call_args.args[0])["properties"]
     assert set(properties) == {
         *("command", "from", "to", "agents", "overlay_count", "overlays", "outcome"),
+        "run_id",
         *("flags", "duration_s", "os", "python", "schema", "$process_person_profile"),
     }
     assert properties["from"]["cline-hooks"] == {
@@ -533,3 +538,99 @@ def test_a_failed_gate_or_usage_error_is_not_reported_as_an_error(
 
     assert telemetry_popen.call_count == 1
     assert _props(telemetry_popen)["outcome"] == outcome
+
+
+def _failing_update(failure: BaseException | Callable[..., object]) -> None:
+    with (
+        patch("llm_prompts.install.main", side_effect=failure),
+        contextlib.suppress(Exception),
+    ):
+        _main("update")
+
+
+def _error(cause: BaseException | None = None, *, hide: bool = False) -> ValueError:
+    error = ValueError()
+    error.__context__ = cause
+    error.__suppress_context__ = hide
+    return error
+
+
+@pytest.mark.usefixtures("stubbed_cli")
+@pytest.mark.parametrize(
+    ("failure", "listed", "service"),
+    [
+        (lambda *_, **__: mcp._post("http://x", "x", {}, {}), 1, "mcp"),
+        (lambda *_, **__: github_api.request("GET", "/x"), 2, "github"),
+        (lambda *_, **__: mcp.pi_tool_name(None), 1, None),  # type: ignore[arg-type]
+        (_error(_error(_error(_error(_error(_error()))))), 4, None),
+        (_error(_error()), 2, None),
+        (_error(_error(), hide=True), 1, None),
+    ],
+)
+def test_an_exception_event_repeats_the_run_context_lists_causes_and_names_a_service(
+    telemetry_popen: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: BaseException | Callable[..., object],
+    listed: int,
+    service: str | None,
+) -> None:
+    offline = MagicMock(side_effect=URLError("down"))
+    monkeypatch.setattr("llm_prompts.mcp.urlopen", offline)
+    monkeypatch.setattr("llm_prompts.github_api.urlopen", offline)
+    monkeypatch.setattr("llm_prompts.github_api.token", lambda: "synthetic-token")
+
+    _failing_update(failure)
+
+    ran, raised = (e["properties"] for e in _events(telemetry_popen))
+    assert re.fullmatch(r"[0-9a-f]{12}", raised["run_id"])
+    context = telemetry._EXCEPTION_CONTEXT
+    assert {k: raised[k] for k in context} == {k: ran[k] for k in context}
+    assert len(raised["$exception_list"]) == listed
+    assert raised["dependency"] == service
+
+
+@pytest.mark.usefixtures("stubbed_cli")
+@pytest.mark.parametrize(
+    ("failure", "value"),
+    [
+        (json.JSONDecodeError("Expecting value", "", 0), "Expecting value: line 1"),
+        (http.client.IncompleteRead(b"abc", 5), "IncompleteRead(3 bytes read"),
+        (subprocess.CalledProcessError(2, ["synthetic-tool"]), "exit status 2"),
+        (json.JSONDecodeError("word " * 100, "", 0), "word word"),
+        (ValueError("plain message"), None),
+    ],
+)
+def test_only_exception_types_with_known_formats_send_a_capped_message(
+    telemetry_popen: MagicMock, failure: BaseException, value: str | None
+) -> None:
+    _failing_update(failure)
+
+    sent = _events(telemetry_popen)[1]["properties"]["$exception_list"][0].get("value")
+    assert (sent is None) == (value is None)
+    assert value is None or value in str(sent)
+    assert len(sent or "") <= telemetry._MAX_MESSAGE_LENGTH
+    assert "synthetic-tool" not in json.dumps(_events(telemetry_popen))
+
+
+@pytest.mark.usefixtures("stubbed_cli")
+def test_a_sent_message_never_carries_local_values_or_generic_identifiers(
+    telemetry_popen: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = str(Path.home())
+    generic = (
+        f"{home}/notes.md /srv/data.json C:\\Users\\x\\a.txt "
+        "https://host.example/p?t=a a@b.example 203.0.113.7 2001:db8::1 "
+        "deadbeefdeadbeefdeadbeef 4111111111111111"
+    )
+    monkeypatch.setenv("SYNTHETIC_SECRET", "plain-env-secret")
+    monkeypatch.setattr(
+        "llm_prompts.telemetry.read_config",
+        lambda: {"tools": [{"source": "plain-config-value"}]},
+    )
+    known = f"plain-env-secret {platform.node()} plain-config-value"
+
+    _failing_update(json.JSONDecodeError(f"{generic} {known}", "", 0))
+
+    value = _events(telemetry_popen)[1]["properties"]["$exception_list"][0].get("value")
+    for leak in [*generic.split(), *known.split(), home]:
+        assert leak not in value

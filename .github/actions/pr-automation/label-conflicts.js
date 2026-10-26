@@ -29,7 +29,13 @@ async function requiredCheckFailed(github, repo, { head, base }) {
   const rules = await github.paginate(github.rest.repos.getBranchRules, { ...repo, branch: base.ref, per_page: 100 });
   const required = rules.filter(({ type }) => type === 'required_status_checks').flatMap(({ parameters }) => parameters.required_status_checks.map(({ context }) => context));
   const runs = required.length ? await github.paginate(github.rest.checks.listForRef, { ...repo, ref: head.sha, per_page: 100 }) : [];
-  return runs.some(({ name, conclusion }) => required.includes(name) && FAILED_CONCLUSIONS.includes(conclusion));
+  const newest = new Map();
+  for (const run of runs.filter(({ name }) => required.includes(name))) {
+    if (!newest.has(run.name) || run.started_at > newest.get(run.name).started_at) {
+      newest.set(run.name, run);
+    }
+  }
+  return [...newest.values()].some(({ conclusion }) => FAILED_CONCLUSIONS.includes(conclusion));
 }
 
 async function dependenciesPending(github, repo, sha) {

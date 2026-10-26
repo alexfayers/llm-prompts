@@ -8,7 +8,7 @@ on:
   pull_request_review:
     types: [submitted, dismissed]
   workflow_run:
-    workflows: [Dependencies, CI]
+    workflows: [Dependencies, CI, PR template]
     types: [completed]
 
 concurrency:

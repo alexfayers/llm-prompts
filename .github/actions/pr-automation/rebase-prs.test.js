@@ -29,14 +29,14 @@ function pr(number, overrides = {}) {
   return { ...eligible, id: `id${number}`, number, headRefOid: `oid${number}`, ...overrides };
 }
 
-function setup(nodes, failing = []) {
+function setup(nodes, failing = [], rebaseFailing = []) {
   const calls = [];
   const warnings = [];
   const github = {
     graphql: async (query, vars) => {
       calls.push({ query, vars });
       if (query.includes('updatePullRequestBranch')) {
-        if (failing.includes(vars.id)) {
+        if (failing.includes(vars.id) || (rebaseFailing.includes(vars.id) && query.includes('REBASE'))) {
           throw new Error('boom');
         }
         return {};
@@ -44,7 +44,7 @@ function setup(nodes, failing = []) {
       return { repository: { pullRequests: { nodes } } };
     },
   };
-  const core = { warning: (message) => warnings.push(message) };
+  const core = { info: () => {}, warning: (message) => warnings.push(message) };
   return { calls, warnings, github, core };
 }
 
@@ -63,13 +63,22 @@ test('eligible PRs are rebased in order and others are skipped', async () => {
   );
 });
 
-test('a failed rebase warns and the remaining PRs are still rebased', async () => {
+test('a failed rebase and merge warns and the remaining PRs are still rebased', async () => {
   const { calls, warnings, github, core } = setup([pr(1), pr(3)], ['id1']);
   await rebase({ github, context, core });
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /#1/);
+  assert.equal(calls.length, 4);
+  assert.deepEqual(calls[3].vars, { id: 'id3', head: 'oid3' });
+});
+
+test('a failed rebase falls back to a merge update', async () => {
+  const { calls, warnings, github, core } = setup([pr(1)], [], ['id1']);
+  await rebase({ github, context, core });
   assert.equal(calls.length, 3);
-  assert.deepEqual(calls[2].vars, { id: 'id3', head: 'oid3' });
+  assert.match(calls[2].query, /updateMethod: MERGE/);
+  assert.deepEqual(calls[2].vars, { id: 'id1', head: 'oid1' });
+  assert.equal(warnings.length, 0);
 });
 
 test('Renovate PRs are not rebased', async () => {

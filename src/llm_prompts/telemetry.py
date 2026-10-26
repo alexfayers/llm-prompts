@@ -15,7 +15,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
-from subprocess import DEVNULL, Popen, SubprocessError, run
+from subprocess import DEVNULL, CalledProcessError, Popen, SubprocessError, run
 from types import TracebackType
 from typing import Any
 from urllib.request import Request, urlopen
@@ -31,10 +31,30 @@ POSTHOG_URL = "https://eu.i.posthog.com/i/v0/e/"
 POSTHOG_TOKEN = "phc_u9CarYTyF9mvobdXzSZ7bCv9DVNj8yF3JFzzD2j3ixgS"
 RESUME_ENV = "LLM_PROMPTS_TELEMETRY_RESUME"
 _SEND_TIMEOUT_SECONDS = 3
+_MAX_CAUSES = 3
+_MESSAGE_TYPES = frozenset({"IncompleteRead", "JSONDecodeError", "CalledProcessError"})
+_MAX_MESSAGE_LENGTH = 200
+_MIN_IDENTITY_LENGTH = 3
+_MIN_SECRET_LENGTH = 8
+_REDACTED = "<redacted>"
+_GENERIC_PATTERNS = (
+    r"[A-Za-z][A-Za-z0-9+.-]*://\S+",  # URL
+    r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+",  # email address
+    r"(?:~|[A-Za-z]:)?[\w.-]*(?:[/\\][^\s'\"]+)+",  # file path
+    r"\d{1,3}(?:\.\d{1,3}){3}",  # IPv4 address
+    r"(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}",  # IPv6 address
+    r"(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}",  # hostname
+    r"[A-Za-z0-9+/=_-]{20,}|\d{6,}",  # long token or number
+)
+_EXCEPTION_CONTEXT = (
+    *("command", "run_id", "flags", "agents", "outcome", "duration_s"),
+    *("os", "python", "schema"),
+)
 _CHECKOUT_KEY = "checkout"
 _INSTALLED_KEY = "installed"
 _GITHUB_SOURCE = re.compile(r"^(git\+)?(https://|ssh://git@|git@)github\.com[/:]")
 _PACKAGE = __name__.partition(".")[0]
+_SERVICES = {"llm_prompts.mcp._post": "mcp", "llm_prompts.github_api.request": "github"}
 _ROOT = Path(__file__).parent.parent
 _TRACKED = ("llm-prompts", "cline-hooks", "mcp-memory")
 _NOTICE = (
@@ -176,10 +196,41 @@ def _reportable(exc: BaseException) -> bool:
     return not isinstance(exc, SystemExit | KeyboardInterrupt)
 
 
-def _exception_event(
-    exc: BaseException, command: str, commit: dict[str, str]
-) -> dict[str, Any]:
-    """Build a PostHog exception event with the type and this package's frames only."""
+def _causes(exc: BaseException) -> Iterator[BaseException]:
+    """Yield up to `_MAX_CAUSES` exceptions that led to `exc`, nearest first."""
+    for _ in range(_MAX_CAUSES):
+        cause = exc.__cause__ or (None if exc.__suppress_context__ else exc.__context__)
+        if cause is None:
+            return
+        yield cause
+        exc = cause
+
+
+def _strings(node: Any) -> Iterator[str]:
+    """Yield every string value in a nested config."""
+    if isinstance(node, dict):
+        node = list(node.values())
+    if isinstance(node, list):
+        yield from (text for child in node for text in _strings(child))
+    elif isinstance(node, str):
+        yield node
+
+
+def _scrub(message: str, config: dict[str, Any]) -> str:
+    """Redact this machine's identifying values, then generic patterns, and cap the length."""
+    home = Path.home()
+    own = [str(home), str(Path.cwd()), str(_ROOT), home.name, platform.node()]
+    own += [os.environ.get(n, "") for n in ("USER", "LOGNAME", "USERNAME")]
+    secrets = [*os.environ.values(), *_strings(config)]
+    known = {v for v in own if len(v) >= _MIN_IDENTITY_LENGTH}
+    known |= {v for v in secrets if len(v) >= _MIN_SECRET_LENGTH}
+    pattern = "|".join(map(re.escape, sorted(known, key=len, reverse=True)))
+    message = re.sub(pattern, _REDACTED, message)
+    return re.sub("|".join(_GENERIC_PATTERNS), _REDACTED, message)[:_MAX_MESSAGE_LENGTH]
+
+
+def _exception_item(exc: BaseException, config: dict[str, Any]) -> dict[str, Any]:
+    """Return an exception's type, scrubbed message if its type allows one, and package frames."""
     frames = [
         {
             "filename": (Path(frame.f_code.co_filename).relative_to(_ROOT)).as_posix(),
@@ -190,12 +241,34 @@ def _exception_event(
         for frame, lineno in traceback.walk_tb(exc.__traceback__)
         if str(frame.f_globals.get("__name__")).split(".")[0] == _PACKAGE
     ]
-    item = {"type": type(exc).__name__, "stacktrace": {"frames": frames}}
+    item: dict[str, Any] = {"type": type(exc).__name__}
+    if item["type"] in _MESSAGE_TYPES:
+        sent = str(exc)
+        if isinstance(exc, CalledProcessError):
+            sent = f"Command returned non-zero exit status {exc.returncode}."
+        item["value"] = _scrub(sent, config)
+    return {**item, "stacktrace": {"frames": frames}}
+
+
+def _exception_event(
+    exc: BaseException,
+    properties: dict[str, Any],
+    commit: dict[str, str],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a PostHog exception event for `exc` and its causes."""
+    items = [_exception_item(e, config) for e in (exc, *_causes(exc))]
+    calls = [
+        f"{f['module']}.{f['function']}"
+        for i in items
+        for f in i["stacktrace"]["frames"]
+    ]
     return {
         "event": "$exception",
         "properties": {
-            "$exception_list": [item],
-            "command": command,
+            "$exception_list": items,
+            "dependency": next((_SERVICES[c] for c in calls if c in _SERVICES), None),
+            **{k: properties[k] for k in _EXCEPTION_CONTEXT},
             "llm_prompts_commit": commit,
             "$process_person_profile": False,
         },
@@ -245,6 +318,7 @@ class Run(AbstractContextManager["Run"]):
                     "command": command,
                     "flags": flags,
                     "started_at": time.time(),
+                    "run_id": uuid.uuid4().hex[:12],
                 }
                 self._begun["commits"] = self._commits() if installs else None
                 self.restore(json.loads(handed_over))
@@ -290,7 +364,8 @@ class Run(AbstractContextManager["Run"]):
                 json.dumps({"install_id": str(uuid.uuid4())}), encoding="utf-8"
             )
             return
-        tools = read_config().get("tools", [])
+        config = read_config()
+        tools = config.get("tools", [])
         local = {
             t.get("name"): _local(str(t.get("source")))
             for t in tools
@@ -306,6 +381,7 @@ class Run(AbstractContextManager["Run"]):
 
         properties = {
             "command": begun["command"],
+            "run_id": begun["run_id"],
             "flags": begun["flags"],
             "from": commits(begun["commits"]),
             "to": commits(None),
@@ -327,7 +403,7 @@ class Run(AbstractContextManager["Run"]):
         send({"event": "command_run", "properties": properties}, install_id)
         if self.outcome.startswith("error:") and exc and _reportable(exc):
             send(
-                _exception_event(exc, begun["command"], commits(None)["llm-prompts"]),
+                _exception_event(exc, properties, commits(None)["llm-prompts"], config),
                 install_id,
             )
 
