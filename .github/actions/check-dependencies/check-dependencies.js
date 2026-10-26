@@ -1,7 +1,6 @@
 const { BLOCKED_LABEL, ensureLabel } = require('../pr-automation/label-pr.js');
-const { fetchPr, requiredCheckFailed, clearsBlock } = require('../pr-automation/label-conflicts.js');
+const { DEPENDENCIES_CONTEXT, dependenciesPending, fetchPr, requiredCheckFailed, clearsBlock } = require('../pr-automation/label-conflicts.js');
 
-const STATUS_CONTEXT = 'dependencies';
 const DISPATCH_EVENT = 'dependencies-recheck';
 const DEPENDENCY = /(?:depends on|blocked by)\s+(?:https:\/\/github\.com\/)?([\w.-]+\/[\w.-]+)?(?:#|\/(?:pull|issues)\/)(\d+)/gi;
 
@@ -9,7 +8,7 @@ async function setStatus(github, context, pr, state, description) {
   await github.rest.repos.createCommitStatus({
     ...context.repo,
     sha: pr.head.sha,
-    context: STATUS_CONTEXT,
+    context: DEPENDENCIES_CONTEXT,
     state,
     description,
   });
@@ -51,11 +50,7 @@ async function evaluate({ github, removeClient, context, core, delay }, pr) {
 }
 
 async function isPending(github, context, pr) {
-  if (pr.labels.some(({ name }) => name === BLOCKED_LABEL.name)) {
-    return true;
-  }
-  const { data } = await github.rest.repos.listCommitStatusesForRef({ ...context.repo, ref: pr.head.sha });
-  return data.find((status) => status.context === STATUS_CONTEXT)?.state === 'pending';
+  return pr.labels.some(({ name }) => name === BLOCKED_LABEL.name) || dependenciesPending(github, context.repo, pr.head.sha);
 }
 
 function dependsOn(pr, { owner, repo }, target) {
