@@ -92,7 +92,7 @@ runs:
       if: |
         github.event_name == 'push' ||
         (github.event_name == 'pull_request_target' && contains(fromJSON('["opened", "reopened", "synchronize", "edited"]'), github.event.action)) ||
-        (github.event_name == 'workflow_run' && github.event.workflow_run.name == 'CI')
+        (github.event_name == 'workflow_run' && contains(fromJSON('["CI", "PR template"]'), github.event.workflow_run.name))
       uses: actions/github-script@v9
       env:
         ACTION_PATH: ${{ github.action_path }}
