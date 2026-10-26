@@ -21,7 +21,7 @@
 | src/llm\_prompts/listing.py                                                   |      126 |        0 |    100% |           |
 | src/llm\_prompts/main\_sync.py                                                |      238 |        5 |     98% |258, 400-401, 419-420 |
 | src/llm\_prompts/manifest.py                                                  |       72 |        3 |     96% | 50-51, 86 |
-| src/llm\_prompts/mcp.py                                                       |       76 |        3 |     96% |82, 157-158 |
+| src/llm\_prompts/mcp.py                                                       |       79 |        1 |     99% |        83 |
 | src/llm\_prompts/network.py                                                   |       25 |        1 |     96% |        30 |
 | src/llm\_prompts/plugins.py                                                   |      164 |       16 |     90% |46, 133-134, 138-139, 155-167, 183, 213, 242, 289, 299, 380, 384 |
 | src/llm\_prompts/prompts/claude-code/skills/retrospective/extract\_signals.py |      181 |       97 |     46% |44-49, 54-69, 80-124, 186, 197, 200, 209, 254-264, 269-286, 297-332, 336 |
@@ -64,6 +64,7 @@
 | tests/test\_listing.py                                                        |       48 |        0 |    100% |           |
 | tests/test\_main\_sync.py                                                     |      263 |        0 |    100% |           |
 | tests/test\_manifest.py                                                       |       73 |        0 |    100% |           |
+| tests/test\_mcp.py                                                            |       19 |        0 |    100% |           |
 | tests/test\_network.py                                                        |       14 |        0 |    100% |           |
 | tests/test\_pi\_extension\_factories.py                                       |        8 |        0 |    100% |           |
 | tests/test\_plugins.py                                                        |      254 |        0 |    100% |           |
@@ -79,7 +80,7 @@
 | tests/test\_telemetry.py                                                      |      297 |        0 |    100% |           |
 | tests/test\_todos\_script.py                                                  |       88 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      114 |        0 |    100% |           |
-| **TOTAL**                                                                     | **19128** |  **561** | **97%** |           |
+| **TOTAL**                                                                     | **19150** |  **559** | **97%** |           |
 
 
 ## Setup coverage badge
