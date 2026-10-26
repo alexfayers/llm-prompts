@@ -1,5 +1,6 @@
 const { BLOCKED_LABEL, ensureLabel, addLabels, removeLabel } = require('./label-pr.js');
 
+const DEPENDENCIES_CONTEXT = 'dependencies';
 const BOT_LOGIN = 'github-actions[bot]';
 const MERGEABLE_ATTEMPTS = 5;
 const MERGEABLE_DELAY_MS = 3000;
@@ -31,6 +32,11 @@ async function requiredCheckFailed(github, repo, { head, base }) {
   return runs.some(({ name, conclusion }) => required.includes(name) && FAILED_CONCLUSIONS.includes(conclusion));
 }
 
+async function dependenciesPending(github, repo, sha) {
+  const { data } = await github.rest.repos.listCommitStatusesForRef({ ...repo, ref: sha });
+  return data.find(({ context }) => context === DEPENDENCIES_CONTEXT)?.state === 'pending';
+}
+
 function clearsBlock(pr, failed) {
   return pr.mergeable === 'MERGEABLE' && !failed && pr.reviewDecision !== 'CHANGES_REQUESTED';
 }
@@ -52,10 +58,10 @@ async function labelConflicts({ github, removeClient = github, context, core, de
     if ((pr.mergeable === 'CONFLICTING' || failed) && !labelled) {
       await ensureLabel(github, core, repo, BLOCKED_LABEL);
       await addLabels(github, core, target, [BLOCKED_LABEL.name]);
-    } else if (labelled && clearsBlock(pr, failed) && await labelledByBot(github, target)) {
+    } else if (labelled && clearsBlock(pr, failed) && await labelledByBot(github, target) && !await dependenciesPending(github, repo, listed.head.sha)) {
       await removeLabel(removeClient, core, target, BLOCKED_LABEL.name);
     }
   }
 }
 
-module.exports = { labelConflicts, fetchPr, requiredCheckFailed, clearsBlock };
+module.exports = { labelConflicts, DEPENDENCIES_CONTEXT, dependenciesPending, fetchPr, requiredCheckFailed, clearsBlock };
