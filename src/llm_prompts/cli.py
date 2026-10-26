@@ -1061,6 +1061,7 @@ def _run_command(run: telemetry.Run) -> int | None:
         from .manifest import read_manifest
         from .setup import (
             config_path,
+            detect_changed_configured_tools,
             detect_stale_local_tools,
             run_setup,
         )
@@ -1099,6 +1100,7 @@ def _run_command(run: telemetry.Run) -> int | None:
             }
             standalone_before_setup = _standalone_tool_envs()
             stale = detect_stale_local_tools()
+            changed_sources |= detect_changed_configured_tools()
             upgraded = config_path().exists() and run_setup(
                 force_reinstall=stale or None
             )

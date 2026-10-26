@@ -1325,7 +1325,6 @@ class TestHerdsmanAgents:
             "tower_do_status",
             "tower_do_talk",
             "mcp__memory__*",
-            "mcp__memory_agent__*",
             "codemode",
         ]
         assert coordinator["thinking"] == "low"

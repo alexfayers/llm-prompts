@@ -457,6 +457,17 @@ def detect_changed_local_tools(tools: list[dict[str, Any]]) -> set[str]:
     }
 
 
+def detect_changed_configured_tools() -> set[str]:
+    """Return the names of configured local tools whose checkout differs from the stamp.
+
+    Returns:
+        An empty set if there is no config; otherwise the changed local tool names.
+    """
+    if not config_path().exists():
+        return set()
+    return detect_changed_local_tools(_load_config())
+
+
 def write_checkout_stamp(tools: list[dict[str, Any]]) -> None:
     """Write the current local-checkout states to the stamp file.
 

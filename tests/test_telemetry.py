@@ -290,6 +290,7 @@ def stubbed_cli(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         "llm_prompts.cli._reconfigure_agents",
         "llm_prompts.plugins.pull_plugin_sources",
         "llm_prompts.setup.detect_stale_local_tools",
+        "llm_prompts.setup.detect_changed_configured_tools",
         "llm_prompts.install.partial_source",
         "llm_prompts.setup.config_path",
         "subprocess.run",

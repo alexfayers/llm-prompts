@@ -7,7 +7,7 @@ description: >-
   Breakdown seat: turns a reasoner's design into {{ "tower_do tasks" if AGENT == "pi" else "TaskCreate entries" }} plus
   an AGENT REQUEST per teammate for main to spawn. Never spawns teammates, designs, reads or edits.
 {% endif %}
-tools: Agent, ToolSearch, TaskCreate, TaskGet, TaskList, TaskUpdate, SendMessage, mcp__memory__*, mcp__memory-agent__*{{ ", codemode" if AGENT == "pi" else "" }}
+tools: Agent, ToolSearch, TaskCreate, TaskGet, TaskList, TaskUpdate, SendMessage, mcp__memory__*{{ ", codemode" if AGENT == "pi" else "" }}
 mcp_read_only: [memory]
 {% if AGENT == "pi" %}
 extensions: []
