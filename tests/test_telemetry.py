@@ -14,7 +14,7 @@ from urllib.error import URLError
 
 import pytest
 import truststore
-from conftest import run_capturing_exit
+from conftest import FakeSubprocess, run_capturing_exit
 
 from llm_prompts import cli, telemetry
 
@@ -71,7 +71,9 @@ def test_any_opt_out_disables_telemetry(
 
 
 def test_event_carries_only_allowlisted_properties(
-    telemetry_popen: MagicMock, monkeypatch: pytest.MonkeyPatch
+    telemetry_popen: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_subprocess: FakeSubprocess,
 ) -> None:
     tools = [
         {"name": "cline-hooks", "source": "/synthetic/hooks"},
@@ -81,6 +83,8 @@ def test_event_carries_only_allowlisted_properties(
         {"name": "local-pub", "source": "~/synthetic/pub"},
     ]
     monkeypatch.setattr("llm_prompts.telemetry.read_config", lambda: {"tools": tools})
+    monkeypatch.setattr("llm_prompts.telemetry.run", fake_subprocess.run)
+    fake_subprocess.on("status", returncode=128)
 
     monkeypatch.setattr("llm_prompts.cli._get_installed_commit", lambda _: A)
     with telemetry.Run(lambda _: A) as run:
@@ -122,6 +126,7 @@ def _git(repo: Path, *args: str) -> str:
     ).stdout.strip()
 
 
+@pytest.mark.real_io
 def test_a_git_checkout_source_reports_its_head_and_whether_it_is_dirty(
     telemetry_popen: MagicMock, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

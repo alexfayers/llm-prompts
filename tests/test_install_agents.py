@@ -24,6 +24,8 @@ from llm_prompts.install import (
 from llm_prompts.install import main as install_main
 from llm_prompts.render_template import parse_frontmatter, split_frontmatter
 
+pytestmark = pytest.mark.usefixtures("bare_tree")
+
 
 def _make_agent(directory: Path, name: str, body: str = "body") -> Path:
     """Create a markdown agent file under directory and return its path."""
@@ -675,6 +677,7 @@ def claude_home(tmp_path: Path) -> Iterator[Path]:
 
 
 class TestClaudeCodeAgentsInstallLayout:
+    @pytest.mark.usefixtures("core_tree")
     def test_worker_reasoner_coordinator_and_surveyor_variants_installed_as_generated_files(
         self, claude_home: Path
     ) -> None:
@@ -716,6 +719,7 @@ class TestClaudeCodeAgentsInstallLayout:
         assert frontmatter["effort"] == "low"
         assert "generate_variants" not in frontmatter
 
+    @pytest.mark.usefixtures("core_tree")
     def test_read_only_variants_keep_write_edit_withheld(
         self, claude_home: Path
     ) -> None:
@@ -729,6 +733,7 @@ class TestClaudeCodeAgentsInstallLayout:
         assert "Edit" in disallowed
         assert "NotebookEdit" in disallowed
 
+    @pytest.mark.usefixtures("core_tree")
     def test_checker_variant_omits_claude_md_and_limits_tools(
         self, claude_home: Path
     ) -> None:
@@ -740,6 +745,7 @@ class TestClaudeCodeAgentsInstallLayout:
         assert frontmatter["omitClaudeMd"] == "true"
         assert frontmatter["tools"] == "StructuredOutput, Read"
 
+    @pytest.mark.usefixtures("core_tree")
     def test_reasoner_variants_have_valid_yaml_frontmatter(
         self, claude_home: Path
     ) -> None:
@@ -759,6 +765,7 @@ class TestClaudeCodeAgentsInstallLayout:
 
 
 class TestClaudeCodeAgentsManifestTracking:
+    @pytest.mark.usefixtures("core_tree")
     def test_generated_variants_tracked_and_removed_on_uninstall(
         self, claude_home: Path
     ) -> None:

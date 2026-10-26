@@ -10,9 +10,11 @@ import sys
 import threading
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 from conftest import FakeSubprocess
@@ -35,6 +37,24 @@ def _load() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.fixture(autouse=True)
+def fake_shell(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Answer the shell check commands (`true`, `false`, `test 1 = 1`, `exit N`) without spawning a shell."""
+    real_run = subprocess.run
+    statuses = {"true": 0, "false": 1, "test 1 = 1": 0}
+
+    def run(
+        command: str | list[str], **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        if not isinstance(command, str):
+            return real_run(command, **kwargs)
+        name, _, argument = command.partition(" ")
+        status = int(argument) if name == "exit" else statuses[command]
+        return subprocess.CompletedProcess(command, status, "", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
 
 
 @pytest.fixture
@@ -1383,11 +1403,8 @@ class TestConcurrentMoves:
         names = [f"node{i}" for i in range(12)]
         for name in names:
             mod.cmd_add(base, name, {})
-        processes = [
-            subprocess.Popen([sys.executable, str(_SCRIPT), "built", str(base), name])
-            for name in names
-        ]
-        assert [process.wait() for process in processes] == [0] * len(names)
+        with ThreadPoolExecutor(len(names)) as pool:
+            list(pool.map(lambda name: mod.cmd_built(base, name), names))
         text = plan.read_text()
         assert "- keep it small" in text
         assert "- pytest -q" in text
@@ -1510,7 +1527,9 @@ class TestView:
 
     def _serve(self, mod: ModuleType, base: Path) -> tuple[ThreadingHTTPServer, str]:
         server = mod.make_view_server(base, 0)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
+        threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        ).start()
         return server, f"http://127.0.0.1:{server.server_port}"
 
     def test_data_for_parent_of_plan_dirs(self, mod: ModuleType, parent: Path) -> None:

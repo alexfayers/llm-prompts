@@ -8,7 +8,8 @@ import shutil
 import subprocess
 import threading
 import urllib.error
-from collections.abc import Callable, Sequence
+import uuid
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from email.message import Message
 from pathlib import Path
 from typing import Any, Self, cast
@@ -16,9 +17,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from llm_prompts import github_api
+from llm_prompts import github_api, install
 from llm_prompts.batching import batch_branch
 from llm_prompts.contribute import Pr
+from llm_prompts.size_guard import CheckResult
 
 SideEffectCall = Callable[
     [list[str], dict[str, Any]], subprocess.CompletedProcess[str] | None
@@ -205,6 +207,23 @@ class FakeSubprocess:
     def sha_dated_subjects(self, *triples: tuple[str, str, str]) -> str:
         """Return git log --format=%H%x09%aI%x09%s output for (sha, subject, date) triples."""
         return "".join(f"{sha}\t{date}\t{subject}\n" for sha, subject, date in triples)
+
+
+def _forbid_spawn(*args: Any, **kwargs: Any) -> None:
+    raise AssertionError(
+        "Unmarked tests cannot spawn processes. "
+        "Request fake_subprocess and route the command, or mark the test @pytest.mark.real_io."
+    )
+
+
+@pytest.fixture(autouse=True)
+def no_real_io(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail any process spawn and skip retry waits, unless the test is marked `real_io`."""
+    if request.node.get_closest_marker("real_io"):
+        return
+    monkeypatch.setattr(subprocess, "run", _forbid_spawn)
+    monkeypatch.setattr(subprocess, "Popen", _forbid_spawn)
+    monkeypatch.setattr("llm_prompts.contribute._RETRY_DELAY_SECONDS", 0)
 
 
 @pytest.fixture
@@ -704,6 +723,50 @@ class ContributeRemote:
         self.fake.on("patch-id", "--stable", side_effect=side_effect)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def unnumbered_temp_dirs() -> Iterator[None]:
+    """Name temp dirs uniquely instead of numbering them, which rescans every earlier dir."""
+    numbered_mktemp = pytest.TempPathFactory.mktemp
+
+    def mktemp(
+        self: pytest.TempPathFactory, basename: str, numbered: bool = True
+    ) -> Path:
+        return numbered_mktemp(self, f"{basename}-{uuid.uuid4().hex}", numbered=False)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(pytest.TempPathFactory, "mktemp", mktemp)
+        yield
+
+
+@pytest.fixture(scope="session")
+def synthetic_prompts_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build a small prompts tree once per session."""
+    root = tmp_path_factory.mktemp("synthetic-prompts")
+    files = {
+        **{
+            f"{agent}/vars.json": "{}"
+            for agent in (
+                "antigravity",
+                "claude-code",
+                "cline",
+                "codex",
+                "copilot",
+                "kiro",
+                "pi",
+            )
+        },
+        "shared/rules/synthetic-rule.md": "# Rule\n\nSynthetic rule body.\n",
+        "shared/skills/synthetic-skill/SKILL.md": (
+            "---\nname: synthetic-skill\ndescription: A synthetic skill.\n---\n\n# Skill\n"
+        ),
+    }
+    for relative, content in files.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    return root
+
+
 @pytest.fixture
 def contribute_remote(fake_subprocess: FakeSubprocess) -> ContributeRemote:
     """Return a `ContributeRemote` wired onto `fake_subprocess`."""
@@ -728,6 +791,16 @@ def isolated_config_dir(
     config_dir = tmp_path_factory.mktemp("config")
     monkeypatch.setattr("llm_prompts.home.config_dir", lambda: config_dir)
     return config_dir
+
+
+@pytest.fixture(autouse=True)
+def isolated_home(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Point `Path.home()` at a per-test temporary dir so no test scans the real home."""
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    return home
 
 
 @pytest.fixture(autouse=True)
@@ -847,3 +920,111 @@ def telemetry_popen(
     popen = MagicMock()
     monkeypatch.setattr("llm_prompts.telemetry.Popen", popen)
     return popen
+
+
+_PROMPTS = Path(__file__).parent.parent / "src" / "llm_prompts" / "prompts"
+_BARE_DROPPED = (
+    "shared/skills",
+    "shared/rules",
+    "shared/agents",
+    "shared/workflows",
+    "pi/agents",
+    "pi/rules",
+    "pi/skills",
+    "pi/herdsman-overlays",
+)
+_KEPT_EXTENSIONS = {
+    "pi/extensions": (
+        "codemode-error-header.ts",
+        "codemode-sleep.ts",
+        "codemode-wait-until.ts",
+        "compact-now.ts",
+        "mcp-hints.ts",
+        "net-guard.ts",
+        "prompt-cache-stabilizer.ts",
+        "role-switch.ts",
+        "tower-do-patch.ts",
+    )
+}
+_KEPT_CORE = {
+    **_KEPT_EXTENSIONS,
+    "shared/skills": ("tdd", "git-usage", "pickup", "todos"),
+    "shared/rules": (
+        "000-context-window-canary.md",
+        "agent-teams.md",
+        "ask-user.md",
+        "coding.md",
+        "coding-python.md",
+        "delegation.md",
+        "git.md",
+    ),
+}
+
+
+def _copy_prompts(
+    root: Path, dropped: Sequence[str], kept: Mapping[str, tuple[str, ...]]
+) -> Path:
+    """Copy the packaged prompt tree, leaving out `dropped` directories and entries of `kept` ones that are not listed."""
+
+    def ignore(directory: str, names: list[str]) -> list[str]:
+        relative = Path(directory).relative_to(_PROMPTS).as_posix()
+        if relative in kept:
+            return [name for name in names if name not in kept[relative]]
+        return [name for name in names if f"{relative}/{name}".lstrip("./") in dropped]
+
+    shutil.copytree(_PROMPTS, root, ignore=ignore)
+    return root
+
+
+@pytest.fixture(scope="session")
+def core_prompts(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Copy the packaged prompt tree keeping a few of its skills and rules."""
+    return _copy_prompts(tmp_path_factory.mktemp("core") / "prompts", (), _KEPT_CORE)
+
+
+@pytest.fixture(scope="session")
+def bare_prompts(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Copy the packaged prompt tree without any skills, rules, agents or workflows."""
+    return _copy_prompts(
+        tmp_path_factory.mktemp("bare") / "prompts", _BARE_DROPPED, _KEPT_EXTENSIONS
+    )
+
+
+@pytest.fixture
+def core_tree() -> None:
+    """Request this to install from a trimmed tree that keeps the core skills and rules."""
+
+
+@pytest.fixture
+def bare_tree() -> None:
+    """Request this to install from the packaged tree without skills, rules, agents or workflows."""
+
+
+@pytest.fixture(autouse=True)
+def synthetic_prompts(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    synthetic_prompts_root: Path,
+) -> Path:
+    """Read a small prompts tree instead of the packaged one, unless the test is marked `real_prompts`."""
+    if request.node.get_closest_marker("real_prompts"):
+        return synthetic_prompts_root
+    named = {"core_tree": "core_prompts", "bare_tree": "bare_prompts"}
+    chosen = next((name for name in named if name in request.fixturenames), None)
+    if chosen:
+        monkeypatch.setattr(
+            "llm_prompts.size_guard.check",
+            lambda *args, **kwargs: CheckResult(True, [], [], ""),
+        )
+        monkeypatch.setattr("llm_prompts.install.clear_read_cache", lambda: None)
+    tree = request.getfixturevalue(named[chosen]) if chosen else synthetic_prompts_root
+    real_prompts_dir = install.prompts_dir
+
+    def prompts_dir(module: str) -> Path:
+        if module == "llm_prompts":
+            return tree
+        return real_prompts_dir(module) if chosen else tree
+
+    for module in ("install", "size_guard", "cli"):
+        monkeypatch.setattr(f"llm_prompts.{module}.prompts_dir", prompts_dir)
+    return tree

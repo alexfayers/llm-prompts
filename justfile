@@ -14,7 +14,7 @@ type-check: _uv
     uv run mypy src/ tests/
 
 test: _uv
-    uv run pytest -vv --nf -n auto --maxprocesses 4 --cov=. --cov-report=xml
+    uv run pytest -q --nf -n auto --maxprocesses 4 --dist worksteal --cov=. --cov-report=xml
 
 test-actions:
     node --test .github/actions/*/*.test.js

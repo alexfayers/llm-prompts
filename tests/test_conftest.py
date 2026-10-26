@@ -10,6 +10,8 @@ from typing import Any
 import pytest
 from conftest import ContributeRemote, FakeSubprocess
 
+from llm_prompts import install
+
 
 def test_callable_side_effect_result_replaces_the_canned_response(
     fake_subprocess: FakeSubprocess,
@@ -153,3 +155,29 @@ def test_open_pr_item_carries_the_body_set_for_it(
     contribute_remote.body(3, "Depends on https://x/pull/1")
 
     assert _open_pr_items(contribute_remote)[0]["body"] == "Depends on https://x/pull/1"
+
+
+def test_unmarked_test_cannot_spawn_a_process() -> None:
+    with pytest.raises(AssertionError, match="real_io"):
+        subprocess.Popen(["true"])
+    with pytest.raises(AssertionError, match="real_io"):
+        subprocess.run(["git", "status"], check=False)
+
+
+@pytest.mark.real_io
+def test_real_io_test_spawns_a_real_process() -> None:
+    assert subprocess.run(["true"], check=False).returncode == 0
+
+
+def test_unmarked_test_reads_the_synthetic_prompts_tree() -> None:
+    tree = install.prompts_dir("llm_prompts")
+
+    assert (tree / "shared" / "rules" / "synthetic-rule.md").is_file()
+    assert not (tree / "shared" / "rules" / "coding.md").exists()
+
+
+@pytest.mark.real_prompts
+def test_real_prompts_test_reads_the_packaged_prompts_tree() -> None:
+    tree = install.prompts_dir("llm_prompts")
+
+    assert (tree / "shared" / "rules" / "coding.md").is_file()

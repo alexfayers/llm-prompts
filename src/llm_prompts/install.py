@@ -3975,6 +3975,11 @@ def main(
                 if Path(f).parent == agents_dest
             }
         else:
+            pi_dialect = (
+                _pi_agent_dialect(root_dir, overlay_dirs)
+                if agents_target == "pi"
+                else _claude_agent_dialect()
+            )
             managed_agents = _install_agents(
                 agent_dirs,
                 agents_dest,
@@ -3986,9 +3991,7 @@ def main(
                     frozenset() if only is not None else target_skip_set,
                 ),
                 agents_target,
-                _pi_agent_dialect(root_dir, overlay_dirs)
-                if agents_target == "pi"
-                else _claude_agent_dialect(),
+                pi_dialect,
                 _builtin_skill_vars(all_agents[agents_target].vars_path()),
                 bundle=pi_bundle if agents_target == "pi" else None,
             )
@@ -3999,7 +4002,7 @@ def main(
                     json.dumps(
                         _pi_role_variants(
                             agent_dirs,
-                            _pi_agent_dialect(root_dir, overlay_dirs),
+                            pi_dialect,
                             _builtin_skill_vars(all_agents[agents_target].vars_path()),
                         ),
                         indent=2,

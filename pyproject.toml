@@ -44,6 +44,10 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 pythonpath = ["src"]
 addopts = ["--color=yes"]
+markers = [
+    "real_io: run real processes, git and waits instead of the fakes",
+    "real_prompts: read the packaged prompts tree and run the size scan",
+]
 
 [tool.mypy]
 strict = true

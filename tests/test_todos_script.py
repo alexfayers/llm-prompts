@@ -124,6 +124,7 @@ class TestFindTodos:
         assert result["todos"][0]["file"] == "sub/a.py"
 
 
+@pytest.mark.real_io
 class TestMain:
     """Tests for the CLI entrypoint."""
 
