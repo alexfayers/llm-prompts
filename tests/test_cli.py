@@ -47,6 +47,14 @@ from llm_prompts.size_guard import ALLOWANCES_FILENAME, CHECKED_TARGETS, Artifac
 from llm_prompts.size_limits import FINALS, RULE_BYTES
 
 
+@pytest.fixture(autouse=True)
+def no_changed_local_checkouts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Report no changed local tool checkouts, so `update` reads no config for them."""
+    monkeypatch.setattr(
+        "llm_prompts.setup.detect_changed_configured_tools", lambda: set()
+    )
+
+
 class TestExtractGitUrl:
     def test_git_plus_https(self) -> None:
         assert (
@@ -855,9 +863,12 @@ class TestUpdateRestartsMemoryOnlyWhenItChanged:
 
 class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
     def _run_update(
-        self, changed: set[str], removed_envs: AbstractSet[str] = frozenset()
+        self,
+        changed: set[str],
+        removed_envs: AbstractSet[str] = frozenset(),
+        local_changes: AbstractSet[str] = frozenset(),
     ) -> dict[str, MagicMock]:
-        """Run `llm-prompts update` with the given changed sources and removed tool envs.
+        """Run `llm-prompts update` with the given changed sources, removed tool envs and changed local checkouts.
 
         Returns:
             The patched post-install configuration mocks, keyed by name.
@@ -873,6 +884,10 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
                 },
             ),
             patch("llm_prompts.cli._pull_local_sources", return_value=changed),
+            patch(
+                "llm_prompts.setup.detect_changed_configured_tools",
+                return_value=set(local_changes),
+            ),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup.run_setup", return_value=False),
             patch("llm_prompts.install.main", return_value=frozenset()),
@@ -919,6 +934,15 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
 
     def test_a_memory_change_reconfigures_memory_and_migrates_the_db(self) -> None:
         mocks = self._run_update({"mcp-memory"})
+        mocks["memory"].assert_called_once_with()
+        mocks["codex"].assert_called_once_with()
+        mocks["pi_memory"].assert_called_once_with()
+        mocks["migrate"].assert_called_once_with()
+
+    def test_a_local_memory_checkout_change_reconfigures_memory_and_migrates_the_db(
+        self,
+    ) -> None:
+        mocks = self._run_update(set(), local_changes={"mcp-memory"})
         mocks["memory"].assert_called_once_with()
         mocks["codex"].assert_called_once_with()
         mocks["pi_memory"].assert_called_once_with()
