@@ -20,6 +20,8 @@ from llm_prompts.install import main as install_main
 from llm_prompts.manifest import read_rendered_rule, write_rendered_rules
 from llm_prompts.render_template import render_template
 
+pytestmark = pytest.mark.usefixtures("bare_tree")
+
 
 def _make_rule(directory: Path, name: str, body: str = "body") -> Path:
     """Create a markdown rule file under directory and return its path."""
@@ -303,6 +305,7 @@ class TestCodexInstallLayout:
         assert agents_md.is_file()
         assert not (codex_home / ".codex" / "rules").exists()
 
+    @pytest.mark.usefixtures("core_tree")
     def test_skills_materialize_into_codex_skills(self, codex_home: Path) -> None:
         skills = codex_home / ".codex" / "skills"
         assert (skills / "tdd").is_dir() and not (skills / "tdd").is_symlink()
@@ -310,6 +313,7 @@ class TestCodexInstallLayout:
             skills / "git-usage"
         ).is_symlink()
 
+    @pytest.mark.usefixtures("core_tree")
     def test_ask_codex_excluded_from_codex_skills(self, tmp_path: Path) -> None:
         home = tmp_path / "home"
         home.mkdir()

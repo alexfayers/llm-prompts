@@ -12,6 +12,8 @@ from llm_prompts.install import get_managed_dirs
 from llm_prompts.install import main as install_main
 from llm_prompts.render_template import render_template
 
+pytestmark = pytest.mark.usefixtures("bare_tree")
+
 
 def _make_rule(directory: Path, name: str, body: str = "body") -> Path:
     """Create a markdown rule file under directory and return its path."""
@@ -60,6 +62,7 @@ class TestAntigravityInstallLayout:
         assert agents_md.is_file()
         assert not (antigravity_home / ".gemini" / "config" / "rules").exists()
 
+    @pytest.mark.usefixtures("core_tree")
     def test_skills_materialize_into_antigravity_skills(
         self, antigravity_home: Path
     ) -> None:

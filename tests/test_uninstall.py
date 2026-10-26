@@ -131,7 +131,7 @@ class TestDisallowUpdateClaudeCode:
 
 
 @pytest.fixture
-def installed_home(tmp_path: Path) -> Iterator[Path]:
+def installed_home(tmp_path: Path, synthetic_prompts: Path) -> Iterator[Path]:
     """Run `install claude-code` into a fake home with overlays/manifest redirected."""
     home = tmp_path / "home"
     home.mkdir()

@@ -36,6 +36,7 @@ from llm_prompts.install import (
     _materialize_builtin_skill,
     _materialize_override_skill,
     _passes_requires_gate,
+    _pi_definitions,
     _rendered_content,
     _targets_agent,
     _warn_pi_version_drift,
@@ -159,6 +160,9 @@ class TestPassesRequiresGate:
             patch("llm_prompts.install.shutil.which", return_value=None),
         ):
             assert _passes_requires_gate(rule) is False
+
+    def test_true_when_source_is_unreadable(self, tmp_path: Path) -> None:
+        assert _passes_requires_gate(tmp_path / "missing.md") is True
 
 
 class TestCollectContentSrcsEnvGate:
@@ -326,6 +330,9 @@ class TestTargetsAgent:
         assert not _targets_agent(rule, "codex")
         assert not _targets_agent(rule, "cline")
         assert _targets_agent(rule, "pi")
+
+    def test_every_agent_when_source_is_unreadable(self, tmp_path: Path) -> None:
+        assert _targets_agent(tmp_path / "missing.md", "codex")
 
     def test_targets_lists_the_only_agents(self, tmp_path: Path) -> None:
         rule = _make_rule(
@@ -671,6 +678,7 @@ class TestMaterializeBuiltinSkill:
         (src / "reference.md").write_text("changed", encoding="utf-8")
         assert sibling.read_text(encoding="utf-8") == "changed"
 
+    @pytest.mark.real_io
     def test_companion_script_still_runs(self, tmp_path: Path) -> None:
         src = self._make_skill(tmp_path / "src", "tidy-code", "# Tidy code\n")
         (src / "check.py").write_text("print('ok')\n", encoding="utf-8")
@@ -776,6 +784,20 @@ class TestMainReadCache:
             install_main(["claude-code"])
 
         assert _read_text(source) == "two"
+
+
+@pytest.mark.real_prompts
+class TestMainShippedPrompts:
+    def test_size_check_passes_for_own_prompts_dir(self, tmp_path: Path) -> None:
+        home = tmp_path / "home"
+        home.mkdir()
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+        ):
+            install_main(["claude-code"])
+
+        assert (home / ".claude" / "skills").exists()
 
 
 class TestMainRunsSizeGuard:
@@ -1125,17 +1147,6 @@ class TestMainRunsSizeGuard:
             call.args[1] for call in mock_log.call_args_list if call.args[0] == "warn"
         ]
         assert any("b.md" in line for line in logged_warn)
-
-    def test_size_check_passes_for_own_prompts_dir(self, tmp_path: Path) -> None:
-        home = tmp_path / "home"
-        home.mkdir()
-        with (
-            patch("llm_prompts.install.Path.home", return_value=home),
-            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
-        ):
-            install_main(["claude-code"])
-
-        assert (home / ".claude" / "skills").exists()
 
     def test_passing_check_logs_parked_state_matching_the_shared_helper(
         self, tmp_path: Path
@@ -1610,6 +1621,50 @@ class TestInstallLinked:
         dest = tmp_path / "dest" / "rule.md"
         _install_linked(src, dest, "rule")
         assert dest.read_text(encoding="utf-8") == body
+
+
+class TestInstallLinkedSkipsUnchanged:
+    @pytest.fixture
+    def written(self) -> Iterator[MagicMock]:
+        with patch("llm_prompts.install._write_text") as write:
+            yield write
+
+    def test_dest_with_the_same_content_is_not_rewritten(
+        self, tmp_path: Path, written: MagicMock
+    ) -> None:
+        src = _make_rule(tmp_path / "src", "rule.md", "# Body\n")
+        dest = _make_rule(tmp_path / "dest", "rule.md", "# Body\n")
+
+        _install_linked(src, dest, "rule")
+
+        written.assert_not_called()
+
+    def test_symlink_to_the_source_is_not_replaced(
+        self, tmp_path: Path, written: MagicMock
+    ) -> None:
+        src = _make_rule(tmp_path / "src", "rule.md", "# Body\n")
+        dest = tmp_path / "dest" / "rule.md"
+        dest.parent.mkdir()
+        dest.symlink_to(src)
+
+        _install_linked(src, dest, "rule")
+
+        written.assert_not_called()
+        assert dest.is_symlink()
+
+
+class TestPiDefinitions:
+    def test_a_source_that_fails_to_render_is_reported_not_generated(
+        self, tmp_path: Path
+    ) -> None:
+        agents = tmp_path / "agents"
+        good = _make_rule(agents, "good.md", "---\nname: good\n---\n\nBody.\n")
+        bad = _make_rule(agents, "bad.md", "---\nname: bad\n---\n\n{% if %}\n")
+
+        definitions, failed = _pi_definitions([agents], MagicMock(), MagicMock(), {})
+
+        assert failed == [bad]
+        assert [src for _, src, _ in definitions] == [good]
 
 
 class TestRenderedAndLinkedContentEquivalence:

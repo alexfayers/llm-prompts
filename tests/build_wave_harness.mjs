@@ -1,12 +1,13 @@
 // Runs the eagle-vision build-wave workflow script against fake agents.
 // Usage: node build_wave_harness.mjs <config.json>
 // config: { script, args, scenario }; prints { result, error, calls } as JSON.
-import { execFile } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+// scenario.shell and scenario.stub map a runner label (or its part before ":") to the marker
+// lines the script would print, or to a list of such lists for successive calls.
+// shell replaces every runner script (an unmapped label is an error), stub only the mapped labels.
+import { spawn } from 'node:child_process'
+import { closeSync, existsSync, openSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { promisify } from 'node:util'
 
-const run = promisify(execFile)
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
 const MAX_WAITS = 6
 
@@ -17,21 +18,45 @@ const errors = []
 
 const logSize = file => (existsSync(file) ? statSync(file).size : 0)
 
+const COMMAND = /^cd (\S+) && bash (\S+\.sh)(?: (\S+))? (>>?) (\S+\.log) 2>&1$/
+
+const exec = ([, cwd, file, step, mode, log]) => new Promise(resolve => {
+  const out = openSync(log, mode === '>' ? 'w' : 'a')
+  spawn('bash', step ? [file, step] : [file], { cwd, stdio: ['ignore', out, out] })
+    .on('error', () => resolve(1))
+    .on('close', code => { closeSync(out); resolve(code ?? 1) })
+})
+
 const runCommand = async (command, repeat) => {
-  const log = command.match(/(\S+\.log) 2>&1$/)[1]
-  const waiting = repeat && / wait >> /.test(command) ? new RegExp(`^${repeat}`, 'm') : null
+  const parts = command.match(COMMAND)
+  const log = parts[5]
+  const waiting = repeat && parts[3] === 'wait' ? new RegExp(`^${repeat}`, 'm') : null
   for (let waits = 0; waits <= MAX_WAITS; waits++) {
     const before = logSize(log)
-    let code = 0
-    try { await run('bash', ['-c', command]) } catch (e) { code = e.code }
+    const code = await exec(parts)
     if (code !== 0 || !waiting?.test(readFileSync(log, 'utf8').slice(before))) return code
   }
   return 0
 }
 
-const runner = async prompt => {
-  const file = prompt.match(/to (\S+\.sh) with the Write tool/)[1]
+const replayed = {}
+
+const scriptedKey = (label, replies) => [label, label.split(':')[0]].find(k => k in replies)
+
+const scripted = (label, replies) => {
+  const key = scriptedKey(label, replies)
+  if (key === undefined) throw new Error(`runner call without scripted lines: ${label}`)
+  const reply = replies[key]
+  if (!Array.isArray(reply[0])) return reply
+  replayed[key] = (replayed[key] ?? -1) + 1
+  return reply[Math.min(replayed[key], reply.length - 1)]
+}
+
+const runner = async (prompt, label) => {
   const prefixes = [...prompt.match(/starts with (.*), verbatim/)[1].matchAll(/"([^"]*)"/g)].map(m => m[1])
+  const replies = scenario.shell ?? (scriptedKey(label, scenario.stub ?? {}) === undefined ? null : scenario.stub)
+  if (replies) return { lines: scripted(label, replies).filter(l => prefixes.some(p => l.startsWith(p))) }
+  const file = prompt.match(/to (\S+\.sh) with the Write tool/)[1]
   const commands = [...prompt.matchAll(/^ {3}(cd \S+ && bash .*)$/gm)].map(m => m[1])
   mkdirSync(dirname(file), { recursive: true })
   writeFileSync(file, `${prompt.slice(prompt.indexOf('\n\n', prompt.indexOf('3. Read')) + 2)}\n`)
@@ -64,7 +89,7 @@ const worker = (label, prompt) => {
 
 const agent = async (prompt, opts) => {
   calls.push({ label: opts.label, agentType: opts.agentType, prompt })
-  return opts.agentType === 'eagle-vision-runner-haiku-low' ? runner(prompt) : worker(opts.label, prompt)
+  return opts.agentType === 'eagle-vision-runner-haiku-low' ? runner(prompt, opts.label) : worker(opts.label, prompt)
 }
 
 const pipeline = (items, first, ...rest) => Promise.all(items.map(async item => {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import time
 from collections.abc import Iterator
@@ -826,6 +827,11 @@ class TestUpdateCheckOnTaskStart:
                 patch(
                     "llm_prompts.hooks.time.sleep",
                     side_effect=finish_check if finishes else None,
+                ),
+                patch(
+                    "llm_prompts.hooks.time.monotonic",
+                    wraps=time.monotonic,
+                    side_effect=None if finishes else itertools.count(step=10),
                 ),
                 patch("llm_prompts.cli._collect_update_messages") as mock_collect,
             ):

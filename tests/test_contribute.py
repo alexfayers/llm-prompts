@@ -57,12 +57,6 @@ _OUT_SCOPE = "docs/notes.md"
 
 
 @pytest.fixture(autouse=True)
-def _no_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Retry network calls without waiting between attempts."""
-    monkeypatch.setattr(contribute, "_RETRY_DELAY_SECONDS", 0)
-
-
-@pytest.fixture(autouse=True)
 def _gh_installed(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default to a host with gh installed, and start with no cached GitHub lookups."""
     monkeypatch.setattr(contribute, "_gh_installed", lambda: True)
@@ -3438,6 +3432,7 @@ class TestSyncTargetsLinks:
         values: tuple[str, ...],
         message: str,
         capsys: pytest.CaptureFixture[str],
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         base, log, report = self._patched()
         with base, log, report, patch("llm_prompts.contribute.run_sync") as mock_sync:

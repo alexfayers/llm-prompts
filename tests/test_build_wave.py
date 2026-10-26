@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import importlib.util
+import io
 import json
 import os
 import shutil
 import subprocess
-import sys
+from collections.abc import Iterator
+from contextlib import redirect_stdout
 from dataclasses import dataclass
+from functools import cache
+from itertools import takewhile
 from pathlib import Path
+from types import ModuleType
 from typing import Any
+from unittest import mock
 
 import pytest
 
@@ -24,23 +31,21 @@ _SKILL = (
 )
 _HARNESS = Path(__file__).parent / "build_wave_harness.mjs"
 
-pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node missing")
+pytestmark = [
+    pytest.mark.skipif(shutil.which("node") is None, reason="node missing"),
+    pytest.mark.real_io,
+]
 
-_COLLECT_STUB = """\
-import runpy
-import subprocess
-import sys
-from pathlib import Path
 
-REAL = {real!r}
-if sys.argv[1] == "collect":
-    lib = runpy.run_path(REAL, run_name="focus_lib")
-    path = lib["find_node_path"](Path(sys.argv[2]), sys.argv[3])
-    command = lib["node_test_command"](path.read_text())
-    sys.exit(subprocess.run(command, shell=True, check=False).returncode)
-sys.argv[0] = REAL
-runpy.run_path(REAL, run_name="__main__")
-"""
+@cache
+def _focus_module() -> ModuleType:
+    """The focus script, loaded once so setup calls run in-process."""
+    spec = importlib.util.spec_from_file_location("focus", _SKILL / "focus.py")
+    assert spec
+    assert spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 @dataclass
@@ -81,20 +86,14 @@ class Project:
         ).stdout.strip()
 
     def focus(self, *args: str) -> str:
-        """Run the focus script on the plan."""
-        return subprocess.run(
-            [
-                sys.executable,
-                str(self.skill / "focus.py"),
-                args[0],
-                str(self.plan),
-                *args[1:],
-            ],
-            env=self.env,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
+        """Run a focus command on the plan in this process, returning its stdout."""
+        command, *rest = args
+        focus = _focus_module()
+        parsed = focus.build_parser().parse_args([command, str(self.plan), *rest])
+        stdout = io.StringIO()
+        with mock.patch.dict(os.environ, self.env), redirect_stdout(stdout):
+            focus.run_command(parsed)
+        return stdout.getvalue()
 
     def add_node(
         self,
@@ -113,22 +112,12 @@ class Project:
             self.focus("link", name, "--depends", *depends)
         self.focus("set-test", name, f"grep -q ok tests/test_{name}.py")
 
-    def commit_on_main(self, subject: str, files: dict[str, str]) -> None:
-        """Commit files straight onto main."""
+    def commit_on_checkout(self, subject: str, files: dict[str, str]) -> None:
+        """Commit files straight onto the repo's checked-out branch."""
         for rel, content in files.items():
             (self.repo / rel).write_text(content)
         self.git("add", "-A")
         self.git("commit", "-q", "-m", subject)
-
-    def finish_by_hand(self, name: str, files: dict[str, str]) -> None:
-        """Leave a node passed in nodes/done with uncommitted files in its worktree."""
-        worktree = self.worktree(f"ev1-{name}")
-        self.git("worktree", "add", "-q", "-b", f"ev/ev1-{name}", str(worktree), "main")
-        for rel, content in files.items():
-            (worktree / rel).parent.mkdir(parents=True, exist_ok=True)
-            (worktree / rel).write_text(content)
-        for step in ("start", "built", "pass"):
-            self.focus(step, name)
 
     def build_sh(self, text: str) -> None:
         """Write the plan's build.sh."""
@@ -170,151 +159,411 @@ class Project:
         return output
 
 
-@pytest.fixture
-def project(tmp_path: Path) -> Project:
-    """A repo on main with one lint finding and an untracked empty plan with a Checks entry."""
-    root = tmp_path.resolve()
-    env = os.environ | {
-        "GIT_CONFIG_GLOBAL": "/dev/null",
-        "GIT_CONFIG_SYSTEM": "/dev/null",
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@example.com",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@example.com",
+_GIT_ENV = {
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_SYSTEM": "/dev/null",
+    "GIT_AUTHOR_NAME": "t",
+    "GIT_AUTHOR_EMAIL": "t@example.com",
+    "GIT_COMMITTER_NAME": "t",
+    "GIT_COMMITTER_EMAIL": "t@example.com",
+    "GIT_CONFIG_COUNT": "1",
+    "GIT_CONFIG_KEY_0": "core.fsync",
+    "GIT_CONFIG_VALUE_0": "none",
+}
+_POLL_SECONDS = 0.02
+_IDLE_SAMPLE = "0 0 0 0 0 20"
+
+
+@pytest.fixture(scope="session")
+def fast_bin_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A bin dir with a quick `sleep` and an instant `iostat`, so the scripts' waits and CPU sampling return promptly."""
+    real_sleep = shutil.which("sleep")
+    bin_dir = tmp_path_factory.mktemp("bin")
+    shims = {
+        "sleep": f"exec {real_sleep} {_POLL_SECONDS}",
+        "iostat": f"echo '{_IDLE_SAMPLE}'",
     }
-    proj = Project(root, env)
+    for name, body in shims.items():
+        (bin_dir / name).write_text(f"#!/bin/sh\n{body}\n")
+        (bin_dir / name).chmod(0o755)
+    return bin_dir
+
+
+@pytest.fixture(scope="session")
+def template_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A repo on main with one lint finding and an untracked empty plan with a Checks entry."""
+    root = tmp_path_factory.mktemp("template").resolve()
+    proj = Project(root, os.environ | _GIT_ENV)
     (root / "repo" / "src").mkdir(parents=True)
     proj.git("init", "-q", "-b", "main")
     (proj.repo / ".git" / "info" / "exclude").write_text("/plan/\n")
     (proj.repo / "src" / "old.txt").write_text("a\nLINT old\n")
     proj.git("add", "-A")
     proj.git("commit", "-q", "-m", "initial")
-    proj.skill.mkdir()
-    (proj.skill / "focus.py").write_text(
-        _COLLECT_STUB.format(real=str(_SKILL / "focus.py"))
-    )
     proj.focus("init")
     plan_file = proj.plan / "PLAN.md"
     plan_file.write_text(
         plan_file.read_text().replace("## Checks\n", "## Checks\n\n- true\n", 1)
     )
-    return proj
+    return root
 
 
-_LINT_SH = """\
-ev_lint() {
-  local p out
-  p=$(ev_worktree_paths "$1" "$2" | head -n 1 | cut -d' ' -f2)
-  out=$(grep -Hn LINT "$p"/src/*.txt | sed -E 's/^([^:]+):([0-9]+):/\\1:\\2: /')
-  [ -z "$out" ] && return 0
-  echo "$out"
-  return 1
-}
+@pytest.fixture
+def project(tmp_path: Path, template_root: Path, fast_bin_dir: Path) -> Project:
+    """A fresh copy of the template repo and plan."""
+    root = tmp_path.resolve()
+    shutil.copytree(template_root, root, symlinks=True, dirs_exist_ok=True)
+    env = os.environ | _GIT_ENV
+    env["PATH"] = f"{fast_bin_dir}{os.pathsep}{env['PATH']}"
+    return Project(root, env)
+
+
+_SHA = "a" * 40
+_STUBBED_LABELS = ("scout", "probe", "testscheck1", "checks", "cleanup-probes")
+_PROBE_STEPS = ["add", "sync", "deps", "build", "smoke", "baseline"]
+
+
+@pytest.fixture
+def bare(tmp_path: Path) -> Project:
+    """A project of paths only: no repo, plan or skill on disk, for runs whose shell is scripted."""
+    return Project(tmp_path.resolve(), dict(os.environ))
+
+
+def seed_lint_baseline(project: Project, target: str) -> None:
+    """Record the clean lint baseline the stubbed probe would have left for the repo at `target`."""
+    fingerprint = subprocess.run(
+        ["git", "hash-object", "--stdin"],
+        input=f". {project.git('rev-parse', target)}\n",
+        env=project.env,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    baseline = Path(f"/tmp/eagle-vision{project.plan}/lint-base")
+    baseline.mkdir(parents=True)
+    (baseline / f"{fingerprint}.rc").write_text("0\n")
+    (baseline / f"{fingerprint}.txt").write_text("")
+
+
+def scripted_shell(
+    project: Project,
+    *nodes: str,
+    wave: int = 1,
+    earlier: tuple[str, ...] = (),
+    last: bool = True,
+    **replies: list[str],
+) -> dict[str, Any]:
+    """Marker lines the runner scripts of a green wave print, with `replies` overriding by label."""
+    logs = f"{project.root}/logs"
+    names = {node: f"ev{wave}-{node}" for node in nodes}
+    shell = {
+        "scout": [
+            *(f"PRE_OK {node}" for node in earlier),
+            *(f"NODE {node} ready todo" for node in nodes),
+            "SCOUT_CPUS 8",
+            "SCOUT_DIRS .",
+            *(["SCOUT_LAST"] if last else []),
+            "SCOUT_END",
+        ],
+        "probe": [f"GATE_STEP {step}" for step in _PROBE_STEPS],
+        "testscheck1": ["TESTS_COLLECTED"],
+        "gate1": [f"GATE_PASS {_SHA}"],
+        "merge1": [
+            "MERGE_TARGET main",
+            *(f"MERGED {node} {_SHA}" for node in nodes),
+            "MERGE_STEP join",
+            "MERGE_STEP pkg-.",
+        ],
+        "checks": [
+            f"CHECK_OK workspace {logs}/wave.log",
+            f"CHECK_OK . {logs}/root.log",
+        ],
+        "cleanup": [
+            *(f"REMOVE {name}" for name in names.values()),
+            *(f"CLEANUP_STEP {name}" for name in names.values()),
+        ],
+        "cleanup-probes": ["REMOVE ev-probe", "CLEANUP_STEP ev-probe"],
+        **{
+            f"setup:{node}": [
+                f"ROW {name} . {project.root}/repo-ev/{name} ev/{name} {_SHA} {_SHA} 0 0"
+            ]
+            for node, name in names.items()
+        },
+    }
+    return {"shell": shell | replies}
+
+
+_GATE_GIT = """\
+#!/bin/sh
+case "$1" in
+  rev-parse) echo 0123456789abcdef0123456789abcdef01234567 ;;
+  hash-object) cat > /dev/null; echo fingerprint ;;
+esac
 """
+_GATE_FOCUS = """\
+import sys
+from pathlib import Path
+
+with Path(sys.argv[0]).with_name("calls.txt").open("a") as calls:
+    calls.write(" ".join(sys.argv[2:]) + "\\n")
+"""
+_GATE_BUILD_SH = """\
+ev_repo() { echo "{root}/repo"; }
+ev_worktree_paths() { echo "$2 {root}/wt/$1"; }
+ev_lint() { local out="{root}/lint-$1.out"; cat "$out"; [ ! -s "$out" ]; }
+"""
+
+
+@dataclass
+class GateShell:
+    """The real probe and gate scripts of a node, run against stubbed git and focus.py."""
+
+    project: Project
+    scripts: dict[str, Path]
+    env: dict[str, str]
+
+    def lint(
+        self, step: str, script: str, findings: list[str]
+    ) -> subprocess.CompletedProcess[str]:
+        """Run one lint arm of `script` in a worktree whose linter prints `findings`."""
+        name = "ev-probe" if script == "probe" else "ev1-alpha"
+        (self.project.root / f"lint-{name}.out").write_text(
+            "".join(
+                f"{self.project.root}/wt/{name}/{finding}\n" for finding in findings
+            )
+        )
+        return subprocess.run(
+            ["bash", str(self.scripts[script]), step],
+            env=self.env,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    @property
+    def focus_calls(self) -> list[str]:
+        """The arguments of every `focus.py` call the scripts made."""
+        calls = self.project.skill / "calls.txt"
+        return calls.read_text().splitlines() if calls.exists() else []
+
+
+def _runner_script(prompt: str) -> str:
+    """The shell script a runner prompt tells the runner to write."""
+    return prompt[prompt.index("\n\n", prompt.index("3. Read")) + 2 :]
+
+
+@pytest.fixture
+def gate_shell(bare: Project) -> Iterator[GateShell]:
+    """The probe and gate scripts of one node, written out with stubs for git, focus.py and the linter."""
+    calls = bare.run(scripted_shell(bare, "alpha"))["calls"]
+    scripts: dict[str, Path] = {}
+    for name, label in (("probe", "probe"), ("gate", "gate1")):
+        (call,) = [c for c in calls if c["label"].startswith(label)]
+        scripts[name] = bare.root / f"{name}.sh"
+        scripts[name].write_text(_runner_script(call["prompt"]))
+    bin_dir = bare.root / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "git").write_text(_GATE_GIT)
+    (bin_dir / "git").chmod(0o755)
+    bare.skill.mkdir()
+    (bare.skill / "focus.py").write_text(_GATE_FOCUS)
+    bare.plan.mkdir(parents=True)
+    bare.build_sh(_GATE_BUILD_SH.replace("{root}", str(bare.root)))
+    logs = Path(f"/tmp/eagle-vision{bare.plan}/wave-1/t1")
+    logs.mkdir(parents=True)
+    for name in ("ev-probe", "ev1-alpha"):
+        (bare.root / "wt" / name).mkdir(parents=True)
+    env = bare.env | {"PATH": f"{bin_dir}{os.pathsep}{bare.env['PATH']}"}
+    yield GateShell(bare, scripts, env)
+    shutil.rmtree(f"/tmp/eagle-vision{bare.plan}")
 
 
 class TestBuildWave:
     """Tests for one wave of the generic build workflow."""
 
-    def test_one_ready_node_lands_one_commit_on_main(self, project: Project) -> None:
+    def test_ready_node_lands_on_the_build_sh_target_and_one_overlapping_the_moved_target_escalates(
+        self, project: Project
+    ) -> None:
         project.add_node("alpha")
-        project.focus("join")
-        before = int(project.git("rev-list", "--count", "main"))
-        out = project.run()
-        assert out["result"]["escalations"] == []
-        assert out["result"]["nextWaveSafe"] is True
-        assert int(project.git("rev-list", "--count", "main")) == before + 1
-        assert project.git("log", "-1", "--format=%s", "main") == "feat: alpha"
-        assert (project.plan / "nodes" / "done" / "alpha.md").exists()
-        assert not project.worktree("ev1-alpha").exists()
-
-    def test_build_sh_sets_target_branch_and_subject(self, project: Project) -> None:
-        project.add_node("alpha")
+        project.add_node("beta", ["tests/test_beta.py", "src/old.txt"])
         project.focus("join")
         project.git("branch", "release")
         project.git("checkout", "-q", "release")
         project.build_sh(
             'EV_TARGET=release\nev_subject() { echo "chore: custom $1"; }\n'
         )
-        main_tip = project.git("rev-parse", "main")
-        out = project.run()
-        assert out["result"]["escalations"] == []
-        assert (
-            project.git("log", "-1", "--format=%s", "release") == "chore: custom alpha"
+        project.git(
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "ev/ev1-beta",
+            str(project.worktree("ev1-beta")),
         )
-        assert project.git("rev-parse", "main") == main_tip
-
-    def test_existing_lint_finding_that_only_moves_passes_the_gate(
-        self, project: Project
-    ) -> None:
-        project.build_sh(_LINT_SH)
-        project.add_node(
-            "alpha", ["tests/test_alpha.py", "src/alpha.txt", "src/old.txt"]
-        )
-        project.focus("join")
-        moved = {"src/alpha.txt": "impl\n", "src/old.txt": "x\ny\na\nLINT old\n"}
-        out = project.run({"impl": {"alpha": {"files": moved}}})
-        assert out["result"]["escalations"] == []
-        assert out["result"]["passed"] == ["alpha"]
-
-    def test_new_lint_finding_escalates_the_node_and_merges_nothing(
-        self, project: Project
-    ) -> None:
-        project.build_sh(_LINT_SH)
-        project.add_node("alpha")
-        project.focus("join")
+        (project.worktree("ev1-beta") / "src" / "old.txt").write_text("node change\n")
+        project.commit_on_checkout("unrelated", {"other.txt": "other\n"})
+        project.commit_on_checkout("main change", {"src/old.txt": "main change\n"})
         main_tip = project.git("rev-parse", "main")
+        seed_lint_baseline(project, "release")
+        stubbed = scripted_shell(project, "alpha", "beta")["shell"]
         out = project.run(
-            {"impl": {"alpha": {"files": {"src/alpha.txt": "LINT fresh\n"}}}}
+            {"stub": {k: stubbed[k] for k in _STUBBED_LABELS}}, skill=str(_SKILL)
         )
         (escalation,) = out["result"]["escalations"]
-        assert escalation["what"] == "alpha"
-        assert "LINT fresh" in escalation["reason"]
-        assert project.git("rev-parse", "main") == main_tip
-
-    def test_resume_merges_a_node_built_before_the_target_moved(
-        self, project: Project
-    ) -> None:
-        project.add_node("alpha")
-        project.focus("join")
-        project.finish_by_hand(
-            "alpha", {"tests/test_alpha.py": "ok\n", "src/alpha.txt": "impl\n"}
-        )
-        project.commit_on_main("unrelated", {"other.txt": "other\n"})
-        out = project.run(resume=True)
-        assert out["result"]["escalations"] == []
-        assert project.git("log", "--format=%s", "-3", "main").splitlines() == [
-            "feat: alpha",
+        assert "local changes overlap release" in escalation["reason"]
+        assert project.git("log", "--format=%s", "-4", "release").splitlines() == [
+            "chore: custom alpha",
+            "main change",
             "unrelated",
             "initial",
         ]
+        assert project.git("show", "release:src/old.txt") == "main change"
+        assert project.git("rev-parse", "main") == main_tip
+        assert (project.plan / "nodes" / "done" / "alpha.md").exists()
+        assert not project.worktree("ev1-alpha").exists()
 
-    def test_resume_escalates_a_node_whose_uncommitted_changes_overlap_the_target(
-        self, project: Project
+    def test_node_whose_worktree_overlaps_the_moved_target_escalates_and_the_other_node_lands(
+        self, bare: Project
     ) -> None:
-        project.add_node(
-            "alpha", ["tests/test_alpha.py", "src/alpha.txt", "src/old.txt"]
+        shell = scripted_shell(bare, "alpha", "beta")
+        shell["shell"] |= {
+            "merge1": [
+                "MERGE_TARGET release",
+                f"MERGED alpha {_SHA}",
+                "MERGE_STEP join",
+                "MERGE_STEP pkg-.",
+            ],
+            "setup:beta": [
+                "SYNC_FAIL . local changes overlap release",
+                f"ROW ev1-beta . {bare.root}/repo-ev/ev1-beta ev/ev1-beta {_SHA} {_SHA} 1 0",
+            ],
+        }
+        out = bare.run(shell)
+        assert "error" not in out
+        (escalation,) = out["result"]["escalations"]
+        assert escalation["what"] == "beta"
+        assert "local changes overlap release" in escalation["reason"]
+        assert out["result"]["passed"] == ["alpha"]
+        assert out["result"]["nextWaveSafe"] is False
+        labels = [c["label"] for c in out["calls"]]
+        assert not [
+            label
+            for label in labels
+            if label.endswith(":beta") and not label.startswith("setup")
+        ]
+
+    def test_default_target_is_main_and_default_subject_is_a_conventional_commit(
+        self, bare: Project, tmp_path: Path
+    ) -> None:
+        out = bare.run(scripted_shell(bare, "alpha"))
+        assert out["result"]["escalations"] == []
+        assert out["result"]["nextWaveSafe"] is True
+        (gate,) = [c for c in out["calls"] if c["label"] == "gate1:alpha"]
+        prelude = "\n".join(
+            takewhile(
+                lambda l: not l.startswith("ev_keep()"),
+                _runner_script(gate["prompt"]).splitlines(),
+            )
         )
-        project.focus("join")
-        project.finish_by_hand(
-            "alpha", {"tests/test_alpha.py": "ok\n", "src/old.txt": "node change\n"}
+        (tmp_path / "prelude.sh").write_text(prelude)
+        subjects = subprocess.run(
+            [
+                "bash",
+                "-c",
+                '. prelude.sh; echo "$EV_TARGET"; ev_subject alpha; ev_subject fix-x; ev_subject pkg/fix-y; ev_subject pkg/z',
+            ],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        assert subjects == [
+            "main",
+            "feat: alpha",
+            "fix: fix-x",
+            "fix(pkg): fix-y",
+            "feat(pkg): z",
+        ]
+
+    def test_existing_lint_finding_that_only_moves_passes_the_gate(
+        self, gate_shell: GateShell
+    ) -> None:
+        gate_shell.lint("run-baseline", "probe", ["src/old.txt:2: LINT old"])
+        done = gate_shell.lint("run-lint", "gate", ["src/old.txt:4: LINT old"])
+        assert done.returncode == 0
+        assert "GATE_STEP lint" in done.stdout
+        assert "GATE_FAIL" not in done.stdout
+        assert gate_shell.focus_calls == []
+
+    def test_new_lint_finding_fails_the_node_with_the_finding_as_detail(
+        self, gate_shell: GateShell
+    ) -> None:
+        gate_shell.lint("run-baseline", "probe", ["src/old.txt:2: LINT old"])
+        done = gate_shell.lint(
+            "run-lint",
+            "gate",
+            ["src/old.txt:2: LINT old", "src/alpha.txt:1: LINT fresh"],
         )
-        project.commit_on_main("main change", {"src/old.txt": "main change\n"})
-        main_tip = project.git("rev-parse", "main")
-        out = project.run(resume=True)
+        assert done.returncode == 1
+        assert "GATE_FAIL lint: new findings" in done.stdout
+        assert "GATE_DETAIL src/alpha.txt: LINT fresh" in done.stdout
+        assert "GATE_DETAIL src/old.txt" not in done.stdout
+        assert gate_shell.focus_calls == [
+            f"{gate_shell.project.plan} alpha lint: new findings"
+        ]
+
+    def test_gate_failures_escalate_the_node_and_merge_nothing(
+        self, bare: Project
+    ) -> None:
+        failure = [
+            "GATE_FAIL lint: new findings /logs/alpha-lint.new",
+            "GATE_DETAIL src/alpha.txt: LINT fresh",
+        ]
+        out = bare.run(
+            scripted_shell(bare, "alpha", gate1=failure, gate2=failure, gate3=failure)
+        )
+        assert "error" not in out
         (escalation,) = out["result"]["escalations"]
         assert escalation["what"] == "alpha"
-        assert "local changes overlap" in escalation["reason"]
-        assert project.git("rev-parse", "main") == main_tip
+        assert "LINT fresh" in escalation["reason"]
+        assert not [c for c in out["calls"] if c["label"].startswith("merge")]
+
+    @pytest.mark.parametrize(
+        ("state", "row", "escalation"),
+        [
+            ("done", f"ROW alpha . /wt ev/ev1-alpha {_SHA} {_SHA} 1 0", None),
+            ("done", f"ROW alpha . /wt ev/ev1-alpha {_SHA} {_SHA} 1 2", "still dirty"),
+            ("done", f"ROW alpha . /wt ev/ev1-alpha {_SHA} {_SHA} 0 0", "no commit"),
+            ("todo", "NO_WORKTREE ev1-alpha", "worktree missing"),
+            ("done", "NO_WORKTREE ev1-alpha", None),
+        ],
+    )
+    def test_resume_merges_a_done_node_without_rebuilding_it(
+        self, bare: Project, state: str, row: str, escalation: str | None
+    ) -> None:
+        shell = scripted_shell(bare, "alpha")
+        shell["shell"] |= {
+            "scout": [f"NODE alpha ready {state}", "SCOUT_END"],
+            "resume:alpha": [row],
+        }
+        out = bare.run(shell, resume=True)
+        assert "error" not in out
+        labels = [c["label"].split(":")[0] for c in out["calls"]]
+        assert not {"setup", "tests1", "impl"} & set(labels)
+        landed = escalation is None and "ROW" in row
+        assert {"gate1", "merge1"} <= set(labels) if landed else "merge1" not in labels
+        reasons = [e["reason"] for e in out["result"]["escalations"]]
+        assert (not reasons) if escalation is None else (escalation in reasons[0])
 
     def test_failed_probe_escalates_every_node_of_the_dir_without_merging(
-        self, project: Project
+        self, bare: Project
     ) -> None:
-        project.build_sh('ev_build() { [ "$2" = . ] && return 1; return 0; }\n')
-        for name in ("alpha", "beta"):
-            project.add_node(name)
-        project.focus("join")
-        out = project.run()
+        out = bare.run(
+            scripted_shell(
+                bare, "alpha", "beta", probe=["GATE_FAIL build failed /logs/probe.log"]
+            )
+        )
+        assert "error" not in out
         assert {e["what"] for e in out["result"]["escalations"]} == {"alpha", "beta"}
         assert all(
             "feasibility probe failed" in e["reason"]
@@ -323,11 +572,8 @@ class TestBuildWave:
         assert not [c for c in out["calls"] if c["label"].startswith("merge")]
 
     def test_plan_defect_triage_escalates_and_blocks_the_next_wave(
-        self, project: Project
+        self, bare: Project
     ) -> None:
-        project.build_sh("ev_wave_build() { return 1; }\n")
-        project.add_node("alpha")
-        project.focus("join")
         defect = {
             "dir": "workspace",
             "test": "build",
@@ -335,38 +581,61 @@ class TestBuildWave:
             "laterNode": "beta",
             "fix": "beta Scope",
         }
-        out = project.run({"triage": {"failures": [defect]}})
+        shell = scripted_shell(
+            bare,
+            "alpha",
+            checks=[
+                "CHECK_FAIL workspace /logs/wave.log",
+                "CHECK_OK . /logs/root.log",
+            ],
+        )
+        out = bare.run(shell | {"triage": {"failures": [defect]}})
+        assert "error" not in out
         (escalation,) = out["result"]["escalations"]
         assert escalation["what"] == "beta"
         assert "plan-defect" in escalation["reason"]
         assert out["result"]["nextWaveSafe"] is False
 
     def test_probe_worktree_lives_until_the_last_wave_finishes(
-        self, project: Project
+        self, bare: Project
     ) -> None:
-        project.add_node("alpha")
-        project.add_node("beta", depends=["alpha"])
-        project.focus("join")
-        assert project.run()["result"]["escalations"] == []
-        assert project.worktree("ev-probe").exists()
-        assert project.run(wave=2, stamp="t2")["result"]["escalations"] == []
-        assert not project.worktree("ev-probe").exists()
+        first = bare.run(scripted_shell(bare, "alpha", last=False))
+        assert "error" not in first
+        assert first["result"]["escalations"] == []
+        assert not [
+            c for c in first["calls"] if c["label"].startswith("cleanup-probes")
+        ]
+        second = bare.run(
+            scripted_shell(bare, "beta", wave=2, earlier=("alpha",)),
+            wave=2,
+            stamp="t2",
+        )
+        assert "error" not in second
+        assert second["result"]["escalations"] == []
+        (cleanup,) = [
+            c for c in second["calls"] if c["label"].startswith("cleanup-probes")
+        ]
+        assert "ev_worktree_remove" in cleanup["prompt"]
+        assert "ev-probe)" in cleanup["prompt"]
 
     @pytest.mark.parametrize("missing", ["plan", "skill", "stamp"])
     def test_missing_plan_skill_or_stamp_throws(
-        self, project: Project, missing: str
+        self, bare: Project, missing: str
     ) -> None:
-        out = project.run(**{missing: None})
+        out = bare.run(**{missing: None})
         assert "args must be" in out["error"]
 
     def test_tests_the_command_does_not_select_get_one_more_attempt_then_escalate(
-        self, project: Project
+        self, bare: Project
     ) -> None:
-        project.add_node("alpha")
-        project.focus("join")
-        out = project.run(
-            {"tests": {"alpha": {"files": {"tests/test_alpha.py": "nothing\n"}}}}
+        shell = scripted_shell(
+            bare,
+            "alpha",
+            testscheck1=["TESTS_EMPTY /logs/tests-1-collect.log"],
+            testscheck2=["TESTS_EMPTY /logs/tests-2-collect.log"],
         )
+        out = bare.run(shell | {"tests": {"alpha": {"files": {}}}})
+        assert "error" not in out
         writers = [
             c
             for c in out["calls"]
@@ -374,7 +643,7 @@ class TestBuildWave:
             and not c["label"].startswith("testscheck")
         ]
         assert len(writers) == 2
-        assert "collect.log" in writers[1]["prompt"]
+        assert "/logs/tests-1-collect.log" in writers[1]["prompt"]
         (escalation,) = out["result"]["escalations"]
         assert escalation["what"] == "alpha"
         assert not [c for c in out["calls"] if c["label"].startswith("impl")]

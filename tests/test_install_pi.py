@@ -7,7 +7,6 @@ import json
 import re
 import shutil
 import subprocess
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -56,6 +55,8 @@ _CLAUDE_ONLY_TOOLS = (
     "ExitPlanMode",
     "ListAgents",
 )
+
+pytestmark = pytest.mark.usefixtures("bare_tree")
 
 
 def _install(
@@ -140,34 +141,58 @@ def _core_packages() -> list[str]:
     return packages
 
 
+_SHARED_HOMES: dict[bool, Path] = {}
+
+
 @pytest.fixture
-def pi_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """Install pi into a fake home, yielding it."""
+def fresh_pi_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Install pi into a fake home that the test may change."""
     monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
     home = tmp_path / "home"
     home.mkdir()
     _install(home, tmp_path / "installed.json")
-    yield home
+    return home
+
+
+@pytest.fixture
+def pi_home(
+    request: pytest.FixtureRequest,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """Return a default pi install shared by the tests that only read it."""
+    core = "core_tree" in request.fixturenames
+    if core not in _SHARED_HOMES:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        root = tmp_path_factory.mktemp("pi-home")
+        (root / "home").mkdir()
+        _install(root / "home", root / "installed.json")
+        _SHARED_HOMES[core] = root / "home"
+    return _SHARED_HOMES[core]
 
 
 class TestPiInstallLayout:
+    @pytest.mark.usefixtures("core_tree")
     def test_installs_agents_md_and_one_file_per_rule(self, pi_home: Path) -> None:
         agent_dir = pi_home / ".pi" / "agent"
         assert (agent_dir / "AGENTS.md").is_file()
         assert (agent_dir / "rules" / "coding.md").is_file()
 
+    @pytest.mark.usefixtures("core_tree")
     def test_skills_materialize_into_pi_skills(self, pi_home: Path) -> None:
         skills = pi_home / ".pi" / "agent" / "skills"
         assert (skills / "tdd" / "SKILL.md").is_file()
         assert (skills / "git-usage" / "SKILL.md").is_file()
 
+    @pytest.mark.usefixtures("core_tree")
     def test_workflows_install_as_prompt_templates(self, pi_home: Path) -> None:
         prompts = pi_home / ".pi" / "agent" / "prompts"
         assert (prompts / "simplify.md").is_file()
 
     def test_reinstall_removes_stale_prompt(
-        self, pi_home: Path, tmp_path: Path
+        self, fresh_pi_home: Path, tmp_path: Path
     ) -> None:
+        pi_home = fresh_pi_home
         stray = pi_home / ".pi" / "agent" / "prompts" / "stray.md"
         stray.parent.mkdir(parents=True, exist_ok=True)
         stray.write_text("stale", encoding="utf-8")
@@ -182,6 +207,7 @@ class TestPiInstallLayout:
 
 
 class TestPiAgentDirOverride:
+    @pytest.mark.usefixtures("core_tree")
     def test_installs_under_pi_coding_agent_dir(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -310,15 +336,8 @@ class TestPiPackages:
         _install(home, tmp_path / "installed.json", [overlay])
         assert _settings(home)["defaultTools"] == ["read"]
 
-    def test_core_fragment_defaults_tools_to_codemode(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
-        home = tmp_path / "home"
-
-        _install(home, tmp_path / "installed.json")
-
-        assert _settings(home)["defaultTools"] == ["+codemode"]
+    def test_core_fragment_defaults_tools_to_codemode(self, pi_home: Path) -> None:
+        assert _settings(pi_home)["defaultTools"] == ["+codemode"]
 
     def test_core_fragment_seeds_modes_and_telemetry_but_keeps_user_values(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -438,30 +457,18 @@ class TestPiExtensions:
         assert not installed.exists()
         assert str(installed) not in _frontmatter(listed)["extensions"]
 
-    def test_core_net_guard_extension_is_installed(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
-        home = tmp_path / "home"
+    def test_core_net_guard_extension_is_installed(self, pi_home: Path) -> None:
         source = _CORE_FRAGMENT.parent / "extensions" / "net-guard.ts"
 
-        _install(home, tmp_path / "installed.json")
-
-        installed = home / ".pi" / "agent" / "extensions" / "net-guard.ts"
+        installed = pi_home / ".pi" / "agent" / "extensions" / "net-guard.ts"
         assert installed.read_text(encoding="utf-8") == source.read_text(
             encoding="utf-8"
         )
 
-    def test_core_compact_now_extension_is_installed(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
-        home = tmp_path / "home"
+    def test_core_compact_now_extension_is_installed(self, pi_home: Path) -> None:
         source = _CORE_FRAGMENT.parent / "extensions" / "compact-now.ts"
 
-        _install(home, tmp_path / "installed.json")
-
-        installed = home / ".pi" / "agent" / "extensions" / "compact-now.ts"
+        installed = pi_home / ".pi" / "agent" / "extensions" / "compact-now.ts"
         assert installed.read_text(encoding="utf-8") == source.read_text(
             encoding="utf-8"
         )
@@ -962,16 +969,12 @@ class TestPiSeedFiles:
         assert "path_write" not in seeded.read_text(encoding="utf-8")
 
     def test_compact_tools_seed_collapses_every_tool_including_codemode_and_herdsman(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, pi_home: Path
     ) -> None:
-        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
-        home = tmp_path / "home"
-        home.mkdir()
-
-        _install(home, tmp_path / "installed.json")
-
         config = json.loads(
-            (home / ".pi" / "agent" / "compact-tools.json").read_text(encoding="utf-8")
+            (pi_home / ".pi" / "agent" / "compact-tools.json").read_text(
+                encoding="utf-8"
+            )
         )
         custom_tools = config.get("custom_tools", {})
         assert custom_tools.get("exclude", []) == []
@@ -979,16 +982,10 @@ class TestPiSeedFiles:
         assert config["style"] == "compact"
 
     def test_zentui_seed_ships_footer_format_and_keeps_other_surfaces_off(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, pi_home: Path
     ) -> None:
-        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
-        home = tmp_path / "home"
-        home.mkdir()
-
-        _install(home, tmp_path / "installed.json")
-
         components = json.loads(
-            (home / ".pi" / "agent" / "zentui.json").read_text(encoding="utf-8")
+            (pi_home / ".pi" / "agent" / "zentui.json").read_text(encoding="utf-8")
         )["components"]
         starship = components["footer"]["styles"]["starship"]
         assert components["footer"]["style"] == "starship"
@@ -1002,22 +999,18 @@ class TestPiSeedFiles:
             assert f"${name}" in starship["format"]
             assert starship["variables"][name].startswith("llm-prompts/context-total:")
         seeded = json.loads(
-            (home / ".pi" / "agent" / "context-total.json").read_text(encoding="utf-8")
+            (pi_home / ".pi" / "agent" / "context-total.json").read_text(
+                encoding="utf-8"
+            )
         )
         assert seeded["footer"] is True
         assert not components["editor"]["enabled"]
 
     def test_net_guard_seed_blocks_and_allows_known_plugins(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, pi_home: Path
     ) -> None:
-        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
-        home = tmp_path / "home"
-        home.mkdir()
-
-        _install(home, tmp_path / "installed.json")
-
         config = json.loads(
-            (home / ".pi" / "agent" / "net-guard.json").read_text(encoding="utf-8")
+            (pi_home / ".pi" / "agent" / "net-guard.json").read_text(encoding="utf-8")
         )
         assert config["mode"] == "block"
         assert "pi-web-access" in config["allow"]
@@ -1057,6 +1050,7 @@ class TestPiWording:
             for tool in _CLAUDE_ONLY_TOOLS:
                 assert tool not in text, f"{path.name} names {tool}"
 
+    @pytest.mark.usefixtures("core_tree")
     def test_rules_carry_pi_question_tools(self, pi_home: Path) -> None:
         rules = (pi_home / ".pi" / "agent" / "AGENTS.md").read_text(encoding="utf-8")
         assert "`ask_user`" in rules
@@ -1068,6 +1062,7 @@ class TestPiAgents:
             frontmatter = path.read_text(encoding="utf-8").split("---\n")[1]
             assert yaml.safe_load(frontmatter)["name"], path.name
 
+    @pytest.mark.usefixtures("core_tree")
     def test_pi_only_explore_is_read_only_and_not_installed_for_claude_code(
         self, pi_home: Path, tmp_path: Path
     ) -> None:
@@ -1090,6 +1085,7 @@ class TestPiAgents:
             install_main(["claude-code"])
         assert not (claude_home / ".claude" / "agents" / "Explore.md").exists()
 
+    @pytest.mark.usefixtures("core_tree")
     def test_only_reasoner_and_coordinator_may_spawn_explore(
         self, pi_home: Path
     ) -> None:
@@ -1101,6 +1097,7 @@ class TestPiAgents:
         }
         assert spawners == {"reasoner", "coordinator"}
 
+    @pytest.mark.usefixtures("core_tree")
     @pytest.mark.parametrize("role", ["worker", "surveyor", "reasoner", "reviewer"])
     def test_each_role_installs_one_definition_and_a_variants_entry(
         self, pi_home: Path, role: str
@@ -1117,6 +1114,7 @@ class TestPiAgents:
         assert role in coordinator["agents"]
         assert coordinator["extensions"][0].endswith("role-switch.ts")
 
+    @pytest.mark.usefixtures("core_tree")
     def test_overlay_models_resolve_tiers_last_overlay_winning(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1150,14 +1148,10 @@ class TestPiAgents:
 
 
 class TestHerdsmanAgents:
-    def test_team_flow_has_no_agent_request_relay(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
-        home = tmp_path / "home"
-        _install(home, tmp_path / "installed.json")
-        agents = home / ".pi" / "agent" / "agents"
-        rules = (home / ".pi" / "agent" / "AGENTS.md").read_text(encoding="utf-8")
+    @pytest.mark.usefixtures("core_tree")
+    def test_team_flow_has_no_agent_request_relay(self, pi_home: Path) -> None:
+        agents = pi_home / ".pi" / "agent" / "agents"
+        rules = (pi_home / ".pi" / "agent" / "AGENTS.md").read_text(encoding="utf-8")
 
         assert "continue_agent" in rules
         for text in (
@@ -1170,38 +1164,24 @@ class TestHerdsmanAgents:
             assert "killable" not in text
 
     def test_delegation_rule_names_no_unmapped_extra_models(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, pi_home: Path
     ) -> None:
-        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
-        home = tmp_path / "home"
-        _install(home, tmp_path / "installed.json")
-        agents = home / ".pi" / "agent" / "agents"
-        rules = (home / ".pi" / "agent" / "AGENTS.md").read_text(encoding="utf-8")
+        agents = pi_home / ".pi" / "agent" / "agents"
+        rules = (pi_home / ".pi" / "agent" / "AGENTS.md").read_text(encoding="utf-8")
 
         assert not list(agents.glob("*-sol-*.md"))
         assert not re.search(r"\b(sol|terra|luna)\b", rules)
 
-    def test_builtin_definitions_are_disabled(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
-        home = tmp_path / "home"
-        _install(home, tmp_path / "installed.json")
-
-        agents = home / ".pi" / "agent" / "agents"
+    def test_builtin_definitions_are_disabled(self, pi_home: Path) -> None:
+        agents = pi_home / ".pi" / "agent" / "agents"
         for name in ("generalist", "implementer", "researcher", "scout"):
             assert (agents / f"{name}.md").read_text(encoding="utf-8") == (
                 f"---\nname: {name}\nenabled: false\n---\n"
             )
 
-    def test_herdsman_overlays_install_verbatim(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
-        home = tmp_path / "home"
-        _install(home, tmp_path / "installed.json")
-
-        installed = home / ".pi" / "agent" / "agents" / "orchestrator-lead.md"
+    @pytest.mark.usefixtures("core_tree")
+    def test_herdsman_overlays_install_verbatim(self, pi_home: Path) -> None:
+        installed = pi_home / ".pi" / "agent" / "agents" / "orchestrator-lead.md"
         assert installed.read_text(encoding="utf-8") == (
             "---\nname: orchestrator-lead\n"
             "tools: [read, bash, codemode, tower_do, "
@@ -1333,13 +1313,9 @@ class TestHerdsmanAgents:
         installed = _frontmatter(home / ".claude" / "agents" / "searcher.md")
         assert installed["disallowedTools"] == "mcp__plugin_alpha_m-x__*"
 
-    def test_agents_install_in_herdsman_dialect(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
-        home = tmp_path / "home"
-        _install(home, tmp_path / "installed.json")
-        agents = home / ".pi" / "agent" / "agents"
+    @pytest.mark.usefixtures("core_tree")
+    def test_agents_install_in_herdsman_dialect(self, pi_home: Path) -> None:
+        agents = pi_home / ".pi" / "agent" / "agents"
 
         coordinator = _frontmatter(agents / "coordinator-sonnet-low.md")
         assert coordinator["tools"] == [
@@ -1383,6 +1359,7 @@ class TestHerdsmanAgents:
                 & frontmatter.keys()
             )
 
+    @pytest.mark.usefixtures("core_tree")
     def test_leaves_load_listed_skills_and_trim_tools(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1430,6 +1407,7 @@ class TestHerdsmanAgents:
         with pytest.raises(ValueError, match="nonexistent-skill"):
             _install(tmp_path / "home", tmp_path / "installed.json", [overlay])
 
+    @pytest.mark.usefixtures("core_tree")
     def test_reviewer_overrides_every_key_of_the_bundled_definition(
         self, pi_home: Path, tmp_path: Path
     ) -> None:
@@ -1554,6 +1532,7 @@ class TestHerdsmanAgents:
         )
         assert (agents / "a-zeta-low.md").exists() is made
 
+    @pytest.mark.usefixtures("core_tree")
     def test_additions_append_to_a_skills_list(self, tmp_path: Path) -> None:
         additions = {"pi_skills": ["tdd", "git-usage"], "generate_variants": []}
         agents = _install_with_additions(tmp_path, "pi_skills: git-usage", additions)
@@ -1573,6 +1552,7 @@ class TestHerdsmanAgents:
         extensions = _frontmatter(agents / "a.md")["extensions"]
         assert extensions[:2] == ["builtin:x", "builtin:z"]
 
+    @pytest.mark.usefixtures("core_tree")
     def test_additions_variants_stay_managed_when_the_size_guard_skips_the_agent(
         self, tmp_path: Path
     ) -> None:
@@ -1586,6 +1566,7 @@ class TestHerdsmanAgents:
             _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o"])
         assert (agents / "a-sonnet-low.md").exists()
 
+    @pytest.mark.usefixtures("core_tree")
     def test_additions_from_several_fragments_join_a_core_agent(
         self, tmp_path: Path
     ) -> None:
@@ -1883,6 +1864,7 @@ class TestPiRoleRules:
         assert "WORKER-MARKER" in (rules / "zz_worker.md").read_text(encoding="utf-8")
         assert "LEAD-MARKER" in (rules / "zz_lead.md").read_text(encoding="utf-8")
 
+    @pytest.mark.usefixtures("core_tree")
     def test_definitions_reference_their_roles_rules_without_inlining_them(
         self, herdsman_home: Path
     ) -> None:
@@ -1908,6 +1890,7 @@ class TestPiRoleRules:
             "reviewer",
         ],
     )
+    @pytest.mark.usefixtures("core_tree")
     def test_rule_without_roles_reaches_every_role(
         self, herdsman_home: Path, definition: str
     ) -> None:
@@ -1916,6 +1899,7 @@ class TestPiRoleRules:
         )
         assert "@../rules/zz_core.md" in text.split("---\n", 2)[2].splitlines()
 
+    @pytest.mark.usefixtures("core_tree")
     def test_global_context_is_not_inherited_but_project_context_is(
         self, herdsman_home: Path
     ) -> None:
@@ -1925,6 +1909,7 @@ class TestPiRoleRules:
 
 
 class TestPiRoleSizes:
+    @pytest.mark.real_prompts
     def test_measured_bytes_equal_the_installed_expansion(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2006,6 +1991,7 @@ class TestPiRoleSelection:
         _install(home, tmp_path / "installed.json", [overlay])
         return home / ".pi" / "agent"
 
+    @pytest.mark.usefixtures("core_tree")
     def test_roles_differ_by_their_selectors(self, agent_dir: Path) -> None:
         agents = agent_dir / "agents"
         coordinator = _references(agents / "coordinator-sonnet-low.md")
@@ -2016,6 +2002,7 @@ class TestPiRoleSelection:
         assert "git.md" not in coordinator
         assert "agent-teams.md" not in coordinator + worker
 
+    @pytest.mark.usefixtures("core_tree")
     def test_explicit_rules_isolated_and_custom_sources(self, agent_dir: Path) -> None:
         agents = agent_dir / "agents"
         assert _references(agents / "explicit.md") == ["zz_core.md"]
@@ -2027,6 +2014,7 @@ class TestPiRoleSelection:
         assert custom == sorted(p.name for p in (agent_dir / "rules").glob("*.md"))
         assert _frontmatter(agents / "custom.md")["inheritProjectContext"] is True
 
+    @pytest.mark.usefixtures("core_tree")
     def test_installs_under_a_custom_agent_directory(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2050,6 +2038,7 @@ class TestPiRoleLifecycle:
             zz_worker=("worker", "WORKER-MARKER"),
         )
 
+    @pytest.mark.usefixtures("core_tree")
     def test_removed_rule_file_is_cleaned_up_after_reinstall(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2083,6 +2072,7 @@ class TestPiRoleLifecycle:
 
         assert not (home / ".pi" / "agent" / "rules").exists()
 
+    @pytest.mark.usefixtures("core_tree")
     def test_only_install_keeps_cached_text_and_selectors_of_other_rules(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2105,6 +2095,7 @@ class TestPiRoleLifecycle:
         assert recorded["pi_rule_roles"]["zz_worker.md"] == ["worker"]
         assert str(agent_dir / "rules" / "zz_worker.md") in recorded["files"]
 
+    @pytest.mark.usefixtures("core_tree")
     def test_skipped_rule_with_no_cached_copy_keeps_the_previous_bundle(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2189,11 +2180,11 @@ def _tree_bytes(root: Path, relatives: tuple[str, ...]) -> dict[str, bytes]:
     return found
 
 
-def _untagged_rules_overlay(root: Path) -> Path:
-    """Build an overlay holding every core shared rule with its roles removed."""
+def _untagged_rules_overlay(root: Path, core_rules: Path) -> Path:
+    """Build an overlay holding every rule of ``core_rules`` with its roles removed."""
     rules = root / "shared" / "rules"
     rules.mkdir(parents=True)
-    for src in (prompts_dir("llm_prompts") / "shared" / "rules").glob("*.md"):
+    for src in core_rules.glob("*.md"):
         (rules / src.name).write_text(
             strip_gating_keys(src.read_text(encoding="utf-8"), {"roles"}),
             encoding="utf-8",
@@ -2202,11 +2193,14 @@ def _untagged_rules_overlay(root: Path) -> Path:
 
 
 class TestRoleMetadataLeavesOtherOutputUnchanged:
+    @pytest.mark.usefixtures("core_tree")
     def test_other_frontends_are_byte_identical(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, core_prompts: Path
     ) -> None:
         monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
-        untagged = _untagged_rules_overlay(tmp_path / "untagged")
+        untagged = _untagged_rules_overlay(
+            tmp_path / "untagged", core_prompts / "shared" / "rules"
+        )
         assert not _ROLES_LINE.search(
             "".join(p.read_text() for p in untagged.rglob("*.md"))
         )
@@ -2222,7 +2216,7 @@ class TestRoleMetadataLeavesOtherOutputUnchanged:
             outputs[label] = _tree_bytes(home, _INSTALLED_PROMPTS)
 
         assert outputs["tagged"].keys() == outputs["untagged"].keys()
-        assert len(outputs["tagged"]) > 100
+        assert len(outputs["tagged"]) > 50
         assert outputs["tagged"] == outputs["untagged"]
         assert not any(b"\nroles:" in data for data in outputs["tagged"].values())
 
