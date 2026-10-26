@@ -58,6 +58,7 @@ from .render_template import (
     substitute_template,
     substitute_variables,
 )
+from .setup import _uv_tools_dir
 
 if TYPE_CHECKING:
     from .manifest import AgentManifest
@@ -415,6 +416,11 @@ def prompts_dir(module: str) -> Path:
             if candidate.is_dir():
                 return candidate
     return Path(str(files(module) / "prompts"))
+
+
+def _running_as_installed_tool() -> bool:
+    """Return whether this process runs from the uv tool env that setup installs."""
+    return Path(sys.prefix).resolve().is_relative_to(_uv_tools_dir().resolve())
 
 
 def _discover_overlay_paths() -> list[Path]:
@@ -3742,6 +3748,14 @@ def main(
     dirs = _get_dirs()
 
     overlay_dirs = _discover_overlay_paths()
+    trusted = _running_as_installed_tool()
+    if not trusted and only is None:
+        log(
+            "warn",
+            f"Not running as the installed llm-prompts (python at {sys.prefix}). "
+            "Skipped stale-file cleanup. "
+            "Run the installed llm-prompts to remove stale files.",
+        )
 
     from .manifest import read_manifest
     from .size_guard import check as run_size_check
@@ -4101,7 +4115,7 @@ def main(
             _sync_pi_mcp_permissions(claude_rules, previous_rules)
     for name in targets:
         manifest_files = list(dict.fromkeys(installed_files[name]))
-        if only is None:
+        if only is None and trusted:
             _cleanup_stale(name, manifest_files, previous_manifest)
             if name == "pi" and pi_bundle is None:
                 _remove_empty_dir(_pi_rules_dir())

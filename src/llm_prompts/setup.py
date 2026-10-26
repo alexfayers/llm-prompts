@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -583,6 +584,10 @@ def _script_names(tool: dict[str, Any]) -> list[str]:
 
 def _uv_tools_dir() -> Path:
     """Return the directory holding one uv tool env per installed tool."""
+    if tool_dir := os.environ.get("UV_TOOL_DIR"):
+        return Path(tool_dir)
+    if data_home := os.environ.get("XDG_DATA_HOME"):
+        return Path(data_home) / "uv" / "tools"
     return Path.home() / ".local" / "share" / "uv" / "tools"
 
 

@@ -344,6 +344,7 @@ class TestCodexInstallLayout:
         with (
             patch("llm_prompts.install.Path.home", return_value=codex_home),
             patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.install._running_as_installed_tool", return_value=True),
         ):
             install_main(["codex"])
 

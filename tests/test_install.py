@@ -38,6 +38,7 @@ from llm_prompts.install import (
     _passes_requires_gate,
     _pi_definitions,
     _rendered_content,
+    _running_as_installed_tool,
     _targets_agent,
     _warn_pi_version_drift,
     get_source_for_managed_file,
@@ -764,6 +765,84 @@ class TestMainValidatesPlugins:
         content_a = (dest_a / "SKILL.md").read_text(encoding="utf-8")
         assert "disable-model-invocation: false" in content_a
         assert dest_b.is_symlink()
+
+
+class TestRunningAsInstalledTool:
+    @pytest.fixture(autouse=True)
+    def clear_uv_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("UV_TOOL_DIR", raising=False)
+        monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+
+    def test_true_inside_uv_tools_dir(
+        self, isolated_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tool_env = isolated_home / ".local" / "share" / "uv" / "tools" / "core"
+        tool_env.mkdir(parents=True)
+        monkeypatch.setattr(sys, "prefix", str(tool_env))
+
+        assert _running_as_installed_tool()
+
+    def test_true_inside_uv_tool_dir_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tool_env = tmp_path / "custom-tools" / "core"
+        tool_env.mkdir(parents=True)
+        monkeypatch.setenv("UV_TOOL_DIR", str(tmp_path / "custom-tools"))
+        monkeypatch.setattr(sys, "prefix", str(tool_env))
+
+        assert _running_as_installed_tool()
+
+    def test_false_outside_uv_tools_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        checkout_env = tmp_path / "checkout" / ".venv"
+        checkout_env.mkdir(parents=True)
+        monkeypatch.setattr(sys, "prefix", str(checkout_env))
+
+        assert not _running_as_installed_tool()
+
+
+class TestMainStaleCleanupGate:
+    def _install_with_overlay_only_file(
+        self, tmp_path: Path, *, trusted: bool
+    ) -> tuple[Path, MagicMock]:
+        from llm_prompts.manifest import write_manifest
+
+        home = tmp_path / "home"
+        overlay_only = home / ".claude" / "rules" / "overlay-only.md"
+        overlay_only.parent.mkdir(parents=True)
+        overlay_only.write_text("overlay content", encoding="utf-8")
+        write_manifest("claude-code", [str(overlay_only)])
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch(
+                "llm_prompts.install._running_as_installed_tool",
+                return_value=trusted,
+            ),
+            patch("llm_prompts.install.log") as mock_log,
+        ):
+            install_main(["claude-code"])
+        return overlay_only, mock_log
+
+    def test_untrusted_run_keeps_overlay_files_and_warns(self, tmp_path: Path) -> None:
+        from llm_prompts.manifest import read_manifest
+
+        overlay_only, mock_log = self._install_with_overlay_only_file(
+            tmp_path, trusted=False
+        )
+
+        assert overlay_only.exists()
+        assert str(overlay_only) in read_manifest()["claude-code"]["files"]
+        logged_warn = [
+            call.args[1] for call in mock_log.call_args_list if call.args[0] == "warn"
+        ]
+        assert any("Skipped stale-file cleanup" in line for line in logged_warn)
+
+    def test_trusted_run_removes_stale_files(self, tmp_path: Path) -> None:
+        overlay_only, _ = self._install_with_overlay_only_file(tmp_path, trusted=True)
+
+        assert not overlay_only.exists()
 
 
 class TestMainReadCache:

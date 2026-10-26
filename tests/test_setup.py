@@ -206,6 +206,32 @@ class TestUvCommands:
         assert "setup needs uv" in capsys.readouterr().err
 
 
+class TestUvToolsDir:
+    def test_uses_uv_tool_dir_when_set(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("UV_TOOL_DIR", str(tmp_path / "tools"))
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+        assert setup._uv_tools_dir() == tmp_path / "tools"
+
+    def test_uses_xdg_data_home_when_set(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("UV_TOOL_DIR", raising=False)
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+        assert setup._uv_tools_dir() == tmp_path / "data" / "uv" / "tools"
+
+    def test_defaults_under_home_when_unset(
+        self, isolated_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("UV_TOOL_DIR", raising=False)
+        monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+
+        assert setup._uv_tools_dir() == isolated_home / ".local/share/uv/tools"
+
+
 class TestEnvDrift:
     @staticmethod
     def _receipt(requirements: list[str], entrypoints: list[str]) -> str:
