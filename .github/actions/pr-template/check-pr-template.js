@@ -110,7 +110,7 @@ function findYappyTier(words, totalLines) {
   return YAPPY_TIERS.filter((t) => words > t.words || totalLines > t.lines).pop();
 }
 
-async function checkYappy({ github, context }) {
+async function checkYappy({ github, context, body }) {
   const pr = context.payload.pull_request;
   const files = await github.paginate(github.rest.pulls.listFiles, {
     owner: context.repo.owner,
@@ -118,7 +118,7 @@ async function checkYappy({ github, context }) {
     pull_number: pr.number,
     per_page: 100,
   });
-  const words = countWords(pr.body || '');
+  const words = countWords(body || '');
   const counts = countLines(files);
   const total = counts.code.added + counts.code.deleted + counts.test.added + counts.test.deleted;
   const tier = findYappyTier(words, total);
@@ -153,14 +153,15 @@ async function checkYappy({ github, context }) {
 
 async function check({ github, context, core }) {
   const pr = context.payload.pull_request;
+  const body = pr && (await github.rest.pulls.get({ ...context.repo, pull_number: pr.number })).data.body;
   if (pr) {
     try {
-      await checkYappy({ github, context });
+      await checkYappy({ github, context, body });
     } catch (error) {
       core.warning(`Yappy check skipped: ${error.message}`);
     }
   }
-  if (!pr || pr.user?.type === 'Bot' || !pr.body || !pr.body.trim()) {
+  if (!pr || pr.user?.type === 'Bot' || !body || !body.trim()) {
     return;
   }
 
@@ -169,7 +170,7 @@ async function check({ github, context, core }) {
     'utf8'
   );
   const templateSections = parseTemplateSections(templateContent);
-  const issues = findBodyIssues(templateSections, pr.body);
+  const issues = findBodyIssues(templateSections, body);
 
   const existing = await findStickyComment(github, context, MARKER);
 
