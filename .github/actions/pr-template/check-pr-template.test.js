@@ -122,13 +122,42 @@ test('check swaps the yappy label and posts one comment with the tier suffix', a
   assert.deepEqual(calls.slice(0, 2), [['removeLabel', 'very yappy'], ['addLabels', ['yappy']]]);
   assert.equal(calls.length, 3);
   assert.match(calls[2][1], /131 words/);
-  assert.match(calls[2][1], /153 code, 60 test \(yappy above 200 total, lockfiles excluded\)/);
+  assert.match(calls[2][1], /- Changed lines: 213 \(yappy above 200 total, moved lines and lockfiles excluded\)/);
+  assert.match(calls[2][1], /- Code lines: \+152 new \/ -1 old \(net \+151\)\n- Test lines: \+60 new \/ -0 old \(net \+60\)/);
 });
 
-test('check counts a whole deleted file as one changed line', async () => {
+test('check counts the lines of a deleted file toward the tier', async () => {
   const files = [
     { filename: 'src/gone.js', status: 'removed', patch: lines('gone', 150).replaceAll('+', '-') },
     { filename: 'src/app.js', patch: '+code' },
+  ];
+  const calls = await runCheck({ files });
+
+  assert.deepEqual(calls.slice(0, 1), [['addLabels', ['slightly yappy']]]);
+});
+
+test('check ignores a file moved by deleting it and adding it elsewhere', async () => {
+  const files = [
+    { filename: 'src/old.js', status: 'removed', patch: lines('moved', 150).replaceAll('+', '-') },
+    { filename: 'src/new.js', patch: lines('moved', 150) },
+  ];
+  const calls = await runCheck({ files });
+
+  assert.deepEqual(calls, []);
+});
+
+test('check counts additions and deletions of a file without a patch', async () => {
+  const files = [{ filename: 'tests/big.test.js', additions: 5, deletions: 500 }];
+  const calls = await runCheck({ files });
+
+  assert.deepEqual(calls.slice(0, 1), [['addLabels', ['very yappy']]]);
+  assert.match(calls[1][1], /- Test lines: \+5 new \/ -500 old \(net -495\)/);
+});
+
+test('check ignores deleted test lines when comparing test to code', async () => {
+  const files = [
+    { filename: 'src/app.js', patch: lines('code', 2) },
+    { filename: 'tests/app.test.js', patch: `+test\n${lines('gone', 5).replaceAll('+', '-')}` },
   ];
   const calls = await runCheck({ files });
 
@@ -136,11 +165,15 @@ test('check counts a whole deleted file as one changed line', async () => {
 });
 
 test('check warns about more test lines than code without a tier', async () => {
-  const files = [{ filename: 'src/app.js', patch: '+code' }, { filename: 'tests/app.test.js', patch: lines('test', 2) }];
+  const files = [
+    { filename: 'src/app.js', patch: '+code' },
+    { filename: 'tests/app.test.js', patch: `${lines('test', 2)}\n-old 0\n-old 1` },
+  ];
   const calls = await runCheck({ files });
 
   assert.deepEqual(calls.map(([name]) => name), ['createComment']);
-  assert.match(calls[0][1], /1 code, 2 test \(lockfiles excluded\)/);
+  assert.match(calls[0][1], /- Changed lines: 5 \(moved lines and lockfiles excluded\)/);
+  assert.match(calls[0][1], /- Code lines: \+1 new \/ -0 old \(net \+1\)\n- Test lines: \+2 new \/ -2 old \(net 0\)/);
   assert.match(calls[0][1], /More test lines than code is kinda CRAZY/);
 });
 
