@@ -50,10 +50,7 @@ State the change concisely, not derivable mechanics unless risky/ambiguous. {% i
 
 Every spawn prompt MUST specify:
 
-{% if AGENT == "pi" %}
-- the memory/MCP facts it needs;
-{% endif %}
-- source order - local checkout, internal/official docs, public web last - report back if unanswered, never widen;
+- source order - memory, local checkout, internal/official docs, public web last - report back if unanswered, never widen to other sources;
 - for a tracked task (memory `task/`, plan slice, ticket): decisions recorded against it;
 - the scope boundary it MUST NOT cross - remote/live systems: read-only, naming disallowed mutations;
 - lint/format/test conventions: package config (`pyproject.toml` or equiv) is authority, not memory/global preferences - MUST match the file edited;
