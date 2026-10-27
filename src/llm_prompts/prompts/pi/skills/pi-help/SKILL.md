@@ -35,3 +35,6 @@ Guided tour of this pi setup. Plain words.
 - MUST explain `promptMaxRows` and `promptFieldMaxWidth` of 1000000 as making the permission prompt start expanded.
 - MUST explain `forwardingTimeoutMs` at its maximum as a permission ask that never times out.
 - MUST explain `tools.sourceCheck.enabled` false in `web-search.json` as no `source_check` tool.
+- MUST explain `showCacheMissNotices` true in `settings.json` as notices for cache misses, cache warming, compaction usage and provider recovery.
+- MUST explain `markdown.mermaid` `"streaming"` as rendering mermaid diagrams while a reply streams, not only when final.
+- MUST tell the user `settings.json` defaults from llm-prompts fill only keys that are unset.

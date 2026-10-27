@@ -367,6 +367,8 @@ class TestPiPackages:
                     "followUpMode": "one-at-a-time",
                     "cacheWarming": "streaming",
                     "enableInstallTelemetry": True,
+                    "showCacheMissNotices": False,
+                    "markdown": {"mermaid": "off"},
                 }
             ),
             encoding="utf-8",
@@ -377,6 +379,8 @@ class TestPiPackages:
         assert settings["followUpMode"] == "one-at-a-time"
         assert settings["cacheWarming"] == "streaming"
         assert settings["enableInstallTelemetry"] is True
+        assert settings["showCacheMissNotices"] is False
+        assert settings["markdown"] == {"mermaid": "off"}
 
     def test_user_settings_and_packages_are_preserved(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

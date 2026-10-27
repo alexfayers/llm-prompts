@@ -4,6 +4,8 @@
   "followUpMode": "all",
   "cacheWarming": "idle",
   "enableInstallTelemetry": false,
+  "showCacheMissNotices": true,
+  "markdown": { "mermaid": "streaming" },
   "packages": [
     "npm:@earendil-works/pi-coding-agent@1.4.0",
     "npm:pi-herdsman@0.32.1",
