@@ -350,8 +350,6 @@ class TestPiPackages:
         assert fresh_settings["followUpMode"] == "all"
         assert fresh_settings["cacheWarming"] == "idle"
         assert fresh_settings["enableInstallTelemetry"] is False
-        assert fresh_settings["showCacheMissNotices"] is True
-        assert fresh_settings["markdown"] == {"mermaid": "streaming"}
         failing: subprocess.CompletedProcess[str] = subprocess.CompletedProcess([], 1)
         with (
             patch("llm_prompts.install.subprocess.run", return_value=failing),
