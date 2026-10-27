@@ -128,6 +128,7 @@ Every command sends one anonymous event to PostHog (EU). The first run sends not
   - a random install id
 - Sent on failure: a second event with the run id, command, flags, agent names, outcome, duration, OS, Python version, schema version, and the llm-prompts commit. It also has the type of the exception and of up to three exceptions that caused it, each with the package-relative file, function, module and line number of its llm-prompts frames, and `github` or `mcp` when the failure came from a call to that service. For `IncompleteRead`, `JSONDecodeError` and `CalledProcessError` (exit status only, never its command) the exception also has its message, scrubbed of local values, paths, URLs, hosts, emails, IPs and long opaque strings, and cut to 200 characters. No other exception type sends a message. Not sent for an exit (the `outcome` records it) or Ctrl-C.
 - Never sent: paths, usernames, hostnames, repo names, names of overlays not installed from github.com, prompt or config contents.
+- Every command also saves in `telemetry.json`, next to `config.toml`, whether it is opted out and when. mcp-memory reads it and sends its own anonymous usage events under the same install id. Nothing leaves the machine from this file.
 - Off with `DO_NOT_TRACK=1`, `LLM_PROMPTS_NO_TELEMETRY=1`, `CI`, or `[telemetry]` with `enabled = false` in `config.toml`.
 - `LLM_PROMPTS_TELEMETRY_DEBUG=1` prints each event and sends it before the command exits.
 - Public totals: https://eu.posthog.com/shared/qdUBSB6XFctcGy5jzZ4TCqeNN3UXcQ

@@ -901,8 +901,8 @@ def telemetry_guard(monkeypatch: pytest.MonkeyPatch) -> None:
         raise AssertionError("telemetry reached the network or spawned a process")
 
     monkeypatch.setenv("LLM_PROMPTS_NO_TELEMETRY", "1")
-    monkeypatch.setattr("llm_prompts.telemetry.Popen", forbidden)
-    monkeypatch.setattr("llm_prompts.telemetry.urlopen", forbidden)
+    monkeypatch.setattr("llm_prompts.telemetry_core.Popen", forbidden)
+    monkeypatch.setattr("llm_prompts.telemetry_core.urlopen", forbidden)
 
 
 @pytest.fixture
@@ -912,13 +912,14 @@ def telemetry_popen(
     """Enable telemetry for a known install and return the mocked sender spawn."""
     for name in ("DO_NOT_TRACK", "LLM_PROMPTS_NO_TELEMETRY", "CI"):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("llm_prompts.telemetry_core.read_config", dict)
     monkeypatch.setattr("llm_prompts.telemetry.read_config", dict)
     monkeypatch.setattr("llm_prompts.telemetry.read_manifest", dict)
     (isolated_config_dir / "telemetry.json").write_text(
         json.dumps({"install_id": "synthetic-id"}), encoding="utf-8"
     )
     popen = MagicMock()
-    monkeypatch.setattr("llm_prompts.telemetry.Popen", popen)
+    monkeypatch.setattr("llm_prompts.telemetry_core.Popen", popen)
     return popen
 
 

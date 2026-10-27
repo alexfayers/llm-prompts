@@ -20,7 +20,15 @@ import pytest
 import truststore
 from conftest import FakeSubprocess, run_capturing_exit
 
-from llm_prompts import cli, github_api, install, mcp, setup, telemetry
+from llm_prompts import (
+    cli,
+    github_api,
+    install,
+    mcp,
+    setup,
+    telemetry,
+    telemetry_core,
+)
 from llm_prompts.exit_reason import REASONS, ExitReason
 
 A, B = "a" * 40, "b" * 40
@@ -71,8 +79,8 @@ def test_any_opt_out_disables_telemetry(
     for name, value in env.items():
         monkeypatch.setenv(name, value)
 
-    with patch("llm_prompts.telemetry.read_config", return_value=config):
-        assert telemetry.enabled() is expected
+    with patch("llm_prompts.telemetry_core.read_config", return_value=config):
+        assert telemetry_core.enabled() is expected
 
 
 def test_event_carries_only_allowlisted_properties(
@@ -228,9 +236,9 @@ def test_post_verifies_certificates_with_the_system_trust_store(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     urlopen = MagicMock()
-    monkeypatch.setattr("llm_prompts.telemetry.urlopen", urlopen)
+    monkeypatch.setattr("llm_prompts.telemetry_core.urlopen", urlopen)
 
-    assert telemetry.post("{}") is True
+    assert telemetry_core.post("{}") is True
 
     assert isinstance(urlopen.call_args.kwargs["context"], truststore.SSLContext)
 
@@ -240,7 +248,7 @@ def test_debug_mode_shows_why_a_post_failed(
 ) -> None:
     monkeypatch.setenv("LLM_PROMPTS_TELEMETRY_DEBUG", "1")
     monkeypatch.setattr(
-        "llm_prompts.telemetry.urlopen", MagicMock(side_effect=URLError("no cert"))
+        "llm_prompts.telemetry_core.urlopen", MagicMock(side_effect=URLError("no cert"))
     )
 
     telemetry.send(EVENT, "id-1")
@@ -256,7 +264,7 @@ def test_send_spawns_a_detached_sender_unless_debugging(
 ) -> None:
     urlopen = MagicMock(side_effect=URLError("offline"))
     monkeypatch.setenv("LLM_PROMPTS_TELEMETRY_DEBUG", debug)
-    monkeypatch.setattr("llm_prompts.telemetry.urlopen", urlopen)
+    monkeypatch.setattr("llm_prompts.telemetry_core.urlopen", urlopen)
 
     telemetry.send(EVENT, "id-1")
 
@@ -705,7 +713,7 @@ def test_only_exception_types_with_known_formats_send_a_capped_message(
     sent = _events(telemetry_popen)[1]["properties"]["$exception_list"][0].get("value")
     assert (sent is None) == (value is None)
     assert value is None or value in str(sent)
-    assert len(sent or "") <= telemetry._MAX_MESSAGE_LENGTH
+    assert len(sent or "") <= telemetry_core._MAX_MESSAGE_LENGTH
     assert "synthetic-tool" not in json.dumps(_events(telemetry_popen))
 
 
