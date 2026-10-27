@@ -1,4 +1,4 @@
-@_default: lint type-check test test-actions test-ts check
+@_default: lint type-check type-check-ts test test-actions test-ts check
 
 @_uv:
     uv -V 2> /dev/null || { echo 'Please install uv: https://docs.astral.sh/uv/getting-started/installation/'; exit 1;}
@@ -12,6 +12,9 @@ lint-check: _uv
 
 type-check: _uv
     uv run mypy src/ tests/
+
+type-check-ts:
+    pnpm type-check
 
 test: _uv
     uv run pytest -q --nf -n auto --maxprocesses 4 --dist worksteal --cov=. --cov-report=xml
