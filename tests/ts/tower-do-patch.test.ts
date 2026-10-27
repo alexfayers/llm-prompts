@@ -13,8 +13,8 @@ const stale = (revision: number) =>
 const board = (revision: number) => ({ revision, keys: ["a", "b"] });
 const BOARD = board(7);
 
-const TOWER_DO_SOURCE = join("/tower-do", "index.ts");
-const boardUrl = pathToFileURL(join("/tower-do", "board.ts")).href;
+const AGENT_DIR = "/agent";
+const boardUrl = pathToFileURL(join(AGENT_DIR, "npm", "node_modules", "tower-do", "board.ts")).href;
 const boardSource = 'export class TowerBoard { async fold() { return { revision: 7, tasks: [{ key: "a" }, { key: "b" }] }; } }';
 const boardHooks = registerHooks({
 	resolve: (specifier, context, next) => (specifier === boardUrl ? { url: boardUrl, format: "module", shortCircuit: true } : next(specifier, context)),
@@ -83,8 +83,7 @@ describe("applyPatch", () => {
 });
 
 describe("tower_do_patch tool", () => {
-	const loadTool = () =>
-		loadExtension("tower-do-patch", { pi: { allTools: [{ name: "tower_do", sourceInfo: { path: TOWER_DO_SOURCE } }] } });
+	const loadTool = () => loadExtension("tower-do-patch", { agentDir: AGENT_DIR });
 
 	function ctxWith(outcomes: Outcome[]) {
 		const calls: [string, any][] = [];

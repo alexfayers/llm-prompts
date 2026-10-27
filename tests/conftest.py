@@ -944,6 +944,7 @@ _KEPT_EXTENSIONS = {
         "prompt-cache-stabilizer.ts",
         "role-switch.ts",
         "tower-do-patch.ts",
+        "tower-do-slim.ts",
     )
 }
 _KEPT_CORE = {

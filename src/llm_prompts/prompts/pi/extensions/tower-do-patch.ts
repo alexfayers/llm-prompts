@@ -1,6 +1,7 @@
 // Adds the tower_do_patch tool, which changes single tasks on the board without resending all of them.
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
@@ -69,11 +70,8 @@ const PARAMETERS = Type.Object({
 type BoardModule = { TowerBoard: new (file: string) => { fold(): Promise<{ revision: number; tasks: { key: string }[] }> } };
 
 export default function (pi: ExtensionAPI) {
-	const loadBoardModule = async (): Promise<BoardModule> => {
-		const source = pi.getAllTools().find((tool) => tool.name === "tower_do")?.sourceInfo.path;
-		if (source === undefined) throw new Error("tower_do_patch: the tower_do tool is not available");
-		return import(pathToFileURL(join(dirname(source), "board.ts")).href);
-	};
+	const loadBoardModule = (): Promise<BoardModule> =>
+		import(pathToFileURL(join(getAgentDir(), "npm", "node_modules", "tower-do", "board.ts")).href);
 
 	const depsFor = (ctx: ExtensionToolContext): PatchDeps => ({
 		async readBoard() {

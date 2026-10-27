@@ -414,6 +414,22 @@ class TestPiPackages:
         _install(home, manifest, [_overlay(overlay, [])])
         assert _settings(home)["packages"] == _core_packages()
 
+    def test_filtered_package_replaces_the_managed_plain_entry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        manifest = tmp_path / "installed.json"
+        entry = {"source": "npm:filter-pkg", "extensions": []}
+        _install(home, manifest, [_overlay(tmp_path / "plain", ["npm:filter-pkg"])])
+        assert "npm:filter-pkg" in _settings(home)["packages"]
+
+        _install(home, manifest, [_overlay(tmp_path / "filtered", [entry])])  # type: ignore[list-item]
+
+        packages = _settings(home)["packages"]
+        assert entry in packages
+        assert "npm:filter-pkg" not in packages
+
     def test_uninstall_removes_only_managed_packages(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -10,7 +10,7 @@
     "npm:@earendil-works/pi-coding-agent@1.4.0",
     "npm:pi-herdsman@0.32.1",
     "npm:pi-ask-user@0.17.0",
-    "npm:tower-do@0.8.1",
+    { "source": "npm:tower-do@0.8.1", "extensions": [] },
     "npm:pi-notify@1.4.0",
     "npm:pi-lsp-extension@1.4.0",
     "npm:@henryqw/pi-herdr-tools@1.6.5",

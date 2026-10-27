@@ -2081,11 +2081,11 @@ _PI_TOOL_NAMES = {
     "Grep": ["grep"],
     "Glob": ["find"],
     "LS": ["ls"],
-    "TaskCreate": ["ext:tower-do/tower_do", "ext:tower-do-patch/tower_do_patch"],
-    "TaskUpdate": ["ext:tower-do/tower_do", "ext:tower-do-patch/tower_do_patch"],
-    "TaskGet": ["ext:tower-do/tower_do_status"],
-    "TaskList": ["ext:tower-do/tower_do_status"],
-    "SendMessage": ["ext:tower-do/tower_do_talk"],
+    "TaskCreate": ["ext:tower-do-slim/tower_do", "ext:tower-do-patch/tower_do_patch"],
+    "TaskUpdate": ["ext:tower-do-slim/tower_do", "ext:tower-do-patch/tower_do_patch"],
+    "TaskGet": ["ext:tower-do-slim/tower_do_status"],
+    "TaskList": ["ext:tower-do-slim/tower_do_status"],
+    "SendMessage": ["ext:tower-do-slim/tower_do_talk"],
 }
 _PI_DROPPED_FRONTMATTER_KEYS = {"color", "omitClaudeMd", "skills", "mcp_read_only"}
 
@@ -2931,16 +2931,18 @@ def _package_source(entry: str | dict[str, Any]) -> str:
     return entry if isinstance(entry, str) else str(entry.get("source", ""))
 
 
-def _pi_packages(fragments: list[Path]) -> list[str]:
+def _pi_packages(fragments: list[Path]) -> dict[str, str | dict[str, Any]]:
     """Collect the pi packages declared by every ``pi/settings.json`` fragment.
 
     Args:
         fragments: Candidate fragment paths, core first, then overlays.
 
     Returns:
-        Package sources whose gates pass, in declaration order, without duplicates.
+        The ``packages`` entry of each package whose gates pass, by source, in
+        declaration order. An entry with resource filters (``extensions``,
+        ``skills``, ``prompts``, ``themes``) wins over a plain one.
     """
-    packages: list[str] = []
+    packages: dict[str, str | dict[str, Any]] = {}
     for fragment in fragments:
         if not fragment.is_file():
             continue
@@ -2948,8 +2950,15 @@ def _pi_packages(fragments: list[Path]) -> list[str]:
             if isinstance(entry, dict) and not _requirements_met(entry, "pi"):
                 continue
             source = _package_source(entry)
-            if source not in packages:
-                packages.append(source)
+            filters = {
+                k: entry[k]
+                for k in ("extensions", "skills", "prompts", "themes")
+                if isinstance(entry, dict) and k in entry
+            }
+            if source not in packages or (
+                filters and isinstance(packages[source], str)
+            ):
+                packages[source] = {"source": source, **filters} if filters else source
     return packages
 
 
@@ -3162,7 +3171,9 @@ def _pi_package_dir(name: str) -> Path:
 
 
 def _sync_pi_packages(
-    wanted: list[str], previous: list[str], defaults: dict[str, Any] | None = None
+    wanted: Mapping[str, str | dict[str, Any]],
+    previous: list[str],
+    defaults: dict[str, Any] | None = None,
 ) -> set[str]:
     """Make pi's global settings list exactly the managed packages in ``wanted``.
 
@@ -3171,7 +3182,8 @@ def _sync_pi_packages(
     settings lack is filled in; one already set is kept.
 
     Args:
-        wanted: Package sources llm-prompts now declares.
+        wanted: The ``packages`` entry of each source llm-prompts now declares. A
+            filtered one replaces the plain entry of a package managed before.
         previous: Package sources llm-prompts managed at the last install.
         defaults: Default provider, model and tools llm-prompts now declares.
 
@@ -3184,10 +3196,16 @@ def _sync_pi_packages(
     )
     current: list[str | dict[str, Any]] = settings.get("packages", [])
     stale = set(previous) - set(wanted)
-    packages = [entry for entry in current if _package_source(entry) not in stale]
+    packages = [
+        wanted[entry]
+        if isinstance(entry, str) and entry in previous and entry in wanted
+        else entry
+        for entry in current
+        if _package_source(entry) not in stale
+    ]
     present = {_package_source(entry) for entry in packages}
     added = [source for source in wanted if source not in present]
-    packages.extend(added)
+    packages.extend(wanted[source] for source in added)
     added_names = _npm_names(added) - _npm_names(present)
     missing_defaults = {k: v for k, v in (defaults or {}).items() if k not in settings}
     if packages == current and not missing_defaults:
@@ -3764,7 +3782,7 @@ def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) ->
                 log(
                     "warn", f"[pi] Run `pi remove npm:{package}` to finish removing it."
                 )
-            _sync_pi_packages([], entry.get("packages", []))
+            _sync_pi_packages({}, entry.get("packages", []))
             _sync_pi_skills([], entry.get("skills", []))
             _sync_pi_mcp_permissions({}, entry.get("mcp_permissions", []))
         delete_agent(name)
@@ -3994,14 +4012,15 @@ def main(
         pi_fragments = [root_dir / "pi" / "settings.json"] + [
             d / "pi" / "settings.json" for d in overlay_dirs
         ]
-        pi_packages = _pi_packages(pi_fragments)
+        pi_entries = _pi_packages(pi_fragments)
+        pi_packages = list(pi_entries)
         wanted_names = _npm_names(pi_packages)
         previous_owned = set(
             previous_manifest.get("pi", {}).get("pi_installed_packages", [])
         )
         retained = _remove_owned_pi_packages(previous_owned, wanted_names)
         added = _sync_pi_packages(
-            pi_packages,
+            pi_entries,
             previous_manifest.get("pi", {}).get("packages", []),
             _pi_defaults(pi_fragments),
         )
