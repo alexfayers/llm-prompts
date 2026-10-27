@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import threading
 from collections.abc import Set as AbstractSet
 from pathlib import Path
+from typing import Any
 from unittest.mock import ANY, MagicMock, call, patch
 
 import pytest
@@ -14,12 +16,14 @@ from conftest import FakeSubprocess, run_capturing_exit
 
 from llm_prompts import cli
 from llm_prompts.cli import (
+    _auto_migrate_memory_db,
     _check_for_updates,
     _collect_sources,
     _collect_update_messages,
     _contribute_target,
     _contribute_targets,
     _ContributeTarget,
+    _flush_memory_telemetry,
     _get_installed_commit,
     _local_source_messages,
     _print_parked_state,
@@ -60,6 +64,12 @@ def no_changed_local_checkouts(monkeypatch: pytest.MonkeyPatch) -> None:
 def no_update_status_check(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep `update` from checking real sources."""
     monkeypatch.setattr("llm_prompts.cli._print_update_status", lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def no_memory_telemetry_flush(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep `update` from running the mcp-memory binary."""
+    monkeypatch.setattr("llm_prompts.cli._flush_memory_telemetry", lambda: None)
 
 
 class TestExtractGitUrl:
@@ -850,6 +860,195 @@ class TestUpdateReexecsAfterUpgradingItself:
         mock_install.assert_called_once_with(
             ["kiro"], size_baseline=baseline, verbose=False
         )
+
+
+class TestAutoMigrateMemoryDb:
+    def test_runs_migrate_db_under_utils(self, fake_subprocess: FakeSubprocess) -> None:
+        with patch("shutil.which", return_value="/usr/local/bin/mcp-memory"):
+            _auto_migrate_memory_db()
+
+        assert fake_subprocess.commands == [
+            ["/usr/local/bin/mcp-memory", "utils", "migrate-db"]
+        ]
+
+    def test_falls_back_to_the_top_level_command_when_the_binary_has_no_utils_group(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        fake_subprocess.on_match(lambda argv: "utils" in argv, returncode=2)
+
+        with patch("shutil.which", return_value="/usr/local/bin/mcp-memory"):
+            _auto_migrate_memory_db()
+
+        assert fake_subprocess.commands[-1] == [
+            "/usr/local/bin/mcp-memory",
+            "migrate-db",
+        ]
+
+    def test_an_old_binarys_usage_error_is_not_printed(
+        self, fake_subprocess: FakeSubprocess, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        def run_like_a_terminal(
+            argv: list[str], kwargs: dict[str, Any]
+        ) -> subprocess.CompletedProcess[str] | None:
+            if "utils" not in argv:
+                return None
+            if not kwargs.get("capture_output"):
+                print("usage: mcp-memory: invalid choice 'utils'", file=sys.stderr)
+            return subprocess.CompletedProcess(
+                argv, 2, "", "usage: mcp-memory: invalid choice 'utils'"
+            )
+
+        fake_subprocess.on("/usr/local/bin/mcp-memory", side_effect=run_like_a_terminal)
+
+        with patch("shutil.which", return_value="/usr/local/bin/mcp-memory"):
+            _auto_migrate_memory_db()
+
+        assert capsys.readouterr().err == ""
+
+    def test_a_real_migrate_error_is_printed(
+        self, fake_subprocess: FakeSubprocess, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        fake_subprocess.on(
+            "/usr/local/bin/mcp-memory", returncode=1, stderr="database is locked"
+        )
+
+        with patch("shutil.which", return_value="/usr/local/bin/mcp-memory"):
+            _auto_migrate_memory_db()
+
+        assert "database is locked" in capsys.readouterr().err
+
+
+class TestFlushMemoryTelemetry:
+    def test_runs_telemetry_flush_via_the_mcp_memory_binary(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        with patch("shutil.which", return_value="/usr/local/bin/mcp-memory"):
+            _flush_memory_telemetry()
+
+        assert fake_subprocess.calls == [
+            (
+                ["/usr/local/bin/mcp-memory", "utils", "telemetry-flush"],
+                {"check": False, "capture_output": True, "text": True, "timeout": ANY},
+            )
+        ]
+
+    def test_does_nothing_when_the_binary_is_not_installed(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        with patch("shutil.which", return_value=None):
+            _flush_memory_telemetry()
+
+        assert fake_subprocess.calls == []
+
+    @pytest.mark.parametrize(
+        "failure",
+        [subprocess.TimeoutExpired("mcp-memory", 1), FileNotFoundError("mcp-memory")],
+    )
+    def test_a_failed_flush_does_not_stop_the_update(
+        self,
+        fake_subprocess: FakeSubprocess,
+        capsys: pytest.CaptureFixture[str],
+        failure: BaseException,
+    ) -> None:
+        fake_subprocess.on("/usr/local/bin/mcp-memory", side_effect=failure)
+
+        with patch("shutil.which", return_value="/usr/local/bin/mcp-memory"):
+            _flush_memory_telemetry()
+
+        assert "telemetry" in capsys.readouterr().err
+
+    def test_a_nonzero_flush_exit_warns_without_stopping_the_update(
+        self,
+        fake_subprocess: FakeSubprocess,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        fake_subprocess.on(
+            "/usr/local/bin/mcp-memory", returncode=1, stderr="server unreachable"
+        )
+
+        with patch("shutil.which", return_value="/usr/local/bin/mcp-memory"):
+            _flush_memory_telemetry()
+
+        error = capsys.readouterr().err
+        assert "telemetry" in error
+        assert "server unreachable" in error
+
+    def test_skips_silently_when_the_binary_has_no_utils_group(
+        self,
+        fake_subprocess: FakeSubprocess,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        fake_subprocess.on("/usr/local/bin/mcp-memory", returncode=2)
+
+        with patch("shutil.which", return_value="/usr/local/bin/mcp-memory"):
+            _flush_memory_telemetry()
+
+        assert capsys.readouterr().err == ""
+
+    def test_update_flushes_before_restarting_the_memory_service(
+        self,
+    ) -> None:
+        order: list[str] = []
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={"kiro": {"files": []}},
+            ),
+            patch("llm_prompts.cli._pull_local_sources", return_value=set()),
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+            patch("llm_prompts.setup.run_setup", return_value=False),
+            patch("llm_prompts.install.main", return_value=frozenset()),
+            patch(
+                "llm_prompts.cli._flush_memory_telemetry",
+                side_effect=lambda: order.append("flush"),
+            ),
+            patch(
+                "llm_prompts.cli._restart_memory_service",
+                side_effect=lambda: order.append("restart"),
+            ),
+            patch("llm_prompts.cli._auto_migrate_memory_db"),
+            patch("llm_prompts.cli._reconfigure_agents"),
+            patch(
+                "llm_prompts.setup.detect_changed_configured_tools",
+                return_value={"mcp-memory"},
+            ),
+            patch("llm_prompts.plugins.pull_plugin_sources"),
+            patch("llm_prompts.size_guard.snapshot_sources", return_value={}),
+        ):
+            mock_config.return_value.exists.return_value = True
+            main()
+
+        assert order == ["flush", "restart"]
+
+    def test_update_skips_the_flush_when_memory_is_unchanged(self) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={"kiro": {"files": []}},
+            ),
+            patch("llm_prompts.cli._pull_local_sources", return_value=set()),
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+            patch("llm_prompts.setup.run_setup", return_value=False),
+            patch("llm_prompts.install.main", return_value=frozenset()),
+            patch("llm_prompts.cli._flush_memory_telemetry") as flush,
+            patch("llm_prompts.cli._restart_memory_service"),
+            patch("llm_prompts.cli._auto_migrate_memory_db"),
+            patch("llm_prompts.cli._reconfigure_agents"),
+            patch(
+                "llm_prompts.setup.detect_changed_configured_tools",
+                return_value=set(),
+            ),
+            patch("llm_prompts.plugins.pull_plugin_sources"),
+            patch("llm_prompts.size_guard.snapshot_sources", return_value={}),
+        ):
+            mock_config.return_value.exists.return_value = True
+            main()
+
+        flush.assert_not_called()
 
 
 class TestRestartMemoryService:
