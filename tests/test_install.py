@@ -425,6 +425,36 @@ class TestInstallSkillsGating:
         assert "OVERLAY-COLLIDE" in (collide / "SKILL.md").read_text(encoding="utf-8")
         assert managed == {"shared-only", "collide", "overlay-only"}
 
+    def test_overlay_files_are_added_into_the_core_skill_dir(
+        self, tmp_path: Path
+    ) -> None:
+        layers = {
+            "base": {"a.txt": "base", "ref/one.md": "1", "ref/x": "b"},
+            "overlay": {"a.txt": "overlay", "ref/two.md": "2", "ref/x": "o"},
+        }
+        for layer, files in layers.items():
+            for relative, text in files.items():
+                (tmp_path / layer / "s" / relative).parent.mkdir(
+                    parents=True, exist_ok=True
+                )
+                (tmp_path / layer / "s" / relative).write_text(text, encoding="utf-8")
+        self._make_skill(tmp_path / "base", "s", "# S\nBASE\n")
+
+        _install_skills(
+            [tmp_path / "overlay", tmp_path / "base"],
+            tmp_path / "agents",
+            "claude-code",
+            tmp_path / "vars.json",
+        )
+
+        skill = tmp_path / "agents" / "skills" / "s"
+        assert "BASE" in (skill / "SKILL.md").read_text(encoding="utf-8")
+        assert {
+            path.relative_to(skill).as_posix(): path.read_text(encoding="utf-8")
+            for path in skill.rglob("*")
+            if path.is_file() and path.name != "SKILL.md"
+        } == {"a.txt": "overlay", "ref/one.md": "1", "ref/two.md": "2", "ref/x": "o"}
+
 
 class TestInstallPluginSkills:
     def _make_skill(self, parent: Path, name: str, skill_md: str) -> Path:

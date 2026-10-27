@@ -17,9 +17,10 @@ from collections.abc import (
     Sequence,
 )
 from dataclasses import dataclass, field
-from functools import cache, partial
+from functools import cache, partial, reduce
 from importlib.metadata import distribution, packages_distributions
 from importlib.resources import files
+from itertools import takewhile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple
 from urllib.parse import urlparse
@@ -43,6 +44,7 @@ from .mcp import (
     exclusions_resolver,
     pi_tool_name,
 )
+from .overlay_merge import merge_agent_text, merged_seed_text
 from .render_template import (
     _read_text,
     clear_read_cache,
@@ -977,6 +979,31 @@ def _resolve_priority_sources(
     return resolved
 
 
+def _agent_sources(candidate_dirs: list[Path]) -> list[tuple[str, Path, str]]:
+    """Resolve agent sources by filename, merging the same-named file of each directory.
+
+    Returns:
+        ``(filename, first-wins source path, merged source text)`` per agent.
+    """
+    return [
+        (
+            name,
+            src,
+            reduce(
+                merge_agent_text,
+                (
+                    _read_text(candidate / name)
+                    for candidate in reversed(candidate_dirs)
+                    if (candidate / name).is_file()
+                ),
+            ),
+        )
+        for name, src in _resolve_priority_sources(
+            candidate_dirs, lambda d: sorted(d.glob("*.md")), lambda p: p.name
+        )
+    ]
+
+
 def _install_symlink(source: Path, dest: Path, label: str, managed: set[str]) -> None:
     """Install ``source`` as a symlink at ``dest``, replacing any existing entry.
 
@@ -1044,19 +1071,54 @@ def _apply_frontmatter_overrides(content: str, overrides: dict[str, str]) -> str
     return "---\n" + "\n".join(lines) + "\n---\n" + body
 
 
+def _link_layered_dir(
+    layers: Sequence[Path], dest: Path, label: str, reserved: Sequence[str] = ()
+) -> None:
+    """Symlink the entries of the layers into ``dest``, merging directories held by several.
+
+    A later layer overrides an earlier one at the same relative path. Entries of
+    ``dest`` that no layer holds are pruned, except ``reserved`` ones.
+
+    Args:
+        layers: Source directories, lowest priority first.
+        dest: Destination directory.
+        label: Human-readable label for log messages.
+        reserved: Entry names to leave alone in ``dest``.
+    """
+    names = {e.name for layer in layers for e in layer.iterdir()} - set(reserved)
+    for name in names:
+        entries = [layer / name for layer in layers if (layer / name).exists()]
+        directories = list(takewhile(Path.is_dir, reversed(entries)))[::-1]
+        if len(directories) < 2:
+            _install_symlink(entries[-1], dest / name, f"{label} sibling", set())
+            continue
+        if (dest / name).is_symlink() or (dest / name).is_file():
+            (dest / name).unlink()
+        (dest / name).mkdir(exist_ok=True)
+        _link_layered_dir(directories, dest / name, label)
+    for existing in dest.iterdir():
+        if existing.name in names or existing.name in reserved:
+            continue
+        if existing.is_symlink() or existing.is_file():
+            existing.unlink()
+        else:
+            shutil.rmtree(existing)
+
+
 def _materialize_skill_dir(
-    source: Path, dest: Path, content: str, label: str, managed: set[str]
+    layers: Sequence[Path], dest: Path, content: str, label: str, managed: set[str]
 ) -> None:
     """Materialize a skill as a real directory with a rewritten ``SKILL.md``.
 
     ``dest`` becomes a real directory (converted from a symlink/file if needed)
     containing ``content`` as its ``SKILL.md`` plus every other top-level entry
-    of ``source`` symlinked in, so siblings keep tracking upstream. Any entry in
-    ``dest`` no longer present in ``source`` is pruned, since manifest cleanup
-    never inspects a skill directory's contents.
+    of ``layers`` symlinked in, so siblings keep tracking upstream. A later
+    layer overrides an earlier one at the same relative path. Any entry in
+    ``dest`` no longer present is pruned, since manifest cleanup never inspects
+    a skill directory's contents.
 
     Args:
-        source: Skill's source directory.
+        layers: Skill's source directories, lowest priority first.
         dest: Destination skill directory.
         content: Content to write as ``dest``'s ``SKILL.md``.
         label: Human-readable label for log/error messages.
@@ -1070,19 +1132,7 @@ def _materialize_skill_dir(
 
         _write_if_changed(dest / "SKILL.md", content, f"{label} '{name}' SKILL.md")
 
-        source_names = {entry.name for entry in source.iterdir()}
-        for entry in source.iterdir():
-            if entry.name == "SKILL.md":
-                continue
-            _install_symlink(entry, dest / entry.name, f"{label} sibling", set())
-
-        for existing in dest.iterdir():
-            if existing.name == "SKILL.md" or existing.name in source_names:
-                continue
-            if existing.is_symlink() or existing.is_file():
-                existing.unlink()
-            else:
-                shutil.rmtree(existing)
+        _link_layered_dir(layers, dest, label, ["SKILL.md"])
 
         managed.add(name)
     except Exception as e:
@@ -1101,7 +1151,7 @@ def _materialize_override_skill(
         managed: Set to accumulate the installed destination name into.
     """
     patched = _apply_frontmatter_overrides(_read_text(source / "SKILL.md"), overrides)
-    _materialize_skill_dir(source, dest, patched, "plugin skill", managed)
+    _materialize_skill_dir([source], dest, patched, "plugin skill", managed)
 
 
 def _builtin_skill_vars(vars_path: Path) -> dict[str, str]:
@@ -1126,6 +1176,7 @@ def _materialize_builtin_skill(
     agent_name: str = "",
     skip_set: Container[Path] = frozenset(),
     previous_manifest: "dict[str, AgentManifest] | None" = None,
+    layers: Sequence[Path] = (),
 ) -> None:
     """Install a built-in/overlay skill as a real directory with variables substituted.
 
@@ -1141,6 +1192,7 @@ def _materialize_builtin_skill(
         agent_name: Target agent name, used for the size-guard skip decision.
         skip_set: Resolved source paths to leave untouched.
         previous_manifest: The manifest from the previous installation.
+        layers: Skill directories to merge, lowest priority first.
     """
     previous_manifest = previous_manifest if previous_manifest is not None else {}
     skill_md = source / "SKILL.md"
@@ -1165,7 +1217,7 @@ def _materialize_builtin_skill(
         return
     for var in find_unreplaced_variables(substituted):
         log("warn", f"Unreplaced variable '{{{{{var}}}}}' in skill '{source.name}'")
-    _materialize_skill_dir(source, dest, substituted, "skill", managed)
+    _materialize_skill_dir(layers or [source], dest, substituted, "skill", managed)
 
 
 def _install_skills(
@@ -1176,7 +1228,7 @@ def _install_skills(
     skip_set: Container[Path] = frozenset(),
     previous_manifest: "dict[str, AgentManifest] | None" = None,
 ) -> set[str]:
-    """Install skills as materialized directories, overlay overriding base on collision.
+    """Install skills as materialized directories, overlay files merging into base.
 
     Args:
         candidate_dirs: Source skills directories in priority order (first wins).
@@ -1220,6 +1272,12 @@ def _install_skills(
         gate,
     )
     for name, src in resolved:
+        layers = [
+            layer
+            for candidate in reversed(candidate_dirs)
+            if (layer := candidate / name).is_dir()
+            and (not (layer / "SKILL.md").is_file() or gate(layer))
+        ]
         _materialize_builtin_skill(
             src,
             dest_root / name,
@@ -1228,6 +1286,7 @@ def _install_skills(
             agent_name,
             skip_set,
             previous_manifest,
+            layers,
         )
     return managed
 
@@ -1554,6 +1613,7 @@ def _expand_agent_variants(
     variables: dict[str, str] | None = None,
     target: str = "",
     additions: dict[str, list[str]] | None = None,
+    source: str | None = None,
 ) -> list[tuple[str, str]]:
     """Expand a ``generate_variants`` template source into generated variant files.
 
@@ -1569,6 +1629,7 @@ def _expand_agent_variants(
             frontmatter is parsed.
         target: Target agent name whose ``<target>_extra_variants`` apply.
         additions: Frontmatter tokens appended to the source before it is parsed.
+        source: The source text, where it is not the content of ``src_path``.
 
     Returns:
         List of ``(generated_filename, generated_content)`` pairs.
@@ -1577,7 +1638,8 @@ def _expand_agent_variants(
         TemplateError: If the source is not a valid template.
     """
     content = _append_frontmatter_tokens(
-        substitute_variables(_read_text(src_path), variables or {}), additions or {}
+        substitute_variables(source or _read_text(src_path), variables or {}),
+        additions or {},
     )
     stripped = strip_gating_keys(content, _GATING_FRONTMATTER_KEYS)
     stem = src_path.stem
@@ -1625,14 +1687,12 @@ def _pi_role_variants(
         ``role -> model alias -> {"model": value, "efforts": {effort: thinking}}``.
     """
     table: dict[str, dict[str, dict[str, Any]]] = {}
-    for _, src in _resolve_priority_sources(
-        candidate_dirs, lambda d: sorted(d.glob("*.md")), lambda p: p.name
-    ):
+    for _, src, source in _agent_sources(candidate_dirs):
         if src.stem not in _PI_SWITCHED_ROLES:
             continue
         try:
             content = _append_frontmatter_tokens(
-                substitute_variables(_read_text(src), variables),
+                substitute_variables(source, variables),
                 dialect.additions.get(src.stem, {}),
             )
         except TemplateError:
@@ -1730,7 +1790,7 @@ def _omit_claude_md_for_rules(content: str) -> str:
 
 
 def _append_included_rules(
-    content: str, src: Path, rules: "_RuleSources | None"
+    content: str, src: Path, rules: "_RuleSources | None", source: str
 ) -> str:
     """Append the rules named by an agent source's ``rules`` key.
 
@@ -1741,12 +1801,13 @@ def _append_included_rules(
         content: The agent content to install.
         src: Agent source path, whose frontmatter names the rules.
         rules: Available rule sources, or ``None`` when none are collected.
+        source: The agent source text.
 
     Returns:
         ``content`` with ``omitClaudeMd: true`` set unless already present,
         followed by each included rule body.
     """
-    _, frontmatter = parse_frontmatter(_read_text(src))
+    _, frontmatter = parse_frontmatter(source)
     if "rules" not in frontmatter:
         return content
     content = _omit_claude_md_for_rules(content)
@@ -1982,13 +2043,11 @@ def _pi_definitions(
     """
     definitions: list[tuple[str, Path, str]] = []
     failed: list[Path] = []
-    for name, src in _resolve_priority_sources(
-        candidate_dirs, lambda d: sorted(d.glob("*.md")), lambda p: p.name
-    ):
+    for name, src, source in _agent_sources(candidate_dirs):
         try:
-            rendered = substitute_variables(_read_text(src), variables)
+            rendered = substitute_variables(source, variables)
             generated = _generated_agents(
-                src, rendered, name, dialect, variables, "pi", None, bundle
+                src, rendered, name, dialect, variables, "pi", None, bundle, source
             )
         except TemplateError:
             failed.append(src)
@@ -2530,6 +2589,7 @@ def _generated_agents(
     agent_name: str,
     rules: "_RuleSources | None",
     bundle: "_PiRuleBundle | None",
+    source: str,
 ) -> list[tuple[str, str]]:
     """Generate the installed files for one subagent source.
 
@@ -2542,6 +2602,7 @@ def _generated_agents(
         agent_name: Target agent name.
         rules: Rule sources that ``rules`` keys resolve against.
         bundle: Rules to reference instead of inlining, if any.
+        source: The source text before variable substitution.
 
     Returns:
         ``(filename, content)`` for each variant, in the target's dialect.
@@ -2550,7 +2611,7 @@ def _generated_agents(
     frontmatter = parse_frontmatter(rendered)[1]
     files = (
         _expand_agent_variants(
-            src, dialect.resolve_model, variables, agent_name, additions
+            src, dialect.resolve_model, variables, agent_name, additions, source
         )
         if "generate_variants" in {**frontmatter, **additions}
         else [
@@ -2568,7 +2629,7 @@ def _generated_agents(
         content = (
             _reference_rules(gen_content, frontmatter, bundle)
             if bundle is not None
-            else _append_included_rules(gen_content, src, rules)
+            else _append_included_rules(gen_content, src, rules, source)
         )
         generated.append(
             (gen_name, dialect.translate(content) if dialect.translate else content)
@@ -2589,7 +2650,7 @@ def _install_agents(
 ) -> set[str]:
     """Install subagent definitions as rendered files.
 
-    Overlay dirs override base on filename collision (first wins). Each source
+    Overlay dirs merge over base on filename collision. Each source
     is rendered with ``variables`` and written to ``agents_dir``; one whose
     frontmatter has ``generate_variants`` is expanded into per-model/effort
     files.
@@ -2611,15 +2672,10 @@ def _install_agents(
     previous_manifest = previous_manifest if previous_manifest is not None else {}
     log("info", f"[{agent_name}] Installing agents...")
     managed: set[str] = set()
-    resolved = _resolve_priority_sources(
-        candidate_dirs,
-        lambda d: sorted(d.glob("*.md")),
-        lambda p: p.name,
-    )
     variables = variables or {}
-    for name, src in resolved:
+    for name, src, source in _agent_sources(candidate_dirs):
         try:
-            rendered = substitute_variables(_read_text(src), variables)
+            rendered = substitute_variables(source, variables)
         except TemplateError as e:
             log("error", f"Failed to render agent '{name}': {e}")
             continue
@@ -2657,7 +2713,7 @@ def _install_agents(
                 managed.add(name)
             continue
         for gen_name, gen_content in _generated_agents(
-            src, rendered, name, dialect, variables, agent_name, rules, bundle
+            src, rendered, name, dialect, variables, agent_name, rules, bundle, source
         ):
             dest = agents_dir / gen_name
             if dest.is_symlink():
@@ -3047,30 +3103,32 @@ def _seed_pi_files(
 
     Args:
         dirs: Prompts directories, core first, then overlays; a later directory
-            replaces an earlier one's file at the same relative path.
+            overrides an earlier one's file at the same relative path, JSON
+            files being deep merged.
         offered_before: Dotted seed keys offered at earlier installs, by seed file path.
 
     Returns:
         The same record, updated with the keys offered now.
     """
-    seeds: dict[Path, Path] = {}
+    seeds: dict[Path, list[Path]] = {}
     for prompts_dir in dirs:
         seed_dir = prompts_dir / "pi" / "seed"
         for source in sorted(seed_dir.rglob("*")):
             if source.is_file():
-                seeds[source.relative_to(seed_dir)] = source
+                seeds.setdefault(source.relative_to(seed_dir), []).append(source)
     offered = dict(offered_before)
-    for relative, source in seeds.items():
+    for relative, sources in seeds.items():
         dest = _pi_agent_dir() / relative
         name = relative.as_posix()
+        text = merged_seed_text(sources)
         fresh = not dest.exists()
         if fresh:
             dest.parent.mkdir(parents=True, exist_ok=True)
-            _write_text(dest, _read_text(source))
+            _write_text(dest, text)
             log("success", f"[pi] Seeded {dest}.")
-        if source.suffix != ".json":
+        if relative.suffix != ".json":
             continue
-        seed = json.loads(_read_text(source))
+        seed = json.loads(text)
         known = set(offered.get(name, ()))
         if not fresh and not _add_seed_keys(dest, seed, known):
             continue

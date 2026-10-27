@@ -65,7 +65,12 @@ Templates are rendered with Jinja2, so text can vary per agent with block tags s
 
 Overlays are separate packages that add extra rules, workflows, and skills on top of the core llm-prompts content. They are useful for organisation-specific or private rules that you don't want in the public repo.
 
-For example, [mcp-memory](https://github.com/alexfayers/mcp-memory) is an overlay that adds memory-related rules and skills. When installed alongside llm-prompts, its content is merged in during `llm-prompts install`. Overlay content takes priority over core content when filenames collide.
+For example, [mcp-memory](https://github.com/alexfayers/mcp-memory) is an overlay that adds memory-related rules and skills. When installed alongside llm-prompts, its content is merged in during `llm-prompts install`. Where an overlay and core provide the same artifact, they merge:
+
+- Rules and workflows: the overlay replaces the core file.
+- Skills: overlay files are added into the core skill directory, and a file at the same relative path overrides core's.
+- Agents: frontmatter is merged, `tools` are appended without duplicates, and a non-blank overlay body replaces the core body.
+- `pi/seed` JSON: deep merged over core, other seed files are replaced.
 
 ## Setup config
 
