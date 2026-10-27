@@ -102,9 +102,16 @@ describe("tower_do_patch tool", () => {
 		const result = await callTool("tower_do_patch", { tasks: [{ key: "c", subject: "new" }], as: "me" }, ctx);
 		assert.deepEqual(calls, [
 			["tower_do_status", { view: "mine" }],
-			["tower_do", { tasks: [{ key: "c", subject: "new" }, { key: "a" }, { key: "b" }], baseRevision: 7, as: "me" }],
+			["tower_do", { tasks: [{ key: "c", subject: "new" }, { key: "a" }, { key: "b" }], remove: [], baseRevision: 7, as: "me" }],
 		]);
 		assert.deepEqual(result.content, OK.result.content);
+	});
+
+	test("passes remove keys to tower_do", async () => {
+		const { callTool } = await loadTool();
+		const { calls, ctx } = ctxWith([OK]);
+		await callTool("tower_do_patch", { remove: ["a"] }, ctx);
+		assert.deepEqual(calls[1], ["tower_do", { tasks: [{ key: "b" }], remove: ["a"], baseRevision: 7, as: undefined }]);
 	});
 
 	test("fails the tool with the message of a failed tower_do call", async () => {
