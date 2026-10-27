@@ -27,7 +27,7 @@ export function mergeTasks(currentKeys: string[], upserts: TaskRow[], removes: s
 
 export type PatchParams = { tasks?: TaskRow[]; remove?: string[]; baseRevision?: number; as?: string };
 export type BoardState = { revision: number; keys: string[] };
-export type WriteArgs = { tasks: TaskRow[]; baseRevision: number; as?: string };
+export type WriteArgs = { tasks: TaskRow[]; remove?: string[]; baseRevision: number; as?: string };
 export type ToolOutcome = { isError: boolean; result: { content: { type: string; text?: string }[]; details?: unknown } };
 export type PatchDeps = {
 	readBoard: () => Promise<BoardState>;
@@ -45,8 +45,9 @@ export async function applyPatch(params: PatchParams, deps: PatchDeps): Promise<
 	const retries = params.baseRevision === undefined ? MAX_STALE_RETRIES : 0;
 	for (let attempt = 0; ; attempt++) {
 		const board = await deps.readBoard();
-		const tasks = mergeTasks(board.keys, params.tasks ?? [], params.remove ?? []);
-		const outcome = await deps.write({ tasks, baseRevision: params.baseRevision ?? board.revision, as: params.as });
+		const remove = params.remove ?? [];
+		const tasks = mergeTasks(board.keys, params.tasks ?? [], remove);
+		const outcome = await deps.write({ tasks, remove, baseRevision: params.baseRevision ?? board.revision, as: params.as });
 		if (attempt >= retries || !isStale(outcome)) return outcome;
 	}
 }
