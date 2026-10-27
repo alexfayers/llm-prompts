@@ -18,5 +18,5 @@ roles: lead, reasoner, worker, surveyor, reviewer
 - MUST NOT run `docker compose down -v` (or any other command that deletes a Docker volume) just to reset state or clean up test data - it destroys the named volume, which may hold real pre-existing data the current session didn't create. MUST delete only the specific test rows/records, or confirm first that the volume is known-disposable (e.g. verified created fresh earlier in the same session).
 - MUST NOT run a fixed `sleep` or poll in a loop{% if AGENT == "pi" %}, except a short-backoff retry loop of an MCP call inside one codemode script{% endif %}. Run long commands in the foreground with an explicit `timeout`.
 {% if AGENT == "pi" %}
-- To run a long command (server, watcher, long build) in the background while you keep working, SHOULD use the `process` tool, not a blocking `bash`.
+- To run a long command (server, watcher, long build) in the background while you keep working, SHOULD use the `process` tool, not a blocking `bash` (lead only - a delegate runs it in foreground `bash` with a `timeout`).
 {% endif %}
