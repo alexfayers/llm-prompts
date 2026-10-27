@@ -29,6 +29,7 @@ from cline_hooks.core.install import resolve_binary
 from jinja2 import TemplateError
 
 from .colors import Color, paint
+from .exit_reason import ExitReason
 from .herdsman import (
     HERDSMAN_BUNDLED_RESETS,
     HERDSMAN_DISABLED_DEFINITIONS,
@@ -2790,7 +2791,7 @@ def patch_kiro_agent_config(agent_config_path: str) -> None:
     config_path = Path(agent_config_path)
     if not config_path.exists():
         log("error", f"{config_path} does not exist")
-        sys.exit(1)
+        raise ExitReason("agent_config_missing")
 
     config = json.loads(config_path.read_text(encoding="utf-8"))
     existing: list[str] = config.get("resources", [])
@@ -3772,7 +3773,7 @@ def main(
         if size_result.declaration_errors:
             for line in format_report([], size_result.declaration_errors).splitlines():
                 log("error", line)
-            sys.exit(1)
+            raise ExitReason("invalid_size_declarations")
         blocking, pulled = split_by_change(size_result.violations, size_baseline)
         skip_sets, frozen_agents = resolve_skip_set(blocking)
         skip_by_agent = dict(skip_sets)
@@ -3819,7 +3820,7 @@ def main(
     if plugin_errors:
         for err in plugin_errors:
             log("error", err)
-        sys.exit(1)
+        raise ExitReason("invalid_plugins")
 
     plugin_skill_pairs: list[tuple[str, Path, dict[str, str]]] = []
     for plugin in plugins:

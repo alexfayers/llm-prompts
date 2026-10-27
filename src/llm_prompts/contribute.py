@@ -34,6 +34,7 @@ from .batching import (
     regression_warning,
     select_groups,
 )
+from .exit_reason import ExitReason
 from .listing import Entry, classify, pr_only_warning, render
 from .network import run_with_retries, with_retries
 from .size_guard import check
@@ -470,10 +471,11 @@ def push_remote(repo: Path) -> tuple[str, bool]:
         _gh_json("repo", "fork", "--remote", repo=repo)
     elif not github_api.has_upstream(repo):
         owner, name = github_api.base_repo(repo)
-        raise SystemExit(
+        raise ExitReason(
+            "no_push_access",
             f"No push access to {owner}/{name} and gh is not installed: fork it on GitHub, "
             "run `git remote rename origin upstream` and `git remote add origin <fork-url>`, "
-            "then rerun."
+            "then rerun.",
         )
     return "origin", True
 
