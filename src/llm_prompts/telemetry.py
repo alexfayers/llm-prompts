@@ -23,6 +23,7 @@ from urllib.request import Request, urlopen
 import truststore
 
 from . import home
+from .exit_reason import ExitReason
 from .install import log
 from .manifest import read_manifest
 from .setup import _expand, _is_local_path, read_config
@@ -281,6 +282,7 @@ class Run(AbstractContextManager["Run"]):
     def __init__(self, installed_commit: Callable[[str], str | None]) -> None:
         """Start inactive until `begin` is called."""
         self.outcome = "ok"
+        self.exit_reason: str | None = None
         self._installed_commit = installed_commit
         self._begun: dict[str, Any] | None = None
 
@@ -344,6 +346,8 @@ class Run(AbstractContextManager["Run"]):
     ) -> None:
         """Report the outcome of the finished command."""
         failed = exc is not None and not (isinstance(exc, SystemExit) and not exc.code)
+        if failed and isinstance(exc, SystemExit):
+            self.exit_reason = exc.reason if isinstance(exc, ExitReason) else "other"
         if failed and self.outcome == "ok":
             self.outcome = f"error:{type(exc).__name__}"
         if self._begun:
@@ -394,6 +398,7 @@ class Run(AbstractContextManager["Run"]):
                 and _GITHUB_SOURCE.match(str(t.get("source")))
             },
             "outcome": self.outcome,
+            "exit_reason": self.exit_reason,
             "duration_s": round(time.time() - begun["started_at"], 1),
             "os": platform.system(),
             "python": f"{sys.version_info.major}.{sys.version_info.minor}",
