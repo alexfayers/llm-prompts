@@ -350,6 +350,8 @@ class TestPiPackages:
         assert fresh_settings["followUpMode"] == "all"
         assert fresh_settings["cacheWarming"] == "idle"
         assert fresh_settings["enableInstallTelemetry"] is False
+        assert fresh_settings["showCacheMissNotices"] is True
+        assert fresh_settings["markdown"] == {"mermaid": "streaming"}
         failing: subprocess.CompletedProcess[str] = subprocess.CompletedProcess([], 1)
         with (
             patch("llm_prompts.install.subprocess.run", return_value=failing),
@@ -367,6 +369,8 @@ class TestPiPackages:
                     "followUpMode": "one-at-a-time",
                     "cacheWarming": "streaming",
                     "enableInstallTelemetry": True,
+                    "showCacheMissNotices": False,
+                    "markdown": {"mermaid": "off"},
                 }
             ),
             encoding="utf-8",
@@ -377,6 +381,8 @@ class TestPiPackages:
         assert settings["followUpMode"] == "one-at-a-time"
         assert settings["cacheWarming"] == "streaming"
         assert settings["enableInstallTelemetry"] is True
+        assert settings["showCacheMissNotices"] is False
+        assert settings["markdown"] == {"mermaid": "off"}
 
     def test_user_settings_and_packages_are_preserved(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -2865,6 +2865,8 @@ _PI_DEFAULT_KEYS = (
     "followUpMode",
     "cacheWarming",
     "enableInstallTelemetry",
+    "showCacheMissNotices",
+    "markdown",
 )
 
 
