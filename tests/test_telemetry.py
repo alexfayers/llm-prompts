@@ -20,7 +20,7 @@ import pytest
 import truststore
 from conftest import FakeSubprocess, run_capturing_exit
 
-from llm_prompts import cli, github_api, mcp, telemetry
+from llm_prompts import cli, github_api, install, mcp, setup, telemetry
 from llm_prompts.exit_reason import REASONS, ExitReason
 
 A, B = "a" * 40, "b" * 40
@@ -571,6 +571,48 @@ def test_an_early_exit_reports_a_fixed_reason_code(
     assert _main(*argv) == 1
 
     assert _props(telemetry_popen)["exit_reason"] == reason
+    assert reason in REASONS
+
+
+@pytest.mark.parametrize(
+    ("reason", "config", "call"),
+    [
+        ("uv_missing", {}, setup._require_uv),
+        ("config_missing", None, setup._load_config),
+        ("config_no_tools", {}, setup._load_config),
+        ("config_exists", {}, setup.init_config),
+        (
+            "invalid_tool_paths",
+            {"tools": [{"name": "x", "source": "/synthetic/x"}]},
+            setup.run_setup,
+        ),
+        ("tool_install_failed", {}, lambda: setup._run_install(MagicMock())),
+        (
+            "agent_config_missing",
+            {},
+            lambda: install.patch_kiro_agent_config("/synthetic/x"),
+        ),
+    ],
+)
+def test_setup_and_install_exits_carry_a_fixed_reason_code(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reason: str,
+    config: dict[str, Any] | None,
+    call: Callable[[], object],
+) -> None:
+    config_file = tmp_path / "config.toml"
+    if config is not None:
+        config_file.touch()
+    monkeypatch.setattr("llm_prompts.setup.config_path", lambda: config_file)
+    monkeypatch.setattr("llm_prompts.setup.read_config", lambda: config)
+    monkeypatch.setattr("shutil.which", lambda _: None)
+    monkeypatch.setattr("subprocess.run", lambda *_, **__: MagicMock(returncode=1))
+
+    with pytest.raises(ExitReason) as raised:
+        call()
+
+    assert raised.value.reason == reason
     assert reason in REASONS
 
 

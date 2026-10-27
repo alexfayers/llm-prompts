@@ -117,7 +117,7 @@ Every command sends one anonymous event to PostHog (EU). The first run sends not
   - agent names
   - overlay count, and the version of each overlay installed from a github.com source
   - outcome, duration, OS and Python version
-  - for an early exit, one code from a fixed list (never the message): `tool_not_configured`, `tool_not_local`, `no_prompts_dir`, `no_contribute_targets`, `gh_login_failed`, `no_github_token`, `no_github_remote`, `no_push_access` or `other`
+  - for an early exit, one code from a fixed list (never the message): `tool_not_configured`, `tool_not_local`, `no_prompts_dir`, `no_contribute_targets`, `gh_login_failed`, `no_github_token`, `no_github_remote`, `no_push_access`, `uv_missing`, `config_missing`, `config_no_tools`, `config_exists`, `invalid_tool_paths`, `tool_install_failed`, `agent_config_missing`, `invalid_size_declarations`, `invalid_plugins` or `other`
   - schema version
   - a random run id, shared by the events of one command
   - a random install id

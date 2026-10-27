@@ -13,6 +13,15 @@ Reason = Literal[
     "no_github_token",
     "no_github_remote",
     "no_push_access",
+    "uv_missing",
+    "config_missing",
+    "config_no_tools",
+    "config_exists",
+    "invalid_tool_paths",
+    "tool_install_failed",
+    "agent_config_missing",
+    "invalid_size_declarations",
+    "invalid_plugins",
     "other",
 ]
 REASONS: tuple[str, ...] = get_args(Reason)
