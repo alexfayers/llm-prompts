@@ -912,9 +912,9 @@ class TestPiSeedFiles:
         fresh_home = tmp_path / "fresh"
         fresh_home.mkdir()
         _install(fresh_home, tmp_path / "fresh.json", [overlay])
-        assert (fresh_home / _SEED_RELATIVE).read_text(encoding="utf-8") == (
-            '{"overlay": true}'
-        )
+        assert json.loads(
+            (fresh_home / _SEED_RELATIVE).read_text(encoding="utf-8")
+        ) == {**json.loads(core_seed.read_text(encoding="utf-8")), "overlay": True}
 
     def test_seed_adds_only_keys_not_offered_before_in_the_files_own_format(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

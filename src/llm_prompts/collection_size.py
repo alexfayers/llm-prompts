@@ -18,6 +18,7 @@ from jinja2 import TemplateError
 from .install import (
     _GATING_FRONTMATTER_KEYS,
     _agent_source_dirs,
+    _agent_sources,
     _append_included_rules,
     _builtin_skill_vars,
     _collect_content_srcs,
@@ -228,23 +229,19 @@ def _agent_bytes(
     variables = _builtin_skill_vars(_own_vars_path(target, vars_root))
     rules = _RuleSources.collect(_agent_for(target, root), overlays)
     total = LoadedBytes()
-    for _, src in _resolve_priority_sources(
-        _agent_source_dirs(root, overlays, target),
-        lambda d: sorted(d.glob("*.md")),
-        lambda p: p.name,
-    ):
+    for _, src, source in _agent_sources(_agent_source_dirs(root, overlays, target)):
         try:
-            rendered = substitute_variables(_read_text(src), variables)
+            rendered = substitute_variables(source, variables)
         except TemplateError:
             continue
         _, frontmatter = parse_frontmatter(rendered)
         files = (
-            _expand_agent_variants(src, variables=variables)
+            _expand_agent_variants(src, variables=variables, source=source)
             if "generate_variants" in frontmatter
             else [(src.name, strip_gating_keys(rendered, _GATING_FRONTMATTER_KEYS))]
         )
         for _, content in files:
-            total += LoadedBytes.of(_append_included_rules(content, src, rules))
+            total += LoadedBytes.of(_append_included_rules(content, src, rules, source))
     return total
 
 
