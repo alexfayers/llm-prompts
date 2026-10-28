@@ -9,7 +9,7 @@
 | src/llm\_prompts/cli.py                                                       |      565 |       73 |     87% |92-93, 119-120, 127-140, 246-247, 358-359, 487, 490, 539, 605-617, 641-643, 678-680, 688-691, 721-730, 997-999, 1002-1008, 1011-1013, 1016-1030, 1040, 1045, 1057, 1073-1077, 1171-1172, 1177 |
 | src/llm\_prompts/collection\_size.py                                          |      115 |        5 |     96% |179, 235-236, 386, 443 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
-| src/llm\_prompts/contribute.py                                                |      864 |       11 |     99% |153, 295, 1119, 1144, 1344, 1361-1362, 1452-1454, 1795 |
+| src/llm\_prompts/contribute.py                                                |      867 |       11 |     99% |153, 300, 1124, 1149, 1349, 1366-1367, 1457-1459, 1800 |
 | src/llm\_prompts/exit\_reason.py                                              |        8 |        0 |    100% |           |
 | src/llm\_prompts/extension\_factories.py                                      |       10 |        0 |    100% |           |
 | src/llm\_prompts/github\_api.py                                               |       97 |        1 |     99% |        73 |
@@ -49,7 +49,7 @@
 | tests/test\_cli.py                                                            |      842 |        0 |    100% |           |
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
 | tests/test\_conftest.py                                                       |       77 |        0 |    100% |           |
-| tests/test\_contribute.py                                                     |     1869 |        0 |    100% |           |
+| tests/test\_contribute.py                                                     |     1877 |        0 |    100% |           |
 | tests/test\_e2e\_git.py                                                       |      123 |        0 |    100% |           |
 | tests/test\_extension\_factories.py                                           |       21 |        0 |    100% |           |
 | tests/test\_focus.py                                                          |     1056 |        1 |     99% |        52 |
@@ -83,7 +83,7 @@
 | tests/test\_telemetry.py                                                      |      327 |        0 |    100% |           |
 | tests/test\_todos\_script.py                                                  |       88 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      114 |        0 |    100% |           |
-| **TOTAL**                                                                     | **19327** |  **541** | **97%** |           |
+| **TOTAL**                                                                     | **19338** |  **541** | **97%** |           |
 
 
 ## Setup coverage badge
