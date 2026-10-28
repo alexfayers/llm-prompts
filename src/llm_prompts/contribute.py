@@ -164,18 +164,23 @@ def _pr_list(repo: Path, state: str, fields: str) -> list[Any]:
             if state == "all"
             else ["--state", state, "--author", "@me"]
         )
-        return list(
-            _gh_json(
-                "pr",
-                "list",
-                *author_state,
-                "--json",
-                fields,
-                "--limit",
-                "1000",
-                repo=repo,
+        try:
+            return list(
+                _gh_json(
+                    "pr",
+                    "list",
+                    *author_state,
+                    "--json",
+                    fields,
+                    "--limit",
+                    "1000",
+                    repo=repo,
+                )
             )
-        )
+        except subprocess.CalledProcessError as error:
+            raise ExitReason(
+                "pr_list_failed", f"gh pr list failed: {_first_stderr_line(error)}"
+            ) from error
     return with_retries(
         partial(github_api.pr_list, repo, _API_PR_QUALIFIERS[state], fields.split(","))
     )

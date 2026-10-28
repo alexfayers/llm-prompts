@@ -13,6 +13,7 @@ Reason = Literal[
     "no_github_token",
     "no_github_remote",
     "no_push_access",
+    "pr_list_failed",
     "uv_missing",
     "config_missing",
     "config_no_tools",
