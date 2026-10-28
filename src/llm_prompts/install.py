@@ -111,10 +111,15 @@ def log(level: LogLevel, message: str) -> None:
     """
     if level == "debug" and not _verbose:
         return
-    if sys.stderr.isatty():
-        print(paint(f"{_SYMBOLS[level]} {message}", _COLORS[level]), file=sys.stderr)
-    else:
-        print(f"{_PLAIN_SYMBOLS[level]} {message}", file=sys.stderr)
+    try:
+        if sys.stderr.isatty():
+            print(
+                paint(f"{_SYMBOLS[level]} {message}", _COLORS[level]), file=sys.stderr
+            )
+        else:
+            print(f"{_PLAIN_SYMBOLS[level]} {message}", file=sys.stderr)
+    except BrokenPipeError:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stderr.fileno())
 
 
 _PI_PACKAGE = "@earendil-works/pi-coding-agent"
