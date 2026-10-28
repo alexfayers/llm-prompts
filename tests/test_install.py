@@ -41,6 +41,7 @@ from llm_prompts.install import (
     _targets_agent,
     _warn_pi_version_drift,
     get_source_for_managed_file,
+    log,
     partial_source,
     prompts_dir,
 )
@@ -2411,3 +2412,20 @@ class TestPiVersionDrift:
 
         err = capsys.readouterr().err
         assert (expected in err) if expected else (err == "")
+
+
+class TestLogBrokenPipe:
+    def test_closed_stderr_pipe_is_silenced_and_the_run_continues(self) -> None:
+        stderr = MagicMock()
+        stderr.isatty.return_value = False
+        stderr.fileno.return_value = 99
+
+        with (
+            patch("llm_prompts.install.sys.stderr", stderr),
+            patch("llm_prompts.install.print", side_effect=BrokenPipeError),
+            patch("llm_prompts.install.os.dup2") as dup2,
+        ):
+            log("info", "first")
+            log("info", "second")
+
+        assert [call.args[1] for call in dup2.call_args_list] == [99, 99]
