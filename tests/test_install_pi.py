@@ -70,6 +70,7 @@ def _install(
     pi: str | None = None,
     only: Path | None = None,
     targets: list[str] | None = None,
+    trusted: bool = False,
     hooks_exit: int = 0,
 ) -> bool:
     """Run `install` into a fake home with overlays and manifest redirected, `cline-hook install pi` exiting with `hooks_exit`."""
@@ -108,6 +109,7 @@ def _install(
             "llm_prompts.install._discover_overlay_paths", return_value=overlays or []
         ),
         patch("llm_prompts.manifest.manifest_path", return_value=manifest),
+        patch("llm_prompts.install._running_as_installed_tool", return_value=trusted),
     ):
         return install_main(targets or ["pi"], only=only)
 
@@ -205,7 +207,7 @@ class TestPiInstallLayout:
         data["agents"]["pi"]["files"].append(str(stray))
         manifest.write_text(json.dumps(data), encoding="utf-8")
 
-        _install(pi_home, manifest)
+        _install(pi_home, manifest, trusted=True)
 
         assert not stray.exists()
 
@@ -2076,7 +2078,7 @@ class TestPiRoleLifecycle:
         assert rule_file.is_file()
 
         (overlay / "shared" / "rules" / "zz_worker.md").unlink()
-        _install(home, manifest, [overlay])
+        _install(home, manifest, [overlay], trusted=True)
 
         assert not rule_file.exists()
         assert "zz_worker.md" not in _references(
