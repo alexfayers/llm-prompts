@@ -23,7 +23,6 @@ from llm_prompts.install import (
     _cleanup_stale,
     _collect_content_srcs,
     _env_var_set,
-    _get_cline_extra_dirs,
     _get_dirs,
     _install_agents,
     _install_content,
@@ -956,10 +955,10 @@ class TestMainRunsSizeGuard:
             patch("llm_prompts.size_guard.check", return_value=failing_result),
         ):
             dirs = _get_dirs()
-            install_main(["claude-code", "cline"])
+            install_main(["claude-code", "kiro"])
 
         assert not dirs["claude-code"]["rules"].exists()
-        assert dirs["cline"]["rules"].exists()
+        assert dirs["kiro"]["rules"].exists()
 
     def test_frozen_agent_logged_at_error_level(self, tmp_path: Path) -> None:
         from llm_prompts.size_guard import CheckResult, Violation
@@ -1878,13 +1877,6 @@ class TestRenderForKiro:
         assert "description: some text" in output
         assert output.endswith("\n")
 
-    def test_copilot_only_frontmatter_ignored(self, tmp_path: Path) -> None:
-        output = self._render(tmp_path, "---\ncopilot_apply_to: '**'\n---\n\n# Rule\n")
-        assert "---" not in output
-        assert "inclusion:" not in output
-        assert "applyTo" not in output
-        assert output.endswith("\n")
-
 
 class TestPathsScoping:
     def _render(self, tmp_path: Path, template_body: str, target: str) -> str:
@@ -1918,22 +1910,6 @@ class TestPathsScoping:
         assert "---" not in output
         assert output.endswith("\n")
 
-    def test_copilot_apply_to_derived_from_paths(self, tmp_path: Path) -> None:
-        output = self._render(
-            tmp_path, "---\npaths: '**/*.py'\n---\n\n# Rule\n", "copilot"
-        )
-        assert "applyTo: '**/*.py'" in output
-        assert output.endswith("\n")
-
-    def test_copilot_apply_to_key_overrides_paths(self, tmp_path: Path) -> None:
-        output = self._render(
-            tmp_path,
-            "---\npaths: '**/*.py'\ncopilot_apply_to: '**'\n---\n\n# Rule\n",
-            "copilot",
-        )
-        assert "applyTo: '**'" in output
-        assert "**/*.py" not in output
-
     def test_kiro_paths_implies_file_match_inclusion(self, tmp_path: Path) -> None:
         output = self._render(
             tmp_path, "---\npaths: '**/*.py'\n---\n\n# Rule\n", "kiro"
@@ -1965,13 +1941,6 @@ class TestPathsScoping:
         assert "---" not in output
         assert output.endswith("\n")
 
-    def test_cline_ignores_paths(self, tmp_path: Path) -> None:
-        output = self._render(
-            tmp_path, "---\npaths: '**/*.py'\n---\n\n# Rule\n", "cline"
-        )
-        assert "---" not in output
-        assert output.endswith("\n")
-
 
 class TestShippedTestingRule:
     RULE = (
@@ -1995,12 +1964,6 @@ class TestShippedTestingRule:
         assert output.startswith("---\npaths:\n")
         for glob in self._globs():
             assert f'  - "{glob}"' in output
-
-    def test_copilot_scopes_every_glob(self, tmp_path: Path) -> None:
-        output = self._render(tmp_path, "copilot")
-        applied = output.partition("applyTo: '")[2].partition("'")[0]
-        for glob in self._globs():
-            assert glob in applied
 
     def test_kiro_scopes_every_glob(self, tmp_path: Path) -> None:
         output = self._render(tmp_path, "kiro")
@@ -2122,18 +2085,17 @@ class TestSkipFailingPrompt:
         from llm_prompts.manifest import write_manifest
 
         dirs = _get_dirs()
-        cline_agents_dir, _ = _get_cline_extra_dirs()
         dest = {
-            "cline_rule": dirs["cline"]["rules"] / "synthetic-rule.md",
+            "kiro_rule": dirs["kiro"]["rules"] / "synthetic-rule.md",
             "claude_rule": dirs["claude-code"]["rules"] / "synthetic-rule.md",
-            "cline_skill": cline_agents_dir / "skills" / "synthetic-skill",
+            "kiro_skill": home / ".kiro" / "skills" / "synthetic-skill",
             "claude_skill": home / ".claude" / "skills" / "synthetic-skill",
             "claude_agent": dirs["claude-code"]["agents"] / "synthetic-agent.md",
         }
-        for key in ("cline_rule", "claude_rule"):
+        for key in ("kiro_rule", "claude_rule"):
             dest[key].parent.mkdir(parents=True, exist_ok=True)
             dest[key].write_text("old rule", encoding="utf-8")
-        for key in ("cline_skill", "claude_skill"):
+        for key in ("kiro_skill", "claude_skill"):
             dest[key].mkdir(parents=True, exist_ok=True)
             (dest[key] / "SKILL.md").write_text(
                 "# Skill\nold skill\n", encoding="utf-8"
@@ -2141,7 +2103,7 @@ class TestSkipFailingPrompt:
         dest["claude_agent"].parent.mkdir(parents=True, exist_ok=True)
         dest["claude_agent"].write_text("old agent", encoding="utf-8")
 
-        write_manifest("cline", [str(dest["cline_rule"]), str(dest["cline_skill"])])
+        write_manifest("kiro", [str(dest["kiro_rule"]), str(dest["kiro_skill"])])
         write_manifest(
             "claude-code",
             [
@@ -2197,9 +2159,9 @@ class TestSkipFailingPrompt:
         state = self._run_first_update(tmp_path)
         dest = state["dest"]
 
-        assert dest["cline_rule"].read_text(encoding="utf-8").strip() == "new rule"
+        assert dest["kiro_rule"].read_text(encoding="utf-8").strip() == "new rule"
         assert dest["claude_rule"].read_text(encoding="utf-8").strip() == "new rule"
-        assert (dest["cline_skill"] / "SKILL.md").read_text(
+        assert (dest["kiro_skill"] / "SKILL.md").read_text(
             encoding="utf-8"
         ) == "# Skill\nnew skill\n"
         assert (dest["claude_skill"] / "SKILL.md").read_text(

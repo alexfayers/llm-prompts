@@ -1,6 +1,5 @@
 ---
 description: Workflow to follow after each change - test, lint, commit
-copilot_mode: agent
 ---
 
 After each change, perform the following steps in order:

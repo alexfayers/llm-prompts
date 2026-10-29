@@ -208,7 +208,7 @@ class TestDelegationModelOptionsArePiOnly:
             (self.SHARED / source).read_text(encoding="utf-8"), variables
         )
 
-    @pytest.mark.parametrize("agent", ["claude-code", "cline", "copilot", "kiro"])
+    @pytest.mark.parametrize("agent", ["claude-code", "kiro"])
     @pytest.mark.parametrize("source", SOURCES)
     def test_non_pi_targets_name_no_gpt_models(self, agent: str, source: str) -> None:
         output = self._render(source, agent)
@@ -247,7 +247,7 @@ class TestReloadRuleIsPiOnly:
     def test_pi_tells_user_to_reload(self) -> None:
         assert self.RELOAD in self._render("pi")
 
-    @pytest.mark.parametrize("agent", ["claude-code", "cline", "copilot", "kiro"])
+    @pytest.mark.parametrize("agent", ["claude-code", "kiro"])
     def test_other_targets_do_not_mention_reload(self, agent: str) -> None:
         assert self.RELOAD not in self._render(agent)
 

@@ -1,6 +1,5 @@
 ---
 description: Style consistency guidelines when making any changes
-copilot_apply_to: '**'
 ---
 
 # Consistency

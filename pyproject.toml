@@ -25,6 +25,7 @@ packages = ["src/llm_prompts"]
 llm-prompts = "llm_prompts.hooks:AutoReinstallPlugin"
 llm-prompts-skill-injection = "llm_prompts.skill_injection:SkillStartupBlocks"
 llm-prompts-handoff = "llm_prompts.handoff_block:HandoffBlock"
+llm-prompts-removed-agents = "llm_prompts.removed_agents_notice:RemovedAgentsNotice"
 
 [tool.ruff.lint]
 ignore = [

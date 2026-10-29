@@ -1,6 +1,5 @@
 ---
 description: Reconsider your approach and simplify before implementing
-copilot_mode: ask
 ---
 
 Reconsider.

@@ -748,9 +748,7 @@ def synthetic_prompts_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
             for agent in (
                 "antigravity",
                 "claude-code",
-                "cline",
                 "codex",
-                "copilot",
                 "kiro",
                 "pi",
             )

@@ -702,6 +702,27 @@ class TestUpdateCommandPullsPlugins:
         mock_setup.assert_not_called()
         mock_install.assert_called_once_with(["kiro"], size_baseline={})
 
+    def test_update_skips_agents_no_longer_supported(self) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={"cline": {"files": []}, "kiro": {"files": []}},
+            ),
+            patch("llm_prompts.cli._pull_local_sources"),
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+            patch("llm_prompts.setup.run_setup", return_value=False),
+            patch("llm_prompts.install.main", return_value=frozenset()) as mock_install,
+            patch("llm_prompts.cli._restart_memory_service"),
+            patch("llm_prompts.plugins.pull_plugin_sources"),
+            patch("llm_prompts.size_guard.snapshot_sources", return_value={}),
+        ):
+            mock_config.return_value.exists.return_value = False
+            main()
+
+        mock_install.assert_called_once_with(["kiro"], size_baseline={})
+
     def test_update_runs_setup_with_stale_tools(self) -> None:
         with (
             patch("sys.argv", ["llm-prompts", "update"]),

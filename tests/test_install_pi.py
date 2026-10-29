@@ -2179,16 +2179,12 @@ class TestExpandedDefinition:
 
 _ROLES_LINE = re.compile(r"^roles: .*\n", re.MULTILINE)
 _OTHER_FRONTENDS = [
-    "cline",
-    "copilot",
     "kiro",
     "claude-code",
     "codex",
     "antigravity",
 ]
 _INSTALLED_PROMPTS = (
-    ".cline_merged/rules",
-    ".copilot/instructions",
     ".kiro/steering",
     ".claude/rules",
     ".claude/agents",
@@ -2244,7 +2240,7 @@ class TestRoleMetadataLeavesOtherOutputUnchanged:
             outputs[label] = _tree_bytes(home, _INSTALLED_PROMPTS)
 
         assert outputs["tagged"].keys() == outputs["untagged"].keys()
-        assert len(outputs["tagged"]) > 50
+        assert len(outputs["tagged"]) > 30
         assert outputs["tagged"] == outputs["untagged"]
         assert not any(b"\nroles:" in data for data in outputs["tagged"].values())
 

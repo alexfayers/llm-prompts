@@ -1,6 +1,6 @@
 # llm-prompts
 
-Installs one shared set of rules, skills, workflows and agents into several LLM coding assistants: Cline, GitHub Copilot, Kiro, Claude Code, Codex, Antigravity and Pi.
+Installs one shared set of rules, skills, workflows and agents into several LLM coding assistants: Kiro, Claude Code, Codex, Antigravity and Pi.
 
 ## Install
 
@@ -13,7 +13,7 @@ This installs [uv](https://docs.astral.sh/uv/) if needed, installs `llm-prompts`
 ## Quick start
 
 ```bash
-llm-prompts install <agent>    # cline, copilot, kiro, claude-code, codex, antigravity, pi, or all
+llm-prompts install <agent>    # kiro, claude-code, codex, antigravity, pi, or all
 llm-prompts update             # pull new versions and reinstall
 llm-prompts uninstall <agent>  # remove installed files
 llm-prompts --help             # all commands and flags

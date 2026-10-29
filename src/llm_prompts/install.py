@@ -1,4 +1,4 @@
-"""Install Cline and Copilot rules, workflows, skills, and prompts."""
+"""Install rules, workflows, skills, and prompts for each supported agent."""
 
 import contextlib
 import json
@@ -148,17 +148,8 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
         Mapping of agent names to their content directories.
     """
     home = user_home()
-    cline_merged = home / ".cline_merged"
     pi_agent = _pi_agent_dir()
     return {
-        "cline": {
-            "rules": cline_merged / "rules",
-            "workflows": cline_merged / "workflows",
-        },
-        "copilot": {
-            "rules": home / ".copilot" / "instructions",
-            "skills": home / ".copilot" / "skills",
-        },
         "kiro": {
             "rules": home / ".kiro" / "steering",
         },
@@ -214,22 +205,17 @@ def _skills_parent(dirs: dict[str, dict[str, Path]], agent: str) -> Path:
     return agent_dirs["rules"].parent
 
 
-def _get_cline_extra_dirs() -> tuple[Path, dict[str, Path]]:
-    """Return the Cline agents dir and symlink targets.
+def _get_cline_symlinks() -> list[Path]:
+    """Return the directory symlinks older versions created for Cline.
 
     Returns:
-        Tuple of (agents_dir, symlink_targets).
+        Symlink paths, for removal on uninstall.
     """
     home = user_home()
     cline_base = (
         (home / "Cline") if sys.platform == "linux" else (home / "Documents" / "Cline")
     )
-    agents = home / ".agents"
-    symlinks = {
-        "rules": cline_base / "Rules",
-        "workflows": cline_base / "Workflows",
-    }
-    return agents, symlinks
+    return [cline_base / "Rules", cline_base / "Workflows"]
 
 
 def _write_text(path: Path, content: str) -> None:
@@ -634,18 +620,6 @@ class _Agent:
         )
 
 
-class _CopilotAgent(_Agent):
-    """Copilot agent with format-specific destination naming."""
-
-    _SUFFIXES: ClassVar[dict[str, str]] = {
-        "rules": "instructions",
-        "workflows": "prompt",
-    }
-
-    def dest_name(self, src: Path, subdir: str) -> str:
-        return f"{src.stem}.{self._SUFFIXES[subdir]}.md"
-
-
 class _CodexAgent(_Agent):
     """Codex agent that concatenates all rules into a single AGENTS.md file."""
 
@@ -717,9 +691,8 @@ class _PiAgent(_CodexAgent):
     AGENTS_MD: ClassVar[str] = "AGENTS.md"
 
 
+REMOVED_AGENTS = ("cline", "copilot")
 AGENT_CLASSES: dict[str, type[_Agent]] = {
-    "cline": _Agent,
-    "copilot": _CopilotAgent,
     "kiro": _Agent,
     "claude-code": _Agent,
     "codex": _CodexAgent,
@@ -2808,29 +2781,6 @@ def _previous_pi_bundle_files(
     ]
 
 
-def _symlink_dir(source: Path, dest: Path) -> None:
-    """Replace a directory with a symlink to source.
-
-    Args:
-        source: Source directory.
-        dest: Destination symlink path.
-    """
-    if dest.is_symlink() and dest.resolve() == source.resolve():
-        log("debug", "Directory symlink is up to date. Skipping.")
-        return
-
-    try:
-        if dest.exists():
-            if dest.is_symlink():
-                dest.unlink()
-            else:
-                shutil.rmtree(dest)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.symlink_to(source)
-    except Exception as e:
-        log("error", f"Failed to symlink {source} to {dest}: {e}")
-
-
 def _kiro_resources() -> list[str]:
     """Return the resource URIs that llm-prompts installs for Kiro.
 
@@ -3723,9 +3673,8 @@ def _remove_manifest_files(agent_name: str, files: list[str]) -> None:
 
 
 def _remove_cline_symlinks() -> None:
-    """Remove Cline's rules and workflows directory symlinks."""
-    _, symlinks = _get_cline_extra_dirs()
-    for dest in symlinks.values():
+    """Remove the Cline rules and workflows directory symlinks older versions created."""
+    for dest in _get_cline_symlinks():
         if dest.is_symlink():
             dest.unlink()
             log("info", f"[cline] Removed symlink: {dest}")
@@ -3965,30 +3914,7 @@ def main(
             }
             plugin_skill_pairs.append((name, src, overrides))
 
-    if "cline" in active_targets:
-        agents_dir, _ = _get_cline_extra_dirs()
-        cline_skill_dirs = [
-            *(d / "shared" / "skills" for d in overlay_dirs),
-            root_dir / "shared" / "skills",
-        ]
-        managed_skills = _install_skills(
-            cline_skill_dirs,
-            agents_dir,
-            "cline",
-            all_agents["cline"].vars_path(),
-            skip_by_agent.get("cline", frozenset()),
-            previous_manifest,
-        )
-        plugin_managed = _install_plugin_skills(
-            plugin_skill_pairs, agents_dir, "cline", managed_skills
-        )
-        managed_skills |= plugin_managed
-        _check_unmanaged(agents_dir / "skills", managed_skills, "skills", is_dir=True)
-        skills_dir = agents_dir / "skills"
-        installed_files["cline"].extend(str(skills_dir / s) for s in managed_skills)
-
     for skill_agent in (
-        "copilot",
         "kiro",
         "claude-code",
         "codex",
@@ -4218,13 +4144,6 @@ def main(
                 dirs["codex"]["rules"] / _CodexAgent.AGENTS_MD,
             )
 
-    if "cline" in active_targets:
-        with isolated("cline"):
-            log("info", "[cline] Symlinking rules and workflows...")
-            _, cline_symlinks = _get_cline_extra_dirs()
-            for subdir, symlink_dest in cline_symlinks.items():
-                _symlink_dir(dirs["cline"][subdir], symlink_dest)
-
     from .manifest import write_manifest
 
     pi_skills: list[str] | None = None
@@ -4304,16 +4223,14 @@ def get_managed_dirs() -> list[Path]:
         Sorted list of managed directory paths.
     """
     dirs = _get_dirs()
-    agents_dir, _ = _get_cline_extra_dirs()
     managed: set[Path] = set()
-    managed.add(agents_dir / "skills")
     managed.add(_pi_rules_dir())
     for key, value in dirs.items():
         for subdir, subdir_path in value.items():
             if key in ("codex", "antigravity", "pi") and subdir == "rules":
                 continue
             managed.add(subdir_path)
-        if key in ("cline", "kiro", "claude-code"):
+        if key in ("kiro", "claude-code"):
             parent = next(iter(value.values())).parent
             managed.add(parent / "skills")
     return sorted(managed)

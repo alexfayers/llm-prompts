@@ -1,6 +1,5 @@
 ---
 description: Evaluate confidence and quality of an approach before implementing
-copilot_mode: ask
 ---
 
 Based on the following rules, how confident are you about your approach? Be brutally honest and do not sugarcoat your opinion.

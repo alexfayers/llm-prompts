@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 
 from . import github_api, telemetry
 from .exit_reason import ExitReason
-from .install import AGENT_CLASSES, log, prompts_dir
+from .install import AGENT_CLASSES, REMOVED_AGENTS, log, prompts_dir
 from .network import run_with_retries
 from .setup import (
     _UPDATE_INSTRUCTION,
@@ -827,7 +827,7 @@ def _run_command(run: telemetry.Run) -> int | None:
     )
     uninstall_parser.add_argument(
         "agent",
-        choices=[*_AGENTS, "all"],
+        choices=[*_AGENTS, *REMOVED_AGENTS, "all"],
         help="Agent to uninstall, or 'all'.",
     )
     uninstall_parser.add_argument(
@@ -1069,6 +1069,12 @@ def _run_command(run: telemetry.Run) -> int | None:
         )
 
         manifest = read_manifest()
+        for name in REMOVED_AGENTS:
+            if manifest.pop(name, None) is not None:
+                log(
+                    "warn",
+                    f"[{name}] no longer supported. Run `llm-prompts uninstall {name}`.",
+                )
         if not manifest:
             print(
                 "No installed agents found. Run `llm-prompts install <agent>` first.",
