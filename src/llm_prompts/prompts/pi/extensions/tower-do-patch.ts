@@ -1,6 +1,7 @@
 // Adds the tower_do_patch tool, which changes single tasks on the board without resending all of them.
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
@@ -27,7 +28,7 @@ export function mergeTasks(currentKeys: string[], upserts: TaskRow[], removes: s
 
 export type PatchParams = { tasks?: TaskRow[]; remove?: string[]; baseRevision?: number; as?: string };
 export type BoardState = { revision: number; keys: string[] };
-export type WriteArgs = { tasks: TaskRow[]; baseRevision: number; as?: string };
+export type WriteArgs = { tasks: TaskRow[]; remove?: string[]; baseRevision: number; as?: string };
 export type ToolOutcome = { isError: boolean; result: { content: { type: string; text?: string }[]; details?: unknown } };
 export type PatchDeps = {
 	readBoard: () => Promise<BoardState>;
@@ -45,8 +46,9 @@ export async function applyPatch(params: PatchParams, deps: PatchDeps): Promise<
 	const retries = params.baseRevision === undefined ? MAX_STALE_RETRIES : 0;
 	for (let attempt = 0; ; attempt++) {
 		const board = await deps.readBoard();
-		const tasks = mergeTasks(board.keys, params.tasks ?? [], params.remove ?? []);
-		const outcome = await deps.write({ tasks, baseRevision: params.baseRevision ?? board.revision, as: params.as });
+		const remove = params.remove ?? [];
+		const tasks = mergeTasks(board.keys, params.tasks ?? [], remove);
+		const outcome = await deps.write({ tasks, remove, baseRevision: params.baseRevision ?? board.revision, as: params.as });
 		if (attempt >= retries || !isStale(outcome)) return outcome;
 	}
 }
@@ -68,11 +70,8 @@ const PARAMETERS = Type.Object({
 type BoardModule = { TowerBoard: new (file: string) => { fold(): Promise<{ revision: number; tasks: { key: string }[] }> } };
 
 export default function (pi: ExtensionAPI) {
-	const loadBoardModule = async (): Promise<BoardModule> => {
-		const source = pi.getAllTools().find((tool) => tool.name === "tower_do")?.sourceInfo.path;
-		if (source === undefined) throw new Error("tower_do_patch: the tower_do tool is not available");
-		return import(pathToFileURL(join(dirname(source), "board.ts")).href);
-	};
+	const loadBoardModule = (): Promise<BoardModule> =>
+		import(pathToFileURL(join(getAgentDir(), "npm", "node_modules", "tower-do", "board.ts")).href);
 
 	const depsFor = (ctx: ExtensionToolContext): PatchDeps => ({
 		async readBoard() {

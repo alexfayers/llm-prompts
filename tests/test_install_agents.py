@@ -610,6 +610,26 @@ class TestInstallAgents:
         assert "OVL-C" in collide.read_text(encoding="utf-8")
         assert managed == {"base-only.md", "collide.md", "overlay-only.md"}
 
+    def test_overlay_agent_merges_frontmatter_and_replaces_body(
+        self, tmp_path: Path
+    ) -> None:
+        base_dir, overlay_dir = tmp_path / "base", tmp_path / "overlay"
+        base_dir.mkdir()
+        overlay_dir.mkdir()
+        (base_dir / "w.md").write_text(
+            "---\nname: w\ncolor: green\ntools: Read\n---\n\nBASE\n", encoding="utf-8"
+        )
+        (overlay_dir / "w.md").write_text(
+            "---\ntools: Bash\n---\n\nOVL\n", encoding="utf-8"
+        )
+        dest = tmp_path / "dest"
+
+        _install_agents([overlay_dir, base_dir], dest)
+
+        body, frontmatter = parse_frontmatter((dest / "w.md").read_text("utf-8"))
+        assert frontmatter == {"name": "w", "color": "green", "tools": "Read, Bash"}
+        assert body.strip() == "OVL"
+
     def test_variant_template_writes_generated_files_alongside_plain_agents(
         self, tmp_path: Path
     ) -> None:

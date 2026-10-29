@@ -20,7 +20,8 @@ import pytest
 import truststore
 from conftest import FakeSubprocess, run_capturing_exit
 
-from llm_prompts import cli, github_api, mcp, telemetry
+from llm_prompts import cli, github_api, install, mcp, setup, telemetry
+from llm_prompts.exit_reason import REASONS, ExitReason
 
 A, B = "a" * 40, "b" * 40
 EVENT: dict[str, Any] = {"event": "command_run", "properties": {}}
@@ -100,6 +101,7 @@ def test_event_carries_only_allowlisted_properties(
     properties = json.loads(posted.call_args.args[0])["properties"]
     assert set(properties) == {
         *("command", "from", "to", "agents", "overlay_count", "overlays", "outcome"),
+        "exit_reason",
         "run_id",
         *("flags", "duration_s", "os", "python", "schema", "$process_person_profile"),
     }
@@ -538,6 +540,101 @@ def test_a_failed_gate_or_usage_error_is_not_reported_as_an_error(
 
     assert telemetry_popen.call_count == 1
     assert _props(telemetry_popen)["outcome"] == outcome
+
+
+@pytest.mark.usefixtures("stubbed_cli")
+@pytest.mark.parametrize(
+    ("argv", "tools", "reason"),
+    [
+        (["contribute", "list"], [], "no_contribute_targets"),
+        (["contribute", "list", "--tool", "x"], [], "tool_not_configured"),
+        (
+            ["contribute", "list", "--tool", "x"],
+            [{"name": "x", "source": "git+https://example.com/x"}],
+            "tool_not_local",
+        ),
+        (["contribute", "list", "--tool", "x"], "no_prompts", "no_prompts_dir"),
+    ],
+)
+def test_an_early_exit_reports_a_fixed_reason_code(
+    telemetry_popen: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    argv: list[str],
+    tools: Any,
+    reason: str,
+) -> None:
+    if tools == "no_prompts":
+        tools = [{"name": "x", "source": str(tmp_path)}]
+    monkeypatch.setattr("llm_prompts.setup._load_config", lambda: tools)
+
+    assert _main(*argv) == 1
+
+    assert _props(telemetry_popen)["exit_reason"] == reason
+    assert reason in REASONS
+
+
+@pytest.mark.parametrize(
+    ("reason", "config", "call"),
+    [
+        ("uv_missing", {}, setup._require_uv),
+        ("config_missing", None, setup._load_config),
+        ("config_no_tools", {}, setup._load_config),
+        ("config_exists", {}, setup.init_config),
+        (
+            "invalid_tool_paths",
+            {"tools": [{"name": "x", "source": "/synthetic/x"}]},
+            setup.run_setup,
+        ),
+        ("tool_install_failed", {}, lambda: setup._run_install(MagicMock())),
+        (
+            "agent_config_missing",
+            {},
+            lambda: install.patch_kiro_agent_config("/synthetic/x"),
+        ),
+    ],
+)
+def test_setup_and_install_exits_carry_a_fixed_reason_code(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reason: str,
+    config: dict[str, Any] | None,
+    call: Callable[[], object],
+) -> None:
+    config_file = tmp_path / "config.toml"
+    if config is not None:
+        config_file.touch()
+    monkeypatch.setattr("llm_prompts.setup.config_path", lambda: config_file)
+    monkeypatch.setattr("llm_prompts.setup.read_config", lambda: config)
+    monkeypatch.setattr("shutil.which", lambda _: None)
+    monkeypatch.setattr("subprocess.run", lambda *_, **__: MagicMock(returncode=1))
+
+    with pytest.raises(ExitReason) as raised:
+        call()
+
+    assert raised.value.reason == reason
+    assert reason in REASONS
+
+
+@pytest.mark.usefixtures("stubbed_cli")
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        (None, None),
+        (SystemExit(0), None),
+        (SystemExit(1), "other"),
+        (SystemExit("free text with /a/path"), "other"),
+        (ExitReason("no_push_access", "free text with /a/path"), "no_push_access"),
+    ],
+)
+def test_only_a_fixed_reason_code_is_sent_for_an_exit(
+    telemetry_popen: MagicMock, failure: BaseException | None, reason: str | None
+) -> None:
+    with patch("llm_prompts.install.main", side_effect=[failure or False]):
+        _main("update")
+
+    assert _props(telemetry_popen)["exit_reason"] == reason
+    assert "free text" not in json.dumps(_events(telemetry_popen))
 
 
 def _failing_update(failure: BaseException | Callable[..., object]) -> None:

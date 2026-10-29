@@ -48,6 +48,7 @@ from llm_prompts.contribute import (
     slug_for,
     stale_main_warning,
 )
+from llm_prompts.exit_reason import ExitReason
 from llm_prompts.size_guard import CheckResult
 
 PROMPTS_PREFIX = "src/llm_prompts/prompts/"
@@ -451,6 +452,23 @@ class TestCollectReportProbe:
         contribute.collect_report(tmp_path, contribute_remote.login, PROMPTS_PREFIX)
 
         assert contribute_remote.fake.matching("branch") == []
+
+
+class TestPrListFailure:
+    def test_failed_gh_listing_exits_with_its_first_stderr_line(
+        self, contribute_remote: ContributeRemote, tmp_path: Path
+    ) -> None:
+        contribute_remote.fake.on_match(
+            lambda argv: argv[:3] == ["gh", "pr", "list"],
+            returncode=1,
+            stderr="HTTP 401: Bad credentials\nrun gh auth login\n",
+        )
+
+        with pytest.raises(ExitReason) as raised:
+            open_prs(tmp_path)
+
+        assert raised.value.reason == "pr_list_failed"
+        assert raised.value.code == "gh pr list failed: HTTP 401: Bad credentials"
 
 
 class TestOpenPrBody:

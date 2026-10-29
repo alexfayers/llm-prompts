@@ -13,6 +13,8 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from .exit_reason import ExitReason
+
 _CREDENTIAL_QUERY = "protocol=https\nhost=github.com\n\n"
 _REMOTE_REPO = re.compile(r"[/:]([^/:]+)/([^/:]+?)(?:\.git)?/?$")
 _API_URL = "https://api.github.com"
@@ -44,7 +46,7 @@ def token() -> str:
     for line in completed.stdout.splitlines():
         if line.startswith("password=") and len(line) > len("password="):
             return line.removeprefix("password=")
-    raise SystemExit(_NO_TOKEN_MESSAGE)
+    raise ExitReason("no_github_token", _NO_TOKEN_MESSAGE)
 
 
 def has_upstream(repo: Path) -> bool:
@@ -68,8 +70,9 @@ def base_repo(repo: Path) -> tuple[str, str]:
     url = _remote_url(repo, "upstream") or _remote_url(repo, "origin") or ""
     match = _REMOTE_REPO.search(url)
     if match is None:
-        raise SystemExit(
-            f"Cannot find the GitHub repository of {repo} from its remotes."
+        raise ExitReason(
+            "no_github_remote",
+            f"Cannot find the GitHub repository of {repo} from its remotes.",
         )
     return match.group(1), match.group(2)
 

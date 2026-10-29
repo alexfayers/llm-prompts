@@ -34,6 +34,7 @@ from .batching import (
     regression_warning,
     select_groups,
 )
+from .exit_reason import ExitReason
 from .listing import Entry, classify, pr_only_warning, render
 from .network import run_with_retries, with_retries
 from .size_guard import check
@@ -163,18 +164,23 @@ def _pr_list(repo: Path, state: str, fields: str) -> list[Any]:
             if state == "all"
             else ["--state", state, "--author", "@me"]
         )
-        return list(
-            _gh_json(
-                "pr",
-                "list",
-                *author_state,
-                "--json",
-                fields,
-                "--limit",
-                "1000",
-                repo=repo,
+        try:
+            return list(
+                _gh_json(
+                    "pr",
+                    "list",
+                    *author_state,
+                    "--json",
+                    fields,
+                    "--limit",
+                    "1000",
+                    repo=repo,
+                )
             )
-        )
+        except subprocess.CalledProcessError as error:
+            raise ExitReason(
+                "pr_list_failed", f"gh pr list failed: {_first_stderr_line(error)}"
+            ) from error
     return with_retries(
         partial(github_api.pr_list, repo, _API_PR_QUALIFIERS[state], fields.split(","))
     )
@@ -470,10 +476,11 @@ def push_remote(repo: Path) -> tuple[str, bool]:
         _gh_json("repo", "fork", "--remote", repo=repo)
     elif not github_api.has_upstream(repo):
         owner, name = github_api.base_repo(repo)
-        raise SystemExit(
+        raise ExitReason(
+            "no_push_access",
             f"No push access to {owner}/{name} and gh is not installed: fork it on GitHub, "
             "run `git remote rename origin upstream` and `git remote add origin <fork-url>`, "
-            "then rerun."
+            "then rerun.",
         )
     return "origin", True
 

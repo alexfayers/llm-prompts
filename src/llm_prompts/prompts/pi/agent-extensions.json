@@ -9,7 +9,7 @@
   "compact-now",
   "codemode-sleep",
   "codemode-wait-until",
-  "tower-do?",
+  "tower-do-slim",
   "tower-do-patch",
   "@gotgenes/pi-permission-system"
 ]

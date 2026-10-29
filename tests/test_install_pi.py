@@ -20,6 +20,8 @@ from llm_prompts.install import (
     _linked_content,
     _parse_roles,
     _pi_agent_dir,
+    _pi_core_base_extensions,
+    _pi_package_dir,
     _requirements_met,
     _split_npm_source,
     get_managed_dirs,
@@ -69,8 +71,9 @@ def _install(
     only: Path | None = None,
     targets: list[str] | None = None,
     trusted: bool = False,
+    hooks_exit: int = 0,
 ) -> bool:
-    """Run `install` into a fake home with overlays and manifest redirected."""
+    """Run `install` into a fake home with overlays and manifest redirected, `cline-hook install pi` exiting with `hooks_exit`."""
 
     def which(command: str) -> str | None:
         if command == "herdr":
@@ -87,8 +90,9 @@ def _install(
         if cmd[1:] == ["install", "pi"]:
             extensions = Path(kwargs["env"]["PI_CODING_AGENT_DIR"]) / "extensions"
             extensions.mkdir(parents=True, exist_ok=True)
-            (extensions / "cline-hooks.ts").touch()
-            return subprocess.CompletedProcess(cmd, 0)
+            if not hooks_exit:
+                (extensions / "cline-hooks.ts").touch()
+            return subprocess.CompletedProcess(cmd, hooks_exit)
         result = outer(cmd, **kwargs)
         if cmd[1:2] == ["install"] and result.returncode == 0:
             package = _split_npm_source(cmd[2])[0]
@@ -353,11 +357,8 @@ class TestPiPackages:
         assert fresh_settings["cacheWarming"] == "idle"
         assert fresh_settings["enableInstallTelemetry"] is False
         failing: subprocess.CompletedProcess[str] = subprocess.CompletedProcess([], 1)
-        with (
-            patch("llm_prompts.install.subprocess.run", return_value=failing),
-            pytest.raises(ValueError, match="pi-permission-system"),
-        ):
-            _install(tmp_path / "bare", tmp_path / "bare.json", pi="/usr/bin/pi")
+        with patch("llm_prompts.install.subprocess.run", return_value=failing):
+            assert _install(tmp_path / "bare", tmp_path / "bare.json", pi="/usr/bin/pi")
 
         home = tmp_path / "home"
         settings_path = home / ".pi" / "agent" / "settings.json"
@@ -369,6 +370,8 @@ class TestPiPackages:
                     "followUpMode": "one-at-a-time",
                     "cacheWarming": "streaming",
                     "enableInstallTelemetry": True,
+                    "showCacheMissNotices": False,
+                    "markdown": {"mermaid": "off"},
                 }
             ),
             encoding="utf-8",
@@ -379,6 +382,8 @@ class TestPiPackages:
         assert settings["followUpMode"] == "one-at-a-time"
         assert settings["cacheWarming"] == "streaming"
         assert settings["enableInstallTelemetry"] is True
+        assert settings["showCacheMissNotices"] is False
+        assert settings["markdown"] == {"mermaid": "off"}
 
     def test_user_settings_and_packages_are_preserved(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -411,6 +416,22 @@ class TestPiPackages:
 
         _install(home, manifest, [_overlay(overlay, [])])
         assert _settings(home)["packages"] == _core_packages()
+
+    def test_filtered_package_replaces_the_managed_plain_entry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        manifest = tmp_path / "installed.json"
+        entry = {"source": "npm:filter-pkg", "extensions": []}
+        _install(home, manifest, [_overlay(tmp_path / "plain", ["npm:filter-pkg"])])
+        assert "npm:filter-pkg" in _settings(home)["packages"]
+
+        _install(home, manifest, [_overlay(tmp_path / "filtered", [entry])])  # type: ignore[list-item]
+
+        packages = _settings(home)["packages"]
+        assert entry in packages
+        assert "npm:filter-pkg" not in packages
 
     def test_uninstall_removes_only_managed_packages(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -910,9 +931,9 @@ class TestPiSeedFiles:
         fresh_home = tmp_path / "fresh"
         fresh_home.mkdir()
         _install(fresh_home, tmp_path / "fresh.json", [overlay])
-        assert (fresh_home / _SEED_RELATIVE).read_text(encoding="utf-8") == (
-            '{"overlay": true}'
-        )
+        assert json.loads(
+            (fresh_home / _SEED_RELATIVE).read_text(encoding="utf-8")
+        ) == {**json.loads(core_seed.read_text(encoding="utf-8")), "overlay": True}
 
     def test_seed_adds_only_keys_not_offered_before_in_the_files_own_format(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1398,15 +1419,17 @@ class TestHerdsmanAgents:
         assert reviewer["excludeTools"][:3] == ["agent", "write", "edit"]
         assert "process" not in reviewer["excludeTools"]
 
-    def test_unresolvable_required_pi_skill_fails_install(self, tmp_path: Path) -> None:
+    def test_unresolvable_required_pi_skill_fails_install(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         overlay = tmp_path / "o"
         (overlay / "shared" / "agents").mkdir(parents=True)
         (overlay / "shared" / "agents" / "odd.md").write_text(
             "---\nname: odd\npi_skills: nonexistent-skill\n---\n\nbody\n",
             encoding="utf-8",
         )
-        with pytest.raises(ValueError, match="nonexistent-skill"):
-            _install(tmp_path / "home", tmp_path / "installed.json", [overlay])
+        assert _install(tmp_path / "home", tmp_path / "installed.json", [overlay])
+        assert "nonexistent-skill" in capsys.readouterr().err
 
     @pytest.mark.usefixtures("core_tree")
     def test_reviewer_overrides_every_key_of_the_bundled_definition(
@@ -1417,14 +1440,16 @@ class TestHerdsmanAgents:
         assert reviewer["noSkills"] is False
         assert reviewer["tools"] == ["*"]
 
-    def test_unmapped_frontmatter_key_fails_install(self, tmp_path: Path) -> None:
+    def test_unmapped_frontmatter_key_fails_install(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         overlay = tmp_path / "o"
         (overlay / "shared" / "agents").mkdir(parents=True)
         (overlay / "shared" / "agents" / "odd.md").write_text(
             "---\nname: odd\nmystery: 1\n---\n\nbody\n", encoding="utf-8"
         )
-        with pytest.raises(ValueError, match="mystery"):
-            _install(tmp_path / "home", tmp_path / "installed.json", [overlay])
+        assert _install(tmp_path / "home", tmp_path / "installed.json", [overlay])
+        assert "mystery" in capsys.readouterr().err
 
     @pytest.mark.parametrize("v", ["[x, y]", "[\"x\", 'y']"])
     def test_extensions_list_limits_extensions(self, tmp_path: Path, v: str) -> None:
@@ -1440,15 +1465,17 @@ class TestHerdsmanAgents:
         assert fm["noExtensions"] is True
         assert fm["extensions"][:2] == [str(extensions / "x.ts"), str(extensions / "y")]
 
-    def test_missing_extension_fails_unless_optional(self, tmp_path: Path) -> None:
+    def test_missing_extension_fails_unless_optional(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         agents = tmp_path / "o/shared/agents"
         agents.mkdir(parents=True)
         (agents / "a.md").write_text("---\nname: a\nextensions: gone?\n---\n\nb\n")
         _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o"])
         assert "gone" not in (tmp_path / "h/.pi/agent/agents/a.md").read_text()
         (agents / "a.md").write_text("---\nname: a\nextensions: gone\n---\n\nb\n")
-        with pytest.raises(ValueError, match="gone"):
-            _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o"])
+        assert _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o"])
+        assert "gone" in capsys.readouterr().err
 
     def test_base_extensions_join_every_list_once(self, tmp_path: Path) -> None:
         (tmp_path / "o/pi").mkdir(parents=True)
@@ -2303,6 +2330,125 @@ class TestPiPackageInstall:
         assert failed
 
 
+class TestPiPackageInstallFailure:
+    @pytest.fixture
+    def overlay(self, tmp_path: Path) -> Path:
+        """Return an overlay whose agent needs the extension of a declared package."""
+        root = _overlay(tmp_path / "overlay", ["npm:acme-ext@1.0.0"])
+        (root / "pi" / "agent-extensions.json").write_text('["acme-ext"]')
+        (root / "pi" / "seed").mkdir()
+        (root / "pi" / "seed" / "acme.json").write_text('{"seeded": true}')
+        (root / "shared" / "agents").mkdir(parents=True)
+        (root / "shared" / "agents" / "a.md").write_text("---\nname: a\n---\n\nv1\n")
+        return root
+
+    def _install(
+        self, tmp_path: Path, overlay: Path, *, fail: bool
+    ) -> tuple[bool, Path, dict[str, Any]]:
+        """Install the overlay with a fake pi, returning the failure flag, the home and the pi manifest entry."""
+        home = tmp_path / "home"
+        home.mkdir(exist_ok=True)
+
+        def run(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                cmd, fail * ("npm:acme-ext@1.0.0" in cmd)
+            )
+
+        with patch("llm_prompts.install.subprocess.run", side_effect=run):
+            failed = _install(
+                home, tmp_path / "installed.json", [overlay], pi="/usr/bin/pi"
+            )
+        recorded = json.loads((tmp_path / "installed.json").read_text("utf-8"))
+        return failed, home, recorded["agents"]["pi"]
+
+    def test_first_install_still_seeds_and_records_the_manifest(
+        self, tmp_path: Path, overlay: Path
+    ) -> None:
+        failed, home, recorded = self._install(tmp_path, overlay, fail=True)
+
+        assert failed
+        assert (home / ".pi/agent/acme.json").is_file()
+        assert str(home / ".pi/agent/agents/a.md") not in recorded["files"]
+
+    def test_failed_install_names_the_package_and_suggests_checking_npm_auth(
+        self, tmp_path: Path, overlay: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._install(tmp_path, overlay, fail=True)
+
+        error = next(
+            line for line in capsys.readouterr().err.splitlines() if "failed." in line
+        )
+        assert "npm:acme-ext@1.0.0" in error
+        assert "npm whoami" in error
+
+    def test_existing_agents_are_kept_and_named_in_the_warning(
+        self, tmp_path: Path, overlay: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _, home, _ = self._install(tmp_path, overlay, fail=False)
+        agent = home / ".pi/agent/agents/a.md"
+        before = agent.read_text("utf-8")
+        shutil.rmtree(home / ".pi/agent/npm/node_modules/acme-ext")
+        (overlay / "shared/agents/a.md").write_text("---\nname: a\n---\n\nv2\n")
+
+        _, _, recorded = self._install(tmp_path, overlay, fail=True)
+
+        assert agent.read_text("utf-8") == before
+        assert str(agent) in recorded["files"]
+        assert str(home / ".pi/agent/agent-role-variants.json") in recorded["files"]
+        assert "Agents not regenerated" in (err := capsys.readouterr().err)
+        assert "npm:acme-ext@1.0.0" in err.split("Agents not regenerated")[1]
+
+
+class TestToolInstallIsolation:
+    def test_a_crashing_tool_does_not_stop_the_others(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        overlay = _overlay(tmp_path / "overlay", [])
+        (overlay / "shared" / "agents").mkdir(parents=True)
+        (overlay / "shared" / "agents" / "a.md").write_text(
+            "---\nname: a\nextensions: gone\n---\n\nb\n"
+        )
+        (overlay / "shared" / "rules").mkdir()
+        (overlay / "shared" / "rules" / "r.md").write_text("rule\n")
+        home = tmp_path / "home"
+        manifest = tmp_path / "installed.json"
+
+        failed = _install(home, manifest, [overlay], targets=["claude-code", "pi"])
+
+        recorded = json.loads(manifest.read_text("utf-8"))["agents"]
+        assert failed
+        assert (home / ".claude/rules/r.md").is_file()
+        assert str(home / ".claude/rules/r.md") in recorded["claude-code"]["files"]
+        assert "pi" not in recorded
+        assert "[pi] Install failed" in capsys.readouterr().err
+
+
+class TestPiHooksInstallFailure:
+    def test_failed_hooks_install_is_handled_like_a_failed_package(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        overlay = _overlay(tmp_path / "overlay", [])
+        (overlay / "shared" / "agents").mkdir(parents=True)
+        (overlay / "shared" / "agents" / "a.md").write_text(
+            "---\nname: a\nextensions: builtin:x\n---\n\nb\n"
+        )
+        home = tmp_path / "home"
+        manifest = tmp_path / "installed.json"
+
+        with patch(
+            "llm_prompts.install.subprocess.run",
+            side_effect=lambda cmd, **_: subprocess.CompletedProcess(cmd, 0),
+        ):
+            failed = _install(home, manifest, [overlay], pi="/usr/bin/pi", hooks_exit=1)
+
+        assert failed
+        assert "pi" in json.loads(manifest.read_text("utf-8"))["agents"]
+        assert not (home / ".pi/agent/agents/a.md").exists()
+        err = capsys.readouterr().err
+        assert "`cline-hook install pi` failed" in err
+        assert "Agents not regenerated" in err
+
+
 class TestPiPackageRemoval:
     def _install(
         self, tmp_path: Path, packages: list[str], *, broken: str = ""
@@ -2399,3 +2545,11 @@ class TestPiPackageRemoval:
         assert "npm:acme-ext" in removed
         assert "npm:user-ext" not in removed
         assert "`pi remove npm:acme-ext`" in capsys.readouterr().err
+
+
+def test_permission_system_is_optional_until_its_package_is_on_disk() -> None:
+    package = "@gotgenes/pi-permission-system"
+    root_dir = prompts_dir("llm_prompts")
+    assert f"{package}?" in _pi_core_base_extensions(root_dir)
+    _pi_package_dir(package).mkdir(parents=True)
+    assert package in _pi_core_base_extensions(root_dir)

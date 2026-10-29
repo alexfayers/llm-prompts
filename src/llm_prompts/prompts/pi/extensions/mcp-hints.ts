@@ -169,7 +169,7 @@ export default function (pi: ExtensionAPI) {
 		noted.forEach(({ name }) => state.seen.add(name));
 		const servers = new Map<string, string[]>();
 		unlisted.forEach((tool) => servers.set(serverOf(tool.name)!, [...(servers.get(serverOf(tool.name)!) ?? []), toolLabel(tool)]));
-		const names = servers.size > 0 ? [["MCP tools (full name mcp__<server>__<tool>):", ...[...servers].map(([server, labels]) => `${server}: ${labels.join(", ")}`)].join("\n")] : [];
+		const names = servers.size > 0 ? [["MCP tools, callable ONLY inside codemode as tools.mcp__<server>__<tool>(args), never as direct tool calls:", ...[...servers].map(([server, labels]) => `${server}: ${labels.join(", ")}`)].join("\n")] : [];
 		const content = [...names, ...noted.map(({ text }) => text)].join("\n\n");
 		return content === "" ? undefined : { message: { customType: "mcp-hints", content, display: false } };
 	});

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import urlparse
 
 from . import github_api, telemetry
+from .exit_reason import ExitReason
 from .install import AGENT_CLASSES, log, prompts_dir
 from .network import run_with_retries
 from .setup import (
@@ -402,7 +403,7 @@ def _contribute_target(name: str) -> tuple[Path, str]:
                     "`contribute` requires a local checkout.",
                     file=sys.stderr,
                 )
-                sys.exit(1)
+                raise ExitReason("tool_not_local")
             repo = _expand(source)
             prefix = _prompts_prefix(repo)
             if prefix is None:
@@ -410,10 +411,10 @@ def _contribute_target(name: str) -> tuple[Path, str]:
                     f"Expected exactly one src/*/prompts directory in {repo}.",
                     file=sys.stderr,
                 )
-                sys.exit(1)
+                raise ExitReason("no_prompts_dir")
             return repo, prefix
     print(f"No {name} tool entry found in config.", file=sys.stderr)
-    sys.exit(1)
+    raise ExitReason("tool_not_configured")
 
 
 class _ContributeTarget(NamedTuple):
@@ -450,7 +451,7 @@ def _contribute_targets() -> list[_ContributeTarget]:
             "found in config.",
             file=sys.stderr,
         )
-        sys.exit(1)
+        raise ExitReason("no_contribute_targets")
     return targets
 
 
@@ -716,7 +717,7 @@ def _get_gh_login() -> str:
             return github_api.login()
         except subprocess.CalledProcessError as error:
             print(error.stderr, file=sys.stderr)
-            sys.exit(1)
+            raise ExitReason("gh_login_failed") from error
     result = subprocess.run(
         ["gh", "api", "user", "--jq", ".login"],
         capture_output=True,
@@ -725,7 +726,7 @@ def _get_gh_login() -> str:
     )
     if result.returncode != 0:
         print(result.stderr, file=sys.stderr)
-        sys.exit(1)
+        raise ExitReason("gh_login_failed")
     return result.stdout.strip()
 
 

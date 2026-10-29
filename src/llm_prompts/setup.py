@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from . import home
+from .exit_reason import ExitReason
 from .network import run_with_retries
 from .squash_subject import squash_pr_number
 
@@ -495,7 +496,7 @@ def _require_uv() -> None:
     """Exit with an error if uv is not installed."""
     if not shutil.which("uv"):
         print("setup needs uv: https://docs.astral.sh/uv/", file=sys.stderr)
-        sys.exit(1)
+        raise ExitReason("uv_missing")
 
 
 class SharedEnv(NamedTuple):
@@ -645,12 +646,12 @@ def _load_config() -> list[dict[str, Any]]:
             f"Run `llm-prompts setup --init` to create one.",
             file=sys.stderr,
         )
-        sys.exit(1)
+        raise ExitReason("config_missing")
     config = read_config()
     tools = config.get("tools", [])
     if not isinstance(tools, list) or not tools:
         print("Config must contain at least one [[tools]] entry.", file=sys.stderr)
-        sys.exit(1)
+        raise ExitReason("config_no_tools")
     return tools
 
 
@@ -674,7 +675,7 @@ def init_config() -> None:
     """Create a starter config file."""
     if config_path().exists():
         print(f"Config already exists at {config_path()}", file=sys.stderr)
-        sys.exit(1)
+        raise ExitReason("config_exists")
     config_path().parent.mkdir(parents=True, exist_ok=True)
     config_path().write_text(_DEFAULT_CONFIG, encoding="utf-8")
     print(f"Created {config_path()}")
@@ -689,7 +690,7 @@ def _run_install(env: SharedEnv) -> None:
     if result.returncode != 0:
         print(result.stderr, end="")
         print(f"\nFailed: {env.name}", file=sys.stderr)
-        sys.exit(1)
+        raise ExitReason("tool_install_failed")
 
 
 def _remove_member_envs(env: SharedEnv, *, dry_run: bool) -> bool:
@@ -743,13 +744,13 @@ def run_setup(
     if errors:
         for err in errors:
             print(err, file=sys.stderr)
-        sys.exit(1)
+        raise ExitReason("invalid_tool_paths")
 
     _require_uv()
     if tool_filter:
         if tool_filter not in {str(tool["name"]) for tool in tools}:
             print(f"No tool named '{tool_filter}' in config.", file=sys.stderr)
-            sys.exit(1)
+            raise ExitReason("tool_not_configured")
         force_reinstall = {str(tools[0]["name"])}
     package_names = {str(tool["name"]): _package_name(tool) for tool in tools}
     force_reinstall = {package_names.get(n, n) for n in force_reinstall}

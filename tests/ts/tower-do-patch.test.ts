@@ -13,8 +13,8 @@ const stale = (revision: number) =>
 const board = (revision: number) => ({ revision, keys: ["a", "b"] });
 const BOARD = board(7);
 
-const TOWER_DO_SOURCE = join("/tower-do", "index.ts");
-const boardUrl = pathToFileURL(join("/tower-do", "board.ts")).href;
+const AGENT_DIR = "/agent";
+const boardUrl = pathToFileURL(join(AGENT_DIR, "npm", "node_modules", "tower-do", "board.ts")).href;
 const boardSource = 'export class TowerBoard { async fold() { return { revision: 7, tasks: [{ key: "a" }, { key: "b" }] }; } }';
 const boardHooks = registerHooks({
 	resolve: (specifier, context, next) => (specifier === boardUrl ? { url: boardUrl, format: "module", shortCircuit: true } : next(specifier, context)),
@@ -83,8 +83,7 @@ describe("applyPatch", () => {
 });
 
 describe("tower_do_patch tool", () => {
-	const loadTool = () =>
-		loadExtension("tower-do-patch", { pi: { allTools: [{ name: "tower_do", sourceInfo: { path: TOWER_DO_SOURCE } }] } });
+	const loadTool = () => loadExtension("tower-do-patch", { agentDir: AGENT_DIR });
 
 	function ctxWith(outcomes: Outcome[]) {
 		const calls: [string, any][] = [];
@@ -102,9 +101,16 @@ describe("tower_do_patch tool", () => {
 		const result = await callTool("tower_do_patch", { tasks: [{ key: "c", subject: "new" }], as: "me" }, ctx);
 		assert.deepEqual(calls, [
 			["tower_do_status", { view: "mine" }],
-			["tower_do", { tasks: [{ key: "c", subject: "new" }, { key: "a" }, { key: "b" }], baseRevision: 7, as: "me" }],
+			["tower_do", { tasks: [{ key: "c", subject: "new" }, { key: "a" }, { key: "b" }], remove: [], baseRevision: 7, as: "me" }],
 		]);
 		assert.deepEqual(result.content, OK.result.content);
+	});
+
+	test("passes remove keys to tower_do", async () => {
+		const { callTool } = await loadTool();
+		const { calls, ctx } = ctxWith([OK]);
+		await callTool("tower_do_patch", { remove: ["a"] }, ctx);
+		assert.deepEqual(calls[1], ["tower_do", { tasks: [{ key: "b" }], remove: ["a"], baseRevision: 7, as: undefined }]);
 	});
 
 	test("fails the tool with the message of a failed tower_do call", async () => {
