@@ -74,9 +74,7 @@ from .size_limits import (
     WORKFLOW_LINES,
 )
 
-CHECKED_TARGETS: tuple[str, ...] = tuple(
-    target for target in AGENT_CLASSES if target != "cline"
-)
+CHECKED_TARGETS: tuple[str, ...] = tuple(AGENT_CLASSES)
 ALLOWANCES_FILENAME = "size_allowances.json"
 
 

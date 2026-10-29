@@ -1,6 +1,5 @@
 ---
 description: Banned phrases and response patterns to avoid
-copilot_apply_to: '**'
 ---
 
 # Banned phrasing

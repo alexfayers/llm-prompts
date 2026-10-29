@@ -290,44 +290,6 @@ def _scoped_paths(
     return [p.strip() for p in raw.split(",") if p.strip()]
 
 
-def render_for_cline(body: str) -> str:
-    """Render template for Cline.
-
-    Args:
-        body: Template body.
-
-    Returns:
-        Normalized body content.
-    """
-    return normalize_whitespace(body)
-
-
-def render_for_copilot(body: str, frontmatter: dict[str, str]) -> str:
-    """Render template for Copilot.
-
-    Args:
-        body: Template body.
-        frontmatter: Parsed frontmatter key-value pairs.
-
-    Returns:
-        Copilot-formatted content.
-    """
-    new_frontmatter = ["---"]
-
-    if "description" in frontmatter:
-        new_frontmatter.append(f"description: {frontmatter['description']}")
-    apply_to = _scoped_paths(frontmatter, "copilot_apply_to")
-    if apply_to:
-        new_frontmatter.append(f"applyTo: '{', '.join(apply_to)}'")
-    if "copilot_mode" in frontmatter:
-        new_frontmatter.append(f"mode: '{frontmatter['copilot_mode']}'")
-
-    new_frontmatter.append("---")
-    output = "\n".join(new_frontmatter) + "\n\n" + body
-
-    return normalize_whitespace(output)
-
-
 def render_for_kiro(body: str, frontmatter: dict[str, str]) -> str:
     """Render template for Kiro.
 
@@ -430,7 +392,7 @@ def render_template(template_path: str, variables_path: str, target: str) -> str
     Args:
         template_path: Path to the template file.
         variables_path: Path to JSON file with variables.
-        target: Target format (`cline`, `copilot`, or `kiro`).
+        target: Target format (`kiro`, `claude-code`, `codex`, `antigravity`, or `pi`).
 
     Returns:
         Rendered content.
@@ -446,10 +408,6 @@ def render_template(template_path: str, variables_path: str, target: str) -> str
         body = _read_text(source)
 
     # Render based on target
-    if target == "cline":
-        return render_for_cline(body)
-    if target == "copilot":
-        return render_for_copilot(body, frontmatter)
     if target == "kiro":
         return render_for_kiro(body, frontmatter)
     if target == "claude-code":
@@ -467,15 +425,13 @@ def build_parser() -> argparse.ArgumentParser:
         Configured argument parser.
     """
     parser = argparse.ArgumentParser(
-        description="Render a template file for Cline or Copilot.",
+        description="Render a template file for an agent.",
     )
     parser.add_argument("template_path", help="Path to the template file.")
     parser.add_argument("variables_path", help="Path to JSON file with variables.")
     parser.add_argument(
         "target",
         choices=[
-            "cline",
-            "copilot",
             "kiro",
             "claude-code",
             "codex",

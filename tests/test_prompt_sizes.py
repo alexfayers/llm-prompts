@@ -308,17 +308,13 @@ class TestIterArtifactsDispatch:
     def test_workflows_measured_only_for_targets_that_install_them(
         self, tmp_path: Path
     ) -> None:
-        _make_prompts_tree(tmp_path, targets=("claude-code", "cline"))
+        _make_prompts_tree(tmp_path, targets=("claude-code", "pi"))
         workflow_metrics = {WORKFLOW_BYTES, WORKFLOW_LINES}
 
         with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
-            artifacts = list(
-                iter_artifacts([tmp_path], targets=("claude-code", "cline"))
-            )
+            artifacts = list(iter_artifacts([tmp_path], targets=("claude-code", "pi")))
 
-        assert {a.target for a in artifacts if a.metric in workflow_metrics} == {
-            "cline"
-        }
+        assert {a.target for a in artifacts if a.metric in workflow_metrics} == {"pi"}
 
     def test_frontmatter_and_placeholder_checks_pass_for_clean_content(
         self, tmp_path: Path
@@ -362,24 +358,11 @@ class TestIterArtifactsDispatch:
             )
         ]
 
-    def test_copilot_dest_name_gets_instructions_suffix(self, tmp_path: Path) -> None:
-        _make_prompts_tree(tmp_path, targets=("copilot",))
-
-        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
-            names = {
-                a.dest_name
-                for a in iter_artifacts([tmp_path], targets=("copilot",))
-                if a.metric == RULE_BYTES
-            }
-
-        assert "shared-rule.instructions.md" in names
-        assert "shared-rule.md" not in names
-
     def test_workflow_bytes_and_lines_measured(self, tmp_path: Path) -> None:
-        _make_prompts_tree(tmp_path, targets=("cline",))
+        _make_prompts_tree(tmp_path, targets=("pi",))
 
         with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
-            artifacts = list(iter_artifacts([tmp_path], targets=("cline",)))
+            artifacts = list(iter_artifacts([tmp_path], targets=("pi",)))
 
         flow_bytes = next(
             a
@@ -621,15 +604,15 @@ class TestCheckWiresCollectionMetric:
     def test_includes_a_collection_bytes_artifact_per_target(
         self, tmp_path: Path
     ) -> None:
-        _make_prompts_tree(tmp_path, targets=("claude-code", "copilot"))
+        _make_prompts_tree(tmp_path, targets=("claude-code", "kiro"))
 
         with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
-            result = check([tmp_path], targets=("claude-code", "copilot"))
+            result = check([tmp_path], targets=("claude-code", "kiro"))
 
         collection = {
             a.target: a.value for a in result.artifacts if a.metric == COLLECTION_BYTES
         }
-        assert set(collection) == {"claude-code", "copilot"}
+        assert set(collection) == {"claude-code", "kiro"}
         assert all(isinstance(v, int) and v > 0 for v in collection.values())
 
     def test_small_synthetic_tree_passes_the_open_step_ceiling(
@@ -647,7 +630,7 @@ class TestCheckWiresCollectionMetric:
 class TestCollectionSplitsAlwaysLoadedFromOnDemand:
     @staticmethod
     def _measure(tmp_path: Path) -> dict[tuple[str, str], int]:
-        targets = ("claude-code", "copilot")
+        targets = ("claude-code", "kiro")
         _make_prompts_tree(tmp_path, targets=targets)
         with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
             result = check([tmp_path], targets=targets)
@@ -656,7 +639,7 @@ class TestCollectionSplitsAlwaysLoadedFromOnDemand:
     def test_start_is_the_always_loaded_parts(self, tmp_path: Path) -> None:
         measured = self._measure(tmp_path)
 
-        for target in ("claude-code", "copilot"):
+        for target in ("claude-code", "kiro"):
             assert measured[(START_BYTES, target)] == sum(
                 measured[(metric, target)] for metric in ALWAYS_LOADED_METRICS
             )
@@ -666,7 +649,7 @@ class TestCollectionSplitsAlwaysLoadedFromOnDemand:
     ) -> None:
         measured = self._measure(tmp_path)
 
-        for target in ("claude-code", "copilot"):
+        for target in ("claude-code", "kiro"):
             assert measured[(COLLECTION_BYTES, target)] == measured[
                 (START_BYTES, target)
             ] + sum(
@@ -680,10 +663,8 @@ class TestCollectionSplitsAlwaysLoadedFromOnDemand:
         measured = self._measure(tmp_path)
 
         frontmatter = "---\nname: demo\ndescription: A demo skill.\n---\n"
-        assert measured[(ALWAYS_SKILL_FRONTMATTER_BYTES, "copilot")] == len(frontmatter)
-        assert measured[(ON_DEMAND_SKILL_BODY_BYTES, "copilot")] == len(
-            "\nFor copilot.\n"
-        )
+        assert measured[(ALWAYS_SKILL_FRONTMATTER_BYTES, "kiro")] == len(frontmatter)
+        assert measured[(ON_DEMAND_SKILL_BODY_BYTES, "kiro")] == len("\nFor kiro.\n")
 
     def test_an_agent_loads_its_frontmatter_always_and_its_body_on_demand(
         self, tmp_path: Path
@@ -692,8 +673,8 @@ class TestCollectionSplitsAlwaysLoadedFromOnDemand:
 
         assert measured[(ALWAYS_AGENT_FRONTMATTER_BYTES, "claude-code")] > 0
         assert measured[(ON_DEMAND_AGENT_BODY_BYTES, "claude-code")] > 0
-        assert measured[(ALWAYS_AGENT_FRONTMATTER_BYTES, "copilot")] == 0
-        assert measured[(ON_DEMAND_AGENT_BODY_BYTES, "copilot")] == 0
+        assert measured[(ALWAYS_AGENT_FRONTMATTER_BYTES, "kiro")] == 0
+        assert measured[(ON_DEMAND_AGENT_BODY_BYTES, "kiro")] == 0
 
     def test_rules_load_always_and_workflows_on_demand(self, tmp_path: Path) -> None:
         _make_prompts_tree(tmp_path)
@@ -757,7 +738,7 @@ class TestDeclaredAllowances:
             for a in artifacts
             if a.metric == RULE_BYTES and a.dest_name == "shared-rule.md"
         ]
-        assert {a.target for a in rule_bytes} == set(CHECKED_TARGETS) - {"copilot"}
+        assert {a.target for a in rule_bytes} == set(CHECKED_TARGETS)
         assert all(a.allowance == 4_000 for a in rule_bytes)
 
     def test_bool_metric_key_is_rejected_and_carries_no_allowance(

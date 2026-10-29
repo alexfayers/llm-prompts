@@ -1,7 +1,6 @@
 ---
 roles: lead
 description: Check memory and known targets before guessing - ask the user rather than run broad local or web searches
-copilot_apply_to: '**'
 ---
 
 # Local before remote

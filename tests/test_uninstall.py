@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
+from llm_prompts.cli import main
 from llm_prompts.install import (
     _disallow_update_claude_code,
     _kiro_resources,
@@ -44,26 +45,25 @@ class TestRemoveClineSymlinks:
         real = tmp_path / "real"
         real.mkdir()
         with patch("llm_prompts.install.Path.home", return_value=home):
-            from llm_prompts.install import _get_cline_extra_dirs
+            from llm_prompts.install import _get_cline_symlinks
 
-            _, symlinks = _get_cline_extra_dirs()
-            for dest in symlinks.values():
+            symlinks = _get_cline_symlinks()
+            for dest in symlinks:
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.symlink_to(real)
 
             _remove_cline_symlinks()
 
-            for dest in symlinks.values():
+            for dest in symlinks:
                 assert not dest.exists()
                 assert not dest.is_symlink()
 
     def test_leaves_real_directory_untouched(self, tmp_path: Path) -> None:
         home = tmp_path / "home"
         with patch("llm_prompts.install.Path.home", return_value=home):
-            from llm_prompts.install import _get_cline_extra_dirs
+            from llm_prompts.install import _get_cline_symlinks
 
-            _, symlinks = _get_cline_extra_dirs()
-            rules_dest = symlinks["rules"]
+            rules_dest = _get_cline_symlinks()[0]
             rules_dest.mkdir(parents=True)
             (rules_dest / "keep.md").write_text("mine", encoding="utf-8")
 
@@ -185,3 +185,14 @@ class TestUninstallEndToEnd:
             uninstall(None)
 
             assert read_manifest() == {}
+
+
+class TestUninstallRemovedAgents:
+    def test_cli_accepts_a_removed_agent(self) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "uninstall", "cline"]),
+            patch("llm_prompts.install.uninstall") as mock_uninstall,
+        ):
+            main()
+
+        mock_uninstall.assert_called_once_with(["cline"], verbose=False)

@@ -1,6 +1,5 @@
 ---
 description: Stop and ask for help when a task or tool fails
-copilot_apply_to: '**'
 ---
 
 # Stop On Failures

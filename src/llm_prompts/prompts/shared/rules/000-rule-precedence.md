@@ -1,6 +1,5 @@
 ---
 description: Rule precedence and authority
-copilot_apply_to: '**'
 ---
 
 # Rule precedence
