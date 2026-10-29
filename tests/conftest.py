@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from llm_prompts import github_api, install
+from llm_prompts import github_api, install, setup
 from llm_prompts.batching import batch_branch
 from llm_prompts.contribute import Pr
 from llm_prompts.size_guard import CheckResult
@@ -801,6 +801,21 @@ def isolated_home(
     home = tmp_path_factory.mktemp("home")
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     return home
+
+
+_REAL_QUERY_UV_TOOLS_DIR = setup._query_uv_tools_dir
+
+
+@pytest.fixture
+def real_uv_tools_dir_query(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Restore the real `uv tool dir` query so a test can route it via fake_subprocess."""
+    monkeypatch.setattr(setup, "_query_uv_tools_dir", _REAL_QUERY_UV_TOOLS_DIR)
+
+
+@pytest.fixture(autouse=True)
+def no_uv_tools_dir_query(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make `_uv_tools_dir` use the environment-derived default without spawning uv."""
+    monkeypatch.setattr(setup, "_query_uv_tools_dir", lambda: None)
 
 
 @pytest.fixture(autouse=True)

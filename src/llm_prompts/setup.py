@@ -585,6 +585,22 @@ def _script_names(tool: dict[str, Any]) -> list[str]:
 
 def _uv_tools_dir() -> Path:
     """Return the directory holding one uv tool env per installed tool."""
+    return _query_uv_tools_dir() or _default_uv_tools_dir()
+
+
+def _query_uv_tools_dir() -> Path | None:
+    """Return the path printed by `uv tool dir`, or None if uv cannot report it."""
+    try:
+        result = subprocess.run(
+            ["uv", "tool", "dir"], capture_output=True, text=True, check=True
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return Path(result.stdout.strip()) if result.stdout.strip() else None
+
+
+def _default_uv_tools_dir() -> Path:
+    """Return uv's tool directory as resolved from the environment."""
     if tool_dir := os.environ.get("UV_TOOL_DIR"):
         return Path(tool_dir)
     if data_home := os.environ.get("XDG_DATA_HOME"):
