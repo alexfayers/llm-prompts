@@ -20,6 +20,8 @@ from llm_prompts.install import (
     _linked_content,
     _parse_roles,
     _pi_agent_dir,
+    _pi_core_base_extensions,
+    _pi_package_dir,
     _requirements_met,
     _split_npm_source,
     get_managed_dirs,
@@ -1415,15 +1417,17 @@ class TestHerdsmanAgents:
         assert reviewer["excludeTools"][:3] == ["agent", "write", "edit"]
         assert "process" not in reviewer["excludeTools"]
 
-    def test_unresolvable_required_pi_skill_fails_install(self, tmp_path: Path) -> None:
+    def test_unresolvable_required_pi_skill_fails_install(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         overlay = tmp_path / "o"
         (overlay / "shared" / "agents").mkdir(parents=True)
         (overlay / "shared" / "agents" / "odd.md").write_text(
             "---\nname: odd\npi_skills: nonexistent-skill\n---\n\nbody\n",
             encoding="utf-8",
         )
-        with pytest.raises(ValueError, match="nonexistent-skill"):
-            _install(tmp_path / "home", tmp_path / "installed.json", [overlay])
+        assert _install(tmp_path / "home", tmp_path / "installed.json", [overlay])
+        assert "nonexistent-skill" in capsys.readouterr().err
 
     @pytest.mark.usefixtures("core_tree")
     def test_reviewer_overrides_every_key_of_the_bundled_definition(
@@ -1434,14 +1438,16 @@ class TestHerdsmanAgents:
         assert reviewer["noSkills"] is False
         assert reviewer["tools"] == ["*"]
 
-    def test_unmapped_frontmatter_key_fails_install(self, tmp_path: Path) -> None:
+    def test_unmapped_frontmatter_key_fails_install(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         overlay = tmp_path / "o"
         (overlay / "shared" / "agents").mkdir(parents=True)
         (overlay / "shared" / "agents" / "odd.md").write_text(
             "---\nname: odd\nmystery: 1\n---\n\nbody\n", encoding="utf-8"
         )
-        with pytest.raises(ValueError, match="mystery"):
-            _install(tmp_path / "home", tmp_path / "installed.json", [overlay])
+        assert _install(tmp_path / "home", tmp_path / "installed.json", [overlay])
+        assert "mystery" in capsys.readouterr().err
 
     @pytest.mark.parametrize("v", ["[x, y]", "[\"x\", 'y']"])
     def test_extensions_list_limits_extensions(self, tmp_path: Path, v: str) -> None:
@@ -1457,15 +1463,17 @@ class TestHerdsmanAgents:
         assert fm["noExtensions"] is True
         assert fm["extensions"][:2] == [str(extensions / "x.ts"), str(extensions / "y")]
 
-    def test_missing_extension_fails_unless_optional(self, tmp_path: Path) -> None:
+    def test_missing_extension_fails_unless_optional(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         agents = tmp_path / "o/shared/agents"
         agents.mkdir(parents=True)
         (agents / "a.md").write_text("---\nname: a\nextensions: gone?\n---\n\nb\n")
         _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o"])
         assert "gone" not in (tmp_path / "h/.pi/agent/agents/a.md").read_text()
         (agents / "a.md").write_text("---\nname: a\nextensions: gone\n---\n\nb\n")
-        with pytest.raises(ValueError, match="gone"):
-            _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o"])
+        assert _install(tmp_path / "h", tmp_path / "i.json", [tmp_path / "o"])
+        assert "gone" in capsys.readouterr().err
 
     def test_base_extensions_join_every_list_once(self, tmp_path: Path) -> None:
         (tmp_path / "o/pi").mkdir(parents=True)
@@ -2389,6 +2397,30 @@ class TestPiPackageInstallFailure:
         assert "npm:acme-ext@1.0.0" in err.split("Agents not regenerated")[1]
 
 
+class TestToolInstallIsolation:
+    def test_a_crashing_tool_does_not_stop_the_others(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        overlay = _overlay(tmp_path / "overlay", [])
+        (overlay / "shared" / "agents").mkdir(parents=True)
+        (overlay / "shared" / "agents" / "a.md").write_text(
+            "---\nname: a\nextensions: gone\n---\n\nb\n"
+        )
+        (overlay / "shared" / "rules").mkdir()
+        (overlay / "shared" / "rules" / "r.md").write_text("rule\n")
+        home = tmp_path / "home"
+        manifest = tmp_path / "installed.json"
+
+        failed = _install(home, manifest, [overlay], targets=["claude-code", "pi"])
+
+        recorded = json.loads(manifest.read_text("utf-8"))["agents"]
+        assert failed
+        assert (home / ".claude/rules/r.md").is_file()
+        assert str(home / ".claude/rules/r.md") in recorded["claude-code"]["files"]
+        assert "pi" not in recorded
+        assert "[pi] Install failed" in capsys.readouterr().err
+
+
 class TestPiHooksInstallFailure:
     def test_failed_hooks_install_is_handled_like_a_failed_package(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -2511,3 +2543,11 @@ class TestPiPackageRemoval:
         assert "npm:acme-ext" in removed
         assert "npm:user-ext" not in removed
         assert "`pi remove npm:acme-ext`" in capsys.readouterr().err
+
+
+def test_permission_system_is_optional_until_its_package_is_on_disk() -> None:
+    package = "@gotgenes/pi-permission-system"
+    root_dir = prompts_dir("llm_prompts")
+    assert f"{package}?" in _pi_core_base_extensions(root_dir)
+    _pi_package_dir(package).mkdir(parents=True)
+    assert package in _pi_core_base_extensions(root_dir)
