@@ -40,6 +40,16 @@ function readJson(file: string): Record<string, unknown> {
 	}
 }
 
+function readConfig(): { config: Record<string, unknown>; problem?: string } {
+	try {
+		const parsed: unknown = JSON.parse(fs.readFileSync(configPath, "utf8"));
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return { config: parsed as Record<string, unknown> };
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return { config: {}, problem: "is missing" };
+	}
+	return { config: {}, problem: "cannot be parsed" };
+}
+
 function globToRegExp(pattern: string): RegExp {
 	const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
 	return new RegExp(`^${escaped}$`, "i");
@@ -75,13 +85,25 @@ function loadPlugins(cwd: string): Plugin[] {
 	return found;
 }
 
-function loadConfig(cwd: string): void {
-	const config = readJson(configPath);
+function loadConfig(cwd: string): string | undefined {
+	const { config, problem } = readConfig();
 	mode = config.mode === "log" ? "log" : "block";
 	const allowed = Array.isArray(config.allow) ? config.allow.map(String) : [];
 	allow = [...allowed, ...ALWAYS_ALLOWED].map(globToRegExp);
 	plugins = loadPlugins(cwd);
 	extensionRoots = [path.join(agentDir, "extensions"), path.join(cwd, ".pi", "extensions")].map((dir) => `${dir}/`);
+	return problem;
+}
+
+function warnConfigProblem(problem: string | undefined): void {
+	if (!problem) return;
+	const message = `net-guard: ${configPath} ${problem}; no allow list loaded`;
+	try {
+		fs.appendFileSync(logPath, `${JSON.stringify({ time: new Date().toISOString(), warning: message })}\n`);
+	} catch {
+		// logging is best effort
+	}
+	notifyContext?.ui.notify(message, "warning");
 }
 
 function pluginOfFrame(file: string): string | undefined {
@@ -236,7 +258,7 @@ export default function (pi: ExtensionAPI) {
 	patchDispatchers();
 	pi.on("session_start", (_event, ctx) => {
 		notifyContext = ctx.mode === "tui" ? ctx : undefined;
-		loadConfig(ctx.cwd);
+		warnConfigProblem(loadConfig(ctx.cwd));
 		patchDispatchers();
 	});
 	pi.on("before_agent_start", () => patchDispatchers());

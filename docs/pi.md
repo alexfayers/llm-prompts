@@ -31,7 +31,7 @@ With Herdr on PATH, each rule is its own file under `rules/` and the global `AGE
 | `extensions/pi-permission-system/config.json` | [pi-permission-system](https://www.npmjs.com/package/@gotgenes/pi-permission-system) policy. Asks before `git push`, forced or `git -c` git commands, `llm-prompts install/setup/update/uninstall/contribute`, `gh pr` and `gh issue` writes, and edits to rule, skill, workflow and agent files. `promptMaxRows` and `promptFieldMaxWidth` of 1000000 start the prompt fully expanded. |
 | `zentui.json` | Turns on only the [pi-zentui](https://www.npmjs.com/package/pi-zentui) statusline: directory, git, model, context, tokens and cost. Change it with `/zentui`. |
 | `compact-tools.json` | Draws every tool call in the [pi-compact-tools](https://www.npmjs.com/package/pi-compact-tools) compact style. Change it with `/compact-tools`. |
-| `net-guard.json` | `mode` and `allow` list for `net-guard`. |
+| `net-guard.json` | `mode` and `allow` list for `net-guard`. `net-guard` warns when the file is missing or cannot be parsed. |
 | `context-total.json` | `footer` and `intervalSeconds` for `context-total`. |
 | `pane-reaper.json` | `enabled`, `graceSeconds` and `intervalSeconds` for `pane-reaper`. |
 | `web-search.json` | Disables the `source_check` tool of pi-web-access. |
