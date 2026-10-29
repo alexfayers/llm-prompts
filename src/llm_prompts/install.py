@@ -2440,7 +2440,7 @@ def _pi_base_extensions(fragments: list[Path]) -> list[str]:
 def _pi_core_base_extensions(root_dir: Path) -> list[str]:
     """Return the core base extensions, optional where this install cannot provide them."""
     unavailable = {"cline-hooks"} if is_rooted() else set()
-    if not shutil.which("pi"):
+    if not _pi_package_dir("@gotgenes/pi-permission-system").exists():
         unavailable.add("@gotgenes/pi-permission-system")
     return [
         f"{name}?" if name in unavailable else name
@@ -3264,7 +3264,7 @@ def _pi_env() -> dict[str, str]:
 
 def _install_pi_packages(
     sources: list[str], adoptable: set[str]
-) -> tuple[bool, set[str]]:
+) -> tuple[list[str], set[str]]:
     """Run ``pi install`` for each npm package whose pinned version is not installed.
 
     Args:
@@ -3272,13 +3272,13 @@ def _install_pi_packages(
         adoptable: Package names llm-prompts may take ownership of when it installs them.
 
     Returns:
-        Whether any ``pi install`` failed, and the adoptable packages it newly installed.
+        The sources whose ``pi install`` failed, and the adoptable packages it newly installed.
     """
     pi = shutil.which("pi")
     if pi is None:
         log("warn", "[pi] `pi` not found, skipping package installs.")
-        return False, set()
-    failed = False
+        return [], set()
+    failed: list[str] = []
     installed: set[str] = set()
     for source in sources:
         if not source.startswith("npm:"):
@@ -3295,8 +3295,12 @@ def _install_pi_packages(
         if subprocess.run(
             [pi, "install", source], env=_pi_env(), check=False
         ).returncode:
-            log("error", f"[pi] `pi install {source}` failed.")
-            failed = True
+            log(
+                "error",
+                f"[pi] `pi install {source}` failed. "
+                "Check npm auth (`~/.npmrc`, `npm whoami`).",
+            )
+            failed.append(source)
         elif absent and name in adoptable:
             installed.add(name)
     return failed, installed
@@ -3507,13 +3511,22 @@ def _sync_pi_mcp_servers() -> None:
     log("success", f"[pi] Added MCP servers {', '.join(added)} to {mcp_path}.")
 
 
-def try_install_hooks_pi() -> None:
-    """Write the cline-hooks bridge extension for pi if available."""
+def try_install_hooks_pi() -> bool:
+    """Write the cline-hooks bridge extension for pi if available.
+
+    Returns:
+        Whether the bridge install ran and failed.
+    """
     binary = resolve_binary()
     if not binary.exists():
         log("debug", f"{binary} not found, skipping Pi hook injection.")
-        return
-    subprocess.run([str(binary), "install", "pi"], env=_pi_env(), check=False)
+        return False
+    if subprocess.run(
+        [str(binary), "install", "pi"], env=_pi_env(), check=False
+    ).returncode:
+        log("error", "[pi] `cline-hook install pi` failed.")
+        return True
+    return False
 
 
 def try_allow_update_claude_code() -> None:
@@ -3840,7 +3853,7 @@ def main(
     previous_manifest = read_manifest()
     all_skipped: frozenset[Path] = frozenset()
     size_failed = False
-    pi_install_failed = False
+    pi_failed_sources: list[str] = []
     frozen_agents: frozenset[str] = frozenset()
     skip_by_agent: dict[str, Container[Path]]
     if only is not None:
@@ -4013,6 +4026,7 @@ def main(
     pi_installed_packages: list[str] | None = previous_manifest.get("pi", {}).get(
         "pi_installed_packages"
     )
+    pi_seeded_keys = previous_manifest.get("pi", {}).get("pi_seeded_keys")
     if "pi" in active_targets:
         pi_fragments = [root_dir / "pi" / "settings.json"] + [
             d / "pi" / "settings.json" for d in overlay_dirs
@@ -4029,7 +4043,7 @@ def main(
             previous_manifest.get("pi", {}).get("packages", []),
             _pi_defaults(pi_fragments),
         )
-        pi_install_failed, newly_owned = _install_pi_packages(pi_packages, added)
+        pi_failed_sources, newly_owned = _install_pi_packages(pi_packages, added)
         _warn_pi_version_drift(pi_packages)
         pi_installed_packages = sorted(
             (previous_owned & wanted_names) | newly_owned | retained
@@ -4042,8 +4056,9 @@ def main(
                 set(previous_manifest.get("pi", {}).get("files", [])),
             )
         )
-        if not is_rooted():
-            try_install_hooks_pi()
+        if not is_rooted() and try_install_hooks_pi():
+            pi_failed_sources.append("cline-hooks")
+        pi_seeded_keys = _seed_pi_files([root_dir, *overlay_dirs], pi_seeded_keys or {})
 
     for agents_target in ("claude-code", "pi"):
         if agents_target not in active_targets:
@@ -4053,7 +4068,18 @@ def main(
         agents_dest = dirs[agents_target]["agents"]
         agent_dirs = _agent_source_dirs(root_dir, overlay_dirs, agents_target)
         target_skip_set = skip_by_agent.get(agents_target, frozenset())
-        if agents_target == "pi" and pi_bundle_held:
+        if agents_target == "pi" and (pi_bundle_held or pi_failed_sources):
+            if pi_failed_sources:
+                log(
+                    "warn",
+                    "[pi] Agents not regenerated: install failed for "
+                    + ", ".join(pi_failed_sources),
+                )
+                installed_files["pi"].extend(
+                    f
+                    for f in previous_manifest.get("pi", {}).get("files", [])
+                    if Path(f).name == _ROLE_VARIANTS_FILE
+                )
             managed_agents = {
                 Path(f).name
                 for f in previous_pi_bundle
@@ -4161,7 +4187,6 @@ def main(
     pi_rule_roles: dict[str, list[str]] | None = previous_manifest.get("pi", {}).get(
         "pi_rule_roles"
     )
-    pi_seeded_keys = previous_manifest.get("pi", {}).get("pi_seeded_keys")
     if "pi" in active_targets:
         pi_rule_roles = (
             None
@@ -4172,7 +4197,6 @@ def main(
         )
         if not herdr_available():
             log("warn", "[pi] `herdr` not found on PATH. pi needs herdr to run.")
-        pi_seeded_keys = _seed_pi_files([root_dir, *overlay_dirs], pi_seeded_keys or {})
         pi_skills = _claude_plugin_skill_dirs()
         if pi_skills is None:
             pi_skills = previous_manifest.get("pi", {}).get("skills", [])
@@ -4210,7 +4234,12 @@ def main(
         display = source.parent.name if source.name == "SKILL.md" else source.name
         log("error", f"Skipped installing {display}: size guard violation")
 
-    return size_failed or bool(all_skipped) or bool(frozen_agents) or pi_install_failed
+    return (
+        size_failed
+        or bool(all_skipped)
+        or bool(frozen_agents)
+        or bool(pi_failed_sources)
+    )
 
 
 def get_managed_dirs() -> list[Path]:
