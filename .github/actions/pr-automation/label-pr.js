@@ -1,4 +1,4 @@
-const { findPr, isBlocked } = require('./sync-project-status.js');
+const { findPullRequest, findPr, isBlocked } = require('./sync-project-status.js');
 
 const BLOCKED_LABEL = { name: 'blocked', color: 'd73a4a', description: 'Open dependencies or changes requested' };
 const AUTO_REBASE_LABEL = { name: 'auto-rebase', color: '0e8a16', description: 'Rebased automatically when the base branch moves' };
@@ -68,7 +68,11 @@ async function labelBlocked({ github, context, core }) {
 }
 
 async function labelAutoRebase({ github, context, core }) {
-  const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: context.payload.pull_request.number });
+  const found = await findPullRequest(github, context);
+  if (!found) {
+    return;
+  }
+  const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: found.number });
   const { data: { statuses } } = await github.rest.repos.getCombinedStatusForRef({ ...context.repo, ref: pr.head.sha });
   const approved = statuses.some(({ context: name, state }) => name === 'codeowner-review' && state === 'success');
   const names = pr.labels.map(({ name }) => name);

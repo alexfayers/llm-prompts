@@ -1,4 +1,5 @@
 const { BLOCKED_LABEL, ensureLabel } = require('../pr-automation/label-pr.js');
+const { findPullRequest } = require('../pr-automation/sync-project-status.js');
 const { DEPENDENCIES_CONTEXT, dependenciesPending, fetchPr, requiredCheckFailed, clearsBlock } = require('../pr-automation/label-conflicts.js');
 
 const DISPATCH_EVENT = 'dependencies-recheck';
@@ -58,7 +59,10 @@ function dependsOn(pr, { owner, repo }, target) {
 }
 
 async function pullsToCheck({ github, context }) {
-  const { pull_request: event, issue, action } = context.payload;
+  const { pull_request: event, issue, action, workflow_run: run } = context.payload;
+  if (run) {
+    return [await findPullRequest(github, context)].filter(Boolean);
+  }
   if (event && action !== 'closed') {
     return [event];
   }

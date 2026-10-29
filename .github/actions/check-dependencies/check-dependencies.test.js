@@ -148,3 +148,19 @@ test('closing an issue rechecks the open PRs that depend on it and dispatches to
   await check({ github, context, core, getOctokit: () => client, token: 't' });
   assert.deepEqual(calls.filter(([type]) => type !== 'search'), [['status', 'sha6', 'success'], ['dispatch', 'x', 'dependencies-recheck'], ['dispatch', 'z', 'dependencies-recheck']]);
 });
+
+test('a PR review run rechecks only the PR matching its head sha, branch and repo', async () => {
+  const pull = (number, head) => ({ number, head, body: 'Depends on #1', labels: [] });
+  const mine = { sha: 'abc', ref: 'fix', repo: { full_name: 'fork/r' } };
+  const { github, context, core, calls } = fixture({ body: '' });
+  context.payload = { workflow_run: { head_sha: 'abc', head_branch: 'fix', head_repository: { full_name: 'fork/r' } } };
+  github.paginate = async () => [pull(1, { ...mine, sha: 'other' }), pull(2, mine), pull(3, { ...mine, repo: { full_name: 'other/r' } })];
+  github.rest.repos.createCommitStatus = async ({ sha, state }) => calls.push(['status', sha, state]);
+  await check({ github, context, core });
+  assert.deepEqual(calls, [['status', 'abc', 'success']]);
+
+  calls.length = 0;
+  github.paginate = async () => [pull(1, { ...mine, sha: 'other' })];
+  await check({ github, context, core });
+  assert.deepEqual(calls, []);
+});

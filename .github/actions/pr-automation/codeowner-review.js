@@ -1,12 +1,14 @@
+const { findPullRequest } = require('./sync-project-status.js');
+
 const STATUS_CONTEXT = 'codeowner-review';
 const RENOVATE_LOGIN = 'renovate[bot]';
 const SAFE_RENOVATE_BRANCHES = ['renovate/all-minor-patch', 'renovate/github-actions', 'renovate/lock-file-maintenance'];
 const IGNORED_REVIEW_STATES = ['COMMENTED', 'PENDING'];
 
-async function setStatus(github, context, state, description) {
+async function setStatus(github, context, pr, state, description) {
   await github.rest.repos.createCommitStatus({
     ...context.repo,
-    sha: context.payload.pull_request.head.sha,
+    sha: pr.head.sha,
     context: STATUS_CONTEXT,
     state,
     description,
@@ -39,8 +41,7 @@ function latestReviewStates(reviews) {
   return states;
 }
 
-async function evaluate({ github, context }) {
-  const pr = context.payload.pull_request;
+async function evaluate({ github, context, pr }) {
   const { owner, repo } = context.repo;
   if (pr.user.login === RENOVATE_LOGIN && SAFE_RENOVATE_BRANCHES.includes(pr.head.ref)) {
     return ['success', 'Renovate PR needs no code owner review'];
@@ -67,8 +68,7 @@ function minReviews(labels) {
   return counts.length ? Math.max(...counts) : 0;
 }
 
-async function evaluateMinReviews({ github, context }) {
-  const pr = context.payload.pull_request;
+async function evaluateMinReviews({ github, context, pr }) {
   const needed = minReviews(pr.labels ?? []);
   if (needed === 0) {
     return null;
@@ -80,12 +80,16 @@ async function evaluateMinReviews({ github, context }) {
 }
 
 async function gate({ github, context }) {
+  const pr = await findPullRequest(github, context);
+  if (!pr) {
+    return;
+  }
   try {
-    const result = await evaluate({ github, context });
-    const required = result[0] === 'success' ? await evaluateMinReviews({ github, context }) : null;
-    await setStatus(github, context, ...(required ?? result));
+    const result = await evaluate({ github, context, pr });
+    const required = result[0] === 'success' ? await evaluateMinReviews({ github, context, pr }) : null;
+    await setStatus(github, context, pr, ...(required ?? result));
   } catch (error) {
-    await setStatus(github, context, 'error', 'Code owner review check failed to run');
+    await setStatus(github, context, pr, 'error', 'Code owner review check failed to run');
     throw error;
   }
 }
