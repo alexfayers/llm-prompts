@@ -68,8 +68,9 @@ def _install(
     pi: str | None = None,
     only: Path | None = None,
     targets: list[str] | None = None,
+    hooks_exit: int = 0,
 ) -> bool:
-    """Run `install` into a fake home with overlays and manifest redirected."""
+    """Run `install` into a fake home with overlays and manifest redirected, `cline-hook install pi` exiting with `hooks_exit`."""
 
     def which(command: str) -> str | None:
         if command == "herdr":
@@ -86,8 +87,9 @@ def _install(
         if cmd[1:] == ["install", "pi"]:
             extensions = Path(kwargs["env"]["PI_CODING_AGENT_DIR"]) / "extensions"
             extensions.mkdir(parents=True, exist_ok=True)
-            (extensions / "cline-hooks.ts").touch()
-            return subprocess.CompletedProcess(cmd, 0)
+            if not hooks_exit:
+                (extensions / "cline-hooks.ts").touch()
+            return subprocess.CompletedProcess(cmd, hooks_exit)
         result = outer(cmd, **kwargs)
         if cmd[1:2] == ["install"] and result.returncode == 0:
             package = _split_npm_source(cmd[2])[0]
@@ -351,11 +353,8 @@ class TestPiPackages:
         assert fresh_settings["cacheWarming"] == "idle"
         assert fresh_settings["enableInstallTelemetry"] is False
         failing: subprocess.CompletedProcess[str] = subprocess.CompletedProcess([], 1)
-        with (
-            patch("llm_prompts.install.subprocess.run", return_value=failing),
-            pytest.raises(ValueError, match="pi-permission-system"),
-        ):
-            _install(tmp_path / "bare", tmp_path / "bare.json", pi="/usr/bin/pi")
+        with patch("llm_prompts.install.subprocess.run", return_value=failing):
+            assert _install(tmp_path / "bare", tmp_path / "bare.json", pi="/usr/bin/pi")
 
         home = tmp_path / "home"
         settings_path = home / ".pi" / "agent" / "settings.json"
@@ -2319,6 +2318,101 @@ class TestPiPackageInstall:
         _, failed = self._run(tmp_path, "npm:acme-ext@1.0.0", returncode=1)
 
         assert failed
+
+
+class TestPiPackageInstallFailure:
+    @pytest.fixture
+    def overlay(self, tmp_path: Path) -> Path:
+        """Return an overlay whose agent needs the extension of a declared package."""
+        root = _overlay(tmp_path / "overlay", ["npm:acme-ext@1.0.0"])
+        (root / "pi" / "agent-extensions.json").write_text('["acme-ext"]')
+        (root / "pi" / "seed").mkdir()
+        (root / "pi" / "seed" / "acme.json").write_text('{"seeded": true}')
+        (root / "shared" / "agents").mkdir(parents=True)
+        (root / "shared" / "agents" / "a.md").write_text("---\nname: a\n---\n\nv1\n")
+        return root
+
+    def _install(
+        self, tmp_path: Path, overlay: Path, *, fail: bool
+    ) -> tuple[bool, Path, dict[str, Any]]:
+        """Install the overlay with a fake pi, returning the failure flag, the home and the pi manifest entry."""
+        home = tmp_path / "home"
+        home.mkdir(exist_ok=True)
+
+        def run(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                cmd, fail * ("npm:acme-ext@1.0.0" in cmd)
+            )
+
+        with patch("llm_prompts.install.subprocess.run", side_effect=run):
+            failed = _install(
+                home, tmp_path / "installed.json", [overlay], pi="/usr/bin/pi"
+            )
+        recorded = json.loads((tmp_path / "installed.json").read_text("utf-8"))
+        return failed, home, recorded["agents"]["pi"]
+
+    def test_first_install_still_seeds_and_records_the_manifest(
+        self, tmp_path: Path, overlay: Path
+    ) -> None:
+        failed, home, recorded = self._install(tmp_path, overlay, fail=True)
+
+        assert failed
+        assert (home / ".pi/agent/acme.json").is_file()
+        assert str(home / ".pi/agent/agents/a.md") not in recorded["files"]
+
+    def test_failed_install_names_the_package_and_suggests_checking_npm_auth(
+        self, tmp_path: Path, overlay: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._install(tmp_path, overlay, fail=True)
+
+        error = next(
+            line for line in capsys.readouterr().err.splitlines() if "failed." in line
+        )
+        assert "npm:acme-ext@1.0.0" in error
+        assert "npm whoami" in error
+
+    def test_existing_agents_are_kept_and_named_in_the_warning(
+        self, tmp_path: Path, overlay: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _, home, _ = self._install(tmp_path, overlay, fail=False)
+        agent = home / ".pi/agent/agents/a.md"
+        before = agent.read_text("utf-8")
+        shutil.rmtree(home / ".pi/agent/npm/node_modules/acme-ext")
+        (overlay / "shared/agents/a.md").write_text("---\nname: a\n---\n\nv2\n")
+
+        _, _, recorded = self._install(tmp_path, overlay, fail=True)
+
+        assert agent.read_text("utf-8") == before
+        assert str(agent) in recorded["files"]
+        assert str(home / ".pi/agent/agent-role-variants.json") in recorded["files"]
+        assert "Agents not regenerated" in (err := capsys.readouterr().err)
+        assert "npm:acme-ext@1.0.0" in err.split("Agents not regenerated")[1]
+
+
+class TestPiHooksInstallFailure:
+    def test_failed_hooks_install_is_handled_like_a_failed_package(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        overlay = _overlay(tmp_path / "overlay", [])
+        (overlay / "shared" / "agents").mkdir(parents=True)
+        (overlay / "shared" / "agents" / "a.md").write_text(
+            "---\nname: a\nextensions: builtin:x\n---\n\nb\n"
+        )
+        home = tmp_path / "home"
+        manifest = tmp_path / "installed.json"
+
+        with patch(
+            "llm_prompts.install.subprocess.run",
+            side_effect=lambda cmd, **_: subprocess.CompletedProcess(cmd, 0),
+        ):
+            failed = _install(home, manifest, [overlay], pi="/usr/bin/pi", hooks_exit=1)
+
+        assert failed
+        assert "pi" in json.loads(manifest.read_text("utf-8"))["agents"]
+        assert not (home / ".pi/agent/agents/a.md").exists()
+        err = capsys.readouterr().err
+        assert "`cline-hook install pi` failed" in err
+        assert "Agents not regenerated" in err
 
 
 class TestPiPackageRemoval:
