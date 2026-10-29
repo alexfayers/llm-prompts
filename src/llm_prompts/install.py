@@ -418,12 +418,15 @@ def _running_as_installed_tool() -> bool:
     return Path(sys.prefix).resolve().is_relative_to(_uv_tools_dir().resolve())
 
 
-def _discover_overlay_paths() -> list[Path]:
+def _discover_overlay_paths(*, quiet: bool = False) -> list[Path]:
     """Discover overlay directories from installed packages via entry_points.
 
     Packages declare an ``llm_prompts`` entry point group where each entry
     point value is the package name. The prompts directory is resolved via
     ``prompts_dir(<package>)``.
+
+    Args:
+        quiet: Skip logging each discovered overlay.
 
     Returns:
         List of overlay directory paths from installed packages.
@@ -435,14 +438,16 @@ def _discover_overlay_paths() -> list[Path]:
         try:
             overlay_path = prompts_dir(ep.value)
             if overlay_path.is_dir():
-                log("info", f"[overlay] Discovered '{ep.name}' at {overlay_path}")
+                if not quiet:
+                    log("info", f"[overlay] Discovered '{ep.name}' at {overlay_path}")
                 paths.append(overlay_path)
-            else:
+            elif not quiet:
                 log(
                     "warn", f"[overlay] '{ep.name}' path does not exist: {overlay_path}"
                 )
         except Exception as e:
-            log("error", f"[overlay] Failed to load '{ep.name}': {e}")
+            if not quiet:
+                log("error", f"[overlay] Failed to load '{ep.name}': {e}")
     return paths
 
 

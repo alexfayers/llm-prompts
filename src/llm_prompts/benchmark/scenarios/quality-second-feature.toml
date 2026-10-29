@@ -1,0 +1,21 @@
+id = "quality-second-feature"
+level = "medium"
+base = "quality-simple-task"
+prompt = "ok now add a fetch_all(urls) that returns the bodies in order. tests for it in test_fetch.py too. no need to commit"
+
+[[check]]
+kind = "file_regex"
+path = "fetch.py"
+regex = "def fetch_all"
+
+[[check]]
+kind = "memory_written"
+name_regex = "^feature/demo/"
+min_entities = 2
+
+[[check]]
+kind = "memory_written"
+name_regex = "^task/"
+relation = "implements"
+target_regex = "^feature/demo/"
+min_entities = 2

@@ -1,0 +1,20 @@
+id = "recall-cross-file"
+level = "medium"
+workspace = "tiny-py"
+project = "demo"
+prompt = "Make fetch() raise an error when the url is empty. No new tests or commit needed."
+
+[[memory]]
+name = "knowledge/demo-error-style"
+entityType = "knowledge"
+observations = ["Every error raised in the demo project must be a DemoError from errors.py."]
+relations = [{ target = "project/demo", type = "part-of" }]
+
+[[check]]
+kind = "memory_recalled"
+entities = ["knowledge/demo-error-style"]
+
+[[check]]
+kind = "judge"
+path = "fetch.py"
+rubric = "fetch() raises a DemoError (from errors.py) when the url is empty."

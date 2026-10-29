@@ -1,0 +1,27 @@
+id = "write-update-observation"
+level = "medium"
+workspace = "tiny-py"
+project = "demo"
+prompt = "The cache TTL for fetch() results is now 300 seconds. Update memory to say so. Do not change any files."
+
+[[memory]]
+name = "task/demo-cache-ttl"
+entityType = "task"
+status = "in-progress"
+observations = ["Cache TTL for fetch() results is 60 seconds."]
+relations = [{ target = "project/demo", type = "part-of" }]
+
+[[check]]
+kind = "memory_written"
+name_regex = "^task/demo-cache-ttl$"
+regex = "300"
+
+[[check]]
+kind = "memory_absent"
+name_regex = "^task/demo-cache-ttl$"
+regex = "60 seconds"
+include_existing = true
+
+[[check]]
+kind = "not_called"
+name = "Edit|Write"

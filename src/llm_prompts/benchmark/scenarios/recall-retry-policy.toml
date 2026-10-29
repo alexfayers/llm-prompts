@@ -1,0 +1,20 @@
+id = "recall-retry-policy"
+level = "light"
+workspace = "tiny-py"
+project = "demo"
+prompt = "Move the body lookup in fetch.py into a _get(url) helper, and make fetch() retry when _get raises DemoError. No new tests or commit needed."
+
+[[memory]]
+name = "knowledge/demo-retry-policy"
+entityType = "knowledge"
+observations = ["Retries in the demo project use exponential backoff 2^n seconds, max 3 retries."]
+relations = [{ target = "project/demo", type = "part-of" }]
+
+[[check]]
+kind = "memory_recalled"
+entities = ["knowledge/demo-retry-policy"]
+
+[[check]]
+kind = "judge"
+path = "fetch.py"
+rubric = "fetch() retries when _get raises DemoError, waiting 2^n seconds between attempts (exponential backoff), at most 3 retries."

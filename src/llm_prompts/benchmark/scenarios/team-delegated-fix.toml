@@ -1,0 +1,35 @@
+id = "team-delegated-fix"
+level = "heavy"
+agents = ["claude"]
+delegation = true
+workspace = "tiny-py"
+project = "demo"
+timeout_s = 900
+prompt = "Have a subagent make fetch() raise a DemoError when the url does not start with http:// or https://, and add the tests for it to test_fetch.py. Then record this piece of work as a task in memory for the demo project. No commit needed."
+
+[[check]]
+kind = "tool_called"
+name = "Agent|Task"
+by = "lead"
+
+[[check]]
+kind = "not_called"
+name = "memory\\..*"
+by = "subagent"
+
+[[check]]
+kind = "memory_written"
+entity_type = "task"
+name_regex = "^task/"
+
+[[check]]
+kind = "file_regex"
+path = "fetch.py"
+regex = "DemoError"
+
+[[check]]
+kind = "tests_passed"
+
+[[check]]
+kind = "max_time"
+seconds = 600
