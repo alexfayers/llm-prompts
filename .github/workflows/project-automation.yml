@@ -5,10 +5,8 @@ on:
     branches: [main]
   pull_request_target:
     types: [opened, reopened, ready_for_review, converted_to_draft, edited, closed, synchronize, labeled, unlabeled, auto_merge_enabled]
-  pull_request_review:
-    types: [submitted, dismissed]
   workflow_run:
-    workflows: [Dependencies, CI, PR template]
+    workflows: [Dependencies, CI, PR template, PR review]
     types: [completed]
 
 concurrency:

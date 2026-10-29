@@ -128,3 +128,17 @@ test('a labelled PR that is up to date is not rebased', async () => {
   await rebaseLabelled({ github, context: labelContext, core: {} });
   assert.equal(calls.length, 2);
 });
+
+test('a review relay run rebases the PR matching its head sha', async () => {
+  const { calls, github } = setupLabelled(2);
+  github.paginate = async () => [{ number: 7, head: { sha: 'abc', ref: 'fix', repo: { full_name: 'fork/r' } } }];
+  github.rest.pulls = { list: {} };
+  await rebaseLabelled({ github, context: { ...labelContext, payload: { workflow_run: { head_sha: 'abc', head_branch: 'fix', head_repository: { full_name: 'fork/r' } } } }, core: {} });
+  assert.deepEqual(calls[2].vars, { id: 'id7', head: 'oid7' });
+
+  const none = setupLabelled(2);
+  none.github.paginate = async () => [];
+  none.github.rest.pulls = { list: {} };
+  await rebaseLabelled({ github: none.github, context: { ...labelContext, payload: { workflow_run: { head_sha: 'abc', head_branch: 'fix', head_repository: { full_name: 'fork/r' } } } }, core: {} });
+  assert.deepEqual(none.calls, []);
+});
