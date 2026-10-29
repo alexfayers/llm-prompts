@@ -9,6 +9,8 @@ import { loadExtension } from "./helpers.ts";
 const work = fs.realpathSync(fs.mkdtempSync(join(os.tmpdir(), "net-guard-")));
 const agentDir = join(work, "agent");
 fs.mkdirSync(join(agentDir, "extensions"), { recursive: true });
+const configFile = join(agentDir, "net-guard.json");
+fs.writeFileSync(configFile, "{}");
 const ext = await loadExtension("net-guard", { agentDir });
 after(() => fs.rmSync(work, { recursive: true }));
 
@@ -45,4 +47,29 @@ test("a call from pi itself is not blocked when pi is listed as a package, but a
 	const messageOf = (probe: { call: () => Promise<unknown> }) => probe.call().then(() => "", (reason: Error) => String(reason.message));
 	assert.ok(!(await messageOf(await import(pathToFileURL(coreFile).href))).includes("net-guard"));
 	assert.ok((await messageOf(await import(pathToFileURL(extensionFile).href))).includes("from plugin probe-via-core"));
+});
+
+async function messageFromExtension(plugin: string, ctx = ext.makeCtx({ mode: "rpc", cwd: work })) {
+	const file = join(agentDir, "extensions", `${plugin}.mjs`);
+	fs.writeFileSync(file, "export const call = () => fetch('http://allow-probe.invalid/')\n");
+	await ext.fire("session_start", {}, ctx);
+	const probe = await import(pathToFileURL(file).href);
+	return probe.call().then(() => "", (reason: Error) => String(reason.message));
+}
+
+test("config entries are allowed", async () => {
+	fs.writeFileSync(configFile, JSON.stringify({ allow: ["probe-extra"] }));
+	assert.ok(!(await messageFromExtension("probe-extra")).includes("net-guard"));
+	assert.ok((await messageFromExtension("probe-other")).includes("blocked fetch"));
+});
+
+test("a missing or unparsable config warns in the terminal UI and the log, and nothing extra is allowed", async () => {
+	for (const [content, problem] of [[undefined, "missing"], ["{ not json", "cannot be parsed"]] as const) {
+		if (content === undefined) fs.rmSync(configFile, { force: true });
+		else fs.writeFileSync(configFile, content);
+		const ctx = ext.makeCtx({ mode: "tui", cwd: work });
+		assert.ok((await messageFromExtension("probe-other", ctx)).includes("blocked fetch"));
+		assert.ok(ctx.notices.some(([message, level]) => level === "warning" && message.includes(configFile) && message.includes(problem)));
+		assert.ok(fs.readFileSync(join(agentDir, "net-guard.log"), "utf8").includes(problem));
+	}
 });
