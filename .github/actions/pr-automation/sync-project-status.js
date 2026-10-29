@@ -67,16 +67,18 @@ async function setStatus(github, contentId, optionId) {
   );
 }
 
-async function findPullRequestNumber(github, { payload, repo }) {
+async function findPullRequest(github, { payload, repo }) {
   if (payload.pull_request) {
-    return payload.pull_request.number;
+    return payload.pull_request;
   }
   const openPrs = await github.paginate(github.rest.pulls.list, { ...repo, state: 'open', per_page: 100 });
-  return openPrs.find((pr) => pr.head.sha === payload.workflow_run.head_sha)?.number;
+  const { head_sha: sha, head_branch: ref, head_repository: repository } = payload.workflow_run;
+  const matches = openPrs.filter((pr) => pr.head.sha === sha && pr.head.ref === ref && pr.head.repo?.full_name === repository?.full_name);
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 async function findPr(github, context, core) {
-  const number = await findPullRequestNumber(github, context);
+  const number = (await findPullRequest(github, context))?.number;
   if (!number) {
     core.info(`No open PR for ${context.payload.workflow_run.head_sha}; skipping.`);
     return null;
@@ -92,4 +94,4 @@ async function sync({ github, context, core }) {
   await setStatus(github, pr.id, resolveStatus(pr));
 }
 
-module.exports = { findPr, fetchPr, isBlocked, resolveStatus, sync };
+module.exports = { findPullRequest, findPr, fetchPr, isBlocked, resolveStatus, sync };

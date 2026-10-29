@@ -1,4 +1,5 @@
 const { AUTO_REBASE_LABEL, isRenovate } = require('./label-pr.js');
+const { findPullRequest } = require('./sync-project-status.js');
 
 const LIST_OPEN_PRS = `query($owner: String!, $repo: String!, $base: String!) {
   repository(owner: $owner, name: $repo) {
@@ -56,7 +57,11 @@ async function rebaseBranch(github, core, pr) {
 }
 
 async function rebaseLabelled({ github, context, core }) {
-  const { repository } = await github.graphql(GET_PR, { ...context.repo, number: context.payload.pull_request.number });
+  const found = await findPullRequest(github, context);
+  if (!found) {
+    return;
+  }
+  const { repository } = await github.graphql(GET_PR, { ...context.repo, number: found.number });
   const pr = repository.pullRequest;
   if (!isRebaseCandidate(pr)) {
     return;

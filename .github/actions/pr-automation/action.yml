@@ -13,7 +13,7 @@ runs:
     - name: Sync project status
       if: |
         inputs.projects-token != '' &&
-        contains(fromJSON('["pull_request_target", "pull_request_review"]'), github.event_name)
+        (github.event_name == 'pull_request_target' || (github.event_name == 'workflow_run' && github.event.workflow_run.name == 'PR review'))
       uses: actions/github-script@v9
       env:
         ACTION_PATH: ${{ github.action_path }}
@@ -77,7 +77,6 @@ runs:
     - name: Label blocked PR
       if: |
         (github.event_name == 'pull_request_target' && contains(fromJSON('["opened", "reopened", "converted_to_draft", "ready_for_review", "synchronize"]'), github.event.action)) ||
-        (github.event_name == 'pull_request_review' && github.event.action == 'submitted') ||
         (github.event_name == 'workflow_run' && github.event.action == 'completed')
       uses: actions/github-script@v9
       env:
@@ -106,7 +105,7 @@ runs:
     - name: Codeowner review gate
       if: |
         (github.event_name == 'pull_request_target' && contains(fromJSON('["opened", "reopened", "synchronize", "ready_for_review", "converted_to_draft", "edited", "labeled", "unlabeled", "auto_merge_enabled"]'), github.event.action)) ||
-        (github.event_name == 'pull_request_review' && contains(fromJSON('["submitted", "dismissed"]'), github.event.action))
+        (github.event_name == 'workflow_run' && github.event.workflow_run.name == 'PR review')
       uses: actions/github-script@v9
       env:
         ACTION_PATH: ${{ github.action_path }}
@@ -120,7 +119,7 @@ runs:
       id: label-auto-rebase
       if: |
         (github.event_name == 'pull_request_target' && contains(fromJSON('["opened", "reopened", "synchronize", "ready_for_review", "edited", "auto_merge_enabled"]'), github.event.action)) ||
-        (github.event_name == 'pull_request_review' && contains(fromJSON('["submitted", "dismissed"]'), github.event.action))
+        (github.event_name == 'workflow_run' && github.event.workflow_run.name == 'PR review')
       uses: actions/github-script@v9
       env:
         ACTION_PATH: ${{ github.action_path }}

@@ -114,3 +114,16 @@ test('an API error sets the error status and still fails', async () => {
   await assert.rejects(gate({ github, context }), /boom/);
   assert.deepEqual(calls, [['abc', 'codeowner-review', 'error']]);
 });
+
+test('a review relay run finds its PR by head sha', async () => {
+  const { github, context, calls } = fixture({ author: 'owner', files: ['src/llm_prompts/cli.py'] });
+  const pr = { ...context.payload.pull_request, head: { sha: 'abc', ref: 'fix', repo: { full_name: 'fork/r' } } };
+  github.rest.pulls.list = { items: [{ ...pr, head: { ...pr.head, sha: 'other' } }, pr] };
+  context.payload = { workflow_run: { head_sha: 'abc', head_branch: 'fix', head_repository: { full_name: 'fork/r' } } };
+  await gate({ github, context });
+  assert.deepEqual(calls, [['abc', 'codeowner-review', 'success']]);
+
+  context.payload.workflow_run.head_sha = 'gone';
+  await gate({ github, context });
+  assert.equal(calls.length, 1);
+});

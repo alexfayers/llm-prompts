@@ -127,3 +127,17 @@ test('Renovate PRs never get the auto-rebase label', async () => {
     assert.deepEqual(f.calls, [], login);
   }
 });
+
+test('a review relay run labels the PR matching its head sha', async () => {
+  const f = rebaseFixture({});
+  f.github.paginate = async () => [{ number: 7, head: { sha: 'abc', ref: 'fix', repo: { full_name: 'fork/r' } } }];
+  f.github.rest.pulls.list = {};
+  f.context.payload = { workflow_run: { head_sha: 'abc', head_branch: 'fix', head_repository: { full_name: 'fork/r' } } };
+  await labelAutoRebase(f);
+  assert.deepEqual(f.calls, ['createLabel', ['auto-rebase']]);
+
+  f.calls.length = 0;
+  f.context.payload.workflow_run.head_sha = 'gone';
+  await labelAutoRebase(f);
+  assert.deepEqual(f.calls, []);
+});
