@@ -49,12 +49,13 @@ async function evaluate({ github, context, pr }) {
   const author = pr.user.login.toLowerCase();
   const files = await github.paginate(github.rest.pulls.listFiles, { owner, repo, pull_number: pr.number, per_page: 100 });
   const rules = await readCodeOwners(github, context.repo, pr.base.ref);
-  const needsReview = (path) => rules.findLast(({ pattern }) => pattern.test(path))?.owners.some((handle) => handle !== author);
+  const repoOwner = owner.toLowerCase();
+  const needsReview = (path) => (rules.findLast(({ pattern }) => pattern.test(path))?.owners ?? [repoOwner]).some((handle) => handle !== author);
   if (!files.some(({ filename, previous_filename }) => [filename, previous_filename].some((path) => path && needsReview(path)))) {
     return ['success', 'No code owner review needed'];
   }
 
-  const owners = new Set(rules.flatMap((rule) => rule.owners));
+  const owners = new Set([repoOwner, ...rules.flatMap((rule) => rule.owners)]);
   const reviews = await github.paginate(github.rest.pulls.listReviews, { owner, repo, pull_number: pr.number, per_page: 100 });
   const states = [...latestReviewStates(reviews)].filter(([login]) => owners.has(login) && login !== author);
   if (states.some(([, state]) => state === 'CHANGES_REQUESTED')) {
@@ -79,18 +80,35 @@ async function evaluateMinReviews({ github, context, pr }) {
   return approvals >= needed ? null : ['pending', `Needs ${needed} approval${needed > 1 ? 's' : ''} (${approvals} so far)`];
 }
 
+async function requestOwnerReview({ github, context, pr }) {
+  const { owner } = context.repo;
+  if (pr.draft || pr.requested_reviewers?.length || pr.requested_teams?.length || pr.user.login.toLowerCase() === owner.toLowerCase()) {
+    return;
+  }
+  const reviews = await github.paginate(github.rest.pulls.listReviews, { ...context.repo, pull_number: pr.number, per_page: 100 });
+  if (reviews.some(({ user }) => user.login.toLowerCase() === owner.toLowerCase())) {
+    return;
+  }
+  await github.rest.pulls.requestReviewers({ ...context.repo, pull_number: pr.number, reviewers: [owner] });
+}
+
 async function gate({ github, context }) {
   const pr = await findPullRequest(github, context);
   if (!pr) {
     return;
   }
+  let status;
   try {
     const result = await evaluate({ github, context, pr });
     const required = result[0] === 'success' ? await evaluateMinReviews({ github, context, pr }) : null;
-    await setStatus(github, context, pr, ...(required ?? result));
+    status = required ?? result;
+    await setStatus(github, context, pr, ...status);
   } catch (error) {
     await setStatus(github, context, pr, 'error', 'Code owner review check failed to run');
     throw error;
+  }
+  if (status[0] === 'pending') {
+    await requestOwnerReview({ github, context, pr });
   }
 }
 

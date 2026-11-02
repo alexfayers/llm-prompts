@@ -1,5 +1,5 @@
 name: PR automation
-description: Sync PR status onto the llm-prompts ecosystem project board, enable squash auto-merge on ready contribute PRs, assign the PR author, apply a breaking label from the PR title or body, label blocked PRs, label PRs with merge conflicts or failing required checks as blocked, apply path-based area labels, report a codeowner-review commit status, and label PRs ready to auto-rebase, and rebase auto-rebase PRs onto the base branch when it moves or when the label is added.
+description: Sync PR status onto the llm-prompts ecosystem project board, enable squash auto-merge on ready contribute PRs, assign the PR author, apply a breaking label from the PR title or body, label blocked PRs, label PRs with merge conflicts or failing required checks as blocked, apply path-based area labels, report a codeowner-review commit status and request the repo owner's review when it is needed, and label PRs ready to auto-rebase, and rebase auto-rebase PRs onto the base branch when it moves or when the label is added.
 inputs:
   projects-token:
     description: Token for the Project GraphQL status sync, for enabling auto-merge and for removing the blocked label so CI re-runs.
