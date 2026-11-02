@@ -619,6 +619,29 @@ class TestUpdateCheckOnTaskStart:
         assert note.user_text == _format_user_text(message)
         assert (tmp_path / "update-stamp").exists()
 
+    def test_user_text_caps_commits_but_agent_notes_stay_full(
+        self, tmp_path: Path
+    ) -> None:
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        message = "[pkg] update available:\n" + "\n".join(
+            f"- change {i}\n  * body {i}" for i in range(7)
+        )
+        with patch(
+            "llm_prompts.cli._collect_update_messages",
+            return_value=[message, _UPDATE_INSTRUCTION],
+        ):
+            result = plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[])
+        assert result is not None
+        assert result.notes == [message, _UPDATE_INSTRUCTION]
+        user_text = result.user_notes[0].user_text
+        assert "- change 4" in user_text
+        assert "change 5" not in user_text
+        assert "body" not in user_text
+        assert "... and 2 more" in user_text
+
     def test_multiple_messages_produce_single_banner(self, tmp_path: Path) -> None:
         plugin = AutoReinstallPlugin()
         plugin._update_check_debouncer = _ReinstallDebouncer(

@@ -6,6 +6,7 @@ import fcntl
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 from collections.abc import Iterator
@@ -97,8 +98,33 @@ _BANNER_TITLE = r"""
  |_|_|_| |_| |_|     | .__/|_|  \___/|_| |_| |_| .__/ \__|___/
                      |_|                       |_|
 """.strip("\n")
+_USER_NOTICE_COMMIT_CAP = 5
 _ANSI_COLOR = "\033[1;36m"  # bold cyan
 _ANSI_RESET = "\033[0m"
+
+
+def _shorten_for_user(message: str, cap: int = _USER_NOTICE_COMMIT_CAP) -> str:
+    """Keep a message's header and its first ``cap`` commit subjects, dropping bodies.
+
+    Args:
+        message: A single update message as built by ``_format_update_message``.
+        cap: Maximum number of commit subjects to keep.
+
+    Returns:
+        The shortened message, ending in "... and N more" when subjects were cut.
+    """
+    header, *rest = message.split("\n")
+    subjects = [line for line in rest if line.startswith("- ")]
+    if not subjects:
+        return message
+    already_cut = sum(
+        int(n) for n in re.findall(r"^\.\.\. and (\d+) more$", message, re.MULTILINE)
+    )
+    hidden = len(subjects) - cap + already_cut
+    kept = [header, *subjects[:cap]]
+    if hidden > 0:
+        kept.append(f"... and {hidden} more")
+    return "\n".join(kept)
 
 
 def _format_user_text(stripped_message: str) -> str:
@@ -277,7 +303,9 @@ class AutoReinstallPlugin(HooksPlugin):
         if not messages:
             return None
         stripped = "\n\n".join(
-            message for message in messages if message != _UPDATE_INSTRUCTION
+            _shorten_for_user(message)
+            for message in messages
+            if message != _UPDATE_INSTRUCTION
         )
         return HookResult(
             notes=[message for message in messages],
