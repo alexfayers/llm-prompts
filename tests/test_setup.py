@@ -419,9 +419,17 @@ class TestRunSetup:
         self, tools_dir: Path, fake_subprocess: FakeSubprocess
     ) -> None:
         fake_subprocess.on("uv", "tool", "upgrade", stderr="Nothing to upgrade\n")
+        setup.run_setup()
         assert setup.run_setup() is False
 
         fake_subprocess.on("uv", "tool", "upgrade", stdout="Updated core\n")
+        assert setup.run_setup() is True
+
+    def test_forced_reinstall_reports_a_change_even_if_uv_says_nothing_to_upgrade(
+        self, tools_dir: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        fake_subprocess.on("uv", "tool", "upgrade", stderr="Nothing to upgrade\n")
+
         assert setup.run_setup() is True
 
     def test_named_tool_forces_a_full_reinstall_of_the_shared_env(
