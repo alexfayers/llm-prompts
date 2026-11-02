@@ -11,6 +11,7 @@ description: Coding guidelines to follow when generating, reviewing, or modifyin
 - MUST add new imports at THE SAME TIME as the code that uses them.
 - When a change adds, or newly requires, an environment variable, config key or setting, MUST update every doc, template and manifest that lists it in the SAME change.
 - Produced code MUST follow the existing style within the package.
+- New related modules SHOULD be grouped in a subpackage with short names (`<area>/<part>.py`), not added flat with a shared prefix (`<area>_<part>.py`), even where the rest of the package is flat. Existing modules MUST NOT be regrouped unless the task asks.
 - MUST NOT {{TOOL_COMPLETE}} until all tasks in the focus chain are done.
 - {{ACTION_NO_NARRATE}}
 - MUST write for reuse: merge similar functions or create an interface.
