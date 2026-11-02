@@ -35,4 +35,4 @@ requires_command: herdr
 - A worktree agent MUST NOT run `llm-prompts update`. Main runs it after merging, because the install comes from the main checkout.
 - A worktree needs its own `uv sync` and `uv run` venv.
 - The pane-reaper extension only reports clean merged worktrees as safe to remove. Main MUST remove them, after merging: run `herdr worktree remove --workspace <id>`, then `git branch -d` the branch. Herdr keeps the branch.
-- MUST NOT use raw `git worktree remove`, nor remove a dirty worktree or one with an unmerged commit.
+- For a Herdr-opened worktree, MUST NOT use raw `git worktree remove`. MUST NOT remove any dirty worktree or one with an unmerged commit.
