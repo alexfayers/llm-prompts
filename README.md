@@ -42,7 +42,7 @@
 | src/llm\_prompts/skill\_injection.py                                          |       37 |        2 |     95% |    33, 36 |
 | src/llm\_prompts/squash\_subject.py                                           |        6 |        0 |    100% |           |
 | src/llm\_prompts/telemetry.py                                                 |      208 |        3 |     99% |160-161, 417 |
-| tests/conftest.py                                                             |      441 |        3 |     99% |158, 875, 914 |
+| tests/conftest.py                                                             |      449 |        4 |     99% |159, 799, 886, 925 |
 | tests/test\_batching.py                                                       |      314 |        0 |    100% |           |
 | tests/test\_build\_wave.py                                                    |      282 |        1 |     99% |       112 |
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
@@ -85,7 +85,7 @@
 | tests/test\_telemetry.py                                                      |      327 |        0 |    100% |           |
 | tests/test\_todos\_script.py                                                  |       88 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      119 |        0 |    100% |           |
-| **TOTAL**                                                                     | **19510** |  **537** | **97%** |           |
+| **TOTAL**                                                                     | **19518** |  **538** | **97%** |           |
 
 
 ## Setup coverage badge
