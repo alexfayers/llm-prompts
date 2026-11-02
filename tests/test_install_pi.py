@@ -1204,13 +1204,30 @@ class TestHerdsmanAgents:
 
     @pytest.mark.usefixtures("core_tree")
     def test_herdsman_overlays_install_verbatim(self, pi_home: Path) -> None:
-        installed = pi_home / ".pi" / "agent" / "agents" / "orchestrator-lead.md"
+        installed = (
+            pi_home / ".pi" / "agent" / "pi-herdsman" / "roles" / "orchestrator-lead.md"
+        )
         assert installed.read_text(encoding="utf-8") == (
             "---\nname: orchestrator-lead\n"
             "tools: [read, bash, codemode, tower_do, "
             "tower_do_patch, tower_do_status, tower_do_talk, ask_user, compact_now, "
             "change_dir]\n---\n"
         )
+
+    @pytest.mark.usefixtures("core_tree")
+    def test_reinstall_removes_role_overlay_from_agents_dir(
+        self, fresh_pi_home: Path, tmp_path: Path
+    ) -> None:
+        stray = fresh_pi_home / ".pi" / "agent" / "agents" / "orchestrator-lead.md"
+        stray.write_text("old", encoding="utf-8")
+        manifest = tmp_path / "installed.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["agents"]["pi"]["files"].append(str(stray))
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+
+        _install(fresh_pi_home, manifest, trusted=True)
+
+        assert not stray.exists()
 
     def test_agent_tools_pass_pi_and_mcp_names(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

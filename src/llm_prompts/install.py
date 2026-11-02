@@ -2544,22 +2544,22 @@ def _install_disabled_definitions(agents_dir: Path) -> set[str]:
     return managed
 
 
-def _install_herdsman_overlays(overlays_dir: Path, agents_dir: Path) -> set[str]:
-    """Copy overlays of herdsman's bundled agent definitions verbatim.
+def _install_herdsman_overlays(overlays_dir: Path, roles_dir: Path) -> set[str]:
+    """Copy overlays of herdsman's role profiles verbatim.
 
     Args:
         overlays_dir: Source directory of overlay definitions.
-        agents_dir: Destination agents directory.
+        roles_dir: Destination role profiles directory.
 
     Returns:
         Set of installed overlay filenames.
     """
     managed: set[str] = set()
     for src in sorted(overlays_dir.glob("*.md")):
-        dest = agents_dir / src.name
+        dest = roles_dir / src.name
         if dest.is_symlink():
             dest.unlink()
-        _write_if_changed(dest, _read_text(src), f"agent {src.name}")
+        _write_if_changed(dest, _read_text(src), f"role {src.name}")
         managed.add(src.name)
     return managed
 
@@ -4091,9 +4091,12 @@ def main(
                     installed_files["pi"].append(str(variants_path))
             if agents_target == "pi":
                 managed_agents |= _install_disabled_definitions(agents_dest)
-                managed_agents |= _install_herdsman_overlays(
-                    root_dir / "pi" / "herdsman-overlays", agents_dest
+                roles_dest = agents_dest.parent / "pi-herdsman" / "roles"
+                managed_roles = _install_herdsman_overlays(
+                    root_dir / "pi" / "herdsman-overlays", roles_dest
                 )
+                _check_unmanaged(roles_dest, managed_roles, "pi roles")
+                installed_files["pi"].extend(str(roles_dest / r) for r in managed_roles)
             _check_unmanaged(agents_dest, managed_agents, f"{agents_target} agents")
             installed_files[agents_target].extend(
                 str(agents_dest / a) for a in managed_agents
