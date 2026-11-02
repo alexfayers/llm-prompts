@@ -15,6 +15,14 @@ from .render_template import frontmatter_list
 
 _TIMEOUT_SECONDS = 5
 _HASH_SUFFIX_LENGTH = 9
+_AUTH_KEYS = {
+    "headers",
+    "oauth",
+    "http_headers",
+    "env_http_headers",
+    "bearer_token_env_var",
+    "http_headers_helper",
+}
 
 
 class McpNaming(NamedTuple):
@@ -140,6 +148,28 @@ def _namespaces(server: str, sources: McpSources) -> dict[str, Any]:
     } or {server: {}}
 
 
+def _listed_tools(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    """List the tools of an MCP HTTP server entry, or none where they cannot be read."""
+    if entry.get("url") and not entry.keys() & _AUTH_KEYS:
+        for _ in range(2):
+            try:
+                tools = _tools(entry["url"])
+                if all("name" in tool for tool in tools):
+                    return tools
+            except (HTTPException, OSError, ValueError, KeyError, TypeError):
+                pass
+    return []
+
+
+def read_only_tools(entry: dict[str, Any]) -> list[str]:
+    """Return the names of an MCP server's tools with ``readOnlyHint`` set."""
+    return [
+        tool["name"]
+        for tool in _listed_tools(entry)
+        if tool.get("annotations", {}).get("readOnlyHint") is True
+    ]
+
+
 def _excluded_tools(
     namespace: str,
     entry: dict[str, Any],
@@ -150,15 +180,8 @@ def _excluded_tools(
 
     Returns every tool of the server, after ``warn``, where its tools cannot be listed.
     """
-    tools: list[dict[str, Any]] = []
-    if entry.get("url") and not entry.keys() & {"headers", "oauth"}:
-        for _ in range(2):
-            try:
-                tools = _tools(entry["url"])
-                names = [_tool_name(namespace, tool["name"], naming) for tool in tools]
-                break
-            except (HTTPException, OSError, ValueError, KeyError, TypeError):
-                tools = []
+    tools = _listed_tools(entry)
+    names = [_tool_name(namespace, tool["name"], naming) for tool in tools]
     if not tools or any(len(name) > naming.limit for name in names):
         warn(
             f"Could not read MCP server {namespace}'s tool annotations; agents with mcp_read_only exclude all its tools."

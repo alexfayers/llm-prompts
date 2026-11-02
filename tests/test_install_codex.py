@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from conftest import fake_mcp_server
 
 from llm_prompts.install import (
     _Agent,
@@ -418,3 +419,71 @@ class TestCodexDocLimit:
         agents_md_size = (codex_dir / "AGENTS.md").stat().st_size
         expected = agents_md_size > 32768
         assert ("project_doc_max_bytes = 65536" in config_text) is expected
+
+
+class TestCodexReviewProfile:
+    PROFILE = "llm-prompts-review"
+    CONFIG = (
+        '[mcp_servers.srv-a]\ncommand = "a"\n\n'
+        '[mcp_servers.srv-r]\nurl = "http://mcp.test/mcp"\n\n'
+        '[plugins."tool@market"]\nenabled = true\n'
+    )
+
+    @pytest.fixture
+    def home(self, tmp_path: Path) -> Path:
+        home = tmp_path / "home"
+        (home / ".codex").mkdir(parents=True)
+        return home
+
+    @pytest.fixture
+    def overlay(self, tmp_path: Path) -> Path:
+        shared = tmp_path / "overlay" / "shared"
+        skill = shared / "skills" / "ask-codex" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text(
+            "---\nname: ask-codex\ndescription: d\n---\n\ncodex -p {{CODEX_REVIEW_PROFILE}}\n",
+            encoding="utf-8",
+        )
+        agent = shared / "agents" / "reviewer.md"
+        agent.parent.mkdir(parents=True)
+        agent.write_text(
+            "---\nname: reviewer\ndescription: d\nmcp_read_only: [srv-r]\n---\n\nbody\n",
+            encoding="utf-8",
+        )
+        return tmp_path / "overlay"
+
+    def _install(self, home: Path, overlay: Path, targets: list[str]) -> None:
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch(
+                "llm_prompts.install._discover_overlay_paths", return_value=[overlay]
+            ),
+            patch("llm_prompts.install._running_as_installed_tool", return_value=True),
+        ):
+            install_main(targets)
+
+    def test_claude_install_writes_profile_allowing_only_reviewer_read_only_tools(
+        self, home: Path, overlay: Path, isolated_config_dir: Path
+    ) -> None:
+        import json
+        import tomllib
+
+        (home / ".codex" / "config.toml").write_text(self.CONFIG, encoding="utf-8")
+
+        with fake_mcp_server(
+            [{"name": "get", "annotations": {"readOnlyHint": True}}, {"name": "put"}]
+        ):
+            self._install(home, overlay, ["claude-code"])
+
+        profile = home / ".codex" / f"{self.PROFILE}.config.toml"
+        assert tomllib.loads(profile.read_text(encoding="utf-8")) == {
+            "mcp_servers": {
+                "srv-a": {"enabled": False},
+                "srv-r": {"enabled_tools": ["get"]},
+            },
+            "plugins": {"tool@market": {"enabled": False}},
+        }
+        manifest = json.loads(
+            (isolated_config_dir / "installed.json").read_text(encoding="utf-8")
+        )
+        assert str(profile) in manifest["agents"]["claude-code"]["files"]

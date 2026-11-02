@@ -34,3 +34,16 @@ def test_excluded_tools_retries_a_truncated_read_once(
 
     assert result == (f"mcp__m_x__{excluded}",)
     assert bool(warnings) is warns
+
+
+def test_server_with_auth_is_not_queried(monkeypatch: pytest.MonkeyPatch) -> None:
+    queried: list[str] = []
+
+    def tools(url: str) -> list[dict[str, Any]]:
+        queried.append(url)
+        return []
+
+    monkeypatch.setattr(mcp, "_tools", tools)
+
+    assert mcp.read_only_tools({"url": URL, "bearer_token_env_var": "TOKEN"}) == []
+    assert queried == []

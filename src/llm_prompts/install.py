@@ -43,6 +43,7 @@ from .mcp import (
     McpSources,
     exclusions_resolver,
     pi_tool_name,
+    read_only_tools,
 )
 from .overlay_merge import merge_agent_text, merged_seed_text
 from .render_template import (
@@ -753,6 +754,7 @@ def _parse_roles(content: str, label: str) -> frozenset[str]:
 
 _CODEX_DOC_LIMIT = 32768
 _CODEX_DOC_LIMIT_RAISED = 65536
+_CODEX_REVIEW_SKILL = "ask-codex"
 
 
 def _ensure_codex_doc_limit(config_path: Path, agents_md_path: Path) -> None:
@@ -791,6 +793,75 @@ def _ensure_codex_doc_limit(config_path: Path, agents_md_path: Path) -> None:
     lines.insert(insert_at, new_line)
     _write_text(config_path, "".join(lines))
     log("success", f"Set project_doc_max_bytes = {_CODEX_DOC_LIMIT_RAISED} in config.")
+
+
+def _codex_review_servers(root_dir: Path, overlay_dirs: Sequence[Path]) -> set[str]:
+    """Return the MCP servers the reviewer agent may use read-only.
+
+    Args:
+        root_dir: This package's own prompts directory.
+        overlay_dirs: Overlay prompts directories in priority order.
+    """
+    reviewer = next(
+        (
+            text
+            for name, _, text in _agent_sources(
+                _agent_source_dirs(root_dir, overlay_dirs, "codex")
+            )
+            if name == "reviewer.md"
+        ),
+        "",
+    )
+    return set(
+        frontmatter_list(parse_frontmatter(reviewer)[1].get("mcp_read_only", ""))
+    )
+
+
+def _write_codex_review_profile(
+    codex_dir: Path, profile_name: str, read_only_servers: set[str]
+) -> Path | None:
+    """Write a codex profile allowing only the read-only tools of the given MCP servers.
+
+    Args:
+        codex_dir: The ``~/.codex`` directory.
+        profile_name: Profile name, used as ``<name>.config.toml``.
+        read_only_servers: MCP servers whose read-only tools stay enabled.
+
+    Returns:
+        Path of the written profile, or None if config.toml is missing or unparsable.
+    """
+    import tomllib
+
+    config_path = codex_dir / "config.toml"
+    if not config_path.exists():
+        return None
+    try:
+        config = tomllib.loads(_read_text(config_path))
+    except tomllib.TOMLDecodeError:
+        log("warn", f"Could not parse {config_path}; skipping review profile.")
+        return None
+
+    tables = []
+    for section in ("mcp_servers", "plugins"):
+        for name, entry in config.get(section, {}).items():
+            tools = (
+                read_only_tools(entry)
+                if section == "mcp_servers" and name in read_only_servers
+                else []
+            )
+            if tools:
+                setting = f"enabled_tools = {json.dumps(tools)}"
+            else:
+                setting = "enabled = false"
+                if name in read_only_servers:
+                    log(
+                        "warn",
+                        f"Could not read MCP server {name}'s tool annotations; the review profile disables it.",
+                    )
+            tables.append(f"[{section}.{json.dumps(name)}]\n{setting}\n")
+    profile_path = codex_dir / f"{profile_name}.config.toml"
+    _write_text(profile_path, "\n".join(tables))
+    return profile_path
 
 
 def _check_unmanaged(
@@ -3734,12 +3805,20 @@ def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) ->
 
     manifest = read_manifest()
     targets = agent_names or list(manifest)
+    kept = {
+        path
+        for name, entry in manifest.items()
+        if name not in targets
+        for path in entry.get("files", [])
+    }
     for name in targets:
         entry = manifest.get(name)
         if entry is None:
             log("warn", f"[{name}] not installed; nothing to remove.")
             continue
-        _remove_manifest_files(name, entry.get("files", []))
+        _remove_manifest_files(
+            name, [path for path in entry.get("files", []) if path not in kept]
+        )
         delete_rendered_rules(name)
         if name == "cline":
             _remove_cline_symlinks()
@@ -3914,6 +3993,7 @@ def main(
             }
             plugin_skill_pairs.append((name, src, overrides))
 
+    review_targets: list[str] = []
     for skill_agent in (
         "kiro",
         "claude-code",
@@ -3947,6 +4027,8 @@ def main(
         )
         skills_dir = skills_parent / "skills"
         installed_files[skill_agent].extend(str(skills_dir / s) for s in managed)
+        if _CODEX_REVIEW_SKILL in managed:
+            review_targets.append(skill_agent)
 
     pi_bundle: _PiRuleBundle | None = None
     pi_bundle_held = False
@@ -4147,6 +4229,19 @@ def main(
                 dirs["codex"]["rules"] / _CodexAgent.AGENTS_MD,
             )
 
+    if review_targets:
+        with isolated(review_targets[0]):
+            profile = _write_codex_review_profile(
+                dirs["codex"]["rules"],
+                _builtin_skill_vars(all_agents[review_targets[0]].vars_path())[
+                    "CODEX_REVIEW_PROFILE"
+                ],
+                _codex_review_servers(root_dir, overlay_dirs),
+            )
+            if profile:
+                for name in review_targets:
+                    installed_files[name].append(str(profile))
+
     from .manifest import write_manifest
 
     pi_skills: list[str] | None = None
@@ -4178,13 +4273,22 @@ def main(
             else:
                 pi_mcp_rules = list(claude_rules)
                 _sync_pi_mcp_permissions(claude_rules, previous_rules)
+    claimed = {
+        *(path for files in installed_files.values() for path in files),
+        *(
+            path
+            for name, entry in previous_manifest.items()
+            if name not in targets
+            for path in entry.get("files", [])
+        ),
+    }
     for name in targets:
         if name in failed_tools:
             continue
         with isolated(name):
             manifest_files = list(dict.fromkeys(installed_files[name]))
             if only is None and trusted:
-                _cleanup_stale(name, manifest_files, previous_manifest)
+                _cleanup_stale(name, sorted(claimed), previous_manifest)
                 if name == "pi" and pi_bundle is None:
                     _remove_empty_dir(_pi_rules_dir())
             else:
