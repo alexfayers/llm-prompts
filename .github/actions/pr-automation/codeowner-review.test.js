@@ -4,20 +4,21 @@ const { gate } = require('./codeowner-review.js');
 
 const CODEOWNERS = '*.md @Owner\n/src/*/prompts/**/rules/ @Owner @friend\n/src/*/prompts/**/skills/ @Owner @friend\n/src/*/prompts/**/skills/pi-help/ @Owner\n/src/*/prompts/**/rules/hooks*.md @Owner\na**b/ @friend\na?c @friend\n';
 
-function fixture({ author, files, reviews = [], labels = [], branch = 'feature' }) {
+function fixture({ author, files, reviews = [], labels = [], branch = 'feature', requested = [], draft = false }) {
   const calls = [];
+  const requests = [];
   const github = {
     paginate: async (method) => method.items,
     rest: {
-      pulls: { listFiles: { items: files.map((file) => (typeof file === 'string' ? { filename: file } : file)) }, listReviews: { items: reviews.map(([login, state]) => ({ user: { login }, state })) } },
+      pulls: { listFiles: { items: files.map((file) => (typeof file === 'string' ? { filename: file } : file)) }, listReviews: { items: reviews.map(([login, state]) => ({ user: { login }, state })) }, requestReviewers: async ({ pull_number, reviewers }) => requests.push([pull_number, reviewers]) },
       repos: {
         getContent: async ({ path, ref }) => ({ data: { content: Buffer.from(CODEOWNERS).toString('base64'), path, ref } }),
         createCommitStatus: async ({ sha, context, state }) => calls.push([sha, context, state]),
       },
     },
   };
-  const context = { repo: { owner: 'owner', repo: 'r' }, payload: { pull_request: { number: 7, user: { login: author }, labels: labels.map((name) => ({ name })), head: { sha: 'abc', ref: branch }, base: { ref: 'main' } } } };
-  return { github, context, calls };
+  const context = { repo: { owner: 'owner', repo: 'r' }, payload: { pull_request: { number: 7, user: { login: author }, labels: labels.map((name) => ({ name })), draft, requested_reviewers: requested.map((login) => ({ login })), requested_teams: [], head: { sha: 'abc', ref: branch }, base: { ref: 'main' } } } };
+  return { github, context, calls, requests };
 }
 
 const PROMPT_FILE = 'src/llm_prompts/prompts/shared/rules/a.md';
@@ -61,6 +62,39 @@ test('other author needs a code owner approval even outside prompts', async () =
   const approved = fixture({ author: 'stranger', files: ['README.md'], reviews: [['owner', 'APPROVED']] });
   await gate(approved);
   assert.deepEqual(approved.calls, [['abc', 'codeowner-review', 'success']]);
+});
+
+test('files no CODEOWNERS rule matches belong to the repo owner', async () => {
+  for (const [author, reviews, state] of [
+    ['owner', [], 'success'],
+    ['stranger', [], 'pending'],
+    ['stranger', [['bystander', 'APPROVED']], 'pending'],
+    ['stranger', [['Owner', 'APPROVED']], 'success'],
+  ]) {
+    const f = fixture({ author, files: ['src/llm_prompts/cli.py'], reviews });
+    await gate(f);
+    assert.deepEqual(f.calls, [['abc', 'codeowner-review', state]], `${author} ${JSON.stringify(reviews)}`);
+  }
+});
+
+test('the repo owner is asked to review only when the gate waits and the owner has not reviewed', async () => {
+  for (const [name, options, reviewers] of [
+    ['stranger PR', { author: 'stranger' }, ['owner']],
+    ['major renovate PR', { author: 'renovate[bot]', branch: 'renovate/major-updates', labels: ['needs-review'] }, ['owner']],
+    ['pi-extensions renovate PR', { author: 'renovate[bot]', branch: 'renovate/pi-extensions' }, ['owner']],
+    ['safe renovate PR', { author: 'renovate[bot]', branch: 'renovate/all-minor-patch' }, []],
+    ['owner PR', { author: 'owner' }, []],
+    ['approved PR', { author: 'stranger', reviews: [['owner', 'APPROVED']] }, []],
+    ['already requested', { author: 'stranger', requested: ['friend'] }, []],
+    ['draft PR', { author: 'stranger', draft: true }, []],
+    ['owner already commented', { author: 'stranger', reviews: [['Owner', 'COMMENTED']] }, []],
+    ['owner already requested changes', { author: 'stranger', reviews: [['owner', 'CHANGES_REQUESTED']] }, []],
+    ['someone else reviewed', { author: 'stranger', reviews: [['friend', 'COMMENTED']] }, ['owner']],
+  ]) {
+    const f = fixture({ files: ['README.md'], ...options });
+    await gate(f);
+    assert.deepEqual(f.requests, reviewers.length ? [[7, reviewers]] : [], name);
+  }
 });
 
 test('renovate bot PRs pass without review only from known-safe branches', async () => {
