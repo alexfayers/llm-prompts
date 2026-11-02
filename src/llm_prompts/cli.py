@@ -631,6 +631,13 @@ def _check_for_updates() -> bool:
     return bool(messages)
 
 
+def _print_update_status() -> None:
+    """Print which sources have updates, ahead of applying them."""
+    print("Checking for updates...", flush=True)
+    messages = [m for m in _collect_update_messages() if m != _UPDATE_INSTRUCTION]
+    print("\n".join(messages) if messages else "No updates found.", flush=True)
+
+
 def _auto_migrate_memory_db() -> None:
     """Consolidate a split mcp-memory database onto the default path.
 
@@ -808,7 +815,7 @@ def _run_command(run: telemetry.Run) -> int | None:
     )
     update_parser = subparsers.add_parser(
         "update",
-        help="Update all installed agents and restart services.",
+        help="Check for and list updates, then update all installed agents and restart services.",
     )
     update_parser.add_argument(
         "--check",
@@ -1096,6 +1103,7 @@ def _run_command(run: telemetry.Run) -> int | None:
         if resumed is None:
             from .size_guard import snapshot_sources
 
+            _print_update_status()
             size_baseline = snapshot_sources(_size_guard_roots())
             changed_sources = _pull_local_sources()
 
