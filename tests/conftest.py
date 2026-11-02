@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import shutil
 import subprocess
 import threading
@@ -792,12 +793,22 @@ def isolated_config_dir(
 
 
 @pytest.fixture(autouse=True)
+def no_pi_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drop every PI_* variable so tests do not depend on the caller running inside pi."""
+    for name in [name for name in os.environ if name.startswith("PI_")]:
+        monkeypatch.delenv(name)
+
+
+@pytest.fixture(autouse=True)
 def isolated_home(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
-    """Point `Path.home()` at a per-test temporary dir so no test scans the real home."""
+    """Point the home dir at a per-test temporary dir so no test touches the real home."""
     home = tmp_path_factory.mktemp("home")
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("UV_TOOL_DIR", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     return home
 
 
