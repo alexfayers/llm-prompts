@@ -8,7 +8,7 @@
   "markdown": { "mermaid": "streaming" },
   "packages": [
     "npm:@earendil-works/pi-coding-agent@1.5.0",
-    "npm:pi-herdsman@0.36.1",
+    "npm:pi-herdsman@0.37.0",
     "npm:pi-ask-user@0.17.1",
     { "source": "npm:tower-do@0.8.2", "extensions": [] },
     "npm:pi-notify@1.4.0",
