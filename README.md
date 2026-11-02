@@ -35,7 +35,7 @@
 | src/llm\_prompts/prompts/shared/skills/todos/find\_todos.py                   |       44 |        7 |     84% |96-98, 103-105, 109 |
 | src/llm\_prompts/removed\_agents\_notice.py                                   |       14 |        0 |    100% |           |
 | src/llm\_prompts/render\_template.py                                          |      166 |       14 |     92% |149, 417-418, 427-443, 455-459, 463 |
-| src/llm\_prompts/setup.py                                                     |      350 |       44 |     87% |232-261, 303-306, 313-314, 354, 357, 378-379, 418-419, 471, 635-638, 679-682, 712-713, 716, 768-769, 781-783 |
+| src/llm\_prompts/setup.py                                                     |      350 |       44 |     87% |232-261, 303-306, 313-314, 354, 357, 378-379, 418-419, 471, 635-638, 679-682, 712-713, 716, 768-769, 784-786 |
 | src/llm\_prompts/size\_guard.py                                               |      354 |       11 |     97% |244-245, 352, 423-425, 460, 482, 486-488 |
 | src/llm\_prompts/size\_limits.py                                              |       61 |        1 |     98% |       138 |
 | src/llm\_prompts/size\_report.py                                              |      187 |        3 |     98% |144, 198, 200 |
@@ -77,7 +77,7 @@
 | tests/test\_render\_template.py                                               |      135 |        0 |    100% |           |
 | tests/test\_retrospective\_extract.py                                         |       90 |        0 |    100% |           |
 | tests/test\_rewrite\_range\_script.py                                         |       68 |        0 |    100% |           |
-| tests/test\_setup.py                                                          |      308 |        0 |    100% |           |
+| tests/test\_setup.py                                                          |      312 |        0 |    100% |           |
 | tests/test\_size\_guard.py                                                    |       93 |        0 |    100% |           |
 | tests/test\_size\_report.py                                                   |      206 |        0 |    100% |           |
 | tests/test\_skill\_injection.py                                               |       30 |        0 |    100% |           |
@@ -85,7 +85,7 @@
 | tests/test\_telemetry.py                                                      |      327 |        0 |    100% |           |
 | tests/test\_todos\_script.py                                                  |       88 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      119 |        0 |    100% |           |
-| **TOTAL**                                                                     | **19518** |  **538** | **97%** |           |
+| **TOTAL**                                                                     | **19522** |  **538** | **97%** |           |
 
 
 ## Setup coverage badge
