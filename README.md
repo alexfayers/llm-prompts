@@ -14,7 +14,7 @@ This installs [uv](https://docs.astral.sh/uv/) if needed, installs `llm-prompts`
 
 ```bash
 llm-prompts install <agent>    # kiro, claude-code, codex, antigravity, pi, or all
-llm-prompts update             # pull new versions and reinstall
+llm-prompts update             # check for and list updates, then pull new versions and reinstall
 llm-prompts uninstall <agent>  # remove installed files
 llm-prompts --help             # all commands and flags
 ```

@@ -7,7 +7,7 @@ import subprocess
 import threading
 from collections.abc import Set as AbstractSet
 from pathlib import Path
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import ANY, MagicMock, call, patch
 
 import pytest
 from conftest import FakeSubprocess, run_capturing_exit
@@ -23,6 +23,7 @@ from llm_prompts.cli import (
     _get_installed_commit,
     _local_source_messages,
     _print_parked_state,
+    _print_update_status,
     _pull_local_sources,
     _remote_source_messages,
     _restart_memory_service,
@@ -53,6 +54,12 @@ def no_changed_local_checkouts(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "llm_prompts.setup.detect_changed_configured_tools", lambda: set()
     )
+
+
+@pytest.fixture(autouse=True)
+def no_update_status_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep `update` from checking real sources."""
+    monkeypatch.setattr("llm_prompts.cli._print_update_status", lambda: None)
 
 
 class TestExtractGitUrl:
@@ -701,6 +708,31 @@ class TestUpdateCommandPullsPlugins:
         mock_pull.assert_called_once_with()
         mock_setup.assert_not_called()
         mock_install.assert_called_once_with(["kiro"], size_baseline={})
+
+    def test_update_reports_the_update_check_before_pulling_sources(self) -> None:
+        order = MagicMock()
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={"kiro": {"files": []}},
+            ),
+            patch("llm_prompts.cli._print_update_status") as mock_status,
+            patch(
+                "llm_prompts.cli._pull_local_sources", return_value=set()
+            ) as mock_pull,
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.install.main", return_value=frozenset()),
+            patch("llm_prompts.cli._restart_memory_service"),
+            patch("llm_prompts.plugins.pull_plugin_sources"),
+            patch("llm_prompts.size_guard.snapshot_sources", return_value={}),
+        ):
+            order.attach_mock(mock_status, "status")
+            order.attach_mock(mock_pull, "pull")
+            mock_config.return_value.exists.return_value = False
+            main()
+
+        assert order.mock_calls == [call.status(), call.pull()]
 
     def test_update_skips_agents_no_longer_supported(self) -> None:
         with (
@@ -1406,6 +1438,25 @@ class TestCheckForUpdates:
             result = _check_for_updates()
         assert result is True
         assert capsys.readouterr().out == "a\nb\n"
+
+
+class TestPrintUpdateStatus:
+    def test_lists_updates_without_agent_instruction(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with patch(
+            "llm_prompts.cli._collect_update_messages",
+            return_value=["[a] update available", _UPDATE_INSTRUCTION],
+        ):
+            _print_update_status()
+        assert capsys.readouterr().out == (
+            "Checking for updates...\n[a] update available\n"
+        )
+
+    def test_reports_no_updates(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with patch("llm_prompts.cli._collect_update_messages", return_value=[]):
+            _print_update_status()
+        assert capsys.readouterr().out == "Checking for updates...\nNo updates found.\n"
 
 
 class TestSizeGuardRoots:

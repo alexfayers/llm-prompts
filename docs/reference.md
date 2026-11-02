@@ -8,7 +8,7 @@ Run `llm-prompts --help` or `llm-prompts <command> --help` for every flag.
 llm-prompts install <agent>                    # install rules, workflows and skills
 llm-prompts install kiro --agent-config PATH   # also patch a Kiro agent JSON
 llm-prompts install <agent> --root DIR         # use DIR as the home directory
-llm-prompts update                             # pull sources, reinstall every installed agent
+llm-prompts update                             # report available updates, pull sources, reinstall every installed agent
 llm-prompts update --check                     # list available updates without applying them
 llm-prompts update --only PATH                 # reinstall only the prompt built from this edited file
 llm-prompts uninstall <agent>                  # remove installed files and config patches
