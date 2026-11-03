@@ -24,7 +24,7 @@ description: Coding guidelines to follow when generating, reviewing, or modifyin
 - When fixing a bug, fix ALL directly related issues in the same code path - MUST NOT dismiss a pre-existing failure that shares its root cause or context.
 - Before adding a parameter to a signature, MUST verify the body uses it.
 - Before declaring a value or function dead, MUST search the WHOLE workspace.
-- After fixing an error you wrote, MUST record the mistake and fix as a memory observation.
+- After fixing an error you wrote, MUST record the mistake and fix in memory - a delegate reports it instead.
 - MUST NOT use non-ascii characters (e.g. emdash); use ascii equivalents.
 - In committed files, MUST NOT name collaborators or hardcode user-specific values (aliases, account IDs, stack names) - use a placeholder like `<account-id>`.
 - In a globally-distributed instruction or doc, MUST NOT assert behaviour depending on the reader's local config ("this command is auto-approved"). State the action, not the consequence.

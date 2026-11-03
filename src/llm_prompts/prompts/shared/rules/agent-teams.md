@@ -73,7 +73,7 @@ targets: claude-code, pi
 - A teammate ends when its run finishes; a handoff or context limit is not 'done' - checkpoint via `{{TOOL_STEER}}` first.
 {% else %}
 - The shared `TaskList` is the team's coordination substrate - main polls it, `coordinator` populates it.
-- Where the `Task*` tools are absent, every `TaskCreate`/`TaskGet`/`TaskList`/`TaskUpdate` step in a rule, skill or agent MUST use memory `task/` entities instead, and each teammate's contract MUST travel in its spawn prompt.
+- Where the `Task*` tools are absent, main MUST track every `TaskCreate`/`TaskGet`/`TaskList`/`TaskUpdate` step itself as memory `task/` entities, which only main writes, and each teammate's contract MUST travel in its spawn prompt.
 
 ## Stopping and persistence - `TaskList` dies with the session
 
@@ -83,4 +83,4 @@ targets: claude-code, pi
 - MUST NOT stop a producer on its idle ping alone - wait for the consumer to confirm input.
 {% endif %}
 - Spawn a fresh replacement for a member reporting high context - don't run it degraded.
-- A stopped teammate can still leave unclaimed items: ending a lead session, run {% if AGENT == "pi" %}`tower_do_status`{% else %}`TaskList`{% endif %} and home every open item - memory, plus `handoff`/`session-end` if work remains.
+- A stopped teammate can still leave unclaimed items: ending a lead session, run {% if AGENT == "pi" %}`tower_do_status`{% else %}`TaskList`{% endif %} and home every open item via `session-end`.

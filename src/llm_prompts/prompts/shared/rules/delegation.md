@@ -54,7 +54,7 @@ Every spawn prompt MUST specify:
 - the memory/MCP facts it needs;
 {% endif %}
 - source order - local checkout, internal/official docs, public web last - report back if unanswered, never widen;
-- for a tracked task (memory `task/`, plan slice, ticket): decisions recorded against it;
+- for a tracked task (memory `task/`, plan slice, ticket): its recorded decisions, and that new ones come back in the report, never to memory;
 - the scope boundary it MUST NOT cross - remote/live systems: read-only, naming disallowed mutations;
 - lint/format/test conventions: package config (`pyproject.toml` or equiv) is authority, not memory/global preferences - MUST match the file edited;
 - where the prompt pins a shape (signature, return type, format) and says match a sibling, MUST reconcile the two;

@@ -11,7 +11,7 @@ A speculative aside - "we should maybe X", "can we X?" - counts as a side reques
 When the user asks to do something that is **not directly related** to the current task, do **not** immediately act on it. Instead:
 1. **Acknowledge** the ask explicitly so the user knows you've heard it.
 2. **Explain** that you are currently focused on something else and will do it afterwards.
-3. **Add it as a TODO in memory** (a `task/` entity with status `planned`, linked to the relevant feature/task) so it is not forgotten.
+3. **Add it as a TODO in memory** (a `task/` entity with status `planned`, `implements` its `feature/`) so it is not forgotten.
 4. **Add it to the end of the current {{TASK_PROGRESS}} checklist** so it will be picked up after the current task completes.
 5. **Continue** the current task to completion before picking up the side request.
 
@@ -19,7 +19,7 @@ When the user asks to do something that is **not directly related** to the curre
 
 NOTE: You are allowed to write to files in {{PLAN_MODE}} for this use case, but prefer memory over a new file per the default above.
 
-An idea YOU raised is a suggestion until the user says go - MUST NOT act on it, and MUST NOT create a tracking task for it either. Immediate tracking applies only to work the user asked for.
+An idea YOU raised is a suggestion until the user says go - MUST NOT act on it, and MUST NOT create a tracking task for it either - this does not cover the steps of an approved plan. Immediate tracking applies only to work the user asked for.
 
 ## Tracking completion in an existing TODO/task-list file
 
