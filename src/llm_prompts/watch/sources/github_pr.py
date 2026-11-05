@@ -23,7 +23,9 @@ def _ci(runs: list[dict[str, Any]], status: dict[str, Any]) -> str:
         run["conclusion"] in FAILED_CONCLUSIONS for run in runs
     ):
         return "fail"
-    if state == "pending" or any(run["status"] != "completed" for run in runs):
+    if (state == "pending" and not runs) or any(
+        run["status"] != "completed" for run in runs
+    ):
         return "pending"
     return "pass" if runs or state else "none"
 
