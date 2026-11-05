@@ -19,6 +19,7 @@ llm-prompts setup --dry-run                    # show the commands without runni
 llm-prompts setup --init                       # create the starter config
 llm-prompts check                              # check prompt sizes and pi extension headers
 llm-prompts size-report --base-root DIR        # markdown report of prompt size changes
+llm-prompts watch gh-pr|cmd TARGET --until COND  # wait for a PR or command to match, then exit (0 match, 124 --timeout, 1 error)
 llm-prompts contribute list|sync|update        # turn commits on local main into PR branches
 ```
 
