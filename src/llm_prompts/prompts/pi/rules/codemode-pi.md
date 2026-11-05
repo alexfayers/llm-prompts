@@ -14,4 +14,4 @@ roles: all
 - MUST NOT declare a codemode script variable named `tools`.
 - Where the tool name is known, MUST NOT search for it. Before its first call, MUST read its arguments with `describeTool("mcp__<server>__<name>")` unless its schema is already in context.
 - Where a named tool is not available, MUST report it missing and stop - MUST NOT look for a substitute.
-- To wait for a changing result (CI, PR, job), SHOULD prefer an event-driven wait. Only where no event exists, MAY poll in one script with `await tools.sleep({ ms })` between checks.
+- Where `llm-prompts watch` has no source, MAY poll with `await tools.sleep({ ms })`.
