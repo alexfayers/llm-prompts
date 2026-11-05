@@ -755,6 +755,39 @@ def _flag_names(parser: argparse.ArgumentParser, argv: list[str]) -> list[str]:
     return sorted({t for a in argv if (t := a.split("=", 1)[0]) in known})
 
 
+def _add_watch_parser(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    """Add the ``watch`` command with one subcommand per watch source."""
+    from .watch.core.registry import sources
+
+    watch_parser = subparsers.add_parser(
+        "watch",
+        help="Wait until a condition holds on a PR or command, then exit.",
+    )
+    source_parsers = watch_parser.add_subparsers(dest="source", required=True)
+    for name, source in sources().items():
+        source_parser = source_parsers.add_parser(
+            name,
+            help=f"Aliases for --until: {', '.join(source.aliases)}.",
+        )
+        source.add_arguments(source_parser)
+        source_parser.add_argument(
+            "--until",
+            action="append",
+            required=True,
+            help="Stop when field=value or changed:field holds, or an alias does. Repeat to stop on any.",
+        )
+        source_parser.add_argument(
+            "--interval",
+            type=float,
+            help=f"Seconds between polls (default {source.default_interval:g}).",
+        )
+        source_parser.add_argument(
+            "--timeout", type=float, help="Exit 124 after this many seconds."
+        )
+
+
 def _run_command(run: telemetry.Run) -> int | None:
     """Parse the command line and run the chosen command."""
     parser = argparse.ArgumentParser(
@@ -854,6 +887,7 @@ def _run_command(run: telemetry.Run) -> int | None:
         required=True,
         help="Base revision's prompts directory to compare against.",
     )
+    _add_watch_parser(subparsers)
     contribute_parser = subparsers.add_parser(
         "contribute", help="Manage derived PR branches for prompt-source commits."
     )
@@ -1158,6 +1192,16 @@ def _run_command(run: telemetry.Run) -> int | None:
         from .size_report import build_report
 
         print(build_report(args.base_root))
+    elif args.command == "watch":
+        from .watch.core.registry import sources
+        from .watch.core.runner import watch
+
+        return watch(
+            sources()[args.source].from_args(args),
+            args.until,
+            interval=args.interval,
+            timeout=args.timeout,
+        )
     elif args.command == "contribute":
         from .contribute import list_targets, sync_targets, update_targets
 
