@@ -6,7 +6,7 @@
 |------------------------------------------------------------------------------ | -------: | -------: | ------: | --------: |
 | src/llm\_prompts/\_\_init\_\_.py                                              |        0 |        0 |    100% |           |
 | src/llm\_prompts/batching.py                                                  |      138 |        1 |     99% |       129 |
-| src/llm\_prompts/cli.py                                                       |      573 |       73 |     87% |92-93, 119-120, 127-140, 246-247, 358-359, 487, 490, 539, 605-617, 648-650, 685-687, 695-698, 728-737, 1004-1006, 1009-1015, 1018-1020, 1023-1037, 1047, 1052, 1064, 1086-1090, 1185-1186, 1191 |
+| src/llm\_prompts/cli.py                                                       |      588 |       73 |     88% |92-93, 119-120, 127-140, 246-247, 358-359, 487, 490, 539, 605-617, 648-650, 685-687, 695-698, 728-737, 1038-1040, 1043-1049, 1052-1054, 1057-1071, 1081, 1086, 1098, 1120-1124, 1229-1230, 1235 |
 | src/llm\_prompts/collection\_size.py                                          |      115 |        5 |     96% |179, 235-236, 386, 443 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/contribute.py                                                |      867 |       11 |     99% |153, 300, 1124, 1149, 1349, 1366-1367, 1457-1459, 1800 |
@@ -42,6 +42,15 @@
 | src/llm\_prompts/skill\_injection.py                                          |       37 |        2 |     95% |    33, 36 |
 | src/llm\_prompts/squash\_subject.py                                           |        6 |        0 |    100% |           |
 | src/llm\_prompts/telemetry.py                                                 |      208 |        3 |     99% |160-161, 417 |
+| src/llm\_prompts/watch/\_\_init\_\_.py                                        |        0 |        0 |    100% |           |
+| src/llm\_prompts/watch/core/\_\_init\_\_.py                                   |        0 |        0 |    100% |           |
+| src/llm\_prompts/watch/core/condition.py                                      |       25 |        3 |     88% | 33, 49-50 |
+| src/llm\_prompts/watch/core/registry.py                                       |       12 |        0 |    100% |           |
+| src/llm\_prompts/watch/core/runner.py                                         |       37 |        1 |     97% |        29 |
+| src/llm\_prompts/watch/core/source.py                                         |       21 |        0 |    100% |           |
+| src/llm\_prompts/watch/sources/\_\_init\_\_.py                                |        0 |        0 |    100% |           |
+| src/llm\_prompts/watch/sources/command.py                                     |       36 |        1 |     97% |        55 |
+| src/llm\_prompts/watch/sources/github\_pr.py                                  |       84 |       11 |     87% |27, 42-47, 84-85, 89, 100-101, 113 |
 | tests/conftest.py                                                             |      458 |        4 |     99% |159, 799, 886, 925 |
 | tests/test\_batching.py                                                       |      314 |        0 |    100% |           |
 | tests/test\_build\_wave.py                                                    |      282 |        1 |     99% |       112 |
@@ -85,7 +94,9 @@
 | tests/test\_telemetry.py                                                      |      327 |        0 |    100% |           |
 | tests/test\_todos\_script.py                                                  |       88 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      119 |        0 |    100% |           |
-| **TOTAL**                                                                     | **19669** |  **545** | **97%** |           |
+| tests/watch/sources/test\_github\_pr.py                                       |       60 |        0 |    100% |           |
+| tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
+| **TOTAL**                                                                     | **19999** |  **561** | **97%** |           |
 
 
 ## Setup coverage badge
