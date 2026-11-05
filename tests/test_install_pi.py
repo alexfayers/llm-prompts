@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 import json
 import re
 import shutil
@@ -13,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 import yaml
+from conftest import fake_mcp_server
 
 from llm_prompts import manifest as manifest_module
 from llm_prompts.install import (
@@ -1259,22 +1259,6 @@ class TestHerdsmanAgents:
         )
         return tmp_path / "overlay"
 
-    @staticmethod
-    def _mcp_server(tools: list[dict[str, Any]]) -> Any:
-        replies = {
-            "initialize": {"protocolVersion": "1"},
-            "tools/list": {"tools": tools},
-        }
-
-        def urlopen(request: Any, timeout: float) -> Any:
-            method = json.loads(request.data)["method"]
-            body = json.dumps({"id": method, "result": replies.get(method)})
-            response = io.BytesIO(body.encode() if method in replies else b"")
-            response.headers = {}  # type: ignore[attr-defined]
-            return response
-
-        return patch("llm_prompts.mcp.urlopen", urlopen)
-
     @pytest.mark.parametrize(
         ("target", "agents_dir", "key", "base", "server"),
         [
@@ -1313,7 +1297,7 @@ class TestHerdsmanAgents:
             tmp_path, "disallowedTools: Write\nmcp_read_only: [m-x]"
         )
 
-        with self._mcp_server(
+        with fake_mcp_server(
             [{"name": "get", "annotations": {"readOnlyHint": True}}, {"name": "put"}]
         ):
             _install(home, tmp_path / "installed.json", [overlay], targets=[target])

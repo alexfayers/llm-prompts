@@ -24,7 +24,7 @@ MUST run `command -v codex` first. If it prints nothing, codex is not installed 
 MUST use the generic exec form for everything - a diff, a plan, a design doc, or a general delegated task:
 
 ```
-codex exec -s read-only --skip-git-repo-check "<adversarial prompt>"
+codex exec -p {{CODEX_REVIEW_PROFILE}} -s read-only --skip-git-repo-check "<adversarial prompt>"
 ```
 
 MUST NOT use `codex exec review`: its diff-selection flags (e.g. `--base`) are mutually exclusive with a custom prompt in current codex versions, so it cannot carry an adversarial framing alongside a diff. The generic form always composes with any prompt, regardless of the content's source.
@@ -34,7 +34,7 @@ MUST NOT use `codex exec review`: its diff-selection flags (e.g. `--base`) are m
 MUST pipe large content (a diff, a long plan) via stdin, not an arg, to avoid `ARG_MAX`:
 
 ```
-{ printf '%s\n' "<adversarial prompt>"; git diff <range>; } | codex exec -s read-only --skip-git-repo-check -
+{ printf '%s\n' "<adversarial prompt>"; git diff <range>; } | codex exec -p {{CODEX_REVIEW_PROFILE}} -s read-only --skip-git-repo-check -
 ```
 
 MUST substitute `cat <file>` for `git diff <range>` when reviewing a plan or design doc.
@@ -44,7 +44,7 @@ MUST substitute `cat <file>` for `git diff <range>` when reviewing a plan or des
 Codex receives the same shared skill set as you and has a native skills tool, so you MAY name a skill directly in the prompt:
 
 ```
-codex exec -s read-only --skip-git-repo-check "Use your refine-plan skill to score this plan, then return the scored output:\n\n<plan>"
+codex exec -p {{CODEX_REVIEW_PROFILE}} -s read-only --skip-git-repo-check "Use your refine-plan skill to score this plan, then return the scored output:\n\n<plan>"
 ```
 
 ## Reading output & safety

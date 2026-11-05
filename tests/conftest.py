@@ -14,7 +14,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from email.message import Message
 from pathlib import Path
 from typing import Any, Self, cast
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -1053,3 +1053,20 @@ def synthetic_prompts(
     for module in ("install", "size_guard", "cli"):
         monkeypatch.setattr(f"llm_prompts.{module}.prompts_dir", prompts_dir)
     return tree
+
+
+def fake_mcp_server(tools: list[dict[str, Any]]) -> Any:
+    """Patch MCP HTTP calls so every server lists the given tools."""
+    replies = {
+        "initialize": {"protocolVersion": "1"},
+        "tools/list": {"tools": tools},
+    }
+
+    def urlopen(request: Any, timeout: float) -> Any:
+        method = json.loads(request.data)["method"]
+        body = json.dumps({"id": method, "result": replies.get(method)})
+        response = io.BytesIO(body.encode() if method in replies else b"")
+        response.headers = {}  # type: ignore[attr-defined]
+        return response
+
+    return patch("llm_prompts.mcp.urlopen", urlopen)

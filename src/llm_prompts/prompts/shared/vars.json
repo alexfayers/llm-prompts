@@ -10,5 +10,6 @@
   "TASK_PROGRESS": "task progress",
   "TOOL_AGENT": "Agent",
   "TOOL_STEER": "steer_subagent",
-  "TOOL_AGENT_RESULT": "get_subagent_result"
+  "TOOL_AGENT_RESULT": "get_subagent_result",
+  "CODEX_REVIEW_PROFILE": "llm-prompts-review"
 }
