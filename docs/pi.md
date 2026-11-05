@@ -61,3 +61,4 @@ These live in `src/llm_prompts/prompts/pi/extensions/`. Each file starts with a 
 | `role-switch` | Spawns the listed `role@model:effort` names by switching the delegating agent's model and thinking around `delegate_agent`, so the child inherits them. |
 | `tower-do-patch` | Adds the `tower_do_patch` tool, which changes single tasks on the board. |
 | `tower-do-slim` | Re-registers `tower_do`, `tower_do_talk` and `tower_do_status` with shorter descriptions. |
+| `tower-widget` | Hides the tower-do widget above the editor by default. `/tower-widget` toggles it for the session. |
