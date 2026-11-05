@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">449 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">445<span class="text"> run</span></button>
+            <span class="text">458 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">454<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">4<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_a44f0ac069e85531_test_batching_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.0">coverage.py v7.17.0</a>,
-            created at 2026-11-03 14:50 +0000
+            created at 2026-11-05 12:07 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -96,7 +96,7 @@
     <p class="run"><span class="n"><a id="t14" href="#t14">14</a></span><span class="t"><span class="key">from</span> <span class="nam">email</span><span class="op">.</span><span class="nam">message</span> <span class="key">import</span> <span class="nam">Message</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t15" href="#t15">15</a></span><span class="t"><span class="key">from</span> <span class="nam">pathlib</span> <span class="key">import</span> <span class="nam">Path</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t16" href="#t16">16</a></span><span class="t"><span class="key">from</span> <span class="nam">typing</span> <span class="key">import</span> <span class="nam">Any</span><span class="op">,</span> <span class="nam">Self</span><span class="op">,</span> <span class="nam">cast</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t17" href="#t17">17</a></span><span class="t"><span class="key">from</span> <span class="nam">unittest</span><span class="op">.</span><span class="nam">mock</span> <span class="key">import</span> <span class="nam">MagicMock</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t17" href="#t17">17</a></span><span class="t"><span class="key">from</span> <span class="nam">unittest</span><span class="op">.</span><span class="nam">mock</span> <span class="key">import</span> <span class="nam">MagicMock</span><span class="op">,</span> <span class="nam">patch</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t18" href="#t18">18</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t19" href="#t19">19</a></span><span class="t"><span class="key">import</span> <span class="nam">pytest</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t20" href="#t20">20</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -1135,6 +1135,23 @@
     <p class="run"><span class="n"><a id="t1053" href="#t1053">1053</a></span><span class="t">    <span class="key">for</span> <span class="nam">module</span> <span class="key">in</span> <span class="op">(</span><span class="str">&quot;install&quot;</span><span class="op">,</span> <span class="str">&quot;size_guard&quot;</span><span class="op">,</span> <span class="str">&quot;cli&quot;</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1054" href="#t1054">1054</a></span><span class="t">        <span class="nam">monkeypatch</span><span class="op">.</span><span class="nam">setattr</span><span class="op">(</span><span class="fst">f&quot;</span><span class="fst">llm_prompts.</span><span class="op">{</span><span class="nam">module</span><span class="op">}</span><span class="fst">.prompts_dir</span><span class="fst">&quot;</span><span class="op">,</span> <span class="nam">prompts_dir</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1055" href="#t1055">1055</a></span><span class="t">    <span class="key">return</span> <span class="nam">tree</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1056" href="#t1056">1056</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1057" href="#t1057">1057</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1058" href="#t1058">1058</a></span><span class="t"><span class="key">def</span> <span class="nam">fake_mcp_server</span><span class="op">(</span><span class="nam">tools</span><span class="op">:</span> <span class="nam">list</span><span class="op">[</span><span class="nam">dict</span><span class="op">[</span><span class="nam">str</span><span class="op">,</span> <span class="nam">Any</span><span class="op">]</span><span class="op">]</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">Any</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1059" href="#t1059">1059</a></span><span class="t">    <span class="str">&quot;&quot;&quot;Patch MCP HTTP calls so every server lists the given tools.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1060" href="#t1060">1060</a></span><span class="t">    <span class="nam">replies</span> <span class="op">=</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1061" href="#t1061">1061</a></span><span class="t">        <span class="str">&quot;initialize&quot;</span><span class="op">:</span> <span class="op">{</span><span class="str">&quot;protocolVersion&quot;</span><span class="op">:</span> <span class="str">&quot;1&quot;</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1062" href="#t1062">1062</a></span><span class="t">        <span class="str">&quot;tools/list&quot;</span><span class="op">:</span> <span class="op">{</span><span class="str">&quot;tools&quot;</span><span class="op">:</span> <span class="nam">tools</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1063" href="#t1063">1063</a></span><span class="t">    <span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1064" href="#t1064">1064</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1065" href="#t1065">1065</a></span><span class="t">    <span class="key">def</span> <span class="nam">urlopen</span><span class="op">(</span><span class="nam">request</span><span class="op">:</span> <span class="nam">Any</span><span class="op">,</span> <span class="nam">timeout</span><span class="op">:</span> <span class="nam">float</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">Any</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1066" href="#t1066">1066</a></span><span class="t">        <span class="nam">method</span> <span class="op">=</span> <span class="nam">json</span><span class="op">.</span><span class="nam">loads</span><span class="op">(</span><span class="nam">request</span><span class="op">.</span><span class="nam">data</span><span class="op">)</span><span class="op">[</span><span class="str">&quot;method&quot;</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1067" href="#t1067">1067</a></span><span class="t">        <span class="nam">body</span> <span class="op">=</span> <span class="nam">json</span><span class="op">.</span><span class="nam">dumps</span><span class="op">(</span><span class="op">{</span><span class="str">&quot;id&quot;</span><span class="op">:</span> <span class="nam">method</span><span class="op">,</span> <span class="str">&quot;result&quot;</span><span class="op">:</span> <span class="nam">replies</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="nam">method</span><span class="op">)</span><span class="op">}</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1068" href="#t1068">1068</a></span><span class="t">        <span class="nam">response</span> <span class="op">=</span> <span class="nam">io</span><span class="op">.</span><span class="nam">BytesIO</span><span class="op">(</span><span class="nam">body</span><span class="op">.</span><span class="nam">encode</span><span class="op">(</span><span class="op">)</span> <span class="key">if</span> <span class="nam">method</span> <span class="key">in</span> <span class="nam">replies</span> <span class="key">else</span> <span class="str">b&quot;&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1069" href="#t1069">1069</a></span><span class="t">        <span class="nam">response</span><span class="op">.</span><span class="nam">headers</span> <span class="op">=</span> <span class="op">{</span><span class="op">}</span>  <span class="com"># type: ignore[attr-defined]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1070" href="#t1070">1070</a></span><span class="t">        <span class="key">return</span> <span class="nam">response</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1071" href="#t1071">1071</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1072" href="#t1072">1072</a></span><span class="t">    <span class="key">return</span> <span class="nam">patch</span><span class="op">(</span><span class="str">&quot;llm_prompts.mcp.urlopen&quot;</span><span class="op">,</span> <span class="nam">urlopen</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -1144,7 +1161,7 @@
             <a class="nav" href="z_a44f0ac069e85531_test_batching_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.0">coverage.py v7.17.0</a>,
-            created at 2026-11-03 14:50 +0000
+            created at 2026-11-05 12:07 +0000
         </p>
     </div>
 </footer>
