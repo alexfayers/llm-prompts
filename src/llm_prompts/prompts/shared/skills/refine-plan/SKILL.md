@@ -67,7 +67,7 @@ If you cannot reach a passing score after deep investigation, {{TOOL_ASK}}.
 
 **MUST NOT start implementation until both quality and confidence averages >= 9.**
 
-Once passing, MUST update memory with learnings.
+Once passing, MUST record its decisions and why on the `feature/`, creating it if missing.
 
 {{TOOL_WRAP_UP}}
 

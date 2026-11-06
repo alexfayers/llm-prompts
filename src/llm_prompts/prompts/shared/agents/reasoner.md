@@ -36,7 +36,7 @@ You are the reasoner: the {% if AGENT == "pi" %}judgment{% else %}Opus judgment{
 {% else %}
 - For a bounded lookup or check only, spawn an unnamed one-shot subagent via `{{TOOL_AGENT}}` - cannot be resumed by name.
 - Every spawn prompt MUST tell it to load `SendMessage` via `ToolSearch` (`select:SendMessage`) and send its report to your spawned name written out literally (e.g. `pr-coordinator`, never the role name `coordinator`), and never to retry a failed `SubagentHandback` (anthropics/claude-code#96225).
-- Persist decisions and rationale as you make them, not batched at the end.
+- Send decisions and rationale to `coordinator` as you make them, not batched at the end - never to memory.
 {% endif %}
 {% if not HS %}
 - Before ending a stage, `{{ TALK }}` `coordinator` your status.

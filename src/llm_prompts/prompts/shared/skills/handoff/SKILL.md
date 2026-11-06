@@ -58,8 +58,8 @@ Then include, in order:
 3. **Key memory entities to load first.** An explicit list of `task/`,
    `feature/`, and `pattern/` entities (with project scope) to read first, each
    with a one-line note, e.g.:
-   - `task/<id>` (project `<name>`) - status + what's done/pending
-   - `feature/<area>` - the subsystem being changed
+   - `task/<id>` (project `<name>`) - status + what's pending
+   - `feature/<project>/<capability>` - its gotchas and decisions
    - `pattern/<name>` - reusable technique that applies
 4. **Load-bearing context the code doesn't show.** Decisions made and why,
    dead ends ruled out, and gotchas/fidelity gaps. Reference step-3 entities
@@ -89,7 +89,7 @@ Then include, in order:
   `TaskStop`. A handoff request is not an instruction to stop in-flight work.
   The doc and the reply MUST name every delegate stopped and what state it left.
 {% endif %}
-- **Memory first, doc second.** Durable facts (decisions, outcomes, learnings,
+- **Memory first, doc second.** Durable facts (decisions, learnings,
   task status) MUST already be in the memory graph before you write the
   handoff - the doc only points at it. If not yet persisted, do so now (see
   the `session-end` skill).
@@ -105,7 +105,7 @@ Then include, in order:
   gate) for EVERY remaining phase, not only the next one.
 - After writing the doc, run the `session-end` skill for the rest of session
   close (memory persisted, commit/push status resolved, rule-file reflection)
-  - except its step 5 comprehensive TODO/task review, which this skill's own
+  - except its step 4 task review, which this skill's own
   "next task" section already narrows to the current effort. Arrived here from
   `session-end` itself - do not re-invoke it. Then tell the user the handoff is
   ready and where it lives.
