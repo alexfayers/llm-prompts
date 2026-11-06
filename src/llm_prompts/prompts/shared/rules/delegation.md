@@ -55,7 +55,7 @@ Every spawn prompt MUST specify:
 {% endif %}
 - source order - local checkout, internal/official docs, public web last - report back if unanswered, never widen;
 - for a tracked task (memory `task/`, plan slice, ticket): decisions recorded against it;
-- the scope boundary it MUST NOT cross - remote/live systems: read-only, naming disallowed mutations;
+- the scope boundary it MUST NOT cross - remote/live systems: read-only, naming disallowed mutations, and PR push permission;
 - lint/format/test conventions: package config (`pyproject.toml` or equiv) is authority, not memory/global preferences - MUST match the file edited;
 - where the prompt pins a shape (signature, return type, format) and says match a sibling, MUST reconcile the two;
 - for code/prose, the output-size limit - minimal diff, no unrequested comments/refactors/reformatting, terse report.
@@ -85,7 +85,7 @@ Every spawn prompt MUST specify:
 {% if AGENT == "pi" %}
 {% if TOOL_AGENT == 'delegate_agent' %}
 - MUST `continue_agent` a finished agent's exact session for same-scope follow-up (fix, gate retry, missing section), never a fresh delegate.
-- Results arrive on their own. `Plan` means a named `reasoner`. Outside a Herdr pane `delegate_agent` is unavailable; work inline.
+- `Plan` means a named `reasoner`. Outside a Herdr pane `delegate_agent` is unavailable; work inline.
 - On "input contains a N-byte line ... 1024-byte limit" from `delegate_agent` or `continue_agent`, MUST retry `delegate_agent` once with the earlier result ref in `files`.
 {% else %}
 - Resume a finished NAMED delegate with `{{TOOL_AGENT}}` - ask for a missing/truncated section, not a re-derive.
