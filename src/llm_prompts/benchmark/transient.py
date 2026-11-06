@@ -15,7 +15,10 @@ MAX_RETRIES = 3
 BACKOFF_S = (30.0, 60.0)
 STAGGER_S = 3.0
 STARTUP_ERROR = "startup error: "
-TRANSIENT = re.compile(r"throttl|rate exceeded|credential export", re.IGNORECASE)
+TRANSIENT = re.compile(
+    r"throttl|rate exceeded|credential export|could not load .*credentials",
+    re.IGNORECASE,
+)
 
 
 def is_startup_error(error: str | None) -> bool:
@@ -24,10 +27,10 @@ def is_startup_error(error: str | None) -> bool:
 
 
 def is_transient(trace: Trace, reason: str) -> bool:
-    """Return whether the agent exited before its first model turn with a throttling error."""
+    """Return whether the agent exited before any model output or tool call with a throttling or credential error."""
     return bool(
         trace.exit_code
-        and not trace.turns
+        and not trace.tokens.total
         and not trace.tool_calls
         and TRANSIENT.search(reason)
     )

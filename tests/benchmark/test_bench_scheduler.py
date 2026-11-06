@@ -573,7 +573,7 @@ def test_a_cell_whose_agent_dies_throttled_before_its_first_turn_runs_again_afte
     go: Go, fake_agent: FakeAgent, pauses: list[float]
 ) -> None:
     throttled = trace(
-        exit_code=1, error=THROTTLED, turns=0, cost_usd=0.25, tool_calls=()
+        exit_code=1, error=THROTTLED, tokens=Tokens(), cost_usd=0.25, tool_calls=()
     )
     fake_agent.script("s0", earlier=(throttled,), trace=trace(turns=1))
 
@@ -589,12 +589,29 @@ def test_a_cell_whose_agent_dies_throttled_before_its_first_turn_runs_again_afte
     assert len(pauses) == 1 and 30 <= pauses[0] <= 60
 
 
+@pytest.mark.parametrize(
+    "error",
+    [THROTTLED, "API Error: Could not load AWS credentials. Check your credentials."],
+    ids=["throttled", "no-credentials"],
+)
+def test_a_credential_error_that_counts_as_the_first_turn_is_retried(
+    go: Go, fake_agent: FakeAgent, pauses: list[float], error: str
+) -> None:
+    failed = trace(exit_code=1, error=error, turns=1, tokens=Tokens(), tool_calls=())
+    fake_agent.script("s0", earlier=(failed,), trace=trace(turns=1))
+
+    row = go("s0")
+
+    assert (row.error, row.retries) == (None, 1)
+    assert len(pauses) == 1
+
+
 def test_a_cell_still_throttled_after_three_retries_is_a_startup_error_row_and_other_failures_are_not_retried(
     go: Go, fake_agent: FakeAgent, pauses: list[float]
 ) -> None:
-    throttled = trace(exit_code=1, error=THROTTLED, turns=0, tool_calls=())
+    throttled = trace(exit_code=1, error=THROTTLED, tokens=Tokens(), tool_calls=())
     fake_agent.script("stuck", trace=throttled)
-    fake_agent.script("partial", trace=replace(throttled, turns=2))
+    fake_agent.script("partial", trace=replace(throttled, tokens=Tokens(1, 2, 3, 4)))
 
     stuck, partial = go("stuck"), go("partial")
 
@@ -612,7 +629,7 @@ def test_a_cell_still_throttled_after_three_retries_is_a_startup_error_row_and_o
 def test_a_throttled_follow_up_runs_again_in_its_base_and_follow_ups_of_a_throttled_base_are_startup_errors(
     go: Go, fake_agent: FakeAgent, pauses: list[float]
 ) -> None:
-    throttled = trace(exit_code=1, error=THROTTLED, turns=0, tool_calls=())
+    throttled = trace(exit_code=1, error=THROTTLED, tokens=Tokens(), tool_calls=())
     fake_agent.script("one", earlier=(throttled,), trace=trace(turns=1))
     fake_agent.script("root", trace=trace(turns=1))
 

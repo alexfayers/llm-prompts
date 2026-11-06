@@ -61,7 +61,7 @@ Peak context is the largest prompt sent on one model call. Cost is the agent's o
 
 Runs of A and of B are reused from earlier runs on the same side when nothing that shapes them changed. That includes the pinned build and, for B, `--b-env`. A reused run keeps its agent run and its checks run again against the current scenario.
 
-A run that fails at startup on a throttling error is retried. If it still fails, it is a startup error: it is left out of the pass rate and the gate.
+A run that fails at startup on a throttling or credential error, before any model output or tool call, is retried. If it still fails, it is a startup error: it is left out of the pass rate and the gate.
 
 ## Gate rules
 
