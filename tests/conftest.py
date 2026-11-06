@@ -969,6 +969,7 @@ _KEPT_EXTENSIONS = {
         "role-switch.ts",
         "tower-do-patch.ts",
         "tower-do-slim.ts",
+        "tower-widget.ts",
     )
 }
 _KEPT_CORE = {
