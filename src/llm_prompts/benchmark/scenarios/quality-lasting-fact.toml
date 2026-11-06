@@ -2,7 +2,7 @@ id = "quality-lasting-fact"
 level = "medium"
 workspace = "tiny-py-env"
 project = "demo"
-prompt = "hey can you make fetch() retry once if it hits a DemoError? add tests for it in test_fetch.py and run them. only once though, the upstream rate limiter bans us after 3 failed calls in a minute. no need to commit"
+prompt = "hey can you make fetch() retry once if it hits a DemoError? add tests for it in test_fetch.py and run them and stop once they pass. only once though, the upstream rate limiter bans us after 3 failed calls in a minute. no need to commit"
 
 [[check]]
 kind = "file_regex"

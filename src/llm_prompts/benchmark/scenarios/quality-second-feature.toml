@@ -1,7 +1,7 @@
 id = "quality-second-feature"
 level = "medium"
 base = "quality-simple-task"
-prompt = "ok now add a fetch_all(urls) that returns the bodies in order. tests for it in test_fetch.py too. no need to commit"
+prompt = "ok now add a fetch_all(urls) that returns the bodies in order. tests for it in test_fetch.py too. run them and stop once they pass. no need to commit"
 
 [[check]]
 kind = "file_regex"

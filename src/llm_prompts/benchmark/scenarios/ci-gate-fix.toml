@@ -2,7 +2,7 @@ id = "ci-gate-fix"
 level = "medium"
 workspace = "tiny-py-gate"
 project = "demo"
-prompt = "ci is red, the gate fails. fix it, dont touch the tests"
+prompt = "ci is red, the gate fails. fix it, dont touch the tests. no need to commit"
 
 [[check]]
 kind = "command_exit"

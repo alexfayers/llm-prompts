@@ -2,7 +2,7 @@ id = "quality-simple-task"
 level = "medium"
 workspace = "tiny-py"
 project = "demo"
-prompt = "Make fetch() raise a DemoError when the url does not start with http:// or https://. Add the tests for it to test_fetch.py. No commit needed."
+prompt = "Make fetch() raise a DemoError when the url does not start with http:// or https://. Add the tests for it to test_fetch.py. Change only fetch.py and test_fetch.py, and stop once the tests pass. No commit needed."
 
 [[check]]
 kind = "file_regex"

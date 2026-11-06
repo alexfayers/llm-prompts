@@ -1,7 +1,7 @@
 id = "correction-midtask"
 level = "medium"
 base = "correction-feature-ask"
-prompt = "nah don't add a new param, just hardcode it for now. and keep the tests"
+prompt = "nah don't add a new param, just hardcode it for now. and keep the tests. no need to commit"
 
 [[check]]
 kind = "file_regex"
