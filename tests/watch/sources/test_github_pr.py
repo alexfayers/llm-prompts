@@ -87,6 +87,18 @@ def test_gh_pr_ci_fails_when_a_commit_status_fails(github: FakeGithub) -> None:
     assert GithubPrSource("o/r", 7, None).poll()["ci"] == "fail"
 
 
+def test_gh_pr_ci_ignores_a_pending_commit_status_when_runs_passed(
+    github: FakeGithub,
+) -> None:
+    github.pr([{"status": "completed", "conclusion": "success"}])
+    github.bodies["repos/o/r/commits/abc123/status"] = {
+        "state": "pending",
+        "total_count": 1,
+    }
+
+    assert GithubPrSource("o/r", 7, None).poll()["ci"] == "pass"
+
+
 def test_gh_pr_ci_fails_on_a_failed_run_on_a_later_page(github: FakeGithub) -> None:
     github.pr([{"status": "completed", "conclusion": "success"}])
     first = "repos/o/r/commits/abc123/check-runs?per_page=100"
