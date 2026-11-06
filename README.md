@@ -50,7 +50,7 @@
 | src/llm\_prompts/watch/core/source.py                                         |       21 |        0 |    100% |           |
 | src/llm\_prompts/watch/sources/\_\_init\_\_.py                                |        0 |        0 |    100% |           |
 | src/llm\_prompts/watch/sources/command.py                                     |       36 |        1 |     97% |        55 |
-| src/llm\_prompts/watch/sources/github\_pr.py                                  |       84 |       11 |     87% |27, 42-47, 84-85, 89, 100-101, 113 |
+| src/llm\_prompts/watch/sources/github\_pr.py                                  |       84 |       11 |     87% |29, 44-49, 86-87, 91, 102-103, 115 |
 | tests/conftest.py                                                             |      458 |        4 |     99% |159, 799, 886, 925 |
 | tests/test\_batching.py                                                       |      314 |        0 |    100% |           |
 | tests/test\_build\_wave.py                                                    |      282 |        1 |     99% |       112 |
@@ -94,9 +94,9 @@
 | tests/test\_telemetry.py                                                      |      327 |        0 |    100% |           |
 | tests/test\_todos\_script.py                                                  |       88 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      119 |        0 |    100% |           |
-| tests/watch/sources/test\_github\_pr.py                                       |       60 |        0 |    100% |           |
+| tests/watch/sources/test\_github\_pr.py                                       |       64 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **19999** |  **561** | **97%** |           |
+| **TOTAL**                                                                     | **20003** |  **561** | **97%** |           |
 
 
 ## Setup coverage badge
