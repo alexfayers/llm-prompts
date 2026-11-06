@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { after, beforeEach, describe, test } from "node:test";
+import { after, beforeEach, describe, mock, test } from "node:test";
 import { promisify } from "node:util";
 import { loadExtension, restoreMocks, useEnv, useMemoryFs } from "./helpers.ts";
 
@@ -14,7 +14,9 @@ const DEAD_OWNER = "01a00000-0000-7000-8000-00000000000d";
 const SELF = "01a00000-0000-7000-8000-0000000000e5";
 const WORKSPACE = "w1";
 const REQUEST = "f42f4a53-9d3c-435b-95b4-509250f47ae5";
-const GITHUB_PR = '[{"number": 7}]';
+const HOUR_MS = 60 * 60 * 1000;
+const GH_LIST = "pr list --state merged --author @me --limit 200 --json headRefName";
+const mergedFor = (...branches: string[]) => JSON.stringify(branches.map((headRefName) => ({ headRefName })));
 
 type Json = Record<string, any>;
 type Worktree = { path: string; branch: string; head: string; dirty: boolean; reflog: number; merged: boolean; tip: number };
@@ -270,19 +272,19 @@ describe("sweepWorktrees confirms squash merges on GitHub only", () => {
 	for (const remote of ["https://github.com/owner/repo.git", "git@github.com:owner/repo.git", "ssh://git@github.com/owner/repo.git"]) {
 		test(`GitHub remote ${remote} with a merged pull request is a candidate`, async () => {
 			world.remote = remote;
-			world.gh = GITHUB_PR;
+			world.gh = mergedFor("feat/squashed");
 			const branch = squashed();
 			const result = await sweepWorktrees();
 			assert.deepEqual(result.candidates.map((w: Json) => w.path), [branch.path]);
 			assert.deepEqual(result.kept, []);
-			assert.deepEqual(world.ghCalls, ["pr list --state merged --head feat/squashed --json number"]);
+			assert.deepEqual(world.ghCalls, [GH_LIST]);
 		});
 	}
 
 	for (const remote of [undefined, "https://example.com/github.com/owner/repo", "https://notgithub.com/owner/repo"]) {
 		test(`other remote ${remote} never calls gh and the branch is kept unmerged`, async () => {
 			world.remote = remote;
-			world.gh = GITHUB_PR;
+			world.gh = mergedFor("feat/squashed");
 			squashed();
 			const result = await sweepWorktrees();
 			assert.deepEqual(result.candidates, []);
@@ -290,6 +292,57 @@ describe("sweepWorktrees confirms squash merges on GitHub only", () => {
 			assert.deepEqual(world.ghCalls, []);
 		});
 	}
+
+	test("one gh call covers every worktree and matches branches locally", async () => {
+		world.remote = "https://github.com/owner/repo";
+		world.gh = mergedFor("feat/a", "feat/c");
+		const [a, b, c] = ["a", "b", "c"].map((name) => addWorktree(name, { merged: false }));
+		const result = await sweepWorktrees();
+		assert.deepEqual(result.candidates.map((w: Json) => w.path), [a.path, c.path]);
+		assert.deepEqual(result.kept.map((w: Json) => w.path), [b.path]);
+		assert.deepEqual(world.ghCalls, [GH_LIST]);
+	});
+
+	test("a merged branch is remembered across sweeps without another gh call", async () => {
+		world.remote = "https://github.com/owner/repo";
+		world.gh = mergedFor("feat/squashed");
+		squashed();
+		const ext = await load();
+		await ext.module.sweepWorktrees();
+		world.gh = undefined;
+		const result = await ext.module.sweepWorktrees();
+		assert.equal(result.candidates.length, 1);
+		assert.equal(world.ghCalls.length, 1);
+	});
+
+	test("a not-merged branch is rechecked only after an hour", async () => {
+		world.remote = "https://github.com/owner/repo";
+		world.gh = "[]";
+		squashed();
+		const now = mock.method(Date, "now", () => NOW);
+		const ext = await load();
+		await ext.module.sweepWorktrees();
+		now.mock.mockImplementation(() => NOW + HOUR_MS - 1);
+		await ext.module.sweepWorktrees();
+		assert.equal(world.ghCalls.length, 1);
+		now.mock.mockImplementation(() => NOW + HOUR_MS);
+		await ext.module.sweepWorktrees();
+		assert.equal(world.ghCalls.length, 2);
+	});
+
+	test("a gh error is not remembered as not merged and is not retried within the sweep", async () => {
+		world.remote = "https://github.com/owner/repo";
+		world.gh = undefined;
+		addWorktree("a", { merged: false });
+		addWorktree("b", { merged: false });
+		const ext = await load();
+		await ext.module.sweepWorktrees();
+		assert.equal(world.ghCalls.length, 1);
+		world.gh = mergedFor("feat/a");
+		const result = await ext.module.sweepWorktrees();
+		assert.deepEqual(result.candidates.map((w: Json) => w.branch), ["feat/a"]);
+		assert.equal(world.ghCalls.length, 2);
+	});
 
 	for (const [label, gh] of [["no merged pull request", "[]"], ["gh fails", undefined]] as const) {
 		test(`GitHub branch is kept: ${label}`, async () => {
