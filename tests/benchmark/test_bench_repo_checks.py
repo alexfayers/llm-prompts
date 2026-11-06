@@ -1,9 +1,10 @@
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from benchmark.test_bench_checks import run
+from benchmark.test_bench_checks import claude_reply, run
 from benchmark.traces import make_trace
 from llm_prompts.benchmark import saved
 from llm_prompts.benchmark.scenarios.checks import evaluate
@@ -144,6 +145,42 @@ def test_byte_size_fails_a_file_larger_than_in_the_first_commit(
     (repo / "f.txt").write_text(text)
 
     assert run("byte_size", {"path": "f.txt"}, ws=repo).passed is passed
+
+
+@pytest.mark.parametrize(("text", "passed"), [("one!\n", True), ("one!!\n", False)])
+def test_byte_size_allows_growth_up_to_max_growth_pct(
+    repo: Path, text: str, passed: bool
+) -> None:
+    (repo / "f.txt").write_text(text)
+
+    outcome = run("byte_size", {"path": "f.txt", "max_growth_pct": 25}, ws=repo)
+
+    assert outcome.passed is passed
+
+
+def test_judge_evidence_holds_the_original_of_an_edited_file_next_to_its_new_content(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (repo / "f.txt").write_text("edited\n")
+    inputs: list[str] = []
+    real = subprocess.run
+
+    def fake(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if argv[0] == "git":
+            return real(argv, **kwargs)
+        inputs.append(kwargs["input"])
+        return subprocess.CompletedProcess(argv, 0, claude_reply("PASS"), "")
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    ctx = CheckContext(make_trace(), repo, (), (), judge="claude")
+    spec = CheckSpec("judge", {"rubric": "r", "path": ("f.txt", "g.txt")})
+
+    (outcome,) = evaluate([spec], ctx)
+
+    assert outcome.passed
+    assert "f.txt (original):\none\n" in inputs[0]
+    assert "f.txt:\nedited\n" in inputs[0]
+    assert "g.txt (original)" not in inputs[0]
 
 
 def test_saved_workspace_keeps_the_repo_so_git_checks_can_run_again(

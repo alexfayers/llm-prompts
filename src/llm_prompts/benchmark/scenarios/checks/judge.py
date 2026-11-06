@@ -15,6 +15,8 @@ from llm_prompts.benchmark.scenarios.checks.context import (
     FAILED_ERROR_CHARS,
     CheckContext,
     args_text,
+    first_commit,
+    git,
     matching,
     optional,
 )
@@ -40,11 +42,14 @@ def _evidence(args: Mapping[str, CheckArg], ctx: CheckContext) -> str:
         if isinstance(paths, tuple)
         else []
     )
-    parts = [
-        f"{path}:\n{(ctx.workspace / path).read_text(errors='replace')}"
-        for path in files
-        if (ctx.workspace / path).is_file()
-    ]
+    parts = []
+    for path in files:
+        if (ctx.workspace / path).is_file():
+            current = (ctx.workspace / path).read_text(errors="replace")
+            original = _original(ctx, path)
+            if original is not None and original != current.strip():
+                parts.append(f"{path} (original):\n{original}")
+            parts.append(f"{path}:\n{current}")
     if "name" in args:
         parts += [
             f"{ctx.trace.tool_calls[index].name}:\n{args_text(ctx.trace.tool_calls[index])}"
@@ -62,6 +67,14 @@ def _evidence(args: Mapping[str, CheckArg], ctx: CheckContext) -> str:
     if not (files or "name" in args or args.get("memory") or args.get("failed")):
         parts = [_capped(ctx.trace.final_text)]
     return "\n\n".join(parts)
+
+
+def _original(ctx: CheckContext, path: str) -> str | None:
+    """Return the file as the cell started, or None if the workspace has no such file in its first commit."""
+    try:
+        return git(ctx, "show", f"{first_commit(ctx)}:{path}")
+    except (subprocess.CalledProcessError, IndexError):
+        return None
 
 
 def _capped(text: str) -> str:

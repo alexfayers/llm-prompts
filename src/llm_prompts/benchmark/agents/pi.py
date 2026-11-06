@@ -37,6 +37,8 @@ BUILTIN_TOOLS = {
 FAILED_STOP_REASONS = {"error", "aborted"}
 HOOK_MESSAGE_TYPE = "cline-hooks"
 DELEGATION_TOOLS = "*_agent*"
+PERMISSION_CONFIG = Path(".pi/agent/extensions/pi-permission-system/config.json")
+PATH_EDIT_TOOLS = ("edit", "write", "path_write")
 
 
 def _text(message: Mapping[str, object]) -> str:
@@ -68,6 +70,13 @@ class PiAdapter:
         write_json(config_path, config)
 
     def install_guard(self, template_dir: Path) -> None:
+        """Install the Bash guard, and let edits to rule and skill files run without a prompt that nobody answers."""
+        config_path = template_dir / PERMISSION_CONFIG
+        config = read_json(config_path)
+        permission = config.setdefault("permission", {})
+        for tool in PATH_EDIT_TOOLS:
+            permission[tool] = {"*": "allow"}
+        write_json(config_path, config)
         agent_dir = template_dir / ".pi" / "agent"
         (agent_dir / "extensions").mkdir(parents=True, exist_ok=True)
         extension = resources.files("llm_prompts.benchmark.guard") / "pi.ts"

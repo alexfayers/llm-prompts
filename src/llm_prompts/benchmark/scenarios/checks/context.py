@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Iterator, Mapping
+import subprocess
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from llm_prompts.benchmark.runner.sandbox import SandboxPolicy
+from llm_prompts.benchmark.cell.env import check_env, host_env, with_venv
+from llm_prompts.benchmark.runner.sandbox import SandboxPolicy, wrap
 from llm_prompts.benchmark.types import (
     CheckArg,
     CheckOutcome,
@@ -18,6 +20,7 @@ from llm_prompts.benchmark.types import (
 )
 
 FAILED_ERROR_CHARS = 300
+GIT_TIMEOUT_S = 60
 
 
 @dataclass(frozen=True)
@@ -63,3 +66,35 @@ def matching(
 
 def optional(args: Mapping[str, CheckArg], key: str) -> str | None:
     return str(args[key]) if key in args else None
+
+
+def in_cell(
+    ctx: CheckContext, argv: Sequence[str], timeout: int
+) -> subprocess.CompletedProcess[str]:
+    """Run ``argv`` in the workspace inside the cell's OS sandbox, with only the variables a check needs."""
+    base = ctx.env or (with_venv(host_env(), ctx.venv) if ctx.venv else host_env())
+    return subprocess.run(
+        wrap(argv, ctx.sandbox) if ctx.sandbox else list(argv),
+        cwd=ctx.workspace,
+        env=check_env(base),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout,
+    )
+
+
+def git(ctx: CheckContext, *args: str) -> str:
+    """Run git in the workspace and return its stripped output, raising CalledProcessError on failure."""
+    argv = ["git", *args]
+    result = in_cell(ctx, argv, GIT_TIMEOUT_S)
+    if result.returncode:
+        raise subprocess.CalledProcessError(
+            result.returncode, argv, result.stdout, result.stderr
+        )
+    return result.stdout.strip()
+
+
+def first_commit(ctx: CheckContext) -> str:
+    """Return the first commit of the workspace repo, which holds the files as the cell started."""
+    return git(ctx, "rev-list", "--max-parents=0", "HEAD").splitlines()[0]

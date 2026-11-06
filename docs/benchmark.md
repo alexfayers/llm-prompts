@@ -151,12 +151,12 @@ rubric = "The retries use exponential backoff."
 | `command_exit` | `command`, `exit` (default 0) | The command exits with `exit`, run in the OS sandbox. |
 | `files_unchanged` | `path` (one or a list) | The paths still match the first commit. |
 | `files_changed` | `path` | Any path differs from the first commit. |
-| `byte_size` | `path` | The file is no larger than in the first commit. |
+| `byte_size` | `path`, `max_growth_pct` (default 0) | The file is at most `max_growth_pct` percent larger than in the first commit. |
 | `judge` | `rubric`, `path`, `name`, `args_regex`, `memory`, `failed`, `model` | A minimal judge answers PASS. |
 
 ### Judge
 
-`judge` asks a minimal pi call (or claude when pi is not on PATH) to answer PASS or FAIL on the first line and give its reason after. It sees the rubric and the evidence, each part cut to 2,000 characters: the files in `path`, the args of tool calls matching `name` and `args_regex`, the new memory observations when `memory = true`, the rejected tool calls when `failed = true`, or the final text when none is given. The model is `model` when set, else the agent's default judge model.
+`judge` asks a minimal pi call (or claude when pi is not on PATH) to answer PASS or FAIL on the first line and give its reason after. It sees the rubric and the evidence, each part cut to 2,000 characters: the files in `path` (each edited file preceded by its first-commit original), the args of tool calls matching `name` and `args_regex`, the new memory observations when `memory = true`, the rejected tool calls when `failed = true`, or the final text when none is given. The model is `model` when set, else the agent's default judge model.
 
 The judge's full reply is the check's `detail` in `results.jsonl` and in `judge-<n>.txt` in the run's folder. `report.md` lists every failed judge check under `## Judge reasons`.
 

@@ -252,7 +252,9 @@ def test_judge_verdict_and_call(
 
     assert (outcome.passed, outcome.tokens) == (passed, 405)
 
-    ((argv, kwargs),) = fake_subprocess.calls
+    ((argv, kwargs),) = (
+        call for call in fake_subprocess.calls if call[0][0] == "claude"
+    )
     assert argv[argv.index("--model") + 1] == "x"
     assert argv[argv.index("--tools") + 1] == ""
     assert kwargs["input"].count("x") < 2100 + 100

@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 import re
-import subprocess
 from collections.abc import Mapping, Sequence
 
-from llm_prompts.benchmark.cell.env import check_env, host_env, with_venv
 from llm_prompts.benchmark.cell.memory import (
     MEMORY_TOOL_PREFIX,
     READ_TOOLS,
     observation_keys,
 )
-from llm_prompts.benchmark.runner.sandbox import wrap
 from llm_prompts.benchmark.scenarios.checks.context import (
     FAILED_ERROR_CHARS,
     CheckContext,
     CheckFn,
     args_text,
+    first_commit,
+    git,
+    in_cell,
     matching,
     optional,
 )
@@ -50,7 +50,6 @@ TEST_RUN = r"\bpytest\b"
 COMMAND_EXITED = r"(?i)\bexit(ed)?\b.{0,20}\bcode \d+"
 TEST_SUCCESS = r"\b\d+ passed\b"
 TEST_FAILURE = r"\b\d+ (failed|errors?)\b|\bno tests ran\b"
-GIT_TIMEOUT_S = 60
 COMMAND_TIMEOUT_S = 180
 
 
@@ -219,48 +218,22 @@ def memory_absent(args: Mapping[str, CheckArg], ctx: CheckContext) -> CheckOutco
     return CheckOutcome("memory_absent", True, f"no new observation matches {regex!r}")
 
 
-def _in_cell(
-    ctx: CheckContext, argv: Sequence[str], timeout: int
-) -> subprocess.CompletedProcess[str]:
-    """Run ``argv`` in the workspace inside the cell's OS sandbox, with only the variables a check needs."""
-    base = ctx.env or (with_venv(host_env(), ctx.venv) if ctx.venv else host_env())
-    return subprocess.run(
-        wrap(argv, ctx.sandbox) if ctx.sandbox else list(argv),
-        cwd=ctx.workspace,
-        env=check_env(base),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=timeout,
-    )
-
-
-def _git(ctx: CheckContext, *args: str) -> str:
-    argv = ["git", *args]
-    result = _in_cell(ctx, argv, GIT_TIMEOUT_S)
-    if result.returncode:
-        raise subprocess.CalledProcessError(
-            result.returncode, argv, result.stdout, result.stderr
-        )
-    return result.stdout.strip()
-
-
 def git_state(args: Mapping[str, CheckArg], ctx: CheckContext) -> CheckOutcome:
     """Pass if ``branch`` has ``commits`` commits since ``since``, its tip message matches ``message_regex`` and ``remote`` still has the branch at ``since``."""
     branch, since = str(args["branch"]), str(args["since"])
     problems: list[str] = []
     if "commits" in args:
-        count = int(_git(ctx, "rev-list", "--count", f"{since}..{branch}"))
+        count = int(git(ctx, "rev-list", "--count", f"{since}..{branch}"))
         if count != int(str(args["commits"])):
             problems.append(f"{count} commits on {branch} since {since}")
     if "message_regex" in args:
-        message = _git(ctx, "log", "-1", "--format=%B", branch)
+        message = git(ctx, "log", "-1", "--format=%B", branch)
         if not re.search(str(args["message_regex"]), message):
             problems.append(f"tip message {message!r} lacks {args['message_regex']!r}")
     if "remote" in args:
         remote = str(args["remote"])
-        pushed = _git(ctx, "ls-remote", remote, f"refs/heads/{branch}").split()[:1]
-        if pushed != [_git(ctx, "rev-parse", since)]:
+        pushed = git(ctx, "ls-remote", remote, f"refs/heads/{branch}").split()[:1]
+        if pushed != [git(ctx, "rev-parse", since)]:
             problems.append(f"remote {remote} moved {branch} off {since}")
     return CheckOutcome(
         "git_state", not problems, "; ".join(problems) or f"{branch} as expected"
@@ -270,7 +243,7 @@ def git_state(args: Mapping[str, CheckArg], ctx: CheckContext) -> CheckOutcome:
 def command_exit(args: Mapping[str, CheckArg], ctx: CheckContext) -> CheckOutcome:
     """Pass if the shell ``command`` run in the workspace exits with ``exit`` (default 0)."""
     wanted = int(str(args.get("exit", 0)))
-    result = _in_cell(ctx, ["sh", "-c", str(args["command"])], COMMAND_TIMEOUT_S)
+    result = in_cell(ctx, ["sh", "-c", str(args["command"])], COMMAND_TIMEOUT_S)
     detail = f"exited {result.returncode}, wanted {wanted}"
     if result.returncode != wanted:
         detail += f"\n{(result.stdout + result.stderr)[-FAILED_ERROR_CHARS:]}"
@@ -282,13 +255,9 @@ def _paths(args: Mapping[str, CheckArg]) -> list[str]:
     return list(paths) if isinstance(paths, tuple) else [str(paths)]
 
 
-def _first_commit(ctx: CheckContext) -> str:
-    return _git(ctx, "rev-list", "--max-parents=0", "HEAD").splitlines()[0]
-
-
 def _changed_paths(args: Mapping[str, CheckArg], ctx: CheckContext) -> list[str]:
-    return _git(
-        ctx, "diff", "--name-only", _first_commit(ctx), "--", *_paths(args)
+    return git(
+        ctx, "diff", "--name-only", first_commit(ctx), "--", *_paths(args)
     ).splitlines()
 
 
@@ -313,12 +282,15 @@ def files_changed(args: Mapping[str, CheckArg], ctx: CheckContext) -> CheckOutco
 
 
 def byte_size(args: Mapping[str, CheckArg], ctx: CheckContext) -> CheckOutcome:
-    """Pass if the workspace file is no larger than in the first commit."""
+    """Pass if the workspace file is at most ``max_growth_pct`` percent (default 0) larger than in the first commit."""
     path = str(args["path"])
-    before = int(_git(ctx, "cat-file", "-s", f"{_first_commit(ctx)}:{path}"))
+    before = int(git(ctx, "cat-file", "-s", f"{first_commit(ctx)}:{path}"))
     now = (ctx.workspace / path).stat().st_size
+    limit = before * (100 + int(str(args.get("max_growth_pct", 0)))) // 100
     return CheckOutcome(
-        "byte_size", now <= before, f"{path!r} is {now} bytes, was {before}"
+        "byte_size",
+        now <= limit,
+        f"{path!r} is {now} bytes, was {before}, limit {limit}",
     )
 
 
