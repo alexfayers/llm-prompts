@@ -64,6 +64,10 @@ const BRANCH_PREFIX = "refs/heads/";
 const MAIN_REFS = ["main", "master"].flatMap((name) => [`${BRANCH_PREFIX}${name}`, `refs/remotes/origin/${name}`]);
 const GITHUB_HOST = "github.com";
 const SCP_REMOTE = /^(?:[^@/:]+@)?([^:/]+):(?!\/\/)/;
+const MERGED_PR_LIMIT = 200;
+const mergedBranches = new Set<string>();
+const notMergedCheckedAt = new Map<string, number>();
+let mergedListing: Promise<Set<string> | undefined> | undefined;
 
 async function herdr(args: string[]): Promise<string> {
 	return (await execFileAsync("herdr", args, { timeout: HERDR_TIMEOUT_MS })).stdout;
@@ -217,14 +221,29 @@ async function hasGitHubOrigin(main: Checkout): Promise<boolean> {
 	}
 }
 
-async function hasMergedPullRequest(main: Checkout, branch: string): Promise<boolean> {
-	if (!(await hasGitHubOrigin(main))) return false;
+async function listMergedBranches(main: Checkout): Promise<Set<string> | undefined> {
 	try {
-		const { stdout } = await execFileAsync("gh", ["pr", "list", "--state", "merged", "--head", branch, "--json", "number"], { cwd: main.path, timeout: HERDR_TIMEOUT_MS });
-		return (JSON.parse(stdout) as unknown[]).length > 0;
+		const { stdout } = await execFileAsync("gh", ["pr", "list", "--state", "merged", "--author", "@me", "--limit", String(MERGED_PR_LIMIT), "--json", "headRefName"], { cwd: main.path, timeout: HERDR_TIMEOUT_MS });
+		return new Set((JSON.parse(stdout) as { headRefName: string }[]).map((pullRequest) => pullRequest.headRefName));
 	} catch {
+		return undefined;
+	}
+}
+
+async function hasMergedPullRequest(main: Checkout, branch: string): Promise<boolean> {
+	if (mergedBranches.has(branch)) return true;
+	const checkedAt = notMergedCheckedAt.get(branch);
+	if (checkedAt !== undefined && Date.now() - checkedAt < MS_PER_HOUR) return false;
+	if (!(await hasGitHubOrigin(main))) return false;
+	mergedListing ??= listMergedBranches(main);
+	const merged = await mergedListing;
+	if (!merged) return false;
+	if (!merged.has(branch)) {
+		notMergedCheckedAt.set(branch, Date.now());
 		return false;
 	}
+	mergedBranches.add(branch);
+	return true;
 }
 
 async function gitKeepReason(main: Checkout, checkout: Checkout): Promise<string | undefined> {
@@ -253,6 +272,7 @@ async function keepReasonUnlessCandidate(main: Checkout, checkout: Checkout): Pr
 
 export async function sweepWorktrees(): Promise<WorktreeResult> {
 	const result: WorktreeResult = { candidates: [], kept: [] };
+	mergedListing = undefined;
 	const [main, ...linked] = await git(".", ["worktree", "list", "--porcelain"]).then(parseCheckouts, () => []);
 	for (const checkout of linked) {
 		const entry = { path: checkout.path, branch: checkout.branch };
