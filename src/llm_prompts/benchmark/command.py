@@ -202,12 +202,14 @@ def estimate(
     return "\n".join([line, *unknown])
 
 
-def _reused(options: RunOptions, a: Variant, cells: list[Cell]) -> dict[str, ResultRow]:
+def _reused(
+    options: RunOptions, variant: Variant, cells: list[Cell]
+) -> dict[str, ResultRow]:
     if not options.reuse:
         return {}
-    if a.build is None:
+    if variant.build is None:
         print(
-            f"benchmark: A runs are not reused, because {options.a} has a tool source that is not pinned."
+            f"benchmark: {variant.label.upper()} runs are not reused, because {variant.ref} has a tool source that is not pinned."
             " Use a local checkout or <source>@<commit sha>.",
             file=sys.stderr,
         )
@@ -224,7 +226,7 @@ def _reused(options: RunOptions, a: Variant, cells: list[Cell]) -> dict[str, Res
                 f"benchmark: reused {label(cell)} from {reuse.origin(row)}",
                 file=sys.stderr,
             )
-        elif cell.variant.label == "a":
+        else:
             current = reuse.parts(cell, options.models[cell.agent], options.os_sandbox)
             print(
                 f"benchmark: not reused {label(cell)}: {_difference(cell, current, prior)}",
@@ -293,7 +295,9 @@ def _build_plan(options: RunOptions) -> _Plan:
         "b", options.b, options.agents, options.overlays, options.b_tools
     )
     built.append(replace(b, env=options.b_env))
-    return _Plan(built, plan(built, options.agents, scenarios, repeats), selected)
+    cells = plan(built, options.agents, scenarios, repeats)
+    b_cells = [cell for cell in cells if cell.variant.label == "b"]
+    return _Plan(built, cells, selected | _reused(options, built[1], b_cells))
 
 
 def _execute(options: RunOptions, chosen: _Plan, run_dir: Path) -> list[ResultRow]:

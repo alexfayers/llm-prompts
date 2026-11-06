@@ -55,9 +55,10 @@ def _digest(value: JsonValue | list[JsonValue]) -> str:
 def _parts(cell: Cell, model: str, os_sandbox: bool) -> list[JsonValue] | None:
     if cell.variant.build is None:
         return None
+    build = cell.variant.build[cell.agent]
     return [
         SCHEMA_VERSION,
-        cell.variant.build[cell.agent],
+        [build, dict(cell.variant.env)] if cell.variant.env else build,
         cell.agent,
         model,
         os_sandbox,
@@ -93,7 +94,11 @@ def closest_differences(
     best: tuple[str, list[str]] | None = None
     for row in prior:
         earlier = row.reuse_parts
-        if row.variant != "a" or row.cell_id != cell.id or earlier is None:
+        if (
+            row.variant != cell.variant.label
+            or row.cell_id != cell.id
+            or earlier is None
+        ):
             continue
         differing = [
             name for name, value in current.items() if earlier.get(name) != value
@@ -128,29 +133,23 @@ def select(
     prior: Sequence[ResultRow],
     key_of: Callable[[Cell], str | None],
 ) -> dict[str, ResultRow]:
-    """Return the earlier row by cell id for each A chain that a single earlier run finished cleanly with the same keys.
+    """Return the earlier row by cell id for each chain that a single earlier run finished cleanly on the same side with the same keys.
 
     A base cell and its follow-ups are reused together or not at all, from the latest such run.
     """
-    finished: dict[str, dict[str, ResultRow]] = {}
+    finished: dict[tuple[str, str], dict[str, ResultRow]] = {}
     for row in prior:
-        if (
-            row.variant == "a"
-            and row.reuse_key
-            and row.error is None
-            and saved.exists(cell_dir(row))
-        ):
-            finished.setdefault(row.run_id, {})[row.reuse_key] = row
-    chains: dict[tuple[str, int, str], list[Cell]] = defaultdict(list)
+        if row.reuse_key and row.error is None and saved.exists(cell_dir(row)):
+            finished.setdefault((row.variant, row.run_id), {})[row.reuse_key] = row
+    chains: dict[tuple[str, str, int, str], list[Cell]] = defaultdict(list)
     for cell in cells:
-        if cell.variant.label == "a":
-            chain = cell.agent, cell.repeat, cell.scenario.root.id
-            chains[chain].append(cell)
+        chain = cell.variant.label, cell.agent, cell.repeat, cell.scenario.root.id
+        chains[chain].append(cell)
     reused: dict[str, ResultRow] = {}
-    for chain_cells in chains.values():
+    for (side, *_), chain_cells in chains.items():
         keys = [key_of(cell) or "" for cell in chain_cells]
-        for rows in reversed(finished.values()):
-            if all(key in rows for key in keys):
+        for (variant, _), rows in reversed(finished.items()):
+            if variant == side and all(key in rows for key in keys):
                 reused |= {
                     cell.id: rows[key]
                     for cell, key in zip(chain_cells, keys, strict=True)

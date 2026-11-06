@@ -140,7 +140,7 @@ def test_a_cells_are_reused_automatically_from_the_latest_matching_run_and_marke
 
     assert run() == 0
 
-    assert [p.cell.variant.label for p in fake_agent.executed] == ["b"]
+    assert fake_agent.executed == []
     reused = [
         r for r in _results(bench_dirs, "20260101-000002-aaaa") if r["variant"] == "a"
     ]
@@ -154,7 +154,7 @@ def test_a_cells_are_reused_automatically_from_the_latest_matching_run_and_marke
         bench_dirs.state / "runs" / "20260101-000002-aaaa" / "report.md"
     ).read_text()
     assert "1/1 [21%-100%] (reused from 20260101-000001-aaaa, re-judged)" in report
-    assert "Reused runs: 1 from 20260101-000001-aaaa" in report
+    assert "Reused runs: 2 from 20260101-000001-aaaa" in report
 
 
 @pytest.mark.parametrize(
@@ -200,7 +200,7 @@ def test_a_reused_after_its_checks_change_keeps_the_agent_cell_and_runs_the_new_
 
     run()
 
-    assert [p.cell.variant.label for p in fake_agent.executed] == ["b"]
+    assert fake_agent.executed == []
     (kept,) = [
         r for r in _results(bench_dirs, "20260101-000001-aaaa") if r["variant"] == "a"
     ]
@@ -279,11 +279,7 @@ def test_a_fresh_follow_up_of_a_follow_up_is_reused_together_with_all_its_ancest
 
     assert run() == 0
 
-    assert sorted(p.cell.id for p in fake_agent.executed) == [
-        "b-claude-f1-0",
-        "b-claude-g1-0",
-        "b-claude-s1-0",
-    ]
+    assert fake_agent.executed == []
 
 
 def test_marking_a_scenario_as_the_headline_does_not_stop_its_a_cell_being_reused(
@@ -296,7 +292,7 @@ def test_marking_a_scenario_as_the_headline_does_not_stop_its_a_cell_being_reuse
 
     assert run() == 0
 
-    assert [p.cell.variant.label for p in fake_agent.executed] == ["b"]
+    assert fake_agent.executed == []
 
 
 def test_a_with_an_unpinned_tool_source_warns_and_runs_fresh(
@@ -712,3 +708,25 @@ def test_terminating_a_run_interrupts_it_instead_of_killing_it(
 
     with pytest.raises(KeyboardInterrupt):
         run()
+
+
+def test_b_cells_are_reused_from_an_earlier_run_until_the_b_environment_changes(
+    bench_dirs: BenchDirs,
+    builds: Builds,
+    add: Any,
+    fake_agent: FakeAgent,
+    run_ids: None,
+) -> None:
+    fake_agent.script("s1", trace=trace(tool_calls=OK))
+    assert run() == 0
+    fake_agent.executed.clear()
+
+    assert run() == 0
+    assert fake_agent.executed == []
+    reused = [
+        r for r in _results(bench_dirs, "20260101-000001-aaaa") if r["variant"] == "b"
+    ]
+    assert [r["reused_from"] for r in reused] == ["20260101-000000-aaaa"]
+
+    assert run(b_env={"X": "1"}) == 0
+    assert [p.cell.variant.label for p in fake_agent.executed] == ["b"]

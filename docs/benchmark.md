@@ -13,9 +13,9 @@ Run it from an llm-prompts checkout. Any commit, branch or `:worktree` works for
 | Option | Meaning |
 |---|---|
 | `--a REF`, `--b REF` | Refs to compare (default: `origin/main` and `:worktree`). |
-| `--a-tool NAME=SOURCE`, `--b-tool NAME=SOURCE` | Use this source for a configured tool (such as `mcp-memory`) in that ref only. Repeatable. A remote source must end in `@<40 character commit sha>`, or A runs are not reused. |
+| `--a-tool NAME=SOURCE`, `--b-tool NAME=SOURCE` | Use this source for a configured tool (such as `mcp-memory`) in that ref only. Repeatable. A remote source must end in `@<40 character commit sha>`, or that side's runs are not reused. |
 | `--b-env NAME=VALUE` | Set this environment variable for the agents of ref B only. Repeatable. |
-| `--no-reuse` | Run A again instead of reusing finished A runs. |
+| `--no-reuse` | Run A and B again instead of reusing finished runs. |
 | `--level LEVEL` | `light`, `medium` or `heavy` (default: `light`). A level includes all lower levels. |
 | `--agents LIST` | Comma separated agents (default: `claude,pi`). |
 | `--model AGENT=ID` | Model id for one agent. Repeatable. |
@@ -59,7 +59,7 @@ The run folder under `~/.local/state/llm-prompts/benchmark/runs/` holds:
 
 Peak context is the largest prompt sent on one model call. Cost is the agent's own reported USD cost. Failed test runs count bash calls that ran `pytest` and were rejected or reported a failure.
 
-A runs are reused from earlier runs when nothing that shapes them changed. B always runs fresh. A reused run keeps its agent run and its checks run again against the current scenario.
+Runs of A and of B are reused from earlier runs on the same side when nothing that shapes them changed. That includes the pinned build and, for B, `--b-env`. A reused run keeps its agent run and its checks run again against the current scenario.
 
 A run that fails at startup on a throttling error is retried. If it still fails, it is a startup error: it is left out of the pass rate and the gate.
 
