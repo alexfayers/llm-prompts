@@ -1160,6 +1160,40 @@ def _link_layered_dir(
             shutil.rmtree(existing)
 
 
+def _skill_layers(
+    candidate_dirs: Sequence[Path], name: str, gate: Callable[[Path], bool]
+) -> list[Path]:
+    """List the directories that make up one skill, lowest priority first.
+
+    Args:
+        candidate_dirs: Skill parent directories in priority order (first wins).
+        name: Skill directory name.
+        gate: Predicate a layer holding a ``SKILL.md`` must satisfy.
+    """
+    return [
+        layer
+        for candidate in reversed(candidate_dirs)
+        if (layer := candidate / name).is_dir()
+        and (not (layer / "SKILL.md").is_file() or gate(layer))
+    ]
+
+
+def _skill_part_files(layers: Sequence[Path]) -> list[Path]:
+    """List the part files a skill installs, a later layer overriding an earlier one.
+
+    Args:
+        layers: Skill's source directories, lowest priority first.
+    """
+    return list(
+        {
+            part.name: part
+            for layer in layers
+            for part in sorted(layer.glob("*.md"))
+            if part.name != "SKILL.md"
+        }.values()
+    )
+
+
 def _materialize_skill_dir(
     layers: Sequence[Path], dest: Path, content: str, label: str, managed: set[str]
 ) -> None:
@@ -1251,7 +1285,12 @@ def _materialize_builtin_skill(
     """
     previous_manifest = previous_manifest if previous_manifest is not None else {}
     skill_md = source / "SKILL.md"
-    if skill_md.resolve() in skip_set:
+    if skill_md.resolve() in skip_set or (
+        not isinstance(skip_set, _AllExcept)
+        and any(
+            part.resolve() in skip_set for part in _skill_part_files(layers or [source])
+        )
+    ):
         if _carry_forward(
             agent_name,
             dest,
@@ -1327,12 +1366,7 @@ def _install_skills(
         gate,
     )
     for name, src in resolved:
-        layers = [
-            layer
-            for candidate in reversed(candidate_dirs)
-            if (layer := candidate / name).is_dir()
-            and (not (layer / "SKILL.md").is_file() or gate(layer))
-        ]
+        layers = _skill_layers(candidate_dirs, name, gate)
         _materialize_builtin_skill(
             src,
             dest_root / name,
