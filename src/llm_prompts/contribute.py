@@ -179,7 +179,7 @@ def _pr_list(repo: Path, state: str, fields: str) -> list[Any]:
             )
         except subprocess.CalledProcessError as error:
             raise ExitReason(
-                "pr_list_failed", f"gh pr list failed: {_first_stderr_line(error)}"
+                "pr_list_failed", f"gh pr list failed: {first_stderr_line(error)}"
             ) from error
     return with_retries(
         partial(github_api.pr_list, repo, _API_PR_QUALIFIERS[state], fields.split(","))
@@ -646,12 +646,12 @@ def behind_prs(
     )
 
 
-def _first_stderr_line(error: subprocess.CalledProcessError) -> str:
+def first_stderr_line(error: subprocess.CalledProcessError) -> str:
     """Return the first line of a failed command's stderr."""
     return (error.stderr or "").strip().split("\n")[0]
 
 
-def _pr_title_body(repo: Path, number: int) -> tuple[str, str]:
+def pr_title_body(repo: Path, number: int) -> tuple[str, str]:
     """Return the title and body of PR ``number``."""
     view = _pr_view(repo, number, "title,body")
     return view["title"] or "", view["body"] or ""
@@ -686,13 +686,13 @@ def _refresh_pr_whats(
         branch, (pr, commits, depends_on) = item
         try:
             refreshed = refreshed_pr(
-                *_pr_title_body(repo, pr.number), commits, depends_on
+                *pr_title_body(repo, pr.number), commits, depends_on
             )
             if refreshed is None:
                 return None
             edit_pr(repo, pr.number, *refreshed)
         except subprocess.CalledProcessError as error:
-            return f"{branch}: PR title/What not updated ({_first_stderr_line(error)})"
+            return f"{branch}: PR title/What not updated ({first_stderr_line(error)})"
         return f"{branch}: updated PR title/What {pr.url}"
 
     with ThreadPoolExecutor() as executor:
@@ -723,7 +723,7 @@ def _open_draft_prs(
                 pr_body(template, commits, _branch_depends(commits, depends_on)),
             )
         except subprocess.CalledProcessError as error:
-            return f"{branch}: PR not opened ({_first_stderr_line(error)})"
+            return f"{branch}: PR not opened ({first_stderr_line(error)})"
         return f"{branch}: opened draft PR {url}"
 
     with ThreadPoolExecutor() as executor:
@@ -1258,7 +1258,7 @@ def collect_report(
     except subprocess.CalledProcessError as error:
         behind = (
             "warning: could not check which PRs are behind main "
-            f"({_first_stderr_line(error)})"
+            f"({first_stderr_line(error)})"
         )
     warnings = [
         warning
@@ -1519,7 +1519,7 @@ def run_update(repo: Path, apply: bool, numbers: Collection[int] = ()) -> int:
         try:
             update_pr_branch(repo, open_pr.pr.number)
         except subprocess.CalledProcessError as error:
-            return f"{open_pr.branch}: not updated ({_first_stderr_line(error)})"
+            return f"{open_pr.branch}: not updated ({first_stderr_line(error)})"
         return f"{open_pr.branch}: rebased onto main {open_pr.pr.url}"
 
     with ThreadPoolExecutor() as pool:

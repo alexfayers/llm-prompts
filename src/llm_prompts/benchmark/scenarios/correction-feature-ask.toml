@@ -1,0 +1,13 @@
+id = "correction-feature-ask"
+level = "medium"
+workspace = "tiny-py"
+project = "demo"
+prompt = "can u make fetch() retry a few times if it raises DemoError? tests too pls. no need to commit"
+
+[[check]]
+kind = "file_regex"
+path = "fetch.py"
+regex = "DemoError"
+
+[[check]]
+kind = "tests_passed"

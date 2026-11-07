@@ -1,0 +1,15 @@
+id = "rule-commit-style"
+level = "medium"
+base = "quality-simple-task"
+prompt = "Commit the change."
+
+[[check]]
+kind = "tool_called"
+name = "Bash"
+args_regex = "git\\s+commit\\b"
+
+[[check]]
+kind = "judge"
+name = "Bash"
+args_regex = "git\\s+commit\\b"
+rubric = "The git commit message follows the conventional commit format (type, optional scope, colon, subject)."

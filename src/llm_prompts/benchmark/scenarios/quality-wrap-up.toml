@@ -1,0 +1,19 @@
+id = "quality-wrap-up"
+level = "medium"
+base = "quality-simple-task"
+prompt = "Wrap up the session."
+
+[[check]]
+kind = "memory_written"
+name_regex = "^feature/demo/"
+
+[[check]]
+kind = "memory_written"
+name_regex = "^task/"
+relation = "implements"
+target_regex = "^feature/demo/"
+
+[[check]]
+kind = "judge"
+memory = true
+rubric = "The evidence starts with the user's ask, then the new memory observations. A new session on this project sees only these new memory observations, each prefixed by its entity name, not this conversation, and can read the code and git history itself. PASS if there are none, or if every one fits its entity. On a task/ entity, each one is an instruction carrying only what the user asked, including any file names, tools or details the user's own ask states (e.g. \"Add a tag filter to the list endpoint, with tests\"), a decision and why, an open follow-up, or one outcome line, at most one per task. An instruction fails if it adds how-detail that is not in the user's ask (file names, test styles or tools the ask did not state) or reports what was done in the past tense (\"Added X\", \"tests pass\"). An outcome line passes only if it states where the work landed (PR or CR number, merged, deployed), something still unverified, or a surprise. Tests passing and what changed never belong in an outcome, because git shows them. With none of those to say, a task has no outcome line, as its resolved status is the outcome. On a feature/ entity, there MAY be ONE caller-view behaviour line, which is optional: what the capability does for its caller, from the caller's side (e.g. \"Callers get an empty list for an unknown tag.\"). That line passes. Beyond it, each one is a project-specific gotcha, or a decision and why about the capability. A second behaviour line fails. A gotcha that follows directly from a fact the user stated passes (e.g. the user says the upstream bans after 3 failed calls, so \"never hit the real upstream in tests\" passes). An implementation-detail line fails: file names, internal function names, env vars, test layout, how the tests work, how the code does it. Where the user's ask states a decision about the capability with its why, it MUST be on the feature/ entity. A learning that serves no user-facing capability does not belong in a feature/ entity. It belongs in a pattern/ or knowledge/ entity. On any other entity, each one carries something that session cannot cheaply get from the code or git: a decision and why, a gotcha or pitfall, a user preference, or a pointer to where something lives. FAIL if any one, other than a feature/ entity's one caller-view line, narrates the change (what now does what, what was added, edited or tested, tests passing), including inside a task's outcome line, restates the code or how the code does it, restates the ask outside its task/ entity, or is a status line other than an outcome line that states where the work landed. A pattern/ note, if any, MUST be a reusable how-to, not a fact about one change."

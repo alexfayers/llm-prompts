@@ -1,0 +1,28 @@
+id = "recall-multi-step"
+level = "heavy"
+workspace = "tiny-py"
+project = "demo"
+timeout_s = 600
+prompt = "Add retries to fetch() so that it raises the project's error type after the last failed attempt. No new tests or commit needed."
+
+[[memory]]
+name = "knowledge/demo-retry-policy"
+entityType = "knowledge"
+observations = ["Retries in the demo project use exponential backoff 2^n seconds, max 3 retries."]
+relations = [{ target = "project/demo", type = "part-of" }]
+
+[[memory]]
+name = "knowledge/demo-error-style"
+entityType = "knowledge"
+observations = ["Every error raised in the demo project must be a DemoError from errors.py."]
+relations = [{ target = "project/demo", type = "part-of" }]
+
+[[check]]
+kind = "memory_recalled"
+entities = ["knowledge/demo-retry-policy", "knowledge/demo-error-style"]
+before = "Edit|Write"
+
+[[check]]
+kind = "judge"
+path = "fetch.py"
+rubric = "fetch() retries with exponential backoff (2^n seconds, at most 3 retries) and raises DemoError after the last failed attempt."

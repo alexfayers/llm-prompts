@@ -1,0 +1,15 @@
+id = "quality-lasting-fact"
+level = "medium"
+workspace = "tiny-py-env"
+project = "demo"
+prompt = "hey can you make fetch() retry once if it hits a DemoError? add tests for it in test_fetch.py and run them and stop once they pass. only once though, the upstream rate limiter bans us after 3 failed calls in a minute. no need to commit"
+
+[[check]]
+kind = "file_regex"
+path = "fetch.py"
+regex = "except[^\\n]*DemoError"
+
+[[check]]
+kind = "judge"
+path = "test_fetch.py"
+rubric = "The tests added to test_fetch.py check behaviour that can really fail: a DemoError on the first call and then success returns the body, and a second consecutive DemoError propagates, so fetch() retries exactly once. None is tautological, only asserts on a mock, or repeats another test."

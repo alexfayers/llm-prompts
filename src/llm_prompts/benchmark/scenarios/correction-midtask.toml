@@ -1,0 +1,32 @@
+id = "correction-midtask"
+level = "medium"
+base = "correction-feature-ask"
+prompt = "nah don't add a new param, just hardcode it for now. and keep the tests. no need to commit"
+
+[[check]]
+kind = "file_regex"
+path = "fetch.py"
+regex = "^def fetch\\(url: str\\) -> str:"
+
+[[check]]
+kind = "file_regex"
+path = "test_fetch.py"
+regex = "def test_fetch_returns_body"
+
+[[check]]
+kind = "file_regex"
+path = "test_fetch.py"
+regex = "(?i)retr|attempt"
+
+[[check]]
+kind = "command_exit"
+command = "python3 -m pytest -q"
+
+[[check]]
+kind = "judge"
+path = ["fetch.py", "test_fetch.py"]
+rubric = "fetch() still takes only url and still retries a few times on DemoError, with the number of retries hardcoded. FAIL if fetch() or any helper has a new retry-count or similar parameter, option or config constant that the caller can set, or leaves one unused or half-removed (a default argument, a leftover mention in a docstring, a test that passes it). The tests still cover the retry and the original behaviour, none was deleted or skipped to make this pass."
+
+[[check]]
+kind = "judge"
+rubric = "The evidence is the agent's final reply after the user told it to drop the new parameter and hardcode it. PASS only if the reply is short (a few sentences at most) and just reports that it is done. FAIL if it argues with or questions the correction, apologises at length, restates the plan or the user's instruction, or lists what it changed step by step, or reports saving the correction to memory, or offers or asks about a rule or skill change."

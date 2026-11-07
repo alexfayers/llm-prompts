@@ -1,0 +1,25 @@
+id = "rule-tdd-slice"
+level = "heavy"
+workspace = "tiny-py"
+project = "demo"
+timeout_s = 600
+prompt = "Add a function normalize_url(url) to fetch.py that lowercases the url and removes a trailing slash. Use test-driven development: put the test in a new file test_normalize.py."
+
+[[check]]
+kind = "tool_called"
+name = "Bash"
+args_regex = "pytest"
+before = "Edit|Write"
+before_args_regex = "(?m)(^|/)fetch\\.py$"
+
+[[check]]
+kind = "tool_called"
+name = "Bash"
+args_regex = "pytest"
+before = "Bash"
+before_args_regex = "(sed\\s+-\\w*i[^\\n]*[\\s/]|tee\\s+(-a\\s+)?(\\S*/)?|>>?\\s*(\\S*/)?)fetch\\.py\\b"
+
+[[check]]
+kind = "judge"
+path = ["test_normalize.py", "fetch.py"]
+rubric = "fetch.py defines normalize_url, which lowercases the url and removes a trailing slash, and test_normalize.py tests it."

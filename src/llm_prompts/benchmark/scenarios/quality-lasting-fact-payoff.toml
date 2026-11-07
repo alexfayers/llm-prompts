@@ -1,0 +1,24 @@
+id = "quality-lasting-fact-payoff"
+level = "medium"
+base = "quality-lasting-fact-wrap-up"
+fresh = true
+headline = true
+prompt = "can you make fetch() also retry on timeouts? add tests for it and make sure they pass. no need to commit"
+
+[[check]]
+kind = "judge"
+path = "fetch.py"
+rubric = "The evidence is fetch.py after a change that makes fetch() also retry on timeouts. PASS only if fetch() retries at most once in total: for any one fetch() call, the upstream request (the call that can raise DemoError or a timeout) runs at most twice, whatever mix of DemoError and timeout errors it raises, and a second consecutive failure of either kind propagates. FAIL if any path can make three or more requests, for example a separate retry for timeouts on top of the DemoError retry, nested retries, or a retry loop with more than two attempts. Also FAIL if timeouts are not retried."
+
+[[check]]
+kind = "file_regex"
+path = "test_fetch.py"
+regex = "(?i)timeout"
+
+[[check]]
+kind = "not_called"
+name = "(?i)bash"
+text_regex = "RuntimeError: unknown environment"
+
+[[check]]
+kind = "tests_passed"
