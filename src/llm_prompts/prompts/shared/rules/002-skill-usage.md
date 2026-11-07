@@ -36,6 +36,6 @@ You MUST use the `git-usage` skill before interacting with git in **ANY** way, i
 
 Where a `HANDOFF.md` is present in the workspace at session start, or the user points you at a handoff doc (their own or another agent's), you **MUST** use the `pickup` skill before doing anything else with it - including before reading it in full or deciding it is stale. MUST NOT re-verify claims the handoff or memory already states as fact.
 
-## Editing rules or skills
+## llm-prompts
 
-You MUST use the `llm-prompts-edit` skill before creating, editing, or deleting any rule or skill source file in this repo.
+You MUST load the `llm-prompts` skill and follow its `edit.md` before creating, editing, or deleting any rule or skill source file in this repo, and its `setup.md` before running `llm-prompts setup`, `update` or `install` or changing its config.
