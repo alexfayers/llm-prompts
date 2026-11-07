@@ -22,7 +22,7 @@ from llm_prompts.benchmark.cell import variants
 from llm_prompts.benchmark.cell.memory import MemoryStartError
 from llm_prompts.benchmark.command import RunOptions
 from llm_prompts.benchmark.runner import process
-from llm_prompts.benchmark.types import PreparedCell, ToolCall, Variant
+from llm_prompts.benchmark.types import PreparedCell, Tokens, ToolCall, Variant
 from llm_prompts.cli import main
 
 pytestmark = pytest.mark.usefixtures(
@@ -474,7 +474,18 @@ def test_cli_options_reach_run_options_and_exit_code_is_returned() -> None:
     code, defaults = cli(returns=1)
     _, calls = cli(
         *["--a", "v1", "--b", "v2", "--level", "medium", "--agents", "pi,claude,pi"],
-        *["--model", "pi=x", "--repeats", "4", "-j", "2", "--scenario", "s1"],
+        *[
+            "--model",
+            "pi=x",
+            "--repeats",
+            "4",
+            "--max-repeats",
+            "2",
+            "-j",
+            "2",
+            "--scenario",
+            "s1",
+        ],
         *["--no-overlays", "--no-os-sandbox", "--estimate"],
         *["--judge", "claude"],
         *["--a-tool", "mcp-memory=/m/a", "--b-tool", "mcp-memory=/m/b"],
@@ -485,7 +496,7 @@ def test_cli_options_reach_run_options_and_exit_code_is_returned() -> None:
     assert calls == [
         RunOptions(
             a="v1", b="v2", level="medium", agents=("pi", "claude"),
-            models={**DEFAULT_MODELS, "pi": "x"}, repeats=4, jobs=2, scenarios=("s1",),
+            models={**DEFAULT_MODELS, "pi": "x"}, repeats=4, max_repeats=2, jobs=2, scenarios=("s1",),
             overlays=False, os_sandbox=False, estimate_only=True, judge="claude",
             a_tools={"mcp-memory": "/m/a"}, b_tools={"mcp-memory": "/m/b"},
             b_env={"FLAG": "0"},
@@ -730,3 +741,112 @@ def test_b_cells_are_reused_from_an_earlier_run_until_the_b_environment_changes(
 
     assert run(b_env={"X": "1"}) == 0
     assert [p.cell.variant.label for p in fake_agent.executed] == ["b"]
+
+
+@pytest.fixture
+def sides(
+    monkeypatch: pytest.MonkeyPatch, fake_agent: FakeAgent
+) -> Callable[..., None]:
+    def script(a: Any, b: Any) -> None:
+        def execute(prepared: PreparedCell, *args: Any) -> Any:
+            fake_agent.execute(prepared, *args)
+            return a if prepared.cell.variant.label == "a" else b
+
+        monkeypatch.setattr(process, "execute", execute)
+
+    return script
+
+
+def _repeats(fake_agent: FakeAgent, side: str) -> list[int]:
+    return sorted(
+        p.cell.repeat for p in fake_agent.executed if p.cell.variant.label == side
+    )
+
+
+def test_a_scenario_runs_once_per_side_and_again_up_to_the_cap_only_while_a_and_b_differ_on_pass(
+    builds: Builds, add: Any, fake_agent: FakeAgent, sides: Callable[..., None]
+) -> None:
+    sides(trace(tool_calls=OK), trace(tool_calls=OK))
+    assert run() == 0
+    assert (_repeats(fake_agent, "a"), _repeats(fake_agent, "b")) == ([0], [0])
+    fake_agent.executed.clear()
+
+    sides(trace(tool_calls=OK), trace(tool_calls=()))
+
+    run(reuse=False)
+    assert (_repeats(fake_agent, "a"), _repeats(fake_agent, "b")) == (
+        [0, 1, 2],
+        [0, 1, 2],
+    )
+    fake_agent.executed.clear()
+
+    run(reuse=False, max_repeats=2)
+    assert (_repeats(fake_agent, "a"), _repeats(fake_agent, "b")) == ([0, 1], [0, 1])
+    fake_agent.executed.clear()
+
+    run(reuse=False, repeats=2)
+    assert (_repeats(fake_agent, "a"), _repeats(fake_agent, "b")) == ([0, 1], [0, 1])
+
+
+def test_a_cost_rise_over_the_gate_limit_adds_repeats_even_when_both_sides_pass(
+    builds: Builds, add: Any, fake_agent: FakeAgent, sides: Callable[..., None]
+) -> None:
+    sides(trace(tool_calls=OK, cost_usd=1.0), trace(tool_calls=OK, cost_usd=2.0))
+
+    run(reuse=False)
+
+    assert _repeats(fake_agent, "b") == [0, 1, 2]
+
+
+def test_reused_runs_count_toward_the_repeats_and_later_repeats_are_reused_too(
+    builds: Builds, add: Any, fake_agent: FakeAgent, sides: Callable[..., None]
+) -> None:
+    sides(trace(tool_calls=OK), trace(tool_calls=()))
+    run(repeats=2)
+    fake_agent.executed.clear()
+
+    run()
+
+    assert sorted(p.cell.id for p in fake_agent.executed) == [
+        "a-claude-s1-2",
+        "b-claude-s1-2",
+    ]
+
+
+def test_a_side_that_only_has_startup_errors_gets_more_repeats_and_a_setup_error_stops_them(
+    builds: Builds, add: Any, fake_agent: FakeAgent, sides: Callable[..., None]
+) -> None:
+    throttled = trace(
+        exit_code=1, error="rate exceeded", tokens=Tokens(), tool_calls=()
+    )
+    sides(trace(tool_calls=OK), throttled)
+
+    run(reuse=False)
+
+    assert _repeats(fake_agent, "a") == [0, 1, 2]
+    fake_agent.executed.clear()
+    sides(trace(tool_calls=OK), trace(exit_code=1, error="auth failed"))
+
+    run(reuse=False, fail_fast=True, jobs=1)
+
+    assert _repeats(fake_agent, "a") == [0]
+
+
+def test_estimate_without_repeats_shows_one_run_per_side_and_the_most_runs(
+    bench_dirs: BenchDirs, builds: Builds, add: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = bench_dirs.state / "runs" / "r" / "results.jsonl"
+    path.parent.mkdir(parents=True)
+    row: dict[str, Any] = {
+        "scenario": "s1", "agent": "claude", "variant": "a", "run_id": "r",
+        "cell_id": "a-claude-s1-0", "tokens": {"input": 6000}, "error": None,
+        "context": 40000, "cost_usd": 0.25,
+    }  # fmt: skip
+    path.write_text(json.dumps(row) + "\n")
+
+    assert run(estimate_only=True) == 0
+
+    assert capsys.readouterr().out == (
+        "Estimated tokens: ~12,000 with 1 run per side, up to ~36,000 with 3,"
+        " peak context ~40,000, cost ~$0.50 to ~$1.50 (A: 0 of 1 cells reused)\n"
+    )

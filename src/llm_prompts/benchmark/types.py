@@ -11,10 +11,6 @@ from typing import Any, Literal
 Level = Literal["light", "medium", "heavy"]
 Agent = Literal["claude", "pi"]
 
-LEVEL_REPEATS: Mapping[Level, int] = MappingProxyType(
-    {"light": 1, "medium": 3, "heavy": 5}
-)
-
 DEFAULT_FAIL_FAST_AFTER = 3
 WORKTREE = ":worktree"
 SCHEMA_VERSION = 8

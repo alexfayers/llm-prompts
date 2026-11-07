@@ -19,7 +19,8 @@ Run it from an llm-prompts checkout. Any commit, branch or `:worktree` works for
 | `--level LEVEL` | `light`, `medium` or `heavy` (default: `light`). A level includes all lower levels. |
 | `--agents LIST` | Comma separated agents (default: `claude,pi`). |
 | `--model AGENT=ID` | Model id for one agent. Repeatable. |
-| `--repeats N` | Runs per scenario, agent and ref. Overrides the level default (light 1, medium 3, heavy 5). |
+| `--repeats N` | Run every scenario exactly N times per agent and ref. Without it, each runs once and then repeats, see [Repeats](#repeats). |
+| `--max-repeats N` | Without `--repeats`, the most runs per scenario, agent and ref (default: 3). |
 | `--overlays`, `--no-overlays` | Use the configured overlays or not (default: on). |
 | `-j N`, `--jobs N` | Parallel runs (default: `jobs` under `[benchmark]` in `config.toml`, else 4). |
 | `--scenario ID` | Run only this scenario. Repeatable. |
@@ -62,6 +63,16 @@ Peak context is the largest prompt sent on one model call. Cost is the agent's o
 Runs of A and of B are reused from earlier runs on the same side when nothing that shapes them changed. That includes the pinned build and, for B, `--b-env`. A reused run keeps its agent run and its checks run again against the current scenario.
 
 A run that fails at startup on a throttling or credential error, before any model output or tool call, is retried. If it still fails, it is a startup error: it is left out of the pass rate and the gate.
+
+## Repeats
+
+Without `--repeats`, every scenario and agent runs once on each side. It runs again, on both sides, while the runs so far show a difference, up to `--max-repeats`:
+
+- A and B have different pass rates.
+- The context, cost or time rise is over its limit in the `[gate]`.
+- A side has no counted run, because every run was a startup error.
+
+A scenario with a follow-up repeats as a whole chain. Reused runs count as runs. A repeat is also reused when an earlier run has it. Each round waits for the previous one, and the runs of a round share the `-j` slots. With `--fail-fast`, a setup error stops the next rounds, and runs are not skipped for repeated failures of one check. The `--estimate` line shows the cost of one run per side and the most.
 
 ## Gate rules
 

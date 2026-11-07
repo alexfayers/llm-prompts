@@ -401,6 +401,22 @@ def _breaches(delta: ScenarioDelta) -> list[str]:
     return breaches
 
 
+def needs_more_runs(delta: ScenarioDelta) -> bool:
+    """Return whether another repeat could settle the scenario: A and B differ on pass rate, a gated metric rises over its limit, or a side has no counted run.
+
+    A scenario with skipped runs needs no more.
+    """
+    a, b = delta.a, delta.b
+    if a.skipped or b.skipped:
+        return False
+    return (
+        not a.total
+        or not b.total
+        or a.passed * b.total != b.passed * a.total
+        or bool(_rises(delta))
+    )
+
+
 def gate_notes(deltas: Sequence[ScenarioDelta]) -> tuple[str, ...]:
     """Return one line per rule left out of the gate for want of enough runs or a clear difference."""
     return tuple(line for delta in deltas for line in _notes(delta))

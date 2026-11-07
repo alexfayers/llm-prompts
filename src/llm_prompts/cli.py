@@ -927,7 +927,13 @@ def _run_command(run: telemetry.Run) -> int | None:
         "--repeats",
         type=int,
         metavar="N",
-        help="Runs per scenario, agent and ref (default: per level).",
+        help="Run every scenario this many times per agent and ref (default: one, then more while A and B differ).",
+    )
+    add(
+        "--max-repeats",
+        type=int,
+        metavar="N",
+        help="Most runs per scenario, agent and ref when --repeats is not given (default: 3).",
     )
     add(
         "--overlays",

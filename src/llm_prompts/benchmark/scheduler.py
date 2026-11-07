@@ -772,14 +772,14 @@ def plan(
     variants: Sequence[Variant],
     agents: Sequence[Agent],
     scenarios: Sequence[Scenario],
-    repeats: int,
+    repeats: Sequence[int],
 ) -> list[Cell]:
-    """Return the cells to run: every variant, agent, scenario and repeat."""
+    """Return the cells to run: every variant, agent and scenario for each of the ``repeats`` indexes."""
     return [
         Cell(variant, agent, scenario, repeat)
         for scenario in scenarios
         for agent in agents
         if agent in scenario.agents
-        for repeat in range(repeats)
+        for repeat in repeats
         for variant in variants
     ]

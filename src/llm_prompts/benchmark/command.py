@@ -10,7 +10,7 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import cast
+from typing import cast, get_args
 
 from llm_prompts import setup, size_report
 from llm_prompts.benchmark import disk, paths, reuse
@@ -19,13 +19,15 @@ from llm_prompts.benchmark.agents.adapter import VariantBuildError
 from llm_prompts.benchmark.cell import memory, variants
 from llm_prompts.benchmark.cell.prepare import IsolationBreach
 from llm_prompts.benchmark.cell.shared import remove_stale_roots
-from llm_prompts.benchmark.fail_fast import SETUP_ERROR
+from llm_prompts.benchmark.fail_fast import SETUP_ERROR, is_setup_error
 from llm_prompts.benchmark.report import estimate as report_estimate
 from llm_prompts.benchmark.report import pr as report_pr
 from llm_prompts.benchmark.report.compare import (
+    MIN_GATED_RUNS,
     Report,
     compare,
     judge_reasons,
+    needs_more_runs,
     size_changes,
     usage,
     verdict,
@@ -41,7 +43,6 @@ from llm_prompts.benchmark.scheduler import chain_sizes, label, plan, rescore
 from llm_prompts.benchmark.scheduler import run as run_cells
 from llm_prompts.benchmark.types import (
     DEFAULT_FAIL_FAST_AFTER,
-    LEVEL_REPEATS,
     WORKTREE,
     Agent,
     Cell,
@@ -94,6 +95,7 @@ class RunOptions:
     agents: tuple[Agent, ...] = tuple(AGENTS)
     models: Mapping[Agent, str] = DEFAULT_MODELS
     repeats: int | None = None
+    max_repeats: int = MIN_GATED_RUNS
     overlays: bool = True
     jobs: int = DEFAULT_JOBS
     scenarios: tuple[str, ...] = ()
@@ -116,7 +118,7 @@ class RunOptions:
         defaults = cls()
         configured = setup.read_config().get("benchmark", {}).get("jobs", defaults.jobs)
         level = args.level or defaults.level
-        if level not in LEVEL_REPEATS:
+        if level not in get_args(Level):
             raise ValueError(f"unknown level: {level}")
         models = dict(defaults.models)
         for entry in args.model or ():
@@ -139,6 +141,9 @@ class RunOptions:
             repeats=None
             if args.repeats is None
             else _at_least_one("repeats", args.repeats),
+            max_repeats=defaults.max_repeats
+            if args.max_repeats is None
+            else _at_least_one("max-repeats", args.max_repeats),
             overlays=args.overlays,
             jobs=_at_least_one("jobs", configured if args.jobs is None else args.jobs),
             scenarios=tuple(args.scenario or ()),
@@ -162,11 +167,6 @@ class RunOptions:
         )
 
 
-def repeats_for(options: RunOptions) -> int:
-    """Return the repeat count, from the options or the level default."""
-    return options.repeats or LEVEL_REPEATS[options.level]
-
-
 def _scenarios(options: RunOptions) -> list[Scenario]:
     return scenarios.load(options.level, options.agents, options.scenarios)
 
@@ -177,42 +177,56 @@ def estimate(
     reused: Mapping[str, ResultRow] | None = None,
     cells: Sequence[Cell] = (),
 ) -> str:
-    """Return a one-paragraph token and cost estimate for the chosen scenarios, leaving out the A cells in ``reused``."""
-    result = report_estimate.estimate(
-        _scenarios(options) if scenarios is None else scenarios,
-        options.agents,
-        repeats_for(options),
-        Counter(
-            (cell.scenario.id, cell.agent)
-            for cell in cells
-            if cell.id in (reused or {})
-        ),
+    """Return a one-paragraph token and cost estimate for the chosen scenarios, leaving out the A cells in ``reused``.
+
+    Without ``--repeats`` it gives the least, one run per side, and the most, ``max_repeats`` runs per side.
+    """
+    chosen = _scenarios(options) if scenarios is None else scenarios
+    adaptive = options.repeats is None and options.max_repeats > 1
+    runs = (1, options.max_repeats) if adaptive else (options.repeats or 1,)
+    least, most = (
+        report_estimate.estimate(
+            chosen,
+            options.agents,
+            count,
+            Counter(
+                (cell.scenario.id, cell.agent)
+                for cell in cells
+                if cell.repeat < count and cell.id in (reused or {})
+            ),
+        )
+        for count in (runs[0], runs[-1])
     )
-    line = f"Estimated tokens: ~{result.total_tokens:,}"
-    if result.context:
-        line += f", peak context ~{result.context:,}"
-    if result.cost_usd is not None:
-        line += f", cost ~${result.cost_usd:.2f}"
+    line = f"Estimated tokens: ~{least.total_tokens:,}"
+    if adaptive:
+        line += f" with 1 run per side, up to ~{most.total_tokens:,} with {runs[-1]}"
+    if most.context:
+        line += f", peak context ~{most.context:,}"
+    if least.cost_usd is not None and most.cost_usd is not None:
+        line += f", cost ~${least.cost_usd:.2f}"
+        if adaptive:
+            line += f" to ~${most.cost_usd:.2f}"
     if options.reuse:
-        line += f" (A: {result.reused_cells} of {result.a_cells} cells reused"
-        if result.reused_cells and result.saved_usd is not None:
-            line += f", ~${result.saved_usd:.2f} saved"
+        line += f" (A: {least.reused_cells} of {least.a_cells} cells reused"
+        if least.reused_cells and least.saved_usd is not None:
+            line += f", ~${least.saved_usd:.2f} saved"
         line += ")"
-    unknown = [f"No past runs: {name} ({agent})" for name, agent in result.unknown]
+    unknown = [f"No past runs: {name} ({agent})" for name, agent in least.unknown]
     return "\n".join([line, *unknown])
 
 
 def _reused(
-    options: RunOptions, variant: Variant, cells: list[Cell]
+    options: RunOptions, variant: Variant, cells: list[Cell], quiet: bool = False
 ) -> dict[str, ResultRow]:
     if not options.reuse:
         return {}
     if variant.build is None:
-        print(
-            f"benchmark: {variant.label.upper()} runs are not reused, because {variant.ref} has a tool source that is not pinned."
-            " Use a local checkout or <source>@<commit sha>.",
-            file=sys.stderr,
-        )
+        if not quiet:
+            print(
+                f"benchmark: {variant.label.upper()} runs are not reused, because {variant.ref} has a tool source that is not pinned."
+                " Use a local checkout or <source>@<commit sha>.",
+                file=sys.stderr,
+            )
         return {}
     prior = reuse.load()
     reused = reuse.select(
@@ -220,6 +234,17 @@ def _reused(
         prior,
         lambda cell: reuse.key(cell, options.models[cell.agent], options.os_sandbox),
     )
+    if not quiet:
+        _announce(options, cells, reused, prior)
+    return reused
+
+
+def _announce(
+    options: RunOptions,
+    cells: Sequence[Cell],
+    reused: Mapping[str, ResultRow],
+    prior: Sequence[ResultRow],
+) -> None:
     for cell in cells:
         if row := reused.get(cell.id):
             print(
@@ -232,7 +257,6 @@ def _reused(
                 f"benchmark: not reused {label(cell)}: {_difference(cell, current, prior)}",
                 file=sys.stderr,
             )
-    return reused
 
 
 def _difference(
@@ -273,42 +297,49 @@ def run(options: RunOptions) -> int:
 @dataclass(frozen=True)
 class _Plan:
     built: list[Variant]
+    scenarios: list[Scenario]
     cells: list[Cell]
     selected: Mapping[str, ResultRow]
 
 
 def _build_plan(options: RunOptions) -> _Plan:
-    """Build side A, print the estimate and, unless only estimating, build side B and plan the cells."""
+    """Build side A, print the estimate and, unless only estimating, build side B and plan the first cells."""
     scenarios = _scenarios(options)
-    repeats = repeats_for(options)
     built = [
         variants.build(
             "a", options.a, options.agents, options.overlays, options.a_tools
         )
     ]
-    a_cells = plan(built, options.agents, scenarios, repeats)
+    a_cells = plan(built, options.agents, scenarios, range(options.repeats or 1))
     selected = _reused(options, built[0], a_cells)
-    print(estimate(options, scenarios, selected, a_cells))
+    most = plan(
+        built, options.agents, scenarios, range(options.repeats or options.max_repeats)
+    )
+    print(
+        estimate(options, scenarios, _reused(options, built[0], most, quiet=True), most)
+    )
     if options.estimate_only:
-        return _Plan(built, [], selected)
+        return _Plan(built, scenarios, [], selected)
     b = variants.build(
         "b", options.b, options.agents, options.overlays, options.b_tools
     )
     built.append(replace(b, env=options.b_env))
-    cells = plan(built, options.agents, scenarios, repeats)
+    cells = plan(built, options.agents, scenarios, range(options.repeats or 1))
     b_cells = [cell for cell in cells if cell.variant.label == "b"]
-    return _Plan(built, cells, selected | _reused(options, built[1], b_cells))
+    return _Plan(
+        built, scenarios, cells, selected | _reused(options, built[1], b_cells)
+    )
 
 
-def _execute(options: RunOptions, chosen: _Plan, run_dir: Path) -> list[ResultRow]:
+def _run_round(
+    options: RunOptions,
+    cells: list[Cell],
+    selected: Mapping[str, ResultRow],
+    run_dir: Path,
+) -> list[ResultRow]:
     """Re-score the reused cells, run the rest and return one row per cell."""
-    cells = chosen.cells
     reused = rescore(
-        [
-            (cell, chosen.selected[cell.id])
-            for cell in cells
-            if cell.id in chosen.selected
-        ],
+        [(cell, selected[cell.id]) for cell in cells if cell.id in selected],
         options.jobs,
         options.models,
         run_dir,
@@ -338,6 +369,44 @@ def _execute(options: RunOptions, chosen: _Plan, run_dir: Path) -> list[ResultRo
         )
     }
     return [reused.get(cell.id) or fresh[cell.id] for cell in cells]
+
+
+def _next_cells(
+    options: RunOptions, chosen: _Plan, rows: list[ResultRow], repeat: int
+) -> list[Cell]:
+    """Return the cells of repeat ``repeat`` for the scenarios and agents whose runs so far still differ between A and B."""
+    if options.fail_fast and any(
+        (row.skipped or "").startswith(SETUP_ERROR)
+        or (row.error and is_setup_error(row.error))
+        for row in rows
+    ):
+        return []
+    roots = {scenario.id: scenario.root.id for scenario in chosen.scenarios}
+    open_ = {
+        (roots[delta.scenario], delta.agent)
+        for delta in compare(rows)
+        if needs_more_runs(delta)
+    }
+    return [
+        cell
+        for cell in plan(chosen.built, options.agents, chosen.scenarios, [repeat])
+        if (cell.scenario.root.id, cell.agent) in open_
+    ]
+
+
+def _execute(options: RunOptions, chosen: _Plan, run_dir: Path) -> list[ResultRow]:
+    """Run the first cells, then without ``--repeats`` one more round for each scenario that A and B still differ on, up to ``max_repeats``."""
+    rows = _run_round(options, chosen.cells, chosen.selected, run_dir)
+    for repeat in range(1, 1 if options.repeats else options.max_repeats):
+        cells = _next_cells(options, chosen, rows, repeat)
+        if not cells:
+            break
+        selected: dict[str, ResultRow] = {}
+        for variant in chosen.built:
+            side = [cell for cell in cells if cell.variant.label == variant.label]
+            selected |= _reused(options, variant, side)
+        rows += _run_round(options, cells, selected, run_dir)
+    return rows
 
 
 def _build_report(
