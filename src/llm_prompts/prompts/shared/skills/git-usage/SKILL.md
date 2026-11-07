@@ -13,6 +13,7 @@ These rules MUST override others.
 - Where the user dictates a commit message, MUST use it verbatim, including case - MUST NOT restyle it to match `git log`.
 - A commit MUST reflect the change as the package's consumers see it.
 - MUST NOT add a commit body.
+- A commit message MUST NOT list test names, and MUST NOT claim that the build, tests, checks or CI pass.
 - SHOULD commit early and often, right after each change; rule/skill/workflow/agent source edits MUST commit same-turn.
 - MUST run `git add` and `git commit` in one command via `&&`.
 - After staging explicit paths (not `git add -A`) and committing, MUST re-check `git -P status --short`. Anything still modified/untracked was missed - MUST `--fixup=<sha>` it in.
