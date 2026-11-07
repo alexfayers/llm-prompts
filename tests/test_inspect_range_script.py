@@ -1,4 +1,4 @@
-"""Tests for the git-tidy skill's commit-range safety-gate script."""
+"""Tests for the git-usage skill's tidy commit-range safety-gate script."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ _SCRIPT = (
     / "prompts"
     / "shared"
     / "skills"
-    / "git-tidy"
+    / "git-usage"
     / "inspect_range.py"
 )
 
