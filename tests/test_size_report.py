@@ -25,7 +25,12 @@ from llm_prompts.size_limits import (
     RULE_LINES,
     START_BYTES,
 )
-from llm_prompts.size_report import Row, build_report, compare, render_markdown
+from llm_prompts.size_report import (
+    Row,
+    build_report,
+    compare,
+    render_markdown,
+)
 
 BASE_ROOT = Path("/base/prompts")
 HEAD_ROOT = Path("/head/prompts")
@@ -540,6 +545,31 @@ class TestRenderSummary:
         )
 
         assert "1 file changed size in this PR" in report
+
+
+class TestMeasure:
+    def test_measures_each_side_with_its_own_overlays(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        base_overlay, head_overlay = Path("/base/overlay"), Path("/head/overlay")
+        calls: list[list[Path]] = []
+
+        def fake_check(
+            roots: list[Path], *, vars_root: Path | None = None
+        ) -> CheckResult:
+            calls.append(roots)
+            return CheckResult(True, [], [], "")
+
+        monkeypatch.setattr(size_report, "check", fake_check)
+
+        size_report.measure(
+            tmp_path,
+            HEAD_ROOT,
+            base_overlays=[base_overlay],
+            head_overlays=[head_overlay],
+        )
+
+        assert calls == [[HEAD_ROOT, head_overlay], [tmp_path, base_overlay]]
 
 
 class TestBuildReport:

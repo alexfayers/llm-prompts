@@ -1,0 +1,20 @@
+id = "quality-simple-task"
+level = "medium"
+workspace = "tiny-py"
+project = "demo"
+prompt = "Make fetch() raise a DemoError when the url does not start with http:// or https://. Add the tests for it to test_fetch.py. Change only fetch.py and test_fetch.py, and stop once the tests pass. No commit needed."
+
+[[check]]
+kind = "file_regex"
+path = "fetch.py"
+regex = "DemoError"
+
+[[check]]
+kind = "judge"
+path = "fetch.py"
+rubric = "fetch.py has the url check and no unrelated code, helpers, unused imports or speculative options."
+
+[[check]]
+kind = "judge"
+path = "test_fetch.py"
+rubric = "The tests added to test_fetch.py check behaviour that can really fail: a url without http:// or https:// raises DemoError, and a valid url still returns the body. None is tautological, only asserts on a mock, or repeats another test."

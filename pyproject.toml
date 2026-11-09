@@ -8,6 +8,7 @@ dependencies = [
     "cline-hooks",
     "jinja2>=3.1.6",
     "platformdirs>=4.11.7",
+    "rich>=15.0.0",
     "truststore>=0.10.5",
 ]
 
@@ -40,6 +41,9 @@ ignore = [
 [tool.coverage.run]
 relative_files = true
 
+[tool.coverage.report]
+exclude_also = ["if __name__ == .__main__.:"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
@@ -52,6 +56,7 @@ markers = [
 
 [tool.mypy]
 strict = true
+exclude = ["/fixtures/"]
 
 [dependency-groups]
 dev = [

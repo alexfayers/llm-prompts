@@ -1,0 +1,16 @@
+id = "write-task-entity"
+level = "heavy"
+workspace = "tiny-py"
+project = "demo"
+timeout_s = 600
+prompt = "Add a max_retries parameter to fetch() and record this piece of work as a task in memory for the demo project. No new tests or commit needed."
+
+[[check]]
+kind = "file_regex"
+path = "fetch.py"
+regex = "max_retries"
+
+[[check]]
+kind = "memory_written"
+entity_type = "task"
+name_regex = "^task/"

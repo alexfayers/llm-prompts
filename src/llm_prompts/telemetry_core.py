@@ -377,14 +377,19 @@ def _strings(node: Any) -> Iterator[str]:
         yield node
 
 
-def scrub(message: str, config: dict[str, Any]) -> str:
-    """Redact this machine's identifying values, then generic patterns, and cap the length."""
+def own_identities() -> set[str]:
+    """Return this machine's identifying values: home, working and install paths, user and host names."""
     home_dir = Path.home()
     own = [str(home_dir), str(Path.cwd()), home_dir.name, platform.node()]
     own.append(str(_ROOT))
     own += [os.environ.get(n, "") for n in ("USER", "LOGNAME", "USERNAME")]
+    return {v for v in own if len(v) >= _MIN_IDENTITY_LENGTH}
+
+
+def scrub(message: str, config: dict[str, Any]) -> str:
+    """Redact this machine's identifying values, then generic patterns, and cap the length."""
     secrets = [*os.environ.values(), *_strings(config)]
-    known = {v for v in own if len(v) >= _MIN_IDENTITY_LENGTH}
+    known = own_identities()
     known |= {v for v in secrets if len(v) >= _MIN_SECRET_LENGTH}
     pattern = "|".join(map(re.escape, sorted(known, key=len, reverse=True)))
     message = re.sub(pattern, _REDACTED, message)
