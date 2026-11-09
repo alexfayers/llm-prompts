@@ -1,0 +1,5 @@
+{
+  "words": 120,
+  "lines": 100,
+  "lockfiles": ["package-lock.json", "pnpm-lock.yaml", "uv.lock"]
+}

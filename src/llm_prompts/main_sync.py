@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from functools import cache
 from itertools import takewhile
@@ -30,12 +30,20 @@ _FIXUP_PREFIXES = ("fixup! ", "squash! ", "amend! ")
 _NETWORK_COMMANDS = frozenset({"fetch", "pull", "ls-remote"})
 
 
+class SkippedCopy(NamedTuple):
+    """A copy of a worktree branch that could not replay, named by the branch's first commit."""
+
+    first: str
+    reason: str
+
+
 class SyncResult(NamedTuple):
     """How a diverged local main was brought onto its upstream."""
 
-    mode: Literal["reset", "rebased", "squash-synced", "failed"]
+    mode: Literal["reset", "rebased", "squash-synced", "rebuilt", "failed"]
     replayed: int = 0
     detail: str = ""
+    skipped: tuple[SkippedCopy, ...] = ()
 
 
 class _OpenPrCommit(NamedTuple):
@@ -43,6 +51,14 @@ class _OpenPrCommit(NamedTuple):
 
     sha: str
     head: str
+
+
+class Squash(NamedTuple):
+    """Everything a branch changes on ``floor``, to commit as one commit with the author and message of ``first``."""
+
+    tip: str
+    floor: str
+    first: str
 
 
 class LocalCommit(NamedTuple):
@@ -262,9 +278,10 @@ def _upstream_pr_numbers(repo: Path) -> dict[str, int]:
 
 def _merged_pr_commits(
     repo: Path, remote: str
-) -> tuple[list[str], dict[_Identity, list[str]]]:
+) -> tuple[list[str], dict[_Identity, list[tuple[str, ...]]]]:
+    """Return the accepted PR heads and, per commit identity, each PR's commits from that one to its head."""
     accepted: list[str] = []
-    pr_commits: dict[_Identity, list[str]] = {}
+    pr_commits: dict[_Identity, list[tuple[str, ...]]] = {}
     numbers = _upstream_pr_numbers(repo)
     if not numbers:
         return accepted, pr_commits
@@ -287,11 +304,21 @@ def _merged_pr_commits(
         if up_tree != head_tree:
             continue
         accepted.append(head)
-        for line in _read(
-            repo, "log", "--no-merges", "--format=%H%x09%at%x09%s", f"{up}^..{head}"
-        ).splitlines():
-            sha, _, rest = line.partition("\t")
-            pr_commits.setdefault(_identity(rest), []).append(sha)
+        rows = [
+            line.partition("\t")
+            for line in reversed(
+                _read(
+                    repo,
+                    "log",
+                    "--no-merges",
+                    "--format=%H%x09%at%x09%s",
+                    f"{up}^..{head}",
+                ).splitlines()
+            )
+        ]
+        chain = tuple(sha for sha, _, _ in rows)
+        for index, (_, _, rest) in enumerate(rows):
+            pr_commits.setdefault(_identity(rest), []).append(chain[index:])
     return accepted, pr_commits
 
 
@@ -344,20 +371,28 @@ def _merge_tree(repo: Path, base: str, ours: str, theirs: str) -> str:
 
 
 def _equivalent(
-    repo: Path, commit: LocalCommit, pr_commits: dict[_Identity, list[str]]
+    repo: Path, commit: LocalCommit, pr_commits: dict[_Identity, list[tuple[str, ...]]]
 ) -> bool:
     return any(
-        _same_change(repo, commit, pr)
-        for pr in pr_commits.get((commit.authored_at, commit.subject), ())
+        _same_change(repo, commit, chain)
+        for chain in pr_commits.get((commit.authored_at, commit.subject), ())
     )
 
 
-def _same_change(repo: Path, commit: LocalCommit, pr: str) -> bool:
-    try:
-        tree = _merge_tree(repo, f"{pr}^", f"{commit.sha}^", pr)
-    except _Conflict:
-        return False
-    return tree == _read(repo, "rev-parse", f"{commit.sha}^{{tree}}").strip()
+def _same_change(repo: Path, commit: LocalCommit, chain: tuple[str, ...]) -> bool:
+    """Return whether applying the pull request's commits from the matching one, in order, reaches the commit's tree at some step."""
+    wanted = _read(repo, "rev-parse", f"{commit.sha}^{{tree}}").strip()
+    ours = f"{commit.sha}^"
+    for index, pr in enumerate(chain):
+        try:
+            tree = _merge_tree(repo, f"{pr}^", ours, pr)
+        except _Conflict:
+            return False
+        if tree == wanted:
+            return True
+        if index + 1 < len(chain):
+            ours = _commit_as(repo, tree, ours, pr)
+    return False
 
 
 def _commit_as(repo: Path, tree: str, parent: str, source: str) -> str:
@@ -378,15 +413,20 @@ def _commit_as(repo: Path, tree: str, parent: str, source: str) -> str:
     ).strip()
 
 
-def _replay(repo: Path, tip: str, commit: LocalCommit) -> str:
+def _replay(
+    repo: Path, tip: str, commit: LocalCommit, squash: Squash | None = None
+) -> str:
+    floor, changes = (
+        (squash.floor, squash.tip) if squash else (f"{commit.sha}^", commit.sha)
+    )
     try:
-        tree = _merge_tree(repo, f"{commit.sha}^", tip, commit.sha)
+        tree = _merge_tree(repo, floor, tip, changes)
     except _Conflict as conflict:
         raise _ReplayConflict(
             f"local commit {commit.sha[:12]} ({commit.subject}) conflicts with upstream"
             f" in {', '.join(conflict.paths)}"
         ) from conflict
-    return _commit_as(repo, tree, tip, commit.sha)
+    return _commit_as(repo, tree, tip, squash.first if squash else commit.sha)
 
 
 def _holds_every_change(repo: Path, commit: LocalCommit, head: str) -> bool:
@@ -479,3 +519,77 @@ def _squash_sync(repo: Path) -> SyncResult:
         return _build_sync(repo)
     except _Bail as bail:
         return SyncResult("failed", detail=f"squash sync stopped: {bail}")
+
+
+def rebuild_local(
+    repo: Path,
+    base: str,
+    substitutions: Mapping[str, Squash],
+    copies: Mapping[str, str],
+    additions: Sequence[Squash],
+) -> SyncResult:
+    """Move local main onto ``base`` with its local commits replayed, some swapped for squashes, plus new squashes.
+
+    Args:
+        repo: The local clone, on its main branch.
+        base: The ref local commits are counted from.
+        substitutions: Local commit sha to the squash that replaces it.
+        copies: Local commit sha of each known copy of a worktree branch to the first commit of that branch. A copy that conflicts is skipped.
+        additions: Squashes to replay on top, in order. One that conflicts is skipped.
+
+    Returns:
+        ``rebuilt`` with the count of replayed commits and the skipped copies, or a failed result that leaves main untouched.
+    """
+    if (operation := _operation_in_progress(repo)) is not None:
+        return SyncResult("failed", detail=f"a {operation} is in progress")
+    try:
+        branch = _read(repo, "symbolic-ref", "--short", "-q", "HEAD").strip()
+        if branch != "main":
+            raise _Bail(f"{repo} has {branch or 'no branch'} checked out, not main")
+        merge_base = _read(repo, "merge-base", "HEAD", base).strip()
+        head = _read(repo, "rev-parse", "HEAD").strip()
+        tip = _read(repo, "rev-parse", base).strip()
+        replayed = 0
+        skipped: list[SkippedCopy] = []
+        untouched = tip == merge_base
+        for commit in _local_commits(repo, merge_base):
+            squash = substitutions.get(commit.sha)
+            if squash is None and untouched:
+                tip = commit.sha
+                continue
+            untouched = False
+            try:
+                tip = _replay(repo, tip, commit, squash)
+            except _ReplayConflict as conflict:
+                if commit.sha not in copies:
+                    raise
+                skipped.append(SkippedCopy(copies[commit.sha], str(conflict)))
+                continue
+            replayed += 1
+        for squash in additions:
+            subject = _read(repo, "log", "-1", "--format=%s", squash.first).strip()
+            try:
+                tip = _replay(repo, tip, LocalCommit(squash.first, "", subject), squash)
+            except _ReplayConflict as conflict:
+                skipped.append(SkippedCopy(squash.first, str(conflict)))
+                continue
+            replayed += 1
+        if tip == head:
+            return SyncResult("rebuilt", skipped=tuple(skipped))
+        saved = run_git(
+            repo,
+            "update-ref",
+            "--create-reflog",
+            "-m",
+            "llm-prompts: pre-sync",
+            PRE_SYNC_REF,
+            "HEAD",
+        )
+        if saved.returncode != 0:
+            return SyncResult("failed", detail=saved.stderr.strip())
+        reset = run_git(repo, "reset", "--keep", tip)
+    except _Bail as bail:
+        return SyncResult("failed", detail=f"main left untouched: {bail}")
+    if reset.returncode != 0:
+        return SyncResult("failed", detail=reset.stderr.strip())
+    return SyncResult("rebuilt", replayed=replayed, skipped=tuple(skipped))
