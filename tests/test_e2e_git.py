@@ -191,6 +191,24 @@ class TestPullLocalSourceE2E:
         ]
         assert git(clone, "status", "--porcelain") == ""
 
+    @pytest.mark.parametrize("identical", [False, True])
+    def test_e2e_a_rewritten_main_stays_reachable_from_the_earlier_mains_ref(
+        self, clone: Path, other: Path, identical: bool
+    ) -> None:
+        commit_file(clone, "local.txt", "local\n", "local change")
+        if identical:
+            commit_file(other, "local.txt", "local\n", "same change")
+            git(other, "push", "-q", "origin", "main")
+        else:
+            push_commit(other, "upstream change", "up\n")
+        git(clone, "fetch", "-q")
+        head = git(clone, "rev-parse", "HEAD")
+
+        result = main_sync.sync_diverged(clone)
+
+        assert result.mode in {"rebased", "reset"}
+        git(clone, "merge-base", "--is-ancestor", head, main_sync.EARLIER_MAINS_REF)
+
     def test_e2e_conflicting_rebase_is_aborted_leaving_clean_tree(
         self, clone: Path, other: Path
     ) -> None:

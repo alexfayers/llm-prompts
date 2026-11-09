@@ -13,7 +13,7 @@ import json
 import re
 import shutil
 import subprocess
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
@@ -22,6 +22,7 @@ from typing import Any, NamedTuple, TextIO
 from . import github_api, main_sync, worktrees
 from .exit_reason import ExitReason
 from .network import run_with_retries, with_retries
+from .squash_subject import squash_pr_number
 from .worktrees import Link, WorktreeEntry
 
 _DEPENDS_PREFIX = "Depends on "
@@ -806,40 +807,199 @@ def _squash_patch_id(repo: Path, squash: main_sync.Squash) -> str:
     return _patch_id(repo, "diff", "-U0", squash.floor, squash.tip)
 
 
-def _copies_of(
-    repo: Path,
-    base: str,
-    squashes: Sequence[main_sync.Squash],
-    copied: Mapping[str, str | None],
-) -> dict[str, str]:
-    """Map each squash's tip to its copy on main ahead of ``base``.
+def _squash_of(
+    repo: Path, floor: str, commits: Sequence[str], tip: str
+) -> main_sync.Squash:
+    """Return the squash of ``commits`` (oldest first) that end at ``tip`` on ``floor``."""
+    return main_sync.Squash(tip, _git("merge-base", floor, tip, repo=repo), commits[0])
 
-    A copy matches by the identity saved when it was copied, else by its first
-    commit's author time and subject, else by the patch of the squash.
-    """
-    free = [
+
+def _main_rows(repo: Path, base: str) -> list[list[str]]:
+    """Return the sha, author time and subject of each main commit ahead of ``base``."""
+    return [
         row.split("\t", 2)
         for row in _git(
             "log", "--format=%H%x09%at%x09%s", f"{base}..main", repo=repo
         ).splitlines()
     ]
-    identities = {
-        squash.tip: _commit_identity(repo, squash.first).split("\t", 1)
-        for squash in squashes
-    }
-    found: dict[str, str] = {}
-    for tip, saved in copied.items():
+
+
+def _squash_landed(repo: Path, base: str, number: int) -> bool:
+    """Return whether ``base`` holds the squash-merge commit of PR ``number``."""
+    subjects = _git(
+        "log", "--format=%s", "--fixed-strings", f"--grep=(#{number})", base, repo=repo
+    ).splitlines()
+    return any(squash_pr_number(subject) == number for subject in subjects)
+
+
+def _later_copies(
+    repo: Path, base: str, tips: Sequence[Tip], taken: Collection[str]
+) -> set[str]:
+    """Return the main commits ahead of ``base`` that copy a tip's later commit.
+
+    A copy matches by author time, subject and patch.
+    """
+    free = [row for row in _main_rows(repo, base) if row[0] not in taken]
+    found: set[str] = set()
+    for sha in (sha for tip in tips for sha in tip.commits[1:]):
+        at, subject = _commit_identity(repo, sha).split("\t", 1)
+        patch = _patch_id(repo, "show", "-U0", sha)
         if match := next(
-            (row for row in free if saved and row[1:] == saved.split("\t", 1)), None
+            (
+                row
+                for row in free
+                if row[1:] == [at, subject]
+                and _patch_id(repo, "show", "-U0", row[0]) == patch
+            ),
+            None,
         ):
             free.remove(match)
-            found[tip] = match[0]
-    for tip, identity in identities.items():
-        if tip in found:
+            found.add(match[0])
+    return found
+
+
+def _rewritten_copies(
+    repo: Path, base: str, tips: Sequence[Tip], taken: Collection[str]
+) -> set[str]:
+    """Return the main commits ahead of ``base`` that copy a commit an earlier version of a tip's branch held.
+
+    A copy matches by author time, subject and the patch of that commit or of the squash of an earlier version.
+    Commits that any earlier main held, or the branch still holds, are not an earlier version.
+    """
+    free = [row for row in _main_rows(repo, base) if row[0] not in taken]
+    found: set[str] = set()
+    earlier_mains = dict.fromkeys(
+        [
+            *_git("log", "-g", "--format=%H", "main", repo=repo).split(),
+            *_git(
+                "for-each-ref",
+                "--format=%(refname)",
+                main_sync.EARLIER_MAINS_REF,
+                repo=repo,
+            ).split(),
+        ]
+    )
+    for tip in tips:
+        past = _git(
+            "log", "-g", "--format=%H", f"refs/heads/{tip.entry.branch}", repo=repo
+        ).split()
+        if not past:
             continue
-        if match := next((row for row in free if row[1:] == identity), None):
+        held = _git(
+            "log",
+            "--format=%H",
+            *dict.fromkeys(past),
+            f"^{tip.floor}",
+            f"^{tip.commits[-1]}",
+            "^main",
+            *(f"^{sha}" for sha in earlier_mains),
+            repo=repo,
+        ).split()
+        proofs: dict[str, set[str]] = {}
+        for sha in held:
+            proofs.setdefault(_commit_identity(repo, sha), set()).add(
+                _patch_id(repo, "show", "-U0", sha)
+            )
+        for earlier in dict.fromkeys(past):
+            commits = _commit_shas(repo, tip.floor, earlier)
+            if commits and commits[0] in held:
+                proofs[_commit_identity(repo, commits[0])].add(
+                    _squash_patch_id(
+                        repo, _squash_of(repo, tip.floor, commits, earlier)
+                    )
+                )
+        found |= {
+            sha
+            for sha, at, subject in free
+            if (patches := proofs.get(f"{at}\t{subject}"))
+            and _patch_id(repo, "show", "-U0", sha) in patches - {""}
+        }
+    return found
+
+
+class Landed(NamedTuple):
+    """A merged PR's copy on main: the identity saved when it was copied and the squash it was copied from."""
+
+    identity: str
+    squash: main_sync.Squash
+
+
+class AmbiguousCopy(Exception):
+    """Several main commits could be a branch's copy and none is shown to be it."""
+
+
+def _is_copy(repo: Path, sha: str, squash: main_sync.Squash) -> bool:
+    """Return whether main commit ``sha`` holds the changes of ``squash`` or of its first commit."""
+    patch = _patch_id(repo, "show", "-U0", sha)
+    return patch in {
+        _squash_patch_id(repo, squash),
+        _patch_id(repo, "show", "-U0", squash.first),
+    } or main_sync.replays_to(repo, f"{sha}^", squash, sha)
+
+
+def _earlier_patches(repo: Path, tip: Tip) -> set[str]:
+    """Return the patch ids of every version of ``tip``'s branch and of each version's first commit."""
+    patches: set[str] = set()
+    for version in dict.fromkeys(
+        _git(
+            "log", "-g", "--format=%H", f"refs/heads/{tip.entry.branch}", repo=repo
+        ).split()
+    ):
+        if commits := _commit_shas(repo, tip.floor, version):
+            patches |= {
+                _squash_patch_id(repo, _squash_of(repo, tip.floor, commits, version)),
+                _patch_id(repo, "show", "-U0", commits[0]),
+            }
+    return patches - {""}
+
+
+def _copies_of(
+    repo: Path, base: str, tips: Sequence[Tip], squashes: Sequence[main_sync.Squash]
+) -> dict[str, str]:
+    """Map each squash's tip to its copy on main ahead of ``base``.
+
+    A copy matches by the identity saved when it was copied, else by its first
+    commit's author time and subject.
+    Either way it must hold the changes of the squash, of its first commit, or of an earlier version of the branch.
+    Else it matches by the patch of the squash.
+
+    Raises:
+        AmbiguousCopy: Several main commits have a saved identity and none holds changes of the branch.
+    """
+    free = _main_rows(repo, base)
+    found: dict[str, str] = {}
+    for tip, squash in zip(tips, squashes, strict=True):
+        if not (saved := tip.entry.copied):
+            continue
+        identity = saved.split("\t", 1)
+        matches = [row for row in free if row[1:] == identity]
+        proven = [
+            row
+            for row in matches
+            if _is_copy(repo, row[0], squash)
+            or _patch_id(repo, "show", "-U0", row[0]) in _earlier_patches(repo, tip)
+        ]
+        if len(matches) > 1 and not proven:
+            raise AmbiguousCopy(
+                f"several main commits match {identity[1]!r} and none is its copy"
+            )
+        if proven:
+            free.remove(proven[0])
+            found[squash.tip] = proven[0][0]
+    for squash in squashes:
+        if squash.tip in found:
+            continue
+        identity = _commit_identity(repo, squash.first).split("\t", 1)
+        if match := next(
+            (
+                row
+                for row in free
+                if row[1:] == identity and _is_copy(repo, row[0], squash)
+            ),
+            None,
+        ):
             free.remove(match)
-            found[tip] = match[0]
+            found[squash.tip] = match[0]
     for squash in squashes:
         if squash.tip in found or not free:
             continue
@@ -854,34 +1014,80 @@ def _copies_of(
 
 
 def _main_changes(
-    repo: Path, base: str, tips: Sequence[Tip]
-) -> tuple[dict[str, main_sync.Squash], dict[str, str], list[main_sync.Squash]]:
-    """Return the main commits to swap for newer squashes, the first commit each copy on main stands for, and the squashes main has no copy of."""
+    repo: Path, base: str, tips: Sequence[Tip], landed: Collection[Landed] = ()
+) -> tuple[
+    dict[str, main_sync.Squash],
+    set[str],
+    dict[str, str],
+    list[main_sync.Squash],
+]:
+    """Return the main commits to swap for newer squashes, the main commits to drop, the first commit each copy on main stands for and the squashes to replay on top.
+
+    A changed squash of a stacked branch replaces its copy in place when the copy is newer than its lower's.
+    Otherwise it replays on top with its old copy dropped, and so do the branches stacked above it.
+    Main commits copied from earlier versions of a branch's history are dropped, and so are the copies of ``landed`` squashes, given by identity, whatever changes review made since.
+    """
     swaps: dict[str, main_sync.Squash] = {}
+    moves: set[str] = set()
+    replayed: set[str] = set()
     adds: list[main_sync.Squash] = []
-    squashes = [
-        main_sync.Squash(
-            t.commits[-1],
-            _git("merge-base", t.floor, t.commits[-1], repo=repo),
-            t.commits[0],
-        )
-        for t in tips
-    ]
-    found = _copies_of(
-        repo, base, squashes, {t.commits[-1]: t.entry.copied for t in tips}
-    )
-    copies: dict[str, str] = {}
-    for squash in squashes:
+    squashes = [_squash_of(repo, t.floor, t.commits, t.commits[-1]) for t in tips]
+    found = _copies_of(repo, base, tips, squashes)
+    copies = {found[s.tip]: s.first for s in squashes if s.tip in found}
+    rows = _main_rows(repo, base)
+    age = {row[0]: n for n, row in enumerate(rows)}
+    copy_of = {
+        t.entry.branch: found[s.tip]
+        for s, t in zip(squashes, tips, strict=True)
+        if s.tip in found
+    }
+    for squash, tip in zip(squashes, tips, strict=True):
         copy = found.get(squash.tip)
+        lower = next(
+            (k.branch for k in tip.entry.depends_on if k.repo == tip.entry.repo), None
+        )
+        follows = lower in replayed
         if copy is None:
             adds.append(squash)
-            continue
-        copies[copy] = squash.first
-        if _commit_identity(repo, copy) != _commit_identity(
-            repo, squash.first
-        ) or _patch_id(repo, "show", "-U0", copy) != _squash_patch_id(repo, squash):
-            swaps[copy] = squash
-    return swaps, copies, adds
+            replayed.add(tip.entry.branch)
+        elif (
+            follows
+            or _commit_identity(repo, copy) != _commit_identity(repo, squash.first)
+            or (
+                _patch_id(repo, "show", "-U0", copy) != _squash_patch_id(repo, squash)
+                and not main_sync.replays_to(repo, f"{copy}^", squash, copy)
+            )
+        ):
+            if tip.entry.base is None or (
+                not follows and lower in copy_of and age[copy] < age[copy_of[lower]]
+            ):
+                swaps[copy] = squash
+            else:
+                moves.add(copy)
+                adds.append(squash)
+                replayed.add(tip.entry.branch)
+    later = _later_copies(repo, base, tips, found.values())
+    taken = {*found.values(), *later}
+    merged: set[str] = set()
+    for gone in landed:
+        at, subject = gone.identity.split("\t", 1)
+        matches = [
+            sha
+            for sha, row_at, row_subject in rows
+            if (row_at, row_subject) == (at, subject)
+        ]
+        proven = [sha for sha in matches if _is_copy(repo, sha, gone.squash)]
+        if len(matches) > 1 and not proven:
+            raise AmbiguousCopy(
+                f"several main commits match {subject!r} and none is its copy"
+            )
+        merged.update(proven or matches)
+    return (
+        swaps,
+        moves | later | merged | _rewritten_copies(repo, base, tips, taken),
+        copies,
+        adds,
+    )
 
 
 _PR_URL_NUMBER = re.compile(r"/pull/(\d+)")
@@ -1013,6 +1219,7 @@ class _RepoSync:
         self.remote_heads: dict[str, str] = {}
         self.prs: dict[int, PrState] = {}
         self._remote: tuple[str, bool] | None = None
+        self.landed: list[Landed] = []
 
     def remote(self) -> tuple[str, bool]:
         if self._remote is None:
@@ -1322,6 +1529,21 @@ class _RepoSync:
         if (stale := stale_main_warning(self.repo, self.base)) is not None:
             _print_warning(stale)
         self.observe()
+        self.landed = [
+            Landed(
+                entry.copied,
+                _squash_of(self.repo, floor, commits, self.tip(entry)),
+            )
+            for entry in self.entries
+            if entry.copied
+            and entry.pr is not None
+            and self.merged(entry)
+            and _squash_landed(self.repo, self.base, entry.pr)
+            and _branch_exists(self.repo, entry.branch)
+            and self.tip(entry) == self.prs[entry.pr].head_sha
+            and (floor := entry.base or self.base)
+            and (commits := _commit_shas(self.repo, floor, self.tip(entry)))
+        ]
         self.restack()
         self.forget_gone()
         self.remove_merged()
@@ -1342,13 +1564,25 @@ class _RepoSync:
             if tip.skipped is not None:
                 self.say(tip.entry, f"skipped: {tip.skipped}")
         usable = [tip for tip in tips if tip.skipped is None]
-        swaps, copies, adds = _main_changes(self.repo, self.base, usable)
+        try:
+            swaps, drops, copies, adds = _main_changes(
+                self.repo, self.base, usable, self.landed
+            )
+        except AmbiguousCopy as ambiguous:
+            print(f"main not updated: {ambiguous}")
+            self.status = 1
+            return
         changed = {squash.tip for squash in [*swaps.values(), *adds]}
         result = None
         if self.apply and (
-            swaps or adds or not _contains(self.repo, self.base, "refs/heads/main")
+            swaps
+            or drops
+            or adds
+            or not _contains(self.repo, self.base, "refs/heads/main")
         ):
-            result = main_sync.rebuild_local(self.repo, self.base, swaps, copies, adds)
+            result = main_sync.rebuild_local(
+                self.repo, self.base, swaps, drops, copies, adds
+            )
             if result.mode == "failed":
                 print(f"main not updated: {result.detail}")
                 self.status = 1
@@ -1630,34 +1864,23 @@ def _held_branch(
     base: str,
     entry: WorktreeEntry,
     commits: Sequence[str],
-    local_main: Sequence[str],
     entries: Sequence[WorktreeEntry],
 ) -> str | None:
-    """Return a branch whose tip sits among ``commits``, or whose copy is among the ``local_main`` ones."""
-    firsts = {
-        other.branch: _commit_identity(repo, theirs[0])
-        for other in entries
-        if other.branch != entry.branch
-        and _branch_exists(repo, other.branch)
-        and (
-            theirs := _commit_shas(
-                repo, other.base or base, f"refs/heads/{other.branch}"
-            )
-        )
-    }
-    for sha in local_main:
-        identity = _commit_identity(repo, sha)
-        if held := next((b for b, first in firsts.items() if first == identity), None):
-            return held
-    return next(
-        (
-            other.branch
-            for other in entries
-            if other.branch in firsts
-            and _git("rev-parse", f"refs/heads/{other.branch}", repo=repo) in commits
-        ),
-        None,
-    )
+    """Return a branch whose first commit, in any version, is among ``commits``.
+
+    A branch sharing its first commit with another holds it only when it has more commits.
+    """
+    identities = [_commit_identity(repo, sha) for sha in commits]
+    for other in entries:
+        if other.branch == entry.branch or not _branch_exists(repo, other.branch):
+            continue
+        theirs = _commit_shas(repo, other.base or base, f"refs/heads/{other.branch}")
+        first = _commit_identity(repo, theirs[0]) if theirs else None
+        if first in identities and (
+            first != identities[0] or len(theirs) < len(commits)
+        ):
+            return other.branch
+    return None
 
 
 def _skip_reason(
@@ -1672,7 +1895,7 @@ def _skip_reason(
     if not commits:
         return "no commits"
     local_main = [sha for sha in commits if _on_main_only(repo, base, entry, sha)]
-    if held := _held_branch(repo, base, entry, commits, local_main, entries):
+    if held := _held_branch(repo, base, entry, commits, entries):
         return f"holds commits of {held}"
     return "holds local main commits" if local_main else None
 
