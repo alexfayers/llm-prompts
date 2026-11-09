@@ -201,6 +201,11 @@ LOCAL_AUTHOR = (
 )
 
 
+def _remembered_main_is_saved(fake: FakeSubprocess) -> None:
+    """Answer the commit that records the earlier main, apart from the replayed commits."""
+    fake.on_match(lambda argv: "commit-tree" in argv and "-m" in argv, stdout="c\n")
+
+
 def _route_divergence(fake: FakeSubprocess) -> None:
     """Route a diverged repo: l1 is WIP, l2 is in PR head h1 by patch, l3 repeats PR commit p3."""
     fake.on("diff", "--quiet", returncode=1)
@@ -228,11 +233,12 @@ def _route_divergence(fake: FakeSubprocess) -> None:
     fake.on("rev-parse", "l3^{tree}", stdout="tree-l3\n")
     fake.on("log", "-1", "--format=%an%x00%ae%x00%aI%x00%B", stdout=LOCAL_AUTHOR)
     fake.on("commit-tree", stdout=["tip1\n", "tip2\n"])
+    _remembered_main_is_saved(fake)
     _head_is_saved(fake)
 
 
 def _commit_tree_calls(fake: FakeSubprocess) -> list[tuple[list[str], dict[str, Any]]]:
-    return [call for call in fake.calls if "commit-tree" in call[0]]
+    return [call for call in fake.calls if "commit-tree" in call[0] and "-F" in call[0]]
 
 
 class TestSquashSync:
@@ -562,6 +568,7 @@ def _route_fixup_group(fake: FakeSubprocess) -> None:
         stdout="tree-group\n",
     )
     fake.on("commit-tree", stdout=["g1\n", "tip1\n"])
+    _remembered_main_is_saved(fake)
     fake.on("rev-parse", "g1^{tree}", stdout="tree-l3\n")
 
 

@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
-from collections.abc import Callable, Mapping, Sequence
+import tempfile
+from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import suppress
 from functools import cache
 from itertools import takewhile
@@ -19,6 +20,12 @@ from .squash_subject import squash_pr_number
 _Identity = tuple[str, str]
 GIT_TIMED_OUT = 124
 PRE_SYNC_REF = "refs/llm-prompts/pre-sync"
+EARLIER_MAINS_REF = "refs/llm-prompts/earlier-mains"
+_EARLIER_MAINS_IDENTITY = {
+    f"GIT_{role}_{field}": value
+    for role in ("AUTHOR", "COMMITTER")
+    for field, value in (("NAME", "llm-prompts"), ("EMAIL", "llm-prompts@localhost"))
+}
 _OPERATION_MARKERS = (
     ("rebase-merge", "rebase"),
     ("rebase-apply", "rebase"),
@@ -153,6 +160,10 @@ def sync_diverged(repo: Path) -> SyncResult:
     )
     if saved.returncode != 0:
         return SyncResult("failed", detail=saved.stderr.strip())
+    try:
+        _remember_main(repo, "HEAD")
+    except _Bail as bail:
+        return SyncResult("failed", detail=f"main left untouched: {bail}")
     if identical:
         reset = run_git(repo, "reset", "--soft", "@{u}")
         if reset.returncode != 0:
@@ -413,6 +424,49 @@ def _commit_as(repo: Path, tree: str, parent: str, source: str) -> str:
     ).strip()
 
 
+def _reuse_resolutions(repo: Path, base: str, ours: str, theirs: str) -> str | None:
+    """Merge in a throwaway worktree where git rerere records the conflicts and applies earlier hand resolutions.
+
+    Returns:
+        The merged tree, or None while any conflict has no recorded resolution.
+    """
+    change = _read(
+        repo, "commit-tree", f"{theirs}^{{tree}}", "-p", base, "-m", "replay"
+    ).strip()
+    with tempfile.TemporaryDirectory() as parent:
+        work = Path(parent) / "work"
+        _read(repo, "worktree", "add", "--quiet", "--detach", str(work), ours)
+        try:
+            pick = run_git(
+                work,
+                "-c",
+                "rerere.enabled=true",
+                "-c",
+                "rerere.autoUpdate=true",
+                "cherry-pick",
+                "--no-commit",
+                change,
+            )
+            if pick.returncode != 1 or run_git(work, "ls-files", "--unmerged").stdout:
+                return None
+            return _read(work, "write-tree").strip()
+        finally:
+            run_git(repo, "worktree", "remove", "--force", str(work))
+
+
+def replays_to(repo: Path, parent: str, squash: Squash, result: str) -> bool:
+    """Return whether replaying ``squash`` on ``parent``, reusing recorded hand resolutions, gives ``result``'s tree."""
+    try:
+        tree: str | None
+        try:
+            tree = _merge_tree(repo, squash.floor, parent, squash.tip)
+        except _Conflict:
+            tree = _reuse_resolutions(repo, squash.floor, parent, squash.tip)
+    except _Bail:
+        return False
+    return tree == _read(repo, "rev-parse", f"{result}^{{tree}}").strip()
+
+
 def _replay(
     repo: Path, tip: str, commit: LocalCommit, squash: Squash | None = None
 ) -> str:
@@ -422,10 +476,13 @@ def _replay(
     try:
         tree = _merge_tree(repo, floor, tip, changes)
     except _Conflict as conflict:
-        raise _ReplayConflict(
-            f"local commit {commit.sha[:12]} ({commit.subject}) conflicts with upstream"
-            f" in {', '.join(conflict.paths)}"
-        ) from conflict
+        resolved = _reuse_resolutions(repo, floor, tip, changes)
+        if resolved is None:
+            raise _ReplayConflict(
+                f"local commit {commit.sha[:12]} ({commit.subject}) conflicts with upstream"
+                f" in {', '.join(conflict.paths)}"
+            ) from conflict
+        tree = resolved
     return _commit_as(repo, tree, tip, squash.first if squash else commit.sha)
 
 
@@ -521,19 +578,41 @@ def _squash_sync(repo: Path) -> SyncResult:
         return SyncResult("failed", detail=f"squash sync stopped: {bail}")
 
 
+def _remember_main(repo: Path, head: str) -> None:
+    """Keep ``head`` and every earlier main reachable from ``EARLIER_MAINS_REF``."""
+    earlier = run_git(repo, "rev-parse", "--verify", "--quiet", EARLIER_MAINS_REF)
+    parents = [
+        "-p",
+        head,
+        *(["-p", EARLIER_MAINS_REF] if earlier.returncode == 0 else []),
+    ]
+    kept = _read(
+        repo,
+        "commit-tree",
+        f"{head}^{{tree}}",
+        *parents,
+        "-m",
+        "llm-prompts: earlier main",
+        env=_EARLIER_MAINS_IDENTITY,
+    ).strip()
+    _read(repo, "update-ref", EARLIER_MAINS_REF, kept)
+
+
 def rebuild_local(
     repo: Path,
     base: str,
     substitutions: Mapping[str, Squash],
+    drops: Collection[str],
     copies: Mapping[str, str],
     additions: Sequence[Squash],
 ) -> SyncResult:
-    """Move local main onto ``base`` with its local commits replayed, some swapped for squashes, plus new squashes.
+    """Move local main onto ``base`` with its local commits replayed, some swapped for squashes or dropped, plus new squashes.
 
     Args:
         repo: The local clone, on its main branch.
         base: The ref local commits are counted from.
         substitutions: Local commit sha to the squash that replaces it.
+        drops: Local commit shas to leave out.
         copies: Local commit sha of each known copy of a worktree branch to the first commit of that branch. A copy that conflicts is skipped.
         additions: Squashes to replay on top, in order. One that conflicts is skipped.
 
@@ -554,10 +633,13 @@ def rebuild_local(
         untouched = tip == merge_base
         for commit in _local_commits(repo, merge_base):
             squash = substitutions.get(commit.sha)
-            if squash is None and untouched:
+            dropped = commit.sha in drops
+            if squash is None and not dropped and untouched:
                 tip = commit.sha
                 continue
             untouched = False
+            if dropped:
+                continue
             try:
                 tip = _replay(repo, tip, commit, squash)
             except _ReplayConflict as conflict:
@@ -587,6 +669,7 @@ def rebuild_local(
         )
         if saved.returncode != 0:
             return SyncResult("failed", detail=saved.stderr.strip())
+        _remember_main(repo, head)
         reset = run_git(repo, "reset", "--keep", tip)
     except _Bail as bail:
         return SyncResult("failed", detail=f"main left untouched: {bail}")

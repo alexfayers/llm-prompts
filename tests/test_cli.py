@@ -319,6 +319,9 @@ class TestPullLocalSources:
             "rev-parse --git-path",
             "diff --quiet",
             "update-ref",
+            "rev-parse --verify",
+            "commit-tree",
+            "update-ref",
             "rebase --quiet",
         )
         assert (
@@ -426,6 +429,9 @@ class TestPullLocalSources:
             "pull --ff-only",
             "rev-parse --git-path",
             "diff --quiet",
+            "update-ref",
+            "rev-parse --verify",
+            "commit-tree",
             "update-ref",
             "rebase --quiet",
             "rebase --abort",

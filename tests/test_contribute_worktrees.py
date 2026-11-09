@@ -362,6 +362,23 @@ def test_a_worktree_started_from_main_holding_another_worktrees_copy_is_skipped(
     assert project.main_subjects() == ["feat: a"]
 
 
+def test_a_worktree_holding_an_earlier_version_of_another_worktrees_commit_is_skipped(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    a = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    old = git(a, "rev-parse", "HEAD")
+    project.worktree("feat/b", "feat: b", start=old)
+    project.run(branch="feat/b")
+    _amend(project, a, "feat: a")
+    capsys.readouterr()
+
+    assert project.run(apply=True) == 0
+
+    assert "feat/b: skipped: holds commits of feat/a" in capsys.readouterr().out
+    assert project.main_subjects() == ["feat: a"]
+
+
 def test_a_worktree_holding_a_merged_worktrees_copy_on_main_is_skipped_by_list_and_sync(
     project: Project, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -468,6 +485,172 @@ def test_a_new_commit_in_a_squashed_worktree_replaces_its_main_commit(
     assert (project.repo / "feat-a-8.txt").exists()
 
 
+def test_main_copies_of_each_worktree_commit_give_way_to_one_squash(
+    project: Project,
+) -> None:
+    path = project.worktree("feat/a", "feat: a", "feat: a2")
+    git(project.repo, "cherry-pick", "-x", "origin/main..feat/a")
+    project.clock += 60
+    (path / "feat-a-8.txt").write_text("amended\n", encoding="utf-8")
+    git(
+        path,
+        "commit",
+        "-qa",
+        "--amend",
+        "--no-edit",
+        "--date",
+        f"{project.clock} +0000",
+    )
+    project.run(branch="feat/a")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a"]
+    assert (project.repo / "feat-a-8.txt").read_text(encoding="utf-8") == "amended\n"
+
+
+def test_a_rewritten_worktree_replaces_main_copies_of_its_earlier_commits(
+    project: Project,
+) -> None:
+    path = project.worktree("feat/a", "feat: a", "feat: a2", "feat: a3")
+    git(project.repo, "cherry-pick", "-x", "origin/main..feat/a")
+    git(path, "reset", "-q", "--hard", "origin/main")
+    project.commit(path, "feat-a-7.txt", "rewritten\n", "feat: a")
+    project.commit(path, "feat-a-8.txt", "rewritten\n", "fix: a")
+    project.run(branch="feat/a")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a"]
+    assert (project.repo / "feat-a-7.txt").read_text(encoding="utf-8") == "rewritten\n"
+    assert (project.repo / "feat-a-8.txt").read_text(encoding="utf-8") == "rewritten\n"
+
+
+def test_an_unrelated_main_commit_titled_like_a_later_worktree_commit_is_kept(
+    project: Project,
+) -> None:
+    project.commit(project.repo, "other.txt", "other\n", "feat: a2")
+    project.worktree("feat/a", "feat: a", "feat: a2", start="origin/main")
+    project.run(branch="feat/a")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a2", "feat: a"]
+
+
+@pytest.fixture
+def hand_resolved(project: Project) -> main_sync.Squash:
+    """A squash that conflicts with local main, after its hand resolution was recorded and reused once."""
+    repo = project.repo
+    base = git(repo, "rev-parse", "HEAD")
+    git(repo, "checkout", "-qb", "feat")
+    tip = project.commit(repo, "base.txt", "feature\n", "feat: feature")
+    git(repo, "checkout", "-q", "main")
+    project.commit(repo, "base.txt", "main\n", "feat: main")
+    squash = main_sync.Squash(tip=tip, floor=base, first=tip)
+    skipped = main_sync.rebuild_local(repo, base, {}, (), {}, [squash]).skipped
+    assert [copy.first for copy in skipped] == [tip]
+    rerere = ("-c", "rerere.enabled=true")
+    git(repo, "checkout", "-q", "--detach")
+    with pytest.raises(subprocess.CalledProcessError):
+        git(repo, *rerere, "cherry-pick", tip)
+    (repo / "base.txt").write_text("resolved\n", encoding="utf-8")
+    git(repo, "add", "base.txt")
+    git(repo, *rerere, "commit", "-q", "--no-edit")
+    git(repo, "checkout", "-q", "main")
+    assert main_sync.rebuild_local(repo, base, {}, (), {}, [squash]).mode == "rebuilt"
+    return squash
+
+
+def test_a_recorded_hand_resolution_settles_the_next_rebuild(
+    project: Project, hand_resolved: main_sync.Squash
+) -> None:
+    assert (project.repo / "base.txt").read_text(encoding="utf-8") == "resolved\n"
+    assert project.main_subjects() == ["feat: main", "feat: feature"]
+
+
+def test_a_hand_resolved_copy_is_current(
+    project: Project, hand_resolved: main_sync.Squash
+) -> None:
+    assert main_sync.replays_to(project.repo, "main^", hand_resolved, "main")
+    assert not main_sync.replays_to(project.repo, "main^", hand_resolved, "main^")
+
+
+def test_a_copy_that_follows_a_rename_on_main_is_current(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    body = "".join(f"line {n}\n" for n in range(10))
+    project.commit(project.repo, "old.txt", body, "chore: add old")
+    git(project.repo, "push", "-q", "origin", "main")
+    git(project.repo, "mv", "old.txt", "new.txt")
+    git(project.repo, "commit", "-qm", "chore: rename")
+    path = project.worktree("feat/a", start="origin/main")
+    project.commit(path, "old.txt", body.replace("line 3", "edited"), "feat: a")
+    project.run(branch="feat/a")
+    assert project.run(apply=True) == 0
+    copied = git(project.repo, "rev-parse", "main")
+    capsys.readouterr()
+
+    assert project.run(apply=True) == 0
+
+    assert "copied into main" not in capsys.readouterr().out
+    assert git(project.repo, "rev-parse", "main") == copied
+
+
+def test_a_local_main_commit_a_worktree_was_once_started_from_is_kept(
+    project: Project,
+) -> None:
+    project.commit(project.repo, "local.txt", "local\n", "chore: local")
+    path = project.worktree("feat/b", "feat: b", "feat: b2")
+    git(path, "reset", "-q", "--hard", "origin/main")
+    project.commit(path, "feat-b-7.txt", "rewritten\n", "feat: b")
+    project.run(branch="feat/b")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["chore: local", "feat: b"]
+
+
+def test_a_local_main_commit_stays_after_a_rebuild_rewrites_the_commit_a_worktree_started_from(
+    project: Project,
+) -> None:
+    project.commit(project.repo, "local.txt", "local\n", "chore: local")
+    path = project.worktree("feat/b", "feat: b", "feat: b2")
+    git(path, "reset", "-q", "--hard", "origin/main")
+    project.commit(path, "feat-b-7.txt", "rewritten\n", "feat: b")
+    project.run(branch="feat/b")
+    _land_upstream(project, "upstream.txt", pull=False)
+    assert project.run(apply=True) == 0
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["chore: local", "feat: b"]
+
+
+def test_a_local_main_commit_stays_after_the_reflog_of_main_expired(
+    project: Project,
+) -> None:
+    project.commit(project.repo, "local.txt", "local\n", "chore: local")
+    path = project.worktree("feat/b", "feat: b", "feat: b2")
+    git(path, "reset", "-q", "--hard", "origin/main")
+    project.commit(path, "feat-b-7.txt", "rewritten\n", "feat: b")
+    project.run(branch="feat/b")
+    _land_upstream(project, "upstream.txt", pull=False)
+    assert project.run(apply=True) == 0
+    git(
+        project.repo,
+        "reflog",
+        "expire",
+        "--expire=now",
+        "--expire-unreachable=now",
+        "refs/heads/main",
+    )
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["chore: local", "feat: b"]
+
+
 def test_a_worktree_started_in_the_same_second_as_a_copied_one_gets_its_own_main_commit(
     project: Project,
 ) -> None:
@@ -498,6 +681,144 @@ def test_an_unrelated_main_commit_from_the_same_second_is_kept(
     assert project.run(apply=True) == 0
 
     assert project.main_subjects() == ["chore: stray", "feat: a"]
+
+
+def _commit_at(repo: Path, name: str, subject: str, at: str) -> None:
+    (repo / name).write_text(f"{name}\n", encoding="utf-8")
+    git(repo, "add", name)
+    git(repo, "commit", "-q", "-m", subject, "--date", f"{at} +0000")
+
+
+def test_an_unrelated_main_commit_with_a_worktree_commits_time_and_subject_is_kept(
+    project: Project,
+) -> None:
+    _commit_at(project.repo, "other.txt", "feat: a", str(project.clock + 60))
+    path = project.worktree("feat/a", start="origin/main")
+    _commit_at(path, "a.txt", "feat: a", str(project.clock + 60))
+    project.run(branch="feat/a")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a", "feat: a"]
+    assert (project.repo / "other.txt").exists()
+    assert (project.repo / "a.txt").exists()
+
+
+def test_an_unrelated_main_commit_with_a_later_worktree_commits_time_and_subject_is_kept(
+    project: Project,
+) -> None:
+    path = project.worktree("feat/a", "feat: a", "feat: a2")
+    _commit_at(
+        project.repo,
+        "other.txt",
+        "feat: a2",
+        git(path, "log", "-1", "--format=%at"),
+    )
+    project.run(branch="feat/a")
+
+    assert project.run(apply=True) == 0
+
+    assert (project.repo / "other.txt").exists()
+    assert project.main_subjects() == ["feat: a2", "feat: a"]
+
+
+def test_an_unrelated_main_commit_with_a_copys_time_and_subject_is_kept_beside_it(
+    project: Project,
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    at = git(path, "log", "-1", "--format=%at")
+    _commit_at(project.repo, "other.txt", "feat: a", at)
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a", "feat: a"]
+    assert (project.repo / "other.txt").exists()
+
+
+def test_an_unrelated_main_commit_with_a_copys_saved_identity_is_kept_when_the_copy_was_reworded(
+    project: Project,
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    at = git(path, "log", "-1", "--format=%at")
+    git(project.repo, "commit", "-q", "--amend", "-m", "feat: reworded on main")
+    _commit_at(project.repo, "other.txt", "feat: a", at)
+
+    assert project.run(apply=True) == 0
+
+    assert (project.repo / "other.txt").exists()
+    assert (project.repo / "feat-a-7.txt").exists()
+
+
+def _copied_worktree(project: Project) -> Path:
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    return path
+
+
+def _amend_extra(path: Path) -> None:
+    (path / "extra.txt").write_text("more\n", encoding="utf-8")
+    git(path, "add", "extra.txt")
+    git(path, "commit", "-q", "--amend", "--no-edit")
+
+
+def test_main_is_left_alone_when_two_commits_could_be_the_changed_worktrees_copy(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _copied_worktree(project)
+    (project.repo / "hand.txt").write_text("edited\n", encoding="utf-8")
+    git(project.repo, "add", "hand.txt")
+    git(project.repo, "commit", "-q", "--amend", "--no-edit")
+    _commit_at(
+        project.repo, "other.txt", "feat: a", git(path, "log", "-1", "--format=%at")
+    )
+    _amend_extra(path)
+    before = git(project.repo, "rev-parse", "main")
+
+    assert project.run(apply=True) == 1
+
+    assert "main not updated" in capsys.readouterr().out
+    assert git(project.repo, "rev-parse", "main") == before
+
+
+def test_the_copy_of_an_earlier_version_is_swapped_beside_an_unrelated_commit_with_its_identity(
+    project: Project,
+) -> None:
+    path = _copied_worktree(project)
+    _commit_at(
+        project.repo, "other.txt", "feat: a", git(path, "log", "-1", "--format=%at")
+    )
+    _amend_extra(path)
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a", "feat: a"]
+    assert (project.repo / "other.txt").exists()
+    assert (project.repo / "extra.txt").read_text(encoding="utf-8") == "more\n"
+
+
+@pytest.mark.parametrize("rewrite", [["--no-edit"], ["-m", "feat: reworded"]])
+def test_an_unrelated_main_commit_with_the_time_and_subject_of_a_rewritten_never_copied_commit_is_kept(
+    project: Project, rewrite: list[str]
+) -> None:
+    path = project.worktree("feat/a", start="origin/main")
+    _commit_at(path, "a.txt", "feat: a", str(project.clock + 60))
+    _commit_at(
+        project.repo, "other.txt", "feat: a", git(path, "log", "-1", "--format=%at")
+    )
+    (path / "a.txt").write_text("amended\n", encoding="utf-8")
+    git(path, "add", "a.txt")
+    git(path, "commit", "-q", "--amend", *rewrite)
+    project.run(branch="feat/a")
+
+    assert project.run(apply=True) == 0
+
+    assert (project.repo / "other.txt").exists()
+    assert (project.repo / "a.txt").read_text(encoding="utf-8") == "amended\n"
 
 
 def test_a_reworded_first_commit_replaces_its_old_copy_in_main(
@@ -839,6 +1160,199 @@ def test_a_merged_worktree_is_not_copied_into_main(project: Project) -> None:
     assert project.run(apply=True) == 0
 
     assert project.main_subjects() == []
+
+
+def test_the_main_copy_of_a_merged_worktree_is_dropped_once_its_squash_landed(
+    project: Project,
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    project.add_pr(
+        7, "feat/a", state="MERGED", headRefOid=git(path, "rev-parse", "HEAD")
+    )
+    worktrees.save_entries(
+        project.record, [e._replace(pr=7) for e in project.entries()]
+    )
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "feat-a-7.txt", "reviewed\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == []
+
+
+def test_a_merged_worktree_is_kept_until_the_main_rebuild_that_drops_its_copy_succeeds(
+    project: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    project.add_pr(
+        7, "feat/a", state="MERGED", headRefOid=git(path, "rev-parse", "HEAD")
+    )
+    worktrees.save_entries(
+        project.record, [e._replace(pr=7) for e in project.entries()]
+    )
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "feat-a-7.txt", "reviewed\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+    real_run_git = main_sync.run_git
+    with monkeypatch.context() as broken:
+        broken.setattr(
+            main_sync,
+            "run_git",
+            lambda repo, *args, **kwargs: (
+                subprocess.CompletedProcess(args, 1, "", "no")
+                if args[0] == "update-ref"
+                else real_run_git(repo, *args, **kwargs)
+            ),
+        )
+        assert project.run(apply=True) == 1
+
+    assert project.main_subjects() == ["feat: a"]
+    assert git(project.repo, "branch", "--list", "feat/a") != ""
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == []
+    assert git(project.repo, "branch", "--list", "feat/a") == ""
+    assert project.entries() == []
+
+
+def test_the_main_copy_of_a_merged_worktree_is_dropped_though_review_changed_its_tree(
+    project: Project,
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    (path / "review.txt").write_text("review edit\n", encoding="utf-8")
+    git(path, "add", "review.txt")
+    git(path, "commit", "-q", "--amend", "--no-edit")
+    project.add_pr(
+        7, "feat/a", state="MERGED", headRefOid=git(path, "rev-parse", "HEAD")
+    )
+    worktrees.save_entries(
+        project.record, [e._replace(pr=7) for e in project.entries()]
+    )
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "feat-a-7.txt", "reviewed\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == []
+
+
+def test_the_main_copy_of_a_merged_worktree_stays_when_review_changed_its_tree_and_another_commit_shares_its_identity(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    (path / "review.txt").write_text("review edit\n", encoding="utf-8")
+    git(path, "add", "review.txt")
+    git(path, "commit", "-q", "--amend", "--no-edit")
+    _commit_at(
+        project.repo, "other.txt", "feat: a", git(path, "log", "-1", "--format=%at")
+    )
+    project.add_pr(
+        7, "feat/a", state="MERGED", headRefOid=git(path, "rev-parse", "HEAD")
+    )
+    worktrees.save_entries(
+        project.record, [e._replace(pr=7) for e in project.entries()]
+    )
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "feat-a-7.txt", "reviewed\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+
+    assert project.run(apply=True) == 1
+
+    assert project.main_subjects() == ["feat: a", "feat: a"]
+    assert "none is its copy" in capsys.readouterr().out
+
+
+def test_an_unrelated_main_commit_with_the_time_and_subject_of_a_landed_copy_is_kept(
+    project: Project,
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    _commit_at(
+        project.repo, "other.txt", "feat: a", git(path, "log", "-1", "--format=%at")
+    )
+    project.add_pr(
+        7, "feat/a", state="MERGED", headRefOid=git(path, "rev-parse", "HEAD")
+    )
+    worktrees.save_entries(
+        project.record, [e._replace(pr=7) for e in project.entries()]
+    )
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "feat-a-7.txt", "reviewed\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a"]
+    assert (project.repo / "other.txt").exists()
+
+
+def test_a_newer_main_copy_of_a_merged_worktree_stays_when_an_older_version_of_its_pr_lands(
+    project: Project,
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    published = git(path, "rev-parse", "HEAD")
+    (path / "newer.txt").write_text("unpublished\n", encoding="utf-8")
+    git(path, "add", "newer.txt")
+    git(path, "commit", "-q", "--amend", "--no-edit")
+    project.run(apply=True)
+    project.add_pr(7, "feat/a", state="MERGED", headRefOid=published)
+    worktrees.save_entries(
+        project.record, [e._replace(pr=7) for e in project.entries()]
+    )
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "landed.txt", "reviewed\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a"]
+
+
+def test_a_newer_main_copy_stays_when_its_branch_is_deleted_and_an_older_version_of_its_pr_lands(
+    project: Project,
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    published = git(path, "rev-parse", "HEAD")
+    (path / "newer.txt").write_text("unpublished\n", encoding="utf-8")
+    git(path, "add", "newer.txt")
+    git(path, "commit", "-q", "--amend", "--no-edit")
+    project.run(apply=True)
+    git(project.repo, "worktree", "remove", "--force", str(path))
+    git(project.repo, "branch", "-D", "feat/a")
+    project.add_pr(7, "feat/a", state="MERGED", headRefOid=published)
+    worktrees.save_entries(
+        project.record, [e._replace(pr=7) for e in project.entries()]
+    )
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "landed.txt", "reviewed\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a"]
 
 
 def test_main_is_left_alone_unless_it_is_checked_out(
@@ -1657,6 +2171,77 @@ def test_a_stack_on_a_lower_of_several_commits_is_squashed_into_two_main_commits
     assert project.run(apply=True) == 0
 
     assert project.main_subjects() == ["feat: a", "feat: b"]
+
+
+def test_a_stacked_upper_is_replayed_after_its_lower_even_when_its_old_copy_sits_first(
+    project: Project,
+) -> None:
+    project.commit(project.repo, "shared.txt", "L1\n-\n-\n-\nL2\n", "chore: shared")
+    git(project.repo, "push", "-q", "origin", "main")
+    for name, shared in (("b", "L1\n-\n-\n-\nB2\n"), ("a", "A1\n-\n-\n-\nL2\n")):
+        path = project.worktree(f"feat/{name}", start="origin/main")
+        (path / f"pad-{name}.txt").write_text("x\n" * 60, encoding="utf-8")
+        git(path, "add", f"pad-{name}.txt")
+        project.commit(path, "shared.txt", shared, f"feat: {name}")
+        project.run(branch=f"feat/{name}")
+        assert project.run(apply=True) == 0
+    upper = project.root / "wt" / "feat-b"
+    git(upper, "rebase", "feat/a")
+    project.clock += 60
+    (upper / "shared.txt").write_text("AB1\n-\n-\n-\nB2\n", encoding="utf-8")
+    git(
+        upper,
+        "commit",
+        "-qa",
+        "--amend",
+        "--no-edit",
+        "--date",
+        f"{project.clock} +0000",
+    )
+    project.run("tool", depends_on=("feat/b", "tool:feat/a"))
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a", "feat: b"]
+    assert (project.repo / "shared.txt").read_text(
+        encoding="utf-8"
+    ) == "AB1\n-\n-\n-\nB2\n"
+
+
+def test_an_amended_upper_copy_in_an_ordered_stack_is_replaced_in_place(
+    project: Project, published_stack: Path
+) -> None:
+    edited = project.root / "wt" / "feat-b" / "feat-b-7.txt"
+    lines = edited.read_text(encoding="utf-8").splitlines(keepends=True)
+    lines[30] = "local edit\n"
+    project.commit(project.repo, edited.name, "".join(lines), "chore: local edit")
+    _amend(project, project.root / "wt" / "feat-b", "feat: b amended")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == [
+        "feat: a",
+        "feat: b amended",
+        "chore: local edit",
+    ]
+
+
+def test_branches_stacked_above_a_moved_branch_move_with_it(
+    project: Project,
+) -> None:
+    project.worktree("feat/a", "feat: a", lines=60)
+    middle = project.worktree("feat/b", "feat: b", start="feat/a", lines=60)
+    project.worktree("feat/c", "feat: c", start="feat/b", lines=60)
+    for name in "abc":
+        project.run(branch=f"feat/{name}")
+    project.run("tool", depends_on=("feat/b", "tool:feat/a"))
+    project.run("tool", depends_on=("feat/c", "tool:feat/b"))
+    assert project.run(apply=True) == 0
+    _amend(project, middle, "feat: b amended")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a", "feat: b amended", "feat: c"]
 
 
 def test_restack_moves_an_upper_onto_an_amended_lower_of_several_commits(
