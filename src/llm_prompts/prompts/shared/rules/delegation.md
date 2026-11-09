@@ -81,7 +81,7 @@ Every spawn prompt MUST specify:
 
 - A delegate stuck on ambiguity or needing a user preference SHOULD escalate.
 - A delegate whose work outgrows its estimate (more steps, files or phases) MUST stop and escalate up the ownership edge, noting more agents may be faster. MUST NOT grind on alone.
-- MUST NOT idle-wait on a background agent/command, `sleep` or placeholder - completion re-invokes you; work on or end the turn.{% if AGENT == "pi" %} Under `pi -p`, MUST `{{TOOL_AGENT_RESULT}}` each background agent first.{% else %} Exception: while a delegate runs, MUST keep a background `sleep 300` armed; if it fires with no update, MUST `SendMessage` it for status.{% endif +%}
+- MUST NOT idle-wait on a background agent/command, `sleep` or placeholder - completion re-invokes you; work on or end the turn.{% if AGENT == "pi" %} Under `pi -p`, MUST `{{TOOL_AGENT_RESULT}}` each background agent first.{% else %} Exception: while any delegate runs, MUST keep ONE background `sleep 300` armed per session, never one per delegate. When it fires, MUST `SendMessage` each delegate that has sent no message since the timer was armed for status, then re-arm it. MUST NOT send a status request to a delegate that has messaged since.{% endif +%}
 {% if AGENT == "pi" %}
 {% if TOOL_AGENT == 'delegate_agent' %}
 - MUST `continue_agent` a finished agent's exact session for same-scope follow-up (fix, gate retry, missing section), never a fresh delegate.
