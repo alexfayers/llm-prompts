@@ -241,7 +241,7 @@ class TestSquashSync:
     ) -> None:
         _route_divergence(fake_subprocess)
         fake_subprocess.on(
-            "log", "--no-merges", stdout="p2\t200\tpr commit\np3\t200\tpr commit\n"
+            "log", "--no-merges", stdout="p3\t200\tpr commit\np2\t200\tpr commit\n"
         )
 
         assert sync_diverged(REPO) == SyncResult("squash-synced", replayed=1)
@@ -257,6 +257,92 @@ class TestSquashSync:
         assert fake_subprocess.matching(
             "merge-tree", "--write-tree", "--name-only", "--merge-base=p3^"
         )[0][-2:] == ["l3^", "p3"]
+
+    def test_a_pull_requests_commits_are_listed_parents_first_whatever_their_dates(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        _route_divergence(fake_subprocess)
+
+        sync_diverged(REPO)
+
+        (listing,) = (
+            argv
+            for argv in fake_subprocess.matching("log", "--no-merges")
+            if "u1^..h1" in argv
+        )
+        assert {"--topo-order", "--reverse"} <= set(listing)
+
+    def test_later_pull_request_commits_are_applied_on_a_commit_not_a_tree(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        _route_divergence(fake_subprocess)
+        fake_subprocess.on(
+            "log", "--no-merges", stdout="p3\t200\tpr commit\np4\t300\tnext\n"
+        )
+        fake_subprocess.on(
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--merge-base=p3^",
+            stdout="tree-step\n",
+        )
+        fake_subprocess.on(
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--merge-base=p4^",
+            stdout="tree-l3\n",
+        )
+        fake_subprocess.on("commit-tree", stdout=["step\n", "tip1\n"])
+
+        assert sync_diverged(REPO) == SyncResult("squash-synced", replayed=1)
+
+        (second,) = fake_subprocess.matching(
+            "merge-tree", "--write-tree", "--name-only", "--merge-base=p4^"
+        )
+        assert second[-2:] == ["step", "p4"]
+
+    @pytest.mark.parametrize(
+        ("conflicts_at_p4", "step_commits"),
+        [
+            (True, ["a1\n", "b1\n", "tip1\n"]),
+            (False, ["a1\n", "a2\n", "a3\n", "b1\n", "tip1\n"]),
+        ],
+        ids=["conflicts-part-way", "ends-without-matching"],
+    )
+    def test_a_failed_pull_request_candidate_does_not_hide_a_later_matching_one(
+        self,
+        fake_subprocess: FakeSubprocess,
+        conflicts_at_p4: bool,
+        step_commits: list[str],
+    ) -> None:
+        _route_divergence(fake_subprocess)
+        fake_subprocess.on(
+            "log",
+            "--no-merges",
+            stdout="p3\t200\tpr commit\np4\t300\tmid\np5\t200\tpr commit\np6\t300\tnext\n",
+        )
+        fake_subprocess.on("commit-tree", stdout=step_commits)
+
+        def merge(
+            argv: list[str], _: dict[str, Any]
+        ) -> subprocess.CompletedProcess[str]:
+            base, ours, _theirs = argv[-3:]
+            if conflicts_at_p4 and base == "--merge-base=p4^":
+                return subprocess.CompletedProcess(argv, 1, "tree-x\nfile.txt\n", "")
+            tree = "tree-l3" if (base, ours) == ("--merge-base=p6^", "b1") else "tree-x"
+            return subprocess.CompletedProcess(argv, 0, f"{tree}\n", "")
+
+        fake_subprocess.on_match(
+            lambda argv: any(arg.startswith("--merge-base=p") for arg in argv),
+            side_effect=merge,
+        )
+
+        assert sync_diverged(REPO) == SyncResult("squash-synced", replayed=1)
+
+        assert fake_subprocess.matching(
+            "merge-tree", "--write-tree", "--name-only", "--merge-base=p5^"
+        )[-1][-2:] == ["l3^", "p5"]
 
     def test_pull_request_commit_applying_differently_is_replayed(
         self, fake_subprocess: FakeSubprocess
