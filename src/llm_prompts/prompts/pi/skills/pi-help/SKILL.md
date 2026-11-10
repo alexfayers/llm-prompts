@@ -30,6 +30,7 @@ Guided tour of this pi setup. Plain words.
 - MUST describe your session as the lead that hands work to background agents.
 - An agent definition MAY set `extensions: [a, b]` to load only those, plus `pi/agent-extensions.json` and extensions calling `registerProvider(`. Names: `builtin:x`, files or packages. `?` marks optional. Omitting `extensions` loads all extensions.
 - MUST tell the user to run `/reload` after editing extensions, packages, settings, agents or `AGENTS.md`.
+- `pi/agent-models.json` `{tier: provider/model}` maps a tier to a model. An exact ID stays pinned. A `*` for the version, as in `provider/name-*-tier`, picks the newest listed match.
 - `pi/agent-additions.json` `{agent: {key: [t]}}` adds `pi_skills`, `extensions`, variants to an agent.
 - MUST NOT describe net-guard as a security boundary.
 - MUST explain `promptMaxRows` and `promptFieldMaxWidth` of 1000000 as making the permission prompt start expanded.
