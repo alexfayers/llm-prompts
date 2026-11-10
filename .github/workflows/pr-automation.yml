@@ -2,6 +2,12 @@ name: PR automation
 
 on:
   workflow_call:
+    inputs:
+      project:
+        description: Set to false to skip syncing PR status onto the project board.
+        required: false
+        type: boolean
+        default: true
     secrets:
       PROJECTS_TOKEN:
         required: true
@@ -18,3 +24,4 @@ jobs:
         with:
           projects-token: ${{ secrets.PROJECTS_TOKEN }}
           github-token: ${{ github.token }}
+          project: ${{ inputs.project }}

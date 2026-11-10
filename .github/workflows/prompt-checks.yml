@@ -1,0 +1,101 @@
+name: Prompt checks
+
+on:
+  workflow_call:
+    inputs:
+      prompts-root:
+        description: Repository-relative prompts directory.
+        required: true
+        type: string
+      core-prompts:
+        description: Check this directory as the core prompts source.
+        default: false
+        type: boolean
+
+jobs:
+  prompt-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        if: github.event_name == 'pull_request'
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .size-base
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Check prompts and compare sizes
+        env:
+          PROMPTS_ROOT: ${{ inputs.prompts-root }}
+          CORE_PROMPTS: ${{ inputs.core-prompts }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          uv run --isolated --no-project \
+            --with "llm-prompts @ git+https://github.com/alexfayers/llm-prompts.git@main" \
+            --with "cline-hooks @ git+https://github.com/alexfayers/cline-hooks.git@main" \
+            python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from llm_prompts.install import prompts_dir
+          from llm_prompts.size_guard import check
+          from llm_prompts.size_report import compare, render_markdown
+
+          head = Path(os.environ["PROMPTS_ROOT"]).resolve()
+          if not head.is_dir():
+              raise SystemExit(f"No prompts at {head}")
+
+          core_source = os.environ["CORE_PROMPTS"] == "true"
+          core = head if core_source else prompts_dir("llm_prompts")
+          result = check([core] if core_source else [core, head])
+          print(result.report)
+          for line in result.stale:
+              print(line)
+          Path("prompt-check-status").write_text(
+              "0\n" if result.passed else "1\n", encoding="utf-8"
+          )
+
+          if os.environ["EVENT_NAME"] == "pull_request":
+              base = (Path(".size-base") / os.environ["PROMPTS_ROOT"]).resolve()
+              if base.is_dir():
+                  base_roots = [base] if core_source else [core, base]
+                  head_roots = [head] if core_source else [core, head]
+                  base_result = check(
+                      base_roots, vars_root=base if core_source else core
+                  )
+                  report = render_markdown(
+                      compare(
+                          base_result.artifacts,
+                          result.artifacts,
+                          base_roots,
+                          head_roots,
+                      )
+                  )
+              else:
+                  report = (
+                      "## Prompt size report\n\n"
+                      f"No base prompts at `{base}` to compare against.\n"
+                  )
+              Path("size-report.md").write_text(report, encoding="utf-8")
+          PY
+
+      - name: Save size report
+        if: github.event_name == 'pull_request'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          cat size-report.md >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$PR_NUMBER" > pr-number
+
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'pull_request'
+        with:
+          name: size-report
+          path: |
+            size-report.md
+            pr-number
+
+      - name: Enforce prompt checks
+        run: exit "$(cat prompt-check-status)"
