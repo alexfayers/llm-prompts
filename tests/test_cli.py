@@ -2203,6 +2203,7 @@ class TestContributeSubcommand:
         ("argv", "options"),
         [
             (["--ready", "feat/x"], SyncOptions(ready="feat/x")),
+            (["--why", "feat/x", "Because."], SyncOptions(why=("feat/x", "Because."))),
             (
                 ["--depends-on", "feat/x", "b:feat/y"],
                 SyncOptions(depends_on=("feat/x", "b:feat/y")),
@@ -2271,6 +2272,20 @@ class TestContributeSubcommand:
         ):
             main()
         assert exc_info.value.code == 2
+
+    def test_combined_record_edits_error(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        argv = ["--why", "feat/x", "text", "--ready", "feat/x"]
+        with (
+            patch(
+                "sys.argv", ["llm-prompts", "contribute", "sync", "--tool", "a", *argv]
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            main()
+        assert exc_info.value.code == 2
+        assert "only one of" in capsys.readouterr().err
 
     def test_update_pr_without_tool_errors(
         self, capsys: pytest.CaptureFixture[str]

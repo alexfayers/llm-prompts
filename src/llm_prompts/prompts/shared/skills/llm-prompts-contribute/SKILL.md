@@ -18,7 +18,8 @@ All three repos' prompts trees go through `llm-prompts contribute` (`list`, `syn
 - MUST work in a `git worktree` on your own branch with its commits ahead of `origin/main`, or of the worktree it depends on. Any number is allowed. `list` flags a worktree whose combined diff is over the line limit in `yappy_limits.json`.
 - MUST start the worktree from `origin/main`, or from the lower worktree's branch and link it with `--depends-on`. `sync` skips a branch holding another worktree's commits or other local `main` commits (`skipped: holds commits of <branch>`).
 - `sync --tool NAME --branch B` records the worktree, local only. `sync` copies the worktree into local `main` as one squashed commit (first commit's subject) and pulls remote changes, but never pushes it or touches a PR.
-- `sync --tool NAME --ready B` lets `sync --apply` push B as `<login>/contribute/B` and open a draft PR (no reviewers), body per the repo's template, then refresh its title and What. `--local B` reverses it. `--forget B` drops it.
+- `sync --tool NAME --why B "TEXT"` records the Why for B's PR, local only. MUST record it before `--ready`. `sync` skips a PR (nonzero exit) while a required template section is empty.
+- `sync --tool NAME --ready B` lets `sync --apply` push B as `<login>/contribute/B` and open a draft PR (no reviewers), body per the repo's template, then refresh its What, and its title only while it is still the one sync wrote. `--local B` reverses it. `--forget B` drops it.
 - `sync --rescan` records your open PRs checked out in worktrees, local only.
 - `sync` is a dry run until `--apply`. It force-pushes only a draft PR whose remote branch is unchanged since the last sync. Once the PR merges, `sync --apply` removes the worktree and branch.
 - `list` - shows each recorded worktree and its state, offline.
@@ -45,7 +46,7 @@ All three repos' prompts trees go through `llm-prompts contribute` (`list`, `syn
 ## PR content
 
 - Follow the template structure (What/Why, optional Dependencies/Issues).
-- After `sync` opens a PR, MUST fill Why (left empty) and delete the unused Dependencies and Issues placeholder comments via `gh pr edit <url> --body-file -`. The body MUST NOT contain `<!--`. Use at most 3 short bullets per section, not restating the title. Descriptions MUST be easy for reluctant reviewers to follow.
+- `sync` writes the recorded Why and no placeholder comments. MUST NOT hand-edit a sync PR's title. A body edit MUST NOT contain `<!--`, except sync's `<!--sync-->` bullet marker. Use at most 3 short bullets per section, not restating the title. Descriptions MUST be easy for reluctant reviewers to follow.
 - Title: the first commit's subject (`type: subject`), plus `(+N more)` when the PR has more commits.
 - Description: bullet points, not paragraphs, each a full sentence. State WHAT and WHY, not HOW. No restating the diff, no process commentary.
 - If you used an eagle-vision plan directory or the user names one, MUST post the plan once as a separate PR comment: `python3 "<base-dir>/../eagle-vision/focus.py" comment <dir> | gh pr comment <pr-url> --body-file -`. MUST NOT put it in the description.

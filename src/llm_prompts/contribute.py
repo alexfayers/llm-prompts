@@ -26,10 +26,14 @@ from .squash_subject import squash_pr_number
 from .worktrees import Link, WorktreeEntry
 
 _DEPENDS_PREFIX = "Depends on "
-_GENERATED_PREFIXES = ("- ", _DEPENDS_PREFIX)
+_TEMPLATE_SECTIONS = json.loads(
+    (Path(__file__).parent / "pr_template_sections.json").read_text("utf-8")
+)
+WHAT_MARK = f" {_TEMPLATE_SECTIONS['syncMark']}"
 _WHAT_HEADING = re.compile(r"^## What\n", re.MULTILINE)
 _DEPENDENCIES_HEADING = re.compile(r"^## Dependencies\n", re.MULTILINE)
 _HEADING = re.compile(r"^## ", re.MULTILINE)
+_SECTION_HEADING = re.compile(r"^##[ \t]+(.*?)[ \t]*$", re.MULTILINE)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _BLANK_LINES = re.compile(r"\n{3,}")
 _PR_TEMPLATE_PATH = ".github/PULL_REQUEST_TEMPLATE.md"
@@ -263,7 +267,7 @@ def pr_template(repo: Path, base: str) -> str:
 
 def _what_lines(commits: Sequence[Commit]) -> list[str]:
     """Return the What section's subject bullets, one per commit."""
-    return [f"- {commit.subject}" for commit in commits]
+    return [f"- {commit.subject}{WHAT_MARK}" for commit in commits]
 
 
 def _with_depends(
@@ -294,15 +298,54 @@ def _with_depends(
     return text[: heading.end()] + section + (f"\n{text[end:]}" if following else "")
 
 
+def _sections(markdown: str) -> dict[str, str]:
+    """Return each ``## `` section's text without placeholder comments, by heading."""
+    parts = _SECTION_HEADING.split(markdown)
+    return {
+        heading: _HTML_COMMENT.sub("", text).strip()
+        for heading, text in zip(parts[1::2], parts[2::2])
+    }
+
+
+def unfilled_sections(template: str, body: str) -> list[str]:
+    """Return the headings of the template's required sections that ``body`` lacks or leaves empty."""
+    optional = _TEMPLATE_SECTIONS["optional"]
+    filled = _sections(body)
+    return [
+        heading
+        for heading in _sections(template)
+        if heading not in optional and not filled.get(heading)
+    ]
+
+
+def _fill_section(body: str, heading: str, text: str) -> str:
+    """Return ``body`` with ``text`` under ``heading`` when that section is missing or empty."""
+    if not text or _sections(body).get(heading):
+        return body
+    match = re.search(rf"^## {re.escape(heading)}[ \t]*\n", body, re.MULTILINE)
+    if match is None:
+        return f"{body.rstrip()}\n\n## {heading}\n\n{text}\n"
+    following = _HEADING.search(body, match.end())
+    end = following.start() if following else len(body)
+    rest = f"\n{body[end:]}" if following else ""
+    return f"{body[: match.end()]}\n{text}\n{rest}"
+
+
 def pr_body(
-    template: str, commits: Sequence[Commit], depends_on: Sequence[str] = ()
+    template: str,
+    commits: Sequence[Commit],
+    depends_on: Sequence[str] = (),
+    why: str = "",
 ) -> str:
-    """Return ``template`` without placeholder comments, with the What lines under its What heading and Depends on lines at the end."""
+    """Return ``template`` without placeholder comments, with the What lines under its What heading, ``why`` under Why and Depends on lines at the end."""
     lines = "\n".join(_what_lines(commits))
     template = _BLANK_LINES.sub("\n\n", _HTML_COMMENT.sub("", template))
     body, found = _WHAT_HEADING.subn(lambda m: f"{m[0]}\n{lines}\n", template, 1)
     return _with_depends(
-        body if found else f"## What\n\n{lines}\n\n{template}", depends_on
+        _fill_section(
+            body if found else f"## What\n\n{lines}\n\n{template}", "Why", why
+        ),
+        depends_on,
     )
 
 
@@ -312,8 +355,13 @@ def rewrite_what(
     depends_on: Sequence[str] = (),
     dropped: Sequence[str] = (),
 ) -> str:
-    """Return ``body`` with its What section's generated lines and trailing Depends on lines rebuilt, all else kept."""
+    """Return ``body`` with its What section's marked lines and trailing Depends on lines rebuilt, all else kept.
+
+    A non-empty ``body`` without marked lines keeps its text apart from Depends on lines.
+    """
     lines = _what_lines(commits)
+    if body.strip() and WHAT_MARK not in body:
+        return _with_depends(body, depends_on, dropped)
     heading = _WHAT_HEADING.search(body)
     if heading is None:
         return _with_depends(
@@ -323,15 +371,9 @@ def rewrite_what(
     end = following.start() if following else len(body)
     section = body[heading.end() : end]
     old = section.lstrip("\n").split("\n")
-    generated = next(
-        (i for i, line in enumerate(old) if not line.startswith(_GENERATED_PREFIXES)),
-        len(old),
-    )
     stale = {f"{_DEPENDS_PREFIX}{ref}" for ref in (*depends_on, *dropped)}
     prose = "\n".join(
-        line
-        for i, line in enumerate(old)
-        if line not in stale and (i >= generated or line.startswith(_DEPENDS_PREFIX))
+        line for line in old if line not in stale and not line.endswith(WHAT_MARK)
     ).strip("\n")
     trailing = section[len(section.rstrip("\n")) :]
     rebuilt = "\n" + "\n".join(lines) + (f"\n\n{prose}" if prose else "") + trailing
@@ -346,9 +388,21 @@ def refreshed_pr(
     commits: Sequence[Commit],
     depends_on: Sequence[str] = (),
     dropped: Sequence[str] = (),
+    retitle: bool = True,
+    why: str = "",
 ) -> tuple[str, str] | None:
-    """Return the PR title and body ``commits`` call for, or None when both are already current."""
-    refreshed = pr_title(commits), rewrite_what(body, commits, depends_on, dropped)
+    """Return the PR title and body ``commits`` call for, or None when both are already current.
+
+    The title stays as it is unless ``retitle``. ``why`` fills an empty Why section.
+    """
+    refreshed = (
+        pr_title(commits) if retitle else title,
+        _fill_section(
+            rewrite_what(body, commits, depends_on, dropped),
+            "Why",
+            why,
+        ),
+    )
     return None if refreshed == (title, body) else refreshed
 
 
@@ -507,20 +561,30 @@ class SyncOptions(NamedTuple):
     rescan: bool = False
     depends_on: tuple[str, str] | None = None
     no_depends_on: tuple[str, str] | None = None
+    why: tuple[str, str] | None = None
+
+    @property
+    def record_edits(self) -> int:
+        """How many record-edit flags the run was given."""
+        return sum(
+            map(
+                bool,
+                (
+                    self.branch,
+                    self.forget,
+                    self.ready,
+                    self.local,
+                    self.depends_on,
+                    self.no_depends_on,
+                    self.why,
+                ),
+            )
+        )
 
     @property
     def edits_record(self) -> bool:
         """Whether the run only edits the record, with no network call."""
-        return any(
-            (
-                self.branch,
-                self.forget,
-                self.ready,
-                self.local,
-                self.depends_on,
-                self.no_depends_on,
-            )
-        )
+        return self.record_edits > 0
 
 
 class Checkout(NamedTuple):
@@ -745,6 +809,11 @@ def edit_record(
         return _link_branches(repo, entries, tools, *options.depends_on)
     if options.no_depends_on is not None:
         return _unlink_branches(repo, entries, tools, *options.no_depends_on)
+    if options.why is not None:
+        branch, why = options.why
+        return _entry_edit(
+            repo, entries, branch, lambda e: e._replace(why=why), "why recorded"
+        )
     if options.branch is not None:
         return _record_branch(tool, repo, entries, options.branch)
     if options.forget is not None:
@@ -1101,12 +1170,19 @@ def _commit_of(repo: Path, sha: str) -> Commit:
 def _pr_number_of(repo: Path, branch: str) -> int:
     """Return the number of the open PR whose head is ``branch``, through gh or the GitHub API."""
     if _gh_installed():
-        return int(
-            _gh_json("pr", "view", branch, "--json", "number", repo=repo)["number"]
+        prs = _gh_json(
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--state",
+            "open",
+            "--json",
+            "number,headRefName",
+            repo=repo,
         )
-    [pr] = [
-        pr
-        for pr in with_retries(
+    else:
+        prs = with_retries(
             partial(
                 github_api.pr_list,
                 repo,
@@ -1114,9 +1190,16 @@ def _pr_number_of(repo: Path, branch: str) -> int:
                 ["number", "headRefName"],
             )
         )
-        if pr["headRefName"] == branch
-    ]
+    [pr] = [pr for pr in prs if pr["headRefName"] == branch]
     return int(pr["number"])
+
+
+def _open_pr_number(repo: Path, branch: str) -> int | None:
+    """Return the number of the open PR whose head is ``branch``, or None when it has none."""
+    try:
+        return _pr_number_of(repo, branch)
+    except (subprocess.CalledProcessError, ValueError):
+        return None
 
 
 def _open_pr(
@@ -1126,6 +1209,7 @@ def _open_pr(
     head_owner: str,
     commits: Sequence[Commit],
     depends_on: Sequence[str] = (),
+    why: str = "",
 ) -> tuple[int, bool]:
     """Open a draft PR for ``branch`` and return its number, or that of the existing one and True."""
     try:
@@ -1134,7 +1218,7 @@ def _open_pr(
             base,
             f"{head_owner}{branch}",
             pr_title(commits),
-            pr_body(pr_template(repo, base), commits, depends_on),
+            pr_body(pr_template(repo, base), commits, depends_on, why),
         )
     except subprocess.CalledProcessError as error:
         if "already exists" not in (error.stderr or ""):
@@ -1208,7 +1292,9 @@ class _RepoSync:
         apply: bool,
         login: str,
         others: Sequence[WorktreeEntry] = (),
+        tool: str = "NAME",
     ) -> None:
+        self.tool = tool
         self.repo = repo
         self.others = others
         self.apply = apply
@@ -1528,6 +1614,9 @@ class _RepoSync:
         fetch_base(self.repo, self.base.split("/", 1)[0])
         if (stale := stale_main_warning(self.repo, self.base)) is not None:
             _print_warning(stale)
+        for entry in list(self.entries):
+            if entry.ready and entry.pr is None:
+                self.adopt(entry)
         self.observe()
         self.landed = [
             Landed(
@@ -1614,6 +1703,8 @@ class _RepoSync:
         if entry.pr is None and waiting is not None:
             self.say(entry, f"waiting: {waiting.branch} has no PR yet")
             return
+        if entry.pr is None and self.unfilled(entry, self.commits(entry, tip)):
+            return
         relation = self.relation(entry)
         pr = self.prs.get(entry.pr) if entry.pr is not None else None
         if relation == "diverged":
@@ -1653,6 +1744,7 @@ class _RepoSync:
                 entry = self.update(entry, remote_head=tip)
             if number is None:
                 head_owner = f"{self.login}:" if forked else ""
+                title = pr_title(self.commits(entry, tip))
                 number, adopted = _open_pr(
                     self.repo,
                     self.base,
@@ -1660,8 +1752,11 @@ class _RepoSync:
                     head_owner,
                     self.commits(entry, tip),
                     [link.ref for link in entry.depends_on],
+                    entry.why,
                 )
-                entry = self.update(entry, pr=number, pr_state="OPEN")
+                entry = self.update(
+                    entry, pr=number, pr_state="OPEN", title="" if adopted else title
+                )
                 self.say(entry, f"pushed, opened draft PR #{number}")
                 if adopted:
                     pr = pr_states(self.repo, [number]).get(number)
@@ -1671,6 +1766,27 @@ class _RepoSync:
                 self.settle_body(entry, pr, tip)
         except subprocess.CalledProcessError as error:
             self.fail(entry, f"not pushed ({first_stderr_line(error)})")
+
+    def adopt(self, entry: WorktreeEntry) -> WorktreeEntry:
+        """Record the open PR already on ``entry``'s branch, if any."""
+        number = _open_pr_number(self.repo, entry.branch)
+        if number is None:
+            return entry
+        return self.update(entry, pr=number, pr_state="OPEN", title="")
+
+    def unfilled(self, entry: WorktreeEntry, commits: Sequence[Commit]) -> bool:
+        """Say which required PR sections ``entry``'s PR would leave empty, and return whether any."""
+        template = pr_template(self.repo, self.base)
+        missing = unfilled_sections(template, pr_body(template, commits, (), entry.why))
+        if missing:
+            self.fail(entry, f"not opened, {self.empty_message(entry, missing)}")
+        return bool(missing)
+
+    def empty_message(self, entry: WorktreeEntry, missing: Sequence[str]) -> str:
+        return (
+            f"PR section {', '.join(missing)} is empty. Set it with: "
+            f'llm-prompts contribute sync --tool {self.tool} --why {entry.branch} "<why>"'
+        )
 
     def settle_body(self, entry: WorktreeEntry, pr: PrState, tip: str) -> None:
         """Refresh a draft PR's title and body, or name a non-draft one whose Depends on lines are out of date."""
@@ -1691,11 +1807,28 @@ class _RepoSync:
             self.commits(entry, tip),
             [link.ref for link in entry.depends_on],
             entry.dropped_refs,
+            retitle=bool(entry.title) and pr.title == entry.title,
+            why=entry.why,
         )
+        template = pr_template(self.repo, self.base)
+        missing = unfilled_sections(template, refreshed[1] if refreshed else pr.body)
+        if missing:
+            self.fail(
+                entry,
+                f"PR #{entry.pr} body left as it is, {self.empty_message(entry, missing)}",
+            )
+            refreshed = (
+                (refreshed[0], pr.body)
+                if refreshed and refreshed[0] != pr.title
+                else None
+            )
         if refreshed is not None:
             edit_pr(self.repo, int(entry.pr or 0), *refreshed)
             self.say(entry, f"updated PR #{entry.pr} title and What")
-        self.update(entry, dropped_refs=())
+            if entry.title and pr.title == entry.title:
+                entry = self.update(entry, title=refreshed[0])
+        if not missing:
+            self.update(entry, dropped_refs=())
 
 
 def _branch_exists(repo: Path, branch: str) -> bool:
@@ -1771,9 +1904,10 @@ def _sync_repo(
     apply: bool,
     login: str,
     others: Sequence[WorktreeEntry] = (),
+    tool: str = "NAME",
 ) -> tuple[int, list[WorktreeEntry]]:
     """Sync one repo's recorded worktrees and return the status and the updated entries."""
-    return _RepoSync(repo, entries, apply, login, others).run()
+    return _RepoSync(repo, entries, apply, login, others, tool).run()
 
 
 def rescan_record(repo: Path, entries: list[WorktreeEntry], login: str) -> list[str]:
@@ -1781,7 +1915,7 @@ def rescan_record(repo: Path, entries: list[WorktreeEntry], login: str) -> list[
     key = _repo_key(repo)
     open_by_branch = {
         item["headRefName"]: item
-        for item in _pr_list(repo, "open", "number,headRefName,headRefOid")
+        for item in _pr_list(repo, "open", "number,headRefName,headRefOid,body")
     }
     lines: list[str] = []
     for checkout in checkouts(repo):
@@ -1797,6 +1931,7 @@ def rescan_record(repo: Path, entries: list[WorktreeEntry], login: str) -> list[
             item["number"],
             "OPEN",
             item["headRefOid"],
+            why=_sections(item["body"]).get("Why", ""),
         )
         old = next(
             (e for e in entries if (e.repo, e.branch) == (key, checkout.branch)), None
@@ -1972,7 +2107,9 @@ def _sync_locked(
         entries = _cached_refs(entries)
         mine = [e for e in entries if e.repo == key]
         others = [e for e in entries if e.repo != key]
-        repo_status, updated = _sync_repo(repo, mine, options.apply, login, others)
+        repo_status, updated = _sync_repo(
+            repo, mine, options.apply, login, others, tool
+        )
         status = max(status, repo_status)
         entries = [e for e in entries if e.repo != key] + updated
     if editing or options.rescan or options.apply:

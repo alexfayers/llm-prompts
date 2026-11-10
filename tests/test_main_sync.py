@@ -222,6 +222,8 @@ def _route_divergence(fake: FakeSubprocess) -> None:
     fake.on("cherry", "@{u}", stdout="+ l1\n+ l2\n+ l3\n")
     fake.on("cherry", "h1", stdout="+ l1\n- l2\n+ l3\n")
     fake.on("rev-parse", "@{u}", stdout="tip0\n")
+    fake.on("cherry-pick", returncode=1)
+    fake.on("ls-files", "--unmerged", stdout="100644 abc 1\ta.txt\n")
     fake.on("merge-tree", stdout="tree-l1\n")
     fake.on(
         "merge-tree",

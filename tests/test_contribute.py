@@ -13,6 +13,7 @@ from conftest import ContributeRemote, FakeGitHub, FakeSubprocess
 
 from llm_prompts import contribute, github_api
 from llm_prompts.contribute import (
+    WHAT_MARK,
     Commit,
     Pr,
     base_ref,
@@ -531,24 +532,27 @@ class TestPrBody:
     def test_commit_subjects_listed_directly_under_what(self) -> None:
         commits = [Commit("a1", "feat: add foo", ()), Commit("a2", "fix: bar", ())]
         assert pr_body(_TEMPLATE, commits) == (
-            "## What\n\n- feat: add foo\n- fix: bar\n\n"
+            f"## What\n\n- feat: add foo{WHAT_MARK}\n- fix: bar{WHAT_MARK}\n\n"
             "## Why\n\n## Testing\n\n## Checks\n\n- [ ] Within budget\n"
         )
 
     def test_placeholder_comments_are_removed_and_the_rest_kept(self) -> None:
         body = pr_body(_TEMPLATE, [Commit("a1", "feat: add foo", ())])
-        assert "<!--" not in body
+        assert "<!--" not in body.replace(WHAT_MARK, "")
         for kept in ("## Why", "## Testing", "## Checks", "- [ ] Within budget"):
             assert kept in body
 
     def test_template_without_what_heading_gets_one_prepended(self) -> None:
         commits = [Commit("a1", "feat: add foo", ())]
         template = "## Why\n\n<!-- Why. -->\n"
-        assert pr_body(template, commits) == "## What\n\n- feat: add foo\n\n## Why\n\n"
+        assert (
+            pr_body(template, commits)
+            == f"## What\n\n- feat: add foo{WHAT_MARK}\n\n## Why\n\n"
+        )
 
     def test_what_section_lists_every_commit(self) -> None:
         commits = [Commit(f"a{i}", f"feat: add thing{i}", ()) for i in range(1, 6)]
-        subjects = "\n".join(f"- feat: add thing{i}" for i in range(1, 6))
+        subjects = "\n".join(f"- feat: add thing{i}{WHAT_MARK}" for i in range(1, 6))
         body = pr_body(_TEMPLATE, commits)
         assert body.startswith(f"## What\n\n{subjects}\n\n## Why")
 
@@ -556,7 +560,7 @@ class TestPrBody:
         commits = [Commit(f"a{i}", f"feat: add thing{i}", ()) for i in range(1, 3)]
         body = pr_body(_TEMPLATE, commits, ["https://example.test/pr/1"])
         assert body.startswith(
-            "## What\n\n- feat: add thing1\n- feat: add thing2\n\n## Why"
+            f"## What\n\n- feat: add thing1{WHAT_MARK}\n- feat: add thing2{WHAT_MARK}\n\n## Why"
         )
         assert body.endswith("\n\nDepends on https://example.test/pr/1\n")
 
@@ -564,13 +568,13 @@ class TestPrBody:
         template = "## What\n\n## Dependencies\n\nHand note.\n\n## Issues\n"
         body = pr_body(template, [Commit("a1", "feat: a", ())], ["o/r#1", "o/r#2"])
         assert body == (
-            "## What\n\n- feat: a\n\n## Dependencies\n\nHand note.\n"
+            f"## What\n\n- feat: a{WHAT_MARK}\n\n## Dependencies\n\nHand note.\n"
             "Depends on o/r#1\nDepends on o/r#2\n\n## Issues\n"
         )
 
 
 _EDITED_BODY = (
-    "## What\n\n- feat: add foo\n\n"
+    f"## What\n\n- feat: add foo{WHAT_MARK}\n\n"
     "## Why\n\nBecause of reasons.\n\n"
     "## Testing\n\nRan it.\n\n"
     "## Checks\n\n- [x] Within budget\n"
@@ -583,7 +587,9 @@ class TestRewriteWhat:
     ) -> None:
         commits = [Commit("a1", "feat: add foo", ()), Commit("a2", "fix: bar", ())]
         assert rewrite_what(_EDITED_BODY, commits) == _EDITED_BODY.replace(
-            "- feat: add foo\n", "- feat: add foo\n- fix: bar\n", 1
+            f"- feat: add foo{WHAT_MARK}\n",
+            f"- feat: add foo{WHAT_MARK}\n- fix: bar{WHAT_MARK}\n",
+            1,
         )
 
     def test_user_prose_is_kept_and_pasted_duplicate_depends_line_dropped(
@@ -591,12 +597,12 @@ class TestRewriteWhat:
     ) -> None:
         commits = [Commit("a1", "feat: add foo", ())]
         body = (
-            "## What\n\n- feat: add foo\n\nSee the thread.\n"
+            f"## What\n\n- feat: add foo{WHAT_MARK}\n\nSee the thread.\n"
             "Depends on https://example.test/pr/1\n"
             "Depends on https://example.test/pr/2\n\n## Why\n\nx\n"
         )
         assert rewrite_what(body, commits, ["https://example.test/pr/1"]) == (
-            "## What\n\n- feat: add foo\n\nSee the thread.\n"
+            f"## What\n\n- feat: add foo{WHAT_MARK}\n\nSee the thread.\n"
             "Depends on https://example.test/pr/2\n\n## Why\n\nx\n\n"
             "Depends on https://example.test/pr/1\n"
         )
@@ -604,48 +610,67 @@ class TestRewriteWhat:
     def test_top_of_what_depends_lines_move_to_the_bottom(self) -> None:
         commits = [Commit("a1", "feat: add foo", ())]
         url = "https://example.test/pr/1"
-        body = f"## What\n\nDepends on {url}\n- feat: add foo\n\n## Why\n\nx\n"
+        body = (
+            f"## What\n\nDepends on {url}\n- feat: add foo{WHAT_MARK}\n\n## Why\n\nx\n"
+        )
         assert rewrite_what(body, commits, [url]) == (
-            f"## What\n\n- feat: add foo\n\n## Why\n\nx\n\nDepends on {url}\n"
+            f"## What\n\n- feat: add foo{WHAT_MARK}\n\n## Why\n\nx\n\nDepends on {url}\n"
         )
 
     def test_top_of_what_hand_written_depends_line_is_kept(self) -> None:
         commits = [Commit("a1", "feat: add foo", ())]
         url = "https://example.test/pr/1"
-        body = "## What\n\nDepends on HAND\n- feat: add foo\n\n## Why\n\nx\n"
+        body = (
+            f"## What\n\nDepends on HAND\n- feat: add foo{WHAT_MARK}\n\n## Why\n\nx\n"
+        )
         assert rewrite_what(body, commits, [url]) == (
-            f"## What\n\n- feat: add foo\n\nDepends on HAND\n\n## Why\n\nx\n\nDepends on {url}\n"
+            f"## What\n\n- feat: add foo{WHAT_MARK}\n\nDepends on HAND\n\n## Why\n\nx\n\nDepends on {url}\n"
         )
 
     def test_trailing_hand_written_depends_line_is_kept(self) -> None:
         commits = [Commit("a1", "feat: add foo", ())]
         url = "https://example.test/pr/1"
-        body = f"## What\n\n- feat: add foo\n\n## Why\n\nx\n\nDepends on OLD\nDepends on {url}\n"
+        body = f"## What\n\n- feat: add foo{WHAT_MARK}\n\n## Why\n\nx\n\nDepends on OLD\nDepends on {url}\n"
         assert rewrite_what(body, commits, [url]) == (
-            f"## What\n\n- feat: add foo\n\n## Why\n\nx\n\nDepends on OLD\n\nDepends on {url}\n"
+            f"## What\n\n- feat: add foo{WHAT_MARK}\n\n## Why\n\nx\n\nDepends on OLD\n\nDepends on {url}\n"
         )
 
     def test_dropped_refs_lose_only_their_exact_line(self) -> None:
         commits = [Commit("a1", "feat: add foo", ())]
         body = (
-            "## What\n\n- feat: add foo\n\n## Dependencies\n\n"
+            f"## What\n\n- feat: add foo{WHAT_MARK}\n\n## Dependencies\n\n"
             "Depends on o/r#1\nDepends on o/r#10\nDepends on hand\n"
         )
         assert rewrite_what(body, commits, [], ["o/r#1"]) == (
-            "## What\n\n- feat: add foo\n\n## Dependencies\n\n"
+            f"## What\n\n- feat: add foo{WHAT_MARK}\n\n## Dependencies\n\n"
             "Depends on o/r#10\nDepends on hand\n"
-        )
-
-    def test_missing_what_heading_is_prepended(self) -> None:
-        commits = [Commit("a1", "feat: add foo", ())]
-        assert rewrite_what("## Why\n\nx\n", commits) == (
-            "## What\n\n- feat: add foo\n\n## Why\n\nx\n"
         )
 
     def test_rewriting_twice_changes_nothing(self) -> None:
         commits = [Commit("a1", "feat: add foo", ()), Commit("a2", "fix: bar", ())]
         once = rewrite_what(_EDITED_BODY, commits, ["https://example.test/pr/1"])
         assert rewrite_what(once, commits, ["https://example.test/pr/1"]) == once
+
+    def test_hand_written_bullet_after_the_generated_bullets_is_kept(self) -> None:
+        commits = [Commit("a1", "feat: add foo", ()), Commit("a2", "fix: bar", ())]
+        body = pr_body(_TEMPLATE, commits[:1]).replace(
+            "\n\n## Why", "\n- hand note\n\n## Why", 1
+        )
+        assert rewrite_what(body, commits) == pr_body(_TEMPLATE, commits).replace(
+            "\n\n## Why", "\n\n- hand note\n\n## Why", 1
+        )
+
+    def test_a_body_sync_did_not_write_is_left_alone(self) -> None:
+        commits = [Commit("a1", "feat: add foo", ())]
+        body = "## What\n\n- my own point\n- another\n\n## Why\n\nx\n"
+        assert rewrite_what(body, commits) == body
+        assert rewrite_what("## Why\n\nx\n", commits) == "## Why\n\nx\n"
+        assert rewrite_what("", commits).startswith("## What\n\n- feat: add foo")
+
+    def test_unmarked_leading_bullets_are_never_deleted(self) -> None:
+        commits = [Commit("a1", "feat: add foo", ()), Commit("a2", "fix: bar", ())]
+        body = "## What\n\n- feat: add foo\n- my own point\n\n## Why\n\nx\n"
+        assert contribute.refreshed_pr("feat: add foo (+1 more)", body, commits) is None
 
 
 class TestPrTemplate:

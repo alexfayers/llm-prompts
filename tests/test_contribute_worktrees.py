@@ -19,6 +19,8 @@ from llm_prompts.worktrees import Link, WorktreeEntry, load_entries
 
 pytestmark = pytest.mark.real_io
 
+WHY = "Sync opened PRs with nothing under Why."
+
 _IDENTITY = {
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_CONFIG_SYSTEM": os.devnull,
@@ -56,6 +58,7 @@ class Project:
         self.state_path = root / "gh-state.json"
         self.record = root / "record.json"
         self.extra: list[contribute.Target] = []
+        self.auto_why = True
         self.state: dict[str, Any] = {"prs": {}, "next": 100, "calls": []}
         self.save_state()
         for key, value in _IDENTITY.items():
@@ -164,13 +167,19 @@ class Project:
                 "local",
                 "depends_on",
                 "no_depends_on",
+                "why",
             )
         )
         name = tool or ("tool" if editing else None)
         chosen = [t for t in self.targets if name in (None, t[0])]
-        return contribute.sync_targets(
+        status = contribute.sync_targets(
             chosen, "tester", SyncOptions(**options), self.targets
         )
+        if self.auto_why and options.get("ready"):
+            contribute.sync_targets(
+                chosen, "tester", SyncOptions(why=(options["ready"], WHY)), self.targets
+            )
+        return status
 
     def entries(self) -> list[WorktreeEntry]:
         return load_entries(self.record)
@@ -576,6 +585,24 @@ def test_a_hand_resolved_copy_is_current(
     assert not main_sync.replays_to(project.repo, "main^", hand_resolved, "main^")
 
 
+def test_a_clean_conflict_fallback_is_current(project: Project) -> None:
+    repo = project.repo
+    base = git(repo, "rev-parse", "HEAD")
+    git(repo, "checkout", "-qb", "feat")
+    tip = project.commit(repo, "base.txt", "feature\n", "feat: feature")
+    git(repo, "checkout", "-q", "main")
+    (repo / ".gitattributes").write_text("base.txt merge=union\n", encoding="utf-8")
+    git(repo, "add", ".gitattributes")
+    parent = project.commit(repo, "base.txt", "main\n", "feat: main")
+    git(repo, "cherry-pick", tip)
+    result = git(repo, "rev-parse", "HEAD")
+    git(repo, "checkout", "-q", "--detach", base)
+
+    assert main_sync.replays_to(
+        repo, parent, main_sync.Squash(tip=tip, floor=base, first=tip), result
+    )
+
+
 def test_a_copy_that_follows_a_rename_on_main_is_current(
     project: Project, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -874,6 +901,41 @@ def test_a_ready_worktree_is_pushed_and_opens_a_draft_pr(
     )
 
 
+def test_a_recorded_why_fills_the_pr_body_sync_opens(project: Project) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.auto_why = False
+    project.run(ready="feat/a")
+    project.run(why=("feat/a", WHY))
+
+    assert project.run(apply=True) == 0
+
+    [create] = project.gh_calls("pr", "create")
+    body = create[create.index("--body") + 1]
+    assert f"## Why\n\n{WHY}\n" in body
+
+
+def test_a_worktree_without_a_why_is_not_opened_and_the_others_still_sync(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project.auto_why = False
+    for branch in ("feat/a", "feat/b"):
+        project.worktree(branch, f"feat: {branch[-1]}")
+        project.run(branch=branch)
+        project.run(ready=branch)
+    project.run(why=("feat/b", WHY))
+
+    assert project.run(apply=True) == 1
+
+    assert project.remote_branches() == [_remote("feat/b")]
+    [create] = project.gh_calls("pr", "create")
+    assert create[create.index("--head") + 1] == _remote("feat/b")
+    assert (
+        "feat/a: not opened, PR section Why is empty. Set it with: "
+        'llm-prompts contribute sync --tool tool --why feat/a "<why>"'
+    ) in capsys.readouterr().out
+
+
 def _amend(project: Project, path: Path, message: str) -> str:
     (path / "more.txt").write_text(message, encoding="utf-8")
     git(path, "add", "more.txt")
@@ -926,6 +988,63 @@ def test_a_rewritten_commit_is_force_pushed_to_its_draft_pr_with_a_fresh_title(
     assert edit[edit.index("--title") + 1] == "fix: a"
     assert [e.remote_head for e in project.entries()] == [tip]
     assert project.main_subjects() == ["fix: a"]
+
+
+def test_an_open_pr_with_an_empty_why_is_filled_from_the_record_or_left_alone_and_named(
+    project: Project, pushed: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    empty = "## What\n\n- feat: a\n\n## Why\n\n<!-- Why it changed. -->\n"
+    _set_body(project, 100, empty)
+    project.run(why=("feat/a", ""))
+    _amend(project, pushed, "fix: a")
+    capsys.readouterr()
+
+    assert project.run(apply=True) == 1
+
+    assert pr_body(project, 100) == empty
+    assert (
+        "feat/a: PR #100 body left as it is, PR section Why is empty. Set it with: "
+        'llm-prompts contribute sync --tool tool --why feat/a "<why>"'
+    ) in capsys.readouterr().out
+
+    project.run(why=("feat/a", WHY))
+    assert project.run(apply=True) == 0
+
+    assert f"## Why\n\n{WHY}\n" in pr_body(project, 100)
+
+
+def test_a_hand_written_why_is_kept_over_the_recorded_one(
+    project: Project, pushed: Path
+) -> None:
+    _set_body(project, 100, "## What\n\n- feat: a\n\n## Why\n\nMy reason.\n")
+    _amend(project, pushed, "fix: a")
+
+    assert project.run(apply=True) == 0
+
+    assert "## Why\n\nMy reason.\n" in pr_body(project, 100)
+    assert WHY not in pr_body(project, 100)
+
+
+def _set_title(project: Project, number: int, title: str) -> None:
+    state = project.load_state()
+    state["prs"][str(number)]["title"] = title
+    project.state = state
+    project.save_state()
+
+
+def test_a_title_edited_by_hand_is_kept_but_one_sync_wrote_follows_the_commits(
+    project: Project, pushed: Path
+) -> None:
+    _amend(project, pushed, "fix: a")
+    assert project.run(apply=True) == 0
+    assert project.load_state()["prs"]["100"]["title"] == "fix: a"
+
+    _set_title(project, 100, "My own title")
+    _amend(project, pushed, "fix: b")
+    assert project.run(apply=True) == 0
+
+    assert project.load_state()["prs"]["100"]["title"] == "My own title"
+    assert "- fix: b" in pr_body(project, 100)
 
 
 def _amend_remotely(project: Project, branch: str, message: str) -> str:
@@ -1084,6 +1203,30 @@ def test_rescan_records_open_prs_checked_out_in_worktrees_and_keeps_existing_fla
         by_branch["feat/b"].pr_state,
     ) == (8, False, "OPEN")
     assert by_branch["feat/b"].remote_head == git(project.repo, "rev-parse", "feat/b")
+
+
+def test_rescan_keeps_the_recorded_why_and_reads_a_new_entrys_from_the_pr_body(
+    project: Project,
+) -> None:
+    project.auto_why = False
+    for branch, number, body in (
+        ("feat/a", 7, "## Why\n\nIn the PR.\n"),
+        ("feat/b", 8, "## What\n\n- b\n\n## Why\n\nIn the other PR.\n"),
+    ):
+        project.worktree(branch, f"feat: {branch}")
+        git(project.repo, "push", "-q", "origin", branch)
+        project.add_pr(number, branch, body=body)
+    project.run(branch="feat/a")
+    project.run(why=("feat/a", WHY))
+    project.run(branch="feat/b")
+    project.run(forget="feat/b")
+
+    assert project.run(rescan=True) == 0
+
+    assert {e.branch: e.why for e in project.entries()} == {
+        "feat/a": WHY,
+        "feat/b": "In the other PR.",
+    }
 
 
 def test_a_corrupt_record_stops_sync_and_rescan_rebuilds_it(
@@ -1428,6 +1571,51 @@ def test_an_existing_pr_for_the_branch_is_adopted(project: Project) -> None:
     assert project.run(apply=True) == 0
 
     assert [e.pr for e in project.entries()] == [7]
+
+
+def test_an_existing_pr_with_a_hand_written_why_is_adopted_without_a_recorded_why(
+    project: Project,
+) -> None:
+    project.auto_why = False
+    project.worktree("feat/a", "feat: a")
+    git(project.repo, "push", "-q", "origin", "feat/a")
+    body = "## What\n\n- my own summary\n\n## Why\n\nMy reason.\n"
+    project.add_pr(7, "feat/a", body=body)
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+
+    assert project.run(apply=True) == 0
+
+    assert [e.pr for e in project.entries()] == [7]
+    assert pr_body(project, 7) == body
+
+
+def test_an_adopted_pr_gets_the_local_commits_ahead_of_it_pushed(
+    project: Project,
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    git(project.repo, "push", "-q", "origin", "feat/a")
+    project.add_pr(7, "feat/a", body="## What\n\n- mine\n\n## Why\n\nx\n")
+    project.commit(path, "more.txt", "more\n", "fix: more")
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+
+    assert project.run(apply=True) == 0
+
+    assert git(project.origin, "rev-parse", "feat/a") == git(path, "rev-parse", "HEAD")
+
+
+def test_a_closed_pr_on_a_reused_branch_is_not_adopted(project: Project) -> None:
+    project.worktree("feat/a", "feat: a")
+    git(project.repo, "push", "-q", "origin", "feat/a")
+    project.add_pr(7, "feat/a", state="CLOSED", body="old")
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+
+    assert project.run(apply=True) == 0
+
+    assert [e.pr for e in project.entries()] == [100]
+    assert pr_body(project, 7) == "old"
 
 
 def test_a_worktree_with_no_commits_is_skipped_by_sync_and_list(
@@ -1935,13 +2123,35 @@ def test_unlinking_removes_only_the_line_sync_wrote_on_the_next_draft_refresh(
     assert project.entries_of(chain)[0].dropped_refs == ()
 
 
+def test_an_unlink_waits_for_a_body_update_that_was_blocked(
+    project: Project, chain: Path
+) -> None:
+    project.run("tool", ready="feat/a")
+    project.run(apply=True)
+    _set_body(project, 101, pr_body(project, 101).replace(WHY, ""))
+    project.run("other", why=("feat/b", ""))
+    project.run("other", no_depends_on=("feat/b", "tool:feat/a"))
+
+    assert project.run(apply=True) == 1
+
+    assert "Depends on o/repo#100" in pr_body(project, 101)
+    assert project.entries_of(chain)[0].dropped_refs == ("o/repo#100",)
+
+    project.run("other", why=("feat/b", WHY))
+    assert project.run(apply=True) == 0
+
+    assert "Depends on o/repo#100" not in pr_body(project, 101)
+
+
 def test_an_adopted_draft_pr_gets_the_depends_on_lines(
     project: Project, chain: Path
 ) -> None:
     project.run("tool", ready="feat/a")
     git(chain, "push", "-q", "origin", "feat/b:" + _remote("feat/b"))
     project.add_pr(
-        7, _remote("feat/b"), body="## What\n\n- feat: b\n\n## Dependencies\n"
+        7,
+        _remote("feat/b"),
+        body="## What\n\n- feat: b\n\n## Why\n\nReason.\n\n## Dependencies\n",
     )
 
     assert project.run(apply=True) == 0

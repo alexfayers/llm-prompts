@@ -447,7 +447,10 @@ def _reuse_resolutions(repo: Path, base: str, ours: str, theirs: str) -> str | N
                 "--no-commit",
                 change,
             )
-            if pick.returncode != 1 or run_git(work, "ls-files", "--unmerged").stdout:
+            if (
+                pick.returncode not in (0, 1)
+                or run_git(work, "ls-files", "--unmerged").stdout
+            ):
                 return None
             return _read(work, "write-tree").strip()
         finally:

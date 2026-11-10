@@ -35,12 +35,14 @@ For a change under `src/llm_prompts/prompts/**` (rules, skills, workflows, agent
 ```sh
 git worktree add ../my-change -b my-change origin/main
 llm-prompts contribute sync --tool NAME --branch my-change   # record it, local only
+llm-prompts contribute sync --tool NAME --why my-change "Why this change"   # text for the PR's Why
 llm-prompts contribute sync --apply                          # copy it into local main
 llm-prompts contribute sync --tool NAME --ready my-change    # let sync push it and open a draft PR
 llm-prompts contribute sync --apply
 ```
 
-- `sync --apply` never pushes or opens a PR for a local-only worktree. Once `--ready`, it pushes the branch, opens a draft PR and keeps its title and What current.
+- `sync --apply` never pushes or opens a PR for a local-only worktree. Once `--ready`, it pushes the branch, opens a draft PR and keeps its What bullets (marked `<!--sync-->`) current. A PR body with no marked bullet keeps its text, apart from the `Depends on` lines sync writes and an empty Why it fills from the recorded Why. It sets the title only when it opens the PR or while the title is still the one it last wrote, so a title you edited is kept.
+- Record the text for the PR's Why with `--why B "TEXT"` before `--ready`. `sync` never opens a PR, nor edits a draft PR's body, while a section the PR template check requires (every template section except those in `src/llm_prompts/pr_template_sections.json`) is empty. It prints the worktree, the empty section and the `--why` command, skips that PR, still syncs the others and exits nonzero. A Why you wrote in a PR is kept.
 - Stack a branch on another with `--depends-on B TOOL:B2`. `sync` restacks it and writes the `Depends on` line.
 - Run `llm-prompts contribute sync --help` for every flag, and `contribute list` for each worktree's state and size.
 - Marking a contribute PR ready for review enables squash auto-merge. It merges once checks pass and a reviewer approves.
