@@ -1402,6 +1402,7 @@ def _install_plugin_skills(
 
 
 _LONG_CONTEXT_SUFFIX = "[1m]"
+_PI_LIST_MODELS_TIMEOUT_SECONDS = 30
 
 
 def _claude_model_catalogue() -> dict[str, str]:
@@ -1456,19 +1457,82 @@ def _resolve_variant_model(alias: str, catalogue: dict[str, str]) -> str:
         rf"claude-{re.escape(alias)}-(\d+(?:-\d+)*)"
         rf"({re.escape(_LONG_CONTEXT_SUFFIX)})?"
     )
+    return _newest_variant_model(pattern, catalogue) or alias
+
+
+def _newest_variant_model(
+    pattern: re.Pattern[str], catalogue: dict[str, str]
+) -> str | None:
+    """Pick the catalogue value whose name matches ``pattern`` with the highest version.
+
+    Args:
+        pattern: Regex whose first group is the version and optional second group
+            marks the preferred long-context entry.
+        catalogue: Mapping of model name to the value to request.
+
+    Returns:
+        The newest matching value, or None when nothing matches.
+    """
     best: tuple[tuple[int, ...], bool] | None = None
-    resolved = alias
+    resolved: str | None = None
     for name, value in catalogue.items():
         match = pattern.fullmatch(name)
         if match is None:
             continue
         rank = (
-            tuple(int(part) for part in match.group(1).split("-")),
-            match.group(2) is not None,
+            tuple(int(part) for part in re.findall(r"\d+", match.group(1))),
+            (match.lastindex or 0) > 1,
         )
         if best is None or rank > best:
             best, resolved = rank, value
     return resolved
+
+
+def _pi_model_catalogue() -> dict[str, str]:
+    """Map every ``provider/model`` pi lists to itself, empty when pi is unavailable.
+
+    Returns:
+        Mapping of ``provider/model`` to the value to request.
+    """
+    pi = shutil.which("pi")
+    if pi is None:
+        return {}
+    try:
+        listing = subprocess.run(
+            [pi, "--offline", "--list-models"],
+            env=_pi_env(),
+            capture_output=True,
+            text=True,
+            timeout=_PI_LIST_MODELS_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if listing.returncode:
+        return {}
+    columns = (line.split() for line in listing.stdout.splitlines()[1:])
+    return {f"{c[0]}/{c[1]}": f"{c[0]}/{c[1]}" for c in columns if len(c) > 1}
+
+
+def _resolve_pi_variant_model(
+    tier: str, models: dict[str, str], catalogue: Callable[[], dict[str, str]]
+) -> str:
+    """Resolve a pi tier to its mapped model, picking the newest for a ``*`` selector.
+
+    Args:
+        tier: Tier alias from a variant token.
+        models: Tier-to-model map; a value holding ``*`` selects the newest listed
+            model with ``*`` standing for the version.
+        catalogue: Returns :func:`_pi_model_catalogue`, called only for a selector.
+
+    Returns:
+        The newest match, else the mapped value, else the tier unchanged.
+    """
+    mapped = models.get(tier, tier)
+    if "*" not in mapped:
+        return mapped
+    pattern = re.compile(re.escape(mapped).replace(r"\*", r"(\d+(?:\.\d+)*)"))
+    return _newest_variant_model(pattern, catalogue()) or mapped
 
 
 _THINKING_OFF_VARIANT_MODELS = {"pi": frozenset({"haiku"})}
@@ -2462,7 +2526,8 @@ def _pi_agent_models(fragments: list[Path]) -> dict[str, str]:
         fragments: Candidate fragment paths, core first, then overlays.
 
     Returns:
-        Model for each tier alias; the last fragment declaring a tier wins.
+        Model or ``*`` selector for each tier alias; the last fragment declaring a
+        tier wins.
     """
     models: dict[str, str] = {}
     for fragment in fragments:
@@ -2543,8 +2608,9 @@ def _pi_agent_dialect(
         + [d / "pi" / "agent-models.json" for d in overlay_dirs]
     )
 
-    def resolve_model(tier: str) -> str:
-        return models.get(tier, tier)
+    resolve_model = partial(
+        _resolve_pi_variant_model, models=models, catalogue=cache(_pi_model_catalogue)
+    )
 
     tool_names = {
         **{

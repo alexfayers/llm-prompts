@@ -72,8 +72,9 @@ def _install(
     targets: list[str] | None = None,
     trusted: bool = False,
     hooks_exit: int = 0,
+    listed_models: str = "",
 ) -> bool:
-    """Run `install` into a fake home with overlays and manifest redirected, `cline-hook install pi` exiting with `hooks_exit`."""
+    """Run `install` into a fake home with overlays and manifest redirected, `cline-hook install pi` exiting with `hooks_exit` and `pi --list-models` printing `listed_models`."""
 
     def which(command: str) -> str | None:
         if command == "herdr":
@@ -87,6 +88,8 @@ def _install(
     outer = subprocess.run
 
     def run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if cmd[1:] == ["--offline", "--list-models"]:
+            return subprocess.CompletedProcess(cmd, 0, listed_models)
         if cmd[1:] == ["install", "pi"]:
             extensions = Path(kwargs["env"]["PI_CODING_AGENT_DIR"]) / "extensions"
             extensions.mkdir(parents=True, exist_ok=True)
@@ -1168,6 +1171,67 @@ class TestPiAgents:
             "efforts": {"low": "off"},
         }
         assert _frontmatter(agent_dir / "agents" / "Explore.md")["model"] == "acme/fast"
+
+    @pytest.mark.usefixtures("core_tree")
+    def test_selector_resolves_newest_listed_model_and_exact_id_stays_pinned(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        overlay = tmp_path / "overlay"
+        (overlay / "pi").mkdir(parents=True)
+        (overlay / "pi" / "agent-models.json").write_text(
+            json.dumps(
+                {
+                    "terra": "acme-provider/acme.model-*-mid",
+                    "luna": "acme-provider/acme.model-2-small",
+                }
+            ),
+            encoding="utf-8",
+        )
+        listed = "provider  model  context\n" + "".join(
+            f"acme-provider  acme.model-{name}  1M\n"
+            for name in ("2-mid", "10.1-mid", "10-mid", "3-small", "2-small")
+        )
+
+        with patch(
+            "llm_prompts.install.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0),
+        ):
+            _install(
+                home,
+                tmp_path / "installed.json",
+                [overlay],
+                pi="/usr/bin/pi",
+                listed_models=listed,
+            )
+
+        variants = json.loads(
+            (home / ".pi/agent/agent-role-variants.json").read_text(encoding="utf-8")
+        )
+        assert (
+            variants["worker"]["terra"]["model"] == "acme-provider/acme.model-10.1-mid"
+        )
+        assert variants["worker"]["luna"]["model"] == "acme-provider/acme.model-2-small"
+
+    @pytest.mark.usefixtures("core_tree")
+    def test_selector_without_a_listed_match_stays_unchanged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        overlay = tmp_path / "overlay"
+        (overlay / "pi").mkdir(parents=True)
+        (overlay / "pi" / "agent-models.json").write_text(
+            json.dumps({"terra": "acme-provider/acme.model-*-mid"}), encoding="utf-8"
+        )
+
+        _install(home, tmp_path / "installed.json", [overlay])
+
+        variants = json.loads(
+            (home / ".pi/agent/agent-role-variants.json").read_text(encoding="utf-8")
+        )
+        assert variants["worker"]["terra"]["model"] == "acme-provider/acme.model-*-mid"
 
 
 class TestHerdsmanAgents:
