@@ -74,7 +74,7 @@ async function evaluateMinReviews({ github, context, pr }) {
   if (needed === 0) {
     return null;
   }
-  const reviews = await github.paginate(github.rest.pulls.listReviews, { ...context.repo, pull_number: pr.number, per_page: 100 });
+  const reviews = (await github.paginate(github.rest.pulls.listReviews, { ...context.repo, pull_number: pr.number, per_page: 100 })).filter((review) => !review.is_copilot_code_review);
   const author = pr.user.login.toLowerCase();
   const approvals = [...latestReviewStates(reviews)].filter(([login, state]) => login !== author && state === 'APPROVED').length;
   return approvals >= needed ? null : ['pending', `Needs ${needed} approval${needed > 1 ? 's' : ''} (${approvals} so far)`];

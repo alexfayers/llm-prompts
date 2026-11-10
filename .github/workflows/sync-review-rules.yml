@@ -1,0 +1,57 @@
+name: Sync review rules
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/instructions/review.instructions.md
+      - .github/instructions/prompts.instructions.md
+      - .github/instructions/python.instructions.md
+      - .github/instructions/typescript.instructions.md
+  workflow_dispatch:
+
+concurrency:
+  group: sync-review-rules
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        repo: [alexfayers/cline-hooks, alexfayers/mcp-memory]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ matrix.repo }}
+          token: ${{ secrets.PROJECTS_TOKEN }}
+          path: target
+      - run: mkdir -p target/.github/instructions
+      - run: cp .github/instructions/{review,prompts,python,typescript}.instructions.md target/.github/instructions/
+      - id: pr
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.PROJECTS_TOKEN }}
+          path: target
+          branch: bot/copilot-review-rules
+          delete-branch: true
+          commit-message: 'chore: sync Copilot review rules from llm-prompts'
+          title: 'chore: sync Copilot review rules from llm-prompts'
+          body: |
+            ## What
+
+            - Copy the Copilot review rules from llm-prompts to `.github/instructions/`.
+
+            ## Why
+
+            - llm-prompts is the one place that edits the rules.
+            - Copilot review only sees this repo's own checkout, so the copy has to be committed here.
+      - if: steps.pr.outputs.pull-request-operation == 'created' || steps.pr.outputs.pull-request-operation == 'updated'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          GH_TOKEN: ${{ secrets.PROJECTS_TOKEN }}
+          PR_URL: ${{ steps.pr.outputs.pull-request-url }}
