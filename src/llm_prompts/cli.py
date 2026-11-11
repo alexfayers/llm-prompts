@@ -714,7 +714,6 @@ def _restart_memory_service() -> None:
     binary = shutil.which("mcp-memory")
     if binary:
         subprocess.run([binary, "restart"], check=False)
-        print("Restarted mcp-memory service.")
 
 
 def _get_gh_login() -> str:
@@ -854,6 +853,9 @@ def _run_command(run: telemetry.Run) -> int | None:
         "--check",
         action="store_true",
         help="Report available updates without applying them.",
+    )
+    update_parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Show every file changed."
     )
     update_parser.add_argument(
         "--only",
@@ -1128,7 +1130,7 @@ def _run_command(run: telemetry.Run) -> int | None:
 
         only_source = partial_source(args.only) if args.only else None
         if only_source is not None:
-            if install_main(list(manifest), only=only_source):
+            if install_main(list(manifest), only=only_source, verbose=args.verbose):
                 run.outcome = "size_guard_failed"
                 sys.exit(1)
             sys.exit(0)
@@ -1168,7 +1170,9 @@ def _run_command(run: telemetry.Run) -> int | None:
                 Path(path): h for path, h in state["size_baseline"].items()
             }
 
-        size_guard_failed = install_main(list(manifest), size_baseline=size_baseline)
+        size_guard_failed = install_main(
+            list(manifest), size_baseline=size_baseline, verbose=args.verbose
+        )
 
         memory_changed = _MEMORY_TOOL in changed_sources
         if changed_sources:

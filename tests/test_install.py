@@ -12,7 +12,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from conftest import run_capturing_exit
+from conftest import FakeSubprocess, run_capturing_exit
 
 from llm_prompts.home import config_dir, set_root
 from llm_prompts.install import (
@@ -44,6 +44,7 @@ from llm_prompts.install import (
     log,
     partial_source,
     prompts_dir,
+    try_install_memory_pi,
 )
 from llm_prompts.install import main as install_main
 from llm_prompts.manifest import AgentManifest
@@ -590,6 +591,19 @@ class TestMaterializeOverrideSkill:
         (src / "reference.md").write_text("changed", encoding="utf-8")
         assert sibling.read_text(encoding="utf-8") == "changed"
 
+    def test_bytecode_cache_is_not_linked(self, tmp_path: Path) -> None:
+        src = self._make_skill(
+            tmp_path / "checkout", "adhd", "# adhd\n", "reference.md"
+        )
+        (src / "__pycache__").mkdir()
+        (src / "__pycache__" / "tool.cpython-312.pyc").write_bytes(b"")
+        (src / "tool.pyc").write_bytes(b"")
+        dest = tmp_path / "dest" / "adhd"
+
+        _materialize_override_skill(src, dest, {"name": "adhd"}, set())
+
+        assert sorted(p.name for p in dest.iterdir()) == ["SKILL.md", "reference.md"]
+
     def test_sibling_removed_upstream_is_pruned(self, tmp_path: Path) -> None:
         src = self._make_skill(
             tmp_path / "checkout", "adhd", "# adhd\n", "reference.md"
@@ -873,6 +887,151 @@ class TestMainStaleCleanupGate:
         overlay_only, _ = self._install_with_overlay_only_file(tmp_path, trusted=True)
 
         assert not overlay_only.exists()
+
+
+class TestMainChangeSummary:
+    def _run(self, tmp_path: Path, agents: list[str]) -> list[tuple[str, str]]:
+        home = tmp_path / "home"
+        home.mkdir(exist_ok=True)
+        overlay = tmp_path / "overlay"
+        _make_rule(overlay / "shared" / "rules", "synthetic.md")
+        skill = overlay / "shared" / "skills" / "synthetic-skill"
+        _make_rule(skill, "SKILL.md", "---\nname: synthetic-skill\n---\n")
+        _make_rule(skill, "reference.md")
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch(
+                "llm_prompts.install._discover_overlay_paths",
+                return_value=[overlay],
+            ),
+            patch(
+                "llm_prompts.size_guard._discover_overlay_paths",
+                return_value=[overlay],
+            ),
+            patch("llm_prompts.plugins._load_plugins", return_value=[]),
+            patch("llm_prompts.install._running_as_installed_tool", return_value=True),
+            patch("llm_prompts.install.log") as mock_log,
+        ):
+            install_main(agents)
+        return [(call.args[0], call.args[1]) for call in mock_log.call_args_list]
+
+    def test_groups_installed_files_across_agents(self, tmp_path: Path) -> None:
+        logged = self._run(tmp_path, ["claude-code", "kiro"])
+
+        lines = [message for level, message in logged if level == "success"]
+        rules = [line for line in lines if line.startswith("Installed rules:")]
+        assert len(rules) == 1
+        assert "synthetic.md" in rules[0]
+        assert rules[0].endswith("(2 agents)")
+        assert not any(line.startswith("Installed rules/") for line in lines)
+
+    def test_groups_skills_without_listing_their_sibling_files(
+        self, tmp_path: Path
+    ) -> None:
+        logged = self._run(tmp_path, ["claude-code", "kiro"])
+
+        lines = [message for level, message in logged if level == "success"]
+        assert "Installed skills: synthetic-skill (2 agents)" in lines
+        assert not any(line.startswith("Updated skills") for line in lines)
+        assert not any("sibling" in line for line in lines)
+
+    def test_reports_a_skill_whose_only_change_is_a_sibling_file(
+        self, tmp_path: Path
+    ) -> None:
+        skill = tmp_path / "overlay" / "shared" / "skills" / "synthetic-skill"
+        self._run(tmp_path, ["claude-code"])
+
+        _make_rule(skill, "extra.md")
+        added = self._run(tmp_path, ["claude-code"])
+        (skill / "extra.md").unlink()
+        removed = self._run(tmp_path, ["claude-code"])
+
+        assert ("success", "Updated skills: synthetic-skill (claude-code)") in added
+        assert ("success", "Updated skills: synthetic-skill (claude-code)") in removed
+
+    def test_expected_state_lines_stay_out_of_the_default_output(
+        self, tmp_path: Path
+    ) -> None:
+        unmanaged = tmp_path / "home" / ".claude" / "rules" / "mine.md"
+        _make_rule(unmanaged.parent, "mine.md")
+
+        logged = self._run(tmp_path, ["claude-code"])
+
+        assert {level for level, _ in logged} <= {"success", "debug"}
+        assert ("debug", "Non-managed file in claude-code rules: mine.md") in logged
+
+    def test_reports_nothing_when_nothing_changed(self, tmp_path: Path) -> None:
+        self._run(tmp_path, ["claude-code"])
+
+        logged = self._run(tmp_path, ["claude-code"])
+
+        assert [m for level, m in logged if level == "success"] == []
+
+
+class TestCompanionToolOutput:
+    def _install_memory(
+        self,
+        fake_subprocess: FakeSubprocess,
+        *,
+        returncode: int = 0,
+        service_exists: bool = True,
+        tool_output: str = "memory MCP server already configured in Pi.\n",
+        tool_error: str = "",
+    ) -> list[tuple[str, str]]:
+        fake_subprocess.on("mcp-memory", "setup-service", stdout="service set up\n")
+        fake_subprocess.on(
+            "mcp-memory",
+            "install",
+            "pi",
+            stdout=tool_output,
+            stderr=tool_error,
+            returncode=returncode,
+        )
+        with (
+            patch("shutil.which", return_value="mcp-memory"),
+            patch(
+                "llm_prompts.install._memory_service_exists",
+                return_value=service_exists,
+            ),
+            patch("llm_prompts.install.log") as mock_log,
+        ):
+            try_install_memory_pi()
+        return [(call.args[0], call.args[1]) for call in mock_log.call_args_list]
+
+    def test_output_is_shown_only_with_verbose(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        logged = self._install_memory(fake_subprocess)
+
+        assert logged == [("debug", "memory MCP server already configured in Pi.")]
+
+    def test_output_is_shown_as_a_warning_when_the_tool_fails(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        logged = self._install_memory(fake_subprocess, returncode=1)
+
+        assert logged == [("warn", "memory MCP server already configured in Pi.")]
+
+    def test_error_output_is_shown_as_a_warning_when_the_tool_succeeds(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        logged = self._install_memory(fake_subprocess, tool_error="mcp add failed\n")
+
+        assert ("warn", "mcp add failed") in logged
+
+    def test_a_silent_failure_is_shown_as_a_warning_with_its_return_code(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        logged = self._install_memory(fake_subprocess, returncode=3, tool_output="")
+
+        assert logged == [("warn", "mcp-memory install pi failed with exit code 3")]
+
+    def test_service_setup_output_is_shown_only_with_verbose(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        logged = self._install_memory(fake_subprocess, service_exists=False)
+
+        assert ("debug", "service set up") in logged
 
 
 class TestMainReadCache:
@@ -1290,11 +1449,11 @@ class TestMainRunsSizeGuard:
         # both report a parked schedule through the exact same helper.
         expected_lines = parked_state_lines([artifact])
         assert expected_lines
-        logged_info = [
-            call.args[1] for call in mock_log.call_args_list if call.args[0] == "info"
+        logged_debug = [
+            call.args[1] for call in mock_log.call_args_list if call.args[0] == "debug"
         ]
         for line in expected_lines:
-            assert line in logged_info
+            assert line in logged_debug
 
     def test_declaration_error_aborts_before_touching_disk(
         self, tmp_path: Path

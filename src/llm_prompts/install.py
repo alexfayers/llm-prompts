@@ -4,6 +4,7 @@ import contextlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -125,7 +126,73 @@ def log(level: LogLevel, message: str) -> None:
         os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stderr.fileno())
 
 
+_MAX_SUMMARY_NAMES = 8
+_changes: dict[tuple[str, str], dict[str, set[str]]] = {}
+_current_target = ""
+
+
+@contextlib.contextmanager
+def _target_scope(target: str) -> Iterator[None]:
+    """Attribute the changes recorded inside the block to ``target``."""
+    global _current_target
+    previous, _current_target = _current_target, target
+    try:
+        yield
+    finally:
+        _current_target = previous
+
+
+def _record_change(action: str, group: str, name: str) -> None:
+    """Remember a change for the end-of-run summary, per action and group."""
+    targets = _changes.setdefault((action, group), {}).setdefault(name, set())
+    if _current_target:
+        targets.add(_current_target)
+
+
+def _log_changes() -> None:
+    """Log one line per action and group, naming what changed across all targets."""
+    for (action, group), names in _changes.items():
+        targets = set().union(*names.values())
+        shown = sorted(names)[:_MAX_SUMMARY_NAMES]
+        hidden = len(names) - len(shown)
+        where = (
+            ""
+            if not targets
+            else f" ({len(targets)} agents)"
+            if len(targets) > 1
+            else f" ({next(iter(targets))})"
+        )
+        more = f" and {hidden} more" if hidden else ""
+        log("success", f"{action} {group}: {', '.join(shown)}{more}{where}")
+    _changes.clear()
+
+
 _PI_PACKAGE = "@earendil-works/pi-coding-agent"
+
+
+def _run_tool(args: list[str], env: dict[str, str] | None = None) -> int:
+    """Run a companion tool, showing its stdout only with --verbose or on failure.
+
+    Its stderr is always shown as a warning.
+
+    Args:
+        args: Command line to run.
+        env: Environment for the command, or None to inherit.
+
+    Returns:
+        The tool's exit code.
+    """
+    result = subprocess.run(args, env=env, check=False, capture_output=True, text=True)
+    stdout_level: LogLevel = "warn" if result.returncode else "debug"
+    stdout_lines = (result.stdout or "").splitlines()
+    stderr_lines = (result.stderr or "").splitlines()
+    for line in stdout_lines:
+        log(stdout_level, line)
+    for line in stderr_lines:
+        log("warn", line)
+    if result.returncode and not (stdout_lines or stderr_lines):
+        log("warn", f"{shlex.join(args)} failed with exit code {result.returncode}")
+    return result.returncode
 
 
 def _pi_agent_dir() -> Path:
@@ -462,7 +529,12 @@ def _rendered_content(src: Path, vars_path: Path, target: str) -> str:
 
 
 def _install_rendered(
-    src: Path, dest: Path, vars_path: Path, target: str, label: str
+    src: Path,
+    dest: Path,
+    vars_path: Path,
+    target: str,
+    label: str,
+    group: str = "files",
 ) -> None:
     """Render and install a templated file.
 
@@ -472,6 +544,7 @@ def _install_rendered(
         vars_path: Variables JSON path.
         target: Render target.
         label: Log label for this file.
+        group: Summary group this file belongs to.
     """
     try:
         output = _rendered_content(src, vars_path, target)
@@ -482,16 +555,19 @@ def _install_rendered(
     for var in find_unreplaced_variables(output):
         log("warn", f"Unreplaced variable '{{{{{var}}}}}' in {label}")
 
-    _write_if_changed(dest, output, label)
+    _write_if_changed(dest, output, label, group)
 
 
-def _write_if_changed(dest: Path, output: str, label: str) -> None:
-    """Write output to dest only if it differs, logging the action taken.
+def _write_if_changed(
+    dest: Path, output: str, label: str, group: str = "files"
+) -> None:
+    """Write output to dest only if it differs, recording the action taken.
 
     Args:
         dest: Destination file path.
         output: Content to write.
         label: Log label for this file.
+        group: Summary group this file belongs to.
     """
     if dest.exists():
         if _read_text(dest) == output:
@@ -504,7 +580,10 @@ def _write_if_changed(dest: Path, output: str, label: str) -> None:
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
         _write_text(dest, output)
-        log("success", f"{action} {label}")
+        log("debug", f"{action} {label}")
+        _record_change(
+            action, group, dest.parent.name if dest.name == "SKILL.md" else dest.name
+        )
     except Exception as e:
         log("error", f"Failed to install {label}: {e}")
         if dest.exists():
@@ -527,13 +606,14 @@ def _linked_content(src: Path) -> str:
     return strip_gating_keys(_read_text(src), _GATING_FRONTMATTER_KEYS)
 
 
-def _install_linked(src: Path, dest: Path, label: str) -> None:
+def _install_linked(src: Path, dest: Path, label: str, group: str = "files") -> None:
     """Install a file by copying source content to destination.
 
     Args:
         src: Source file path.
         dest: Destination file path.
         label: Log label for this file.
+        group: Summary group this file belongs to.
     """
     src_content = _linked_content(src)
     if dest.exists() and not dest.is_symlink():
@@ -552,7 +632,8 @@ def _install_linked(src: Path, dest: Path, label: str) -> None:
         if dest.exists():
             dest.unlink()
         _write_text(dest, src_content)
-        log("success", f"{action} {label}")
+        log("debug", f"{action} {label}")
+        _record_change(action, group, dest.name)
     except Exception as e:
         log("error", f"Failed to install {label}: {e}")
 
@@ -641,7 +722,7 @@ class _CodexAgent(_Agent):
         vars_path = self.vars_path()
         dest = dest_dir / self.AGENTS_MD
 
-        log("info", f"[{self.name}] Installing rules...")
+        log("debug", f"[{self.name}] Installing rules...")
         collected = _collect_content_srcs(
             self, "rules", shared_src, overlay_srcs, overlay_agent_srcs
         )
@@ -676,7 +757,7 @@ class _CodexAgent(_Agent):
             log("warn", f"Unreplaced variable '{{{{{var}}}}}' in {self.AGENTS_MD}")
 
         dest_dir.mkdir(parents=True, exist_ok=True)
-        _write_if_changed(dest, output, self.AGENTS_MD)
+        _write_if_changed(dest, output, self.AGENTS_MD, "rules")
         write_rendered_rules(self.name, rules)
         return {self.AGENTS_MD}
 
@@ -885,7 +966,7 @@ def _check_unmanaged(
         if not is_dir and not item.is_file():
             continue
         if item.name not in managed:
-            log("warn", f"Non-managed {kind} in {label}: {item.name}")
+            log("debug", f"Non-managed {kind} in {label}: {item.name}")
 
 
 def _collect_content_srcs(
@@ -973,7 +1054,7 @@ def _install_content(
     vars_path = agent.vars_path()
     target = agent.name
 
-    log("info", f"[{target}] Installing {subdir}...")
+    log("debug", f"[{target}] Installing {subdir}...")
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     collected = _collect_content_srcs(
@@ -992,10 +1073,10 @@ def _install_content(
                 managed.add(name)
             continue
         if agent_specific:
-            _install_linked(src, dest_dir / name, f"{subdir}/{name}")
+            _install_linked(src, dest_dir / name, f"{subdir}/{name}", subdir)
         else:
             _install_rendered(
-                src, dest_dir / name, vars_path, target, f"{subdir}/{name}"
+                src, dest_dir / name, vars_path, target, f"{subdir}/{name}", subdir
             )
         managed.add(name)
 
@@ -1060,7 +1141,9 @@ def _agent_sources(candidate_dirs: list[Path]) -> list[tuple[str, Path, str]]:
     ]
 
 
-def _install_symlink(source: Path, dest: Path, label: str, managed: set[str]) -> None:
+def _install_symlink(
+    source: Path, dest: Path, label: str, managed: set[str]
+) -> str | None:
     """Install ``source`` as a symlink at ``dest``, replacing any existing entry.
 
     Idempotent: an already-correct symlink is left untouched. A pre-existing
@@ -1071,13 +1154,16 @@ def _install_symlink(source: Path, dest: Path, label: str, managed: set[str]) ->
         dest: Destination symlink path.
         label: Human-readable artifact label used in log messages.
         managed: Set to accumulate the installed destination name into.
+
+    Returns:
+        The action taken, or None when the symlink was already correct or failed.
     """
     name = dest.name
     try:
         if dest.is_symlink() and dest.resolve() == source.resolve():
             log("debug", f"{label} '{name}' is up to date. Skipping.")
             managed.add(name)
-            return
+            return None
         already_existed = dest.exists() or dest.is_symlink()
         if already_existed:
             if dest.is_symlink() or dest.is_file():
@@ -1087,12 +1173,12 @@ def _install_symlink(source: Path, dest: Path, label: str, managed: set[str]) ->
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.symlink_to(source)
         managed.add(name)
-        log(
-            "success",
-            f"{'Updated' if already_existed else 'Installed'} {label}: {name}",
-        )
+        action = "Updated" if already_existed else "Installed"
+        log("debug", f"{action} {label}: {name}")
+        return action
     except Exception as e:
         log("error", f"Failed to install {label} '{name}': {e}")
+    return None
 
 
 def _apply_frontmatter_overrides(content: str, overrides: dict[str, str]) -> str:
@@ -1129,7 +1215,7 @@ def _apply_frontmatter_overrides(content: str, overrides: dict[str, str]) -> str
 
 def _link_layered_dir(
     layers: Sequence[Path], dest: Path, label: str, reserved: Sequence[str] = ()
-) -> None:
+) -> bool:
     """Symlink the entries of the layers into ``dest``, merging directories held by several.
 
     A later layer overrides an earlier one at the same relative path. Entries of
@@ -1140,18 +1226,30 @@ def _link_layered_dir(
         dest: Destination directory.
         label: Human-readable label for log messages.
         reserved: Entry names to leave alone in ``dest``.
+
+    Returns:
+        Whether any entry was added, replaced or pruned.
     """
-    names = {e.name for layer in layers for e in layer.iterdir()} - set(reserved)
+    changed = False
+    names = {
+        e.name
+        for layer in layers
+        for e in layer.iterdir()
+        if e.name != "__pycache__" and e.suffix != ".pyc"
+    } - set(reserved)
     for name in names:
         entries = [layer / name for layer in layers if (layer / name).exists()]
         directories = list(takewhile(Path.is_dir, reversed(entries)))[::-1]
         if len(directories) < 2:
-            _install_symlink(entries[-1], dest / name, f"{label} sibling", set())
+            action = _install_symlink(
+                entries[-1], dest / name, f"{label} sibling", set()
+            )
+            changed = changed or action is not None
             continue
         if (dest / name).is_symlink() or (dest / name).is_file():
             (dest / name).unlink()
         (dest / name).mkdir(exist_ok=True)
-        _link_layered_dir(directories, dest / name, label)
+        changed = _link_layered_dir(directories, dest / name, label) or changed
     for existing in dest.iterdir():
         if existing.name in names or existing.name in reserved:
             continue
@@ -1159,6 +1257,8 @@ def _link_layered_dir(
             existing.unlink()
         else:
             shutil.rmtree(existing)
+        changed = True
+    return changed
 
 
 def _materialize_skill_dir(
@@ -1186,9 +1286,13 @@ def _materialize_skill_dir(
             dest.unlink()
         dest.mkdir(parents=True, exist_ok=True)
 
-        _write_if_changed(dest / "SKILL.md", content, f"{label} '{name}' SKILL.md")
+        is_new = not (dest / "SKILL.md").exists()
+        _write_if_changed(
+            dest / "SKILL.md", content, f"{label} '{name}' SKILL.md", "skills"
+        )
 
-        _link_layered_dir(layers, dest, label, ["SKILL.md"])
+        if _link_layered_dir(layers, dest, label, ["SKILL.md"]) and not is_new:
+            _record_change("Updated", "skills", name)
 
         managed.add(name)
     except Exception as e:
@@ -1319,7 +1423,7 @@ def _install_skills(
             return False
         return True
 
-    log("info", "[shared] Installing skills...")
+    log("debug", "[shared] Installing skills...")
     managed: set[str] = set()
     resolved = _resolve_priority_sources(
         candidate_dirs,
@@ -1398,7 +1502,11 @@ def _install_plugin_skills(
         if overrides:
             _materialize_override_skill(src_dir, dest_root / name, overrides, managed)
         else:
-            _install_symlink(src_dir, dest_root / name, "plugin skill", managed)
+            action = _install_symlink(
+                src_dir, dest_root / name, "plugin skill", managed
+            )
+            if action:
+                _record_change(action, "skills", name)
     return managed
 
 
@@ -2640,6 +2748,7 @@ def _install_disabled_definitions(agents_dir: Path) -> set[str]:
             dest,
             f"---\nname: {name}\nenabled: false\n---\n",
             f"agent {filename}",
+            "agents",
         )
         managed.add(filename)
     return managed
@@ -2660,7 +2769,7 @@ def _install_herdsman_overlays(overlays_dir: Path, coordinators_dir: Path) -> se
         dest = coordinators_dir / src.name
         if dest.is_symlink():
             dest.unlink()
-        _write_if_changed(dest, _read_text(src), f"role {src.name}")
+        _write_if_changed(dest, _read_text(src), f"role {src.name}", "roles")
         managed.add(src.name)
     return managed
 
@@ -2755,7 +2864,7 @@ def _install_agents(
         Set of installed agent filenames.
     """
     previous_manifest = previous_manifest if previous_manifest is not None else {}
-    log("info", f"[{agent_name}] Installing agents...")
+    log("debug", f"[{agent_name}] Installing agents...")
     managed: set[str] = set()
     variables = variables or {}
     for name, src, source in _agent_sources(candidate_dirs):
@@ -2803,7 +2912,7 @@ def _install_agents(
             dest = agents_dir / gen_name
             if dest.is_symlink():
                 dest.unlink()
-            _write_if_changed(dest, gen_content, f"agent {gen_name}")
+            _write_if_changed(dest, gen_content, f"agent {gen_name}", "agents")
             managed.add(gen_name)
     return managed
 
@@ -2827,13 +2936,13 @@ def _install_pi_rule_files(bundle: _PiRuleBundle, rules_dir: Path) -> set[str]:
     Returns:
         Installed rule filenames, or an empty set when any rule failed to write.
     """
-    log("info", "[pi] Installing rule files...")
+    log("debug", "[pi] Installing rule files...")
     rules_dir.mkdir(parents=True, exist_ok=True)
     for name, text in bundle.texts.items():
         dest = rules_dir / name
         if dest.is_symlink():
             dest.unlink()
-        _write_if_changed(dest, text, f"rules/{name}")
+        _write_if_changed(dest, text, f"rules/{name}", "rules")
     if not all((rules_dir / name).is_file() for name in bundle.texts):
         return set()
     return set(bundle.texts)
@@ -2851,13 +2960,15 @@ def _install_pi_lead_rules(agent: _Agent, bundle: _PiRuleBundle) -> set[str]:
     """
     from .manifest import write_rendered_rules
 
-    log("info", f"[{agent.name}] Installing rules...")
+    log("debug", f"[{agent.name}] Installing rules...")
     output = bundle.lead_text()
     for var in find_unreplaced_variables(output):
         log("warn", f"Unreplaced variable '{{{{{var}}}}}' in {_PiAgent.AGENTS_MD}")
     dest_dir = agent.dest_dir("rules")
     dest_dir.mkdir(parents=True, exist_ok=True)
-    _write_if_changed(dest_dir / _PiAgent.AGENTS_MD, output, _PiAgent.AGENTS_MD)
+    _write_if_changed(
+        dest_dir / _PiAgent.AGENTS_MD, output, _PiAgent.AGENTS_MD, "rules"
+    )
     write_rendered_rules(agent.name, bundle.texts)
     return {_PiAgent.AGENTS_MD}
 
@@ -2926,7 +3037,7 @@ def patch_kiro_agent_config(agent_config_path: str) -> None:
     if added:
         log("success", f"Patched {config_path} with {added} resource(s).")
     else:
-        log("info", f"{config_path} already has all resource entries.")
+        log("debug", f"{config_path} already has all resource entries.")
 
 
 def try_install_hooks(agent_config_path: str) -> None:
@@ -2936,19 +3047,17 @@ def try_install_hooks(agent_config_path: str) -> None:
         agent_config_path: Path to the agent JSON file to patch.
     """
     import shutil
-    import subprocess
 
     binary = shutil.which("cline-hook")
     if not binary:
         log("debug", "cline-hook not found on PATH, skipping hook injection.")
         return
-    subprocess.run([binary, "install", "kiro", agent_config_path], check=False)
+    _run_tool([binary, "install", "kiro", agent_config_path])
 
 
 def try_install_hooks_claude_code() -> None:
     """Patch Claude Code settings with cline-hooks entries if available."""
     import shutil
-    import subprocess
 
     binary = shutil.which("cline-hook")
     if not binary:
@@ -2957,13 +3066,12 @@ def try_install_hooks_claude_code() -> None:
             "cline-hook not found on PATH, skipping Claude Code hook injection.",
         )
         return
-    subprocess.run([binary, "install", "claude-code"], check=False)
+    _run_tool([binary, "install", "claude-code"])
 
 
 def try_install_hooks_antigravity() -> None:
     """Patch Antigravity hooks.json with cline-hooks entries if available."""
     import shutil
-    import subprocess
 
     binary = shutil.which("cline-hook")
     if not binary:
@@ -2972,7 +3080,7 @@ def try_install_hooks_antigravity() -> None:
             "cline-hook not found on PATH, skipping Antigravity hook injection.",
         )
         return
-    subprocess.run([binary, "install", "antigravity"], check=False)
+    _run_tool([binary, "install", "antigravity"])
 
 
 _PI_DEFAULT_KEYS = (
@@ -3578,9 +3686,7 @@ def try_install_hooks_pi() -> bool:
     if not binary.exists():
         log("debug", f"{binary} not found, skipping Pi hook injection.")
         return False
-    if subprocess.run(
-        [str(binary), "install", "pi"], env=_pi_env(), check=False
-    ).returncode:
+    if _run_tool([str(binary), "install", "pi"], env=_pi_env()):
         log("error", "[pi] `cline-hook install pi` failed.")
         return True
     return False
@@ -3620,49 +3726,45 @@ def try_install_memory(agent_config_path: str) -> None:
         agent_config_path: Agent JSON to patch with memory server and @memory allowedTools.
     """
     import shutil
-    import subprocess
 
     binary = shutil.which("mcp-memory")
     if not binary:
         log("debug", "mcp-memory not found on PATH, skipping MCP config injection.")
         return
-    subprocess.run([binary, "install", "kiro", agent_config_path], check=False)
+    _run_tool([binary, "install", "kiro", agent_config_path])
     if not _memory_service_exists():
-        subprocess.run([binary, "setup-service"], check=False)
+        _run_tool([binary, "setup-service"])
 
 
 def try_install_memory_claude_code() -> None:
     """Add mcp-memory to Claude Code if available."""
     import shutil
-    import subprocess
 
     binary = shutil.which("mcp-memory")
     if not binary:
         log("debug", "mcp-memory not found on PATH, skipping Claude Code MCP setup.")
         return
-    subprocess.run([binary, "install", "claude-code"], check=False)
+    _run_tool([binary, "install", "claude-code"])
     if not _memory_service_exists():
-        subprocess.run([binary, "setup-service"], check=False)
+        _run_tool([binary, "setup-service"])
 
 
 def try_install_memory_codex() -> None:
     """Add mcp-memory to Codex if available."""
     import shutil
-    import subprocess
 
     binary = shutil.which("mcp-memory")
     if not binary:
         log("debug", "mcp-memory not found on PATH, skipping Codex MCP setup.")
         return
-    subprocess.run([binary, "install", "codex"], check=False)
+    _run_tool([binary, "install", "codex"])
     if not _memory_service_exists():
-        subprocess.run([binary, "setup-service"], check=False)
+        _run_tool([binary, "setup-service"])
 
 
 def try_install_memory_antigravity() -> None:
     """Add mcp-memory to Antigravity if available."""
     import shutil
-    import subprocess
 
     binary = shutil.which("mcp-memory")
     if not binary:
@@ -3671,23 +3773,22 @@ def try_install_memory_antigravity() -> None:
             "mcp-memory not found on PATH, skipping Antigravity MCP setup.",
         )
         return
-    subprocess.run([binary, "install", "antigravity"], check=False)
+    _run_tool([binary, "install", "antigravity"])
     if not _memory_service_exists():
-        subprocess.run([binary, "setup-service"], check=False)
+        _run_tool([binary, "setup-service"])
 
 
 def try_install_memory_pi() -> None:
     """Add mcp-memory to pi's MCP config if available."""
     import shutil
-    import subprocess
 
     binary = shutil.which("mcp-memory")
     if not binary:
         log("debug", "mcp-memory not found on PATH, skipping Pi MCP setup.")
         return
-    subprocess.run([binary, "install", "pi"], check=False)
+    _run_tool([binary, "install", "pi"])
     if not _memory_service_exists():
-        subprocess.run([binary, "setup-service"], check=False)
+        _run_tool([binary, "setup-service"])
 
 
 def _carry_forward(
@@ -3740,10 +3841,12 @@ def _cleanup_stale(
         path = Path(filepath)
         if path.is_symlink() or path.is_file():
             path.unlink()
-            log("info", f"[{agent_name}] Removed stale file: {path.name}")
+            log("debug", f"[{agent_name}] Removed stale file: {path.name}")
+            _record_change("Removed", "stale files", path.name)
         elif path.is_dir():
             shutil.rmtree(path)
-            log("info", f"[{agent_name}] Removed stale directory: {path.name}")
+            log("debug", f"[{agent_name}] Removed stale directory: {path.name}")
+            _record_change("Removed", "stale files", path.name)
 
 
 def _remove_empty_dir(path: Path) -> None:
@@ -3877,7 +3980,8 @@ def _isolated(
 ) -> Iterator[None]:
     """Log an error from one tool's install step and leave that tool out of the rest of the run."""
     try:
-        yield
+        with _target_scope(tool):
+            yield
     except Exception as error:
         log("error", f"[{tool}] Install failed: {error}")
         failed_tools.add(tool)
@@ -3910,6 +4014,7 @@ def main(
     """
     global _verbose
     _verbose = verbose
+    _changes.clear()
     if root is not None:
         set_root(root)
     clear_read_cache()
@@ -3974,7 +4079,7 @@ def main(
                 "`llm-prompts check` once they are compressed.",
             )
         for line in parked_state_lines(size_result.artifacts):
-            log("info", line)
+            log("debug", line)
         for line in size_result.stale:
             log("warn", line)
 
@@ -4040,17 +4145,18 @@ def main(
             root_dir / skill_agent / "skills",
             *(d / skill_agent / "skills" for d in overlay_dirs),
         ]
-        managed = _install_skills(
-            skill_dirs,
-            skills_parent,
-            skill_agent,
-            all_agents[skill_agent].vars_path(),
-            skip_by_agent.get(skill_agent, frozenset()),
-            previous_manifest,
-        )
-        plugin_managed = _install_plugin_skills(
-            plugin_skill_pairs, skills_parent, skill_agent, managed
-        )
+        with _target_scope(skill_agent):
+            managed = _install_skills(
+                skill_dirs,
+                skills_parent,
+                skill_agent,
+                all_agents[skill_agent].vars_path(),
+                skip_by_agent.get(skill_agent, frozenset()),
+                previous_manifest,
+            )
+            plugin_managed = _install_plugin_skills(
+                plugin_skill_pairs, skills_parent, skill_agent, managed
+            )
         managed |= plugin_managed
         _check_unmanaged(
             skills_parent / "skills", managed, f"{skill_agent} skills", is_dir=True
@@ -4199,6 +4305,7 @@ def main(
                         )
                         + "\n",
                         _ROLE_VARIANTS_FILE,
+                        "agents",
                     )
                     installed_files["pi"].append(str(variants_path))
             if agents_target == "pi":
@@ -4339,6 +4446,7 @@ def main(
                 pi_seeded_keys=pi_seeded_keys if name == "pi" else None,
             )
 
+    _log_changes()
     for source in sorted(all_skipped):
         display = source.parent.name if source.name == "SKILL.md" else source.name
         log("error", f"Skipped installing {display}: size guard violation")

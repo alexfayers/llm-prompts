@@ -707,7 +707,26 @@ class TestUpdateCommandPullsPlugins:
 
         mock_pull.assert_called_once_with()
         mock_setup.assert_not_called()
-        mock_install.assert_called_once_with(["kiro"], size_baseline={})
+        mock_install.assert_called_once_with(["kiro"], size_baseline={}, verbose=False)
+
+    def test_update_verbose_flag_reaches_the_install(self) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "update", "--verbose"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={"kiro": {"files": []}},
+            ),
+            patch("llm_prompts.cli._pull_local_sources"),
+            patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+            patch("llm_prompts.setup.run_setup", return_value=False),
+            patch("llm_prompts.install.main", return_value=frozenset()) as mock_install,
+            patch("llm_prompts.cli._restart_memory_service"),
+            patch("llm_prompts.plugins.pull_plugin_sources"),
+            patch("llm_prompts.size_guard.snapshot_sources", return_value={}),
+        ):
+            main()
+
+        mock_install.assert_called_once_with(["kiro"], size_baseline={}, verbose=True)
 
     def test_update_reports_the_update_check_before_pulling_sources(self) -> None:
         order = MagicMock()
@@ -753,7 +772,7 @@ class TestUpdateCommandPullsPlugins:
             mock_config.return_value.exists.return_value = False
             main()
 
-        mock_install.assert_called_once_with(["kiro"], size_baseline={})
+        mock_install.assert_called_once_with(["kiro"], size_baseline={}, verbose=False)
 
     def test_update_runs_setup_with_stale_tools(self) -> None:
         with (
@@ -828,7 +847,9 @@ class TestUpdateReexecsAfterUpgradingItself:
             main()
 
         mock_exec.assert_called_once_with("llm-prompts", ["llm-prompts", "update"])
-        mock_install.assert_called_once_with(["kiro"], size_baseline=baseline)
+        mock_install.assert_called_once_with(
+            ["kiro"], size_baseline=baseline, verbose=False
+        )
 
 
 class TestRestartMemoryService:
@@ -841,6 +862,14 @@ class TestRestartMemoryService:
         assert fake_subprocess.calls == [
             (["/usr/local/bin/mcp-memory", "restart"], {"check": False})
         ]
+
+    def test_prints_nothing_itself(
+        self, fake_subprocess: FakeSubprocess, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with patch("shutil.which", return_value="/usr/local/bin/mcp-memory"):
+            _restart_memory_service()
+
+        assert capsys.readouterr().out == ""
 
     def test_does_nothing_when_the_binary_is_not_installed(
         self, fake_subprocess: FakeSubprocess
@@ -2091,7 +2120,7 @@ class TestUpdateOnly:
         ):
             exit_code = run_capturing_exit(main)
 
-        mock_install.assert_called_once_with(["kiro"], only=source)
+        mock_install.assert_called_once_with(["kiro"], only=source, verbose=False)
         mock_pull_local.assert_not_called()
         mock_pull_plugins.assert_not_called()
         mock_setup.assert_not_called()
