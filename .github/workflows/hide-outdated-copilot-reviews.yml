@@ -1,0 +1,35 @@
+name: Hide outdated Copilot reviews
+
+on:
+  workflow_run:
+    workflows: [PR review]
+    types: [completed]
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  hide:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - run: |
+          PR=$(gh api -X GET "repos/$REPO/pulls" -f state=open -f head="$HEAD_OWNER:$BRANCH" --jq ".[] | select(.head.sha == \"$SHA\") | .number")
+          [ -n "$PR" ] || exit 0
+          gh api --paginate "repos/$REPO/pulls/$PR/reviews" --jq ".[] | select(.user.login == \"$AUTHOR\") | .node_id" |
+          head -n -1 |
+          while read -r review; do
+            echo "$review"
+            gh api graphql --paginate -f id="$review" -f query='query($id: ID!, $endCursor: String) { node(id: $id) { ... on PullRequestReview { comments(first: 100, after: $endCursor) { pageInfo { hasNextPage endCursor } nodes { id isMinimized } } } } }' --jq '.data.node.comments.nodes[] | select(.isMinimized | not) | .id'
+          done |
+          while read -r id; do
+            gh api graphql -f id="$id" -f query='mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { clientMutationId } }'
+          done
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          AUTHOR: copilot-pull-request-reviewer[bot]

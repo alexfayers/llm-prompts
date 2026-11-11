@@ -10,7 +10,7 @@ function fixture({ author, files, reviews = [], labels = [], branch = 'feature',
   const github = {
     paginate: async (method) => method.items,
     rest: {
-      pulls: { listFiles: { items: files.map((file) => (typeof file === 'string' ? { filename: file } : file)) }, listReviews: { items: reviews.map(([login, state]) => ({ user: { login }, state })) }, requestReviewers: async ({ pull_number, reviewers }) => requests.push([pull_number, reviewers]) },
+      pulls: { listFiles: { items: files.map((file) => (typeof file === 'string' ? { filename: file } : file)) }, listReviews: { items: reviews.map(([login, state, copilot]) => ({ user: { login }, state, is_copilot_code_review: copilot })) }, requestReviewers: async ({ pull_number, reviewers }) => requests.push([pull_number, reviewers]) },
       repos: {
         getContent: async ({ path, ref }) => ({ data: { content: Buffer.from(CODEOWNERS).toString('base64'), path, ref } }),
         createCommitStatus: async ({ sha, context, state }) => calls.push([sha, context, state]),
@@ -139,6 +139,18 @@ test('a min-reviews label needs that many approvals from anyone but the author',
     const f = fixture({ author: 'stranger', files: ['README.md'], reviews, labels });
     await gate(f);
     assert.deepEqual(f.calls, [['abc', 'codeowner-review', state]], JSON.stringify([reviews, labels]));
+  }
+});
+
+test('a Copilot code review approval does not count toward min-reviews', async () => {
+  const copilot = ['copilot-pull-request-reviewer[bot]', 'APPROVED', true];
+  for (const [reviews, state] of [
+    [[['owner', 'APPROVED'], copilot], 'pending'],
+    [[['owner', 'APPROVED'], copilot, ['alice', 'APPROVED']], 'success'],
+  ]) {
+    const f = fixture({ author: 'stranger', files: ['README.md'], reviews, labels: ['min-reviews:2'] });
+    await gate(f);
+    assert.deepEqual(f.calls, [['abc', 'codeowner-review', state]], JSON.stringify(reviews));
   }
 });
 

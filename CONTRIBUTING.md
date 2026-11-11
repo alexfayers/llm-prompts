@@ -57,3 +57,10 @@ Add fixes for review feedback to the PR as new commits - do not amend or rebase 
 - State WHAT changed and WHY, not HOW.
 - No restating the diff, no process commentary, no filler.
 - List a PR that must merge first as a `Depends on <PR URL>` line; the `check-dependencies` check fails until it merges and re-checks when that PR closes.
+
+## Copilot review
+
+- The four files `review.instructions.md`, `prompts.instructions.md`, `python.instructions.md` and `typescript.instructions.md` under `.github/instructions` here are the single place to edit the Copilot review rules.
+- The `Sync review rules` workflow opens bot PRs in cline-hooks and mcp-memory with a copy of them.
+- When Copilot submits a review, its earlier reviews on that PR are marked outdated.
+- Copilot approvals do not count toward `min-reviews` labels.
