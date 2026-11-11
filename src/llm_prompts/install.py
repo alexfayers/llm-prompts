@@ -29,6 +29,7 @@ from urllib.request import url2pathname
 from cline_hooks.core.install import resolve_binary
 from jinja2 import TemplateError
 
+from .claude_models import catalogue
 from .colors import Color, paint
 from .exit_reason import ExitReason
 from .herdsman import (
@@ -1405,41 +1406,6 @@ _LONG_CONTEXT_SUFFIX = "[1m]"
 _PI_LIST_MODELS_TIMEOUT_SECONDS = 30
 
 
-def _claude_model_catalogue() -> dict[str, str]:
-    """Map every model name this Claude Code install can select to its request value.
-
-    Bedrock installs are the reason this exists: the CLI's tier aliases resolve to
-    model ids an account may not serve, and an unservable id silently falls back to
-    the session's default model, so ``modelOverrides`` is the only authoritative
-    source there. Elsewhere ``availableModels`` names the models directly.
-
-    ``CLAUDE_CODE_USE_BEDROCK`` only reaches processes that inherit the shell
-    environment, so Bedrock is also recognised from settings keys only a Bedrock
-    install has: ``awsCredentialExport`` and a non-empty ``modelOverrides``.
-
-    Returns:
-        Mapping of model name to the value to request, empty when unavailable.
-    """
-    try:
-        settings = json.loads(
-            (user_home() / ".claude" / "settings.json").read_text(encoding="utf-8")
-        )
-    except (OSError, json.JSONDecodeError):
-        return {}
-    is_bedrock = (
-        bool(settings.get("awsCredentialExport"))
-        or bool(settings.get("modelOverrides"))
-        or os.environ.get("CLAUDE_CODE_USE_BEDROCK") == "1"
-    )
-    if is_bedrock:
-        overrides = settings.get("modelOverrides")
-        return overrides if isinstance(overrides, dict) else {}
-    available = settings.get("availableModels")
-    if not isinstance(available, list):
-        return {}
-    return {name: name for name in available if isinstance(name, str)}
-
-
 def _resolve_variant_model(alias: str, catalogue: dict[str, str]) -> str:
     """Resolve a tier alias to the newest model of that family the install can run.
 
@@ -1448,7 +1414,7 @@ def _resolve_variant_model(alias: str, catalogue: dict[str, str]) -> str:
 
     Args:
         alias: Tier alias from a variant token (e.g. ``haiku``).
-        catalogue: Mapping from :func:`_claude_model_catalogue`.
+        catalogue: Mapping from :func:`llm_prompts.claude_models.catalogue`.
 
     Returns:
         Resolved model value, or the alias unchanged when nothing matches.
@@ -1696,9 +1662,7 @@ def _variant_specs(
         else []
     )
     if resolve_model is None:
-        resolve_model = partial(
-            _resolve_variant_model, catalogue=_claude_model_catalogue()
-        )
+        resolve_model = partial(_resolve_variant_model, catalogue=catalogue())
     specs: list[_VariantSpec] = []
     thinking_off_models = _THINKING_OFF_VARIANT_MODELS.get(target, frozenset())
     seen_thinking_off: set[str] = set()

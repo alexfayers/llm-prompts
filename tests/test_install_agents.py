@@ -10,11 +10,11 @@ from unittest.mock import patch
 import pytest
 import yaml
 
+from llm_prompts import claude_models
 from llm_prompts.install import (
     _Agent,
     _apply_frontmatter_overrides,
     _apply_variant_frontmatter,
-    _claude_model_catalogue,
     _expand_agent_variants,
     _install_agents,
     _resolve_variant_model,
@@ -97,7 +97,7 @@ class TestResolveVariantModel:
         _write_settings(tmp_path, _BEDROCK_SETTINGS)
 
         with patch("llm_prompts.install.Path.home", return_value=tmp_path):
-            catalogue = _claude_model_catalogue()
+            catalogue = claude_models.catalogue()
 
         assert _resolve_variant_model("haiku", catalogue) == (
             "bedrock/claude-haiku-4-5-dated"
@@ -110,7 +110,7 @@ class TestResolveVariantModel:
         _write_settings(tmp_path, _BEDROCK_SETTINGS)
 
         with patch("llm_prompts.install.Path.home", return_value=tmp_path):
-            catalogue = _claude_model_catalogue()
+            catalogue = claude_models.catalogue()
 
         assert _resolve_variant_model("opus", catalogue) == "bedrock/claude-opus-5[1m]"
 
@@ -121,7 +121,7 @@ class TestResolveVariantModel:
         _write_settings(tmp_path, _BEDROCK_SETTINGS)
 
         with patch("llm_prompts.install.Path.home", return_value=tmp_path):
-            catalogue = _claude_model_catalogue()
+            catalogue = claude_models.catalogue()
 
         assert _resolve_variant_model("sonnet", catalogue) == "bedrock/claude-sonnet-5"
 
@@ -132,7 +132,7 @@ class TestResolveVariantModel:
         _write_settings(tmp_path, _NON_BEDROCK_SETTINGS)
 
         with patch("llm_prompts.install.Path.home", return_value=tmp_path):
-            catalogue = _claude_model_catalogue()
+            catalogue = claude_models.catalogue()
 
         assert _resolve_variant_model("opus", catalogue) == "claude-opus-5[1m]"
         assert _resolve_variant_model("haiku", catalogue) == "claude-haiku-4-5"
@@ -144,7 +144,7 @@ class TestResolveVariantModel:
         _write_settings(tmp_path, _BEDROCK_SETTINGS)
 
         with patch("llm_prompts.install.Path.home", return_value=tmp_path):
-            catalogue = _claude_model_catalogue()
+            catalogue = claude_models.catalogue()
 
         assert _resolve_variant_model("fable", catalogue) == "fable"
 
@@ -154,7 +154,7 @@ class TestResolveVariantModel:
         monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
 
         with patch("llm_prompts.install.Path.home", return_value=tmp_path):
-            catalogue = _claude_model_catalogue()
+            catalogue = claude_models.catalogue()
 
         assert catalogue == {}
         assert _resolve_variant_model("haiku", catalogue) == "haiku"
@@ -169,7 +169,7 @@ class TestResolveVariantModel:
         )
 
         with patch("llm_prompts.install.Path.home", return_value=tmp_path):
-            catalogue = _claude_model_catalogue()
+            catalogue = claude_models.catalogue()
 
         assert catalogue == {}
         assert _resolve_variant_model("sonnet", catalogue) == "sonnet"
@@ -181,7 +181,7 @@ class TestResolveVariantModel:
         _write_settings(tmp_path, {"availableModels": ["claude-haiku-4-5"]})
 
         with patch("llm_prompts.install.Path.home", return_value=tmp_path):
-            catalogue = _claude_model_catalogue()
+            catalogue = claude_models.catalogue()
 
         assert _resolve_variant_model("haiku", catalogue) == "haiku"
 
@@ -192,7 +192,7 @@ class TestResolveVariantModel:
         _write_settings(tmp_path, _BEDROCK_SETTINGS)
 
         with patch("llm_prompts.install.Path.home", return_value=tmp_path):
-            catalogue = _claude_model_catalogue()
+            catalogue = claude_models.catalogue()
 
         assert _resolve_variant_model("haiku", catalogue) == (
             "bedrock/claude-haiku-4-5-dated"
@@ -212,7 +212,7 @@ class TestResolveVariantModel:
         )
 
         with patch("llm_prompts.install.Path.home", return_value=tmp_path):
-            catalogue = _claude_model_catalogue()
+            catalogue = claude_models.catalogue()
 
         assert catalogue == {}
         assert _resolve_variant_model("haiku", catalogue) == "haiku"
@@ -227,7 +227,7 @@ class TestResolveVariantModel:
         )
 
         with patch("llm_prompts.install.Path.home", return_value=tmp_path):
-            catalogue = _claude_model_catalogue()
+            catalogue = claude_models.catalogue()
 
         assert catalogue == {"claude-haiku-4-5": "claude-haiku-4-5"}
 
@@ -241,7 +241,7 @@ class TestResolveVariantModel:
         )
 
         with patch("llm_prompts.install.Path.home", return_value=tmp_path):
-            catalogue = _claude_model_catalogue()
+            catalogue = claude_models.catalogue()
 
         assert catalogue == {}
 
