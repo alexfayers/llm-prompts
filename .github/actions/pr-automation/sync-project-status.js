@@ -12,19 +12,24 @@ function isBlocked(pr) {
   return pr.reviewDecision === 'CHANGES_REQUESTED';
 }
 
-function isApproved(pr) {
-  const states = (pr.latestOpinionatedReviews?.nodes ?? []).map(({ state }) => state);
-  return states.includes('APPROVED') && !states.includes('CHANGES_REQUESTED');
+async function hasReviewRequirements(github, repo, sha) {
+  const { data: { statuses } } = await github.rest.repos.getCombinedStatusForRef({ ...repo, ref: sha });
+  return statuses.some(({ context, state }) => context === 'codeowner-review' && state === 'success');
 }
 
-function resolveStatus(pr) {
+function isApproved(pr, requirementsMet) {
+  const states = (pr.latestOpinionatedReviews?.nodes ?? []).map(({ state }) => state);
+  return requirementsMet && states.includes('APPROVED') && !states.includes('CHANGES_REQUESTED');
+}
+
+function resolveStatus(pr, requirementsMet) {
   if (pr.state !== 'OPEN') {
     return STATUS_OPTION.DONE;
   }
   if (pr.isDraft) {
     return STATUS_OPTION.IN_PROGRESS;
   }
-  return isApproved(pr) ? STATUS_OPTION.APPROVED : STATUS_OPTION.REVIEW;
+  return isApproved(pr, requirementsMet) ? STATUS_OPTION.APPROVED : STATUS_OPTION.REVIEW;
 }
 
 async function fetchPr(github, { owner, repo, number }) {
@@ -91,7 +96,7 @@ async function sync({ github, context, core }) {
   if (!pr) {
     return;
   }
-  await setStatus(github, pr.id, resolveStatus(pr));
+  await setStatus(github, pr.id, resolveStatus(pr, await hasReviewRequirements(github, context.repo, pr.headRefOid)));
 }
 
-module.exports = { findPullRequest, findPr, fetchPr, isBlocked, resolveStatus, sync };
+module.exports = { findPullRequest, findPr, fetchPr, isBlocked, hasReviewRequirements, resolveStatus, sync };

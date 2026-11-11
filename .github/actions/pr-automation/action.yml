@@ -10,19 +10,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Sync project status
-      if: |
-        inputs.projects-token != '' &&
-        (github.event_name == 'pull_request_target' || (github.event_name == 'workflow_run' && github.event.workflow_run.name == 'PR review'))
-      uses: actions/github-script@v9
-      env:
-        ACTION_PATH: ${{ github.action_path }}
-      with:
-        github-token: ${{ inputs.projects-token }}
-        script: |
-          const { sync } = require(`${process.env.ACTION_PATH}/sync-project-status.js`)
-          await sync({ github, context, core })
-
     - name: Enable squash auto-merge
       if: |
         github.event_name == 'pull_request_target' &&
@@ -114,6 +101,19 @@ runs:
         script: |
           const { gate } = require(`${process.env.ACTION_PATH}/codeowner-review.js`)
           await gate({ github, context })
+
+    - name: Sync project status
+      if: |
+        inputs.projects-token != '' &&
+        (github.event_name == 'pull_request_target' || (github.event_name == 'workflow_run' && github.event.workflow_run.name == 'PR review'))
+      uses: actions/github-script@v9
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      with:
+        github-token: ${{ inputs.projects-token }}
+        script: |
+          const { sync } = require(`${process.env.ACTION_PATH}/sync-project-status.js`)
+          await sync({ github, context, core })
 
     - name: Label auto-rebase PR
       id: label-auto-rebase

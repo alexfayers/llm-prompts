@@ -13,8 +13,13 @@ test('open draft PR maps to In Progress and open ready PR to Review', () => {
 });
 
 test('approved PR maps to Approved unless changes are also requested', () => {
-  assert.equal(resolveStatus({ ...openPr, ...reviewedAs('APPROVED') }), 'c6f50cd1');
-  assert.equal(resolveStatus({ ...openPr, ...reviewedAs('APPROVED', 'CHANGES_REQUESTED') }), '432b1b61');
+  assert.equal(resolveStatus({ ...openPr, ...reviewedAs('APPROVED') }, true), 'c6f50cd1');
+  assert.equal(resolveStatus({ ...openPr, ...reviewedAs('APPROVED', 'CHANGES_REQUESTED') }, true), '432b1b61');
+});
+
+test('approved PR stays in Review until the review requirements are met', () => {
+  assert.equal(resolveStatus({ ...openPr, ...reviewedAs('APPROVED') }, false), '432b1b61');
+  assert.equal(resolveStatus({ ...openPr, ...reviewedAs('APPROVED') }, true), 'c6f50cd1');
 });
 
 test('blocked PRs keep their draft, review or approved status', () => {
@@ -22,7 +27,7 @@ test('blocked PRs keep their draft, review or approved status', () => {
     assert.equal(resolveStatus({ ...openPr, ...blocker }), '432b1b61');
     assert.equal(resolveStatus({ ...openPr, ...blocker, isDraft: true }), '47fc9ee4');
   }
-  assert.equal(resolveStatus({ ...openPr, ...reviewedAs('APPROVED'), isDraft: true }), '47fc9ee4');
+  assert.equal(resolveStatus({ ...openPr, ...reviewedAs('APPROVED'), isDraft: true }, true), '47fc9ee4');
 });
 
 test('closed or merged PR maps to Done even with requested changes', () => {
