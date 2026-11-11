@@ -56,7 +56,7 @@ Add fixes for review feedback to the PR as new commits - do not amend or rebase 
 - Description as bullet points, not paragraphs.
 - State WHAT changed and WHY, not HOW.
 - No restating the diff, no process commentary, no filler.
-- List a PR that must merge first as a `Depends on <PR URL>` line; the `check-dependencies` check fails until it merges and re-checks when that PR closes.
+- List a PR that must merge first as a `Depends on <PR URL>` line; the `check-dependencies` check fails until it merges and re-checks when that PR closes. A PR or issue closing in a private repo never rechecks PRs in a public repo.
 
 ## Copilot review
 

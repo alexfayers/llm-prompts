@@ -20,7 +20,7 @@ function fixture({ body, labels = [], states = {} }) {
   };
   const removeClient = { rest: { issues: { removeLabel: async ({ name }) => calls.push(['removeLabel', name]) } } };
   const context = { repo: { owner: 'o', repo: 'r' }, payload: { pull_request: { number: 7, head: { sha: 'abc' }, base: { ref: 'main' }, body, labels: labels.map((name) => ({ name })) } } };
-  const core = { warning() {} };
+  const core = { info() {}, warning() {} };
   return { github, context, core, calls, getOctokit: () => removeClient, token: 'actions-token', removeClient };
 }
 
@@ -147,6 +147,33 @@ test('closing an issue rechecks the open PRs that depend on it and dispatches to
   });
   await check({ github, context, core, getOctokit: () => client, token: 't' });
   assert.deepEqual(calls.filter(([type]) => type !== 'search'), [['status', 'sha6', 'success'], ['dispatch', 'x', 'dependencies-recheck'], ['dispatch', 'z', 'dependencies-recheck']]);
+});
+
+test('closing an issue in a private repo rechecks its own PRs and dispatches only to private repos', async () => {
+  const pull = (number, body) => ({ number, head: { sha: `sha${number}` }, body, labels: [] });
+  const { github, context, core, calls } = fixture({ body: '' });
+  delete context.payload.pull_request;
+  context.payload.action = 'closed';
+  context.payload.issue = { number: 5 };
+  context.payload.repository = { private: true };
+  github.paginate = async () => [pull(6, 'Depends on #5')];
+  github.rest.repos.createCommitStatus = async ({ sha, state }) => calls.push(['status', sha, state]);
+  const client = searchClient(calls, {
+    '"o/r#5" is:pr is:open user:o in:body': [item('o/x', 'Depends on o/r#5'), item('o/p', 'Depends on o/r#5'), item('o/gone', 'Depends on o/r#5')],
+  });
+  client.rest.repos.get = async ({ repo }) => {
+    if (repo === 'gone') throw Object.assign(new Error('Not Found'), { status: 404 });
+    return { data: { private: repo === 'p' } };
+  };
+  await check({ github, context, core, getOctokit: () => client, token: 't' });
+  assert.deepEqual(calls.filter(([type]) => type !== 'search'), [['status', 'sha6', 'success'], ['dispatch', 'p', 'dependencies-recheck']]);
+});
+
+test('a private repo still removes the blocked label with the token', async () => {
+  const { github, context, core, calls, getOctokit, token } = fixture({ body: 'Depends on #1', labels: ['blocked'] });
+  context.payload.repository = { private: true };
+  await check({ github, context, core, getOctokit, token, delay: async () => {} });
+  assert.deepEqual(calls, [['status', 'success'], ['removeLabel', 'blocked']]);
 });
 
 test('a PR review run rechecks only the PR matching its head sha, branch and repo', async () => {
