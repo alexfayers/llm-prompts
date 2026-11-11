@@ -2645,19 +2645,19 @@ def _install_disabled_definitions(agents_dir: Path) -> set[str]:
     return managed
 
 
-def _install_herdsman_overlays(overlays_dir: Path, roles_dir: Path) -> set[str]:
-    """Copy overlays of herdsman's role profiles verbatim.
+def _install_herdsman_overlays(overlays_dir: Path, coordinators_dir: Path) -> set[str]:
+    """Copy overlays of herdsman's coordinator profiles verbatim.
 
     Args:
         overlays_dir: Source directory of overlay definitions.
-        roles_dir: Destination role profiles directory.
+        coordinators_dir: Destination coordinator profiles directory.
 
     Returns:
         Set of installed overlay filenames.
     """
     managed: set[str] = set()
     for src in sorted(overlays_dir.glob("*.md")):
-        dest = roles_dir / src.name
+        dest = coordinators_dir / src.name
         if dest.is_symlink():
             dest.unlink()
         _write_if_changed(dest, _read_text(src), f"role {src.name}")
@@ -4203,12 +4203,14 @@ def main(
                     installed_files["pi"].append(str(variants_path))
             if agents_target == "pi":
                 managed_agents |= _install_disabled_definitions(agents_dest)
-                roles_dest = agents_dest.parent / "pi-herdsman" / "roles"
+                coordinators_dest = agents_dest.parent / "coordinators"
                 managed_roles = _install_herdsman_overlays(
-                    root_dir / "pi" / "herdsman-overlays", roles_dest
+                    root_dir / "pi" / "herdsman-overlays", coordinators_dest
                 )
-                _check_unmanaged(roles_dest, managed_roles, "pi roles")
-                installed_files["pi"].extend(str(roles_dest / r) for r in managed_roles)
+                _check_unmanaged(coordinators_dest, managed_roles, "pi coordinators")
+                installed_files["pi"].extend(
+                    str(coordinators_dest / r) for r in managed_roles
+                )
             _check_unmanaged(agents_dest, managed_agents, f"{agents_target} agents")
             installed_files[agents_target].extend(
                 str(agents_dest / a) for a in managed_agents
