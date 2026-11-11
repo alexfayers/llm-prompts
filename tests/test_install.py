@@ -44,6 +44,9 @@ from llm_prompts.install import (
     log,
     partial_source,
     prompts_dir,
+    try_install_hooks_claude_code,
+    try_install_hooks_pi,
+    try_install_memory_claude_code,
     try_install_memory_pi,
 )
 from llm_prompts.install import main as install_main
@@ -1032,6 +1035,79 @@ class TestCompanionToolOutput:
         logged = self._install_memory(fake_subprocess, service_exists=False)
 
         assert ("debug", "service set up") in logged
+
+
+class TestUserWideBinaries:
+    def test_hooks_run_the_user_wide_binary_not_the_venv_one(
+        self,
+        fake_subprocess: FakeSubprocess,
+        venv_and_user_bins: tuple[Path, Path],
+    ) -> None:
+        _, user_bin = venv_and_user_bins
+
+        try_install_hooks_claude_code()
+
+        assert fake_subprocess.commands == [
+            [str(user_bin / "cline-hook"), "install", "claude-code"]
+        ]
+
+    def test_memory_setup_runs_the_user_wide_binary_not_the_venv_one(
+        self,
+        fake_subprocess: FakeSubprocess,
+        venv_and_user_bins: tuple[Path, Path],
+    ) -> None:
+        _, user_bin = venv_and_user_bins
+        binary = str(user_bin / "mcp-memory")
+
+        with patch("llm_prompts.install._memory_service_exists", return_value=False):
+            try_install_memory_claude_code()
+
+        assert fake_subprocess.commands == [
+            [binary, "install", "claude-code"],
+            [binary, "setup-service"],
+        ]
+
+    def test_nothing_runs_when_only_a_venv_has_the_binary(
+        self,
+        fake_subprocess: FakeSubprocess,
+        venv_and_user_bins: tuple[Path, Path],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        venv_bin, _ = venv_and_user_bins
+        monkeypatch.setenv("PATH", str(venv_bin))
+
+        try_install_hooks_claude_code()
+        try_install_memory_claude_code()
+
+        assert fake_subprocess.commands == []
+
+    def test_pi_hooks_run_the_user_wide_binary(
+        self,
+        fake_subprocess: FakeSubprocess,
+        venv_and_user_bins: tuple[Path, Path],
+    ) -> None:
+        _, user_bin = venv_and_user_bins
+
+        failed = try_install_hooks_pi()
+
+        assert not failed
+        assert fake_subprocess.commands == [
+            [str(user_bin / "cline-hook"), "install", "pi"]
+        ]
+
+    def test_pi_hooks_are_skipped_when_only_a_venv_has_the_binary(
+        self,
+        fake_subprocess: FakeSubprocess,
+        venv_and_user_bins: tuple[Path, Path],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        venv_bin, _ = venv_and_user_bins
+        monkeypatch.setenv("PATH", str(venv_bin))
+
+        failed = try_install_hooks_pi()
+
+        assert not failed
+        assert fake_subprocess.commands == []
 
 
 class TestMainReadCache:

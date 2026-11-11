@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 
 from . import github_api, telemetry
 from .exit_reason import ExitReason
-from .install import AGENT_CLASSES, REMOVED_AGENTS, log, prompts_dir
+from .install import AGENT_CLASSES, REMOVED_AGENTS, log, prompts_dir, user_binary
 from .network import run_with_retries
 from .setup import (
     _UPDATE_INSTRUCTION,
@@ -645,7 +645,7 @@ def _auto_migrate_memory_db() -> None:
     custom --db-path, which the hook plugin does not inherit (it reads the default). Idempotent
     - a no-op once the DB is already at the default. Remove once all machines are migrated.
     """
-    binary = shutil.which("mcp-memory")
+    binary = user_binary("mcp-memory")
     if binary:
         subprocess.run([binary, "migrate-db"], check=False)
 
@@ -711,7 +711,7 @@ def _standalone_tool_envs() -> set[str]:
 
 def _restart_memory_service() -> None:
     """Restart the mcp-memory background service if installed."""
-    binary = shutil.which("mcp-memory")
+    binary = user_binary("mcp-memory")
     if binary:
         subprocess.run([binary, "restart"], check=False)
 
