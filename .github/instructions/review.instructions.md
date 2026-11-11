@@ -26,7 +26,8 @@ excludeAgent: "cloud-agent"
 
 - Comment only on a defect that breaks normal use, leaks data or fails CI.
 - Skip races between API calls, rare corner cases and dry-run or preview output, unless they lose data.
-- Skip a finding about code the PR does not change.
+- Flag only a defect in a line the PR adds or edits. Skip a problem in code the PR leaves unchanged, even where a changed line calls it or sits next to it. This applies to inline comments and the review summary.
+- Count code the PR only moves or renames, with no logic change, as unchanged.
 - When nothing meets this bar, leave no comments.
 
 ## Correctness
