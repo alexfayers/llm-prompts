@@ -5,25 +5,29 @@ description: Write a handoff doc for a fresh session to resume work. Use when en
 
 # handoff
 
-Produce one self-contained handoff document that lets a brand-new session
-resume the work with no prior context, then stop. Write the shortest document
-that rebuilds your mental model - not a diary.
+If the invocation names a part (a sibling `<part>.md`, e.g. `live`), MUST read `<base-dir>/<part>.md` first.
+
+Write one self-contained, minimal handoff doc a new session can resume from with no prior context. Then stop the work it hands over, unless the doc goes to `compact_now` or to an explicitly parallel session.
 
 ## Where it goes
 
+A live handoff continues the work in a fresh session.
+
 {% if AGENT == "pi" %}
-In pi, MUST write the handoff per this skill, omit Step 0, and pass it as the `compact_now` `instructions`. MUST NOT write `HANDOFF.md` or start a new session unless the user asks. Then the rest of this section applies.
+Unless starting a new session, MUST pass the doc as the `compact_now` `instructions`. MUST use `change_dir` for a cwd or worktree change only when the tool is available and permits the move. MUST NOT write `HANDOFF.md` or start a new session unless the user asks, the work needs a parallel session, the env or process must change, or the cwd or worktree cannot change in this session. When starting a new session, {% if has_command("herdr") %}MUST follow the next paragraph.{% else %}write `HANDOFF.md`.{% endif %}
+
+
 {% endif %}
 {% if has_command("herdr") %}
-Inside Herdr (`test "${HERDR_ENV:-}" = 1`), MUST send the doc live per the herdr rule and omit Step 0, unless the user asks for a disk handoff or has opted out. Otherwise:
+Inside Herdr (`test "${HERDR_ENV:-}" = 1`),{% if AGENT == "pi" %} when starting a new session,{% endif %} MUST send the doc live per `<base-dir>/live.md`{% if AGENT != "pi" %} and omit Step 0{% endif %}, unless the user asks for a disk handoff or has opted out. Otherwise:
 
 {% endif %}
 Write to `HANDOFF.md` in the workspace root (or the directory the work lives in),
 unless the user names another location. One handoff doc at a time - overwrite a
 stale `HANDOFF.md` that is no longer relevant.
 
-- Before writing, MUST check whether `HANDOFF.md` already exists; if so, MUST
-  read it and confirm it belongs to the current effort.
+- Before writing, MUST read any existing `HANDOFF.md` and confirm it belongs to
+  the current effort.
 - Where it belongs to a different effort, MUST NOT overwrite it - append a new
   section or write a differently-named file instead, and surface the collision
   to the user.
@@ -36,17 +40,22 @@ for an existing doc as `pickup`, not a rewrite.
 
 ## Required structure
 
+{% if AGENT != "pi" %}
 The document MUST open with a self-delete instruction as step 1 (it is
-scaffolding, not a durable artifact - durable facts belong in memory and
-committed docs):
+scaffolding, not a durable artifact):
+{% else %}
+The document MUST open with:
+{% endif %}
 
 ```markdown
 # Handoff: <what is being handed off>
+{% if AGENT != "pi" %}
 
 ## Step 0 - Delete this doc first
 Before doing anything else, delete this file (`HANDOFF.md`). It is a one-shot
 handoff, not a durable record. The real record is in memory ([[entity-name]]) and
 the committed code/docs.
+{% endif %}
 ```
 
 Then include, in order:
@@ -91,7 +100,7 @@ Then include, in order:
 {% endif %}
 - **Memory first, doc second.** Durable facts (decisions, outcomes, learnings,
   task status) MUST already be in the memory graph before you write the
-  handoff - the doc only points at it. If not yet persisted, do so now (see
+  handoff. If not yet persisted, do so now (see
   the `session-end` skill).
 - No diff dump or play-by-play. Link the commit; summarise intent. Use bullets.
 - Point to the plan file if one exists for the effort.
@@ -103,9 +112,6 @@ Then include, in order:
   it goes.
 - For multi-phase work, MUST carry context (or explicit references: file:line,
   gate) for EVERY remaining phase, not only the next one.
-- After writing the doc, run the `session-end` skill for the rest of session
-  close (memory persisted, commit/push status resolved, rule-file reflection)
-  - except its step 5 comprehensive TODO/task review, which this skill's own
-  "next task" section already narrows to the current effort. Arrived here from
-  `session-end` itself - do not re-invoke it. Then tell the user the handoff is
-  ready and where it lives.
+- After writing the doc, run the `session-end` skill, except its step 4 task
+  review. Arrived here from `session-end` itself - do not re-invoke it. Then
+  tell the user where it lives.
