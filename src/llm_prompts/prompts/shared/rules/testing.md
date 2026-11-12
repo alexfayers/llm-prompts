@@ -16,3 +16,6 @@ paths: '**/test_*.py, **/conftest.py, **/*_test.*, **/*.test.*, **/*.spec.*, **/
 - MUST NOT couple a test to dynamic external state (live service status, registries, dates) - derive expectations from the same source of truth the code reads, and assert the invariant, not a snapshot.
 - Keep the real-world case that motivated a change OUT of the test suite - reproduce it with a generic synthetic fixture the test builds itself (neutral names, a temp directory).
 - MUST add one test per new behaviour or bug fix through the public entry point. MUST extend existing tests where possible, otherwise follow existing patterns.
+- MUST NOT write one test per item. Cover a repeated case once, and parametrise only when cases differ.
+- MUST NOT copy a production mapping or config table into a test. Assert one representative case.
+- Tests SHOULD be as few and as small as the behaviour allows.
