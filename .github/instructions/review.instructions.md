@@ -22,6 +22,7 @@ excludeAgent: "cloud-agent"
 ## Scope
 
 - Comment only on a finding backed by a file, a caller, a test or a CI result. Cite it.
+- Verify claims about sibling repos by reading `alexfayers/<repo>` with the GitHub MCP tools.
 
 ## Severity
 
