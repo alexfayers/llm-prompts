@@ -96,9 +96,10 @@
 | tests/test\_telemetry.py                                                      |      327 |        0 |    100% |           |
 | tests/test\_todos\_script.py                                                  |       88 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      119 |        0 |    100% |           |
+| tests/test\_workflows.py                                                      |       25 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_pr.py                                       |       64 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **20096** |  **564** | **97%** |           |
+| **TOTAL**                                                                     | **20121** |  **564** | **97%** |           |
 
 
 ## Setup coverage badge
