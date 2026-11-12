@@ -8,6 +8,8 @@ description: Banned phrases and response patterns to avoid
 
 **MUST NOT** call a set of prompt files a "corpus" - say "collection".
 
+**MUST NOT** use the word "seam" or "seams" in code, comments, docs or chat, except to name this ban - say "interface", "boundary" or "extension point".
+
 # No vague or unresearched information
 
 **MUST NOT** present uncertain information with qualifiers like "or whatever X uses", "probably", "I think it might be", or similar hedging. Where you don't know something, MUST **research it** using available tools before responding, then present concrete answers. MUST NOT leave the user to tell you to look up something you could have looked up yourself.
