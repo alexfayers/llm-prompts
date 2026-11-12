@@ -11,6 +11,7 @@ llm-prompts install <agent> --root DIR         # use DIR as the home directory
 llm-prompts update                             # report available updates, pull sources, reinstall every installed agent
 llm-prompts update --check                     # list available updates without applying them
 llm-prompts update --only PATH                 # reinstall only the prompt built from this edited file
+llm-prompts update --verbose                    # also list every file changed
 llm-prompts uninstall <agent>                  # remove installed files and config patches
 llm-prompts source <agent>                     # show the source file paths for an agent
 llm-prompts setup                              # install the tools in config.toml
