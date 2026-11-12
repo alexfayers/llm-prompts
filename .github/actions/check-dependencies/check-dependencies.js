@@ -79,7 +79,7 @@ async function pullsToCheck({ github, context }) {
 
 async function dispatchCrossRepoDependents({ context, core, client }) {
   const { owner, repo } = context.repo;
-  const { pull_request: pull, issue } = context.payload;
+  const { pull_request: pull, issue, repository } = context.payload;
   const number = (pull ?? issue).number;
   const target = `${owner}/${repo}#${number}`;
   const items = [];
@@ -97,6 +97,10 @@ async function dispatchCrossRepoDependents({ context, core, client }) {
   for (const slug of repos) {
     const [depOwner, depRepo] = slug.split('/');
     try {
+      if (repository?.private && !(await client.rest.repos.get({ owner: depOwner, repo: depRepo })).data.private) {
+        core.info(`Skipping ${DISPATCH_EVENT} to ${slug}: a private repo never dispatches to a public one`);
+        continue;
+      }
       await client.rest.repos.createDispatchEvent({ owner: depOwner, repo: depRepo, event_type: DISPATCH_EVENT });
     } catch (error) {
       core.warning(`Could not dispatch ${DISPATCH_EVENT} to ${slug}: ${error.message}`);

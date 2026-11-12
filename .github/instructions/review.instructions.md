@@ -45,6 +45,7 @@ excludeAgent: "cloud-agent"
 ## Description
 
 - A PR that must merge first has a `Depends on <PR URL>` line.
+- A PR or issue closing in a private repo never rechecks PRs in a public repo.
 - Use the size and word counts the automation already posts. Invent no limits.
 
 ## Wording
