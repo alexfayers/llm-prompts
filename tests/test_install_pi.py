@@ -73,8 +73,9 @@ def _install(
     trusted: bool = False,
     hooks_exit: int = 0,
     listed_models: str = "",
+    wrapper: str | None = None,
 ) -> bool:
-    """Run `install` into a fake home with overlays and manifest redirected, `cline-hook install pi` exiting with `hooks_exit` and `pi --list-models` printing `listed_models`."""
+    """Run `install` into a fake home with overlays and manifest redirected, `cline-hook install pi` exiting with `hooks_exit`, `pi --list-models` printing `listed_models` and `pool` found at the given path."""
 
     def which(command: str, path: str | None = None) -> str | None:
         if command == "herdr":
@@ -83,6 +84,8 @@ def _install(
             return pi
         if command == "cline-hook":
             return "/usr/bin/cline-hook"
+        if command == "pool":
+            return wrapper
         return _REAL_WHICH(command, path=path)
 
     outer = subprocess.run
@@ -662,6 +665,137 @@ class TestPiPluginMcpServers:
         _install(home, tmp_path / "installed.json")
 
         assert self._pi_servers(home) == {"ok": {"command": "a", "args": ["x"]}}
+
+    def _wrapper_overlay(self, tmp_path: Path, wrapper: Any = None) -> Path:
+        overlay = tmp_path / "overlay"
+        (overlay / "pi").mkdir(parents=True)
+        (overlay / "pi" / "mcp-stdio-wrapper.json").write_text(
+            json.dumps(["pool", "client", "--"] if wrapper is None else wrapper),
+            encoding="utf-8",
+        )
+        return overlay
+
+    def test_stdio_servers_are_wrapped_once_and_remote_ones_are_not(
+        self, tmp_path: Path
+    ) -> None:
+        home = tmp_path / "home"
+        plugin = _plugin_dir(tmp_path, "alpha")
+        self._mcp(
+            plugin,
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "plain": {"command": "a", "args": ["x"], "env": {"K": "v"}},
+                        "wrapped": {
+                            "command": "/opt/bin/pool",
+                            "args": ["client", "--", "b"],
+                        },
+                        "remote": {"type": "http", "url": "https://example.test"},
+                    }
+                }
+            ),
+        )
+        _claude_plugins(home, {"alpha@acme": True}, {"alpha@acme": plugin})
+
+        _install(
+            home,
+            tmp_path / "installed.json",
+            [self._wrapper_overlay(tmp_path)],
+            wrapper="/usr/bin/pool",
+        )
+
+        assert self._pi_servers(home) == {
+            "plain": {
+                "command": "pool",
+                "args": ["client", "--", "a", "x"],
+                "env": {"K": "v"},
+            },
+            "wrapped": {"command": "/opt/bin/pool", "args": ["client", "--", "b"]},
+            "remote": {"type": "http", "url": "https://example.test"},
+        }
+
+    def test_same_executable_with_other_arguments_is_still_wrapped(
+        self, tmp_path: Path
+    ) -> None:
+        home = tmp_path / "home"
+        plugin = _plugin_dir(tmp_path, "alpha")
+        self._mcp(
+            plugin,
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "other": {"command": "/opt/bin/pool", "args": ["serve"]}
+                    }
+                }
+            ),
+        )
+        _claude_plugins(home, {"alpha@acme": True}, {"alpha@acme": plugin})
+
+        _install(
+            home,
+            tmp_path / "installed.json",
+            [self._wrapper_overlay(tmp_path)],
+            wrapper="/usr/bin/pool",
+        )
+
+        assert self._pi_servers(home) == {
+            "other": {
+                "command": "pool",
+                "args": ["client", "--", "/opt/bin/pool", "serve"],
+            }
+        }
+
+    @pytest.mark.parametrize(
+        "wrapper", [[], "pool client --", {"command": "pool"}, ["pool", 1]]
+    )
+    def test_servers_stay_unwrapped_when_the_wrapper_is_not_a_string_list(
+        self, tmp_path: Path, wrapper: Any, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        home = tmp_path / "home"
+        plugin = _plugin_dir(tmp_path, "alpha")
+        self._mcp(plugin, json.dumps({"mcpServers": {"plain": {"command": "a"}}}))
+        _claude_plugins(home, {"alpha@acme": True}, {"alpha@acme": plugin})
+
+        _install(
+            home,
+            tmp_path / "installed.json",
+            [self._wrapper_overlay(tmp_path, wrapper)],
+            wrapper="/usr/bin/pool",
+        )
+
+        assert self._pi_servers(home) == {"plain": {"command": "a"}}
+        assert "mcp-stdio-wrapper.json" in capsys.readouterr().err
+
+    def test_install_completes_unwrapped_when_the_wrapper_file_is_malformed(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        home = tmp_path / "home"
+        plugin = _plugin_dir(tmp_path, "alpha")
+        self._mcp(plugin, json.dumps({"mcpServers": {"plain": {"command": "a"}}}))
+        _claude_plugins(home, {"alpha@acme": True}, {"alpha@acme": plugin})
+        overlay = self._wrapper_overlay(tmp_path)
+        (overlay / "pi" / "mcp-stdio-wrapper.json").write_text(
+            '["secret-token", ', encoding="utf-8"
+        )
+
+        _install(home, tmp_path / "installed.json", [overlay], wrapper="/usr/bin/pool")
+
+        assert self._pi_servers(home) == {"plain": {"command": "a"}}
+        err = capsys.readouterr().err
+        assert "mcp-stdio-wrapper.json" in err
+        assert "secret-token" not in err
+
+    def test_servers_stay_unwrapped_when_the_wrapper_is_not_on_path(
+        self, tmp_path: Path
+    ) -> None:
+        home = tmp_path / "home"
+        plugin = _plugin_dir(tmp_path, "alpha")
+        self._mcp(plugin, json.dumps({"mcpServers": {"plain": {"command": "a"}}}))
+        _claude_plugins(home, {"alpha@acme": True}, {"alpha@acme": plugin})
+
+        _install(home, tmp_path / "installed.json", [self._wrapper_overlay(tmp_path)])
+
+        assert self._pi_servers(home) == {"plain": {"command": "a"}}
 
     def test_claude_json_wins_over_plugin_and_existing_pi_entries_stay(
         self, tmp_path: Path
