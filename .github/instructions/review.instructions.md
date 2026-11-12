@@ -10,6 +10,7 @@ excludeAgent: "cloud-agent"
 - llm-prompts installs one shared set of rules, skills, workflows and agents into several agent CLIs: Claude Code, Codex, Kiro, Antigravity and Pi.
 - cline-hooks runs one `cline-hook` command for lifecycle hooks in those CLIs. Its plugins add notes to a session or block a tool call, such as shell command rules, the fixup guard, the skill guard and edit blocks on files managed by llm-prompts.
 - mcp-memory is an MCP server that gives agents a persistent per-project memory. It stores a knowledge graph in SQLite and serves it over local HTTP. It also ships rules, skills and a cline-hooks plugin.
+- Before flagging lost protected observations or source edges, read the merge and restore paths.
 - The pi extensions live in `src/llm_prompts/prompts/pi/extensions/`. They add or change behavior in Pi sessions.
 
 ## Contribution guidelines
@@ -28,12 +29,15 @@ excludeAgent: "cloud-agent"
 - Skip races between API calls, rare corner cases and dry-run or preview output, unless they lose data.
 - Flag only a defect in a line the PR adds or edits. Skip a problem in code the PR leaves unchanged, even where a changed line calls it or sits next to it. This applies to inline comments and the review summary.
 - Count code the PR only moves or renames, with no logic change, as unchanged.
+- Don't flag a change only a consumer in another repo can make.
 - When nothing meets this bar, leave no comments.
 
 ## Correctness
 
 - Flag behavior that is broken, errors that are swallowed or mishandled, and new behavior or a fix without a test, when the Severity bar is met.
 - Existing tests that cover the change count. Do not ask for more.
+- Before claiming a count includes failures, read the code path that records it.
+- Before claiming a `KeyError`, check for a variable that shadows the key or mapping.
 
 ## Shrinking
 
@@ -115,4 +119,5 @@ Comment only when you can name a concrete check or hook. Do not flag judgment no
 
 - No praise, no speculation.
 - Do not repeat a finding CI already reports.
+- Close a finding when the pushed diff fixes it.
 - Do not claim tests ran without evidence.
