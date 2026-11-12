@@ -5,13 +5,12 @@ description: Coding guidelines to follow when generating, reviewing, or modifyin
 
 # Coding guidelines
 
-- MUST keep code concise but readable, and any change minimal.
-- A size limit (lines, words) is a ceiling, never a target. MUST make the smallest change that delivers the behaviour and remove redundant code.
+- MUST keep code concise but readable and changes minimal. MUST treat size limits as ceilings, not targets, make the smallest change that delivers the behaviour and remove redundant code.
 - Code MUST be self-documenting with descriptive names and minimal comments. MUST NOT add a comment that refers to the change you are making, explains why, or names other code that uses it - comments describe the code, only where genuinely complex.
 - MUST add new imports at THE SAME TIME as the code that uses them.
 - When a change adds, or newly requires, an environment variable, config key or setting, MUST update every doc, template and manifest that lists it in the SAME change.
 - Produced code MUST follow the existing style within the package.
-- New related modules SHOULD be grouped in a subpackage with short names (`<area>/<part>.py`), not added flat with a shared prefix (`<area>_<part>.py`), even where the rest of the package is flat. Existing modules MUST NOT be regrouped unless the task asks.
+- Before adding a new related file (source, frontend, tests) that would take a non-root folder from 7 to 8 files, SHOULD put it in an existing or new short-named area subfolder (`<area>/<part>`, not `<area>_<part>`), unless a tool requires a flat layout. MUST NOT regroup existing files unasked.
 - MUST NOT {{TOOL_COMPLETE}} until all tasks in the focus chain are done.
 - {{ACTION_NO_NARRATE}}
 - MUST write for reuse: merge similar functions or create an interface.

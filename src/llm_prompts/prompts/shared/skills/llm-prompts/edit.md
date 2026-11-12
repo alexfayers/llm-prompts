@@ -12,6 +12,7 @@ Decision order for touching this repo's own rule/skill/workflow/agent sources.
 
 - Generic across every project and person -> rule/skill. Specific to one person/repo/task -> memory, not here.
 - A hook enforces with certainty; a rule/skill only requests compliance. Anything that genuinely must not happen, or any behaviour checkable at a tool call or lifecycle event, belongs in a hook, not a MUST/NEVER rule.
+- A behaviour a hook can only partly catch deterministically MUST stay a SHOULD rule, with the hook as a note.
 - Where the event reached for fires only after the change has landed, MUST check whether an earlier event can predict the outcome from the tool's own input, not conclude enforcement is impossible.
 
 ## 3. Rule vs skill
