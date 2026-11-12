@@ -13,7 +13,9 @@ Each event has:
 
 The session start check (`startup-check`) sends the same event.
 
-A failure sends a second event with the exception type, up to three chained exception types, and the file, function, module and line of the llm-prompts frames, plus `github` or `mcp` when the failure came from that service. Only `IncompleteRead`, `JSONDecodeError` and `CalledProcessError` (exit status, never its command) also send a message, scrubbed of local values, paths, URLs, hosts, emails, IPs and long opaque strings, and cut to 200 characters. Exits and Ctrl-C send no failure event.
+A failure sends a second event with the exception type, up to three chained exception types, and the file, function, module and line of the llm-prompts, cline-hooks and mcp-memory frames, plus `github` or `mcp` when the failure came from that service. Only exceptions defined in llm-prompts and cline-hooks send their message, scrubbed of local values, paths, URLs, hosts, emails, IPs and long opaque strings and cut to 200 characters. Every other exception, including mcp-memory ones, sends its type and `<message withheld>`. A failed command sends only its exit status. Exits and Ctrl-C send no failure event.
+
+Each llm-prompts command writes `telemetry.json` next to `config.toml`. It holds your opt-out choice, when you made it, and the install id. mcp-memory reads this file, so it follows the same opt-out and sends its events under the same install id. The file itself is never sent.
 
 Never sent: paths, usernames, hostnames, repo names, names of overlays not installed from github.com, prompt or config contents.
 

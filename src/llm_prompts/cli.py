@@ -38,6 +38,8 @@ if TYPE_CHECKING:
 
 _AGENTS = tuple(AGENT_CLASSES)
 _MEMORY_TOOL = "mcp-memory"
+_MEMORY_FLUSH_TIMEOUT_SECONDS = 10
+_ARGPARSE_USAGE_ERROR = 2
 _RUN_SETUP_TRACKED_TOOLS = (_MEMORY_TOOL, "cline-hooks")
 _UPDATE_RESUME_ENV = "LLM_PROMPTS_UPDATE_RESUME"
 _INSTALLING_COMMANDS = frozenset({"install", "setup", "update"})
@@ -647,7 +649,17 @@ def _auto_migrate_memory_db() -> None:
     """
     binary = user_binary("mcp-memory")
     if binary:
-        subprocess.run([binary, "migrate-db"], check=False)
+        result = subprocess.run(
+            [binary, "utils", "migrate-db"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == _ARGPARSE_USAGE_ERROR:
+            subprocess.run([binary, "migrate-db"], check=False)
+        else:
+            print(result.stdout, end="")
+            print(result.stderr, end="", file=sys.stderr)
 
 
 def _reconfigure_agents(
@@ -714,6 +726,29 @@ def _restart_memory_service() -> None:
     binary = user_binary("mcp-memory")
     if binary:
         subprocess.run([binary, "restart"], check=False)
+
+
+def _flush_memory_telemetry() -> None:
+    """Ask the running mcp-memory server to send its pending usage telemetry."""
+    binary = shutil.which("mcp-memory")
+    if binary:
+        try:
+            result = subprocess.run(
+                [binary, "utils", "telemetry-flush"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=_MEMORY_FLUSH_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            print(f"Could not flush mcp-memory telemetry: {error}", file=sys.stderr)
+        else:
+            if result.returncode not in (0, _ARGPARSE_USAGE_ERROR):
+                print(
+                    f"Could not flush mcp-memory telemetry: exit {result.returncode}",
+                    result.stderr.strip(),
+                    file=sys.stderr,
+                )
 
 
 def _get_gh_login() -> str:
@@ -1178,6 +1213,7 @@ def _run_command(run: telemetry.Run) -> int | None:
         if changed_sources:
             _reconfigure_agents(manifest, memory_changed=memory_changed)
         if memory_changed:
+            _flush_memory_telemetry()
             _auto_migrate_memory_db()
             _restart_memory_service()
 

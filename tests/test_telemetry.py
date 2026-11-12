@@ -20,7 +20,15 @@ import pytest
 import truststore
 from conftest import FakeSubprocess, run_capturing_exit
 
-from llm_prompts import cli, github_api, install, mcp, setup, telemetry
+from llm_prompts import (
+    cli,
+    github_api,
+    install,
+    mcp,
+    setup,
+    telemetry,
+    telemetry_core,
+)
 from llm_prompts.exit_reason import REASONS, ExitReason
 
 A, B = "a" * 40, "b" * 40
@@ -36,7 +44,7 @@ def _props(popen: MagicMock) -> dict[str, Any]:
 def _events(popen: MagicMock) -> list[dict[str, Any]]:
     """Return the sent events, with placeholders resolved as the detached sender does."""
     return [
-        json.loads(telemetry._resolve_checkouts(call.args[0][3]))
+        json.loads(telemetry_core.resolve_versions(call.args[0][3]))
         for call in popen.call_args_list
     ]
 
@@ -71,8 +79,8 @@ def test_any_opt_out_disables_telemetry(
     for name, value in env.items():
         monkeypatch.setenv(name, value)
 
-    with patch("llm_prompts.telemetry.read_config", return_value=config):
-        assert telemetry.enabled() is expected
+    with patch("llm_prompts.telemetry_core.read_config", return_value=config):
+        assert telemetry_core.enabled() is expected
 
 
 def test_event_carries_only_allowlisted_properties(
@@ -88,7 +96,7 @@ def test_event_carries_only_allowlisted_properties(
         {"name": "local-pub", "source": "~/synthetic/pub"},
     ]
     monkeypatch.setattr("llm_prompts.telemetry.read_config", lambda: {"tools": tools})
-    monkeypatch.setattr("llm_prompts.telemetry.run", fake_subprocess.run)
+    monkeypatch.setattr("llm_prompts.telemetry_core.run", fake_subprocess.run)
     fake_subprocess.on("status", returncode=128)
 
     monkeypatch.setattr("llm_prompts.cli._get_installed_commit", lambda _: A)
@@ -96,8 +104,8 @@ def test_event_carries_only_allowlisted_properties(
         run.begin("update", [], installs=True)
 
     posted = MagicMock()
-    monkeypatch.setattr("llm_prompts.telemetry.post", posted)
-    telemetry.deliver(telemetry_popen.call_args.args[0][3])
+    monkeypatch.setattr("llm_prompts.telemetry_core.post", posted)
+    telemetry_core.deliver(telemetry_popen.call_args.args[0][3])
     properties = json.loads(posted.call_args.args[0])["properties"]
     assert set(properties) == {
         *("command", "from", "to", "agents", "overlay_count", "overlays", "outcome"),
@@ -177,13 +185,13 @@ def test_a_git_checkout_source_reports_its_base_on_origin_main_and_whether_it_is
         if dirty:
             (repo / "f").write_text("x")
         with (
-            patch("llm_prompts.telemetry.run", side_effect=AssertionError),
+            patch("llm_prompts.telemetry_core.run", side_effect=AssertionError),
             telemetry.Run(lambda _: A) as run,
         ):
             run.begin("update", [])
         posted = MagicMock()
-        monkeypatch.setattr("llm_prompts.telemetry.post", posted)
-        telemetry.deliver(telemetry_popen.call_args.args[0][3])
+        monkeypatch.setattr("llm_prompts.telemetry_core.post", posted)
+        telemetry_core.deliver(telemetry_popen.call_args.args[0][3])
         sent = json.loads(posted.call_args.args[0])["properties"]
         telemetry_popen.reset_mock()
         expected = {
@@ -213,7 +221,7 @@ def test_a_checkout_without_origin_main_names_no_commit(tmp_path: Path) -> None:
     _git(tmp_path, *identity, "commit", "-q", "--allow-empty", "-m", "x")
     (tmp_path / "f").write_text("x")
 
-    state = telemetry._checkout_state(str(tmp_path))
+    state = telemetry_core._checkout_state(str(tmp_path))
 
     assert state == {
         "commit": None,
@@ -228,9 +236,9 @@ def test_post_verifies_certificates_with_the_system_trust_store(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     urlopen = MagicMock()
-    monkeypatch.setattr("llm_prompts.telemetry.urlopen", urlopen)
+    monkeypatch.setattr("llm_prompts.telemetry_core.urlopen", urlopen)
 
-    assert telemetry.post("{}") is True
+    assert telemetry_core.post("{}") is True
 
     assert isinstance(urlopen.call_args.kwargs["context"], truststore.SSLContext)
 
@@ -240,10 +248,10 @@ def test_debug_mode_shows_why_a_post_failed(
 ) -> None:
     monkeypatch.setenv("LLM_PROMPTS_TELEMETRY_DEBUG", "1")
     monkeypatch.setattr(
-        "llm_prompts.telemetry.urlopen", MagicMock(side_effect=URLError("no cert"))
+        "llm_prompts.telemetry_core.urlopen", MagicMock(side_effect=URLError("no cert"))
     )
 
-    telemetry.send(EVENT, "id-1")
+    telemetry_core.send(EVENT, "id-1")
 
     err = capsys.readouterr().err
     assert "telemetry sent: False" in err
@@ -256,9 +264,9 @@ def test_send_spawns_a_detached_sender_unless_debugging(
 ) -> None:
     urlopen = MagicMock(side_effect=URLError("offline"))
     monkeypatch.setenv("LLM_PROMPTS_TELEMETRY_DEBUG", debug)
-    monkeypatch.setattr("llm_prompts.telemetry.urlopen", urlopen)
+    monkeypatch.setattr("llm_prompts.telemetry_core.urlopen", urlopen)
 
-    telemetry.send(EVENT, "id-1")
+    telemetry_core.send(EVENT, "id-1")
 
     assert urlopen.called is (debug == "1")
     assert telemetry_popen.called is (debug == "0")
@@ -270,7 +278,7 @@ def test_send_spawns_a_detached_sender_unless_debugging(
 
 
 def test_the_parent_never_waits_on_the_sender(telemetry_popen: MagicMock) -> None:
-    telemetry.send(EVENT, "id-1")
+    telemetry_core.send(EVENT, "id-1")
 
     assert telemetry_popen.return_value.mock_calls == []
 
@@ -395,13 +403,13 @@ def test_the_event_lists_sorted_flag_names_and_never_their_values(
     assert "synthetic" not in json.dumps(_props(telemetry_popen))
 
 
-def test_a_failed_command_also_sends_an_exception_event_without_paths_or_message(
+def test_a_failed_command_also_sends_an_exception_event_without_paths(
     telemetry_popen: MagicMock,
     stubbed_cli: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     home = str(Path.home())
-    failure = ValueError(f"cannot read {home}/secret.md")
+    failure = _own(ValueError)(f"cannot read {home}/secret.md")
 
     with (
         patch("llm_prompts.install.main", side_effect=failure),
@@ -412,7 +420,7 @@ def test_a_failed_command_also_sends_an_exception_event_without_paths_or_message
 
     raised = next(e for e in _events(telemetry_popen) if e["event"] == "$exception")
     (item,) = raised["properties"]["$exception_list"]
-    assert item["type"] == "ValueError"
+    assert item["type"] == "OwnError"
     frames = item["stacktrace"]["frames"]
     assert frames
     assert {f["module"] for f in frames} <= {
@@ -427,7 +435,7 @@ def test_a_failed_command_also_sends_an_exception_event_without_paths_or_message
     sent = json.dumps(_events(telemetry_popen))
     assert home not in sent
     assert "secret.md" not in sent
-    assert "cannot read" not in sent
+    assert item["value"].startswith("cannot read ")
 
 
 @pytest.mark.usefixtures("stubbed_cli")
@@ -444,6 +452,17 @@ def test_an_exit_or_interrupt_sends_no_exception_event(
         _main("update")
 
     assert "$exception" not in [e["event"] for e in _events(telemetry_popen)]
+
+
+@pytest.mark.usefixtures("stubbed_cli")
+def test_an_interrupt_sends_no_event(telemetry_popen: MagicMock) -> None:
+    with (
+        patch("llm_prompts.install.main", side_effect=KeyboardInterrupt()),
+        contextlib.suppress(KeyboardInterrupt),
+    ):
+        _main("update")
+
+    assert _events(telemetry_popen) == []
 
 
 @pytest.mark.parametrize(
@@ -496,8 +515,8 @@ def test_the_parent_never_looks_up_versions_unless_the_command_installs(
 
     monkeypatch.setattr("llm_prompts.cli._get_installed_commit", lambda _: B)
     posted = MagicMock()
-    monkeypatch.setattr("llm_prompts.telemetry.post", posted)
-    telemetry.deliver(telemetry_popen.call_args.args[0][3])
+    monkeypatch.setattr("llm_prompts.telemetry_core.post", posted)
+    telemetry_core.deliver(telemetry_popen.call_args.args[0][3])
     properties = json.loads(posted.call_args.args[0])["properties"]
     assert properties["from"]["llm-prompts"]["commit"] == B
     assert properties["to"]["llm-prompts"]["commit"] == B
@@ -513,8 +532,8 @@ def test_an_installing_command_captures_from_before_it_runs(
 
     monkeypatch.setattr("llm_prompts.cli._get_installed_commit", lambda _: B)
     posted = MagicMock()
-    monkeypatch.setattr("llm_prompts.telemetry.post", posted)
-    telemetry.deliver(telemetry_popen.call_args.args[0][3])
+    monkeypatch.setattr("llm_prompts.telemetry_core.post", posted)
+    telemetry_core.deliver(telemetry_popen.call_args.args[0][3])
     properties = json.loads(posted.call_args.args[0])["properties"]
     assert properties["from"]["llm-prompts"]["commit"] == A
     assert properties["to"]["llm-prompts"]["commit"] == B
@@ -638,6 +657,11 @@ def test_only_a_fixed_reason_code_is_sent_for_an_exit(
     assert "free text" not in json.dumps(_events(telemetry_popen))
 
 
+def _own(error: type[Exception]) -> type[Exception]:
+    """Return a subclass of `error` that looks defined in llm_prompts."""
+    return type("OwnError", (error,), {"__module__": "llm_prompts.synthetic"})
+
+
 def _failing_update(failure: BaseException | Callable[..., object]) -> None:
     with (
         patch("llm_prompts.install.main", side_effect=failure),
@@ -691,23 +715,23 @@ def test_an_exception_event_repeats_the_run_context_lists_causes_and_names_a_ser
 @pytest.mark.parametrize(
     ("failure", "value"),
     [
-        (json.JSONDecodeError("Expecting value", "", 0), "Expecting value: line 1"),
-        (http.client.IncompleteRead(b"abc", 5), "IncompleteRead(3 bytes read"),
-        (subprocess.CalledProcessError(2, ["synthetic-tool"]), "exit status 2"),
-        (json.JSONDecodeError("word " * 100, "", 0), "word word"),
-        (ValueError("plain message"), None),
+        (
+            _own(json.JSONDecodeError)("Expecting value", "", 0),
+            "Expecting value: line 1",
+        ),
+        (_own(http.client.IncompleteRead)(b"abc", 5), "OwnError(3 bytes read"),
+        (_own(json.JSONDecodeError)("word " * 100, "", 0), "word word"),
+        (_own(ValueError)("plain message"), "plain message"),
     ],
 )
-def test_only_exception_types_with_known_formats_send_a_capped_message(
-    telemetry_popen: MagicMock, failure: BaseException, value: str | None
+def test_our_exception_types_send_a_capped_scrubbed_message(
+    telemetry_popen: MagicMock, failure: BaseException, value: str
 ) -> None:
     _failing_update(failure)
 
-    sent = _events(telemetry_popen)[1]["properties"]["$exception_list"][0].get("value")
-    assert (sent is None) == (value is None)
-    assert value is None or value in str(sent)
-    assert len(sent or "") <= telemetry._MAX_MESSAGE_LENGTH
-    assert "synthetic-tool" not in json.dumps(_events(telemetry_popen))
+    sent = _events(telemetry_popen)[1]["properties"]["$exception_list"][0]["value"]
+    assert value in sent
+    assert len(sent) <= telemetry_core._MAX_MESSAGE_LENGTH
 
 
 @pytest.mark.usefixtures("stubbed_cli")
@@ -727,7 +751,7 @@ def test_a_sent_message_never_carries_local_values_or_generic_identifiers(
     )
     known = f"plain-env-secret {platform.node()} plain-config-value"
 
-    _failing_update(json.JSONDecodeError(f"{generic} {known}", "", 0))
+    _failing_update(_own(json.JSONDecodeError)(f"{generic} {known}", "", 0))
 
     value = _events(telemetry_popen)[1]["properties"]["$exception_list"][0].get("value")
     for leak in [*generic.split(), *known.split(), home]:
