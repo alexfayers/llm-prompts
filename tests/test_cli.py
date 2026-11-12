@@ -871,6 +871,17 @@ class TestRestartMemoryService:
 
         assert capsys.readouterr().out == ""
 
+    def test_restarts_via_the_user_wide_binary_not_the_venv_one(
+        self,
+        fake_subprocess: FakeSubprocess,
+        venv_and_user_bins: tuple[Path, Path],
+    ) -> None:
+        _, user_bin = venv_and_user_bins
+
+        _restart_memory_service()
+
+        assert fake_subprocess.commands == [[str(user_bin / "mcp-memory"), "restart"]]
+
     def test_does_nothing_when_the_binary_is_not_installed(
         self, fake_subprocess: FakeSubprocess
     ) -> None:

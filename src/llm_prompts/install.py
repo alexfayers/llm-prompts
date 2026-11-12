@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
-from cline_hooks.core.install import resolve_binary
+from cline_hooks.core.user_install import resolve_user_binary
 from jinja2 import TemplateError
 
 from .claude_models import catalogue
@@ -193,6 +193,19 @@ def _run_tool(args: list[str], env: dict[str, str] | None = None) -> int:
     if result.returncode and not (stdout_lines or stderr_lines):
         log("warn", f"{shlex.join(args)} failed with exit code {result.returncode}")
     return result.returncode
+
+
+def user_binary(name: str) -> str | None:
+    """Find a companion tool of the user-wide install, never one in a project venv.
+
+    Args:
+        name: The tool's executable name.
+
+    Returns:
+        The tool's path, or None where the user-wide install lacks it.
+    """
+    binary = resolve_user_binary(name)
+    return str(binary) if binary else None
 
 
 def _pi_agent_dir() -> Path:
@@ -3046,9 +3059,8 @@ def try_install_hooks(agent_config_path: str) -> None:
     Args:
         agent_config_path: Path to the agent JSON file to patch.
     """
-    import shutil
 
-    binary = shutil.which("cline-hook")
+    binary = user_binary("cline-hook")
     if not binary:
         log("debug", "cline-hook not found on PATH, skipping hook injection.")
         return
@@ -3057,9 +3069,8 @@ def try_install_hooks(agent_config_path: str) -> None:
 
 def try_install_hooks_claude_code() -> None:
     """Patch Claude Code settings with cline-hooks entries if available."""
-    import shutil
 
-    binary = shutil.which("cline-hook")
+    binary = user_binary("cline-hook")
     if not binary:
         log(
             "debug",
@@ -3071,9 +3082,8 @@ def try_install_hooks_claude_code() -> None:
 
 def try_install_hooks_antigravity() -> None:
     """Patch Antigravity hooks.json with cline-hooks entries if available."""
-    import shutil
 
-    binary = shutil.which("cline-hook")
+    binary = user_binary("cline-hook")
     if not binary:
         log(
             "debug",
@@ -3682,11 +3692,14 @@ def try_install_hooks_pi() -> bool:
     Returns:
         Whether the bridge install ran and failed.
     """
-    binary = resolve_binary()
-    if not binary.exists():
-        log("debug", f"{binary} not found, skipping Pi hook injection.")
+    binary = user_binary("cline-hook")
+    if not binary:
+        log(
+            "debug",
+            "cline-hook not found in the user-wide install, skipping Pi hook injection.",
+        )
         return False
-    if _run_tool([str(binary), "install", "pi"], env=_pi_env()):
+    if _run_tool([binary, "install", "pi"], env=_pi_env()):
         log("error", "[pi] `cline-hook install pi` failed.")
         return True
     return False
@@ -3725,9 +3738,8 @@ def try_install_memory(agent_config_path: str) -> None:
     Args:
         agent_config_path: Agent JSON to patch with memory server and @memory allowedTools.
     """
-    import shutil
 
-    binary = shutil.which("mcp-memory")
+    binary = user_binary("mcp-memory")
     if not binary:
         log("debug", "mcp-memory not found on PATH, skipping MCP config injection.")
         return
@@ -3738,9 +3750,8 @@ def try_install_memory(agent_config_path: str) -> None:
 
 def try_install_memory_claude_code() -> None:
     """Add mcp-memory to Claude Code if available."""
-    import shutil
 
-    binary = shutil.which("mcp-memory")
+    binary = user_binary("mcp-memory")
     if not binary:
         log("debug", "mcp-memory not found on PATH, skipping Claude Code MCP setup.")
         return
@@ -3751,9 +3762,8 @@ def try_install_memory_claude_code() -> None:
 
 def try_install_memory_codex() -> None:
     """Add mcp-memory to Codex if available."""
-    import shutil
 
-    binary = shutil.which("mcp-memory")
+    binary = user_binary("mcp-memory")
     if not binary:
         log("debug", "mcp-memory not found on PATH, skipping Codex MCP setup.")
         return
@@ -3764,9 +3774,8 @@ def try_install_memory_codex() -> None:
 
 def try_install_memory_antigravity() -> None:
     """Add mcp-memory to Antigravity if available."""
-    import shutil
 
-    binary = shutil.which("mcp-memory")
+    binary = user_binary("mcp-memory")
     if not binary:
         log(
             "debug",
@@ -3780,9 +3789,8 @@ def try_install_memory_antigravity() -> None:
 
 def try_install_memory_pi() -> None:
     """Add mcp-memory to pi's MCP config if available."""
-    import shutil
 
-    binary = shutil.which("mcp-memory")
+    binary = user_binary("mcp-memory")
     if not binary:
         log("debug", "mcp-memory not found on PATH, skipping Pi MCP setup.")
         return

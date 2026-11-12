@@ -76,14 +76,14 @@ def _install(
 ) -> bool:
     """Run `install` into a fake home with overlays and manifest redirected, `cline-hook install pi` exiting with `hooks_exit` and `pi --list-models` printing `listed_models`."""
 
-    def which(command: str) -> str | None:
+    def which(command: str, path: str | None = None) -> str | None:
         if command == "herdr":
             return "/usr/bin/herdr" if herdr else None
         if command == "pi":
             return pi
         if command == "cline-hook":
-            return None
-        return _REAL_WHICH(command)
+            return "/usr/bin/cline-hook"
+        return _REAL_WHICH(command, path=path)
 
     outer = subprocess.run
 

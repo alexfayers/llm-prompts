@@ -91,7 +91,7 @@ wheels = [
 [[package]]
 name = "cline-hooks"
 version = "1.0"
-source = { git = "https://github.com/alexfayers/cline-hooks.git#9c460bf3e1419563ed24ad6d2175085462b061cb" }
+source = { git = "https://github.com/alexfayers/cline-hooks.git#cf1a60662e65045dc1c2c0dfca6b4f87933fc7ed" }
 dependencies = [
     { name = "bashlex" },
     { name = "gitpython" },

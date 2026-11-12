@@ -840,6 +840,25 @@ def herdr_off_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(shutil, "which", which)
 
 
+@pytest.fixture
+def venv_and_user_bins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, Path]:
+    """Put a venv scripts directory ahead of a user-wide one on PATH, both holding every companion tool."""
+    venv_bin = tmp_path / "project" / ".venv" / "bin"
+    user_bin = tmp_path / "user" / "bin"
+    (venv_bin.parent / "pyvenv.cfg").parent.mkdir(parents=True)
+    (venv_bin.parent / "pyvenv.cfg").write_text("home = /usr\n", encoding="utf-8")
+    for directory in (venv_bin, user_bin):
+        directory.mkdir(parents=True, exist_ok=True)
+        for tool in ("cline-hook", "mcp-memory"):
+            (directory / tool).write_text("#!/bin/sh\n", encoding="utf-8")
+            (directory / tool).chmod(0o755)
+    monkeypatch.setenv("PATH", f"{venv_bin}{os.pathsep}{user_bin}")
+    monkeypatch.delenv("CLINE_HOOKS_DEV_BIN_DIR", raising=False)
+    return venv_bin, user_bin
+
+
 class FakeGitHub:
     """Fake `github_api.urlopen`, routed by REST (method, path) or GraphQL query substring."""
 
