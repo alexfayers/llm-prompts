@@ -982,6 +982,7 @@ _KEPT_EXTENSIONS = {
         "codemode-sleep.ts",
         "codemode-wait-until.ts",
         "compact-now.ts",
+        "herdsman-guidance-dedupe.ts",
         "mcp-hints.ts",
         "net-guard.ts",
         "prompt-cache-stabilizer.ts",
