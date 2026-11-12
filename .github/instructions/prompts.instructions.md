@@ -33,7 +33,7 @@ excludeAgent: "cloud-agent"
 
 ## Size
 
-- Compression keeps every directive. Flag a dropped one.
+- Compression keeps every directive. Flag a dropped one, unless another rule file with the same effective scope, including mcp-memory's, already holds it.
 - In llm-prompts, check sizes against `src/llm_prompts/size_limits.py` and the allowances declared in the repo. `llm-prompts check` and the CI size report measure them.
 - Reject a file split or a ceiling raise made only to stay under a budget.
 
