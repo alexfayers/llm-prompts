@@ -14,7 +14,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 from urllib.parse import urlparse
 
 from . import github_api, telemetry
@@ -38,9 +38,11 @@ if TYPE_CHECKING:
     from .contribute import SyncOptions
     from .manifest import AgentManifest
     from .size_guard import Artifact
+    from .worktrees import WorktreeEntry
 
 _AGENTS = tuple(AGENT_CLASSES)
 _MEMORY_TOOL = "mcp-memory"
+_OWN_TOOL = "llm-prompts"
 _MEMORY_FLUSH_TIMEOUT_SECONDS = 10
 _ARGPARSE_USAGE_ERROR = 2
 _RUN_SETUP_TRACKED_TOOLS = (_MEMORY_TOOL, "cline-hooks")
@@ -466,6 +468,7 @@ class _PullOutcome(NamedTuple):
     name: str
     changed: bool
     messages: list[str]
+    failed: bool = False
 
 
 def _source_test_warnings(name: str, repo: Path, test: str) -> list[str]:
@@ -523,7 +526,11 @@ def _pull_one_local_source(name: str, source: str, test: str = "") -> _PullOutco
     repo = _expand(source)
     if not (repo / ".git").is_dir():
         return unchanged
-    run_git(repo, "fetch", "--quiet")
+    fetch = run_git(repo, "fetch", "--quiet")
+    if fetch.returncode != 0:
+        return _PullOutcome(
+            name, False, [f"[{name}] fetch failed", f"  {fetch.stderr.strip()}"], True
+        )
     result = run_git(repo, "rev-list", "--count", "HEAD..@{u}")
     if result.returncode != 0:
         return unchanged
@@ -545,6 +552,7 @@ def _pull_one_local_source(name: str, source: str, test: str = "") -> _PullOutco
                 f"[{name}] {count} new commit(s) available but sync failed",
                 f"  {synced.detail}",
             ],
+            True,
         )
     if synced.mode == "reset":
         message = (
@@ -563,19 +571,105 @@ def _pull_one_local_source(name: str, source: str, test: str = "") -> _PullOutco
     return _PullOutcome(name, True, messages)
 
 
-def _pull_local_sources() -> set[str]:
-    """Pull upstream changes for all local-path tool sources in parallel.
+def _recorded_sources(
+    tools: list[dict[str, Any]], entries: list[WorktreeEntry]
+) -> dict[str, Path]:
+    """Map each local-path tool source with recorded worktrees to its checkout."""
+    from .contribute import _repo_key
+    from .setup import _expand, _is_local_path
+
+    recorded = {entry.repo for entry in entries}
+    sources = {
+        str(tool.get("name", "")): _expand(str(tool.get("source", "")))
+        for tool in tools
+        if _is_local_path(str(tool.get("source", "")))
+    }
+    return {
+        name: repo
+        for name, repo in sources.items()
+        if (repo / ".git").is_dir() and _repo_key(repo) in recorded
+    }
+
+
+def _copy_blocker(repo: Path) -> str | None:
+    """Return why ``repo`` cannot take copies of recorded worktrees, or None when it can."""
+    from .main_sync import _operation_in_progress, run_git
+
+    if (operation := _operation_in_progress(repo)) is not None:
+        return f"a {operation} is in progress"
+    branch = run_git(repo, "symbolic-ref", "--short", "-q", "HEAD").stdout.strip()
+    return (
+        None
+        if branch == "main"
+        else f"{branch or 'no branch'} is checked out, not main"
+    )
+
+
+def _copy_recorded_into(
+    name: str, repo: Path, entries: list[WorktreeEntry], test: str = ""
+) -> tuple[bool, bool, list[WorktreeEntry]]:
+    """Copy the recorded worktrees of ``repo`` into its main, then run ``test`` when copying moved main.
 
     Returns:
-        The names of the tool sources that actually moved.
+        Whether main moved, whether copying failed, and the updated record entries.
+    """
+    from .contribute import _repo_key, copy_recorded, first_stderr_line
+    from .main_sync import run_git
+
+    key = _repo_key(repo)
+    others = [entry for entry in entries if entry.repo != key]
+    before = run_git(repo, "rev-parse", "HEAD").stdout
+    try:
+        status, updated = copy_recorded(
+            repo, [entry for entry in entries if entry.repo == key], others, name
+        )
+    except subprocess.CalledProcessError as error:
+        print(
+            f"[{name}] copying recorded worktrees failed ({first_stderr_line(error)})"
+        )
+        return False, True, entries
+    moved = run_git(repo, "rev-parse", "HEAD").stdout != before
+    if name == _OWN_TOOL and (
+        pending := [e.branch for e in updated if e.pr_state != "MERGED"]
+    ):
+        has_copy_code = run_git(
+            repo,
+            "grep",
+            "-q",
+            "def copy_recorded",
+            "main",
+            "--",
+            "src/llm_prompts/contribute.py",
+        )
+        if has_copy_code.returncode != 0:
+            print(
+                f"[{name}] main has no copy-into-main code, so the next update cannot add "
+                f"recorded copies: {', '.join(pending)}"
+            )
+    if status == 0 and moved and test:
+        for line in _source_test_warnings(name, repo, test):
+            print(line)
+    return moved, status != 0, others + updated
+
+
+def _pull_and_copy(
+    tools: list[dict[str, Any]], entries: list[WorktreeEntry]
+) -> tuple[set[str], bool, list[WorktreeEntry]]:
+    """Pull every local source, then copy recorded worktrees into each main that pulled cleanly.
+
+    Returns:
+        The names of the sources that moved, whether any pull or copy failed, and the updated record entries.
     """
     from functools import partial
 
-    from .setup import _load_config, _run_parallel_ordered, config_path
+    from .setup import _run_parallel_ordered
 
-    if not config_path().exists():
-        return set()
-
+    recorded = _recorded_sources(tools, entries)
+    for name, repo in recorded.items():
+        if (blocker := _copy_blocker(repo)) is not None:
+            print(f"[{name}] {blocker}")
+            raise ExitReason("other")
+    tests = {str(tool.get("name", "")): str(tool.get("test", "")) for tool in tools}
     pulls: list[Callable[[], _PullOutcome]] = [
         partial(
             _pull_one_local_source,
@@ -583,15 +677,53 @@ def _pull_local_sources() -> set[str]:
             str(tool.get("source", "")),
             str(tool.get("test", "")),
         )
-        for tool in _load_config()
+        for tool in tools
     ]
-
     changed: set[str] = set()
+    failed = False
     for outcome in _run_parallel_ordered(pulls):
         for line in outcome.messages:
             print(line)
         if outcome.changed:
             changed.add(outcome.name)
+        failed |= outcome.failed
+        if outcome.name in recorded and not outcome.failed:
+            moved, copy_failed, entries = _copy_recorded_into(
+                outcome.name, recorded[outcome.name], entries, tests[outcome.name]
+            )
+            failed |= copy_failed
+            if moved:
+                changed.add(outcome.name)
+    return changed, failed, entries
+
+
+def _pull_local_sources() -> set[str]:
+    """Pull upstream changes for all local-path tool sources, then copy recorded worktrees into each main.
+
+    Returns:
+        The names of the tool sources that actually moved.
+
+    Raises:
+        ExitReason: When another contribute run holds the record lock, or a source could not be pulled or copied.
+    """
+    from . import worktrees
+    from .setup import _load_config, config_path
+
+    if not config_path().exists():
+        return set()
+
+    path = worktrees.record_path()
+    try:
+        with worktrees.locked(path):
+            entries = worktrees.load_entries(path)
+            changed, failed, updated = _pull_and_copy(_load_config(), entries)
+            if updated != entries:
+                worktrees.save_entries(path, updated)
+    except (worktrees.LockHeld, worktrees.CorruptRecord) as error:
+        print(error)
+        raise ExitReason("other") from error
+    if failed:
+        raise ExitReason("other")
     return changed
 
 

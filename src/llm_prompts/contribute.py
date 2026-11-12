@@ -1293,8 +1293,10 @@ class _RepoSync:
         login: str,
         others: Sequence[WorktreeEntry] = (),
         tool: str = "NAME",
+        label: str = "",
     ) -> None:
         self.tool = tool
+        self.label = label
         self.repo = repo
         self.others = others
         self.apply = apply
@@ -1320,7 +1322,7 @@ class _RepoSync:
         return contribute_branch(self.login, entry.branch)
 
     def say(self, entry: WorktreeEntry, message: str) -> None:
-        print(f"{entry.branch}: {message}")
+        print(f"{self.label}{entry.branch}: {message}")
 
     def fail(self, entry: WorktreeEntry, message: str) -> None:
         self.say(entry, message)
@@ -1357,12 +1359,7 @@ class _RepoSync:
         ]
 
     def observe(self) -> None:
-        numbers = [e.pr for e in self.entries if e.pr is not None]
-        if numbers:
-            self.prs = pr_states(self.repo, numbers)
-            for entry in list(self.entries):
-                if (pr := self.prs.get(entry.pr or 0)) is not None:
-                    self.update(entry, pr_state=pr.state)
+        self.observe_prs()
         pushed = [e for e in self.entries if e.pr is not None or e.remote_head]
         if pushed:
             remote, _ = self.remote()
@@ -1378,6 +1375,14 @@ class _RepoSync:
                     for b in self.remote_heads
                 ]
                 _git_network("fetch", "--quiet", remote, *specs, repo=self.repo)
+
+    def observe_prs(self) -> None:
+        numbers = [e.pr for e in self.entries if e.pr is not None]
+        if numbers:
+            self.prs = pr_states(self.repo, numbers)
+            for entry in list(self.entries):
+                if (pr := self.prs.get(entry.pr or 0)) is not None:
+                    self.update(entry, pr_state=pr.state)
 
     def relation(self, entry: WorktreeEntry) -> str:
         """Compare the worktree tip with the remote branch: none, pull, push, force or diverged."""
@@ -1618,21 +1623,7 @@ class _RepoSync:
             if entry.ready and entry.pr is None:
                 self.adopt(entry)
         self.observe()
-        self.landed = [
-            Landed(
-                entry.copied,
-                _squash_of(self.repo, floor, commits, self.tip(entry)),
-            )
-            for entry in self.entries
-            if entry.copied
-            and entry.pr is not None
-            and self.merged(entry)
-            and _squash_landed(self.repo, self.base, entry.pr)
-            and _branch_exists(self.repo, entry.branch)
-            and self.tip(entry) == self.prs[entry.pr].head_sha
-            and (floor := entry.base or self.base)
-            and (commits := _commit_shas(self.repo, floor, self.tip(entry)))
-        ]
+        self.landed = self.landed_copies()
         self.restack()
         self.forget_gone()
         self.remove_merged()
@@ -1647,6 +1638,52 @@ class _RepoSync:
         self.publish()
         return self.status, self.entries
 
+    def landed_copies(self) -> list[Landed]:
+        """Return each copy whose PR merged and whose squash is on the base."""
+        return [
+            Landed(
+                entry.copied,
+                _squash_of(self.repo, floor, commits, self.tip(entry)),
+            )
+            for entry in self.entries
+            if entry.copied
+            and entry.pr is not None
+            and self.merged(entry)
+            and _squash_landed(self.repo, self.base, entry.pr)
+            and _branch_exists(self.repo, entry.branch)
+            and self.tip(entry) == self.prs[entry.pr].head_sha
+            and (floor := entry.base or self.base)
+            and (commits := _commit_shas(self.repo, floor, self.tip(entry)))
+        ]
+
+    def copy_only(self) -> tuple[int, list[WorktreeEntry]]:
+        """Copy the recorded worktrees into main without touching a remote, a PR or a worktree."""
+        if self.copyable():
+            self.landed = self.landed_copies()
+            self.copy_into_main()
+        return self.status, self.entries
+
+    def copyable(self) -> bool:
+        """Say whether every recorded worktree can be read, printing and counting each that cannot."""
+        try:
+            self.observe_prs()
+            self.open_entries()
+        except subprocess.CalledProcessError as error:
+            print(f"{self.label}PR states not read ({first_stderr_line(error)})")
+            self.status = 1
+        except graphlib.CycleError:
+            print(f"{self.label}the recorded worktrees depend on each other")
+            self.status = 1
+        else:
+            for entry in self.entries:
+                if entry.pr is not None and entry.pr not in self.prs:
+                    self.fail(entry, f"PR #{entry.pr} was not found")
+                elif not self.merged(entry) and not _branch_exists(
+                    self.repo, entry.branch
+                ):
+                    self.fail(entry, "the branch is gone")
+        return self.status == 0
+
     def copy_into_main(self) -> None:
         tips = _tips(self.repo, self.base, self.open_entries())
         for tip in tips:
@@ -1658,7 +1695,7 @@ class _RepoSync:
                 self.repo, self.base, usable, self.landed
             )
         except AmbiguousCopy as ambiguous:
-            print(f"main not updated: {ambiguous}")
+            print(f"{self.label}main not updated: {ambiguous}")
             self.status = 1
             return
         changed = {squash.tip for squash in [*swaps.values(), *adds]}
@@ -1673,7 +1710,7 @@ class _RepoSync:
                 self.repo, self.base, swaps, drops, copies, adds
             )
             if result.mode == "failed":
-                print(f"main not updated: {result.detail}")
+                print(f"{self.label}main not updated: {result.detail}")
                 self.status = 1
                 return
         skipped = {copy.first: copy.reason for copy in result.skipped} if result else {}
@@ -1908,6 +1945,18 @@ def _sync_repo(
 ) -> tuple[int, list[WorktreeEntry]]:
     """Sync one repo's recorded worktrees and return the status and the updated entries."""
     return _RepoSync(repo, entries, apply, login, others, tool).run()
+
+
+def copy_recorded(
+    repo: Path, entries: list[WorktreeEntry], others: Sequence[WorktreeEntry], tool: str
+) -> tuple[int, list[WorktreeEntry]]:
+    """Copy one repo's recorded worktrees into its local main and return the status and the updated entries.
+
+    Every line it prints starts with ``[tool]``.
+    """
+    return _RepoSync(
+        repo, entries, True, "", others, tool, label=f"[{tool}] "
+    ).copy_only()
 
 
 def rescan_record(repo: Path, entries: list[WorktreeEntry], login: str) -> list[str]:

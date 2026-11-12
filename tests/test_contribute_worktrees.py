@@ -10,11 +10,13 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
-from llm_prompts import contribute, github_api, main_sync, worktrees
+from llm_prompts import cli, contribute, github_api, main_sync, setup, worktrees
 from llm_prompts.contribute import SyncOptions
+from llm_prompts.exit_reason import ExitReason
 from llm_prompts.worktrees import Link, WorktreeEntry, load_entries
 
 pytestmark = pytest.mark.real_io
@@ -285,6 +287,349 @@ def test_a_local_only_worktree_is_copied_into_main_and_never_sent_to_github(
     assert project.main_subjects() == ["feat: a"]
     assert project.remote_branches() == []
     assert project.gh_calls() == []
+
+
+def copy_recorded(project: Project) -> int:
+    """Copy the recorded worktrees into main the way `update` does, and save the record."""
+    status, updated = contribute.copy_recorded(
+        project.repo, project.entries(), (), "tool"
+    )
+    worktrees.save_entries(project.record, updated)
+    return status
+
+
+def test_copying_recorded_worktrees_puts_them_in_main_and_sends_nothing_to_github(
+    project: Project,
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.worktree("feat/b", "feat: b")
+    project.run(branch="feat/a")
+    project.run(branch="feat/b")
+    project.run(ready="feat/b")
+
+    assert copy_recorded(project) == 0
+
+    assert project.main_subjects() == ["feat: a", "feat: b"]
+    assert project.remote_branches() == []
+    assert project.gh_calls() == []
+
+    copied = git(project.repo, "rev-parse", "main")
+
+    assert copy_recorded(project) == 0
+
+    assert git(project.repo, "rev-parse", "main") == copied
+
+
+def test_copying_stops_on_a_recorded_branch_that_is_gone(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    project.worktree("feat/b", "feat: b")
+    project.run(branch="feat/a")
+    project.run(branch="feat/b")
+    git(project.repo, "worktree", "remove", "--force", str(path))
+    git(project.repo, "branch", "-D", "feat/a")
+
+    assert copy_recorded(project) == 1
+
+    assert "feat/a: the branch is gone" in capsys.readouterr().out
+    assert project.main_subjects() == []
+    assert [e.branch for e in project.entries()] == ["feat/a", "feat/b"]
+
+
+def test_copying_stops_on_a_pr_whose_state_cannot_be_read(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    worktrees.save_entries(
+        project.record, [e._replace(pr=999) for e in project.entries()]
+    )
+
+    assert copy_recorded(project) == 1
+
+    assert "feat/a: PR #999 was not found" in capsys.readouterr().out
+    assert project.main_subjects() == []
+
+
+def depend_on_each_other(project: Project) -> None:
+    """Record feat/a and feat/b of ``project`` as stacked on each other."""
+    project.run(branch="feat/a")
+    project.run(branch="feat/b")
+    key = _key(project.repo)
+    worktrees.save_entries(
+        project.record,
+        [
+            e._replace(
+                depends_on=(Link(key, "feat/b" if e.branch == "feat/a" else "feat/a"),)
+            )
+            for e in project.entries()
+        ],
+    )
+
+
+def test_copying_stops_on_worktrees_that_depend_on_each_other(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.worktree("feat/b", "feat: b")
+    depend_on_each_other(project)
+
+    assert copy_recorded(project) == 1
+
+    assert "the recorded worktrees depend on each other" in capsys.readouterr().out
+    assert project.main_subjects() == []
+
+
+def configure_sources(project: Project, test: str = "") -> None:
+    """Point the config at every cloned tool of ``project``, each with the test command ``test``."""
+    test_line = f"test = {json.dumps(test)}\n" if test else ""
+    setup.config_path().write_text(
+        "".join(
+            f'[[tools]]\nname = "{name}"\nsource = "{repo}"\n{test_line}'
+            for name, repo, _ in project.targets
+        ),
+        encoding="utf-8",
+    )
+
+
+def recording_test_command(project: Project, returncode: int) -> tuple[str, Path]:
+    """Return a test command that logs the directory it runs in, and the log it appends to."""
+    log = project.root / "test-runs.log"
+    script = project.root / "record_test.py"
+    script.write_text(
+        "import os, sys\n"
+        f"open({str(log)!r}, 'a').write(os.getcwd() + '\\n')\n"
+        f"sys.exit({returncode})\n",
+        encoding="utf-8",
+    )
+    return f"{sys.executable} {script}", log
+
+
+def run_update(project: Project) -> Any:
+    """Run ``llm-prompts update`` with only the copying of recorded worktrees real, and return the install mock."""
+    with (
+        patch("sys.argv", ["llm-prompts", "update"]),
+        patch(
+            "llm_prompts.manifest.read_manifest", return_value={"kiro": {"files": []}}
+        ),
+        patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+        patch("llm_prompts.setup.run_setup", return_value=False),
+        patch("llm_prompts.install.main", return_value=frozenset()) as install,
+        patch("llm_prompts.plugins.pull_plugin_sources"),
+    ):
+        cli.main()
+    return install
+
+
+def test_update_copies_recorded_worktrees_into_main_though_upstream_has_nothing_new(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure_sources(project)
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+
+    assert cli._pull_local_sources() == {"tool"}
+
+    assert project.main_subjects() == ["feat: a"]
+    assert "[tool] feat/a: copied into main" in capsys.readouterr().out
+    assert project.remote_branches() == []
+    assert project.gh_calls() == []
+    assert cli._pull_local_sources() == set()
+
+
+def test_update_says_when_main_has_no_copy_code_to_add_the_recorded_copies_next_time(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    own = project.add_tool("llm-prompts")
+    configure_sources(project)
+    project.worktree("feat/a", "feat: a", repo=own)
+    project.run("llm-prompts", branch="feat/a")
+
+    cli._pull_local_sources()
+
+    assert (
+        "[llm-prompts] main has no copy-into-main code, so the next update cannot add "
+        "recorded copies: feat/a" in capsys.readouterr().out
+    )
+    (own / "src/llm_prompts").mkdir(parents=True)
+    project.commit(
+        own, "src/llm_prompts/contribute.py", "def copy_recorded(): ...\n", "feat: copy"
+    )
+
+    cli._pull_local_sources()
+
+    assert "no copy-into-main code" not in capsys.readouterr().out
+
+
+def test_update_pulls_upstream_and_copies_worktrees_of_every_configured_tool(
+    project: Project,
+) -> None:
+    other = project.add_tool("other")
+    configure_sources(project)
+    project.worktree("feat/a", "feat: a")
+    project.worktree("feat/b", "feat: b", repo=other)
+    project.run(branch="feat/a")
+    project.run("other", branch="feat/b")
+    clone = project.root / "upstream-clone"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(clone)], check=True)
+    project.commit(clone, "upstream.txt", "upstream\n", "chore: upstream")
+    git(clone, "push", "-q", "origin", "main")
+
+    assert cli._pull_local_sources() == {"tool", "other"}
+
+    assert project.main_subjects() == ["feat: a"]
+    assert git(other, "log", "--format=%s", "origin/main..main") == "feat: b"
+    assert (project.repo / "upstream.txt").exists()
+
+
+def test_update_stops_on_a_held_lock_without_touching_any_source(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure_sources(project)
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+
+    with worktrees.locked(project.record), pytest.raises(ExitReason):
+        cli._pull_local_sources()
+
+    assert "another contribute run is in progress" in capsys.readouterr().out
+    assert project.main_subjects() == []
+
+
+def test_update_still_reinstalls_when_a_copy_conflicts_and_names_the_worktree(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure_sources(project)
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    (path / "base.txt").write_text("worktree\n", encoding="utf-8")
+    git(path, "commit", "-q", "-am", "feat: a edits base")
+    project.commit(project.repo, "base.txt", "main\n", "feat: main edits base")
+    before = git(project.repo, "rev-parse", "main")
+
+    with (
+        patch("sys.argv", ["llm-prompts", "update"]),
+        patch(
+            "llm_prompts.manifest.read_manifest", return_value={"kiro": {"files": []}}
+        ),
+        patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+        patch("llm_prompts.setup.run_setup", return_value=False),
+        patch("llm_prompts.install.main", return_value=frozenset()) as install,
+        patch("llm_prompts.plugins.pull_plugin_sources"),
+    ):
+        cli.main()
+
+    install.assert_called_once()
+    assert git(project.repo, "rev-parse", "main") == before
+    assert "[tool] feat/a: not copied into main" in capsys.readouterr().out
+
+
+def test_update_warns_about_a_failing_test_after_a_copy_and_still_reinstalls(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    command, log = recording_test_command(project, returncode=1)
+    configure_sources(project, command)
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+
+    install = run_update(project)
+
+    install.assert_called_once()
+    assert project.main_subjects() == ["feat: a"]
+    assert f"[tool] warning: `{command}` failed on the synced main" in (
+        capsys.readouterr().out
+    )
+    assert [Path(line) for line in log.read_text().splitlines()] == [
+        project.repo.resolve()
+    ]
+
+
+def test_update_runs_the_test_only_when_a_copy_moved_main(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    command, log = recording_test_command(project, returncode=0)
+    configure_sources(project, command)
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+
+    cli._pull_local_sources()
+    assert len(log.read_text().splitlines()) == 1
+
+    cli._pull_local_sources()
+    assert len(log.read_text().splitlines()) == 1
+    assert "warning" not in capsys.readouterr().out
+
+
+def test_update_runs_no_test_when_every_copy_is_skipped(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    command, log = recording_test_command(project, returncode=1)
+    configure_sources(project, command)
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    (path / "base.txt").write_text("worktree\n", encoding="utf-8")
+    git(path, "commit", "-q", "-am", "feat: a edits base")
+    project.commit(project.repo, "base.txt", "main\n", "feat: main edits base")
+
+    run_update(project)
+
+    out = capsys.readouterr().out
+    assert "[tool] feat/a: not copied into main" in out
+    assert "warning" not in out
+    assert not log.exists()
+
+
+def test_update_runs_the_test_when_one_copy_is_skipped_and_another_lands(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    command, log = recording_test_command(project, returncode=1)
+    configure_sources(project, command)
+    path = project.worktree("feat/a", "feat: a")
+    project.worktree("feat/b", "feat: b")
+    project.run(branch="feat/a")
+    project.run(branch="feat/b")
+    (path / "base.txt").write_text("worktree\n", encoding="utf-8")
+    git(path, "commit", "-q", "-am", "feat: a edits base")
+    project.commit(project.repo, "base.txt", "main\n", "feat: main edits base")
+
+    run_update(project)
+
+    out = capsys.readouterr().out
+    assert "[tool] feat/a: not copied into main" in out
+    assert "[tool] warning:" in out
+    assert len(log.read_text().splitlines()) == 1
+
+
+def test_update_names_the_source_on_a_copy_that_cannot_be_read(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure_sources(project)
+    project.worktree("feat/a", "feat: a")
+    project.worktree("feat/b", "feat: b")
+    depend_on_each_other(project)
+
+    with pytest.raises(ExitReason):
+        cli._pull_local_sources()
+
+    assert "[tool] the recorded worktrees depend on each other" in (
+        capsys.readouterr().out
+    )
+
+
+def test_update_stops_before_pulling_when_a_source_is_not_on_main(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure_sources(project)
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    git(project.repo, "switch", "-q", "-c", "elsewhere")
+
+    with pytest.raises(ExitReason):
+        cli._pull_local_sources()
+
+    assert "[tool] elsewhere is checked out, not main" in capsys.readouterr().out
+    assert project.main_subjects() == []
 
 
 def test_a_worktree_with_several_commits_is_squashed_into_one_main_commit(
@@ -990,6 +1335,25 @@ def test_a_rewritten_commit_is_force_pushed_to_its_draft_pr_with_a_fresh_title(
     assert project.main_subjects() == ["fix: a"]
 
 
+def test_copying_an_amended_worktree_with_a_pr_leaves_the_remote_and_the_pr_alone(
+    project: Project, pushed: Path
+) -> None:
+    remote_tip = git(project.origin, "rev-parse", _remote("feat/a"))
+    title = project.load_state()["prs"]["100"]["title"]
+    body = project.load_state()["prs"]["100"]["body"]
+    calls = len(project.gh_calls())
+    _amend(project, pushed, "fix: a")
+
+    assert copy_recorded(project) == 0
+
+    assert project.main_subjects() == ["fix: a"]
+    assert git(project.origin, "rev-parse", _remote("feat/a")) == remote_tip
+    prs = project.load_state()["prs"]["100"]
+    assert (prs["title"], prs["body"]) == (title, body)
+    assert [c[:2] for c in project.gh_calls()[calls:]] == [["api", "graphql"]]
+    assert [e.pr_state for e in project.entries()] == ["OPEN"]
+
+
 def test_an_open_pr_with_an_empty_why_is_filled_from_the_record_or_left_alone_and_named(
     project: Project, pushed: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1462,6 +1826,46 @@ def test_a_newer_main_copy_stays_when_its_branch_is_deleted_and_an_older_version
     assert project.run(apply=True) == 0
 
     assert project.main_subjects() == ["feat: a"]
+
+
+def test_copying_drops_the_main_copy_of_a_merged_worktree_but_keeps_an_unrelated_commit(
+    project: Project,
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    project.commit(project.repo, "mine.txt", "mine\n", "feat: mine")
+    project.add_pr(
+        7, "feat/a", state="MERGED", headRefOid=git(path, "rev-parse", "HEAD")
+    )
+    worktrees.save_entries(
+        project.record, [e._replace(pr=7) for e in project.entries()]
+    )
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "feat-a-7.txt", "reviewed\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+    git(project.repo, "fetch", "-q")
+
+    assert copy_recorded(project) == 0
+
+    assert project.main_subjects() == ["feat: mine"]
+
+
+def test_copying_a_conflicting_worktree_leaves_main_untouched_and_names_it(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    (path / "base.txt").write_text("worktree\n", encoding="utf-8")
+    git(path, "commit", "-q", "-am", "feat: a edits base")
+    project.commit(project.repo, "base.txt", "main\n", "feat: main edits base")
+    before = git(project.repo, "rev-parse", "main")
+
+    assert copy_recorded(project) == 0
+
+    assert git(project.repo, "rev-parse", "main") == before
+    assert "feat/a: not copied into main" in capsys.readouterr().out
 
 
 def test_main_is_left_alone_unless_it_is_checked_out(

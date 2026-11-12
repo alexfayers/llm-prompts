@@ -36,6 +36,7 @@ from llm_prompts.cli import (
     main,
 )
 from llm_prompts.contribute import SyncOptions
+from llm_prompts.exit_reason import ExitReason
 from llm_prompts.main_sync import SyncResult
 from llm_prompts.setup import (
     _UPDATE_INSTRUCTION,
@@ -351,7 +352,7 @@ class TestPullLocalSources:
         assert fake_subprocess.matching("rebase") == []
         assert fake_subprocess.matching("diff") == []
 
-    def test_fetch_timeout_is_ignored_like_a_failed_fetch(
+    def test_fetch_timeout_fails_the_pull(
         self, tmp_path: Path, fake_subprocess: FakeSubprocess
     ) -> None:
         clone = tmp_path / "clone"
@@ -359,12 +360,13 @@ class TestPullLocalSources:
         fake_subprocess.on(
             "fetch", side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=30)
         )
-        fake_subprocess.on("rev-list", "--count", stdout="1\n")
-        fake_subprocess.on("pull", "--ff-only", returncode=0)
 
         outcome = cli._pull_one_local_source("core", str(clone))
 
-        assert outcome.messages == ["[core] pulled 1 new commit(s)"]
+        assert outcome.failed
+        assert not outcome.changed
+        assert outcome.messages[0] == "[core] fetch failed"
+        assert fake_subprocess.matching("pull") == []
 
     def test_rev_list_timeout_leaves_source_unchanged(
         self, tmp_path: Path, fake_subprocess: FakeSubprocess
@@ -420,7 +422,10 @@ class TestPullLocalSources:
         config = [{"name": "core", "source": str(clone)}]
         with patch("llm_prompts.setup.config_path") as mock_config:
             mock_config.return_value.exists.return_value = True
-            with patch("llm_prompts.setup._load_config", return_value=config):
+            with (
+                patch("llm_prompts.setup._load_config", return_value=config),
+                pytest.raises(ExitReason),
+            ):
                 _pull_local_sources()
 
         fake_subprocess.assert_sequence(
@@ -513,7 +518,10 @@ class TestPullLocalSources:
         ]
         with patch("llm_prompts.setup.config_path") as mock_config:
             mock_config.return_value.exists.return_value = True
-            with patch("llm_prompts.setup._load_config", return_value=config):
+            with (
+                patch("llm_prompts.setup._load_config", return_value=config),
+                pytest.raises(ExitReason),
+            ):
                 _pull_local_sources()
 
         lines = capsys.readouterr().out.splitlines()
@@ -675,7 +683,7 @@ class TestPullLocalSources:
 
         assert "[core] warning: `just test` failed" in capsys.readouterr().out
 
-    def test_failed_sync_reports_detail_and_leaves_source_unchanged(
+    def test_failed_sync_reports_detail_leaves_source_unchanged_and_stops_update(
         self,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
@@ -696,7 +704,8 @@ class TestPullLocalSources:
             ),
         ):
             mock_config.return_value.exists.return_value = True
-            assert _pull_local_sources() == set()
+            with pytest.raises(ExitReason):
+                _pull_local_sources()
 
         assert capsys.readouterr().out.splitlines() == [
             "[core] 1 new commit(s) available but sync failed",
@@ -855,6 +864,30 @@ class TestUpdateCommandPullsPlugins:
             main()
 
         mock_install.assert_called_once_with(["kiro"], size_baseline={}, verbose=True)
+
+    def test_update_stops_before_plugins_setup_and_install_when_a_source_fails(
+        self,
+    ) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={"kiro": {"files": []}},
+            ),
+            patch(
+                "llm_prompts.cli._pull_local_sources", side_effect=ExitReason("other")
+            ),
+            patch("llm_prompts.setup.run_setup") as mock_setup,
+            patch("llm_prompts.install.main") as mock_install,
+            patch("llm_prompts.plugins.pull_plugin_sources") as mock_pull,
+            patch("llm_prompts.size_guard.snapshot_sources", return_value={}),
+            pytest.raises(ExitReason),
+        ):
+            main()
+
+        mock_pull.assert_not_called()
+        mock_setup.assert_not_called()
+        mock_install.assert_not_called()
 
     def test_update_reports_the_update_check_before_pulling_sources(self) -> None:
         order = MagicMock()

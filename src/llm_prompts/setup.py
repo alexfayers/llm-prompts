@@ -41,7 +41,8 @@ _DEFAULT_CONFIG = """\
 #   - A local path (~/git/pkg or /abs/path) - installed from the checkout
 #
 # A local-path entry can set `test = "just test"`. `llm-prompts update` runs it in
-# the checkout after rebasing or replaying local commits, and only warns if it fails.
+# the checkout after rebasing or replaying local commits or changing main by copying
+# recorded worktrees, and only warns if it fails.
 #
 # The first entry owns the environment; the others are installed alongside it.
 # Each tool's commands are taken from its pyproject.toml scripts.
