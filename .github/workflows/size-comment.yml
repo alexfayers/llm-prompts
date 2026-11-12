@@ -4,6 +4,7 @@ on:
   workflow_run:
     workflows: [CI]
     types: [completed]
+  workflow_call:
 
 jobs:
   comment:
@@ -15,6 +16,10 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          repository: alexfayers/llm-prompts
+          ref: main
+          path: .shared-automation
       - uses: actions/download-artifact@v8
         with:
           name: size-report
@@ -24,5 +29,5 @@ jobs:
       - uses: actions/github-script@v9
         with:
           script: |
-            const { reportForRun } = require('./.github/scripts/post-size-report.js')
+            const { reportForRun } = require('./.shared-automation/.github/scripts/post-size-report.js')
             await reportForRun({ github, context, core, dir: 'size-artifact' })

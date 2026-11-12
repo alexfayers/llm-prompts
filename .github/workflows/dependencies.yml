@@ -9,6 +9,10 @@ on:
     workflows: [PR review]
     types: [completed]
   workflow_dispatch:
+  workflow_call:
+    secrets:
+      PROJECTS_TOKEN:
+        required: false
   repository_dispatch:
     types: [dependencies-recheck]
 

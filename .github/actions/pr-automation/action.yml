@@ -7,6 +7,10 @@ inputs:
   github-token:
     description: Token used for labeling the PR and reading repo contents.
     required: true
+  project:
+    description: Set to "false" to skip syncing PR status onto the project board.
+    required: false
+    default: 'true'
 runs:
   using: composite
   steps:
@@ -104,6 +108,7 @@ runs:
 
     - name: Sync project status
       if: |
+        inputs.project == 'true' &&
         inputs.projects-token != '' &&
         !github.event.repository.private &&
         (github.event_name == 'pull_request_target' || (github.event_name == 'workflow_run' && github.event.workflow_run.name == 'PR review'))
