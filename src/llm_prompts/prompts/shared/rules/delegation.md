@@ -36,7 +36,7 @@ targets: claude-code, pi
 - `Explore`/`Plan` inherit no rules: their prompt MUST carry every binding constraint. SHOULD prefer `Explore` to `surveyor` for bounded read-only search.
 {% if AGENT == "pi" %}
 {% if TOOL_AGENT == "delegate_agent" %}
-- Main spawns `coordinator` or `reasoner`; `coordinator` spawns the rest. `Explore` runs foreground, result inline. Children are leaves.
+- Main spawns per `agent-teams.md`; `coordinator` spawns the rest. `Explore` runs foreground, result inline. Children are leaves.
 {% else %}
 - Only main spawns a NAMED teammate; roster is flat. `reasoner` and `coordinator` MAY spawn unnamed `Explore` only (foreground, result inline); else report to `coordinator` for the AGENT REQUEST.
 {% endif %}
@@ -53,8 +53,8 @@ Every spawn prompt MUST specify:
 {% if AGENT == "pi" %}
 - the memory/MCP facts it needs;
 {% endif %}
-- source order - local checkout, internal/official docs, public web last - report back if unanswered, never widen;
-- for a tracked task (memory `task/`, plan slice, ticket): decisions recorded against it;
+- source order - memory, local checkout, internal/official docs, public web last - report back if unanswered, never widen;
+- for a tracked task (memory `task/`, plan slice, ticket): its recorded decisions, and that new ones come back in the report, never to memory;
 - the scope boundary it MUST NOT cross - remote/live systems: read-only, naming disallowed mutations and PR push permission;
 - lint/format/test conventions: package config (e.g. `pyproject.toml`) outranks memory/global preferences - MUST match the file edited;
 - where the prompt pins a shape (signature, return type, format) and says match a sibling, MUST reconcile the two;

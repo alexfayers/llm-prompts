@@ -29,8 +29,8 @@ Kiro supports spawning parallel AI agents as a DAG pipeline via the `subagent` t
 
 ## Memory
 
-- Subagents share the same memory database - they can read and write to the same project
-- Instruct subagents to persist findings to memory so downstream stages can pick them up
+- Subagents share the memory database but MUST NOT write to it - main writes after a fresh read
+- Instruct subagents to report decisions and why, gotchas and reusable how-tos so main can persist them
 - Include memory rules in the `prompt_template` so subagents follow the same conventions
 
 ## Role selection
