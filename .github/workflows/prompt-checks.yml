@@ -34,7 +34,6 @@ jobs:
         run: |
           uv run --isolated --no-project \
             --with "llm-prompts @ git+https://github.com/alexfayers/llm-prompts.git@main" \
-            --with "cline-hooks @ git+https://github.com/alexfayers/cline-hooks.git@main" \
             python - <<'PY'
           import os
           from pathlib import Path
