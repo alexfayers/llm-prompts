@@ -131,8 +131,9 @@ class TestRewriteRangeE2E:
     """e2e: rewrite_range.py drives a real `git rebase -i`."""
 
     @pytest.fixture
-    def mod(self) -> ModuleType:
+    def mod(self, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
         """Load the rewrite_range script as a module."""
+        monkeypatch.syspath_prepend(str(_SCRIPT.parent))
         spec = importlib.util.spec_from_file_location("rewrite_range", _SCRIPT)
         assert spec and spec.loader
         module = importlib.util.module_from_spec(spec)
@@ -166,6 +167,34 @@ class TestRewriteRangeE2E:
         assert exited.value.code == 0
         assert subjects(clone) == ["feat: B and D", "feat: C", "base"]
         assert git(clone, "status", "--porcelain") == ""
+
+    def test_e2e_message_overrides_follow_plan_order(
+        self,
+        mod: ModuleType,
+        clone: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        base = git(clone, "rev-parse", "HEAD")
+        for name in "bcde":
+            commit_file(clone, f"{name}.txt", name, f"feat: {name.upper()}")
+        shas = git(clone, "log", "--reverse", "--format=%H", f"{base}..HEAD").split()
+        verbs = [("reword", None), ("reword", "feat: renamed C")]
+        verbs += [("squash", None), ("squash", "feat: group")]
+        plan = [
+            {"sha": sha, "verb": verb, **({"message": msg} if msg else {})}
+            for sha, (verb, msg) in zip(shas, verbs, strict=True)
+        ]
+        plan_path = tmp_path / "plan.json"
+        plan_path.write_text(json.dumps(plan))
+        monkeypatch.chdir(clone)
+        monkeypatch.setattr(sys, "argv", ["rewrite_range.py", str(plan_path), base])
+
+        with pytest.raises(SystemExit) as exited:
+            mod.main()
+
+        assert exited.value.code == 0
+        assert subjects(clone) == ["feat: group", "feat: B", "base"]
 
 
 class TestPullLocalSourceE2E:

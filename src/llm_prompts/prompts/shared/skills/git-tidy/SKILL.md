@@ -7,7 +7,7 @@ description: "Tidy unpushed commit history via non-interactive rebase: squash, f
 
 ## Hard invariants
 
-- Only rewrite unpushed commits - `git -P log --oneline @{u}..HEAD` MUST include every commit touched.
+- Only rewrite unpushed commits - `git -P log --oneline @{u}..HEAD` MUST include every commit touched. With no upstream, the gate treats every commit as unpushed. Its `commits` lists them.
 - MUST NOT use `--no-verify`, MUST NOT `git rebase --skip` on conflict - resolve properly or `git rebase --abort`.
 - MUST NOT auto-push. Pushing is a separate, explicitly confirmed step (`confirm-push` skill) - out of scope here.
 - MUST present the planned end-state and get explicit confirmation before any rewrite.
@@ -33,10 +33,12 @@ description: "Tidy unpushed commit history via non-interactive rebase: squash, f
    - **Reorder, drop, or combine folding with reordering**: `--autosquash` cannot reorder or drop, use the plan-driven script instead:
 
      ```bash
-     python3 "<base-dir>/rewrite_range.py" <plan.json> [base]
+     python3 "<base-dir>/rewrite_range.py" <plan.json> [base | --root]
      ```
 
      Plan is a JSON array, oldest-first, final top-to-bottom rebase order: `[{"sha": "...", "verb": "pick"}, {"sha": "...", "verb": "squash", "message": "final subject"}, ...]`. `verb`: `pick`/`drop`/`squash`/`fixup`/`reword`. `message` optional, only meaningful on `squash`/`reword` - sets the final subject; omit to keep git's default. Replaces hand-written `GIT_SEQUENCE_EDITOR`/`GIT_EDITOR` scripts - MUST NOT write those by hand.
+     - MUST pass the gate's `base` (`--root` when it reports so).
+     - The plan MUST list every range commit once. MUST use `drop` to remove one.
      - `squash`/`fixup` always fold into the nearest previous kept commit - purely positional, never path-based.
      - Preflight: identify topic boundaries (e.g. feat/docs/fix groups), each `squash`/`fixup` line MUST sit immediately below the commit it should fold into. Keep a topic block's first commit as `pick`/`reword`, fold only subsequent commits in that block.
      - Example: combine two docs commits, keep an earlier feature commit separate - `pick <feature>`, `reword <docs-1>`, `fixup <docs-2>` - MUST NOT `squash <docs-1>`.
