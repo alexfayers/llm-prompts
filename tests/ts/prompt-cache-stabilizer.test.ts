@@ -101,4 +101,11 @@ describe("cwd move", () => {
 			assert.ok(!systemText(outs[0]).includes("cwd"));
 		}
 	});
+
+	test("the delegate identity moves to the first user message after the cwd", async () => {
+		const messages = [system(1, { skills: "S", cwd: cwdSection("/w"), pi_herdsman_agent: "<id>worker:a</id>" }, "base"), user(2)];
+		const out = await handle(MID_CONVO_MODEL, messages, true);
+		assert.deepEqual(out.messages[1].content.map((part: any) => part.text), [cwdSection("/w"), "<id>worker:a</id>", "hi"]);
+		assert.deepEqual(folded(out.messages), { skills: "S" });
+	});
 });
