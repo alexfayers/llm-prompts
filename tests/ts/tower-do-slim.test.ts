@@ -11,6 +11,7 @@ const sources: Record<string, string> = {
 	[towerUrl("state.ts")]: "export const MAX_TOWER_DO_OPEN_TASKS = 50; export const formatTakeoverWindow = () => '6h';",
 	[towerUrl("index.ts")]: `export default function (pi) {
 		pi.on("session_start", () => {});
+		pi.on("context", (event) => ({ messages: [...event.messages, ...(event.remind ? [{ role: "custom", customType: "pi-tower-do-reminder", content: "board reminder" }] : [])] }));
 		pi.registerTool({ name: "tower_do", description: "long", promptGuidelines: ["long"], parameters: { type: "object", description: "x", properties: { description: { type: "string", description: "long" }, key: { type: "string", pattern: "^a" } } }, execute: () => "do" });
 		pi.registerTool({ name: "other", description: "kept", parameters: { description: "kept" }, execute: () => "other" });
 	}`,
@@ -43,5 +44,21 @@ describe("tower-do-slim", () => {
 		assert.equal(ext.tools.other.description, "kept");
 		assert.deepEqual(ext.tools.other.parameters, { description: "kept" });
 		assert.equal(ext.handlers.session_start.length, 1);
+	});
+
+	test("moves the board reminder from the context to the next tool result", async () => {
+		const user = { role: "user", content: "hi" };
+		const out = await ext.fire("context", { messages: [user], remind: true });
+		assert.deepEqual(out.messages, [user]);
+		const first = await ext.fire("tool_result", { content: [{ type: "text", text: "out" }], structuredContent: { ok: 1 } });
+		assert.deepEqual(first.structuredContent, { ok: 1 });
+		assert.deepEqual(first.content, [{ type: "text", text: "out" }, { type: "text", text: "board reminder" }]);
+		assert.equal(await ext.fire("tool_result", { content: [] }), undefined);
+	});
+
+	test("drops a board reminder no tool result took before the turn ends", async () => {
+		await ext.fire("context", { messages: [{ role: "user", content: "hi" }], remind: true });
+		await ext.fire("turn_end");
+		assert.equal(await ext.fire("tool_result", { content: [] }), undefined);
 	});
 });

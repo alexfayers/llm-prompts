@@ -3,6 +3,7 @@ import { getCurrentSystemMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const CWD_SECTION = "cwd";
+const MOVED_SECTIONS = [CWD_SECTION, "pi_herdsman_agent"];
 const BUILT_IN_SECTIONS = new Set(["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", CWD_SECTION]);
 
 type Message = {
@@ -51,17 +52,22 @@ export function stabilizeMergedHead(messages: Message[], branchSystemMessages: M
 
 export function moveCwdToFirstUserMessage(messages: Message[]): Message[] | undefined {
 	const firstUser = messages.findIndex((message) => message.role === "user");
-	const cwd = messages
-		.filter((message) => message.role === "system")
-		.reduce<string | undefined>((current, message) => (message.sections && CWD_SECTION in message.sections ? (message.sections[CWD_SECTION] ?? undefined) : current), undefined);
-	if (firstUser < 0 || cwd === undefined) return undefined;
+	const latest = (name: string) =>
+		messages
+			.filter((message) => message.role === "system")
+			.reduce<string | undefined>((current, message) => (message.sections && name in message.sections ? (message.sections[name] ?? undefined) : current), undefined);
+	const moved = MOVED_SECTIONS.flatMap((name) => {
+		const text = latest(name);
+		return text === undefined ? [] : [{ type: "text", text }];
+	});
+	if (firstUser < 0 || moved.length === 0) return undefined;
 	return messages.flatMap((message, index) => {
 		if (index === firstUser) {
 			const text = typeof message.content === "string" ? (message.content ? [{ type: "text", text: message.content }] : []) : (message.content ?? []);
-			return [{ ...message, content: [{ type: "text", text: cwd }, ...text] }];
+			return [{ ...message, content: [...moved, ...text] }];
 		}
-		if (message.role !== "system" || !message.sections || !(CWD_SECTION in message.sections)) return [message];
-		const sections = Object.fromEntries(Object.entries(message.sections).filter(([name]) => name !== CWD_SECTION));
+		if (message.role !== "system" || !message.sections || !MOVED_SECTIONS.some((name) => name in message.sections!)) return [message];
+		const sections = Object.fromEntries(Object.entries(message.sections).filter(([name]) => !MOVED_SECTIONS.includes(name)));
 		return index > 0 && Object.keys(sections).length === 0 && isEmptySystemMessage(message) ? [] : [{ ...message, sections }];
 	});
 }

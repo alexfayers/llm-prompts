@@ -4,6 +4,8 @@ import { pathToFileURL } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 
+const REMINDER_TYPE = "pi-tower-do-reminder";
+
 type Slim = { description: string; promptGuidelines: string[] };
 type TowerState = { formatTakeoverWindow(): string; MAX_TOWER_DO_OPEN_TASKS: number };
 type TowerModule = { default: (pi: ExtensionAPI) => void | Promise<void> };
@@ -56,5 +58,25 @@ export default async function (pi: ExtensionAPI) {
 		const override = slim[tool.name];
 		pi.registerTool(override ? { ...tool, ...override, parameters: withoutDescriptions(tool.parameters) } : tool);
 	};
-	await towerDo(new Proxy(pi, { get: (target, key) => (key === "registerTool" ? registerTool : Reflect.get(target, key)) }));
+	let pendingReminder: string | undefined;
+	const detachReminder = (handler: Function) => async (event: any, ctx: any) => {
+		const result = await handler(event, ctx);
+		const messages: any[] | undefined = result?.messages;
+		const last = messages?.at(-1);
+		if (!messages || last?.customType !== REMINDER_TYPE) return result;
+		pendingReminder = typeof last.content === "string" ? last.content : last.content.map((part: { text?: string }) => part.text ?? "").join("");
+		return { ...result, messages: messages.slice(0, -1) };
+	};
+	const on = (event: string, handler: Function) => pi.on(event as never, (event === "context" ? detachReminder(handler) : handler) as never);
+	pi.on("turn_end", () => {
+		pendingReminder = undefined;
+	});
+	pi.on("tool_result", (event) => {
+		if (pendingReminder === undefined) return;
+		const text = pendingReminder;
+		pendingReminder = undefined;
+		return { content: [...event.content, { type: "text", text }], structuredContent: event.structuredContent };
+	});
+	const wrappers: Record<string, unknown> = { registerTool, on };
+	await towerDo(new Proxy(pi, { get: (target, key) => (typeof key === "string" && key in wrappers ? wrappers[key] : Reflect.get(target, key)) }));
 }
