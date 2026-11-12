@@ -30,9 +30,7 @@ Before planning, in order: Explore agents, one per independent dimension, for ex
 
 ## Subagent usage during implementation
 
-- SHOULD fan out Explore agents for research, implementation agents for non-overlapping edits, and review agents alongside continued implementation.
-- SHOULD push bulk read-only work (auditing, reviewing memory, summarising many items) to subagents.
-- SHOULD sustain roughly one {{TOOL_AGENT}} call per 50 turns.
+- SHOULD run review agents alongside implementation, push bulk read-only work (audits, memory review, summaries) to subagents, and make about one {{TOOL_AGENT}} call per 50 turns.
 
 ## Scope discipline during execution
 
@@ -61,15 +59,15 @@ Before planning, in order: Explore agents, one per independent dimension, for ex
 - Once the user approves continuing past a context-usage notice, that approval stands for the session - MUST NOT re-ask, except on a new signal: a worse notice tier not yet seen, or a task the approval wouldn't cover.
 {% if AGENT == "pi" %}
 - Past the context threshold, MUST compact with `compact_now` and an `instructions` summary naming the open tasks, asks and decisions.
-- At a clean point - work small, committed, verified, nothing mid-flight - SHOULD run `compact_now` or persist plan and TODOs to memory rather than asking the user to pick.
+- At a clean point - work small, committed, verified, nothing mid-flight - SHOULD run `compact_now` or persist the plan and TODOs as memory `task/` entities rather than asking the user to pick.
 {% else %}
-- At a clean handoff point - work small, committed, verified, nothing mid-flight - SHOULD run `handoff` or persist plan and TODOs to memory rather than asking the user to pick.
+- At a clean handoff point - work small, committed, verified, nothing mid-flight - SHOULD run `handoff` or persist the plan and TODOs as memory `task/` entities rather than asking the user to pick.
 {% endif %}
 - Where a request is ambiguous about how much to do now, SHOULD resolve it toward the least-costly-to-reverse reading and confirm in one line before acting.
 
 ## Multi-phase plans: one lead session per phase
 
 - SHOULD spin up a fresh lead session per phase.
-- The plan's persisted state (plan-file status markers, a memory entity) MUST be what a fresh lead re-reads to resume, never state held only in the outgoing lead's conversation.
+- The plan's persisted state (plan-file status markers, its memory `task/` entities) MUST be what a fresh lead re-reads to resume, never state held only in the outgoing lead's conversation.
 - Before ending a lead session at a phase boundary, MUST confirm the finished phase's implementer reported back and its status is marked done, then stop.
 - In an unattended run, MUST persist memory, and write a fresh `HANDOFF.md` at each phase boundary and before any multi-agent loop (e.g. repeated `refine-plan` passes) - long running sessions may end without warning.

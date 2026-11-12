@@ -36,7 +36,7 @@ targets: claude-code, pi
 - `Explore`/`Plan` inherit no rules: their prompt MUST carry every binding constraint. SHOULD prefer `Explore` to `surveyor` for bounded read-only search.
 {% if AGENT == "pi" %}
 {% if TOOL_AGENT == "delegate_agent" %}
-- Main spawns `coordinator` or `reasoner`; `coordinator` spawns the rest. `Explore` runs foreground, result inline. Children are leaves.
+- Main spawns per `agent-teams.md`; `coordinator` spawns the rest. `Explore` runs foreground, result inline. Children are leaves.
 {% else %}
 - Only main spawns a NAMED teammate; roster is flat. `reasoner` and `coordinator` MAY spawn unnamed `Explore` only (foreground, result inline); else report to `coordinator` for the AGENT REQUEST.
 {% endif %}
@@ -53,8 +53,8 @@ Every spawn prompt MUST specify:
 {% if AGENT == "pi" %}
 - the memory/MCP facts it needs;
 {% endif %}
-- source order - local checkout, internal/official docs, public web last - report back if unanswered, never widen;
-- for a tracked task (memory `task/`, plan slice, ticket): decisions recorded against it;
+- source order - memory, local checkout, internal/official docs, public web last - report back if unanswered, never widen;
+- for a tracked task (memory `task/`, plan slice, ticket): its recorded decisions, and that new ones come back in the report, never to memory;
 - the scope boundary it MUST NOT cross - remote/live systems: read-only, naming disallowed mutations, and PR push permission;
 - lint/format/test conventions: package config (`pyproject.toml` or equiv) is authority, not memory/global preferences - MUST match the file edited;
 - where the prompt pins a shape (signature, return type, format) and says match a sibling, MUST reconcile the two;
@@ -81,7 +81,7 @@ Every spawn prompt MUST specify:
 
 - A delegate stuck on ambiguity or needing a user preference SHOULD escalate.
 - A delegate whose work outgrows its estimate (more steps, files or phases) MUST stop and escalate up the ownership edge, noting more agents may be faster. MUST NOT grind on alone.
-- MUST NOT idle-wait on a background agent/command, `sleep` or placeholder - completion re-invokes you; work on or end the turn.{% if AGENT == "pi" %} Under `pi -p`, MUST `{{TOOL_AGENT_RESULT}}` each background agent first.{% else %} Exception: while any delegate runs, MUST keep ONE background `sleep 300` armed per session, never one per delegate. When it fires, MUST `SendMessage` each delegate that has sent no message since the timer was armed for status, then re-arm it. MUST NOT send a status request to a delegate that has messaged since.{% endif +%}
+- MUST NOT idle-wait on a background agent/command, `sleep` or placeholder - completion re-invokes you; work on or end the turn.{% if AGENT == "pi" %} Under `pi -p`, MUST `{{TOOL_AGENT_RESULT}}` each background agent first.{% else %} Exception: while any delegate runs, MUST keep ONE background `sleep 300` armed per session, never one per delegate. When it fires, MUST `SendMessage` each delegate that has sent no message since the timer was armed for status, then re-arm it.{% endif +%}
 {% if AGENT == "pi" %}
 {% if TOOL_AGENT == 'delegate_agent' %}
 - MUST `continue_agent` a finished agent's exact session for same-scope follow-up (fix, gate retry, missing section), never a fresh delegate.

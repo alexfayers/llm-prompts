@@ -284,6 +284,11 @@ class TestPlanningRuleLinesAreClaudeCodeOnly:
     def test_pi_agent_teams_names_tower_do_patch(self) -> None:
         assert "tower_do_patch" in self._render("rules/agent-teams.md", "pi")
 
+    def test_pi_agent_teams_lets_main_read_a_known_target(self) -> None:
+        assert "MAY read a known target itself" in self._render(
+            "rules/agent-teams.md", "pi"
+        )
+
 
 class TestStartUpStepsAreHookDriven:
     SHARED = Path(__file__).parent.parent / "src/llm_prompts/prompts/shared"
