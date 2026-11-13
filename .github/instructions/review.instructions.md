@@ -76,6 +76,13 @@ excludeAgent: "cloud-agent"
 - Flag a repeated threshold that does not come from one named constant.
 - Flag a new parameter that the body does not use.
 - Flag a shared rule or doc that claims behavior which depends on the reader's local config.
+- Do not flag an `Update <file> if X changes` comment as stale when that file only documents the feature generically and never describes the changed text.
+
+## cline-hooks
+
+- Installed Codex hooks set `CLINE_HOOKS_FRONTEND=codex` (except on Windows), which selects `CodexProtocol` before detection. `CodexProtocol.detect` is always False, so a Codex payload without a recognized frontend override falls through to `ClaudeCodeProtocol`. Check which protocol is active at runtime first.
+- The delegation plugin's read-only command allow-lists only gate reminders, and are deliberate. Do not ask for a write-detection list or a read-only exception for an unlisted command. A command wrongly treated as an edit only adds a reminder. A missed write only loses a reminder. Do flag a listed command that can still write.
+- `is_read_only_git` also decides checkout-lock and skill-guard blocks. Flag a git subcommand that can write but is treated as read-only, and one that blocks a read.
 
 ## Tests
 
@@ -112,6 +119,7 @@ Comment only when you can name a concrete check or hook. Do not flag judgment no
 ## Verdict
 
 - APPROVE only when the review is complete with no actionable findings and no unresolved material uncertainty.
+- Don't withhold approval only because CI can't test runtime behaviour.
 - Otherwise COMMENT. Give the evidence, the impact and the smallest fix.
 - Zero inline comments is not approval.
 - In each comment, name the rule that applies and give the problem and the fix in one or two plain sentences.
