@@ -14,6 +14,7 @@ from typing import Any
 
 from . import telemetry_core
 from .exit_reason import ExitReason
+from .home import is_rooted
 from .install import log
 from .manifest import read_manifest
 from .setup import read_config
@@ -87,7 +88,7 @@ class Run(AbstractContextManager["Run"]):
         return {name: self._installed_commit(name) for name in telemetry_core.TRACKED}
 
     def begin(self, command: str, flags: list[str], installs: bool = False) -> None:
-        """Start tracking `command` unless opted out or no agents are installed.
+        """Start tracking `command` unless opted out, rooted or no agents are installed.
 
         Takes over state from `RESUME_ENV`.
 
@@ -99,7 +100,7 @@ class Run(AbstractContextManager["Run"]):
         """
         handed_over = os.environ.pop(RESUME_ENV, "null")
         try:
-            if read_manifest() and telemetry_core.save_opt_state():
+            if not is_rooted() and read_manifest() and telemetry_core.save_opt_state():
                 self._begun = {
                     "command": command,
                     "flags": flags,

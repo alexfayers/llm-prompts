@@ -337,6 +337,22 @@ def test_an_install_with_no_agents_sends_nothing_and_leaves_no_trace(
     assert capsys.readouterr().err == ""
 
 
+@pytest.mark.usefixtures("stubbed_cli")
+def test_a_rooted_install_sends_nothing_and_leaves_no_trace(
+    telemetry_popen: MagicMock,
+    isolated_config_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    state = isolated_config_dir / "telemetry.json"
+    state.unlink()
+
+    _main("install", "kiro", "--root=/synthetic/root", "--no-update")
+
+    telemetry_popen.assert_not_called()
+    assert not state.exists()
+    assert "telemetry" not in capsys.readouterr().err
+
+
 def test_a_failing_report_sends_nothing_and_keeps_the_command_result(
     telemetry_popen: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -384,7 +400,6 @@ def stubbed_cli(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         (["setup"], False, "ok"),
         (["install", "kiro", "--no-update"], False, "ok"),
         (["install", "kiro"], False, None),
-        (["install", "kiro", "--root", "/synthetic/root"], False, "ok"),
         (["update", "--check"], False, "ok"),
         (["update", "--only", "/synthetic/rule.md"], False, "ok"),
         (["setup", "--dry-run"], False, "ok"),
@@ -415,10 +430,12 @@ def test_a_command_sends_at_most_one_event_naming_its_outcome(
 def test_the_event_lists_sorted_flag_names_and_never_their_values(
     telemetry_popen: MagicMock,
 ) -> None:
-    _main("install", "kiro", "--root=/synthetic/root", "--no-update", "-v")
+    _main(
+        "install", "kiro", "--agent-config=/synthetic/agent.json", "--no-update", "-v"
+    )
 
     flags = _props(telemetry_popen)["flags"]
-    assert flags == ["--no-update", "--root", "-v"]
+    assert flags == ["--agent-config", "--no-update", "-v"]
     assert "synthetic" not in json.dumps(_props(telemetry_popen))
 
 

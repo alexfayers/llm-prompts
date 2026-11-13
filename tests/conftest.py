@@ -793,6 +793,12 @@ def isolated_config_dir(
 
 
 @pytest.fixture(autouse=True)
+def unrooted_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start every test without an install root, restoring it afterwards."""
+    monkeypatch.setattr("llm_prompts.home._HOME.root", None)
+
+
+@pytest.fixture(autouse=True)
 def no_pi_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Drop every PI_* variable so tests do not depend on the caller running inside pi."""
     for name in [name for name in os.environ if name.startswith("PI_")]:

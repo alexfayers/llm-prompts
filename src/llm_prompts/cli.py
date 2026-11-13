@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 
 from . import github_api, telemetry
 from .exit_reason import ExitReason
+from .home import set_root
 from .install import AGENT_CLASSES, REMOVED_AGENTS, log, prompts_dir, user_binary
 from .network import run_with_retries
 from .setup import (
@@ -1047,6 +1048,9 @@ def _run_command(run: telemetry.Run) -> int | None:
         and (args.only or args.cleanup)
     ):
         sync_parser.error("--commit cannot be combined with --only or --cleanup.")
+
+    if args.command == "install" and args.root:
+        set_root(args.root)
 
     if args.command:
         run.begin(
