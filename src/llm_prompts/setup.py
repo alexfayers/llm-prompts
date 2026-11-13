@@ -536,6 +536,7 @@ def _build_commands(tools: list[dict[str, Any]], changed_local: set[str]) -> Sha
             name,
             member_names,
             {_package_name(t) for t in tools if str(t["name"]) in changed_local},
+            _git_dependencies(tools),
         ),
         member_names,
         [script for names in scripts.values() for script in names],
@@ -569,14 +570,37 @@ def _install_source(source: str) -> str:
     return str(_expand(source)) if _is_local_path(source) else source
 
 
+def _git_dependencies(tools: list[dict[str, Any]]) -> list[str]:
+    """Return the canonical names of the git-sourced dependencies the tools declare."""
+    return sorted(
+        {
+            re.sub(r"[-_.]+", "-", dependency).lower()
+            for tool in tools
+            for dependency, source in (_read_pyproject(tool) or {})
+            .get("tool", {})
+            .get("uv", {})
+            .get("sources", {})
+            .items()
+            if isinstance(source, dict) and "git" in source
+        }
+    )
+
+
 def _build_upgrade_cmd(
-    name: str, member_names: list[str], changed_local: set[str]
+    name: str,
+    member_names: list[str],
+    changed_local: set[str],
+    git_dependencies: list[str],
 ) -> list[str]:
-    """Build a targeted upgrade command that reinstalls only changed local packages."""
+    """Build an upgrade command that reinstalls changed local packages and git dependencies."""
+    configured = [name, *member_names]
+    reinstalled = [
+        *(package for package in configured if package in changed_local),
+        *(package for package in git_dependencies if package not in configured),
+    ]
     cmd = ["uv", "tool", "upgrade", name]
-    for package_name in [name, *member_names]:
-        if package_name in changed_local:
-            cmd.extend(["--reinstall-package", package_name])
+    for package in reinstalled:
+        cmd.extend(["--reinstall-package", package])
     return cmd
 
 
@@ -759,7 +783,8 @@ def run_setup(
     package_names = {str(tool["name"]): _package_name(tool) for tool in tools}
     force_reinstall = {package_names.get(n, n) for n in force_reinstall}
 
-    env = _build_commands(tools, detect_changed_local_tools(tools))
+    changed_local = detect_changed_local_tools(tools)
+    env = _build_commands(tools, changed_local)
     name = env.name
 
     changed = False
@@ -775,10 +800,7 @@ def run_setup(
             env.upgrade_cmd, check=False, capture_output=True, text=True
         )
         if result.returncode == 0:
-            if (
-                "--reinstall-package" in env.upgrade_cmd
-                or "Nothing to upgrade" not in result.stderr
-            ):
+            if changed_local or "Nothing to upgrade" not in result.stderr:
                 print(result.stdout, end="")
                 changed = True
             needs_install = _has_drifted(env)
