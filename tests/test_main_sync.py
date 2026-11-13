@@ -240,6 +240,9 @@ class TestSquashSync:
         self, fake_subprocess: FakeSubprocess
     ) -> None:
         _route_divergence(fake_subprocess)
+        fake_subprocess.on(
+            "log", "--no-merges", stdout="p2\t200\tpr commit\np3\t200\tpr commit\n"
+        )
 
         assert sync_diverged(REPO) == SyncResult("squash-synced", replayed=1)
 
@@ -402,6 +405,34 @@ class TestSquashSync:
         )[0][-2:] == ["tip0", "o1"]
         assert fake_subprocess.commands[-1][-3:] == ["reset", "--keep", "tip1"]
 
+    def test_stacked_pull_requests_sharing_a_commit_use_the_version_that_replays(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        _route_open_pull_request(fake_subprocess, local_change_tree="tree-h9")
+        fake_subprocess.on_match(
+            lambda argv: "--merge-base=o1^" in argv,
+            returncode=1,
+            stdout="tree\na.txt\n",
+        )
+        fake_subprocess.on("cat-file", stdout=["h1 missing\n", "h9 c\nh8 c\n"])
+        fake_subprocess.on_match(
+            lambda argv: "refs/heads/*" in argv,
+            stdout="h9\trefs/pull/9/head\nh9\trefs/heads/me/contribute/work\n"
+            "h8\trefs/pull/8/head\nh8\trefs/heads/me/contribute/base\n",
+        )
+        fake_subprocess.on_match(
+            lambda argv: "@{u}..h8" in argv, stdout="o2\t100\tlocal work\n"
+        )
+        fake_subprocess.on_match(
+            lambda argv: "merge-tree" in argv and argv[-2:] == ["h8", "l1"],
+            stdout="tree-h8\n",
+        )
+        fake_subprocess.on("rev-parse", "h8^{tree}", stdout="tree-h8\n")
+
+        assert sync_diverged(REPO) == SyncResult("squash-synced", replayed=1)
+
+        assert fake_subprocess.matching("log", "-1")[0][-1] == "o2"
+
     def test_a_local_change_missing_from_the_pull_request_is_kept_and_sync_stops(
         self, fake_subprocess: FakeSubprocess
     ) -> None:
@@ -515,19 +546,6 @@ class TestSquashSyncBails:
             "failed",
             detail="squash sync stopped: local merge commit l1; recover with:"
             f" cd {REPO} && git reset --keep {PRE_SYNC_REF}",
-        )
-
-    def test_pull_request_commits_sharing_an_identity(
-        self, fake_subprocess: FakeSubprocess
-    ) -> None:
-        _route_divergence(fake_subprocess)
-        fake_subprocess.on(
-            "log", "--no-merges", stdout="p2\t200\tpr commit\np3\t200\tpr commit\n"
-        )
-
-        _assert_untouched_bail(
-            fake_subprocess,
-            "two pull request commits share author time and subject: pr commit",
         )
 
     def test_timed_out_git_call(self, fake_subprocess: FakeSubprocess) -> None:
