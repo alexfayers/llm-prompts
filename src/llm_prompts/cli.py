@@ -309,6 +309,7 @@ def _local_source_messages(name: str, source: str) -> list[str]:
         ["git", "-C", str(repo), "fetch", "--quiet"],
         check=True,
         capture_output=True,
+        text=True,
         timeout=GIT_TIMEOUT,
     )
     result = subprocess.run(
