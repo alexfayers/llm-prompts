@@ -910,7 +910,7 @@ class TestUpdateCommandPullsPlugins:
         mock_setup.assert_not_called()
         mock_install.assert_called_once_with(["kiro"], size_baseline={}, verbose=False)
 
-    def test_update_skips_the_tool_reinstall_when_fetch_failed_but_cached_commits_rebased(
+    def test_update_stops_before_plugins_and_installs_when_a_source_fails_to_sync(
         self,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
@@ -934,18 +934,21 @@ class TestUpdateCommandPullsPlugins:
             patch("llm_prompts.setup._load_config", return_value=config),
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup._require_uv"),
-            patch("llm_prompts.cli._reexec_update"),
-            patch("llm_prompts.install.main", return_value=frozenset()),
-            patch("llm_prompts.cli._restart_memory_service"),
-            patch("llm_prompts.plugins.pull_plugin_sources"),
+            patch("llm_prompts.install.main") as mock_install,
+            patch("llm_prompts.cli._reconfigure_agents") as mock_reconfigure,
+            patch("llm_prompts.plugins.pull_plugin_sources") as mock_pull,
             patch("llm_prompts.size_guard.snapshot_sources", return_value={}),
         ):
             mock_config.return_value.exists.return_value = True
-            main()
+            with pytest.raises(SystemExit) as exit_info:
+                main()
 
-        assert fake_subprocess.matching("rebase")
+        assert exit_info.value.code == 1
+        mock_pull.assert_not_called()
+        mock_install.assert_not_called()
+        mock_reconfigure.assert_not_called()
         assert not [argv for argv in fake_subprocess.commands if argv[0] == "uv"]
-        assert "Not reinstalling the tools: core" in capsys.readouterr().out
+        assert "Update stopped: core" in capsys.readouterr().out
 
     def test_update_verbose_flag_reaches_the_install(self) -> None:
         with (

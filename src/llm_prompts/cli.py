@@ -1231,6 +1231,14 @@ def _run_command(run: telemetry.Run) -> int | None:
             size_baseline = snapshot_sources(_size_guard_roots())
             failed_sources: set[str] = set()
             changed_sources = _pull_local_sources(failed_sources)
+            if failed_sources:
+                print(
+                    f"Update stopped: {', '.join(sorted(failed_sources))} "
+                    "could not be updated, so the installed versions would not match. "
+                    "Fix the errors above, then rerun `llm-prompts update`."
+                )
+                run.outcome = "source_sync_failed"
+                sys.exit(1)
 
             from .plugins import pull_plugin_sources
 
@@ -1242,16 +1250,8 @@ def _run_command(run: telemetry.Run) -> int | None:
             standalone_before_setup = _standalone_tool_envs()
             stale = detect_stale_local_tools()
             changed_sources |= detect_changed_configured_tools()
-            if failed_sources:
-                print(
-                    f"Not reinstalling the tools: {', '.join(sorted(failed_sources))} "
-                    "could not be updated, so the installed versions would not match. "
-                    "Fix the errors above, then rerun `llm-prompts update`."
-                )
-            upgraded = (
-                config_path().exists()
-                and not failed_sources
-                and run_setup(force_reinstall=stale or None)
+            upgraded = config_path().exists() and run_setup(
+                force_reinstall=stale or None
             )
             for name in _RUN_SETUP_TRACKED_TOOLS:
                 if _get_installed_dist(name) != dists_before_setup[name]:
