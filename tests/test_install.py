@@ -1845,6 +1845,63 @@ class TestInstallSkillsSkipSet:
         ) == "# Old\n"
         assert "my-skill" in managed
 
+    def test_skill_with_a_skipped_part_left_unchanged(self, tmp_path: Path) -> None:
+        skill_dir = tmp_path / "skills_src" / "my-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("# New\n", encoding="utf-8")
+        part = skill_dir / "part.md"
+        part.write_text("oversized\n", encoding="utf-8")
+        agents_dir = tmp_path / "agents"
+        installed_skill_dir = agents_dir / "skills" / "my-skill"
+        installed_skill_dir.mkdir(parents=True)
+        (installed_skill_dir / "SKILL.md").write_text("# Old\n", encoding="utf-8")
+
+        _install_skills(
+            [skill_dir.parent],
+            agents_dir,
+            "test-agent",
+            tmp_path / "vars.json",
+            skip_set=frozenset({part.resolve()}),
+            previous_manifest={"test-agent": {"files": [str(installed_skill_dir)]}},
+        )
+
+        assert (installed_skill_dir / "SKILL.md").read_text(
+            encoding="utf-8"
+        ) == "# Old\n"
+        assert not (installed_skill_dir / "part.md").exists()
+
+    def test_skipped_part_shadowed_by_overlay_does_not_block_install(
+        self, tmp_path: Path
+    ) -> None:
+        base = tmp_path / "base" / "my-skill"
+        overlay = tmp_path / "overlay" / "my-skill"
+        base.mkdir(parents=True)
+        overlay.mkdir(parents=True)
+        (base / "SKILL.md").write_text("# New\n", encoding="utf-8")
+        shadowed = base / "part.md"
+        shadowed.write_text("oversized\n", encoding="utf-8")
+        (overlay / "part.md").write_text("small\n", encoding="utf-8")
+        agents_dir = tmp_path / "agents"
+        installed_skill_dir = agents_dir / "skills" / "my-skill"
+        installed_skill_dir.mkdir(parents=True)
+        (installed_skill_dir / "SKILL.md").write_text("# Old\n", encoding="utf-8")
+
+        _install_skills(
+            [overlay.parent, base.parent],
+            agents_dir,
+            "test-agent",
+            tmp_path / "vars.json",
+            skip_set=frozenset({shadowed.resolve()}),
+            previous_manifest={"test-agent": {"files": [str(installed_skill_dir)]}},
+        )
+
+        assert (installed_skill_dir / "SKILL.md").read_text(
+            encoding="utf-8"
+        ) == "# New\n"
+        assert (installed_skill_dir / "part.md").read_text(
+            encoding="utf-8"
+        ) == "small\n"
+
 
 class TestInstallAgentsSkipSet:
     def test_skipped_agent_all_variants_left_unchanged(self, tmp_path: Path) -> None:

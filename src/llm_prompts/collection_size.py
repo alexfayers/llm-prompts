@@ -4,7 +4,8 @@ Unlike the per-file metrics in `size_guard`, a collection total must count each
 installed artifact exactly once, so every kind is resolved with the same
 overlay priority `install.main` applies rather than measuring each root
 independently. It also counts what no per-file metric does: a skill's whole
-`SKILL.md` as materialized. Agent bodies are measured but not totalled.
+`SKILL.md` as materialized, plus its part files. Agent bodies are measured but
+not totalled.
 """
 
 from __future__ import annotations
@@ -31,6 +32,8 @@ from .install import (
     _rendered_content,
     _resolve_priority_sources,
     _RuleSources,
+    _skill_layers,
+    _skill_part_files,
     _targets_agent,
     content_subdirs,
 )
@@ -154,11 +157,11 @@ def _skill_bytes(
     target: str,
     vars_root: Path | None = None,
 ) -> LoadedBytes:
-    """Sum installed ``SKILL.md`` bytes for one target, priority resolved.
+    """Sum the bytes a session loads from skills for one target, priority resolved.
 
-    Measures the whole substituted file `_materialize_builtin_skill` writes,
-    not just the body `skill_body_bytes` gates. A skill's sibling files are
-    symlinked rather than copied, so they add no installed bytes.
+    Measures the whole substituted ``SKILL.md`` `_materialize_builtin_skill`
+    writes, not just the body `skill_body_bytes` gates. Each sibling ``*.md``
+    part is read on demand like a body, so its bytes join the ``body`` part.
 
     Args:
         root: This package's own prompts directory.
@@ -168,8 +171,8 @@ def _skill_bytes(
             package's own.
 
     Returns:
-        ``SKILL.md`` bytes the install writes for this target, split into
-        frontmatter and body.
+        Skill bytes a session loads for this target, split into frontmatter and
+        body.
     """
     variables = _builtin_skill_vars(_own_vars_path(target, vars_root))
 
@@ -181,19 +184,20 @@ def _skill_bytes(
             return False
         return _targets_agent(skill_md, target)
 
+    candidate_dirs = [
+        *(d / "shared" / "skills" for d in overlays),
+        root / "shared" / "skills",
+        root / target / "skills",
+        *(d / target / "skills" for d in overlays),
+    ]
     resolved = _resolve_priority_sources(
-        [
-            *(d / "shared" / "skills" for d in overlays),
-            root / "shared" / "skills",
-            root / target / "skills",
-            *(d / target / "skills" for d in overlays),
-        ],
+        candidate_dirs,
         lambda d: [p for p in sorted(d.iterdir()) if p.is_dir()],
         lambda p: p.name,
         gate,
     )
     total = LoadedBytes()
-    for _, skill_dir in resolved:
+    for name, skill_dir in resolved:
         try:
             substituted = strip_gating_keys(
                 substitute_variables(_read_text(skill_dir / "SKILL.md"), variables),
@@ -202,6 +206,12 @@ def _skill_bytes(
         except TemplateError:
             continue
         total += LoadedBytes.of(substituted)
+        total += LoadedBytes(
+            body=sum(
+                len(part.read_bytes())
+                for part in _skill_part_files(_skill_layers(candidate_dirs, name, gate))
+            )
+        )
     return total
 
 
