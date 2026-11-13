@@ -32,6 +32,10 @@ A subagent MUST NOT run `session-end` - it reports to its lead instead.
 
 You MUST use the `git-usage` skill before interacting with git in **ANY** way, including running ANY `git` command.
 
+## PR review
+
+Before each push, PR creation or PR update, you MUST use the `pr-review` skill on your diff and PR text.
+
 ## Handoff pickup
 
 Where a `HANDOFF.md` is present in the workspace at session start, or the user points you at a handoff doc (their own or another agent's), you **MUST** use the `pickup` skill before doing anything else with it - including before reading it in full or deciding it is stale. MUST NOT re-verify claims the handoff or memory already states as fact.
