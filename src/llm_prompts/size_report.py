@@ -426,6 +426,56 @@ def render_markdown(rows: Sequence[Row]) -> str:
     return "\n\n".join(sections) + "\n"
 
 
+def missing_note(base_prompts: Path, head_prompts: Path | None) -> str | None:
+    """Explain which side has no prompts directory to compare.
+
+    Args:
+        base_prompts: The base revision's own prompts directory.
+        head_prompts: The head revision's own prompts directory, or None.
+
+    Returns:
+        A one-line note, or None when both sides can be measured.
+    """
+    for side, prompts in (("base", base_prompts), ("head", head_prompts)):
+        if prompts is not None and not prompts.is_dir():
+            return f"No {side} prompts at `{prompts}` to compare against."
+    return None
+
+
+def measure(
+    base_prompts: Path,
+    head_prompts: Path | None = None,
+    base_overlays: Sequence[Path] | None = None,
+    head_overlays: Sequence[Path] | None = None,
+) -> list[Row]:
+    """Measure base and head and join the results.
+
+    Args:
+        base_prompts: The base revision's own prompts directory.
+        head_prompts: The head revision's own prompts directory, or None to
+            measure the current checkout.
+        base_overlays: The overlay prompts directories installed with the base,
+            or None for the discovered ones.
+        head_overlays: The overlay prompts directories installed with head, or
+            None for the discovered ones.
+
+    Returns:
+        One row per measured artifact.
+    """
+    discovered = _size_guard_roots()
+    head_roots = [
+        head_prompts or discovered[0],
+        *(discovered[1:] if head_overlays is None else head_overlays),
+    ]
+    base_roots = [
+        base_prompts,
+        *(discovered[1:] if base_overlays is None else base_overlays),
+    ]
+    head = check(head_roots, vars_root=head_prompts)
+    base = check(base_roots, vars_root=base_prompts)
+    return compare(base.artifacts, head.artifacts, base_roots, head_roots)
+
+
 def build_report(base_prompts: Path) -> str:
     """Measure base and head and render the comparison.
 
@@ -435,15 +485,7 @@ def build_report(base_prompts: Path) -> str:
     Returns:
         A markdown report, or a note that there is no base to compare against.
     """
-    if not base_prompts.is_dir():
-        return (
-            "## Prompt size report\n\n"
-            f"No base prompts at `{base_prompts}` to compare against.\n"
-        )
-    head_roots = _size_guard_roots()
-    base_roots = [base_prompts, *head_roots[1:]]
-    head = check(head_roots)
-    base = check(base_roots, vars_root=base_prompts)
-    return render_markdown(
-        compare(base.artifacts, head.artifacts, base_roots, head_roots)
-    )
+    note = missing_note(base_prompts, None)
+    if note:
+        return f"## Prompt size report\n\n{note}\n"
+    return render_markdown(measure(base_prompts))

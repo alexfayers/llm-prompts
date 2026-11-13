@@ -542,6 +542,45 @@ class TestRenderSummary:
         assert "1 file changed size in this PR" in report
 
 
+def _prompts_tree(root: Path, rule_name: str, rule_text: str) -> Path:
+    rules = root / "shared" / "rules"
+    rules.mkdir(parents=True)
+    (rules / rule_name).write_text(rule_text)
+    for target in CHECKED_TARGETS:
+        (root / target).mkdir()
+        (root / target / "vars.json").write_text("{}")
+    return root
+
+
+class TestMeasure:
+    def test_measures_each_tree_separately_with_its_own_overlays(
+        self, tmp_path: Path
+    ) -> None:
+        base = _prompts_tree(tmp_path / "base", "own.md", "x" * 100)
+        head = _prompts_tree(tmp_path / "head", "own.md", "x" * 150)
+        base_overlay = _prompts_tree(
+            tmp_path / "base_overlay", "base_extra.md", "y" * 10
+        )
+        head_overlay = _prompts_tree(
+            tmp_path / "head_overlay", "head_extra.md", "y" * 30
+        )
+
+        rows = size_report.measure(
+            base, head, base_overlays=[base_overlay], head_overlays=[head_overlay]
+        )
+
+        sizes = {
+            row.file.rsplit("/", 1)[-1]: (row.base, row.head)
+            for row in rows
+            if row.metric == RULE_BYTES
+        }
+        assert sizes == {
+            "own.md": (101, 151),
+            "base_extra.md": (11, None),
+            "head_extra.md": (None, 31),
+        }
+
+
 class TestBuildReport:
     def test_missing_base_says_there_is_nothing_to_compare(
         self, tmp_path: Path
