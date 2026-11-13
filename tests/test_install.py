@@ -48,6 +48,7 @@ from llm_prompts.install import (
     try_install_hooks_pi,
     try_install_memory_claude_code,
     try_install_memory_pi,
+    user_binary,
 )
 from llm_prompts.install import main as install_main
 from llm_prompts.manifest import AgentManifest
@@ -1080,6 +1081,20 @@ class TestUserWideBinaries:
         try_install_memory_claude_code()
 
         assert fake_subprocess.commands == []
+
+    def test_user_wide_lookup_still_skips_venvs_when_cline_hooks_lacks_it(
+        self,
+        venv_and_user_bins: tuple[Path, Path],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        venv_bin, user_bin = venv_and_user_bins
+        monkeypatch.setitem(sys.modules, "cline_hooks.core.user_install", None)
+
+        assert user_binary("cline-hook") == str(user_bin / "cline-hook")
+
+        monkeypatch.setenv("PATH", str(venv_bin))
+
+        assert user_binary("cline-hook") is None
 
     def test_pi_hooks_run_the_user_wide_binary(
         self,
@@ -2706,3 +2721,19 @@ class TestLogBrokenPipe:
             log("info", "second")
 
         assert [call.args[1] for call in dup2.call_args_list] == [99, 99]
+
+
+@pytest.mark.real_io
+def test_user_binary_survives_cline_hooks_without_user_install() -> None:
+    startup = (
+        "import sys; sys.modules['cline_hooks.core.user_install'] = None; "
+        "from llm_prompts.cli import main; from llm_prompts.install import user_binary; "
+        "print(user_binary('sh'))"
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", startup], capture_output=True, text=True, check=False
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip().endswith("sh")
