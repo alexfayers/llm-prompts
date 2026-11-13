@@ -957,7 +957,7 @@ def telemetry_popen(
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr("llm_prompts.telemetry_core.read_config", dict)
     monkeypatch.setattr("llm_prompts.telemetry.read_config", dict)
-    monkeypatch.setattr("llm_prompts.telemetry.read_manifest", dict)
+    monkeypatch.setattr("llm_prompts.telemetry.read_manifest", lambda: {"kiro": {}})
     (isolated_config_dir / "telemetry.json").write_text(
         json.dumps({"install_id": "synthetic-id"}), encoding="utf-8"
     )

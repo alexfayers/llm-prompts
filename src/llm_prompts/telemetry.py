@@ -87,7 +87,9 @@ class Run(AbstractContextManager["Run"]):
         return {name: self._installed_commit(name) for name in telemetry_core.TRACKED}
 
     def begin(self, command: str, flags: list[str], installs: bool = False) -> None:
-        """Start tracking `command` unless opted out, taking over state from `RESUME_ENV`.
+        """Start tracking `command` unless opted out or no agents are installed.
+
+        Takes over state from `RESUME_ENV`.
 
         Args:
             command: The command name.
@@ -97,7 +99,7 @@ class Run(AbstractContextManager["Run"]):
         """
         handed_over = os.environ.pop(RESUME_ENV, "null")
         try:
-            if telemetry_core.save_opt_state():
+            if read_manifest() and telemetry_core.save_opt_state():
                 self._begun = {
                     "command": command,
                     "flags": flags,
