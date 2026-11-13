@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["src/llm_prompts/prompts/pi/extensions/*.ts", "tests/ts/*.ts"]
+  "include": ["src/llm_prompts/prompts/pi/extensions/*.ts", "src/llm_prompts/benchmark/guard/pi.ts", "tests/ts/*.ts"]
 }
