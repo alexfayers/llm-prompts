@@ -8,8 +8,9 @@
 | src/llm\_prompts/batching.py                                                  |      138 |        1 |     99% |       129 |
 | src/llm\_prompts/benchmark/\_\_init\_\_.py                                    |        1 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/cell/\_\_init\_\_.py                               |        0 |        0 |    100% |           |
+| src/llm\_prompts/benchmark/cell/audit.py                                      |       96 |       11 |     89% |58-60, 126, 153-163 |
 | src/llm\_prompts/benchmark/cell/env.py                                        |       24 |        1 |     96% |        61 |
-| src/llm\_prompts/benchmark/cell/home\_dirs.py                                 |       81 |       37 |     54% |29, 37-50, 57-71, 80-81, 95, 104-109 |
+| src/llm\_prompts/benchmark/cell/home\_dirs.py                                 |       81 |        9 |     89% |60-63, 95, 104-109 |
 | src/llm\_prompts/benchmark/guard/\_\_init\_\_.py                              |        0 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/guard/claude.py                                    |       26 |        1 |     96% |        64 |
 | src/llm\_prompts/benchmark/paths.py                                           |       51 |       13 |     75% |26, 36, 41, 46, 51, 56, 61, 67, 92, 99, 106-108 |
@@ -64,7 +65,8 @@
 | src/llm\_prompts/watch/sources/command.py                                     |       36 |        1 |     97% |        55 |
 | src/llm\_prompts/watch/sources/github\_pr.py                                  |       84 |       11 |     87% |29, 44-49, 86-87, 91, 102-103, 115 |
 | tests/benchmark/\_\_init\_\_.py                                               |        0 |        0 |    100% |           |
-| tests/benchmark/conftest.py                                                   |       26 |        1 |     96% |        35 |
+| tests/benchmark/conftest.py                                                   |       47 |        1 |     98% |        67 |
+| tests/benchmark/test\_bench\_audit.py                                         |       63 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_env.py                                           |       54 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_guard\_pi.py                                     |       41 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_guard\_rules.py                                  |       17 |        0 |    100% |           |
@@ -72,6 +74,7 @@
 | tests/benchmark/test\_bench\_sandbox\_policy.py                               |       78 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_tool\_dirs.py                                    |       36 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_types.py                                         |        5 |        0 |    100% |           |
+| tests/benchmark/traces.py                                                     |        3 |        0 |    100% |           |
 | tests/conftest.py                                                             |      476 |        4 |     99% |159, 805, 911, 950 |
 | tests/test\_batching.py                                                       |      314 |        0 |    100% |           |
 | tests/test\_build\_wave.py                                                    |      282 |        1 |     99% |       112 |
@@ -120,7 +123,7 @@
 | tests/test\_workflows.py                                                      |       25 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_pr.py                                       |       64 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **21715** |  **587** | **97%** |           |
+| **TOTAL**                                                                     | **21898** |  **570** | **97%** |           |
 
 
 ## Setup coverage badge
