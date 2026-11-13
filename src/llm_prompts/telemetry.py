@@ -19,6 +19,7 @@ from .manifest import read_manifest
 from .setup import read_config
 
 RESUME_ENV = "LLM_PROMPTS_TELEMETRY_RESUME"
+own_identities = telemetry_core.own_identities
 _EXCEPTION_CONTEXT = (
     *("command", "run_id", "flags", "agents", "outcome", "duration_s"),
     *("os", "python", "schema"),

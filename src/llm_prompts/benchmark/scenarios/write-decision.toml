@@ -1,0 +1,18 @@
+id = "write-decision"
+level = "light"
+workspace = "tiny-py"
+project = "demo"
+prompt = "We decided the demo fetch() timeout is 5 seconds. Save that decision to memory for the demo project. Do not change any files."
+
+[[check]]
+kind = "judge"
+memory = true
+rubric = "The text records a decision that the demo fetch() timeout is 5 seconds."
+
+[[check]]
+kind = "not_called"
+name = "Edit|Write"
+
+[[check]]
+kind = "max_time"
+seconds = 120

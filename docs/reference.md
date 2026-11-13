@@ -18,6 +18,7 @@ llm-prompts setup                              # install the tools in config.tom
 llm-prompts setup <tool>                       # reinstall the shared environment from scratch
 llm-prompts setup --dry-run                    # show the commands without running them
 llm-prompts setup --init                       # create the starter config
+llm-prompts benchmark                          # compare two llm-prompts refs by running agents through scenarios
 llm-prompts check                              # check prompt sizes and pi extension headers
 llm-prompts size-report --base-root DIR        # markdown report of prompt size changes
 llm-prompts watch gh-pr|cmd TARGET --until COND  # wait for a PR or command to match, then exit (0 match, 124 --timeout, 1 error)

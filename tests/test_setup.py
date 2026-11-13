@@ -351,6 +351,17 @@ class TestChangedLocalTools:
         assert git_calls
         assert all(argv[-1] == setup._NOT_PROMPTS for argv in git_calls)
 
+    def test_source_state_covers_prompts(
+        self,
+        checkouts: list[dict[str, Any]],
+        fake_subprocess: FakeSubprocess,
+    ) -> None:
+        setup.source_state(checkouts[0]["source"])
+
+        git_calls = [argv for argv, _ in fake_subprocess.calls if argv[0] == "git"]
+        assert git_calls
+        assert all(setup._NOT_PROMPTS not in argv for argv in git_calls)
+
     def test_every_local_tool_is_changed_without_a_stamp(
         self, checkouts: list[dict[str, Any]]
     ) -> None:

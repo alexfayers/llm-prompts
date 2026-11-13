@@ -961,6 +961,99 @@ def _run_command(run: telemetry.Run) -> int | None:
         help="Base revision's prompts directory to compare against.",
     )
     _add_watch_parser(subparsers)
+
+    benchmark_parser = subparsers.add_parser(
+        "benchmark",
+        help="Run agents through scenarios on two llm-prompts refs and compare the results.",
+    )
+    add = benchmark_parser.add_argument
+    add("--a", metavar="REF", help="First ref to run (default: origin/main).")
+    add("--b", metavar="REF", help="Second ref to run (default: :worktree).")
+    for label in ("a", "b"):
+        add(
+            f"--{label}-tool",
+            action="append",
+            metavar="NAME=SOURCE",
+            help=f"Use this source for a configured tool in ref {label.upper()}. Repeatable.",
+        )
+    add(
+        "--b-env",
+        action="append",
+        metavar="NAME=VALUE",
+        help="Set this environment variable for the agents of ref B only. Repeatable.",
+    )
+    add(
+        "--no-reuse",
+        dest="reuse",
+        action="store_false",
+        help="Run A and B again instead of reusing finished runs whose build, scenario and settings match.",
+    )
+    add("--level", metavar="LEVEL", help="light, medium or heavy (default: light).")
+    add("--agents", metavar="LIST", help="Comma separated agents (default: claude,pi).")
+    add(
+        "--model",
+        action="append",
+        metavar="AGENT=ID",
+        help="Model id for an agent. Repeatable.",
+    )
+    add(
+        "--repeats",
+        type=int,
+        metavar="N",
+        help="Run every scenario this many times per agent and ref (default: one, then more while A and B differ).",
+    )
+    add(
+        "--max-repeats",
+        type=int,
+        metavar="N",
+        help="Most runs per scenario, agent and ref when --repeats is not given (default: 3).",
+    )
+    add(
+        "--overlays",
+        action="store_true",
+        help="Install every configured overlay (default: only the core tools and the overlays that set up an agent's model provider).",
+    )
+    add(
+        "--overlay",
+        action="append",
+        metavar="NAME",
+        help="Install this configured overlay. Repeatable.",
+    )
+    add(
+        "-j",
+        "--jobs",
+        type=int,
+        metavar="N",
+        help="Parallel cells (default: [benchmark] jobs in config.toml, else 4).",
+    )
+    add(
+        "--scenario",
+        action="append",
+        metavar="ID",
+        help="Run only this scenario. Repeatable.",
+    )
+    add(
+        "--fail-fast",
+        action="store_true",
+        help="Stop the whole run at the first setup error (auth, disk full, agent crash, harness error). Skip the rest of a side's repeats of a scenario once its first N runs fail the same check.",
+    )
+    add(
+        "--fail-fast-after",
+        type=int,
+        metavar="N",
+        help="With --fail-fast, runs that must fail the same check before the rest are skipped (default: 3).",
+    )
+    add(
+        "--no-os-sandbox",
+        dest="os_sandbox",
+        action="store_false",
+        help="Run without the OS sandbox.",
+    )
+    add(
+        "--judge",
+        choices=("auto", "pi", "claude"),
+        help="Harness for judge checks (default: auto, pi if on PATH, else claude).",
+    )
     contribute_parser = subparsers.add_parser(
         "contribute", help="Manage derived PR branches for prompt-source commits."
     )
@@ -1278,6 +1371,16 @@ def _run_command(run: telemetry.Run) -> int | None:
             interval=args.interval,
             timeout=args.timeout,
         )
+
+    elif args.command == "benchmark":
+        from .benchmark.command import RunOptions
+        from .benchmark.command import run as run_benchmark
+
+        try:
+            options = RunOptions.from_args(args)
+        except ValueError as error:
+            benchmark_parser.error(str(error))
+        return run_benchmark(options)
     elif args.command == "contribute":
         from .contribute import list_targets, sync_targets, update_targets
 
