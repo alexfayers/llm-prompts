@@ -39,7 +39,7 @@
 | src/llm\_prompts/setup.py                                                     |      351 |       44 |     87% |236-265, 307-310, 317-318, 358, 361, 382-383, 422-423, 475, 639-642, 683-686, 716-717, 720, 772-773, 788-790 |
 | src/llm\_prompts/size\_guard.py                                               |      354 |       11 |     97% |244-245, 352, 423-425, 460, 482, 486-488 |
 | src/llm\_prompts/size\_limits.py                                              |       61 |        1 |     98% |       138 |
-| src/llm\_prompts/size\_report.py                                              |      187 |        3 |     98% |144, 198, 200 |
+| src/llm\_prompts/size\_report.py                                              |      196 |        2 |     99% |  198, 200 |
 | src/llm\_prompts/skill\_injection.py                                          |       37 |        2 |     95% |    33, 36 |
 | src/llm\_prompts/squash\_subject.py                                           |        6 |        0 |    100% |           |
 | src/llm\_prompts/telemetry.py                                                 |       79 |        0 |    100% |           |
@@ -91,7 +91,7 @@
 | tests/test\_rewrite\_range\_script.py                                         |       68 |        0 |    100% |           |
 | tests/test\_setup.py                                                          |      312 |        0 |    100% |           |
 | tests/test\_size\_guard.py                                                    |       93 |        0 |    100% |           |
-| tests/test\_size\_report.py                                                   |      206 |        0 |    100% |           |
+| tests/test\_size\_report.py                                                   |      223 |        0 |    100% |           |
 | tests/test\_skill\_injection.py                                               |       30 |        0 |    100% |           |
 | tests/test\_squash\_subject.py                                                |        7 |        0 |    100% |           |
 | tests/test\_telemetry.py                                                      |      332 |        0 |    100% |           |
@@ -101,7 +101,7 @@
 | tests/test\_workflows.py                                                      |       25 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_pr.py                                       |       64 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **20757** |  **530** | **97%** |           |
+| **TOTAL**                                                                     | **20783** |  **529** | **97%** |           |
 
 
 ## Setup coverage badge
