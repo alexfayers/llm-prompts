@@ -467,6 +467,7 @@ class _PullOutcome(NamedTuple):
     name: str
     changed: bool
     messages: list[str]
+    failed: bool = False
 
 
 def _source_test_warnings(name: str, repo: Path, test: str) -> list[str]:
@@ -524,13 +525,16 @@ def _pull_one_local_source(name: str, source: str, test: str = "") -> _PullOutco
     repo = _expand(source)
     if not (repo / ".git").is_dir():
         return unchanged
-    run_git(repo, "fetch", "--quiet")
+    fetch = run_git(repo, "fetch", "--quiet")
+    fetch_failed = fetch.returncode != 0
+    fetch_error = f"[{name}] could not fetch: {fetch.stderr.strip()}"
+    fetch_failure = _PullOutcome(name, False, [fetch_error], failed=True)
     result = run_git(repo, "rev-list", "--count", "HEAD..@{u}")
     if result.returncode != 0:
-        return unchanged
+        return fetch_failure if fetch_failed else unchanged
     count = int(result.stdout.strip())
     if count == 0:
-        return unchanged
+        return fetch_failure if fetch_failed else unchanged
     pull = run_git(repo, "pull", "--ff-only", "--quiet")
     if pull.returncode == 0:
         return _PullOutcome(name, True, [f"[{name}] pulled {count} new commit(s)"])
@@ -546,6 +550,7 @@ def _pull_one_local_source(name: str, source: str, test: str = "") -> _PullOutco
                 f"[{name}] {count} new commit(s) available but sync failed",
                 f"  {synced.detail}",
             ],
+            failed=True,
         )
     if synced.mode == "reset":
         message = (
@@ -559,13 +564,18 @@ def _pull_one_local_source(name: str, source: str, test: str = "") -> _PullOutco
             message += f"; replayed {synced.replayed} local commit(s)"
         message += f"; undo with: git reset --keep {PRE_SYNC_REF}"
     messages = [message]
+    if fetch_failed:
+        messages.append(fetch_error)
     if test and (synced.replayed or synced.mode == "rebased"):
         messages += _source_test_warnings(name, repo, test)
-    return _PullOutcome(name, True, messages)
+    return _PullOutcome(name, True, messages, failed=fetch_failed)
 
 
-def _pull_local_sources() -> set[str]:
+def _pull_local_sources(failed: set[str] | None = None) -> set[str]:
     """Pull upstream changes for all local-path tool sources in parallel.
+
+    Args:
+        failed: Collects the names of the tool sources that could not be synced.
 
     Returns:
         The names of the tool sources that actually moved.
@@ -593,6 +603,8 @@ def _pull_local_sources() -> set[str]:
             print(line)
         if outcome.changed:
             changed.add(outcome.name)
+        if outcome.failed and failed is not None:
+            failed.add(outcome.name)
     return changed
 
 
@@ -1217,7 +1229,8 @@ def _run_command(run: telemetry.Run) -> int | None:
 
             _print_update_status()
             size_baseline = snapshot_sources(_size_guard_roots())
-            changed_sources = _pull_local_sources()
+            failed_sources: set[str] = set()
+            changed_sources = _pull_local_sources(failed_sources)
 
             from .plugins import pull_plugin_sources
 
@@ -1229,8 +1242,16 @@ def _run_command(run: telemetry.Run) -> int | None:
             standalone_before_setup = _standalone_tool_envs()
             stale = detect_stale_local_tools()
             changed_sources |= detect_changed_configured_tools()
-            upgraded = config_path().exists() and run_setup(
-                force_reinstall=stale or None
+            if failed_sources:
+                print(
+                    f"Not reinstalling the tools: {', '.join(sorted(failed_sources))} "
+                    "could not be updated, so the installed versions would not match. "
+                    "Fix the errors above, then rerun `llm-prompts update`."
+                )
+            upgraded = (
+                config_path().exists()
+                and not failed_sources
+                and run_setup(force_reinstall=stale or None)
             )
             for name in _RUN_SETUP_TRACKED_TOOLS:
                 if _get_installed_dist(name) != dists_before_setup[name]:
