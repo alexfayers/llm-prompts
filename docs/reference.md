@@ -135,4 +135,6 @@ source = "~/mcp-memory"
 
 Local paths are installed as copies. `llm-prompts install <agent>` picks up changes to rules, workflows and skills right away. `llm-prompts update` reinstalls a checkout only when files outside `prompts/` changed since the last setup.
 
+A local tool can set an optional `test` command, run in its checkout (`test = "just test"`). `update` runs it only after it rebases or replays local commits onto the pulled upstream. A failure or a timeout after 10 minutes only prints a warning with how to undo the sync. The install still goes ahead.
+
 Run `just` (lint, type-check, test) before opening a PR. See [CONTRIBUTING.md](../CONTRIBUTING.md).

@@ -8,6 +8,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -24,6 +25,7 @@ from .setup import (
     _UPDATE_INSTRUCTION,
     GIT_TIMEOUT,
     SHIPPED_PATHS,
+    TEST_TIMEOUT,
     _commit_subjects_between,
     _extract_git_url,
     _format_update_message,
@@ -465,12 +467,40 @@ class _PullOutcome(NamedTuple):
     messages: list[str]
 
 
-def _pull_one_local_source(name: str, source: str) -> _PullOutcome:
+def _source_test_warnings(name: str, repo: Path, test: str) -> list[str]:
+    """Run a source's test command and describe how it went wrong, if it did."""
+    from .main_sync import PRE_SYNC_REF
+
+    try:
+        passed = (
+            subprocess.run(
+                shlex.split(test),
+                cwd=repo,
+                capture_output=True,
+                check=False,
+                timeout=TEST_TIMEOUT,
+            ).returncode
+            == 0
+        )
+        problem = "failed on the synced main"
+    except subprocess.TimeoutExpired:
+        passed, problem = False, f"timed out after {TEST_TIMEOUT}s"
+    except OSError:
+        passed, problem = False, "could not be run"
+    if passed:
+        return []
+    return [
+        f"[{name}] warning: `{test}` {problem}; undo with: git reset --keep {PRE_SYNC_REF}"
+    ]
+
+
+def _pull_one_local_source(name: str, source: str, test: str = "") -> _PullOutcome:
     """Pull upstream changes for a single local-path tool source.
 
     Args:
         name: The source name, used in the messages.
         source: The configured source string.
+        test: Optional command run in the source after local commits are rebased or replayed.
 
     Returns:
         Whether the source moved, and message lines describing the pull outcome.
@@ -524,7 +554,10 @@ def _pull_one_local_source(name: str, source: str) -> _PullOutcome:
         if synced.replayed:
             message += f"; replayed {synced.replayed} local commit(s)"
         message += f"; undo with: git reset --keep {PRE_SYNC_REF}"
-    return _PullOutcome(name, True, [message])
+    messages = [message]
+    if test and (synced.replayed or synced.mode == "rebased"):
+        messages += _source_test_warnings(name, repo, test)
+    return _PullOutcome(name, True, messages)
 
 
 def _pull_local_sources() -> set[str]:
@@ -545,6 +578,7 @@ def _pull_local_sources() -> set[str]:
             _pull_one_local_source,
             str(tool.get("name", "")),
             str(tool.get("source", "")),
+            str(tool.get("test", "")),
         )
         for tool in _load_config()
     ]

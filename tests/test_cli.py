@@ -41,6 +41,7 @@ from llm_prompts.main_sync import SyncResult
 from llm_prompts.setup import (
     _UPDATE_INSTRUCTION,
     SHIPPED_PATHS,
+    TEST_TIMEOUT,
     SharedEnv,
     _extract_git_url,
     _format_update_message,
@@ -284,6 +285,12 @@ class TestLocalSourceMessages:
         fake_subprocess.on("log", "--pretty=format:%s%n%b%x1e", returncode=128)
         result = _local_source_messages("core", str(tmp_path))
         assert result == ["[core] update available"]
+
+
+WARNING = (
+    "[core] warning: `just test` failed on the synced main;"
+    " undo with: git reset --keep refs/llm-prompts/pre-sync"
+)
 
 
 class TestPullLocalSources:
@@ -556,6 +563,91 @@ class TestPullLocalSources:
             assert _pull_local_sources() == {"core"}
 
         assert capsys.readouterr().out.splitlines() == [expected]
+
+    @pytest.mark.parametrize(
+        ("result", "test_returncode", "ran"),
+        [
+            (SyncResult("squash-synced", replayed=1), 0, True),
+            (SyncResult("squash-synced", replayed=1), 1, True),
+            (SyncResult("rebased"), 1, True),
+            (SyncResult("reset"), 1, False),
+        ],
+    )
+    def test_source_test_runs_only_when_local_commits_remain_and_failure_only_warns(
+        self,
+        tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
+        result: SyncResult,
+        test_returncode: int,
+        ran: bool,
+    ) -> None:
+        clone = tmp_path / "clone"
+        (clone / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-list", "--count", stdout="1\n")
+        fake_subprocess.on("pull", "--ff-only", returncode=1)
+        fake_subprocess.on("just", "test", returncode=test_returncode)
+
+        with patch("llm_prompts.main_sync.sync_diverged", return_value=result):
+            outcome = cli._pull_one_local_source("core", str(clone), "just test")
+
+        assert outcome.changed
+        assert bool(fake_subprocess.matching("just", "test")) == ran
+        assert outcome.messages[1:] == ([WARNING] if ran and test_returncode else [])
+        if ran:
+            (_, kwargs) = next(c for c in fake_subprocess.calls if c[0][0] == "just")
+            assert kwargs["cwd"] == clone
+            assert kwargs["timeout"] == TEST_TIMEOUT
+
+    def test_source_test_timeout_only_warns(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        clone = tmp_path / "clone"
+        (clone / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-list", "--count", stdout="1\n")
+        fake_subprocess.on("pull", "--ff-only", returncode=1)
+        fake_subprocess.on(
+            "just",
+            "test",
+            side_effect=subprocess.TimeoutExpired(cmd=["just"], timeout=TEST_TIMEOUT),
+        )
+
+        with patch(
+            "llm_prompts.main_sync.sync_diverged",
+            return_value=SyncResult("squash-synced", replayed=1),
+        ):
+            outcome = cli._pull_one_local_source("core", str(clone), "just test")
+
+        assert outcome.changed
+        assert outcome.messages[-1] == (
+            f"[core] warning: `just test` timed out after {TEST_TIMEOUT}s;"
+            " undo with: git reset --keep refs/llm-prompts/pre-sync"
+        )
+
+    def test_configured_source_test_is_run_by_the_update_pull(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        fake_subprocess: FakeSubprocess,
+    ) -> None:
+        clone = tmp_path / "clone"
+        (clone / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-list", "--count", stdout="1\n")
+        fake_subprocess.on("pull", "--ff-only", returncode=1)
+        fake_subprocess.on("just", "test", returncode=1)
+
+        config = [{"name": "core", "source": str(clone), "test": "just test"}]
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=config),
+            patch(
+                "llm_prompts.main_sync.sync_diverged",
+                return_value=SyncResult("squash-synced", replayed=1),
+            ),
+        ):
+            mock_config.return_value.exists.return_value = True
+            assert _pull_local_sources() == {"core"}
+
+        assert "[core] warning: `just test` failed" in capsys.readouterr().out
 
     def test_failed_sync_reports_detail_and_leaves_source_unchanged(
         self,
