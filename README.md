@@ -24,7 +24,7 @@
 | src/llm\_prompts/main\_sync.py                                                |      230 |        3 |     99% |252, 395-396 |
 | src/llm\_prompts/manifest.py                                                  |       72 |        3 |     96% | 50-51, 86 |
 | src/llm\_prompts/mcp.py                                                       |       85 |        1 |     99% |        91 |
-| src/llm\_prompts/network.py                                                   |       25 |        1 |     96% |        30 |
+| src/llm\_prompts/network.py                                                   |       27 |        0 |    100% |           |
 | src/llm\_prompts/overlay\_merge.py                                            |       49 |        2 |     96% |    54, 92 |
 | src/llm\_prompts/plugins.py                                                   |      164 |       16 |     90% |46, 133-134, 138-139, 155-167, 183, 213, 242, 289, 299, 380, 384 |
 | src/llm\_prompts/prompts/claude-code/skills/retrospective/extract\_signals.py |      181 |       97 |     46% |44-49, 54-69, 80-124, 186, 197, 200, 209, 254-264, 269-286, 297-332, 336 |
@@ -80,7 +80,7 @@
 | tests/test\_main\_sync.py                                                     |      270 |        0 |    100% |           |
 | tests/test\_manifest.py                                                       |       73 |        0 |    100% |           |
 | tests/test\_mcp.py                                                            |       27 |        2 |     93% |     43-44 |
-| tests/test\_network.py                                                        |       14 |        0 |    100% |           |
+| tests/test\_network.py                                                        |       26 |        0 |    100% |           |
 | tests/test\_overlay\_merge.py                                                 |       19 |        0 |    100% |           |
 | tests/test\_pi\_extension\_factories.py                                       |        8 |        0 |    100% |           |
 | tests/test\_plugins.py                                                        |      254 |        0 |    100% |           |
@@ -101,7 +101,7 @@
 | tests/test\_workflows.py                                                      |       25 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_pr.py                                       |       64 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **20813** |  **530** | **97%** |           |
+| **TOTAL**                                                                     | **20827** |  **529** | **97%** |           |
 
 
 ## Setup coverage badge
