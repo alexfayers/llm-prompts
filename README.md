@@ -10,6 +10,8 @@
 | src/llm\_prompts/benchmark/cell/\_\_init\_\_.py                               |        0 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/cell/env.py                                        |       24 |        1 |     96% |        61 |
 | src/llm\_prompts/benchmark/cell/home\_dirs.py                                 |       81 |       37 |     54% |29, 37-50, 57-71, 80-81, 95, 104-109 |
+| src/llm\_prompts/benchmark/guard/\_\_init\_\_.py                              |        0 |        0 |    100% |           |
+| src/llm\_prompts/benchmark/guard/claude.py                                    |       26 |        1 |     96% |        64 |
 | src/llm\_prompts/benchmark/paths.py                                           |       51 |       13 |     75% |26, 36, 41, 46, 51, 56, 61, 67, 92, 99, 106-108 |
 | src/llm\_prompts/benchmark/runner/\_\_init\_\_.py                             |        0 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/runner/sandbox.py                                  |       61 |        2 |     97% |     47-48 |
@@ -64,6 +66,8 @@
 | tests/benchmark/\_\_init\_\_.py                                               |        0 |        0 |    100% |           |
 | tests/benchmark/conftest.py                                                   |       26 |        1 |     96% |        35 |
 | tests/benchmark/test\_bench\_env.py                                           |       54 |        0 |    100% |           |
+| tests/benchmark/test\_bench\_guard\_pi.py                                     |       41 |        0 |    100% |           |
+| tests/benchmark/test\_bench\_guard\_rules.py                                  |       17 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_paths.py                                         |       13 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_sandbox\_policy.py                               |       78 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_tool\_dirs.py                                    |       36 |        0 |    100% |           |
@@ -116,7 +120,7 @@
 | tests/test\_workflows.py                                                      |       25 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_pr.py                                       |       64 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **21631** |  **586** | **97%** |           |
+| **TOTAL**                                                                     | **21715** |  **587** | **97%** |           |
 
 
 ## Setup coverage badge
