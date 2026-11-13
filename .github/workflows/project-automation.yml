@@ -17,6 +17,7 @@ jobs:
   automate:
     permissions:
       checks: read
+      contents: read
       pull-requests: write
       statuses: write
     uses: alexfayers/llm-prompts/.github/workflows/pr-automation.yml@main
