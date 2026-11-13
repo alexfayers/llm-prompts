@@ -425,6 +425,30 @@ class TestRunSetup:
         fake_subprocess.on("uv", "tool", "upgrade", stdout="Updated core\n")
         assert setup.run_setup() is True
 
+    def test_upgrade_refreshes_git_dependencies_without_reporting_a_change(
+        self, tmp_path: Path, tools_dir: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        (tmp_path / "core" / "pyproject.toml").write_text(
+            '[project]\nname = "core"\n[project.scripts]\ncore = "core:main"\n'
+            '[tool.uv.sources]\nGit_Dep = { git = "https://example.com/git-dep.git" }\n'
+            'local-dep = { path = "../local-dep" }\n',
+            encoding="utf-8",
+        )
+        fake_subprocess.on("uv", "tool", "upgrade", stderr="Nothing to upgrade\n")
+        setup.run_setup()
+
+        assert setup.run_setup() is False
+
+        *_, upgrade = fake_subprocess.matching("uv", "tool", "upgrade")
+        assert upgrade == [
+            "uv",
+            "tool",
+            "upgrade",
+            "core",
+            "--reinstall-package",
+            "git-dep",
+        ]
+
     def test_forced_reinstall_reports_a_change_even_if_uv_says_nothing_to_upgrade(
         self, tools_dir: Path, fake_subprocess: FakeSubprocess
     ) -> None:
