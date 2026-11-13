@@ -623,6 +623,27 @@ class TestPullLocalSources:
             " undo with: git reset --keep refs/llm-prompts/pre-sync"
         )
 
+    @pytest.mark.parametrize("test", ["'unterminated", "   "])
+    def test_unparseable_source_test_only_warns(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess, test: str
+    ) -> None:
+        clone = tmp_path / "clone"
+        (clone / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-list", "--count", stdout="1\n")
+        fake_subprocess.on("pull", "--ff-only", returncode=1)
+
+        with patch(
+            "llm_prompts.main_sync.sync_diverged",
+            return_value=SyncResult("squash-synced", replayed=1),
+        ):
+            outcome = cli._pull_one_local_source("core", str(clone), test)
+
+        assert outcome.changed
+        assert outcome.messages[-1] == (
+            f"[core] warning: `{test}` could not be run;"
+            " undo with: git reset --keep refs/llm-prompts/pre-sync"
+        )
+
     def test_configured_source_test_is_run_by_the_update_pull(
         self,
         tmp_path: Path,

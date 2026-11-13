@@ -472,9 +472,11 @@ def _source_test_warnings(name: str, repo: Path, test: str) -> list[str]:
     from .main_sync import PRE_SYNC_REF
 
     try:
+        if not (argv := shlex.split(test)):
+            raise ValueError("empty command")
         passed = (
             subprocess.run(
-                shlex.split(test),
+                argv,
                 cwd=repo,
                 capture_output=True,
                 check=False,
@@ -485,7 +487,7 @@ def _source_test_warnings(name: str, repo: Path, test: str) -> list[str]:
         problem = "failed on the synced main"
     except subprocess.TimeoutExpired:
         passed, problem = False, f"timed out after {TEST_TIMEOUT}s"
-    except OSError:
+    except (OSError, ValueError):
         passed, problem = False, "could not be run"
     if passed:
         return []
