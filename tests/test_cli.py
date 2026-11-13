@@ -756,6 +756,35 @@ class TestCollectUpdateMessages:
         assert result[0].startswith("[pkg] update check failed: ")
         assert "secret" not in result[0]
 
+    @pytest.mark.real_io
+    def test_failed_local_fetch_is_reported(self, tmp_path: Path) -> None:
+        clone = tmp_path / "clone"
+        subprocess.run(["git", "init", "-q", str(clone)], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(clone),
+                "remote",
+                "add",
+                "origin",
+                str(tmp_path / "gone"),
+            ],
+            check=True,
+        )
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch(
+                "llm_prompts.setup._load_config",
+                return_value=[{"name": "core", "source": str(clone)}],
+            ),
+            patch("llm_prompts.plugins._load_plugins", return_value=[]),
+        ):
+            mock_config.return_value.exists.return_value = True
+            result = _collect_update_messages()
+
+        assert result[0].startswith("[core] update check failed: ")
+
     def test_update_instruction_appears_once_after_all_packages(self) -> None:
         config = [
             {"name": "pkg-a", "source": "~/git/pkg-a"},
