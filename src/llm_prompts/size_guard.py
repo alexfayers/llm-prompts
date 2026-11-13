@@ -41,6 +41,8 @@ from .install import (
     _PiRuleBundle,
     _rendered_content,
     _resolve_priority_sources,
+    _skill_layers,
+    _skill_part_files,
     _targets_agent,
     assume_commands,
     content_subdirs,
@@ -334,7 +336,8 @@ def _iter_skill_artifacts(
 
     Skills never split by shared-vs-agent-specific the way rules/workflows do
     - every skill's `SKILL.md` is substituted (never rendered), matching
-    `_materialize_builtin_skill`.
+    `_materialize_builtin_skill`. Each installed sibling `*.md` part, from any
+    layer, is measured raw.
 
     Args:
         root: Prompts directory being scanned.
@@ -388,6 +391,52 @@ def _iter_skill_artifacts(
             allowances.get(SKILL_DESCRIPTION_CHARS, {}).get(name),
         )
         yield from _common_artifacts(substituted, target, name, skill_md)
+    skill_names = sorted(
+        {
+            skill_dir.name
+            for candidate in candidate_dirs
+            if candidate.is_dir()
+            for skill_dir in candidate.iterdir()
+            if skill_dir.is_dir()
+        }
+    )
+    for name in skill_names:
+        for part in _skill_part_files(_skill_layers(candidate_dirs, name, gate)):
+            yield from _iter_part_artifacts(
+                part, target, f"{name}/{part.name}", allowances
+            )
+
+
+def _iter_part_artifacts(
+    part: Path,
+    target: str,
+    dest_name: str,
+    allowances: dict[str, dict[str, int]],
+) -> Iterator[Artifact]:
+    """Yield size/validity artifacts for one unsubstituted skill part file.
+
+    Args:
+        part: Part file beside its skill's `SKILL.md`.
+        target: Render target.
+        dest_name: Installed name, ``<skill>/<part>.md``.
+        allowances: This root's declared per-artifact ceilings.
+    """
+    content = _read_text(part)
+    yield Artifact(
+        SKILL_BODY_BYTES,
+        target,
+        dest_name,
+        len(content.encode()),
+        part,
+        allowances.get(SKILL_BODY_BYTES, {}).get(dest_name),
+    )
+    yield Artifact(
+        NO_UNSUBSTITUTED_PLACEHOLDERS,
+        target,
+        dest_name,
+        not find_unreplaced_variables(content),
+        part,
+    )
 
 
 def _iter_agent_artifacts(
@@ -984,6 +1033,7 @@ def _iter_source_artifacts(
     content: str,
     targets: tuple[str, ...],
     allowances: dict[str, dict[str, int]],
+    source: Path,
 ) -> Iterator[Artifact]:
     """Mirror one source file into `tmp` and yield its artifacts, per its position.
 
@@ -993,6 +1043,7 @@ def _iter_source_artifacts(
         content: The file's hypothetical text.
         targets: Render targets to measure.
         allowances: The owning root's declared per-artifact ceilings.
+        source: The real source path, for a skill's sibling `SKILL.md` and parts.
     """
     if len(rel_parts) == 3 and rel_parts[1] in ("rules", "workflows"):
         first, kind, _ = rel_parts
@@ -1007,12 +1058,22 @@ def _iter_source_artifacts(
                 tmp, target, kind, bytes_metric, lines_metric, allowances
             )
     elif (
-        len(rel_parts) == 4 and rel_parts[1] == "skills" and rel_parts[3] == "SKILL.md"
+        len(rel_parts) == 4
+        and rel_parts[1] == "skills"
+        and rel_parts[3].endswith(".md")
     ):
-        first = rel_parts[0]
+        first, _, skill, file_name = rel_parts
         _mirror(tmp, rel_parts, content)
+        for sibling in sorted(source.parent.glob("*.md")):
+            if sibling.name != file_name:
+                _mirror(tmp, (*rel_parts[:3], sibling.name), _read_text(sibling))
         for target in _scoped_targets(first, targets):
-            yield from _iter_skill_artifacts(tmp, target, allowances)
+            for artifact in _iter_skill_artifacts(tmp, target, allowances):
+                if (
+                    file_name == "SKILL.md"
+                    or artifact.dest_name == f"{skill}/{file_name}"
+                ):
+                    yield artifact
     elif rel_parts[1:2] == ("agents",) and len(rel_parts) == 3:
         _mirror(tmp, rel_parts, content)
         for target in _scoped_targets(rel_parts[0], targets):
@@ -1058,7 +1119,7 @@ def check_source(
         with tempfile.TemporaryDirectory() as tmp_dir:
             artifacts = list(
                 _iter_source_artifacts(
-                    Path(tmp_dir), rel_parts, content, targets, allowances
+                    Path(tmp_dir), rel_parts, content, targets, allowances, source
                 )
             )
         if "pi" in targets and _affects_pi_roles(rel_parts):

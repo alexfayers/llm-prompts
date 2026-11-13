@@ -13,6 +13,7 @@ from llm_prompts.size_guard import (
     Violation,
     ceiling_for,
     check,
+    check_source,
     resolve_skip_set,
 )
 from llm_prompts.size_limits import (
@@ -21,6 +22,7 @@ from llm_prompts.size_limits import (
     COLLECTION_SCHEDULE,
     FINALS,
     FRONTMATTER_VALID,
+    NO_UNSUBSTITUTED_PLACEHOLDERS,
     RULE_BYTES,
     RULE_LINES,
     SCHEDULES,
@@ -198,3 +200,126 @@ class TestHerdsmanRender:
 
         (artifact,) = (a for a in result.artifacts if a.metric == RULE_BYTES)
         assert artifact.value == len("delegate_agent\n")
+
+
+class TestSkillParts:
+    @staticmethod
+    def _skill_root(tmp_path: Path, part_text: str) -> Path:
+        skill = tmp_path / "root" / "shared" / "skills" / "grp"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("---\nname: grp\ndescription: d\n---\nbody\n")
+        (skill / "part.md").write_text(part_text)
+        return tmp_path / "root"
+
+    def test_part_over_the_body_cap_is_flagged(self, tmp_path: Path) -> None:
+        root = self._skill_root(tmp_path, "x" * (FINALS[SKILL_BODY_BYTES] + 1))
+
+        result = check([root], ("claude-code",))
+
+        assert [(v.metric, v.dest_name) for v in result.violations] == [
+            (SKILL_BODY_BYTES, "grp/part.md")
+        ]
+
+    def test_a_directory_named_like_a_part_is_ignored(self, tmp_path: Path) -> None:
+        root = self._skill_root(tmp_path, "ok\n")
+        (root / "shared" / "skills" / "grp" / "dir.md").mkdir()
+
+        assert check([root], ("claude-code",)).violations == []
+
+    def test_part_with_an_unreplaced_placeholder_is_flagged(
+        self, tmp_path: Path
+    ) -> None:
+        root = self._skill_root(tmp_path, "{{UNKNOWN}}\n")
+
+        result = check([root], ("claude-code",))
+
+        assert [(v.metric, v.dest_name) for v in result.violations] == [
+            (NO_UNSUBSTITUTED_PLACEHOLDERS, "grp/part.md")
+        ]
+
+    def test_part_allowance_is_honoured(self, tmp_path: Path) -> None:
+        size = FINALS[SKILL_BODY_BYTES] + 1
+        root = self._skill_root(tmp_path, "x" * size)
+        allowances = {SKILL_BODY_BYTES: {"grp/part.md": size}}
+        (root / "size_allowances.json").write_text(json.dumps(allowances))
+
+        result = check([root], ("claude-code",))
+
+        assert result.violations == []
+
+    def test_part_edit_is_flagged_by_check_source(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = self._skill_root(tmp_path, "ok\n")
+        monkeypatch.setattr("llm_prompts.size_guard._own_root_dir", lambda: root)
+        part = root / "shared/skills/grp/part.md"
+
+        result = check_source(
+            part, "x" * (FINALS[SKILL_BODY_BYTES] + 1), ("claude-code",)
+        )
+
+        assert [(v.metric, v.dest_name) for v in result.violations] == [
+            (SKILL_BODY_BYTES, "grp/part.md")
+        ]
+
+    def test_skill_md_edit_flags_an_oversized_sibling_part(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = self._skill_root(tmp_path, "x" * (FINALS[SKILL_BODY_BYTES] + 1))
+        monkeypatch.setattr("llm_prompts.size_guard._own_root_dir", lambda: root)
+        skill_md = root / "shared/skills/grp/SKILL.md"
+
+        result = check_source(skill_md, skill_md.read_text(), ("claude-code",))
+
+        assert [(v.metric, v.dest_name) for v in result.violations] == [
+            (SKILL_BODY_BYTES, "grp/part.md")
+        ]
+
+    def test_part_in_a_shadowed_layer_with_its_own_skill_md_is_still_flagged(
+        self, tmp_path: Path
+    ) -> None:
+        root = self._skill_root(tmp_path, "ok\n")
+        shadowed = root / "claude-code" / "skills" / "grp"
+        shadowed.mkdir(parents=True)
+        (shadowed / "SKILL.md").write_text("---\nname: grp\ndescription: d\n---\n")
+        (shadowed / "big.md").write_text("x" * (FINALS[SKILL_BODY_BYTES] + 1))
+
+        result = check([root], ("claude-code",))
+
+        assert [(v.metric, v.dest_name) for v in result.violations] == [
+            (SKILL_BODY_BYTES, "grp/big.md")
+        ]
+
+    def test_overlay_part_without_a_sibling_skill_md_is_flagged(
+        self, tmp_path: Path
+    ) -> None:
+        skill = tmp_path / "overlay" / "shared" / "skills" / "grp"
+        skill.mkdir(parents=True)
+        (skill / "part.md").write_text("x" * (FINALS[SKILL_BODY_BYTES] + 1))
+
+        result = check([tmp_path / "overlay"], ("claude-code",))
+
+        assert [(v.metric, v.dest_name) for v in result.violations] == [
+            (SKILL_BODY_BYTES, "grp/part.md")
+        ]
+
+    def test_overlay_part_edit_without_a_sibling_skill_md_is_flagged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        own = self._skill_root(tmp_path, "ok\n")
+        monkeypatch.setattr("llm_prompts.size_guard._own_root_dir", lambda: own)
+        overlay = tmp_path / "overlay"
+        part = overlay / "shared/skills/grp/part.md"
+        part.parent.mkdir(parents=True)
+        part.write_text("ok\n")
+        monkeypatch.setattr(
+            "llm_prompts.size_guard._discover_overlay_paths", lambda: [overlay]
+        )
+
+        result = check_source(
+            part, "x" * (FINALS[SKILL_BODY_BYTES] + 1), ("claude-code",)
+        )
+
+        assert [(v.metric, v.dest_name) for v in result.violations] == [
+            (SKILL_BODY_BYTES, "grp/part.md")
+        ]

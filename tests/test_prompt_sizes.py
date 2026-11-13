@@ -666,6 +666,51 @@ class TestCollectionSplitsAlwaysLoadedFromOnDemand:
         assert measured[(ALWAYS_SKILL_FRONTMATTER_BYTES, "kiro")] == len(frontmatter)
         assert measured[(ON_DEMAND_SKILL_BODY_BYTES, "kiro")] == len("\nFor kiro.\n")
 
+    def test_a_skill_part_loads_on_demand_with_its_skill_body(
+        self, tmp_path: Path
+    ) -> None:
+        _make_prompts_tree(tmp_path, targets=("kiro",))
+        _write(tmp_path / "shared" / "skills" / "demo" / "part.md", "Part text.\n")
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check([tmp_path], targets=("kiro",))
+
+        measured = {a.metric: int(a.value) for a in result.artifacts}
+        assert measured[ON_DEMAND_SKILL_BODY_BYTES] == len("\nFor kiro.\n") + len(
+            "Part text.\n"
+        )
+
+    def test_an_overlay_skill_still_loads_the_parts_of_the_skill_it_overrides(
+        self, tmp_path: Path
+    ) -> None:
+        overlay = tmp_path / "overlay"
+        _make_prompts_tree(tmp_path, targets=("kiro",))
+        _write(tmp_path / "shared" / "skills" / "demo" / "base.md", "Base part.\n")
+        _write(
+            overlay / "shared" / "skills" / "demo" / "SKILL.md",
+            "---\nname: demo\ndescription: A demo skill.\n---\n\nOverlay.\n",
+        )
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check([tmp_path, overlay], targets=("kiro",))
+
+        measured = {a.metric: int(a.value) for a in result.artifacts}
+        assert measured[ON_DEMAND_SKILL_BODY_BYTES] == len("\nOverlay.\n") + len(
+            "Base part.\n"
+        )
+
+    def test_an_overlay_part_without_a_skill_md_loads_with_the_skill_it_extends(
+        self, tmp_path: Path
+    ) -> None:
+        overlay = tmp_path / "overlay"
+        _make_prompts_tree(tmp_path, targets=("kiro",))
+        _write(overlay / "shared" / "skills" / "demo" / "extra.md", "Extra part.\n")
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check([tmp_path, overlay], targets=("kiro",))
+
+        measured = {a.metric: int(a.value) for a in result.artifacts}
+        assert measured[ON_DEMAND_SKILL_BODY_BYTES] == len("\nFor kiro.\n") + len(
+            "Extra part.\n"
+        )
+
     def test_an_agent_loads_its_frontmatter_always_and_its_body_on_demand(
         self, tmp_path: Path
     ) -> None:
