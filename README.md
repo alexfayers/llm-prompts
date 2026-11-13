@@ -6,6 +6,8 @@
 |------------------------------------------------------------------------------ | -------: | -------: | ------: | --------: |
 | src/llm\_prompts/\_\_init\_\_.py                                              |        0 |        0 |    100% |           |
 | src/llm\_prompts/batching.py                                                  |      138 |        1 |     99% |       129 |
+| src/llm\_prompts/benchmark/\_\_init\_\_.py                                    |        1 |        0 |    100% |           |
+| src/llm\_prompts/benchmark/types.py                                           |      204 |        8 |     96% |71, 76, 107, 112, 115, 126, 157, 170 |
 | src/llm\_prompts/claude\_models.py                                            |       23 |        0 |    100% |           |
 | src/llm\_prompts/cli.py                                                       |      622 |       70 |     89% |96-97, 123-124, 131-144, 250-251, 363-364, 522, 525, 577, 644-656, 734-736, 744-747, 799-808, 1112-1114, 1117-1123, 1126-1128, 1131-1145, 1155, 1160, 1172, 1194-1198, 1306-1307, 1312 |
 | src/llm\_prompts/collection\_size.py                                          |      117 |        4 |     97% |245-246, 396, 453 |
@@ -53,6 +55,8 @@
 | src/llm\_prompts/watch/sources/\_\_init\_\_.py                                |        0 |        0 |    100% |           |
 | src/llm\_prompts/watch/sources/command.py                                     |       36 |        1 |     97% |        55 |
 | src/llm\_prompts/watch/sources/github\_pr.py                                  |       84 |       11 |     87% |29, 44-49, 86-87, 91, 102-103, 115 |
+| tests/benchmark/\_\_init\_\_.py                                               |        0 |        0 |    100% |           |
+| tests/benchmark/test\_bench\_types.py                                         |        5 |        0 |    100% |           |
 | tests/conftest.py                                                             |      473 |        4 |     99% |159, 799, 905, 944 |
 | tests/test\_batching.py                                                       |      314 |        0 |    100% |           |
 | tests/test\_build\_wave.py                                                    |      282 |        1 |     99% |       112 |
@@ -101,7 +105,7 @@
 | tests/test\_workflows.py                                                      |       25 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_pr.py                                       |       64 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **20981** |  **529** | **97%** |           |
+| **TOTAL**                                                                     | **21191** |  **537** | **97%** |           |
 
 
 ## Setup coverage badge
