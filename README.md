@@ -12,7 +12,7 @@
 | src/llm\_prompts/benchmark/paths.py                                           |       51 |       13 |     75% |26, 36, 41, 46, 51, 56, 61, 67, 92, 99, 106-108 |
 | src/llm\_prompts/benchmark/types.py                                           |      204 |        8 |     96% |71, 76, 107, 112, 115, 126, 157, 170 |
 | src/llm\_prompts/claude\_models.py                                            |       23 |        0 |    100% |           |
-| src/llm\_prompts/cli.py                                                       |      622 |       70 |     89% |96-97, 123-124, 131-144, 250-251, 363-364, 522, 525, 577, 644-656, 734-736, 744-747, 799-808, 1112-1114, 1117-1123, 1126-1128, 1131-1145, 1155, 1160, 1172, 1194-1198, 1306-1307, 1312 |
+| src/llm\_prompts/cli.py                                                       |      625 |       67 |     89% |97-98, 124-125, 132-145, 251-252, 364-365, 523, 526, 578, 645-657, 735-737, 745-748, 800-809, 1116-1118, 1121-1127, 1130-1132, 1143-1149, 1159, 1164, 1176, 1198-1202, 1310-1311, 1316 |
 | src/llm\_prompts/collection\_size.py                                          |      117 |        4 |     97% |245-246, 396, 453 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/contribute.py                                                |      867 |       11 |     99% |153, 300, 1124, 1149, 1349, 1366-1367, 1457-1459, 1800 |
@@ -47,7 +47,7 @@
 | src/llm\_prompts/size\_report.py                                              |      196 |        2 |     99% |  198, 200 |
 | src/llm\_prompts/skill\_injection.py                                          |       37 |        2 |     95% |    33, 36 |
 | src/llm\_prompts/squash\_subject.py                                           |        6 |        0 |    100% |           |
-| src/llm\_prompts/telemetry.py                                                 |       79 |        2 |     97% |   140-141 |
+| src/llm\_prompts/telemetry.py                                                 |       80 |        2 |     98% |   141-142 |
 | src/llm\_prompts/telemetry\_core.py                                           |      216 |        5 |     98% |66-67, 76-77, 398 |
 | src/llm\_prompts/watch/\_\_init\_\_.py                                        |        0 |        0 |    100% |           |
 | src/llm\_prompts/watch/core/\_\_init\_\_.py                                   |        0 |        0 |    100% |           |
@@ -62,7 +62,7 @@
 | tests/benchmark/test\_bench\_env.py                                           |       54 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_paths.py                                         |       13 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_types.py                                         |        5 |        0 |    100% |           |
-| tests/conftest.py                                                             |      473 |        4 |     99% |159, 799, 905, 944 |
+| tests/conftest.py                                                             |      476 |        4 |     99% |159, 805, 911, 950 |
 | tests/test\_batching.py                                                       |      314 |        0 |    100% |           |
 | tests/test\_build\_wave.py                                                    |      282 |        1 |     99% |       112 |
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
@@ -103,14 +103,14 @@
 | tests/test\_size\_report.py                                                   |      223 |        0 |    100% |           |
 | tests/test\_skill\_injection.py                                               |       30 |        0 |    100% |           |
 | tests/test\_squash\_subject.py                                                |        7 |        0 |    100% |           |
-| tests/test\_telemetry.py                                                      |      342 |        0 |    100% |           |
+| tests/test\_telemetry.py                                                      |      350 |        0 |    100% |           |
 | tests/test\_telemetry\_core.py                                                |      153 |        1 |     99% |       126 |
 | tests/test\_todos\_script.py                                                  |       88 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      119 |        0 |    100% |           |
 | tests/test\_workflows.py                                                      |       25 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_pr.py                                       |       64 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **21333** |  **551** | **97%** |           |
+| **TOTAL**                                                                     | **21348** |  **548** | **97%** |           |
 
 
 ## Setup coverage badge
