@@ -38,3 +38,22 @@ def test_with_retries_retries_a_transient_failure() -> None:
         return "ok"
 
     assert network.with_retries(call) == "ok"
+
+
+def test_with_retries_retries_a_timeout_and_gives_up_after_the_last_attempt() -> None:
+    attempts = 0
+
+    def call() -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts < network.NETWORK_ATTEMPTS:
+            raise subprocess.TimeoutExpired("git", 30)
+        return "ok"
+
+    assert network.with_retries(call) == "ok"
+
+    def always_times_out() -> str:
+        raise subprocess.TimeoutExpired("git", 30)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        network.with_retries(always_times_out)
