@@ -11,6 +11,8 @@
 | src/llm\_prompts/benchmark/cell/env.py                                        |       24 |        1 |     96% |        61 |
 | src/llm\_prompts/benchmark/cell/home\_dirs.py                                 |       81 |       37 |     54% |29, 37-50, 57-71, 80-81, 95, 104-109 |
 | src/llm\_prompts/benchmark/paths.py                                           |       51 |       13 |     75% |26, 36, 41, 46, 51, 56, 61, 67, 92, 99, 106-108 |
+| src/llm\_prompts/benchmark/runner/\_\_init\_\_.py                             |        0 |        0 |    100% |           |
+| src/llm\_prompts/benchmark/runner/sandbox.py                                  |       61 |        2 |     97% |     47-48 |
 | src/llm\_prompts/benchmark/types.py                                           |      204 |        8 |     96% |71, 76, 107, 112, 115, 126, 157, 170 |
 | src/llm\_prompts/claude\_models.py                                            |       23 |        0 |    100% |           |
 | src/llm\_prompts/cli.py                                                       |      625 |       67 |     89% |97-98, 124-125, 132-145, 251-252, 364-365, 523, 526, 578, 645-657, 735-737, 745-748, 800-809, 1116-1118, 1121-1127, 1130-1132, 1143-1149, 1159, 1164, 1176, 1198-1202, 1310-1311, 1316 |
@@ -60,9 +62,10 @@
 | src/llm\_prompts/watch/sources/command.py                                     |       36 |        1 |     97% |        55 |
 | src/llm\_prompts/watch/sources/github\_pr.py                                  |       84 |       11 |     87% |29, 44-49, 86-87, 91, 102-103, 115 |
 | tests/benchmark/\_\_init\_\_.py                                               |        0 |        0 |    100% |           |
-| tests/benchmark/conftest.py                                                   |       10 |        0 |    100% |           |
+| tests/benchmark/conftest.py                                                   |       26 |        1 |     96% |        35 |
 | tests/benchmark/test\_bench\_env.py                                           |       54 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_paths.py                                         |       13 |        0 |    100% |           |
+| tests/benchmark/test\_bench\_sandbox\_policy.py                               |       78 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_tool\_dirs.py                                    |       36 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_types.py                                         |        5 |        0 |    100% |           |
 | tests/conftest.py                                                             |      476 |        4 |     99% |159, 805, 911, 950 |
@@ -113,7 +116,7 @@
 | tests/test\_workflows.py                                                      |       25 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_pr.py                                       |       64 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **21476** |  **583** | **97%** |           |
+| **TOTAL**                                                                     | **21631** |  **586** | **97%** |           |
 
 
 ## Setup coverage badge
