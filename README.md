@@ -7,7 +7,7 @@
 | src/llm\_prompts/\_\_init\_\_.py                                              |        0 |        0 |    100% |           |
 | src/llm\_prompts/batching.py                                                  |      138 |        1 |     99% |       129 |
 | src/llm\_prompts/claude\_models.py                                            |       23 |        0 |    100% |           |
-| src/llm\_prompts/cli.py                                                       |      604 |       70 |     88% |94-95, 121-122, 129-142, 248-249, 360-361, 489, 492, 541, 607-619, 697-699, 707-710, 762-771, 1075-1077, 1080-1086, 1089-1091, 1094-1108, 1118, 1123, 1135, 1157-1161, 1269-1270, 1275 |
+| src/llm\_prompts/cli.py                                                       |      620 |       72 |     88% |96-97, 123-124, 131-144, 250-251, 362-363, 488-489, 519, 522, 574, 641-653, 731-733, 741-744, 796-805, 1109-1111, 1114-1120, 1123-1125, 1128-1142, 1152, 1157, 1169, 1191-1195, 1303-1304, 1309 |
 | src/llm\_prompts/collection\_size.py                                          |      115 |        5 |     96% |179, 235-236, 386, 443 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/contribute.py                                                |      867 |       11 |     99% |153, 300, 1124, 1149, 1349, 1366-1367, 1457-1459, 1800 |
@@ -36,7 +36,7 @@
 | src/llm\_prompts/prompts/shared/skills/todos/find\_todos.py                   |       44 |        7 |     84% |96-98, 103-105, 109 |
 | src/llm\_prompts/removed\_agents\_notice.py                                   |       14 |        0 |    100% |           |
 | src/llm\_prompts/render\_template.py                                          |      166 |       14 |     92% |149, 417-418, 427-443, 455-459, 463 |
-| src/llm\_prompts/setup.py                                                     |      350 |       44 |     87% |232-261, 303-306, 313-314, 354, 357, 378-379, 418-419, 471, 635-638, 679-682, 712-713, 716, 768-769, 784-786 |
+| src/llm\_prompts/setup.py                                                     |      351 |       44 |     87% |236-265, 307-310, 317-318, 358, 361, 382-383, 422-423, 475, 639-642, 683-686, 716-717, 720, 772-773, 788-790 |
 | src/llm\_prompts/size\_guard.py                                               |      354 |       11 |     97% |244-245, 352, 423-425, 460, 482, 486-488 |
 | src/llm\_prompts/size\_limits.py                                              |       61 |        1 |     98% |       138 |
 | src/llm\_prompts/size\_report.py                                              |      187 |        3 |     98% |144, 198, 200 |
@@ -59,7 +59,7 @@
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
 | tests/test\_check\_repos\_script.py                                           |       67 |        0 |    100% |           |
 | tests/test\_claude\_models.py                                                 |       25 |        0 |    100% |           |
-| tests/test\_cli.py                                                            |      948 |        1 |     99% |       896 |
+| tests/test\_cli.py                                                            |      986 |        1 |     99% |       988 |
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
 | tests/test\_conftest.py                                                       |       77 |        0 |    100% |           |
 | tests/test\_contribute.py                                                     |     1877 |        0 |    100% |           |
@@ -101,7 +101,7 @@
 | tests/test\_workflows.py                                                      |       25 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_pr.py                                       |       64 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **20690** |  **530** | **97%** |           |
+| **TOTAL**                                                                     | **20745** |  **532** | **97%** |           |
 
 
 ## Setup coverage badge
