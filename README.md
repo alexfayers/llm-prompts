@@ -18,7 +18,7 @@
 | src/llm\_prompts/benchmark/runner/sandbox.py                                  |       61 |        2 |     97% |     47-48 |
 | src/llm\_prompts/benchmark/types.py                                           |      204 |        8 |     96% |71, 76, 107, 112, 115, 126, 157, 170 |
 | src/llm\_prompts/claude\_models.py                                            |       23 |        0 |    100% |           |
-| src/llm\_prompts/cli.py                                                       |      625 |       67 |     89% |97-98, 124-125, 132-145, 251-252, 364-365, 523, 526, 578, 645-657, 735-737, 745-748, 800-809, 1116-1118, 1121-1127, 1130-1132, 1143-1149, 1159, 1164, 1176, 1198-1202, 1310-1311, 1316 |
+| src/llm\_prompts/cli.py                                                       |      636 |       67 |     89% |97-98, 124-125, 132-145, 251-252, 364-365, 524, 527, 588, 657-669, 747-749, 757-760, 812-821, 1128-1130, 1133-1139, 1142-1144, 1155-1161, 1171, 1176, 1188, 1210-1214, 1331-1332, 1337 |
 | src/llm\_prompts/collection\_size.py                                          |      117 |        4 |     97% |245-246, 396, 453 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/contribute.py                                                |      867 |       11 |     99% |153, 300, 1124, 1149, 1349, 1366-1367, 1457-1459, 1800 |
@@ -81,7 +81,7 @@
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
 | tests/test\_check\_repos\_script.py                                           |       67 |        0 |    100% |           |
 | tests/test\_claude\_models.py                                                 |       25 |        0 |    100% |           |
-| tests/test\_cli.py                                                            |     1005 |        1 |     99% |      1038 |
+| tests/test\_cli.py                                                            |     1047 |        1 |     99% |      1124 |
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
 | tests/test\_conftest.py                                                       |       77 |        0 |    100% |           |
 | tests/test\_contribute.py                                                     |     1877 |        0 |    100% |           |
@@ -123,7 +123,7 @@
 | tests/test\_workflows.py                                                      |       25 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_pr.py                                       |       64 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **21951** |  **569** | **97%** |           |
+| **TOTAL**                                                                     | **22004** |  **569** | **97%** |           |
 
 
 ## Setup coverage badge
