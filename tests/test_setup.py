@@ -449,6 +449,74 @@ class TestRunSetup:
             "git-dep",
         ]
 
+    @pytest.fixture
+    def own_package(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(setup, "_OWN_PACKAGE", "core")
+
+    def test_env_without_llm_prompts_is_not_probed_for_it(
+        self, tools_dir: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        setup.run_setup()
+
+        assert not fake_subprocess.matching(str(tools_dir / "core" / "bin" / "python"))
+
+    @pytest.mark.usefixtures("own_package")
+    def test_upgrade_that_leaves_the_env_unable_to_start_refreshes_every_dependency(
+        self, tools_dir: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        fake_subprocess.on_match(
+            lambda argv: argv[0] == str(tools_dir / "core" / "bin" / "python"),
+            returncode=[1, 0],
+        )
+
+        assert setup.run_setup() is True
+
+        assert fake_subprocess.matching("uv", "tool", "upgrade")[-1] == [
+            "uv",
+            "tool",
+            "upgrade",
+            "core",
+            "--reinstall",
+        ]
+
+    @pytest.mark.usefixtures("own_package")
+    @pytest.mark.parametrize("tool_filter", [None, "cli"])
+    def test_env_that_still_cannot_start_after_the_refresh_is_reported_without_traceback(
+        self,
+        tools_dir: Path,
+        fake_subprocess: FakeSubprocess,
+        capsys: pytest.CaptureFixture[str],
+        tool_filter: str | None,
+    ) -> None:
+        fake_subprocess.on_match(
+            lambda argv: argv[0] == str(tools_dir / "core" / "bin" / "python"),
+            returncode=1,
+            stderr="Traceback (most recent call last):\nModuleNotFoundError: No module named 'x'\n",
+        )
+
+        with pytest.raises(SystemExit) as raised:
+            setup.run_setup(tool_filter)
+
+        assert getattr(raised.value, "reason", None) == "tool_install_failed"
+        err = capsys.readouterr().err
+        assert "No module named 'x'" in err
+        assert "Traceback" not in err
+
+    @pytest.mark.usefixtures("own_package")
+    def test_failed_upgrade_falls_back_to_an_install_that_is_also_verified(
+        self, tools_dir: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        fake_subprocess.on("uv", "tool", "upgrade", returncode=1)
+        fake_subprocess.on_match(
+            lambda argv: argv[0] == str(tools_dir / "core" / "bin" / "python"),
+            returncode=1,
+        )
+
+        with pytest.raises(SystemExit):
+            setup.run_setup()
+
+        assert fake_subprocess.matching("uv", "tool", "install")
+
     def test_forced_reinstall_reports_a_change_even_if_uv_says_nothing_to_upgrade(
         self, tools_dir: Path, fake_subprocess: FakeSubprocess
     ) -> None:

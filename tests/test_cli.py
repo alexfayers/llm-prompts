@@ -1781,6 +1781,7 @@ class TestRunSetupForceReinstall:
             patch("llm_prompts.setup._require_uv"),
             patch("llm_prompts.setup._build_commands", return_value=env),
             patch("llm_prompts.setup._has_drifted", return_value=False),
+            patch("llm_prompts.setup._startup_problem", return_value=None),
             patch("llm_prompts.setup._remove_member_envs", return_value=False),
             patch("llm_prompts.setup.write_pyproject_stamp"),
             patch("llm_prompts.setup.write_checkout_stamp"),
