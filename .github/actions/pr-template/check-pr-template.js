@@ -1,9 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 const { findStickyComment, upsertStickyComment } = require('../../scripts/sticky-comment.js');
+const yappyLimits = require('../../../src/llm_prompts/yappy_limits.json');
 
 const MARKER = '<!-- pr-template-check -->';
-const OPTIONAL_SECTIONS = ['Dependencies', 'Issues'];
+const { optional: OPTIONAL_SECTIONS, syncMark: SYNC_MARK } = require('../../../src/llm_prompts/pr_template_sections.json');
 
 function parseSections(markdown) {
   const lines = markdown.split('\n');
@@ -40,7 +41,7 @@ function findBodyIssues(templateSections, prBody) {
   const prSections = parseSections(prBody);
   const issues = [];
 
-  if (prBody.includes('<!--')) {
+  if (prBody.replaceAll(SYNC_MARK, '').includes('<!--')) {
     issues.push('Remove every leftover "<!--" placeholder comment');
   }
 
@@ -65,11 +66,11 @@ function findBodyIssues(templateSections, prBody) {
 
 const YAPPY_MARKER = '<!-- pr-yappy-check -->';
 const YAPPY_TIERS = [
-  { label: 'slightly yappy', words: 120, lines: 100 },
+  { label: 'slightly yappy', words: yappyLimits.words, lines: yappyLimits.lines },
   { label: 'yappy', words: 200, lines: 200 },
   { label: 'very yappy', words: 300, lines: 400 },
 ];
-const LOCKFILE = /(^|\/)(package-lock\.json|pnpm-lock\.yaml|uv\.lock)$/;
+const LOCKFILE = new RegExp(`(^|/)(${yappyLimits.lockfiles.map((name) => name.replace(/[.\\]/g, '\\$&')).join('|')})$`);
 const TEST_FILE = /(^|\/)(tests?|__tests__)\/|(^|\/)test_[^/]*$|[._-]tests?\.[^/]+$/;
 
 function countWords(prBody) {

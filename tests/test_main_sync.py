@@ -201,6 +201,11 @@ LOCAL_AUTHOR = (
 )
 
 
+def _remembered_main_is_saved(fake: FakeSubprocess) -> None:
+    """Answer the commit that records the earlier main, apart from the replayed commits."""
+    fake.on_match(lambda argv: "commit-tree" in argv and "-m" in argv, stdout="c\n")
+
+
 def _route_divergence(fake: FakeSubprocess) -> None:
     """Route a diverged repo: l1 is WIP, l2 is in PR head h1 by patch, l3 repeats PR commit p3."""
     fake.on("diff", "--quiet", returncode=1)
@@ -217,6 +222,8 @@ def _route_divergence(fake: FakeSubprocess) -> None:
     fake.on("cherry", "@{u}", stdout="+ l1\n+ l2\n+ l3\n")
     fake.on("cherry", "h1", stdout="+ l1\n- l2\n+ l3\n")
     fake.on("rev-parse", "@{u}", stdout="tip0\n")
+    fake.on("cherry-pick", returncode=1)
+    fake.on("ls-files", "--unmerged", stdout="100644 abc 1\ta.txt\n")
     fake.on("merge-tree", stdout="tree-l1\n")
     fake.on(
         "merge-tree",
@@ -228,11 +235,12 @@ def _route_divergence(fake: FakeSubprocess) -> None:
     fake.on("rev-parse", "l3^{tree}", stdout="tree-l3\n")
     fake.on("log", "-1", "--format=%an%x00%ae%x00%aI%x00%B", stdout=LOCAL_AUTHOR)
     fake.on("commit-tree", stdout=["tip1\n", "tip2\n"])
+    _remembered_main_is_saved(fake)
     _head_is_saved(fake)
 
 
 def _commit_tree_calls(fake: FakeSubprocess) -> list[tuple[list[str], dict[str, Any]]]:
-    return [call for call in fake.calls if "commit-tree" in call[0]]
+    return [call for call in fake.calls if "commit-tree" in call[0] and "-F" in call[0]]
 
 
 class TestSquashSync:
@@ -257,6 +265,78 @@ class TestSquashSync:
         assert fake_subprocess.matching(
             "merge-tree", "--write-tree", "--name-only", "--merge-base=p3^"
         )[0][-2:] == ["l3^", "p3"]
+
+    def test_later_pull_request_commits_are_applied_on_a_commit_not_a_tree(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        _route_divergence(fake_subprocess)
+        fake_subprocess.on(
+            "log", "--no-merges", stdout="p4\t300\tnext\np3\t200\tpr commit\n"
+        )
+        fake_subprocess.on(
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--merge-base=p3^",
+            stdout="tree-step\n",
+        )
+        fake_subprocess.on(
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--merge-base=p4^",
+            stdout="tree-l3\n",
+        )
+        fake_subprocess.on("commit-tree", stdout=["step\n", "tip1\n"])
+
+        assert sync_diverged(REPO) == SyncResult("squash-synced", replayed=1)
+
+        (second,) = fake_subprocess.matching(
+            "merge-tree", "--write-tree", "--name-only", "--merge-base=p4^"
+        )
+        assert second[-2:] == ["step", "p4"]
+
+    @pytest.mark.parametrize(
+        ("conflicts_at_p4", "step_commits"),
+        [
+            (True, ["a1\n", "b1\n", "tip1\n"]),
+            (False, ["a1\n", "a2\n", "a3\n", "b1\n", "tip1\n"]),
+        ],
+        ids=["conflicts-part-way", "ends-without-matching"],
+    )
+    def test_a_failed_pull_request_candidate_does_not_hide_a_later_matching_one(
+        self,
+        fake_subprocess: FakeSubprocess,
+        conflicts_at_p4: bool,
+        step_commits: list[str],
+    ) -> None:
+        _route_divergence(fake_subprocess)
+        fake_subprocess.on(
+            "log",
+            "--no-merges",
+            stdout="p6\t300\tnext\np5\t200\tpr commit\np4\t300\tmid\np3\t200\tpr commit\n",
+        )
+        fake_subprocess.on("commit-tree", stdout=step_commits)
+
+        def merge(
+            argv: list[str], _: dict[str, Any]
+        ) -> subprocess.CompletedProcess[str]:
+            base, ours, _theirs = argv[-3:]
+            if conflicts_at_p4 and base == "--merge-base=p4^":
+                return subprocess.CompletedProcess(argv, 1, "tree-x\nfile.txt\n", "")
+            tree = "tree-l3" if (base, ours) == ("--merge-base=p6^", "b1") else "tree-x"
+            return subprocess.CompletedProcess(argv, 0, f"{tree}\n", "")
+
+        fake_subprocess.on_match(
+            lambda argv: any(arg.startswith("--merge-base=p") for arg in argv),
+            side_effect=merge,
+        )
+
+        assert sync_diverged(REPO) == SyncResult("squash-synced", replayed=1)
+
+        assert fake_subprocess.matching(
+            "merge-tree", "--write-tree", "--name-only", "--merge-base=p5^"
+        )[-1][-2:] == ["l3^", "p5"]
 
     def test_pull_request_commit_applying_differently_is_replayed(
         self, fake_subprocess: FakeSubprocess
@@ -476,6 +556,7 @@ def _route_fixup_group(fake: FakeSubprocess) -> None:
         stdout="tree-group\n",
     )
     fake.on("commit-tree", stdout=["g1\n", "tip1\n"])
+    _remembered_main_is_saved(fake)
     fake.on("rev-parse", "g1^{tree}", stdout="tree-l3\n")
 
 

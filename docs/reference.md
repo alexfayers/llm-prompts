@@ -8,7 +8,7 @@ Run `llm-prompts --help` or `llm-prompts <command> --help` for every flag.
 llm-prompts install <agent>                    # install rules, workflows and skills
 llm-prompts install kiro --agent-config PATH   # also patch a Kiro agent JSON
 llm-prompts install <agent> --root DIR         # use DIR as the home directory
-llm-prompts update                             # report available updates, pull sources, reinstall every installed agent
+llm-prompts update                             # report updates, pull sources, copy recorded worktrees into local main, reinstall every installed agent
 llm-prompts update --check                     # list available updates without applying them
 llm-prompts update --only PATH                 # reinstall only the prompt built from this edited file
 llm-prompts update --verbose                    # also list every file changed
@@ -21,10 +21,10 @@ llm-prompts setup --init                       # create the starter config
 llm-prompts check                              # check prompt sizes and pi extension headers
 llm-prompts size-report --base-root DIR        # markdown report of prompt size changes
 llm-prompts watch gh-pr|cmd TARGET --until COND  # wait for a PR or command to match, then exit (0 match, 124 --timeout, 1 error)
-llm-prompts contribute list|sync|update        # turn commits on local main into PR branches
+llm-prompts contribute list|sync|update        # keep each worktree branch in sync with local main and its own PR
 ```
 
-`install` runs `setup` first (installs or upgrades the tools in your config), then writes the files for the agent. `--no-update` skips `setup`. `update` pulls every git-based `[[tools]]` and `[[plugins]]` source and reinstalls for each agent you have already installed.
+`install` runs `setup` first (installs or upgrades the tools in your config), then writes the files for the agent. `--no-update` skips `setup`. `update` pulls every git-based `[[tools]]` and `[[plugins]]` source copies each local source's recorded worktrees into its local main as `contribute sync --apply` does (nothing is pushed, no PR is opened, no worktree is removed), and reinstalls for each agent you have already installed. It stops before installing when a pull or copy fails or another `contribute` run holds the record lock.
 
 `contribute` is covered in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
@@ -135,6 +135,6 @@ source = "~/mcp-memory"
 
 Local paths are installed as copies. `llm-prompts install <agent>` picks up changes to rules, workflows and skills right away. `llm-prompts update` reinstalls a checkout only when files outside `prompts/` changed since the last setup.
 
-A local tool can set an optional `test` command, run in its checkout (`test = "just test"`). `update` runs it only after it rebases or replays local commits onto the pulled upstream. A failure or a timeout after 10 minutes only prints a warning with how to undo the sync. The install still goes ahead.
+A local tool can set an optional `test` command, run in its checkout (`test = "just test"`). `update` runs it only after it rebases or replays local commits onto the pulled upstream, or after copying recorded worktrees changes main. A failure or a timeout after 10 minutes only prints a warning with how to undo the sync. The install still goes ahead.
 
 Run `just` (lint, type-check, test) before opening a PR. See [CONTRIBUTING.md](../CONTRIBUTING.md).
