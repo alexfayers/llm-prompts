@@ -401,6 +401,55 @@ class TestPullLocalSources:
         assert fake_subprocess.matching("rebase") == []
         assert "[core] pulled 1 new commit(s)" in capsys.readouterr().out
 
+    def test_sources_that_fail_to_sync_are_collected(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        clone = tmp_path / "clone"
+        (clone / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-list", "--count", stdout="1\n")
+        fake_subprocess.on(
+            "pull",
+            "--ff-only",
+            side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=30),
+        )
+        failed: set[str] = set()
+
+        config = [{"name": "core", "source": str(clone)}]
+        with patch("llm_prompts.setup.config_path") as mock_config:
+            mock_config.return_value.exists.return_value = True
+            with patch("llm_prompts.setup._load_config", return_value=config):
+                _pull_local_sources(failed)
+
+        assert failed == {"core"}
+
+    def test_source_that_cannot_be_fetched_is_reported_as_failed(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        clone = tmp_path / "clone"
+        (clone / ".git").mkdir(parents=True)
+        fake_subprocess.on(
+            "fetch", side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=30)
+        )
+        fake_subprocess.on("rev-list", "--count", stdout="0\n")
+
+        outcome = cli._pull_one_local_source("core", str(clone))
+
+        assert outcome.failed
+        assert outcome.messages == ["[core] could not fetch: git fetch timed out"]
+
+    def test_source_is_failed_when_fetch_and_upstream_lookup_both_fail(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        clone = tmp_path / "clone"
+        (clone / ".git").mkdir(parents=True)
+        fake_subprocess.on("fetch", returncode=1, stderr="network down")
+        fake_subprocess.on("rev-list", "--count", returncode=128)
+
+        outcome = cli._pull_one_local_source("core", str(clone))
+
+        assert outcome.failed
+        assert outcome.messages == ["[core] could not fetch: network down"]
+
     def test_conflicting_rebase_is_aborted_and_reported(
         self,
         tmp_path: Path,
@@ -861,6 +910,43 @@ class TestUpdateCommandPullsPlugins:
         mock_setup.assert_not_called()
         mock_install.assert_called_once_with(["kiro"], size_baseline={}, verbose=False)
 
+    def test_update_skips_the_tool_reinstall_when_fetch_failed_but_cached_commits_rebased(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        fake_subprocess: FakeSubprocess,
+    ) -> None:
+        clone = tmp_path / "clone"
+        (clone / ".git").mkdir(parents=True)
+        fake_subprocess.on("fetch", returncode=1, stderr="network down")
+        fake_subprocess.on("rev-list", "--count", stdout="1\n")
+        fake_subprocess.on("pull", "--ff-only", returncode=1)
+        fake_subprocess.on("diff", "--quiet", returncode=1)
+        config = [{"name": "core", "source": str(clone)}]
+
+        with (
+            patch("sys.argv", ["llm-prompts", "update"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={"kiro": {"files": []}},
+            ),
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=config),
+            patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+            patch("llm_prompts.setup._require_uv"),
+            patch("llm_prompts.cli._reexec_update"),
+            patch("llm_prompts.install.main", return_value=frozenset()),
+            patch("llm_prompts.cli._restart_memory_service"),
+            patch("llm_prompts.plugins.pull_plugin_sources"),
+            patch("llm_prompts.size_guard.snapshot_sources", return_value={}),
+        ):
+            mock_config.return_value.exists.return_value = True
+            main()
+
+        assert fake_subprocess.matching("rebase")
+        assert not [argv for argv in fake_subprocess.commands if argv[0] == "uv"]
+        assert "Not reinstalling the tools: core" in capsys.readouterr().out
+
     def test_update_verbose_flag_reaches_the_install(self) -> None:
         with (
             patch("sys.argv", ["llm-prompts", "update", "--verbose"]),
@@ -903,7 +989,7 @@ class TestUpdateCommandPullsPlugins:
             mock_config.return_value.exists.return_value = False
             main()
 
-        assert order.mock_calls == [call.status(), call.pull()]
+        assert order.mock_calls == [call.status(), call.pull(set())]
 
     def test_update_skips_agents_no_longer_supported(self) -> None:
         with (
