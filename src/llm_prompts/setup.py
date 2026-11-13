@@ -29,6 +29,7 @@ def config_path() -> Path:
 
 
 GIT_TIMEOUT = 30
+TEST_TIMEOUT = 600
 
 _DEFAULT_CONFIG = """\
 # llm-prompts setup configuration
@@ -38,6 +39,9 @@ _DEFAULT_CONFIG = """\
 # `source` can be:
 #   - A git URL (e.g. "git+https://github.com/user/repo.git")
 #   - A local path (~/git/pkg or /abs/path) - installed from the checkout
+#
+# A local-path entry can set `test = "just test"`. `llm-prompts update` runs it in
+# the checkout after rebasing or replaying local commits, and only warns if it fails.
 #
 # The first entry owns the environment; the others are installed alongside it.
 # Each tool's commands are taken from its pyproject.toml scripts.
