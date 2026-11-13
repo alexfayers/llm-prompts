@@ -318,6 +318,25 @@ def test_begin_never_starts_a_report_when_opted_out_or_the_resume_state_is_bad(
     assert telemetry.RESUME_ENV not in os.environ
 
 
+def test_an_install_with_no_agents_sends_nothing_and_leaves_no_trace(
+    telemetry_popen: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_config_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr("llm_prompts.telemetry.read_manifest", dict)
+    state = isolated_config_dir / "telemetry.json"
+    state.unlink()
+
+    with pytest.raises(ValueError), telemetry.Run(lambda _: A) as run:
+        run.begin("update", [])
+        raise ValueError
+
+    telemetry_popen.assert_not_called()
+    assert not state.exists()
+    assert capsys.readouterr().err == ""
+
+
 def test_a_failing_report_sends_nothing_and_keeps_the_command_result(
     telemetry_popen: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
