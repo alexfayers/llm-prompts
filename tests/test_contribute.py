@@ -3418,7 +3418,7 @@ class TestSyncTargetsLinks:
             ),
         )
         assert (
-            "c1: code-only, open its PR by hand (llm-prompts-contribute skill)"
+            "c1: code-only, open its PR by hand (llm-prompts skill, contribute.md)"
             in capsys.readouterr().out
         )
 
