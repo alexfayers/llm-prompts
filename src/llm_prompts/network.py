@@ -19,14 +19,16 @@ RETRY_DELAY_SECONDS = 1.0
 
 
 def with_retries[T](call: Callable[[], T]) -> T:
-    """Run a network call and return its result, retrying transient failures with backoff."""
+    """Run a network call and return its result, retrying timeouts and transient failures with backoff."""
     for attempt in range(1, NETWORK_ATTEMPTS):
         try:
             return call()
+        except subprocess.TimeoutExpired:
+            pass
         except subprocess.CalledProcessError as error:
             if not TRANSIENT_FAILURE.search(error.stderr or ""):
                 raise
-            time.sleep(RETRY_DELAY_SECONDS * attempt)
+        time.sleep(RETRY_DELAY_SECONDS * attempt)
     return call()
 
 
