@@ -3656,11 +3656,63 @@ def _read_mcp_servers(path: Path, label: str) -> dict[str, Any]:
     return servers
 
 
-def _sync_pi_mcp_servers() -> None:
+def _pi_mcp_wrapper(fragments: list[Path]) -> list[str]:
+    """Collect the command words declared by every ``pi/mcp-stdio-wrapper.json``.
+
+    Args:
+        fragments: Candidate fragment paths, core first, then overlays.
+
+    Returns:
+        Words that prefix a stdio server's command; the last fragment wins, and
+        none is declared by default. A fragment that is unparsable, or not a
+        non-empty list of strings, declares none and logs a warning.
+    """
+    wrapper: list[str] = []
+    for fragment in fragments:
+        if not fragment.is_file():
+            continue
+        try:
+            words = json.loads(_read_text(fragment))
+        except json.JSONDecodeError:
+            words = None
+        valid = (
+            isinstance(words, list)
+            and bool(words)
+            and all(isinstance(word, str) for word in words)
+        )
+        if not valid:
+            log(
+                "warn",
+                f"[pi] {fragment.name} is not a JSON list of command words, "
+                "leaving MCP servers unwrapped.",
+            )
+        wrapper = words if valid else []
+    return wrapper
+
+
+def _wrapped_stdio_server(entry: dict[str, Any], wrapper: list[str]) -> dict[str, Any]:
+    """Return the entry run through the wrapper, unless it is remote, already wrapped (same executable and argument prefix) or the wrapper is missing."""
+    command = entry.get("command")
+    args = entry.get("args", [])
+    if (
+        not wrapper
+        or not command
+        or (
+            Path(command).name == Path(wrapper[0]).name
+            and args[: len(wrapper) - 1] == wrapper[1:]
+        )
+        or not shutil.which(wrapper[0])
+    ):
+        return entry
+    return {**entry, "command": wrapper[0], "args": [*wrapper[1:], command, *args]}
+
+
+def _sync_pi_mcp_servers(wrapper: list[str]) -> None:
     """Add the MCP servers from Claude's user config and enabled plugins that pi's lacks.
 
     Existing pi entries are never changed, and Claude's user config wins over
-    plugins. Servers pi cannot run are skipped. Only server names are logged,
+    plugins. Servers pi cannot run are skipped. Stdio servers run through the
+    overlay's wrapper command when it is on PATH. Only server names are logged,
     since entries may hold secrets.
     """
     mcp_path = _pi_agent_dir() / "mcp.json"
@@ -3677,7 +3729,9 @@ def _sync_pi_mcp_servers() -> None:
         if entry.get("type") == "sse" or not (entry.get("command") or entry.get("url")):
             log("warn", f"[pi] Skipping unsupported MCP server {name}.")
             continue
-        servers[name] = {k: entry[k] for k in _PI_MCP_KEYS if k in entry}
+        servers[name] = _wrapped_stdio_server(
+            {k: entry[k] for k in _PI_MCP_KEYS if k in entry}, wrapper
+        )
         added.append(name)
     if not added:
         return
@@ -4255,7 +4309,14 @@ def main(
             continue
         with isolated(agents_target):
             if agents_target == "pi":
-                _sync_pi_mcp_servers()
+                _sync_pi_mcp_servers(
+                    _pi_mcp_wrapper(
+                        [
+                            d / "pi" / "mcp-stdio-wrapper.json"
+                            for d in (root_dir, *overlay_dirs)
+                        ]
+                    )
+                )
             agents_dest = dirs[agents_target]["agents"]
             agent_dirs = _agent_source_dirs(root_dir, overlay_dirs, agents_target)
             target_skip_set = skip_by_agent.get(agents_target, frozenset())
