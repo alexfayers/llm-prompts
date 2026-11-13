@@ -29,6 +29,8 @@ def config_path() -> Path:
 
 
 GIT_TIMEOUT = 30
+_OWN_PACKAGE = "llm-prompts"
+_STARTUP_CHECK = "import llm_prompts.cli, cline_hooks.core.user_install"
 TEST_TIMEOUT = 600
 
 _DEFAULT_CONFIG = """\
@@ -658,6 +660,56 @@ def _has_drifted(env: SharedEnv) -> bool:
     )
 
 
+def _startup_problem(env: SharedEnv) -> str | None:
+    """Return why the installed env cannot start llm-prompts, or None if it can."""
+    if _OWN_PACKAGE not in (env.name, *env.members):
+        return None
+    python = _uv_tools_dir() / env.name / "bin" / "python"
+    try:
+        result = subprocess.run(
+            [str(python), "-c", _STARTUP_CHECK],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as error:
+        return str(error)
+    if result.returncode == 0:
+        return None
+    return (result.stderr.strip().splitlines() or [f"exit {result.returncode}"])[-1]
+
+
+def _repair_unstartable(env: SharedEnv) -> bool:
+    """Refresh every dependency of an env that cannot start, exiting if it still cannot.
+
+    Args:
+        env: The shared env just upgraded.
+
+    Returns:
+        True if the env failed to start and the refresh repaired it.
+    """
+    problem = _startup_problem(env)
+    if problem is None:
+        return False
+    print(f"[{env.name}] Upgraded env cannot start ({problem}), refreshing it...")
+    subprocess.run(
+        ["uv", "tool", "upgrade", env.name, "--reinstall"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    problem = _startup_problem(env)
+    if problem is not None:
+        print(
+            f"[{env.name}] Still cannot start: {problem}\n"
+            "A configured tool source may be out of date. "
+            "Update every source checkout, then rerun `llm-prompts update`.",
+            file=sys.stderr,
+        )
+        raise ExitReason("tool_install_failed")
+    return True
+
+
 def read_config() -> dict[str, Any]:
     """Return the parsed config file, or an empty dict when it does not exist."""
     if not config_path().exists():
@@ -821,6 +873,7 @@ def run_setup(
         _run_install(env)
 
     if not dry_run:
+        changed = _repair_unstartable(env) or changed
         print("\nAll tools installed successfully.")
         write_pyproject_stamp()
         write_checkout_stamp(tools)
