@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
-from cline_hooks.core.user_install import resolve_user_binary
 from jinja2 import TemplateError
 
 from .claude_models import catalogue
@@ -195,6 +194,15 @@ def _run_tool(args: list[str], env: dict[str, str] | None = None) -> int:
     return result.returncode
 
 
+def _path_without_venvs() -> str:
+    """Return `PATH` without virtual environment scripts directories."""
+    return os.pathsep.join(
+        entry
+        for entry in os.environ.get("PATH", "").split(os.pathsep)
+        if entry and not (Path(entry).resolve().parent / "pyvenv.cfg").exists()
+    )
+
+
 def user_binary(name: str) -> str | None:
     """Find a companion tool of the user-wide install, never one in a project venv.
 
@@ -202,8 +210,16 @@ def user_binary(name: str) -> str | None:
         name: The tool's executable name.
 
     Returns:
-        The tool's path, or None where the user-wide install lacks it.
+        The tool's path, or None where the user-wide install lacks it. An
+        outdated cline-hooks lacking the user-wide lookup falls back to `PATH`
+        without virtual environment scripts directories.
     """
+    try:
+        from cline_hooks.core.user_install import resolve_user_binary
+    except ModuleNotFoundError as error:
+        if error.name != "cline_hooks.core.user_install":
+            raise
+        return shutil.which(name, path=_path_without_venvs())
     binary = resolve_user_binary(name)
     return str(binary) if binary else None
 
