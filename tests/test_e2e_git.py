@@ -22,7 +22,7 @@ _SCRIPT = (
     / "prompts"
     / "shared"
     / "skills"
-    / "git-tidy"
+    / "git-usage"
     / "rewrite_range.py"
 )
 

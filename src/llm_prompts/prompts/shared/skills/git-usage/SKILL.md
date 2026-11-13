@@ -1,12 +1,13 @@
 ---
 name: git-usage
-description: Rules and style preferences for the usage of git. Use before you interact with git in any way.
+description: Git rules and style, and tidying unpushed commits (squash, fixup, reorder, reword, drop). Use before any git command, or when asked to tidy commits.
 ---
 
 # Git
 
 These rules MUST override others.
 
+- If the invocation text names a part (e.g. `tidy`), MUST read that part's file before anything else.
 - MUST use `-P` for paginated/scrollable output (e.g. `git -P log`).
 - MUST use conventional commits in personal repos or where `git -P log --oneline -20` shows them, otherwise match the existing style.
 - A commit subject MUST be one short, plain idea saying what changed. MUST NOT list changes ("X, Y and Z"). In conventional commits, MUST use a scope only where it fits.
@@ -18,7 +19,7 @@ These rules MUST override others.
 - After staging explicit paths (not `git add -A`) and committing, MUST re-check `git -P status --short`. Anything still modified/untracked was missed - MUST `--fixup=<sha>` it in.
 - Before staging an edited file, MUST run `git -P diff <path>` for foreign unstaged hunks - `git add <path>` stages the WHOLE file (tell-tale: extra insertions). MUST stage only your hunks with `git add -p <path>`, confirm with `git -P diff --cached <path>`. If a foreign hunk already reached an unpushed commit, MUST `git reset --soft HEAD~1` then re-stage with `-p`.
 - An unpushed commit (`git -P log --oneline @{u}..HEAD`) is not final - MAY amend, reword, squash, reorder, or drop.
-- New work that is the same logical change as an unpushed commit MUST fold into it, never a new standalone commit: `--fixup=<sha>`/`--squash=<sha>` + `git-tidy` autosquash, never `--amend`; autosquash only if every commit above the target is yours. Exception: the overlap is coincidental.
+- New work that is the same logical change as an unpushed commit MUST fold into it, never a new standalone commit: `--fixup=<sha>`/`--squash=<sha>` + autosquash per `<base-dir>/tidy.md`, never `--amend`; autosquash only if every commit above the target is yours. Exception: the overlap is coincidental.
 - Same logical change also covers same-topic-different-angle, not just a bug fix - MUST fold it immediately: `--squash=<target>` when directly correcting (keeps both messages), `--fixup=<target>` for another angle (keeps the better message).
 - Before amending, MUST check `git -P log --oneline @{u}..HEAD`. Empty output means HEAD is already pushed - MUST NOT amend; make a new commit instead.
 - If using a focus chain, the last task MUST be committing the changes.
@@ -37,7 +38,7 @@ Before making a commit, MUST tell the user: "I am following the predefined git r
 
 ## Amending non-HEAD commits
 
-To squash, fixup, reorder, reword, or drop unpushed commits, MUST use `git-tidy`.
+To squash, fixup, reorder, reword, or drop unpushed commits, MUST read and follow `<base-dir>/tidy.md`.
 
 ## Checking for uncommitted/unpushed changes across repos
 
