@@ -6,6 +6,7 @@ import os
 import shlex
 import subprocess
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from functools import cache
 from itertools import takewhile
 from pathlib import Path
@@ -245,13 +246,6 @@ def _fetch_missing(repo: Path, remote: str, heads: dict[str, str]) -> dict[str, 
     return heads
 
 
-def _record(commits: dict[_Identity, str], identity: _Identity, sha: str) -> None:
-    if commits.setdefault(identity, sha) != sha:
-        raise _Bail(
-            f"two pull request commits share author time and subject: {identity[1]}"
-        )
-
-
 def _upstream_pr_numbers(repo: Path) -> dict[str, int]:
     ups = _cherry(repo, "HEAD", "@{u}", "+")
     if not ups:
@@ -268,9 +262,9 @@ def _upstream_pr_numbers(repo: Path) -> dict[str, int]:
 
 def _merged_pr_commits(
     repo: Path, remote: str
-) -> tuple[list[str], dict[_Identity, str]]:
+) -> tuple[list[str], dict[_Identity, list[str]]]:
     accepted: list[str] = []
-    pr_commits: dict[_Identity, str] = {}
+    pr_commits: dict[_Identity, list[str]] = {}
     numbers = _upstream_pr_numbers(repo)
     if not numbers:
         return accepted, pr_commits
@@ -297,12 +291,12 @@ def _merged_pr_commits(
             repo, "log", "--no-merges", "--format=%H%x09%at%x09%s", f"{up}^..{head}"
         ).splitlines():
             sha, _, rest = line.partition("\t")
-            _record(pr_commits, _identity(rest), sha)
+            pr_commits.setdefault(_identity(rest), []).append(sha)
     return accepted, pr_commits
 
 
-def _open_pr_commits(repo: Path, remote: str) -> dict[_Identity, _OpenPrCommit]:
-    """Map each commit of an open pull request, by identity, to its current head version.
+def _open_pr_commits(repo: Path, remote: str) -> dict[_Identity, list[_OpenPrCommit]]:
+    """Map each commit of an open pull request, by identity, to its versions in each head.
 
     A pull request is open when its head is also the tip of a branch on the remote.
     """
@@ -322,16 +316,13 @@ def _open_pr_commits(repo: Path, remote: str) -> dict[_Identity, _OpenPrCommit]:
             if ref.startswith("refs/pull/") and sha in branch_tips
         },
     )
-    shas: dict[_Identity, str] = {}
-    commits: dict[_Identity, _OpenPrCommit] = {}
+    commits: dict[_Identity, list[_OpenPrCommit]] = {}
     for head in heads.values():
         for line in _read(
             repo, "log", "--no-merges", "--format=%H%x09%at%x09%s", f"@{{u}}..{head}"
         ).splitlines():
             sha, _, rest = line.partition("\t")
-            identity = _identity(rest)
-            _record(shas, identity, sha)
-            commits.setdefault(identity, _OpenPrCommit(sha, head))
+            commits.setdefault(_identity(rest), []).append(_OpenPrCommit(sha, head))
     return commits
 
 
@@ -353,11 +344,15 @@ def _merge_tree(repo: Path, base: str, ours: str, theirs: str) -> str:
 
 
 def _equivalent(
-    repo: Path, commit: LocalCommit, pr_commits: dict[_Identity, str]
+    repo: Path, commit: LocalCommit, pr_commits: dict[_Identity, list[str]]
 ) -> bool:
-    pr = pr_commits.get((commit.authored_at, commit.subject))
-    if pr is None:
-        return False
+    return any(
+        _same_change(repo, commit, pr)
+        for pr in pr_commits.get((commit.authored_at, commit.subject), ())
+    )
+
+
+def _same_change(repo: Path, commit: LocalCommit, pr: str) -> bool:
     try:
         tree = _merge_tree(repo, f"{pr}^", f"{commit.sha}^", pr)
     except _Conflict:
@@ -406,18 +401,18 @@ def _replay_or_open_pr_version(
     repo: Path,
     tip: str,
     commit: LocalCommit,
-    open_pr_commits: Callable[[], dict[_Identity, _OpenPrCommit]],
+    open_pr_commits: Callable[[], dict[_Identity, list[_OpenPrCommit]]],
 ) -> str:
     try:
         return _replay(repo, tip, commit)
-    except _ReplayConflict as conflict:
-        pr_commit = open_pr_commits().get((commit.authored_at, commit.subject))
-        if pr_commit is None or not _holds_every_change(repo, commit, pr_commit.head):
-            raise
-        try:
-            return _replay(repo, tip, commit._replace(sha=pr_commit.sha))
-        except _ReplayConflict:
-            raise conflict from None
+    except _ReplayConflict:
+        for pr_commit in open_pr_commits().get(
+            (commit.authored_at, commit.subject), ()
+        ):
+            if _holds_every_change(repo, commit, pr_commit.head):
+                with suppress(_ReplayConflict):
+                    return _replay(repo, tip, commit._replace(sha=pr_commit.sha))
+        raise
 
 
 def _fixup_target(subject: str) -> str | None:
