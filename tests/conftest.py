@@ -19,7 +19,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from llm_prompts import github_api, install, setup
-from llm_prompts.batching import batch_branch
 from llm_prompts.contribute import Pr
 from llm_prompts.size_guard import CheckResult
 
@@ -303,6 +302,11 @@ class _ScopedFake:
         return getattr(self._fake, name)
 
 
+def batch_branch(login: str, slug: str) -> str:
+    """Build the ``<login>/contribute/<slug>`` branch name the fakes register."""
+    return f"{login}/contribute/{slug}"
+
+
 class ContributeRemote:
     """Fakes the git/gh commands `inventory()` issues, built on `FakeSubprocess`.
 
@@ -317,13 +321,8 @@ class ContributeRemote:
     - `gh pr list --author @me --state all --json ...` - the same call `all_prs`
       makes, listing every registered PR.
     - `gh pr list --state open --author @me --json ...,isDraft,reviewDecision,body,commits` -
-      every registered open PR, without its commits; `review` sets a PR's
-      draft flag and review decision.
+      every registered open PR, without its commits.
     - `gh pr view <number> --json commits` - one open PR's branch commits.
-    - `gh pr list --state merged --author @me --json number,headRefName,title` -
-      every merged PR, without its commits.
-    - `gh pr view <number> --json commits` - one merged PR's own pre-merge
-      commits, each carrying an `authoredDate`; `fail_pr_view` makes it error.
     - `git log --format=%H%x09%aI%x09%s --reverse <range>` for main (also
       carrying each commit's authored date) and `git log --format=%H%x09%s
       --reverse <range>` for each branch, matched by the range's `..main` or
@@ -344,22 +343,15 @@ class ContributeRemote:
         )
         self._heads: list[str] = []
         self._pr_items: list[dict[str, Any]] = []
-        self._merged_items: list[dict[str, Any]] = []
-        self._merged_commits: dict[int, list[dict[str, str]]] = {}
-        self._failing_views: set[int] = set()
         self._known_shas: set[str] = set()
         self._branch_commits: dict[str, list[dict[str, str]]] = {}
-        self._pr_extra_commits: dict[int, list[dict[str, str]]] = {}
-        self._reviews: dict[int, tuple[bool, str]] = {}
         self._bodies: dict[int, str] = {}
-        self._titles: dict[int, str] = {}
         self._pr_heads: dict[int, tuple[str, str]] = {}
         self._paths: dict[str, Sequence[str]] = {}
         self._register_fetch()
         self._register_ls_remote()
         self._register_pr_list()
         self._register_open_pr_list()
-        self._register_merged_pr_list()
         self._register_merged_pr_view()
         self._register_patch_id()
         self._register_shows()
@@ -389,68 +381,6 @@ class ContributeRemote:
         )
         self._register_diffs(commits)
 
-    def managed(
-        self,
-        slug: str,
-        commits: Sequence[tuple[str, str]],
-        pr: Pr | None = None,
-    ) -> str:
-        """Register an open (or no-PR) managed batch branch; return its branch name."""
-        branch = batch_branch(self.login, slug)
-        self._register_branch(branch, commits, pr)
-        return branch
-
-    def merged(
-        self,
-        slug: str,
-        number: int,
-        commits: Sequence[tuple[str, str]],
-        dates: dict[str, str] | None = None,
-    ) -> str:
-        """Register a merged managed PR - its branch is gone (deleteBranchOnMerge)."""
-        return self._register_merged_pr(
-            batch_branch(self.login, slug), number, commits, dates
-        )
-
-    def merged_legacy(
-        self,
-        branch: str,
-        number: int,
-        commits: Sequence[tuple[str, str]],
-        dates: dict[str, str] | None = None,
-    ) -> str:
-        """Register a merged legacy PR - its branch is gone (deleteBranchOnMerge)."""
-        return self._register_merged_pr(branch, number, commits, dates)
-
-    def _register_merged_pr(
-        self,
-        branch: str,
-        number: int,
-        commits: Sequence[tuple[str, str]],
-        dates: dict[str, str] | None = None,
-    ) -> str:
-        pr = Pr(number, "MERGED", f"https://github.com/o/r/pull/{number}")
-        self._known_shas.update(sha for sha, _ in commits)
-        self._pr_items.append(self._pr_item(branch, pr))
-        title = (
-            commits[0][1]
-            if len(commits) == 1
-            else branch.rpartition("/")[2].replace("-", " ")
-        )
-        self._merged_items.append(
-            {"number": number, "headRefName": branch, "title": title}
-        )
-        self._register_merged_commits(number, commits, dates)
-        self._register_diffs(commits)
-        return branch
-
-    def closed(self, slug: str, number: int, commits: Sequence[tuple[str, str]]) -> str:
-        """Register a closed (unmerged) managed PR; its branch is still on the remote."""
-        branch = batch_branch(self.login, slug)
-        pr = Pr(number, "CLOSED", f"https://github.com/o/r/pull/{number}")
-        self._register_branch(branch, commits, pr)
-        return branch
-
     def unmanaged_pr(
         self,
         branch: str,
@@ -463,19 +393,6 @@ class ContributeRemote:
         self._register_branch(branch, commits, pr, dates)
         return branch
 
-    def pr_extra_commits(
-        self,
-        number: int,
-        commits: Sequence[tuple[str, str]],
-        dates: dict[str, str] | None = None,
-    ) -> None:
-        """Add commits to an open PR's `gh pr view` that its branch log lacks."""
-        self._pr_extra_commits[number] = _commit_items(commits, dates)
-
-    def review(self, number: int, *, draft: bool = False, decision: str = "") -> None:
-        """Set an open PR's draft flag and ``reviewDecision``."""
-        self._reviews[number] = (draft, decision)
-
     def head(self, number: int, sha: str, base: str = "main") -> None:
         """Set an open PR's head commit and base branch."""
         self._pr_heads[number] = (sha, base)
@@ -483,15 +400,6 @@ class ContributeRemote:
     def body(self, number: int, text: str) -> None:
         """Set an open PR's body."""
         self._bodies[number] = text
-
-    def title(self, number: int, text: str) -> None:
-        """Set an open PR's title."""
-        self._titles[number] = text
-
-    def legacy(self, branch: str, pr: Pr | None = None) -> str:
-        """Register a legacy `<login>/<slug>` branch (no commits) on the remote."""
-        self._register_branch(branch, (), pr)
-        return branch
 
     def _pr_item(self, branch: str, pr: Pr) -> dict[str, Any]:
         return {
@@ -562,35 +470,6 @@ class ContributeRemote:
             f"+refs/heads/{self.login}/*:refs/remotes/origin/{self.login}/*",
         )
 
-    def _register_merged_commits(
-        self,
-        number: int,
-        commits: Sequence[tuple[str, str]],
-        dates: dict[str, str] | None = None,
-    ) -> None:
-        self._merged_commits[number] = _commit_items(commits, dates)
-
-    def fail_pr_view(self, number: int) -> None:
-        """Make `gh pr view <number>` exit non-zero."""
-        self._failing_views.add(number)
-
-    def truncate_headline(
-        self, number: int, sha: str, headline: str, body: str
-    ) -> None:
-        """Override a registered merged PR's single commit with a truncated headline.
-
-        Simulates GitHub truncating `messageHeadline`, with the remainder of the
-        subject moved to `messageBody`'s first line.
-        """
-        self._merged_commits[number] = [
-            {
-                "oid": sha,
-                "messageHeadline": headline,
-                "messageBody": body,
-                "authoredDate": _DEFAULT_AUTHORED_DATE,
-            }
-        ]
-
     def _register_ls_remote(self) -> None:
         def side_effect(
             argv: list[str], kwargs: dict[str, Any]
@@ -610,10 +489,7 @@ class ContributeRemote:
         def side_effect(
             argv: list[str], kwargs: dict[str, Any]
         ) -> subprocess.CompletedProcess[str]:
-            items = [
-                {**item, "isDraft": self._is_draft(item)} for item in self._pr_items
-            ]
-            return subprocess.CompletedProcess(argv, 0, json.dumps(items), "")
+            return subprocess.CompletedProcess(argv, 0, json.dumps(self._pr_items), "")
 
         self.fake.on(
             "gh",
@@ -628,9 +504,6 @@ class ContributeRemote:
             side_effect=side_effect,
         )
 
-    def _is_draft(self, item: dict[str, Any]) -> bool:
-        return bool(self._reviews.get(item["number"], (item["isDraft"], ""))[0])
-
     def _register_open_pr_list(self) -> None:
         def side_effect(
             argv: list[str], kwargs: dict[str, Any]
@@ -638,10 +511,9 @@ class ContributeRemote:
             items = [
                 {
                     **item,
-                    "isDraft": self._is_draft(item),
-                    "reviewDecision": self._reviews.get(item["number"], (False, ""))[1],
+                    "reviewDecision": "",
                     "body": self._bodies.get(item["number"], ""),
-                    "title": self._titles.get(item["number"], ""),
+                    "title": "",
                     **(
                         {
                             "headRefOid": self._pr_heads[item["number"]][0],
@@ -669,44 +541,18 @@ class ContributeRemote:
             side_effect=side_effect,
         )
 
-    def _register_merged_pr_list(self) -> None:
-        def side_effect(
-            argv: list[str], kwargs: dict[str, Any]
-        ) -> subprocess.CompletedProcess[str]:
-            return subprocess.CompletedProcess(
-                argv, 0, json.dumps(self._merged_items), ""
-            )
-
-        self.fake.on(
-            "gh",
-            "pr",
-            "list",
-            "--state",
-            "merged",
-            "--author",
-            "@me",
-            "--json",
-            "number,headRefName,title",
-            side_effect=side_effect,
-        )
-
     def _open_pr_commits(self, number: int) -> list[dict[str, str]]:
         branch = next(
             item["headRefName"] for item in self._pr_items if item["number"] == number
         )
-        return self._branch_commits[branch] + self._pr_extra_commits.get(number, [])
+        return self._branch_commits[branch]
 
     def _register_merged_pr_view(self) -> None:
         def side_effect(
             argv: list[str], kwargs: dict[str, Any]
         ) -> subprocess.CompletedProcess[str]:
             number = int(argv[3])
-            if number in self._failing_views:
-                raise subprocess.CalledProcessError(1, argv, stderr="boom")
-            commits = {
-                "commits": self._merged_commits.get(number)
-                or self._open_pr_commits(number)
-            }
+            commits = {"commits": self._open_pr_commits(number)}
             return subprocess.CompletedProcess(argv, 0, json.dumps(commits), "")
 
         self.fake.on("gh", "pr", "view", side_effect=side_effect)
@@ -770,16 +616,6 @@ def synthetic_prompts_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def contribute_remote(fake_subprocess: FakeSubprocess) -> ContributeRemote:
     """Return a `ContributeRemote` wired onto `fake_subprocess`."""
     return ContributeRemote(fake_subprocess)
-
-
-@pytest.fixture(autouse=True)
-def isolated_links_path(
-    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
-) -> Path:
-    """Point the persisted cross-repo links file at a per-test temporary path."""
-    path = tmp_path_factory.mktemp("links") / "contribute-links.json"
-    monkeypatch.setattr("llm_prompts.links.LINKS_PATH", path)
-    return path
 
 
 @pytest.fixture(autouse=True)
@@ -925,9 +761,10 @@ class _FakeResponse:
         return json.dumps(self._body).encode()
 
 
-def http_error(code: int, message: str) -> urllib.error.HTTPError:
-    """Build the HTTPError urlopen raises for a JSON error body."""
-    body = io.BytesIO(json.dumps({"message": message}).encode())
+def http_error(code: int, message: str, *details: str) -> urllib.error.HTTPError:
+    """Build the HTTPError urlopen raises for a JSON error body with optional ``errors`` details."""
+    payload = {"message": message, "errors": [{"message": d} for d in details]}
+    body = io.BytesIO(json.dumps(payload).encode())
     return urllib.error.HTTPError(
         "https://api.github.com", code, message, Message(), body
     )

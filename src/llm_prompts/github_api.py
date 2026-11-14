@@ -93,7 +93,9 @@ def request(method: str, path: str, payload: Any = None) -> Any:
         with urlopen(api_request, timeout=_REQUEST_TIMEOUT_SECONDS) as response:
             return json.loads(response.read())
     except HTTPError as error:
-        message = json.loads(error.read() or b"{}").get("message", error.reason)
+        body = json.loads(error.read() or b"{}")
+        details = [e["message"] for e in body.get("errors", []) if "message" in e]
+        message = ": ".join([body.get("message", error.reason), *details])
         raise subprocess.CalledProcessError(
             1, [method, path], stderr=f"HTTP {error.code}: {message}"
         ) from error

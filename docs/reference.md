@@ -22,7 +22,7 @@ llm-prompts benchmark                          # compare two llm-prompts refs by
 llm-prompts check                              # check prompt sizes and pi extension headers
 llm-prompts size-report --base-root DIR        # markdown report of prompt size changes
 llm-prompts watch gh-pr|gh-triage|cmd TARGET... --until COND [--all] [--follow]  # wait for a PR, a repo's ready-PR list or a command to match, then exit (0 match, 124 --timeout, 1 error). Several targets: any match ends it, --all waits for every one, --follow prints each match and keeps watching until --timeout
-llm-prompts contribute list|sync|update        # turn commits on local main into PR branches
+llm-prompts contribute list|sync|update        # keep each worktree branch in sync with local main and its own PR
 ```
 
 `install` runs `setup` first (installs or upgrades the tools in your config), then writes the files for the agent. `--no-update` skips `setup`. `update` pulls every git-based `[[tools]]` and `[[plugins]]` source and reinstalls for each agent you have already installed.
