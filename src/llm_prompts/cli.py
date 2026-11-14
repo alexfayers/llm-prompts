@@ -12,7 +12,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import urlparse
@@ -868,6 +868,11 @@ def _add_watch_parser(
             help=f"Seconds between polls (default {source.default_interval:g}).",
         )
         source_parser.add_argument(
+            "--all",
+            action="store_true",
+            help="With several targets, wait until every one matches. Default is any.",
+        )
+        source_parser.add_argument(
             "--timeout", type=float, help="Exit 124 after this many seconds."
         )
 
@@ -1298,11 +1303,13 @@ def _run_command(run: telemetry.Run) -> int | None:
         from .watch.core.registry import sources
         from .watch.core.runner import watch
 
+        built = sources()[args.source].from_args(args)
         return watch(
-            sources()[args.source].from_args(args),
+            built if isinstance(built, Sequence) else [built],
             args.until,
             interval=args.interval,
             timeout=args.timeout,
+            require_all=args.all,
         )
     elif args.command == "contribute":
         from .contribute import list_targets, sync_targets, update_targets
