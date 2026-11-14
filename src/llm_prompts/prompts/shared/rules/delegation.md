@@ -46,7 +46,7 @@ targets: claude-code, pi
 
 ## Spawn prompt contract
 
-State the change concisely, not derivable mechanics unless risky/ambiguous. {% if AGENT == "pi" %}`{{TOOL_STEER}}` and `tower_do_talk` follow{% else %}`SendMessage` follows{% endif %} this plus `anti-yap.md`: ask/answer only.
+State the change concisely. State derivable mechanics only if risky or ambiguous. {% if AGENT == "pi" %}`{{TOOL_STEER}}` and `tower_do_talk` follow{% else %}`SendMessage` follows{% endif %} this plus `anti-yap.md`: ask/answer only.
 
 Every spawn prompt MUST specify:
 
@@ -55,20 +55,20 @@ Every spawn prompt MUST specify:
 {% endif %}
 - source order - local checkout, internal/official docs, public web last - report back if unanswered, never widen;
 - for a tracked task (memory `task/`, plan slice, ticket): decisions recorded against it;
-- the scope boundary it MUST NOT cross - remote/live systems: read-only, naming disallowed mutations, and PR push permission;
-- lint/format/test conventions: package config (`pyproject.toml` or equiv) is authority, not memory/global preferences - MUST match the file edited;
+- the scope boundary it MUST NOT cross - remote/live systems: read-only, naming disallowed mutations and PR push permission;
+- lint/format/test conventions: package config (e.g. `pyproject.toml`) outranks memory/global preferences - MUST match the file edited;
 - where the prompt pins a shape (signature, return type, format) and says match a sibling, MUST reconcile the two;
 - for code/prose, the output-size limit - minimal diff, no unrequested comments/refactors/reformatting, terse report.
 - for a UI/visual change: coding.md's rendered check, reported as seen - MUST NOT accept "done" from a test pass or "folded into another slice".
 - for a shell-restricted delegate: name {% if AGENT == "pi" %}`read`/`grep`/`find`{% else %}Read/Grep/Glob{% endif %} for investigation, and exactly which command it MAY run - never implicit {% if AGENT == "pi" %}`bash`{% else %}Bash{% endif %}.
-- MUST NOT ask a role without write tools to write files - artifacts go to a `worker`. Scratch notes stay in the report unless a file was requested.
-- a delegate asked a question MUST report the answer, never raw output or file text, except a failure, error or named value. A drafted edit returns new wording only.
+- MUST NOT ask a role without write tools to write files - artifacts go to a `worker`. Scratch notes stay in the report unless a file is requested.
+- a delegate asked a question MUST report the answer, not raw output or file text (except failure, error or named value). A drafted edit returns new wording only.
 - For a code comment, state policy/convention, not draft prose.
 - A design/planning prompt MUST route full output to implementers, plus a few lines to main: what changes, what it buys, the risk. MUST NOT make it main's deliverable.
 
 ## Parallelise by default
 
-- SHOULD parallelise decomposable work, design and research included; serial only when a step needs prior output.
+- SHOULD parallelise decomposable work, design/research included; serial only if a step needs prior output.
 - On an open design question, SHOULD dispatch a few {% if AGENT == "pi" %}judgment{% else %}Opus{% endif %} delegates on different angles and synthesize.
 
 ## Effort, not model tier
@@ -80,8 +80,8 @@ Every spawn prompt MUST specify:
 ## Escalation and waiting
 
 - A delegate stuck on ambiguity or needing a user preference SHOULD escalate.
-- A delegate whose work outgrows its estimate (more steps, files or phases) MUST stop and escalate up the ownership edge, noting more agents may be faster. MUST NOT grind on alone.
-- MUST NOT idle-wait on a background agent/command, `sleep` or placeholder - completion re-invokes you; work on or end the turn.{% if AGENT == "pi" %} Under `pi -p`, MUST `{{TOOL_AGENT_RESULT}}` each background agent first.{% else %} Exception: while any delegate runs, MUST keep ONE background `sleep 300` armed per session, never one per delegate. When it fires, MUST `SendMessage` each delegate that has sent no message since the timer was armed for status, then re-arm it. MUST NOT send a status request to a delegate that has messaged since.{% endif +%}
+- A delegate whose work outgrows its estimate (more steps/files/phases) MUST stop and escalate up the ownership edge, noting more agents may help - MUST NOT grind alone.
+- MUST NOT idle-wait on a background agent/command, `sleep` or placeholder - completion re-invokes you; work or end turn.{% if AGENT == "pi" %} Under `pi -p`, MUST `{{TOOL_AGENT_RESULT}}` each background agent first.{% else %} Exception: while any delegate runs, MUST keep ONE background `sleep 300` armed per session, never one per delegate. When it fires, MUST `SendMessage` each delegate silent since arming for status, then re-arm. MUST NOT request status from a delegate that messaged since.{% endif +%}
 {% if AGENT == "pi" %}
 {% if TOOL_AGENT == 'delegate_agent' %}
 - MUST `continue_agent` a finished agent's exact session for same-scope follow-up (fix, gate retry, missing section), never a fresh delegate.
@@ -91,6 +91,6 @@ Every spawn prompt MUST specify:
 - Resume a finished NAMED delegate with `{{TOOL_AGENT}}` - ask for a missing/truncated section, not a re-derive.
 {% endif %}
 {% else %}
-- A mid-turn message is silently ignored: wait, or re-verify state yourself. Once idle, `SendMessage` resumes a NAMED delegate - ask for a missing/truncated section, not re-derive it.
+- A mid-turn message is ignored: wait, or re-verify state yourself. Once idle, `SendMessage` resumes a NAMED delegate - ask for a missing/truncated section, not re-derive.
 - A resend returns a SUMMARY; read its transcript `.jsonl` under `subagents/` - MUST NOT ask again or re-run.
 {% endif %}
