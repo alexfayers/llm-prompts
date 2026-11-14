@@ -248,6 +248,22 @@ def substitute_variables(content: str, variables: dict[str, str]) -> str:
     return _compile_template(content).render(variables)
 
 
+def render_skill_part(part: str, variables: dict[str, str]) -> str:
+    """Render a skill part, keeping its final newline.
+
+    Args:
+        part: Part source text.
+        variables: Variables to substitute.
+
+    Returns:
+        Rendered part, ending in a newline when ``part`` does.
+    """
+    rendered = substitute_variables(part, variables)
+    if part.endswith("\n") and not rendered.endswith("\n"):
+        return rendered + "\n"
+    return rendered
+
+
 def find_unreplaced_variables(content: str) -> list[str]:
     """Find any {{VAR}} placeholders remaining after substitution.
 

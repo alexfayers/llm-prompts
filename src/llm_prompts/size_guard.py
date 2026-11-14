@@ -52,6 +52,7 @@ from .render_template import (
     _read_text,
     find_unreplaced_variables,
     parse_frontmatter,
+    render_skill_part,
     resolve_frontmatter,
     split_frontmatter,
     substitute_variables,
@@ -424,7 +425,7 @@ def _iter_part_artifacts(
         variables: Variables the part is rendered with.
     """
     try:
-        content = substitute_variables(_read_text(part), variables)
+        content = render_skill_part(_read_text(part), variables)
     except TemplateError:
         yield Artifact(TEMPLATE_RENDERS, target, dest_name, False, part)
         return
