@@ -41,7 +41,7 @@
 | src/llm\_prompts/prompts/claude-code/skills/retrospective/extract\_signals.py |      181 |       97 |     46% |44-49, 54-69, 80-124, 186, 197, 200, 209, 254-264, 269-286, 297-332, 336 |
 | src/llm\_prompts/prompts/shared/skills/eagle-vision/focus.py                  |      689 |       10 |     99% |108, 159, 271, 676, 690, 1214-1217, 1311 |
 | src/llm\_prompts/prompts/shared/skills/git-tidy/inspect\_range.py             |       57 |        3 |     95% |59-60, 106 |
-| src/llm\_prompts/prompts/shared/skills/git-tidy/rewrite\_range.py             |       64 |        3 |     95% |64, 67, 168 |
+| src/llm\_prompts/prompts/shared/skills/git-tidy/rewrite\_range.py             |       90 |        3 |     97% |61, 64, 201 |
 | src/llm\_prompts/prompts/shared/skills/git-usage/check\_repos.py              |       67 |       12 |     82% |41-42, 44, 63, 73-75, 95-96, 124-125, 159 |
 | src/llm\_prompts/prompts/shared/skills/tidy-code/check\_reduction.py          |       42 |        1 |     98% |        97 |
 | src/llm\_prompts/prompts/shared/skills/todos/find\_todos.py                   |       44 |        7 |     84% |96-98, 103-105, 109 |
@@ -85,7 +85,7 @@
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
 | tests/test\_conftest.py                                                       |       77 |        0 |    100% |           |
 | tests/test\_contribute.py                                                     |     1877 |        0 |    100% |           |
-| tests/test\_e2e\_git.py                                                       |      123 |        0 |    100% |           |
+| tests/test\_e2e\_git.py                                                       |      140 |        0 |    100% |           |
 | tests/test\_extension\_factories.py                                           |       21 |        0 |    100% |           |
 | tests/test\_focus.py                                                          |     1056 |        1 |     99% |        52 |
 | tests/test\_github\_api.py                                                    |      123 |        0 |    100% |           |
@@ -110,7 +110,7 @@
 | tests/test\_removed\_agents\_notice.py                                        |       29 |        0 |    100% |           |
 | tests/test\_render\_template.py                                               |      135 |        0 |    100% |           |
 | tests/test\_retrospective\_extract.py                                         |       90 |        0 |    100% |           |
-| tests/test\_rewrite\_range\_script.py                                         |       68 |        0 |    100% |           |
+| tests/test\_rewrite\_range\_script.py                                         |       96 |        0 |    100% |           |
 | tests/test\_setup.py                                                          |      347 |        0 |    100% |           |
 | tests/test\_size\_guard.py                                                    |      156 |        0 |    100% |           |
 | tests/test\_size\_report.py                                                   |      223 |        0 |    100% |           |
@@ -123,7 +123,7 @@
 | tests/test\_workflows.py                                                      |       25 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_pr.py                                       |       64 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **22010** |  **569** | **97%** |           |
+| **TOTAL**                                                                     | **22081** |  **569** | **97%** |           |
 
 
 ## Setup coverage badge
