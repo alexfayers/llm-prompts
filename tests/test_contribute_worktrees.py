@@ -1710,11 +1710,11 @@ def test_a_copy_that_cannot_replay_is_skipped_and_the_others_still_copy(
     project.run(branch="feat/b")
     project.commit(project.repo, "feat-a-7.txt", "other\n", "feat: other")
 
-    assert project.run(apply=True) == 0
+    assert project.run(apply=True) == 1
 
     out = capsys.readouterr().out
     assert "feat/a: not copied into main: " in out
-    assert "(feat: a) conflicts with upstream in feat-a-7.txt" in out
+    assert "(feat: a) conflicts with main in feat-a-7.txt" in out
     assert "feat/b: copied into main" in out
     assert project.main_subjects() == ["feat: other", "feat: b"]
     assert [(e.branch, e.copied is None) for e in project.entries()] == [
@@ -1743,7 +1743,7 @@ def test_an_upper_copy_that_conflicts_after_its_lower_is_amended_is_skipped_and_
     git(lower, "commit", "-q", "-a", "--amend", "--no-edit")
     capsys.readouterr()
 
-    assert project.run(apply=True) == 0
+    assert project.run(apply=True) == 1
 
     assert "feat/b: not copied into main: " in capsys.readouterr().out
     assert project.main_subjects() == ["feat: lower"]
