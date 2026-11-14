@@ -7,7 +7,9 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
+from conftest import FakeSubprocess
 
+from benchmark.traces import make_trace
 from llm_prompts.benchmark import paths
 from llm_prompts.benchmark.cell import home_dirs
 from llm_prompts.benchmark.runner.process import reset_stop
@@ -16,6 +18,17 @@ from llm_prompts.benchmark.runner.process import reset_stop
 def _write_json(path: Path, data: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data))
+
+
+@pytest.fixture
+def judge_passes(fake_subprocess: FakeSubprocess) -> None:
+    fake_subprocess.on_match(
+        lambda argv: argv[0] == "claude",
+        stdout=json.dumps({"type": "result", "result": "PASS", "usage": {}}),
+    )
+
+
+UNSCRIPTED_TRACE = make_trace(model="fake")
 
 
 @pytest.fixture
