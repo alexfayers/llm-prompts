@@ -72,6 +72,36 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: just test-ts
 
+  pi-pins:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - id: changed
+        run: |
+          if git diff --quiet HEAD^1 HEAD -- src/llm_prompts/prompts/pi/settings.json .github/scripts/check-pi-pins.js; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.changed.outputs.run == 'true'
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - if: steps.changed.outputs.run == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      - if: steps.changed.outputs.run == 'true'
+        run: uv sync --locked
+      - if: steps.changed.outputs.run == 'true'
+        run: uv run node .github/scripts/check-pi-pins.js
+
   size-report:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
