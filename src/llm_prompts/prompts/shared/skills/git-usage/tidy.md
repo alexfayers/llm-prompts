@@ -1,8 +1,3 @@
----
-name: git-tidy
-description: "Tidy unpushed commit history via non-interactive rebase: squash, fixup, reorder, reword, drop. Use when asked to tidy or clean up unpushed commits."
----
-
 # Git Tidy
 
 ## Hard invariants
