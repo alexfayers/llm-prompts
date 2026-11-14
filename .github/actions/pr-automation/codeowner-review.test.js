@@ -81,7 +81,7 @@ test('the repo owner is asked to review only when the gate waits and the owner h
   for (const [name, options, reviewers] of [
     ['stranger PR', { author: 'stranger' }, ['owner']],
     ['major renovate PR', { author: 'renovate[bot]', branch: 'renovate/major-updates', labels: ['needs-review'] }, ['owner']],
-    ['pi-extensions renovate PR', { author: 'renovate[bot]', branch: 'renovate/pi-extensions' }, ['owner']],
+    ['pi-extensions renovate PR', { author: 'renovate[bot]', branch: 'renovate/pi-extensions' }, []],
     ['safe renovate PR', { author: 'renovate[bot]', branch: 'renovate/all-minor-patch' }, []],
     ['owner PR', { author: 'owner' }, []],
     ['approved PR', { author: 'stranger', reviews: [['owner', 'APPROVED']] }, []],
@@ -102,7 +102,7 @@ test('renovate bot PRs pass without review only from known-safe branches', async
     ['renovate[bot]', 'renovate/all-minor-patch', [], [], 'success'],
     ['renovate[bot]', 'renovate/github-actions', [], [], 'success'],
     ['renovate[bot]', 'renovate/lock-file-maintenance', ['ci'], [], 'success'],
-    ['renovate[bot]', 'renovate/pi-extensions', [], [], 'pending'],
+    ['renovate[bot]', 'renovate/pi-extensions', [], [], 'success'],
     ['renovate[bot]', 'renovate/major-updates', ['needs-review'], [], 'pending'],
     ['renovate[bot]', 'renovate/major-updates', [], [['owner', 'APPROVED']], 'success'],
     ['renovate[bot]', 'renovate/all-minor-patch-2', [], [], 'pending'],

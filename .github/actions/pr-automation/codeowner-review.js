@@ -2,7 +2,7 @@ const { findPullRequest } = require('./sync-project-status.js');
 
 const STATUS_CONTEXT = 'codeowner-review';
 const RENOVATE_LOGIN = 'renovate[bot]';
-const SAFE_RENOVATE_BRANCHES = ['renovate/all-minor-patch', 'renovate/github-actions', 'renovate/lock-file-maintenance'];
+const SAFE_RENOVATE_BRANCHES = ['renovate/all-minor-patch', 'renovate/github-actions', 'renovate/lock-file-maintenance', 'renovate/pi-extensions'];
 const IGNORED_REVIEW_STATES = ['COMMENTED', 'PENDING'];
 
 async function setStatus(github, context, pr, state, description) {
