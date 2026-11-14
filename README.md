@@ -126,10 +126,10 @@
 | tests/test\_todos\_script.py                                                  |       88 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      119 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_pr.py                                       |      116 |        0 |    100% |           |
-| tests/watch/sources/test\_github\_triage.py                                   |       34 |        0 |    100% |           |
+| tests/watch/sources/test\_github\_triage.py                                   |       28 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       31 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **22493** |  **575** | **97%** |           |
+| **TOTAL**                                                                     | **22487** |  **575** | **97%** |           |
 
 
 ## Setup coverage badge
