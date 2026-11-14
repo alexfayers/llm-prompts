@@ -459,6 +459,24 @@ class TestPiPackages:
 
         assert _settings(home)["packages"] == ["npm:user-pkg"]
 
+    def test_declared_version_replaces_another_version_of_the_package(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        settings_path = home / ".pi" / "agent" / "settings.json"
+        settings_path.parent.mkdir(parents=True)
+        settings_path.write_text(
+            json.dumps({"packages": ["npm:acme-pkg@1.0.0"]}), encoding="utf-8"
+        )
+        overlay = _overlay(tmp_path / "o", ["npm:acme-pkg@2.0.0"])
+
+        _install(home, tmp_path / "installed.json", [overlay])
+
+        packages = _settings(home)["packages"]
+        assert "npm:acme-pkg@2.0.0" in packages
+        assert "npm:acme-pkg@1.0.0" not in packages
+
 
 class TestPiExtensions:
     def test_overlay_extension_is_installed_and_removed_when_undeclared(
