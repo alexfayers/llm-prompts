@@ -43,10 +43,10 @@
 | src/llm\_prompts/benchmark/transient.py                                       |       41 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/types.py                                           |      204 |        0 |    100% |           |
 | src/llm\_prompts/claude\_models.py                                            |       23 |        0 |    100% |           |
-| src/llm\_prompts/cli.py                                                       |      679 |       67 |     90% |98-99, 125-126, 133-146, 252-253, 365-366, 525, 528, 589, 658-670, 748-750, 758-761, 830-839, 1278-1280, 1283-1289, 1292-1294, 1305-1311, 1321, 1326, 1338, 1360-1364, 1491-1492, 1497 |
+| src/llm\_prompts/cli.py                                                       |      738 |       72 |     90% |100-101, 127-128, 135-148, 254-255, 367-368, 527, 530, 602, 629-633, 703, 725, 788-800, 878-880, 888-891, 960-969, 1408-1410, 1413-1419, 1422-1424, 1435-1441, 1451, 1456, 1468, 1490-1494, 1621-1622, 1627 |
 | src/llm\_prompts/collection\_size.py                                          |      117 |        4 |     97% |245-246, 396, 453 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
-| src/llm\_prompts/contribute.py                                                |     1060 |       49 |     95% |105, 132-133, 174-175, 207-208, 447-448, 481, 611, 614, 667, 789-790, 830, 918-919, 949, 1204, 1368, 1370, 1384-1385, 1393-1394, 1415, 1426-1427, 1534-1535, 1614, 1720-1721, 1770-1771, 1843-1865, 2050-2052, 2056, 2078 |
+| src/llm\_prompts/contribute.py                                                |     1088 |       56 |     95% |105, 132-133, 174-175, 207-208, 447-448, 481, 611, 614, 667, 789-790, 830, 918-919, 949, 1204, 1373, 1375, 1389-1390, 1398-1399, 1420, 1431-1432, 1539-1540, 1619, 1675-1680, 1684, 1757-1758, 1807-1808, 1880-1902, 2099-2101, 2105, 2127 |
 | src/llm\_prompts/exit\_reason.py                                              |        8 |        0 |    100% |           |
 | src/llm\_prompts/extension\_factories.py                                      |       10 |        0 |    100% |           |
 | src/llm\_prompts/github\_api.py                                               |       99 |        1 |     99% |        73 |
@@ -73,7 +73,7 @@
 | src/llm\_prompts/prompts/shared/skills/todos/find\_todos.py                   |       44 |        7 |     84% |96-98, 103-105, 109 |
 | src/llm\_prompts/removed\_agents\_notice.py                                   |       14 |        0 |    100% |           |
 | src/llm\_prompts/render\_template.py                                          |      166 |       14 |     92% |149, 417-418, 427-443, 455-459, 463 |
-| src/llm\_prompts/setup.py                                                     |      392 |       36 |     91% |239-268, 313, 320-321, 361, 364, 385-386, 432-433, 485, 731-732, 815-818, 848-849, 852, 905-906 |
+| src/llm\_prompts/setup.py                                                     |      392 |       35 |     91% |240-269, 314, 321-322, 362, 365, 386-387, 433-434, 732-733, 816-819, 849-850, 853, 906-907 |
 | src/llm\_prompts/size\_guard.py                                               |      367 |       10 |     97% |246-247, 472-474, 509, 531, 535-537 |
 | src/llm\_prompts/size\_limits.py                                              |       61 |        1 |     98% |       138 |
 | src/llm\_prompts/size\_report.py                                              |      196 |        2 |     99% |  198, 200 |
@@ -131,7 +131,7 @@
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
 | tests/test\_conftest.py                                                       |       77 |        0 |    100% |           |
 | tests/test\_contribute.py                                                     |      338 |        0 |    100% |           |
-| tests/test\_contribute\_worktrees.py                                          |     1397 |        0 |    100% |           |
+| tests/test\_contribute\_worktrees.py                                          |     1500 |        0 |    100% |           |
 | tests/test\_e2e\_git.py                                                       |      185 |        0 |    100% |           |
 | tests/test\_extension\_factories.py                                           |       21 |        0 |    100% |           |
 | tests/test\_filter\_findings\_script.py                                       |       73 |        0 |    100% |           |
@@ -174,7 +174,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       28 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       31 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **27227** |  **720** | **97%** |           |
+| **TOTAL**                                                                     | **27417** |  **731** | **97%** |           |
 
 
 ## Setup coverage badge
