@@ -17,4 +17,4 @@
 - `source` MUST be a pip-installable reference: `git+https://github.com/user/repo.git`, `git+ssh://host/path/to/repo` or a local path (`~/path/to/repo`). Given a repository web URL, MUST convert it to a `git+https://` or `git+ssh://` URL.
 - Memory: `name = "mcp-memory"`, `source = "git+https://github.com/alexfayers/mcp-memory.git"`.
 - Lifecycle hooks: `name = "cline-hooks"`, `source = "git+https://github.com/alexfayers/cline-hooks.git"`.
-- Then run `llm-prompts setup` to install it, followed by `llm-prompts install <agent>` to apply its rules, workflows and skills.
+- Then run `llm-prompts setup` to install it, followed by `llm-prompts install {{AGENT}}` to apply its rules, workflows and skills.

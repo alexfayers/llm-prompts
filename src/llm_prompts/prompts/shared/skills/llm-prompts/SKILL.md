@@ -12,5 +12,3 @@ MUST read and follow only the part the task needs, from `<base-dir>` (this skill
 - `contribute.md` - open or update a PR in llm-prompts, cline-hooks or mcp-memory.
 - `report-issue.md` - report a bug in one of them as a GitHub issue.
 - `request.md` - request a feature in one of them as a GitHub issue.
-
-In these parts, `<agent>` means `{{AGENT}}`.
