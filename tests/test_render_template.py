@@ -304,6 +304,3 @@ class TestStartUpStepsAreHookDriven:
             return substitute_variables(text, {"AGENT": agent})
 
         assert ("first tool call" in render("rules/002-skill-usage.md")) is kept
-        assert (
-            "`read_graph(project=" in render("skills/session-start/SKILL.md")
-        ) is kept

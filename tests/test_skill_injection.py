@@ -67,6 +67,17 @@ class TestSkillStartupBlocks:
         assert blocks[0].replaces == "load the `alpha` skill"
         assert blocks[0].order == 10
 
+    def test_base_dir_placeholder_becomes_the_skill_directory(
+        self, tmp_path: Path, install: Callable[[list[Path]], None]
+    ) -> None:
+        flagged = "metadata:\n  inject_at_start: true\n"
+        skill_dir = write_skill(tmp_path, "alpha", flagged, 'run "<base-dir>/x.py"')
+        install([skill_dir])
+
+        (block,) = SkillStartupBlocks().startup_blocks(["/ws"])
+
+        assert block.body(None) == f'run "{skill_dir}/x.py"'
+
     def test_nothing_is_contributed_without_a_frontend(
         self,
         tmp_path: Path,

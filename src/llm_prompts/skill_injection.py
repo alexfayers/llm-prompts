@@ -41,7 +41,7 @@ def _skill_block(skill_dir: Path) -> StartupBlock | None:
     return StartupBlock(
         title=f"skill `{name}`",
         replaces=f"load the `{name}` skill",
-        body=lambda _: body.strip("\n"),
+        body=lambda _: body.strip("\n").replace("<base-dir>", str(skill_dir)),
         skill=name,
         order=10,
     )
