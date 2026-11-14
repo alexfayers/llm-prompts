@@ -3450,7 +3450,8 @@ def _sync_pi_packages(
     """Make pi's global settings list exactly the managed packages in ``wanted``.
 
     Packages the user added themselves are left alone; a package llm-prompts
-    managed before but no longer declares is removed. Each default the user's
+    managed before but no longer declares is removed, as is another version
+    of a declared npm package. Each default the user's
     settings lack is filled in; one already set is kept.
 
     Args:
@@ -3467,7 +3468,13 @@ def _sync_pi_packages(
         json.loads(_read_text(settings_path)) if settings_path.exists() else {}
     )
     current: list[str | dict[str, Any]] = settings.get("packages", [])
-    stale = set(previous) - set(wanted)
+    stale = (set(previous) - set(wanted)) | {
+        source
+        for source in map(_package_source, current)
+        if source.startswith("npm:")
+        and source not in wanted
+        and _npm_names([source]) & _npm_names(wanted)
+    }
     packages = [
         wanted[entry]
         if isinstance(entry, str) and entry in previous and entry in wanted
@@ -3478,7 +3485,7 @@ def _sync_pi_packages(
     present = {_package_source(entry) for entry in packages}
     added = [source for source in wanted if source not in present]
     packages.extend(wanted[source] for source in added)
-    added_names = _npm_names(added) - _npm_names(present)
+    added_names = _npm_names(added) - _npm_names(map(_package_source, current))
     missing_defaults = {k: v for k, v in (defaults or {}).items() if k not in settings}
     if packages == current and not missing_defaults:
         return added_names
