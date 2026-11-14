@@ -22,20 +22,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        repo: [alexfayers/cline-hooks, alexfayers/mcp-memory]
+        repo: [cline-hooks, mcp-memory]
     steps:
       - uses: actions/checkout@v7
+      - id: releaser
+        uses: alexfayers/llm-prompts/.github/actions/app-token@main
+        with:
+          app-id: ${{ secrets.RELEASER_ID }}
+          private-key: ${{ secrets.RELEASER_PRIVATE_KEY }}
+          fallback-token: ${{ secrets.PROJECTS_TOKEN }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ matrix.repo }}
       - uses: actions/checkout@v7
         with:
-          repository: ${{ matrix.repo }}
-          token: ${{ secrets.PROJECTS_TOKEN }}
+          repository: ${{ github.repository_owner }}/${{ matrix.repo }}
+          token: ${{ steps.releaser.outputs.token }}
           path: target
       - run: mkdir -p target/.github/instructions
       - run: cp .github/instructions/{review,prompts,python,typescript}.instructions.md target/.github/instructions/
       - id: pr
         uses: peter-evans/create-pull-request@v8
         with:
-          token: ${{ secrets.PROJECTS_TOKEN }}
+          token: ${{ steps.releaser.outputs.token }}
           path: target
           branch: bot/copilot-review-rules
           delete-branch: true
@@ -53,5 +61,5 @@ jobs:
       - if: steps.pr.outputs.pull-request-operation == 'created' || steps.pr.outputs.pull-request-operation == 'updated'
         run: gh pr merge --auto --squash "$PR_URL"
         env:
-          GH_TOKEN: ${{ secrets.PROJECTS_TOKEN }}
+          GH_TOKEN: ${{ steps.releaser.outputs.token }}
           PR_URL: ${{ steps.pr.outputs.pull-request-url }}

@@ -22,4 +22,6 @@ jobs:
       statuses: write
     uses: alexfayers/llm-prompts/.github/workflows/pr-automation.yml@main
     secrets:
+      CI_BOT_ID: ${{ secrets.CI_BOT_ID }}
+      CI_BOT_PRIVATE_KEY: ${{ secrets.CI_BOT_PRIVATE_KEY }}
       PROJECTS_TOKEN: ${{ secrets.PROJECTS_TOKEN }}

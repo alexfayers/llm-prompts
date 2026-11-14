@@ -1,0 +1,34 @@
+name: App token
+description: Mint a GitHub App installation token in a public repo, falling back to a given token when the app is not configured or minting fails. Never mints in a private repo.
+inputs:
+  app-id:
+    description: ID of the GitHub App.
+    required: false
+  private-key:
+    description: Private key of the GitHub App.
+    required: false
+  fallback-token:
+    description: Token returned when no app token is minted.
+    required: false
+  owner:
+    description: Owner of the app installation. Set it, without repositories, to reach every repo the app is installed on.
+    required: false
+  repositories:
+    description: Comma-separated repository names the token can reach. Defaults to the current repo when owner is unset.
+    required: false
+outputs:
+  token:
+    description: The app installation token, or the fallback token.
+    value: ${{ steps.mint.outputs.token || inputs.fallback-token }}
+runs:
+  using: composite
+  steps:
+    - id: mint
+      if: inputs.private-key != '' && !github.event.repository.private
+      continue-on-error: true
+      uses: actions/create-github-app-token@v3
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: ${{ inputs.owner }}
+        repositories: ${{ inputs.repositories }}
