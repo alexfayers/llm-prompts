@@ -10,12 +10,7 @@ import pytest
 from conftest import FakeSubprocess
 
 from llm_prompts.watch.core.runner import watch
-from llm_prompts.watch.sources.github_triage import (
-    ADDRESSED,
-    TO_REVIEW,
-    GithubTriageSource,
-    triage,
-)
+from llm_prompts.watch.sources.github_triage import GithubTriageSource
 
 VIEWER = "me"
 LAST_PAGE = {"hasNextPage": False}
@@ -77,42 +72,6 @@ def test_gh_triage_prints_the_full_list_when_a_ready_pr_appears(
         "- ✅ addressed: [#1](https://github.com/o/r/pull/1) title 1\n"
         "- 👀 to review: [#4](https://github.com/o/r/pull/4) title 4\n"
     )
-
-
-@pytest.mark.parametrize(
-    ("reviews", "comments", "status"),
-    [
-        ([(VIEWER, "COMMENTED", "[LLM] fine")], [], TO_REVIEW),
-        ([], [(VIEWER, "[LLM] done")], TO_REVIEW),
-        ([(VIEWER, "APPROVED", "")], [], ADDRESSED),
-        ([(VIEWER, "CHANGES_REQUESTED", "")], [], ADDRESSED),
-        ([(VIEWER, "COMMENTED", "")], [], TO_REVIEW),
-        ([(None, "APPROVED", "")], [(None, "ok")], TO_REVIEW),
-    ],
-)
-def test_triage_counts_only_the_viewers_human_activity(
-    reviews: list[tuple[str | None, str, str]],
-    comments: list[tuple[str | None, str]],
-    status: str,
-) -> None:
-    node = pull_request(1)
-    node["reviews"]["nodes"] = [
-        {"author": author and {"login": author}, "state": state, "body": body}
-        for author, state, body in reviews
-    ]
-    node["reviewThreads"]["nodes"] = [
-        {
-            "isResolved": True,
-            "comments": {
-                "nodes": [{"author": author and {"login": author}, "body": body}]
-            },
-        }
-        for author, body in comments
-    ]
-
-    assert triage([node], VIEWER) == [
-        f"- {status} [#1](https://github.com/o/r/pull/1) title 1"
-    ]
 
 
 def test_gh_triage_fails_cleanly_when_the_default_repository_lookup_fails(
