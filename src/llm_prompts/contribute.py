@@ -1823,7 +1823,7 @@ def sync_targets(
         for commit in manual_commits:
             print(
                 f"{commit.sha[:7]}: code-only, open its PR by hand "
-                "(llm-prompts-contribute skill)"
+                "(llm-prompts skill, contribute.md)"
             )
         if selection is None or own_commits:
             status = max(

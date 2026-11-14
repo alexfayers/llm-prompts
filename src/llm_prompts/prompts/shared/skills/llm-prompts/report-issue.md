@@ -1,15 +1,10 @@
----
-name: llm-prompts-request
-description: Request a feature in llm-prompts, cline-hooks, or mcp-memory as a GitHub issue. Use when the user wants a rule, skill, hook, memory tool or CLI changed.
----
+# Reporting an issue
 
-# Requesting a feature
-
-Bugs and annoyances: `llm-prompts-report-issue` skill.
+Feature requests and ideas: `<base-dir>/request.md`.
 
 ## Target repo
 
-- MUST pick the repo that would own the change:
+- MUST pick the repo where the faulty behaviour lives:
   - `llm-prompts` - rules, skills, workflows, agents, installer, `llm-prompts` CLI.
   - `cline-hooks` - hook plugins, hook-emitted blocks and notes.
   - `mcp-memory` - memory server, memory tools, memory CLI.
@@ -22,14 +17,14 @@ Bugs and annoyances: `llm-prompts-report-issue` skill.
 ## Draft
 
 - Title: short, plain, no `type:` prefix.
-- Body: a few short paragraphs. Open with the need, then the proposal as a hedged question. Cover the current behaviour only where it explains the need.
-- MUST carry exactly ONE ask. Several ideas -> one issue each.
+- Body: a few short paragraphs. What happens literally, what was expected, how to reproduce if known.
+- MUST carry exactly ONE ask. Several problems -> one issue each.
 - MUST NOT paste secrets, tokens, private paths or other private info.
 
 ## Open
 
 - MUST show the user the target repo, title and body, and ask the user for approval.
 - MUST NOT run `gh issue create` before the user approves. Edits requested -> redraft, show again.
-- On approval (github.com): `gh issue create -R <owner/name> --title "<title>" --body-file -`, adding `--label enhancement` only if the repo has it (`gh label list -R <owner/name>`).
+- On approval (github.com): `gh issue create -R <owner/name> --title "<title>" --body-file -`, adding `--label bug` only if the repo has it (`gh label list -R <owner/name>`).
 - MUST report the issue URL.
 - MUST NOT push, open a PR, or comment on other issues.

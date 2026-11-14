@@ -1,8 +1,3 @@
----
-name: llm-prompts-edit
-description: Edit llm-prompts' own rule, skill, workflow, or agent sources under src/llm_prompts/prompts/. Use before proposing or writing any change there.
----
-
 # llm-prompts Source Editing
 
 Decision order for touching this repo's own rule/skill/workflow/agent sources.
@@ -16,16 +11,17 @@ Decision order for touching this repo's own rule/skill/workflow/agent sources.
 ## 2. Scope
 
 - Generic across every project and person -> rule/skill. Specific to one person/repo/task -> memory, not here.
-- A hook enforces with certainty; a rule/skill only requests compliance - prefer a hook when the behaviour is checkable at a tool call or lifecycle event.
+- A hook enforces with certainty; a rule/skill only requests compliance. Anything that genuinely must not happen, or any behaviour checkable at a tool call or lifecycle event, belongs in a hook, not a MUST/NEVER rule.
+- Where the event reached for fires only after the change has landed, MUST check whether an earlier event can predict the outcome from the tool's own input, not conclude enforcement is impossible.
 
 ## 3. Rule vs skill
 
 - A rule always applies, everywhere. A skill is one process for one task. Not clear which -> escalate to the user for a decision.
-- New mandatory skill also needs a trigger line in `002-skill-usage` - propose both together.
+- New mandatory skill or part also needs a trigger line in `002-skill-usage` - propose both together.
 
 ## 4. Dedup
 
-- Find the real source file first with `llm-prompts source <agent>` (e.g. `claude-code`) - never guess a path.
+- Find the real source file first with `llm-prompts source <agent>` - never guess a path.
 - MUST scope prompt-rule audits and edits to the files listed in ~/.config/llm-prompts/installed.json, not every agent subdirectory under prompts/.
 - MUST grep the rule AND skill sources for existing coverage - sharpen the most specific match in place, not a second overlapping instruction.
 - MUST check you did not already make this edit earlier in the session.
@@ -37,6 +33,7 @@ Decision order for touching this repo's own rule/skill/workflow/agent sources.
 - RFC 2119 bullets only; no filler, justification or restatement. MUST/MUST NOT for absolute requirements; SHOULD/SHOULD NOT for defaults overridable with good reason; MAY for free choices.
 - A skill is a directory: SKILL.md plus optional scripts. Prefer a script or hook over prose wherever the step is checkable or computable exactly.
 - New skill: `src/llm_prompts/prompts/shared/skills/<name>/SKILL.md`, `name` = directory, `description` states what + when. Directory scan registers it.
+- A task that fits an existing skill's group SHOULD be a part of it: a sibling `<part>.md` listed in that skill's index, never named `SKILL.md`. Parts are not templated - per-target text stays in `SKILL.md`. A skill a hook or `pi_skills` names MUST keep its own `SKILL.md`.
 
 ## 6. Size
 
@@ -46,6 +43,7 @@ Decision order for touching this repo's own rule/skill/workflow/agent sources.
 ## 7. Commit and PR
 
 - Commit the change right after making it. Do not leave it uncommitted.
+- Where no auto-reinstall hook runs (cline-hooks not installed), MUST run the installed `llm-prompts update` after editing a source.
 - If an unpushed commit already changes the same rule or skill, fix that commit up instead of making a new one.
 - Keep a compression edit in its own commit, separate from the content change - easier to review.
-- To open the change as a PR: `llm-prompts-contribute` skill.
+- To open the change as a PR: `<base-dir>/contribute.md`.

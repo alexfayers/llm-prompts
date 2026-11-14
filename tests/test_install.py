@@ -2737,7 +2737,7 @@ class TestPiVersionDrift:
                 "1.10.0",
                 (
                     "[llm-prompts] pi 1.10.0 is newer than tested 1.2.0 - if extensions break, "
-                    "report it with the llm-prompts-report-issue skill"
+                    "report it with the llm-prompts skill (report-issue.md)"
                 ),
             ),
             ("1.2.0\n", None),

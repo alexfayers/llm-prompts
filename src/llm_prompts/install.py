@@ -3481,7 +3481,7 @@ def _warn_pi_version_drift(sources: Iterable[str]) -> None:
     else:
         message = (
             f"pi {installed} is newer than tested {pinned} - if extensions break, "
-            "report it with the llm-prompts-report-issue skill"
+            "report it with the llm-prompts skill (report-issue.md)"
         )
     print(paint(f"[llm-prompts] {message}", "grey"), file=sys.stderr)
 
