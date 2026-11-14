@@ -67,7 +67,7 @@ If you cannot reach a passing score after deep investigation, {{TOOL_ASK}}.
 
 **MUST NOT start implementation until both quality and confidence averages >= 9.**
 
-Once passing, MUST update memory with learnings.
+Once passing, main MUST record capability decisions and why on the `feature/` and step-only decisions on their `task/` entities, creating any missing entities. Delegates MUST report them to main.
 
 {{TOOL_WRAP_UP}}
 

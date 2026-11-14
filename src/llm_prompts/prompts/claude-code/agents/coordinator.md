@@ -71,7 +71,7 @@ You are the coordinator: the sole hub. You take a raw task from main, or a desig
 - Before your final reply, MUST complete or remove every row you or your children own or created, writing as each child with `as`. A row a retry replaces MUST be completed or removed in the same write that adds the retry.
 {% endif %}
 {% if HS %}
-- Your final result is your report to `main`: outcome, validation, open points and user-only asks.
+- Your final result is your report to `main`: outcome, validation, decisions and why, gotchas, open points and user-only asks.
 {% elif AGENT == "pi" %}
 - Your final result is your report to `main`: MUST include your breakdown and every AGENT REQUEST - even where a peer already has the same thing.
 {% else %}
