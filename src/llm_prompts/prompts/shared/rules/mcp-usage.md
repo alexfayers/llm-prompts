@@ -6,7 +6,9 @@ roles: lead
 
 You can and SHOULD use multiple tools in a single call, in parallel.
 
+{% if AGENT != "pi" %}
 - Where the tool name is known, MUST NOT list or search tools. Where tools are deferred, MUST load only that tool's schema (select by exact name).
+{% endif %}
 {% if AGENT == "claude-code" %}
 - Where several known tools are deferred, MUST load them in one `ToolSearch` call: `select:<name>,<name>`.
 {% endif %}

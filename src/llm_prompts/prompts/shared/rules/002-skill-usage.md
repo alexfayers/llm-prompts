@@ -36,7 +36,11 @@ You MUST use the `git-usage` skill before interacting with git in **ANY** way, i
 
 Before each push, PR creation or PR update, you MUST use the `pr-review` skill on your diff and PR text.
 
-## Handoff pickup
+## Handoff
+
+{% if has_command("herdr") %}
+- Before a live Herdr handoff, MUST use the `handoff` skill and read its `live.md` part.
+{% endif %}
 
 Where a `HANDOFF.md` is present in the workspace at session start, or the user points you at a handoff doc (their own or another agent's), you **MUST** use the `pickup` skill before doing anything else with it - including before reading it in full or deciding it is stale. MUST NOT re-verify claims the handoff or memory already states as fact.
 

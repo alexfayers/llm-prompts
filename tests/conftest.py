@@ -22,6 +22,8 @@ from llm_prompts import github_api, install, setup
 from llm_prompts.contribute import Pr
 from llm_prompts.size_guard import CheckResult
 
+_REAL_WHICH = shutil.which
+
 SideEffectCall = Callable[
     [list[str], dict[str, Any]], subprocess.CompletedProcess[str] | None
 ]
@@ -680,6 +682,26 @@ def herdr_off_path(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
     monkeypatch.setattr(shutil, "which", which)
+
+
+@pytest.fixture
+def herdr_stub(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, herdr_off_path: None
+) -> Path:
+    """Put a `herdr` stub on PATH and return the file listing the argv of each call."""
+    bin_dir = tmp_path / "stub-bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "herdr-calls.txt"
+    stub = bin_dir / "herdr"
+    stub.write_text(f'#!/bin/sh\necho "$@" >> "{calls}"\n', encoding="utf-8")
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+    def which(command: str, *args: Any, **kwargs: Any) -> str | None:
+        return None if command == "pi" else _REAL_WHICH(command, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "which", which)
+    return calls
 
 
 @pytest.fixture
