@@ -3,12 +3,9 @@ name: PR review
 on:
   pull_request_review:
     types: [submitted, dismissed]
-  workflow_call:
 
 permissions: {}
 
 jobs:
   relay:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Review events from forks get a read-only token, so project automation reruns from this run's workflow_run event"
+    uses: alexfayers/llm-prompts-ci/.github/workflows/pr-review.yml@main

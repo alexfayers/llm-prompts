@@ -1,8 +1,0 @@
-name: Setup just
-description: Install just
-runs:
-  using: composite
-  steps:
-    - uses: taiki-e/install-action@v2
-      with:
-        tool: just

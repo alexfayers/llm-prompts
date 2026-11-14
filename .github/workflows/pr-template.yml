@@ -3,7 +3,6 @@ name: PR template
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review, edited]
-  workflow_call:
 
 concurrency:
   group: pr-template-${{ github.event.pull_request.number }}
@@ -18,6 +17,5 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v7
-      - if: github.repository == 'alexfayers/llm-prompts'
-        run: node --test .github/scripts/*.test.js
-      - uses: alexfayers/llm-prompts/.github/actions/pr-template@main
+      - run: node --test .github/scripts/*.test.js
+      - uses: alexfayers/llm-prompts-ci/.github/actions/pr-template@main

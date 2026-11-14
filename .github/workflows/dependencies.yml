@@ -9,14 +9,6 @@ on:
     workflows: [PR review]
     types: [completed]
   workflow_dispatch:
-  workflow_call:
-    secrets:
-      CI_BOT_ID:
-        required: false
-      CI_BOT_PRIVATE_KEY:
-        required: false
-      PROJECTS_TOKEN:
-        required: false
   repository_dispatch:
     types: [dependencies-recheck]
 
@@ -30,12 +22,12 @@ jobs:
       pull-requests: write
     steps:
       - id: ci-bot
-        uses: alexfayers/llm-prompts/.github/actions/app-token@main
+        uses: alexfayers/llm-prompts-ci/.github/actions/app-token@main
         with:
           app-id: ${{ secrets.CI_BOT_ID }}
           private-key: ${{ secrets.CI_BOT_PRIVATE_KEY }}
           fallback-token: ${{ secrets.PROJECTS_TOKEN }}
           owner: ${{ github.repository_owner }}
-      - uses: alexfayers/llm-prompts/.github/actions/check-dependencies@main
+      - uses: alexfayers/llm-prompts-ci/.github/actions/check-dependencies@main
         with:
           automation-token: ${{ steps.ci-bot.outputs.token }}
