@@ -22,7 +22,7 @@ Decision order for touching this repo's own rule/skill/workflow/agent sources.
 
 ## 4. Dedup
 
-- Find the real source file first with `llm-prompts source <agent>` - never guess a path.
+- Find the real source file first with `llm-prompts source {{AGENT}}` - never guess a path.
 - MUST scope prompt-rule audits and edits to the files listed in ~/.config/llm-prompts/installed.json, not every agent subdirectory under prompts/.
 - MUST grep the rule AND skill sources for existing coverage - sharpen the most specific match in place, not a second overlapping instruction.
 - MUST check you did not already make this edit earlier in the session.
@@ -34,7 +34,7 @@ Decision order for touching this repo's own rule/skill/workflow/agent sources.
 - RFC 2119 bullets only; no filler, justification or restatement. MUST/MUST NOT for absolute requirements; SHOULD/SHOULD NOT for defaults overridable with good reason; MAY for free choices.
 - A skill is a directory: SKILL.md plus optional scripts. Prefer a script or hook over prose wherever the step is checkable or computable exactly.
 - New skill: `src/llm_prompts/prompts/shared/skills/<name>/SKILL.md`, `name` = directory, `description` states what + when. Directory scan registers it.
-- A task that fits an existing skill's group SHOULD be a part of it: a sibling `<part>.md` listed in that skill's index, never named `SKILL.md`. Parts are not templated - per-target text stays in `SKILL.md`. A skill a hook or `pi_skills` names MUST keep its own `SKILL.md`.
+- A task that fits an existing skill's group SHOULD be a part of it: a sibling `<part>.md` listed in that skill's index, never named `SKILL.md`. A skill a hook or `pi_skills` names MUST keep its own `SKILL.md`.
 
 ## 6. Size
 
