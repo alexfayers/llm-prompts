@@ -55,6 +55,7 @@ from .render_template import (
     load_vars,
     normalize_whitespace,
     parse_frontmatter,
+    render_skill_part,
     render_template,
     resolve_frontmatter,
     resolve_source_file,
@@ -1486,7 +1487,7 @@ def _materialize_builtin_skill(
         substituted,
         "skill",
         managed,
-        lambda part: substitute_variables(part, variables),
+        lambda part: render_skill_part(part, variables),
     )
 
 

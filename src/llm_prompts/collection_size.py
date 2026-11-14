@@ -40,6 +40,7 @@ from .install import (
 from .render_template import (
     _read_text,
     parse_frontmatter,
+    render_skill_part,
     split_frontmatter,
     strip_gating_keys,
     substitute_variables,
@@ -205,7 +206,7 @@ def _skill_bytes(
             )
             parts = LoadedBytes(
                 body=sum(
-                    len(substitute_variables(_read_text(part), variables).encode())
+                    len(render_skill_part(_read_text(part), variables).encode())
                     for part in _skill_part_files(
                         _skill_layers(candidate_dirs, name, gate)
                     )

@@ -728,7 +728,7 @@ class TestMaterializeBuiltinSkill:
         _materialize_builtin_skill(src, dest, vars_path, set())
 
         assert not (dest / "live.md").is_symlink()
-        assert (dest / "live.md").read_text(encoding="utf-8") == "pi step"
+        assert (dest / "live.md").read_text(encoding="utf-8") == "pi step\n"
         assert "{% if" in part.read_text(encoding="utf-8")
 
     def test_nested_part_rendered_with_the_skill_variables(
@@ -745,7 +745,7 @@ class TestMaterializeBuiltinSkill:
 
         rendered = dest / "parts" / "live.md"
         assert not rendered.is_symlink()
-        assert rendered.read_text(encoding="utf-8") == "pi"
+        assert rendered.read_text(encoding="utf-8") == "pi\n"
 
     def test_siblings_still_resolve_and_stay_live(self, tmp_path: Path) -> None:
         src = self._make_skill(
