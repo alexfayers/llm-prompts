@@ -656,7 +656,10 @@ def _copy_recorded_into(
 
 
 def _pull_and_copy(
-    tools: list[dict[str, Any]], entries: list[WorktreeEntry], failed: set[str]
+    tools: list[dict[str, Any]],
+    entries: list[WorktreeEntry],
+    failed: set[str],
+    copy_failed: set[str],
 ) -> tuple[set[str], list[WorktreeEntry]]:
     """Pull every local source, then copy recorded worktrees into each main that pulled cleanly.
 
@@ -664,6 +667,7 @@ def _pull_and_copy(
         tools: The configured tool sources.
         entries: The recorded worktrees.
         failed: Collects the names of the sources that could not be pulled or copied.
+        copy_failed: Collects the names of the sources that could not be copied.
 
     Returns:
         The names of the sources that moved and the updated record entries.
@@ -676,7 +680,7 @@ def _pull_and_copy(
     for name, repo in recorded.items():
         if (blocker := _copy_blocker(repo)) is not None:
             print(f"[{name}] {blocker}")
-            raise ExitReason("other")
+            raise ExitReason("copy_blocked")
     tests = {str(tool.get("name", "")): str(tool.get("test", "")) for tool in tools}
     pulls: list[Callable[[], _PullOutcome]] = [
         partial(
@@ -696,21 +700,25 @@ def _pull_and_copy(
         if outcome.failed:
             failed.add(outcome.name)
         elif outcome.name in recorded:
-            moved, copy_failed, entries = _copy_recorded_into(
+            moved, copied_failed, entries = _copy_recorded_into(
                 outcome.name, recorded[outcome.name], entries, tests[outcome.name]
             )
-            if copy_failed:
+            if copied_failed:
                 failed.add(outcome.name)
+                copy_failed.add(outcome.name)
             if moved:
                 changed.add(outcome.name)
     return changed, entries
 
 
-def _pull_local_sources(failed: set[str] | None = None) -> set[str]:
+def _pull_local_sources(
+    failed: set[str] | None = None, copy_failed: set[str] | None = None
+) -> set[str]:
     """Pull upstream changes for all local-path tool sources, then copy recorded worktrees into each main.
 
     Args:
         failed: Collects the names of the tool sources that could not be pulled or copied.
+        copy_failed: Collects the names of the tool sources that could not be copied.
 
     Returns:
         The names of the tool sources that actually moved.
@@ -729,13 +737,20 @@ def _pull_local_sources(failed: set[str] | None = None) -> set[str]:
         with worktrees.locked(path):
             entries = worktrees.load_entries(path)
             changed, updated = _pull_and_copy(
-                _load_config(), entries, failed if failed is not None else set()
+                _load_config(),
+                entries,
+                failed if failed is not None else set(),
+                copy_failed if copy_failed is not None else set(),
             )
             if updated != entries:
                 worktrees.save_entries(path, updated)
     except (worktrees.LockHeld, worktrees.CorruptRecord) as error:
         print(error)
-        raise ExitReason("other") from error
+        raise ExitReason(
+            "record_locked"
+            if isinstance(error, worktrees.LockHeld)
+            else "record_corrupt"
+        ) from error
     return changed
 
 
@@ -1388,7 +1403,7 @@ def _run_command(run: telemetry.Run) -> int | None:
         from .install import main as install_main
 
         agent_names = list(_AGENTS) if args.agent == "all" else [args.agent]
-        size_guard_failed = install_main(
+        install_failure = install_main(
             agent_names, verbose=args.verbose, root=args.root
         )
 
@@ -1444,8 +1459,8 @@ def _run_command(run: telemetry.Run) -> int | None:
                     agent_config=args.agent_config,
                 )
 
-        if size_guard_failed:
-            run.outcome = "size_guard_failed"
+        if install_failure:
+            run.outcome = install_failure
             sys.exit(1)
     elif args.command == "source":
         _print_sources(args.agent)
@@ -1487,19 +1502,20 @@ def _run_command(run: telemetry.Run) -> int | None:
                     f"[{name}] no longer supported. Run `llm-prompts uninstall {name}`.",
                 )
         if not manifest:
-            print(
+            raise ExitReason(
+                "no_installed_agents",
                 "No installed agents found. Run `llm-prompts install <agent>` first.",
-                file=sys.stderr,
             )
-            sys.exit(1)
 
         from .install import main as install_main
         from .install import partial_source
 
         only_source = partial_source(args.only) if args.only else None
         if only_source is not None:
-            if install_main(list(manifest), only=only_source, verbose=args.verbose):
-                run.outcome = "size_guard_failed"
+            if failure := install_main(
+                list(manifest), only=only_source, verbose=args.verbose
+            ):
+                run.outcome = failure
                 sys.exit(1)
             sys.exit(0)
 
@@ -1510,13 +1526,16 @@ def _run_command(run: telemetry.Run) -> int | None:
             _print_update_status()
             size_baseline = snapshot_sources(_size_guard_roots())
             failed_sources: set[str] = set()
-            changed_sources = _pull_local_sources(failed_sources)
+            copy_failed_sources: set[str] = set()
+            changed_sources = _pull_local_sources(failed_sources, copy_failed_sources)
             if failed_sources:
                 print(
                     f"Update stopped: {', '.join(sorted(failed_sources))} "
                     "could not be updated, so the installed versions would not match. "
                     "Fix the errors above, then rerun `llm-prompts update`."
                 )
+                if failed_sources == copy_failed_sources:
+                    raise ExitReason("copy_failed")
                 run.outcome = "source_sync_failed"
                 sys.exit(1)
 
@@ -1547,7 +1566,7 @@ def _run_command(run: telemetry.Run) -> int | None:
                 Path(path): h for path, h in state["size_baseline"].items()
             }
 
-        size_guard_failed = install_main(
+        install_failure = install_main(
             list(manifest), size_baseline=size_baseline, verbose=args.verbose
         )
 
@@ -1559,8 +1578,8 @@ def _run_command(run: telemetry.Run) -> int | None:
             _auto_migrate_memory_db()
             _restart_memory_service()
 
-        if size_guard_failed:
-            run.outcome = "size_guard_failed"
+        if install_failure:
+            run.outcome = install_failure
             sys.exit(1)
     elif args.command == "uninstall":
         from .install import uninstall

@@ -997,7 +997,7 @@ class TestUpdateCommandPullsPlugins:
             mock_config.return_value.exists.return_value = False
             main()
 
-        assert order.mock_calls == [call.status(), call.pull(set())]
+        assert order.mock_calls == [call.status(), call.pull(set(), set())]
 
     def test_update_skips_agents_no_longer_supported(self) -> None:
         with (

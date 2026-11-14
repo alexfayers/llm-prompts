@@ -763,7 +763,7 @@ def _repair_unstartable(env: SharedEnv) -> bool:
             "Update every source checkout, then rerun `llm-prompts update`.",
             file=sys.stderr,
         )
-        raise ExitReason("tool_install_failed")
+        raise ExitReason("tool_unstartable")
     return True
 
 

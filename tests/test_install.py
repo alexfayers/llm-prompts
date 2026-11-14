@@ -1298,7 +1298,7 @@ class TestMainRunsSizeGuard:
         ):
             result = install_main(["claude-code"])
 
-        assert result is True
+        assert result == "size_guard_failed"
 
     def test_blocking_violation_report_logged_at_error_level(
         self, tmp_path: Path
@@ -1420,7 +1420,7 @@ class TestMainRunsSizeGuard:
         ):
             skipped = install_main(["claude-code"])
 
-        assert skipped is True
+        assert skipped == "size_guard_failed"
         logged_error = [
             call.args[1] for call in mock_log.call_args_list if call.args[0] == "error"
         ]
@@ -2570,7 +2570,7 @@ class TestMainOnly:
             [str(env["edited_dest"]), str(env["other_dest"]), *(extra_files or [])],
         )
 
-    def _run(self, env: dict[str, Path]) -> bool:
+    def _run(self, env: dict[str, Path]) -> str | None:
         with (
             patch("llm_prompts.install.Path.home", return_value=env["home"]),
             patch(
@@ -2595,7 +2595,7 @@ class TestMainOnly:
         orphan.write_text("orphan", encoding="utf-8")
         self._seed(env, [str(orphan)])
 
-        assert self._run(env) is False
+        assert self._run(env) is None
 
         assert env["edited_dest"].read_text(encoding="utf-8").strip() == "new edited"
         assert env["other_dest"].read_text(encoding="utf-8") == "old other_dest"
@@ -2624,7 +2624,7 @@ class TestMainOnly:
         with patch("llm_prompts.size_guard.check_source", return_value=failing):
             result = self._run(env)
 
-        assert result is True
+        assert result == "size_guard_failed"
         assert env["edited_dest"].read_text(encoding="utf-8") == "old edited_dest"
 
 

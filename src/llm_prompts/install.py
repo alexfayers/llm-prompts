@@ -102,6 +102,7 @@ _PLAIN_SYMBOLS: dict[LogLevel, str] = {
 }
 
 
+InstallFailure = Literal["size_guard_failed", "pi_package_failed", "install_failed"]
 _verbose = False
 
 
@@ -4149,7 +4150,7 @@ def main(
     size_baseline: dict[Path, str] | None = None,
     only: Path | None = None,
     root: Path | None = None,
-) -> bool:
+) -> InstallFailure | None:
     """Run the installation workflow.
 
     Args:
@@ -4162,8 +4163,7 @@ def main(
         root: Directory to install under instead of the home directory.
 
     Returns:
-        Whether any prompt was skipped or any agent frozen due to a size
-        guard violation.
+        Why the install did not fully succeed, or None when it did.
     """
     global _verbose
     _verbose = verbose
@@ -4611,13 +4611,13 @@ def main(
         display = source.parent.name if source.name == "SKILL.md" else source.name
         log("error", f"Skipped installing {display}: size guard violation")
 
-    return (
-        size_failed
-        or bool(all_skipped)
-        or bool(frozen_agents)
-        or bool(pi_failed_sources)
-        or bool(failed_tools)
-    )
+    if failed_tools:
+        return "install_failed"
+    if pi_failed_sources:
+        return "pi_package_failed"
+    if size_failed or all_skipped or frozen_agents:
+        return "size_guard_failed"
+    return None
 
 
 def get_managed_dirs() -> list[Path]:
