@@ -8,8 +8,8 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, Self
 
-from ...network import run_with_retries
 from ..core.source import Fields, WatchError
+from .rest import conditional_get
 
 FAILED_CONCLUSIONS = frozenset(
     {"failure", "timed_out", "cancelled", "action_required", "startup_failure"}
@@ -109,31 +109,15 @@ class GithubPrSource:
     def _get(self, path: str) -> tuple[Any, str | None]:
         self._used.add(path)
         cached = self._cache.get(path)
-        conditional = ["-H", f"If-None-Match: {cached[0]}"] if cached else []
-        try:
-            result = run_with_retries(
-                ["gh", "api", "-i", path, *conditional],
-                capture_output=True,
-                text=True,
-            )
-        except OSError:
-            raise WatchError("gh is not installed.") from None
-        head, _, body = result.stdout.partition("\n\n")
-        status_line, *header_lines = head.splitlines() or [""]
-        status = re.match(r"HTTP/\S+ (\d+)", status_line)
-        code = int(status[1]) if status else 0
-        headers = {
-            name.lower(): value.strip()
-            for name, _, value in (line.partition(":") for line in header_lines)
-        }
-        if code == 304 and cached:
+        response = conditional_get(path, cached[0] if cached else None)
+        if response.code == 304 and cached:
             return cached[1], cached[2]
-        if code != 200:
+        if response.code != 200:
             raise WatchError(f"GitHub request failed for {self.describe()}.")
-        data = json.loads(body)
-        link = re.search(r'<([^>]+)>;\s*rel="next"', headers.get("link", ""))
+        data = json.loads(response.body)
+        link = re.search(r'<([^>]+)>;\s*rel="next"', response.headers.get("link", ""))
         following = link[1] if link else None
-        self._cache[path] = (headers["etag"], data, following)
+        self._cache[path] = (response.headers["etag"], data, following)
         return data, following
 
     def _get_all(self, path: str, key: str | None = None) -> list[dict[str, Any]]:
