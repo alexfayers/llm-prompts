@@ -248,7 +248,6 @@ SCHEDULES: dict[str, Schedule] = {
                         "tidy-code",
                         "git-usage",
                         "session-start",
-                        "git-tidy",
                         "handoff",
                         "session-end",
                     }
@@ -262,7 +261,7 @@ SCHEDULES: dict[str, Schedule] = {
             ScheduleStep(
                 "D2",
                 230,
-                frozenset({"handoff", "ask-codex", "git-tidy", "pickup", "grill-me"}),
+                frozenset({"handoff", "ask-codex", "pickup", "grill-me"}),
             ),
             ScheduleStep(
                 "D3",
@@ -271,7 +270,6 @@ SCHEDULES: dict[str, Schedule] = {
                     {
                         "handoff",
                         "ask-codex",
-                        "git-tidy",
                         "pickup",
                         "grill-me",
                         "todos",
@@ -287,7 +285,6 @@ SCHEDULES: dict[str, Schedule] = {
                     {
                         "handoff",
                         "ask-codex",
-                        "git-tidy",
                         "pickup",
                         "grill-me",
                         "todos",

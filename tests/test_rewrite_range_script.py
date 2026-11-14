@@ -1,4 +1,4 @@
-"""Tests for the git-tidy skill's declarative-plan rebase script."""
+"""Tests for the git-usage skill's tidy declarative-plan rebase script."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ _SCRIPT = (
     / "prompts"
     / "shared"
     / "skills"
-    / "git-tidy"
+    / "git-usage"
     / "rewrite_range.py"
 )
 
