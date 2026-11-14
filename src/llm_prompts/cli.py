@@ -815,6 +815,7 @@ def _sync_options(args: argparse.Namespace) -> SyncOptions:
         args.rescan,
         tuple(args.depends_on) if args.depends_on else None,
         tuple(args.no_depends_on) if args.no_depends_on else None,
+        tuple(args.why) if args.why else None,
     )
 
 
@@ -1149,6 +1150,12 @@ def _run_command(run: telemetry.Run) -> int | None:
         help="Remove the dependency of BRANCH on TOOL:BRANCH.",
     )
     sync_parser.add_argument(
+        "--why",
+        nargs=2,
+        metavar=("BRANCH", "TEXT"),
+        help="Record the text sync puts under Why in BRANCH's PR.",
+    )
+    sync_parser.add_argument(
         "--rescan",
         action="store_true",
         help="Record your open PRs whose branch is checked out in a worktree.",
@@ -1190,7 +1197,7 @@ def _run_command(run: telemetry.Run) -> int | None:
     ):
         sync_parser.error(
             "Pass only one of --branch, --forget, --ready, --local, "
-            "--depends-on, --no-depends-on and --rescan."
+            "--depends-on, --no-depends-on, --why and --rescan."
         )
 
     if (
@@ -1200,8 +1207,8 @@ def _run_command(run: telemetry.Run) -> int | None:
         and args.tool is None
     ):
         sync_parser.error(
-            "--branch, --forget, --ready, --local, --depends-on and "
-            "--no-depends-on require --tool NAME."
+            "--branch, --forget, --ready, --local, --depends-on, "
+            "--no-depends-on and --why require --tool NAME."
         )
 
     if args.command == "install" and args.root:

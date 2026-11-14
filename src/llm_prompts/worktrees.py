@@ -37,6 +37,7 @@ class WorktreeEntry(NamedTuple):
     and has not yet taken out of the PR body.
     ``copied`` is the author time and subject of the first commit when sync last
     copied the branch into local main.
+    ``why`` is the text sync puts under Why when it opens the PR.
     """
 
     repo: str
@@ -50,6 +51,7 @@ class WorktreeEntry(NamedTuple):
     base: str | None = None
     dropped_refs: tuple[str, ...] = ()
     copied: str | None = None
+    why: str = ""
 
 
 def record_path() -> Path:
