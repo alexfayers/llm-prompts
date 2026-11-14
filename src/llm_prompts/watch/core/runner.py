@@ -60,7 +60,8 @@ def _poll_until_done(
                     if follow and reported.get(index) == current:
                         break
                     print(
-                        f"{sources[index].describe()}: {_describe(condition, current)}"
+                        f"{sources[index].describe()}: {_describe(condition, current)}",
+                        flush=True,
                     )
                     if follow:
                         baselines[index] = reported[index] = current
@@ -76,7 +77,10 @@ def _poll_until_done(
         now = time.time()
         if stop is not None and now >= stop:
             for index in waiting:
-                print(f"{sources[index].describe()}: {_timeout_text(currents[index])}")
+                print(
+                    f"{sources[index].describe()}: {_timeout_text(currents[index])}",
+                    flush=True,
+                )
             return EXIT_TIMEOUT
         pause = sources[0].default_interval if interval is None else interval
         time.sleep(pause if stop is None else min(pause, stop - now))
