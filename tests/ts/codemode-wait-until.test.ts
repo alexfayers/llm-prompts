@@ -26,7 +26,7 @@ test("waitUntil throws once the timeout passes", async () => {
 });
 
 test("waitUntil sleeps at most the sleep limit", async () => {
-	const { slept } = await run("let n=0;return waitUntil(()=>++n>1,{intervalMs:700000});");
+	const { slept } = await run("let n=0;return waitUntil(()=>++n>1,{intervalMs:700000,timeoutMs:900000});");
 	assert.deepEqual(slept, [600000]);
 });
 
