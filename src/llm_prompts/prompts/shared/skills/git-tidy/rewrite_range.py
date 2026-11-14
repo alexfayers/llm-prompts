@@ -26,10 +26,12 @@ top-to-bottom order they appear in the plan, since that is the order the
 rebase invokes the commit-message editor.
 
 Usage:
-    python3 rewrite_range.py <plan.json> [<base-ref>]
+    python3 rewrite_range.py <plan.json> [<base-ref> | --root]
 
-`base-ref` defaults to the branch's upstream (`@{u}`). Run inspect_range.py
-first and get explicit user confirmation of the plan before invoking this.
+`base-ref` defaults to `@{u}`, else `--root`, as in inspect_range.py. `--root`
+rebases from the first commit, so the range is every commit. The plan
+MUST list every range commit once. Remove a commit with `drop`. Run
+inspect_range.py first and get explicit user confirmation of the plan.
 """
 
 import argparse
@@ -38,6 +40,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+from inspect_range import list_commits, resolve_base
 
 VALID_VERBS = {"pick", "drop", "squash", "fixup", "reword"}
 
@@ -48,13 +52,6 @@ def run_git(args: list[str]) -> str:
         ["git", *args], capture_output=True, text=True, check=True
     )
     return completed.stdout
-
-
-def resolve_base(explicit_base: str | None) -> str:
-    """Resolve the base ref, falling back to the branch's upstream."""
-    if explicit_base:
-        return explicit_base
-    return run_git(["rev-parse", "--abbrev-ref", "@{u}"]).strip()
 
 
 def load_plan(plan_path: Path) -> list[dict[str, str]]:
@@ -68,6 +65,24 @@ def load_plan(plan_path: Path) -> list[dict[str, str]]:
         if entry["verb"] not in VALID_VERBS:
             raise ValueError(f"invalid verb {entry['verb']!r} in entry: {entry}")
     return plan
+
+
+def validate_coverage(plan: list[dict[str, str]], base: str) -> None:
+    """Raise unless the plan names every commit in the range exactly once."""
+    range_shas = [commit["sha"] for commit in list_commits(base)]
+    matches = [
+        [sha for sha in range_shas if entry["sha"] and sha.startswith(entry["sha"])]
+        for entry in plan
+    ]
+    resolved = [found[0] for found in matches if len(found) == 1]
+    problems = {
+        "unknown": [e["sha"] for e, found in zip(plan, matches) if len(found) != 1],
+        "duplicate": sorted({sha for sha in resolved if resolved.count(sha) > 1}),
+        "omitted": [sha for sha in range_shas if sha not in resolved],
+    }
+    detail = "; ".join(f"{k}: {', '.join(v)}" for k, v in problems.items() if v)
+    if detail:
+        raise ValueError(f"plan must cover the range once - {detail}")
 
 
 def subject_for(sha: str) -> str:
@@ -89,27 +104,37 @@ def build_sequence_script(plan: list[dict[str, str]], script_path: Path) -> None
     script_path.chmod(0o755)
 
 
-def build_message_script(plan: list[dict[str, str]], script_path: Path) -> None:
-    """Write a GIT_EDITOR script that applies message overrides in order.
+def editor_messages(plan: list[dict[str, str]]) -> list[str | None]:
+    """Return each editor call's message override, None for the default."""
+    slots: list[str | None] = []
+    group_slot: int | None = None
+    for entry in plan:
+        verb, message = entry["verb"], entry.get("message")
+        if verb == "squash":
+            if group_slot is None:
+                group_slot = len(slots)
+                slots.append(None)
+            slots[group_slot] = message or slots[group_slot]
+        elif verb in ("pick", "reword"):
+            group_slot = None
+            if verb == "reword":
+                slots.append(message)
+    return slots
 
-    Each message is written to its own numbered file (rather than one
-    newline-joined queue read back line-by-line) so multi-line messages
-    survive intact.
-    """
-    messages = [
-        entry["message"]
-        for entry in plan
-        if entry["verb"] in ("squash", "reword") and entry.get("message")
-    ]
-    if not messages:
+
+def build_message_script(plan: list[dict[str, str]], script_path: Path) -> None:
+    """Write a GIT_EDITOR script that applies the message overrides."""
+    slots = editor_messages(plan)
+    if not any(slots):
         script_path.write_text("#!/bin/bash\ntrue\n")
         script_path.chmod(0o755)
         return
 
     queue_dir = script_path.with_suffix(".queue.d")
     queue_dir.mkdir(exist_ok=True)
-    for index, message in enumerate(messages, start=1):
-        (queue_dir / f"{index}.txt").write_text(message)
+    for index, message in enumerate(slots, start=1):
+        if message:
+            (queue_dir / f"{index}.txt").write_text(message)
 
     count_file = script_path.with_suffix(".count")
     script = f"""#!/bin/bash
@@ -119,10 +144,8 @@ COUNT_FILE="{count_file}"
 COUNT=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
 INDEX=$((COUNT + 1))
 MESSAGE_FILE="$QUEUE_DIR/$INDEX.txt"
-if [ -f "$MESSAGE_FILE" ]; then
-  cp "$MESSAGE_FILE" "$FILE"
-  echo $((COUNT + 1)) > "$COUNT_FILE"
-fi
+[ -f "$MESSAGE_FILE" ] && cp "$MESSAGE_FILE" "$FILE"
+echo "$INDEX" > "$COUNT_FILE"
 """
     script_path.write_text(script)
     script_path.chmod(0o755)
@@ -135,16 +158,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("plan", type=Path, help="Path to the JSON plan file")
     parser.add_argument(
-        "base", nargs="?", default=None, help="Base ref (default: @{u})"
+        "base",
+        nargs="?",
+        default=None,
+        help="Base ref (default: @{u}, else --root)",
+    )
+    parser.add_argument(
+        "--root", action="store_true", help="Rewrite from the first commit"
     )
     return parser
 
 
 def main() -> None:
     """Parse args, build the editor scripts, and run the rebase."""
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    if args.root and args.base:
+        parser.error("base and --root are exclusive")
     plan = load_plan(args.plan)
-    base = resolve_base(args.base)
+    base = "--root" if args.root else resolve_base(args.base)
+    validate_coverage(plan, base)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         seq_script = Path(tmpdir) / "sequence_editor.sh"

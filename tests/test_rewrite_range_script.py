@@ -33,8 +33,9 @@ def _load() -> ModuleType:
 
 
 @pytest.fixture
-def mod() -> ModuleType:
+def mod(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     """Load the rewrite_range script as a module."""
+    monkeypatch.syspath_prepend(str(_SCRIPT.parent))
     return _load()
 
 
@@ -113,6 +114,11 @@ class TestMain:
         plan_path.write_text(json.dumps([{"sha": "abc123", "verb": "pick"}]))
 
         fake_subprocess.on("rev-parse", "--abbrev-ref", "@{u}", stdout="origin/main\n")
+        fake_subprocess.on(
+            "log",
+            "--reverse",
+            stdout=fake_subprocess.sha_subjects(("abc123full", "feat: base feature")),
+        )
         fake_subprocess.on("log", "-1", "--format=%s", stdout="feat: base feature\n")
 
         captured: dict[str, Path] = {}
@@ -148,3 +154,110 @@ class TestMain:
             pytest.raises(ValueError, match="invalid verb"),
         ):
             mod.main()
+
+    @pytest.mark.parametrize(
+        ("argv", "upstream_returncode"),
+        [([], 128), (["--root"], 0)],
+        ids=["no-upstream", "root-flag"],
+    )
+    def test_rebases_onto_root_without_upstream_or_when_asked(
+        self,
+        mod: ModuleType,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        argv: list[str],
+        upstream_returncode: int,
+    ) -> None:
+        plan_path = tmp_path / "plan.json"
+        plan_path.write_text(json.dumps([{"sha": "abc123", "verb": "pick"}]))
+        fake_subprocess.on(
+            "rev-parse",
+            "--abbrev-ref",
+            "@{u}",
+            stdout="origin/main\n",
+            returncode=upstream_returncode,
+        )
+        fake_subprocess.on(
+            "log",
+            "--reverse",
+            stdout=fake_subprocess.sha_subjects(("abc123full", "feat: base feature")),
+        )
+        fake_subprocess.on("log", "-1", "--format=%s", stdout="feat: base feature\n")
+
+        with (
+            patch("sys.argv", ["rewrite_range.py", str(plan_path), *argv]),
+            pytest.raises(SystemExit),
+        ):
+            mod.main()
+
+        assert fake_subprocess.matching("rebase", "-i") == [
+            ["git", "rebase", "-i", "--root"]
+        ]
+
+    def test_base_with_root_is_rejected(
+        self, mod: ModuleType, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        plan_path = tmp_path / "plan.json"
+        plan_path.write_text(json.dumps([{"sha": "abc123", "verb": "pick"}]))
+
+        with (
+            patch("sys.argv", ["rewrite_range.py", str(plan_path), "main", "--root"]),
+            pytest.raises(SystemExit) as exc,
+        ):
+            mod.main()
+
+        assert exc.value.code == 2
+        assert fake_subprocess.matching("rebase") == []
+
+    @pytest.mark.parametrize(
+        ("plan", "message"),
+        [
+            ([{"sha": "aaa111", "verb": "pick"}], "omitted"),
+            (
+                [{"sha": "", "verb": "pick"}, {"sha": "bbb222", "verb": "pick"}],
+                "unknown",
+            ),
+            (
+                [
+                    {"sha": "aaa111", "verb": "pick"},
+                    {"sha": "aaa111", "verb": "pick"},
+                    {"sha": "bbb222", "verb": "pick"},
+                ],
+                "duplicate",
+            ),
+            (
+                [
+                    {"sha": "aaa111", "verb": "pick"},
+                    {"sha": "bbb222", "verb": "pick"},
+                    {"sha": "ccc333", "verb": "pick"},
+                ],
+                "unknown",
+            ),
+        ],
+    )
+    def test_plan_not_covering_range_exactly_is_rejected(
+        self,
+        mod: ModuleType,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        plan: list[dict[str, str]],
+        message: str,
+    ) -> None:
+        plan_path = tmp_path / "plan.json"
+        plan_path.write_text(json.dumps(plan))
+        fake_subprocess.on("rev-parse", "--abbrev-ref", "@{u}", stdout="origin/main\n")
+        fake_subprocess.on(
+            "log",
+            "--reverse",
+            stdout=fake_subprocess.sha_subjects(
+                ("aaa111full", "feat: A"), ("bbb222full", "feat: B")
+            ),
+        )
+
+        with (
+            patch("sys.argv", ["rewrite_range.py", str(plan_path)]),
+            pytest.raises(ValueError, match=message),
+        ):
+            mod.main()
+
+        assert fake_subprocess.matching("rebase") == []
