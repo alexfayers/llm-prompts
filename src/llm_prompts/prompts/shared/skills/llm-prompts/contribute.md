@@ -1,14 +1,9 @@
----
-name: llm-prompts-contribute
-description: Open a PR in llm-prompts, cline-hooks, or mcp-memory. Use to open or update a PR.
----
-
 # Opening a PR
 
 Covers llm-prompts, cline-hooks, and mcp-memory. Read the TARGET repo's CONTRIBUTING.md and `.github/PULL_REQUEST_TEMPLATE.md`. Never assume another repo's applies.
 
 - MUST open every PR as a draft (`gh pr create --draft`). MUST NOT request reviewers unasked.
-- MUST NOT rewrite commits backing an approved or in-review PR/CR. New work MUST get its own commit and PR/CR. MUST ask if unsure.
+- MUST NOT rewrite commits backing an approved or in-review PR. New work MUST get its own commit and PR. MUST ask if unsure.
 - MUST get different-model review and fix notes until re-review has none. Then MUST mark ready and enable squash auto-merge. MUST NOT use `--admin`.
 
 ## Rule/skill/workflow/agent sources (any repo's `**/prompts/**`)

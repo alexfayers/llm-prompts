@@ -15,65 +15,8 @@ These files are distributed and always loaded, so content MUST be generic - usef
 Anything specific to one person, one incident, one repo, or one past conversation MUST NOT go here; it belongs in memory or in local unmanaged rules.
 Before adding a rule, MUST check it would still read correctly in an unrelated repo for a different person.
 
-Run `llm-prompts source {{AGENT}}` to see the source file paths for all installed rules, workflows, and skills.
-
-After editing any source file, run `llm-prompts update` to reinstall. MUST use the installed `llm-prompts` (PATH), never `uv run llm-prompts` - it can miss overlays and delete their installed files.
-
 {% if AGENT == "pi" %}
 After changing pi extensions, packages, settings, agent definitions or AGENTS.md, MUST tell the user to run `/reload`. `/reload` refreshes the current session only. New sessions and delegates pick up changes on their own. The user MAY `/reload` while delegates are running.
 A new pi extension MUST start with a `// <one-sentence summary>` header, optionally followed by `// Commands:`, `// Config:` and `// Env:` lines.
 Changes that invalidate a hand-written `pi-help` fact MUST update that fact.
 {% endif %}
-
-Use `llm-prompts setup` for initial setup only. `llm-prompts update` reinstalls every tool, including local changes, from its sources. Config is at `~/.config/llm-prompts/config.toml` - run `llm-prompts setup --init` to create it.
-
-## Rules request, hooks enforce
-
-Rules and skills request compliance; only a cline-hooks handler actually enforces it by blocking or forcing an action.
-Anything that genuinely must not happen belongs in a hook, not in a rule phrased with MUST/NEVER.
-A MUST/NEVER for behaviour no hook checks asserts a guarantee the rule cannot actually deliver.
-When writing or reviewing a rule, ask whether the behaviour is observable at a tool call or lifecycle event - if so, it should be a hook.
-When the event reached for fires only after the change has landed, MUST check whether an earlier event can predict the outcome from the tool's own input, not conclude enforcement is impossible.
-
-## Adding an overlay
-
-To add an llm-prompts overlay package, add a `[[tools]]` entry to `~/.config/llm-prompts/config.toml`:
-
-```toml
-[[tools]]
-name = "<package-name>"
-source = "<git-url-or-local-path>"
-```
-
-The `source` field must be a pip-installable reference:
-- Git HTTPS: `git+https://github.com/user/repo.git`
-- Git SSH: `git+ssh://host/path/to/repo`
-- Local path: `~/path/to/repo`
-
-If given a web URL to a repository, convert it to a `git+https://` or `git+ssh://` URL that pip can install from.
-
-Then run `llm-prompts setup` to install it, followed by `llm-prompts install {{AGENT}}` to apply the new rules, workflows, and skills.
-
-## Adding memory
-
-To add persistent memory via [mcp-memory](https://github.com/alexfayers/mcp-memory), add it to `~/.config/llm-prompts/config.toml`:
-
-```toml
-[[tools]]
-name = "mcp-memory"
-source = "git+https://github.com/alexfayers/mcp-memory.git"
-```
-
-Then run `llm-prompts setup` followed by `llm-prompts install {{AGENT}}`.
-
-## Adding hooks
-
-To add lifecycle hooks via [cline-hooks](https://github.com/alexfayers/cline-hooks), add it to `~/.config/llm-prompts/config.toml`:
-
-```toml
-[[tools]]
-name = "cline-hooks"
-source = "git+https://github.com/alexfayers/cline-hooks.git"
-```
-
-Then run `llm-prompts setup` followed by `llm-prompts install {{AGENT}}`.
