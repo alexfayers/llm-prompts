@@ -6,6 +6,7 @@ import pytest
 
 from benchmark.test_bench_checks import claude_reply, run
 from benchmark.traces import make_trace
+from llm_prompts.benchmark import saved
 from llm_prompts.benchmark.scenarios.checks import evaluate
 from llm_prompts.benchmark.scenarios.checks.context import CheckContext
 from llm_prompts.benchmark.types import CheckArg, CheckSpec
@@ -180,3 +181,14 @@ def test_judge_evidence_holds_the_original_of_an_edited_file_next_to_its_new_con
     assert "f.txt (original):\none\n" in inputs[0]
     assert "f.txt:\nedited\n" in inputs[0]
     assert "g.txt (original)" not in inputs[0]
+
+
+def test_saved_workspace_keeps_the_repo_so_git_checks_can_run_again(
+    repo: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    cell_dir = tmp_path_factory.mktemp("cell")
+    commit(repo, "feat: a")
+
+    saved.write(cell_dir, repo, make_trace(), (), ())
+
+    assert run("git_state", GIT_STATE, ws=saved.load(cell_dir).workspace).passed

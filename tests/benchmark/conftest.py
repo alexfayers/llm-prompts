@@ -3,20 +3,34 @@ from __future__ import annotations
 import json
 import shutil
 import tempfile
+import time
+from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 from conftest import FakeSubprocess
 
 from benchmark.traces import make_trace
-from llm_prompts.benchmark import paths
+from llm_prompts.benchmark import paths, transient
 from llm_prompts.benchmark.cell import home_dirs
 from llm_prompts.benchmark.cell.variants import PLACEHOLDER_MEMORY_URL
+from llm_prompts.benchmark.runner import process
 from llm_prompts.benchmark.runner.process import reset_stop
-from llm_prompts.benchmark.types import MemoryEntity, MemoryHandle, ToolCall, Variant
+from llm_prompts.benchmark.runner.sandbox import SandboxPolicy
+from llm_prompts.benchmark.types import (
+    DEFAULT_GATE,
+    MemoryEntity,
+    MemoryHandle,
+    PreparedCell,
+    Scenario,
+    Session,
+    ToolCall,
+    Trace,
+    Variant,
+)
 
 
 class FakeMemory:
@@ -106,6 +120,12 @@ def judge_passes(fake_subprocess: FakeSubprocess) -> None:
 UNSCRIPTED_TRACE = make_trace(model="fake")
 
 
+SCENARIO = Scenario(
+    "s0", "light", ("claude", "pi"), Path("ws"), "demo-project", "do it", 60,
+    DEFAULT_GATE, (), (),
+)  # fmt: skip
+
+
 @pytest.fixture
 def fake_variant(tmp_path: Path) -> Variant:
     root = tmp_path / "variant"
@@ -135,8 +155,87 @@ def live_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "live").mkdir()
     (tmp_path / "roots").mkdir()
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "live")
+    give_pi_a_default_model(tmp_path / "live")
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "roots"))
     monkeypatch.setattr(paths, "work_dir", lambda: tmp_path / "roots")
+
+
+@dataclass
+class _Script:
+    memory_calls: tuple[ToolCall, ...] = ()
+    trace: Trace = UNSCRIPTED_TRACE
+    earlier: tuple[Trace, ...] = ()
+    raises: BaseException | None = None
+    reply_delay: float = 0.0
+    files: Mapping[str, str] = field(default_factory=dict)
+    replies: bool = True
+    entities: tuple[MemoryEntity, ...] = ()
+
+
+class FakeAgent:
+    def __init__(self, fake_memory: FakeMemory) -> None:
+        self.executed: list[PreparedCell] = []
+        self.policies: list[SandboxPolicy | None] = []
+        self.events: list[tuple[str, str]] = []
+        self.sessions: dict[str, Session | None] = {}
+        self.seen_files: dict[str, list[str]] = {}
+        self._memory = fake_memory
+        self._scripts: dict[str, _Script] = {}
+        self._runs: Counter[str] = Counter()
+
+    def script(self, scenario: str, **kwargs: object) -> None:
+        self._scripts[scenario] = _Script(**kwargs)  # type: ignore[arg-type]
+
+    def execute(
+        self,
+        prepared: PreparedCell,
+        scenario: Scenario,
+        model: str,
+        policy: SandboxPolicy | None,
+        on_reply: Callable[[], None] | None = None,
+        session: Session | None = None,
+    ) -> Trace:
+        self.executed.append(prepared)
+        self.events.append(("start", prepared.cell.id))
+        self.sessions[prepared.cell.id] = session
+        self.seen_files[prepared.cell.id] = sorted(
+            p.name for p in prepared.workspace.iterdir()
+        )
+        self.policies.append(policy)
+        (prepared.root / "agent.log").write_text("log")
+        (prepared.home / ".cline-hooks").mkdir(exist_ok=True)
+        (prepared.home / ".cline-hooks" / "cline-hooks.log").write_text("hooks")
+        script = self._scripts.get(scenario.id, _Script())
+        self._runs[scenario.id] += 1
+        self._memory.tool_call_lists[prepared.memory].extend(script.memory_calls)
+        self._memory.entity_lists[prepared.memory].extend(script.entities)
+        for name, text in script.files.items():
+            (prepared.workspace / name).write_text(text)
+        time.sleep(script.reply_delay)
+        if on_reply and script.replies:
+            on_reply()
+            self.events.append(("reply", prepared.cell.id))
+        if script.raises is not None:
+            raise script.raises
+        attempt = self._runs[scenario.id] - 1
+        return (
+            script.earlier[attempt] if attempt < len(script.earlier) else script.trace
+        )
+
+
+@pytest.fixture
+def fake_agent(monkeypatch: pytest.MonkeyPatch, fake_memory: FakeMemory) -> FakeAgent:
+    fake = FakeAgent(fake_memory)
+    monkeypatch.setattr(process, "execute", fake.execute)
+    return fake
+
+
+@pytest.fixture(autouse=True)
+def pauses(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    waited: list[float] = []
+    monkeypatch.setattr(process, "pause", waited.append)
+    monkeypatch.setattr(transient, "STAGGER_S", 0.0)
+    return waited
 
 
 def pi_settings_path() -> Path:
