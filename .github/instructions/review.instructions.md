@@ -76,6 +76,8 @@ excludeAgent: "cloud-agent"
 - Flag a repeated threshold that does not come from one named constant.
 - Flag a new parameter that the body does not use.
 - Flag a shared rule or doc that claims behavior which depends on the reader's local config.
+- Flag a new related file that takes a non-root folder from 7 to 8 files without an area subfolder (`<area>/<part>`, not `<area>_<part>`). Skip a flat layout a tool requires. Skip existing files.
+- A hook that catches only part of a SHOULD rule is a note by design. MUST NOT flag the gap as a mismatch.
 - Do not flag an `Update <file> if X changes` comment as stale when that file only documents the feature generically and never describes the changed text.
 
 ## cline-hooks
