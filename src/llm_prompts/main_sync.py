@@ -468,7 +468,11 @@ def replays_to(repo: Path, parent: str, squash: Squash, result: str) -> bool:
 
 
 def _replay(
-    repo: Path, tip: str, commit: LocalCommit, squash: Squash | None = None
+    repo: Path,
+    tip: str,
+    commit: LocalCommit,
+    squash: Squash | None = None,
+    against: str = "upstream",
 ) -> str:
     floor, changes = (
         (squash.floor, squash.tip) if squash else (f"{commit.sha}^", commit.sha)
@@ -479,7 +483,7 @@ def _replay(
         resolved = _reuse_resolutions(repo, floor, tip, changes)
         if resolved is None:
             raise _ReplayConflict(
-                f"local commit {commit.sha[:12]} ({commit.subject}) conflicts with upstream"
+                f"local commit {commit.sha[:12]} ({commit.subject}) conflicts with {against}"
                 f" in {', '.join(conflict.paths)}"
             ) from conflict
         tree = resolved
@@ -641,7 +645,13 @@ def rebuild_local(
             if dropped:
                 continue
             try:
-                tip = _replay(repo, tip, commit, squash)
+                tip = _replay(
+                    repo,
+                    tip,
+                    commit,
+                    squash,
+                    "main" if commit.sha in copies else "upstream",
+                )
             except _ReplayConflict as conflict:
                 if commit.sha not in copies:
                     raise
@@ -651,7 +661,13 @@ def rebuild_local(
         for squash in additions:
             subject = _read(repo, "log", "-1", "--format=%s", squash.first).strip()
             try:
-                tip = _replay(repo, tip, LocalCommit(squash.first, "", subject), squash)
+                tip = _replay(
+                    repo,
+                    tip,
+                    LocalCommit(squash.first, "", subject),
+                    squash,
+                    "main",
+                )
             except _ReplayConflict as conflict:
                 skipped.append(SkippedCopy(squash.first, str(conflict)))
                 continue

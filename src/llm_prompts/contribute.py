@@ -1637,7 +1637,7 @@ class _RepoSync:
             ):
                 self.pull(entry)
         self.restack()
-        if self.copy_into_main():
+        if self.copy_into_main(fail_skipped=True):
             self.finish_cleanup()
         self.publish()
         return self.status, self.entries
@@ -1688,8 +1688,8 @@ class _RepoSync:
                     self.fail(entry, "the branch is gone")
         return self.status == 0
 
-    def copy_into_main(self) -> bool:
-        """Return whether main is up to date, so merged entries may go."""
+    def copy_into_main(self, fail_skipped: bool = False) -> bool:
+        """Return whether main is up to date, so merged entries may go. A skipped copy counts as a failure when ``fail_skipped``."""
         tips = _tips(self.repo, self.base, self.open_entries())
         for tip in tips:
             if tip.skipped is not None:
@@ -1721,7 +1721,8 @@ class _RepoSync:
         skipped = {copy.first: copy.reason for copy in result.skipped} if result else {}
         for tip in usable:
             if tip.commits[0] in skipped:
-                self.say(tip.entry, f"not copied into main: {skipped[tip.commits[0]]}")
+                report = self.fail if fail_skipped else self.say
+                report(tip.entry, f"not copied into main: {skipped[tip.commits[0]]}")
             elif tip.commits[-1] in changed:
                 verb = "copied" if self.apply else "would copy"
                 self.say(tip.entry, f"{verb} into main")
