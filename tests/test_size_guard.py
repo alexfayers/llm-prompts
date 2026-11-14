@@ -28,6 +28,7 @@ from llm_prompts.size_limits import (
     SCHEDULES,
     SKILL_BODY_BYTES,
     SKILL_DESCRIPTION_CHARS,
+    TEMPLATE_RENDERS,
     WORKFLOW_LINES,
     Schedule,
     ScheduleStep,
@@ -218,6 +219,28 @@ class TestSkillParts:
 
         assert [(v.metric, v.dest_name) for v in result.violations] == [
             (SKILL_BODY_BYTES, "grp/part.md")
+        ]
+
+    def test_part_is_measured_as_rendered(self, tmp_path: Path) -> None:
+        big = "x" * (FINALS[SKILL_BODY_BYTES] + 1)
+        root = self._skill_root(tmp_path, f"{{% if SHOW %}}{big}{{% endif %}}\n")
+        vars_dir = tmp_path / "vars" / "claude-code"
+        vars_dir.mkdir(parents=True)
+        (vars_dir / "vars.json").write_text(json.dumps({"SHOW": ""}))
+
+        result = check([root], ("claude-code",), vars_root=tmp_path / "vars")
+
+        assert result.violations == []
+
+    def test_part_with_invalid_template_is_flagged_not_raised(
+        self, tmp_path: Path
+    ) -> None:
+        root = self._skill_root(tmp_path, "{% if %}\n")
+
+        result = check([root], ("claude-code",))
+
+        assert [(v.metric, v.dest_name) for v in result.violations] == [
+            (TEMPLATE_RENDERS, "grp/part.md")
         ]
 
     def test_a_directory_named_like_a_part_is_ignored(self, tmp_path: Path) -> None:
