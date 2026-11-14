@@ -122,7 +122,7 @@
 | tests/benchmark/test\_bench\_types.py                                         |        5 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_variant.py                                       |      213 |        0 |    100% |           |
 | tests/benchmark/traces.py                                                     |        3 |        0 |    100% |           |
-| tests/conftest.py                                                             |      420 |       23 |     95% |158, 292-293, 296, 299, 302, 307, 362, 441-452, 457-459, 477-478, 492, 564-568, 641, 747, 787 |
+| tests/conftest.py                                                             |      434 |       23 |     95% |160, 294-295, 298, 301, 304, 309, 364, 443-454, 459-461, 479-480, 494, 566-570, 643, 769, 809 |
 | tests/test\_build\_wave.py                                                    |      282 |        1 |     99% |       112 |
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
 | tests/test\_check\_repos\_script.py                                           |       67 |        0 |    100% |           |
@@ -140,7 +140,7 @@
 | tests/test\_handoff\_block.py                                                 |       14 |        0 |    100% |           |
 | tests/test\_hooks.py                                                          |      422 |        0 |    100% |           |
 | tests/test\_inspect\_range\_script.py                                         |       89 |        0 |    100% |           |
-| tests/test\_install.py                                                        |     1368 |        0 |    100% |           |
+| tests/test\_install.py                                                        |     1402 |        0 |    100% |           |
 | tests/test\_install\_agents.py                                                |      603 |        0 |    100% |           |
 | tests/test\_install\_antigravity.py                                           |       62 |        4 |     94% |     20-23 |
 | tests/test\_install\_codex.py                                                 |      269 |        0 |    100% |           |
@@ -174,7 +174,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       28 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       31 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **27535** |  **727** | **97%** |           |
+| **TOTAL**                                                                     | **27583** |  **727** | **97%** |           |
 
 
 ## Setup coverage badge
