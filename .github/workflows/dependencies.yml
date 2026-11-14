@@ -24,7 +24,7 @@ jobs:
       - id: ci-bot
         uses: alexfayers/llm-prompts-ci/.github/actions/app-token@main
         with:
-          app-id: ${{ secrets.CI_BOT_ID }}
+          client-id: ${{ secrets.CI_BOT_CLIENT_ID }}
           private-key: ${{ secrets.CI_BOT_PRIVATE_KEY }}
           fallback-token: ${{ secrets.PROJECTS_TOKEN }}
           owner: ${{ github.repository_owner }}
