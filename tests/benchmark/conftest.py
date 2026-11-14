@@ -10,6 +10,7 @@ import pytest
 
 from llm_prompts.benchmark import paths
 from llm_prompts.benchmark.cell import home_dirs
+from llm_prompts.benchmark.runner.process import reset_stop
 
 
 def _write_json(path: Path, data: object) -> None:
@@ -24,6 +25,27 @@ def live_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "live")
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "roots"))
     monkeypatch.setattr(paths, "work_dir", lambda: tmp_path / "roots")
+
+
+def pi_settings_path() -> Path:
+    return Path.home() / ".pi" / "agent" / "settings.json"
+
+
+def give_pi_a_default_model(home: Path) -> None:
+    """Write pi settings with a default model into ``home``, as a user's own pi has."""
+    path = home / ".pi" / "agent" / "settings.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"defaultModel": "test-model"}))
+
+
+@pytest.fixture(autouse=True)
+def _pi_default_model(isolated_home: Path) -> None:
+    give_pi_a_default_model(isolated_home)
+
+
+@pytest.fixture(autouse=True)
+def _reset_runner_stop() -> None:
+    reset_stop()
 
 
 @pytest.fixture(autouse=True)
