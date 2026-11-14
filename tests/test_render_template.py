@@ -252,6 +252,56 @@ class TestReloadRuleIsPiOnly:
         assert self.RELOAD not in self._render(agent)
 
 
+class TestMcpUsageToolSearchBulletIsNotPi:
+    SHARED = Path(__file__).parent.parent / "src/llm_prompts/prompts/shared"
+    BULLET = "MUST NOT list or search tools"
+
+    def _render(self, agent: str) -> str:
+        variables = {
+            **load_vars(self.SHARED.parent / agent / "vars.json"),
+            "AGENT": agent,
+        }
+        return substitute_variables(
+            (self.SHARED / "rules/mcp-usage.md").read_text(encoding="utf-8"),
+            variables,
+        )
+
+    def test_pi_omits_the_bullet(self) -> None:
+        assert self.BULLET not in self._render("pi")
+
+    @pytest.mark.parametrize("agent", ["claude-code", "kiro"])
+    def test_other_targets_keep_the_bullet(self, agent: str) -> None:
+        assert self.BULLET in self._render(agent)
+
+
+class TestHandoffStepZeroIsNotPi:
+    SHARED = Path(__file__).parent.parent / "src/llm_prompts/prompts/shared"
+    STEP_ZERO = "## Step 0 - Delete this doc first"
+    OMIT_CLAUSE = "omit Step 0"
+
+    def _render(self, agent: str) -> str:
+        variables = {
+            **load_vars(self.SHARED.parent / agent / "vars.json"),
+            "AGENT": agent,
+        }
+        return substitute_variables(
+            (self.SHARED / "skills/handoff/SKILL.md").read_text(encoding="utf-8"),
+            variables,
+        )
+
+    def test_pi_never_mentions_step_zero(self, herdr_stub: Path) -> None:
+        assert "Step 0" not in self._render("pi")
+
+    @pytest.mark.parametrize("agent", ["claude-code", "kiro"])
+    def test_other_targets_keep_step_zero_and_the_omit_clause(
+        self, herdr_stub: Path, agent: str
+    ) -> None:
+        rendered = self._render(agent)
+
+        assert self.STEP_ZERO in rendered
+        assert self.OMIT_CLAUSE in rendered
+
+
 class TestPlanningRuleLinesAreClaudeCodeOnly:
     SHARED = Path(__file__).parent.parent / "src/llm_prompts/prompts/shared"
     CLAUDE_CODE_LINES = (
@@ -302,3 +352,14 @@ class TestStartUpStepsAreHookDriven:
         assert (
             "`read_graph(project=" in render("skills/session-start/SKILL.md")
         ) is kept
+
+    def test_the_injected_start_up_skill_is_not_marked_as_a_manual_fallback_only(
+        self,
+    ) -> None:
+        text = (self.SHARED / "skills/session-start/SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        rendered = substitute_variables(text, {"AGENT": "pi"})
+
+        assert "oad manually" not in rendered
+        assert "Load only when no start-up blocks were injected" not in rendered

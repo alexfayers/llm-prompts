@@ -462,6 +462,56 @@ class TestInstallSkillsGating:
         } == {"a.txt": "overlay", "ref/one.md": "1", "ref/two.md": "2", "ref/x": "o"}
 
 
+class TestLiveHandoffInstall:
+    SKILLS = prompts_dir("llm_prompts") / "shared" / "skills"
+    LIVE_POINTER = "<base-dir>/live.md"
+
+    def _install(self, tmp_path: Path, agent: str) -> Path:
+        _install_skills(
+            [self.SKILLS],
+            tmp_path / "agents",
+            agent,
+            prompts_dir("llm_prompts") / agent / "vars.json",
+        )
+        return tmp_path / "agents" / "skills" / "handoff"
+
+    @pytest.mark.parametrize("agent", ["claude-code", "pi"])
+    def test_with_herdr_on_path_the_skill_sends_the_handoff_live(
+        self, tmp_path: Path, herdr_stub: Path, agent: str
+    ) -> None:
+        installed = self._install(tmp_path, agent)
+
+        assert self.LIVE_POINTER in (installed / "SKILL.md").read_text(encoding="utf-8")
+        assert "HANDOFF-ACK" in (installed / "live.md").read_text(encoding="utf-8")
+
+    @pytest.mark.parametrize(
+        ("agent", "new_session_only"), [("claude-code", False), ("pi", True)]
+    )
+    def test_only_pi_limits_live_handoff_to_new_sessions(
+        self, tmp_path: Path, herdr_stub: Path, agent: str, new_session_only: bool
+    ) -> None:
+        text = (self._install(tmp_path, agent) / "SKILL.md").read_text(encoding="utf-8")
+
+        assert ("when starting a new session," in text) is new_session_only
+
+    @pytest.mark.parametrize("agent", ["claude-code", "pi"])
+    def test_without_herdr_the_skill_has_no_live_pointer(
+        self, tmp_path: Path, agent: str
+    ) -> None:
+        installed = self._install(tmp_path, agent)
+
+        assert self.LIVE_POINTER not in (installed / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+
+    def test_installing_only_looks_for_herdr_without_running_it(
+        self, tmp_path: Path, herdr_stub: Path
+    ) -> None:
+        self._install(tmp_path, "pi")
+
+        assert not herdr_stub.exists()
+
+
 class TestInstallPluginSkills:
     def _make_skill(self, parent: Path, name: str, skill_md: str) -> Path:
         skill_dir = parent / name
