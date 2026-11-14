@@ -85,7 +85,7 @@ Rules:
 - Only enough code to pass current test
 - Don't anticipate future tests
 - Keep tests focused on observable behavior
-- One wide test per behavior - variants go in one parametrized test, not a test each
+- One wide test per behavior - cover a repeated case once, parametrise only when cases differ
 - No tests that re-cover a tested path, or for a rename/move - only fix the tests it breaks
 
 ### 4. Refactor
