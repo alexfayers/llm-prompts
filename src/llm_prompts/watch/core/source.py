@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping, Sequence
-from typing import Protocol
+from typing import Any, Protocol, runtime_checkable
 
 Fields = Mapping[str, str]
 
@@ -31,6 +31,25 @@ class Source(Protocol):
         """Return the target's current fields."""
 
 
+@runtime_checkable
+class Stateful(Source, Protocol):
+    """A source that keeps state, such as conditional-request validators, between runs."""
+
+    @property
+    def name(self) -> str:
+        """The source's name."""
+
+    @property
+    def state_key(self) -> str:
+        """Identify the target the state belongs to."""
+
+    def load_state(self, state: Mapping[str, Any]) -> None:
+        """Restore the state a previous run stored."""
+
+    def dump_state(self) -> dict[str, Any]:
+        """Return the state to store for the next run."""
+
+
 class SourceType(Protocol):
     """A source class: how the command line names it and builds it."""
 
@@ -43,5 +62,5 @@ class SourceType(Protocol):
         """Add this source's target arguments to its subcommand parser."""
 
     @classmethod
-    def from_args(cls, args: argparse.Namespace) -> Source:
-        """Build the source from parsed arguments."""
+    def from_args(cls, args: argparse.Namespace) -> Source | Sequence[Source]:
+        """Build the source, or one source per target, from parsed arguments."""

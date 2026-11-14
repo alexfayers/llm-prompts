@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 from typing import Any
 
 import pytest
 from conftest import FakeSubprocess
 
+from llm_prompts.watch.core.runner import watch
+from llm_prompts.watch.core.store import Persisted
 from llm_prompts.watch.sources.github_pr import GithubPrSource
 
 
@@ -131,3 +134,102 @@ def test_gh_pr_sends_etags_reuses_fields_on_not_modified_and_sees_dismissals(
     github.bodies[reviews] = [{"id": 1, "user": {"login": "a"}, "state": "DISMISSED"}]
 
     assert source.poll()["reviews"] != first["reviews"]
+
+
+def test_gh_pr_a_later_watch_reuses_the_etags_an_earlier_one_stored(
+    github: FakeGithub,
+) -> None:
+    github.pr()
+    watch([GithubPrSource("o/r", 7, None)], ["state=OPEN"], interval=0, timeout=5)
+    github.requests.clear()
+
+    watch([GithubPrSource("o/r", 7, None)], ["state=OPEN"], interval=0, timeout=5)
+
+    assert all(
+        any(a.startswith("If-None-Match: ") for a in argv) for argv in github.requests
+    )
+
+
+def test_gh_pr_watch_goes_on_when_the_cache_cannot_be_written(
+    github: FakeGithub, isolated_home: Path
+) -> None:
+    github.pr()
+    (isolated_home / ".cache").write_text("")
+
+    assert (
+        watch([GithubPrSource("o/r", 7, None)], ["state=OPEN"], interval=0, timeout=5)
+        == 0
+    )
+
+
+@pytest.mark.parametrize("stored", ["[]", '{"repos/o/r/pulls/7": null}'])
+def test_gh_pr_watch_ignores_stored_state_of_the_wrong_shape(
+    github: FakeGithub, isolated_home: Path, stored: str
+) -> None:
+    github.pr()
+    watch([GithubPrSource("o/r", 7, None)], ["state=OPEN"], interval=0, timeout=5)
+    for file in (isolated_home / ".cache" / "llm-prompts" / "watch").glob("*.json"):
+        file.write_text(stored)
+
+    assert (
+        watch([GithubPrSource("o/r", 7, None)], ["state=OPEN"], interval=0, timeout=5)
+        == 0
+    )
+
+
+def test_gh_pr_cache_file_is_private_to_the_user(
+    github: FakeGithub, isolated_home: Path
+) -> None:
+    github.pr()
+
+    watch([GithubPrSource("o/r", 7, None)], ["state=OPEN"], interval=0, timeout=5)
+
+    (cache,) = (isolated_home / ".cache" / "llm-prompts" / "watch").glob("*.json")
+    assert cache.stat().st_mode & 0o777 == 0o600
+
+
+def test_gh_pr_loose_cache_file_is_made_private(
+    github: FakeGithub, isolated_home: Path
+) -> None:
+    github.pr()
+    watch([GithubPrSource("o/r", 7, None)], ["state=OPEN"], interval=0, timeout=5)
+    (cache,) = (isolated_home / ".cache" / "llm-prompts" / "watch").glob("*.json")
+    cache.chmod(0o644)
+
+    Persisted(GithubPrSource("o/r", 7, None))
+
+    assert cache.stat().st_mode & 0o777 == 0o600
+
+
+def test_gh_pr_cache_write_is_retried_after_a_failure(
+    github: FakeGithub, isolated_home: Path
+) -> None:
+    github.pr()
+    (isolated_home / ".cache").write_text("")
+    source = Persisted(GithubPrSource("o/r", 7, None))
+    source.poll()
+    (isolated_home / ".cache").unlink()
+
+    source.poll()
+
+    assert list((isolated_home / ".cache" / "llm-prompts" / "watch").glob("*.json"))
+
+
+def test_gh_pr_failed_cache_replace_leaves_no_temporary_file_and_is_retried(
+    github: FakeGithub, isolated_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    github.pr()
+    source = Persisted(GithubPrSource("o/r", 7, None))
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "replace", _fail_replace)
+        source.poll()
+    directory = isolated_home / ".cache" / "llm-prompts" / "watch"
+    assert list(directory.iterdir()) == []
+
+    source.poll()
+
+    assert len(list(directory.glob("*.json"))) == 1
+
+
+def _fail_replace(self: Path, target: Path) -> Path:
+    raise OSError("replace failed")

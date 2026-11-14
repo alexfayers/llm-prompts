@@ -66,14 +66,16 @@ class GithubPrSource:
         self._number = number
         self._head = head
         self._cache: dict[str, tuple[str, Any, str | None]] = {}
+        self._used: set[str] = set()
 
     @classmethod
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         """Add the target and head arguments."""
         parser.add_argument(
             "target",
+            nargs="+",
             type=_parse_target,
-            help="PR number, owner/repo#number or PR URL.",
+            help="PR numbers, owner/repo#number or PR URLs. Any match stops the watch.",
         )
         parser.add_argument(
             "--head",
@@ -81,16 +83,31 @@ class GithubPrSource:
         )
 
     @classmethod
-    def from_args(cls, args: argparse.Namespace) -> Self:
-        """Build the source from parsed arguments."""
-        repo, number = args.target
-        return cls(repo, number, args.head)
+    def from_args(cls, args: argparse.Namespace) -> list[Self]:
+        """Build one source per target from parsed arguments."""
+        return [cls(repo, number, args.head) for repo, number in args.target]
 
     def describe(self) -> str:
         """Return the short label printed with the result."""
-        return f"gh-pr {self._number}"
+        return f"gh-pr {self._repo}#{self._number}"
+
+    @property
+    def state_key(self) -> str:
+        """Return the key its cached responses are stored under."""
+        return f"{self._repo}#{self._number}"
+
+    def load_state(self, state: Mapping[str, Any]) -> None:
+        """Restore the cached responses a previous run stored."""
+        self._cache = {
+            path: (etag, data, link) for path, (etag, data, link) in state.items()
+        }
+
+    def dump_state(self) -> dict[str, Any]:
+        """Return the cached responses this run used."""
+        return {path: self._cache[path] for path in self._used if path in self._cache}
 
     def _get(self, path: str) -> tuple[Any, str | None]:
+        self._used.add(path)
         cached = self._cache.get(path)
         conditional = ["-H", f"If-None-Match: {cached[0]}"] if cached else []
         try:
