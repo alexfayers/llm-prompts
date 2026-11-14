@@ -15,7 +15,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
-      - uses: ./.github/actions/setup-just
+      - uses: alexfayers/llm-prompts-ci/.github/actions/setup-just@main
       - run: uv sync --locked
       - run: just lint-check
 
@@ -26,7 +26,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
-      - uses: ./.github/actions/setup-just
+      - uses: alexfayers/llm-prompts-ci/.github/actions/setup-just@main
       - run: uv sync --locked
       - run: just type-check
       - uses: pnpm/action-setup@v6
@@ -48,7 +48,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
-      - uses: ./.github/actions/setup-just
+      - uses: alexfayers/llm-prompts-ci/.github/actions/setup-just@main
       - run: uv sync --locked
       - run: just test
       - uses: py-cov-action/python-coverage-comment-action@v4.6
@@ -63,7 +63,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-just
+      - uses: alexfayers/llm-prompts-ci/.github/actions/setup-just@main
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
@@ -127,16 +127,6 @@ jobs:
           path: |
             size-report.md
             pr-number
-
-  pr-automation-test:
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'blocked') }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-just
-      - run: just test-actions
 
   posthog-release:
     if: github.event_name == 'push'
