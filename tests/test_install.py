@@ -713,18 +713,52 @@ class TestMaterializeBuiltinSkill:
         assert "name: session-end" in content
         assert "description: Wrap up." in content
 
+    def test_part_rendered_with_the_skill_variables(self, tmp_path: Path) -> None:
+        src = self._make_skill(tmp_path / "src", "handoff", "# Handoff\n")
+        part = src / "live.md"
+        part.write_text(
+            '{% if AGENT == "pi" %}pi step{% else %}other step{% endif %}\n',
+            encoding="utf-8",
+        )
+        dest = tmp_path / "dest" / "handoff"
+        dest.mkdir(parents=True)
+        (dest / "live.md").symlink_to(part)
+        vars_path = self._write_vars(tmp_path, {"AGENT": "pi"})
+
+        _materialize_builtin_skill(src, dest, vars_path, set())
+
+        assert not (dest / "live.md").is_symlink()
+        assert (dest / "live.md").read_text(encoding="utf-8") == "pi step"
+        assert "{% if" in part.read_text(encoding="utf-8")
+
+    def test_nested_part_rendered_with_the_skill_variables(
+        self, tmp_path: Path
+    ) -> None:
+        src = self._make_skill(tmp_path / "src", "handoff", "# Handoff\n")
+        (src / "parts").mkdir()
+        part = src / "parts" / "live.md"
+        part.write_text('{% if AGENT == "pi" %}pi{% else %}other{% endif %}\n')
+        dest = tmp_path / "dest" / "handoff"
+        vars_path = self._write_vars(tmp_path, {"AGENT": "pi"})
+
+        _materialize_builtin_skill(src, dest, vars_path, set())
+
+        rendered = dest / "parts" / "live.md"
+        assert not rendered.is_symlink()
+        assert rendered.read_text(encoding="utf-8") == "pi"
+
     def test_siblings_still_resolve_and_stay_live(self, tmp_path: Path) -> None:
         src = self._make_skill(
-            tmp_path / "src", "tidy-code", "# Tidy code\n", "reference.md"
+            tmp_path / "src", "tidy-code", "# Tidy code\n", "reference.txt"
         )
         dest = tmp_path / "dest" / "tidy-code"
         vars_path = self._write_vars(tmp_path, {})
 
         _materialize_builtin_skill(src, dest, vars_path, set())
 
-        sibling = dest / "reference.md"
+        sibling = dest / "reference.txt"
         assert sibling.is_symlink()
-        (src / "reference.md").write_text("changed", encoding="utf-8")
+        (src / "reference.txt").write_text("changed", encoding="utf-8")
         assert sibling.read_text(encoding="utf-8") == "changed"
 
     @pytest.mark.real_io
