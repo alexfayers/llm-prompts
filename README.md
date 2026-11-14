@@ -43,6 +43,7 @@
 | src/llm\_prompts/prompts/shared/skills/git-usage/check\_repos.py              |       67 |       12 |     82% |41-42, 44, 63, 73-75, 95-96, 124-125, 159 |
 | src/llm\_prompts/prompts/shared/skills/git-usage/inspect\_range.py            |       57 |        3 |     95% |59-60, 106 |
 | src/llm\_prompts/prompts/shared/skills/git-usage/rewrite\_range.py            |       90 |        3 |     97% |61, 64, 201 |
+| src/llm\_prompts/prompts/shared/skills/pr-review/filter\_findings.py          |       64 |        3 |     95% | 45-46, 91 |
 | src/llm\_prompts/prompts/shared/skills/tidy-code/check\_reduction.py          |       42 |        1 |     98% |        97 |
 | src/llm\_prompts/prompts/shared/skills/todos/find\_todos.py                   |       44 |        7 |     84% |96-98, 103-105, 109 |
 | src/llm\_prompts/removed\_agents\_notice.py                                   |       14 |        0 |    100% |           |
@@ -87,6 +88,7 @@
 | tests/test\_contribute.py                                                     |     1877 |        0 |    100% |           |
 | tests/test\_e2e\_git.py                                                       |      140 |        0 |    100% |           |
 | tests/test\_extension\_factories.py                                           |       21 |        0 |    100% |           |
+| tests/test\_filter\_findings\_script.py                                       |       73 |        0 |    100% |           |
 | tests/test\_focus.py                                                          |     1056 |        1 |     99% |        52 |
 | tests/test\_github\_api.py                                                    |      123 |        0 |    100% |           |
 | tests/test\_handoff\_block.py                                                 |       14 |        0 |    100% |           |
@@ -123,7 +125,7 @@
 | tests/test\_uninstall.py                                                      |      119 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_pr.py                                       |       64 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **22069** |  **569** | **97%** |           |
+| **TOTAL**                                                                     | **22206** |  **572** | **97%** |           |
 
 
 ## Setup coverage badge
