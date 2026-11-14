@@ -875,6 +875,11 @@ def _add_watch_parser(
         source_parser.add_argument(
             "--timeout", type=float, help="Exit 124 after this many seconds."
         )
+        source_parser.add_argument(
+            "--follow",
+            action="store_true",
+            help="Print each match, then keep watching from the new state until the timeout.",
+        )
 
 
 def _run_command(run: telemetry.Run) -> int | None:
@@ -1310,6 +1315,7 @@ def _run_command(run: telemetry.Run) -> int | None:
             interval=args.interval,
             timeout=args.timeout,
             require_all=args.all,
+            follow=args.follow,
         )
     elif args.command == "contribute":
         from .contribute import list_targets, sync_targets, update_targets

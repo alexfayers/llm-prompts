@@ -20,7 +20,7 @@ llm-prompts setup --dry-run                    # show the commands without runni
 llm-prompts setup --init                       # create the starter config
 llm-prompts check                              # check prompt sizes and pi extension headers
 llm-prompts size-report --base-root DIR        # markdown report of prompt size changes
-llm-prompts watch gh-pr|cmd TARGET... --until COND [--all]  # wait for a PR or command to match, then exit (0 match, 124 --timeout, 1 error). Several gh-pr targets: any match ends it, --all waits for every one
+llm-prompts watch gh-pr|gh-triage|cmd TARGET... --until COND [--all] [--follow]  # wait for a PR, a repo's ready-PR list or a command to match, then exit (0 match, 124 --timeout, 1 error). Several targets: any match ends it, --all waits for every one, --follow prints each match and keeps watching until --timeout
 llm-prompts contribute list|sync|update        # turn commits on local main into PR branches
 ```
 
