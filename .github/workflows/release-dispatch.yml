@@ -1,0 +1,14 @@
+name: Release dispatch
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  dispatch:
+    uses: alexfayers/llm-prompts-ci/.github/workflows/release-dispatch.yml@main
+    secrets:
+      CI_BOT_CLIENT_ID: ${{ secrets.CI_BOT_CLIENT_ID }}
+      CI_BOT_PRIVATE_KEY: ${{ secrets.CI_BOT_PRIVATE_KEY }}
