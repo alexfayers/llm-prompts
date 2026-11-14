@@ -14,6 +14,7 @@ import tempfile
 import tomllib
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
+from importlib import metadata
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -600,6 +601,19 @@ def install_args(tools: Mapping[str, str]) -> list[str]:
             )
         ),
     ]
+
+
+def missing_tools() -> dict[str, str]:
+    """Return the configured tools, as name to source, that this Python has not installed."""
+    installed = {
+        re.sub(r"[-_.]+", "-", dist.metadata["Name"]).lower()
+        for dist in metadata.distributions()
+    }
+    return {
+        str(tool["name"]): str(tool["source"])
+        for tool in read_config().get("tools", [])
+        if _package_name(tool) not in installed
+    }
 
 
 def local_source_path(source: str) -> Path | None:
