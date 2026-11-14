@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-import threading
 from collections.abc import Set as AbstractSet
 from pathlib import Path
 from typing import Any
@@ -36,7 +35,7 @@ from llm_prompts.cli import (
     _size_guard_roots,
     main,
 )
-from llm_prompts.contribute import Report
+from llm_prompts.contribute import SyncOptions
 from llm_prompts.main_sync import SyncResult
 from llm_prompts.setup import (
     _UPDATE_INSTRUCTION,
@@ -320,6 +319,9 @@ class TestPullLocalSources:
             "rev-parse --git-path",
             "diff --quiet",
             "update-ref",
+            "rev-parse --verify",
+            "commit-tree",
+            "update-ref",
             "rebase --quiet",
         )
         assert (
@@ -476,6 +478,9 @@ class TestPullLocalSources:
             "pull --ff-only",
             "rev-parse --git-path",
             "diff --quiet",
+            "update-ref",
+            "rev-parse --verify",
+            "commit-tree",
             "update-ref",
             "rebase --quiet",
             "rebase --abort",
@@ -2286,43 +2291,68 @@ class TestContributeTargets:
         )
 
 
-def _report(exit: int = 0, warnings: list[str] | None = None) -> Report:
-    return Report(None, [], [], warnings or [], exit, {}, {})
-
-
 class TestContributeSubcommand:
-    def test_list_collects_the_target_report(self, tmp_path: Path) -> None:
+    def test_list_reaches_list_targets(self, tmp_path: Path) -> None:
+        targets = [_ContributeTarget("llm-prompts", tmp_path, "src/pkg/prompts/")]
         with (
             patch("sys.argv", ["llm-prompts", "contribute", "list"]),
-            patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
-            patch(
-                "llm_prompts.cli._contribute_targets",
-                return_value=[
-                    _ContributeTarget("llm-prompts", tmp_path, "src/pkg/prompts/")
-                ],
-            ),
-            patch(
-                "llm_prompts.contribute.collect_report", return_value=_report()
-            ) as mock_collect,
+            patch("llm_prompts.cli._contribute_targets", return_value=targets),
+            patch("llm_prompts.contribute.list_targets", return_value=0) as mock_list,
         ):
-            main()
-        mock_collect.assert_called_once_with(tmp_path, "octocat", "src/pkg/prompts/")
+            assert main() == 0
+        mock_list.assert_called_once_with(targets)
 
-    def test_sync_apply_dispatches_to_run_sync(self, tmp_path: Path) -> None:
+    def test_sync_flags_reach_sync_targets(self, tmp_path: Path) -> None:
+        targets = [_ContributeTarget("llm-prompts", tmp_path, "src/pkg/prompts/")]
         with (
-            patch("sys.argv", ["llm-prompts", "contribute", "sync", "--apply"]),
-            patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
             patch(
-                "llm_prompts.cli._contribute_targets",
-                return_value=[
-                    _ContributeTarget("llm-prompts", tmp_path, "src/pkg/prompts/")
-                ],
+                "sys.argv",
+                ["llm-prompts", "contribute", "sync", "--apply", "--rescan"],
             ),
-            patch("llm_prompts.contribute.run_sync", return_value=0) as mock_sync,
+            patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
+            patch("llm_prompts.cli._contribute_targets", return_value=targets),
+            patch("llm_prompts.contribute.sync_targets", return_value=0) as mock_sync,
         ):
-            main()
+            assert main() == 0
         mock_sync.assert_called_once_with(
-            tmp_path, "octocat", "src/pkg/prompts/", True, None, None, ()
+            targets, "octocat", SyncOptions(apply=True, rescan=True), targets
+        )
+
+    @pytest.mark.parametrize(
+        ("argv", "options"),
+        [
+            (["--ready", "feat/x"], SyncOptions(ready="feat/x")),
+            (
+                ["--depends-on", "feat/x", "b:feat/y"],
+                SyncOptions(depends_on=("feat/x", "b:feat/y")),
+            ),
+            (
+                ["--no-depends-on", "feat/x", "b:feat/y"],
+                SyncOptions(no_depends_on=("feat/x", "b:feat/y")),
+            ),
+        ],
+    )
+    def test_record_edits_make_no_gh_call_and_link_edits_see_every_tool(
+        self, tmp_path: Path, argv: list[str], options: SyncOptions
+    ) -> None:
+        one = _ContributeTarget("a", tmp_path, "src/pkg/prompts/")
+        every = [one, _ContributeTarget("b", tmp_path, "src/pkg/prompts/")]
+        with (
+            patch(
+                "sys.argv", ["llm-prompts", "contribute", "sync", "--tool", "a", *argv]
+            ),
+            patch("llm_prompts.cli._get_gh_login", side_effect=AssertionError),
+            patch(
+                "llm_prompts.cli._contribute_target",
+                return_value=(tmp_path, "src/pkg/prompts/"),
+            ),
+            patch("llm_prompts.cli._contribute_targets", return_value=every),
+            patch("llm_prompts.contribute.sync_targets", return_value=0) as mock_sync,
+        ):
+            assert main() == 0
+        linking = options.depends_on or options.no_depends_on
+        mock_sync.assert_called_once_with(
+            [one], "", options, every if linking else [one]
         )
 
     def test_tool_flag_selects_configured_target(self, tmp_path: Path) -> None:
@@ -2331,76 +2361,55 @@ class TestContributeSubcommand:
                 "sys.argv",
                 ["llm-prompts", "contribute", "list", "--tool", "mcp-memory"],
             ),
-            patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
             patch(
                 "llm_prompts.cli._contribute_target",
                 return_value=(tmp_path, "src/pkg/prompts/"),
             ) as mock_target,
-            patch("llm_prompts.contribute.collect_report", return_value=_report()),
+            patch("llm_prompts.contribute.list_targets", return_value=0),
         ):
             main()
         mock_target.assert_called_once_with("mcp-memory")
 
-    def test_multiple_targets_print_headers_and_aggregate_status(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        targets = [
-            _ContributeTarget("tool-a", tmp_path / "a", "src/pkg/prompts/"),
-            _ContributeTarget("tool-b", tmp_path / "b", "src/pkg/prompts/"),
-        ]
+    @pytest.mark.parametrize("flag", ["--branch", "--forget", "--ready", "--local"])
+    def test_record_edits_without_tool_error(self, flag: str) -> None:
         with (
-            patch("sys.argv", ["llm-prompts", "contribute", "list"]),
-            patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
-            patch("llm_prompts.cli._contribute_targets", return_value=targets),
+            patch("sys.argv", ["llm-prompts", "contribute", "sync", flag, "feat/x"]),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            main()
+        assert exc_info.value.code == 2
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["--ready", "feat/x", "--local", "feat/y"],
+            ["--depends-on", "feat/x", "b:feat/y", "--forget", "feat/x"],
+            ["--rescan", "--ready", "feat/x"],
+        ],
+        ids=["two-edits", "link-and-edit", "rescan-and-edit"],
+    )
+    def test_conflicting_record_options_error(
+        self,
+        fake_subprocess: FakeSubprocess,
+        argv: list[str],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        with (
             patch(
-                "llm_prompts.contribute.collect_report",
-                side_effect=lambda repo, login, prefix: _report(
-                    exit=int(repo.name == "b")
-                ),
+                "sys.argv", ["llm-prompts", "contribute", "sync", "--tool", "a", *argv]
             ),
+            pytest.raises(SystemExit) as exc_info,
         ):
-            status = main()
-        assert status == 1
-        out = capsys.readouterr().out
-        assert "[tool-a]" in out
-        assert "[tool-b]" in out
+            main()
+        assert exc_info.value.code == 2
+        assert "Pass only one of" in capsys.readouterr().err
 
-    def test_multiple_targets_print_in_target_order_when_the_first_finishes_last(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        targets = [
-            _ContributeTarget("tool-a", tmp_path / "a", "src/pkg/prompts/"),
-            _ContributeTarget("tool-b", tmp_path / "b", "src/pkg/prompts/"),
-        ]
-        second_done = threading.Event()
-
-        def fake_collect(repo: Path, login: str, prefix: str) -> Report:
-            if repo.name == "a":
-                assert second_done.wait(timeout=5)
-            if repo.name == "b":
-                second_done.set()
-            return _report(warnings=[f"listing {repo.name}"])
-
-        with (
-            patch("sys.argv", ["llm-prompts", "contribute", "list"]),
-            patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
-            patch("llm_prompts.cli._contribute_targets", return_value=targets),
-            patch("llm_prompts.contribute.collect_report", side_effect=fake_collect),
-        ):
-            assert main() == 0
-        out = capsys.readouterr().out
-        assert (
-            out.index("[tool-a]")
-            < out.index("listing a")
-            < out.index("[tool-b]")
-            < out.index("listing b")
-        )
-
-    def test_cleanup_without_tool_errors(self) -> None:
+    @pytest.mark.parametrize("flag", ["--depends-on", "--no-depends-on"])
+    def test_link_edits_without_tool_error(self, flag: str) -> None:
         with (
             patch(
                 "sys.argv",
-                ["llm-prompts", "contribute", "sync", "--cleanup", "branch-x"],
+                ["llm-prompts", "contribute", "sync", flag, "feat/x", "b:feat/y"],
             ),
             pytest.raises(SystemExit) as exc_info,
         ):
@@ -2422,7 +2431,6 @@ class TestContributeSubcommand:
         targets = [_ContributeTarget("tool-a", tmp_path / "a", "src/pkg/prompts/")]
         with (
             patch("sys.argv", ["llm-prompts", "contribute", "update", "--apply"]),
-            patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
             patch("llm_prompts.cli._contribute_targets", return_value=targets),
             patch("llm_prompts.contribute.update_targets", return_value=0) as mock,
         ):
@@ -2438,7 +2446,6 @@ class TestContributeSubcommand:
                 ["llm-prompts", "contribute", "update", "--tool", "tool-a"]
                 + ["--pr", "3", "--pr", "4"],
             ),
-            patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
             patch(
                 "llm_prompts.cli._contribute_target",
                 return_value=(tmp_path, "src/pkg/prompts/"),
@@ -2447,76 +2454,6 @@ class TestContributeSubcommand:
         ):
             assert main() == 0
         assert mock.call_args.args[1:] == (False, [3, 4])
-
-    def test_repeated_commit_flags_reach_run_sync(self, tmp_path: Path) -> None:
-        with (
-            patch(
-                "sys.argv",
-                [
-                    "llm-prompts",
-                    "contribute",
-                    "sync",
-                    "--commit",
-                    "abc",
-                    "--commit",
-                    "def",
-                ],
-            ),
-            patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
-            patch(
-                "llm_prompts.cli._contribute_targets",
-                return_value=[
-                    _ContributeTarget("llm-prompts", tmp_path, "src/pkg/prompts/")
-                ],
-            ),
-            patch("llm_prompts.contribute.run_sync", return_value=0) as mock_sync,
-        ):
-            main()
-        assert mock_sync.call_args.args[-1] == ["abc", "def"]
-
-    @pytest.mark.parametrize(
-        "other", [["--only", "branch-x"], ["--cleanup", "branch-x"]]
-    )
-    def test_commit_cannot_combine_with_only_or_cleanup(
-        self, other: list[str], capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        with (
-            patch(
-                "sys.argv",
-                [
-                    "llm-prompts",
-                    "contribute",
-                    "sync",
-                    "--tool",
-                    "x",
-                    "--commit",
-                    "abc",
-                    *other,
-                ],
-            ),
-            pytest.raises(SystemExit) as exc_info,
-        ):
-            main()
-        assert exc_info.value.code == 2
-        assert "--commit cannot be combined" in capsys.readouterr().err
-
-    def test_commit_with_several_targets_reaches_sync_targets(
-        self, tmp_path: Path
-    ) -> None:
-        targets = [
-            _ContributeTarget("tool-a", tmp_path / "a", "src/pkg/prompts/"),
-            _ContributeTarget("tool-b", tmp_path / "b", "src/pkg/prompts/"),
-        ]
-        with (
-            patch("sys.argv", ["llm-prompts", "contribute", "sync", "--commit", "abc"]),
-            patch("llm_prompts.cli._get_gh_login", return_value="octocat"),
-            patch("llm_prompts.cli._contribute_targets", return_value=targets),
-            patch("llm_prompts.contribute.sync_targets", return_value=0) as mock_sync,
-        ):
-            assert main() == 0
-        mock_sync.assert_called_once_with(
-            targets, "octocat", False, None, None, ["abc"], ANY
-        )
 
 
 class TestGetGhLoginWithoutGh:
