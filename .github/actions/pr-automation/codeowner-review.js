@@ -1,8 +1,10 @@
 const { findPullRequest } = require('./sync-project-status.js');
 
 const STATUS_CONTEXT = 'codeowner-review';
-const RENOVATE_LOGIN = 'renovate[bot]';
-const SAFE_RENOVATE_BRANCHES = ['renovate/all-minor-patch', 'renovate/github-actions', 'renovate/lock-file-maintenance', 'renovate/pi-extensions'];
+const SAFE_BOT_BRANCHES = {
+  'renovate[bot]': ['renovate/all-minor-patch', 'renovate/github-actions', 'renovate/lock-file-maintenance', 'renovate/pi-extensions'],
+  'alexfayers-auto-cd[bot]': ['bot/copilot-review-rules'],
+};
 const IGNORED_REVIEW_STATES = ['COMMENTED', 'PENDING'];
 
 async function setStatus(github, context, pr, state, description) {
@@ -43,8 +45,8 @@ function latestReviewStates(reviews) {
 
 async function evaluate({ github, context, pr }) {
   const { owner, repo } = context.repo;
-  if (pr.user.login === RENOVATE_LOGIN && SAFE_RENOVATE_BRANCHES.includes(pr.head.ref)) {
-    return ['success', 'Renovate PR needs no code owner review'];
+  if (Object.hasOwn(SAFE_BOT_BRANCHES, pr.user.login) && SAFE_BOT_BRANCHES[pr.user.login].includes(pr.head.ref)) {
+    return ['success', 'Bot PR needs no code owner review'];
   }
   const author = pr.user.login.toLowerCase();
   const files = await github.paginate(github.rest.pulls.listFiles, { owner, repo, pull_number: pr.number, per_page: 100 });

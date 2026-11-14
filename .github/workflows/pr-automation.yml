@@ -9,6 +9,10 @@ on:
         type: boolean
         default: true
     secrets:
+      CI_BOT_ID:
+        required: false
+      CI_BOT_PRIVATE_KEY:
+        required: false
       PROJECTS_TOKEN:
         required: true
 
@@ -21,8 +25,15 @@ jobs:
       pull-requests: write
       statuses: write
     steps:
+      - id: ci-bot
+        uses: alexfayers/llm-prompts/.github/actions/app-token@main
+        with:
+          app-id: ${{ secrets.CI_BOT_ID }}
+          private-key: ${{ secrets.CI_BOT_PRIVATE_KEY }}
+          fallback-token: ${{ secrets.PROJECTS_TOKEN }}
       - uses: alexfayers/llm-prompts/.github/actions/pr-automation@main
         with:
+          automation-token: ${{ steps.ci-bot.outputs.token }}
           projects-token: ${{ secrets.PROJECTS_TOKEN }}
           github-token: ${{ github.token }}
           project: ${{ inputs.project }}

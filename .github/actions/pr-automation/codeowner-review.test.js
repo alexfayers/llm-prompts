@@ -97,7 +97,7 @@ test('the repo owner is asked to review only when the gate waits and the owner h
   }
 });
 
-test('renovate bot PRs pass without review only from known-safe branches', async () => {
+test('bot PRs pass without review only from known-safe branches', async () => {
   for (const [author, branch, labels, reviews, state] of [
     ['renovate[bot]', 'renovate/all-minor-patch', [], [], 'success'],
     ['renovate[bot]', 'renovate/github-actions', [], [], 'success'],
@@ -109,6 +109,10 @@ test('renovate bot PRs pass without review only from known-safe branches', async
     ['renovate[bot]', 'feature/all-minor-patch', [], [], 'pending'],
     ['dependabot[bot]', 'renovate/all-minor-patch', [], [], 'pending'],
     ['stranger', 'renovate/all-minor-patch', [], [], 'pending'],
+    ['alexfayers-auto-cd[bot]', 'bot/copilot-review-rules', [], [], 'success'],
+    ['alexfayers-auto-cd[bot]', 'bot/other', [], [], 'pending'],
+    ['renovate[bot]', 'bot/copilot-review-rules', [], [], 'pending'],
+    ['constructor', 'bot/copilot-review-rules', [], [], 'pending'],
   ]) {
     const f = fixture({ author, files: ['README.md'], labels, reviews, branch });
     await gate(f);

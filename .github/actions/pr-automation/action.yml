@@ -1,8 +1,11 @@
 name: PR automation
 description: Sync a public repo's PR status onto the llm-prompts ecosystem project board, enable squash auto-merge on ready contribute PRs, assign the PR author, apply a breaking label from the PR title or body, label blocked PRs, label PRs with merge conflicts or failing required checks as blocked, apply path-based area labels, report a codeowner-review commit status and request the repo owner's review when it is needed, and label PRs ready to auto-rebase, and rebase auto-rebase PRs onto the base branch when it moves or when the label is added.
 inputs:
+  automation-token:
+    description: Token for enabling auto-merge, for rebasing PRs and for removing the blocked label. Unlike github.token, it makes these changes start new workflow runs. In a private repo, scope the token to that repo only.
+    required: true
   projects-token:
-    description: Token for the Project GraphQL status sync, for enabling auto-merge, for rebasing PRs and for removing the blocked label. Unlike github.token, it makes these changes start new workflow runs. In a private repo, scope the token to that repo only.
+    description: Token for the Project GraphQL status sync. In a private repo, scope the token to that repo only.
     required: true
   github-token:
     description: Token used for labeling the PR and reading repo contents.
@@ -23,7 +26,7 @@ runs:
       env:
         ACTION_PATH: ${{ github.action_path }}
       with:
-        github-token: ${{ inputs.projects-token }}
+        github-token: ${{ inputs.automation-token }}
         script: |
           const { enable } = require(`${process.env.ACTION_PATH}/auto-merge.js`)
           await enable({ github, context, core })
@@ -34,7 +37,7 @@ runs:
       env:
         ACTION_PATH: ${{ github.action_path }}
       with:
-        github-token: ${{ inputs.projects-token }}
+        github-token: ${{ inputs.automation-token }}
         script: |
           const { rebase } = require(`${process.env.ACTION_PATH}/rebase-prs.js`)
           await rebase({ github, context, core })
@@ -86,12 +89,12 @@ runs:
       uses: actions/github-script@v9
       env:
         ACTION_PATH: ${{ github.action_path }}
-        PROJECTS_TOKEN: ${{ inputs.projects-token }}
+        AUTOMATION_TOKEN: ${{ inputs.automation-token }}
       with:
         github-token: ${{ inputs.github-token }}
         script: |
           const { labelConflicts } = require(`${process.env.ACTION_PATH}/label-conflicts.js`)
-          await labelConflicts({ github, removeClient: getOctokit(process.env.PROJECTS_TOKEN), context, core })
+          await labelConflicts({ github, removeClient: getOctokit(process.env.AUTOMATION_TOKEN), context, core })
 
     - name: Codeowner review gate
       if: |
@@ -141,7 +144,7 @@ runs:
       env:
         ACTION_PATH: ${{ github.action_path }}
       with:
-        github-token: ${{ inputs.projects-token }}
+        github-token: ${{ inputs.automation-token }}
         script: |
           const { rebaseLabelled } = require(`${process.env.ACTION_PATH}/rebase-prs.js`)
           await rebaseLabelled({ github, context, core })
