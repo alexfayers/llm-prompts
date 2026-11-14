@@ -491,6 +491,20 @@ class TestPluginSourceMessages:
 
         assert plugins.plugin_source_messages(outdated_plugin) == []
 
+    def test_unreadable_log_falls_back_to_short_shas(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        (plugins._checkout_dir("p") / ".git").mkdir(parents=True)
+        local, remote = "a" * 40, "b" * 40
+        fake_subprocess.on("rev-parse", "HEAD", stdout=f"{local}\n")
+        fake_subprocess.on("ls-remote", stdout=f"{remote}\tHEAD\n")
+        fake_subprocess.on("log", "--pretty=format:%s%n%b%x1e", returncode=128)
+        plugin = {"name": "p", "source": f"git+file://{tmp_path / 'upstream'}"}
+
+        assert plugins.plugin_source_messages(plugin) == [
+            "[p] update available (aaaaaaaa -> bbbbbbbb)"
+        ]
+
     def test_log_is_limited_to_installed_skill_paths(
         self, outdated_plugin: dict[str, str], fake_subprocess: FakeSubprocess
     ) -> None:

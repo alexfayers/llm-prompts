@@ -314,7 +314,7 @@ def plugin_source_messages(plugin: dict[str, Any]) -> list[str]:
     )
     if subjects == []:
         return []
-    return _format_update_message(name, subjects, local_sha, remote_sha)
+    return _format_update_message(name, subjects, local_sha[:8], remote_sha[:8])
 
 
 def _installed_pathspecs(subset: list[str] | None) -> list[str]:

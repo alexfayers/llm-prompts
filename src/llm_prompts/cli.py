@@ -23,6 +23,7 @@ from .home import set_root
 from .install import AGENT_CLASSES, REMOVED_AGENTS, log, prompts_dir, user_binary
 from .network import run_with_retries
 from .setup import (
+    _RELEASE_TAG,
     _UPDATE_INSTRUCTION,
     GIT_TIMEOUT,
     SHIPPED_PATHS,
@@ -30,6 +31,7 @@ from .setup import (
     _commit_subjects_between,
     _extract_git_url,
     _format_update_message,
+    _latest_release_tag,
     _remote_commit_subjects,
     _remote_head,
     _uv_tools_dir,
@@ -256,8 +258,25 @@ def _get_installed_dist(package_name: str) -> tuple[Path, str] | None:
     return None
 
 
-def _remote_source_messages(name: str, source: str) -> list[str]:
+def _get_installed_revision(package_name: str) -> str | None:
+    """Get the ref a uv tool env's git install was requested at, if any."""
+    installed = _get_installed_dist(package_name)
+    if not installed:
+        return None
+    vcs_info = json.loads(installed[0].read_text(encoding="utf-8")).get("vcs_info", {})
+    revision: str | None = vcs_info.get("requested_revision")
+    return revision
+
+
+def _remote_source_messages(
+    name: str, source: str, ref: str | None = None
+) -> list[str]:
     """Return update-availability messages for a remote git source.
+
+    Args:
+        name: The tool name.
+        source: The configured source.
+        ref: A ref to follow instead of the latest release tag.
 
     Returns:
         Message lines describing available updates, or an empty list.
@@ -270,14 +289,23 @@ def _remote_source_messages(name: str, source: str) -> list[str]:
     if not installed_commit:
         return [f"[{name}] not installed (run `llm-prompts setup` first)"]
 
-    remote_commit = _remote_head(git_url, None)
+    release = None if ref else _latest_release_tag(git_url)
+    remote_commit = release[1] if release else _remote_head(git_url, ref)
     if remote_commit is None or remote_commit == installed_commit:
         return []
 
     subjects = _remote_commit_subjects(git_url, installed_commit, remote_commit)
     if subjects == []:
         return []
-    return _format_update_message(name, subjects, installed_commit, remote_commit)
+    if release:
+        revision = _get_installed_revision(name)
+        installed = revision if revision and _RELEASE_TAG.fullmatch(revision) else None
+        return _format_update_message(
+            name, subjects, release=(installed or installed_commit[:8], release[0])
+        )
+    return _format_update_message(
+        name, subjects, installed_commit[:8], remote_commit[:8]
+    )
 
 
 class UpdateCheckFailure(str):
@@ -776,7 +804,7 @@ def _collect_update_messages() -> list[str]:
         if _is_local_path(source):
             check = partial(_local_source_messages, name, source)
         else:
-            check = partial(_remote_source_messages, name, source)
+            check = partial(_remote_source_messages, name, source, tool.get("ref"))
         checks.append(partial(_update_check_or_failure, name, check))
     for plugin in _load_plugins():
         check = partial(plugin_source_messages, plugin)
