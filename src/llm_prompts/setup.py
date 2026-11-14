@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -402,11 +402,12 @@ def _checkout_stamp_path() -> Path:
 _NOT_PROMPTS = ":(exclude,glob)**/prompts/**"
 
 
-def _checkout_state(repo: Path) -> str | None:
-    """Return a digest of a checkout's files, status and uncommitted diff outside prompts.
+def _checkout_state(repo: Path, include_prompts: bool = False) -> str | None:
+    """Return a digest of a checkout's files, status and uncommitted diff, outside prompts unless asked.
 
     Args:
         repo: The checkout directory.
+        include_prompts: Whether prompt files count towards the digest.
 
     Returns:
         The hex digest, or ``None`` if git fails.
@@ -415,7 +416,13 @@ def _checkout_state(repo: Path) -> str | None:
     for args in (["ls-files", "-s"], ["status", "--porcelain"], ["diff", "HEAD"]):
         try:
             result = subprocess.run(
-                ["git", "-C", str(repo), *args, "--", _NOT_PROMPTS],
+                [
+                    "git",
+                    "-C",
+                    str(repo),
+                    *args,
+                    *(() if include_prompts else ("--", _NOT_PROMPTS)),
+                ],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -570,6 +577,41 @@ def _package_name(tool: dict[str, Any]) -> str:
 def _install_source(source: str) -> str:
     """Return the expanded path of a local source, or the source itself."""
     return str(_expand(source)) if _is_local_path(source) else source
+
+
+def install_args(tools: Mapping[str, str]) -> list[str]:
+    """Return the ``uv pip install`` arguments for tools given as name to source.
+
+    Args:
+        tools: Tool names mapped to their configured sources.
+
+    Returns:
+        The expanded sources, then the flags that ignore local ``tool.uv.sources``.
+    """
+    return [
+        *(_install_source(source) for source in tools.values()),
+        *(
+            arg
+            for name, source in tools.items()
+            if _is_local_path(source)
+            for arg in (
+                "--no-sources-package",
+                _package_name({"name": name, "source": source}),
+            )
+        ),
+    ]
+
+
+def local_source_path(source: str) -> Path | None:
+    """Return the expanded path of a local source, or None if the source is remote."""
+    return _expand(source) if _is_local_path(source) else None
+
+
+def source_state(source: str) -> str:
+    """Return a digest of a local source's checkout with its prompts, or an empty string if remote."""
+    if not _is_local_path(source):
+        return ""
+    return _checkout_state(_expand(source), include_prompts=True) or "unreadable"
 
 
 def _git_dependencies(tools: list[dict[str, Any]]) -> list[str]:

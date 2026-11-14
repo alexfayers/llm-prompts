@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import shutil
 import tempfile
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -12,7 +14,80 @@ from conftest import FakeSubprocess
 from benchmark.traces import make_trace
 from llm_prompts.benchmark import paths
 from llm_prompts.benchmark.cell import home_dirs
+from llm_prompts.benchmark.cell.variants import PLACEHOLDER_MEMORY_URL
 from llm_prompts.benchmark.runner.process import reset_stop
+from llm_prompts.benchmark.types import MemoryEntity, MemoryHandle, ToolCall, Variant
+
+
+class FakeMemory:
+    def __init__(self) -> None:
+        self.started: list[MemoryHandle] = []
+        self.stopped: list[MemoryHandle] = []
+        self.calls: list[tuple[str, Path]] = []
+        self.entity_lists: dict[MemoryHandle, list[MemoryEntity]] = {}
+        self.tool_call_lists: dict[MemoryHandle, list[ToolCall]] = {}
+        self.copies: dict[Path, list[MemoryEntity]] = {}
+
+    def copy_database(self, handle: MemoryHandle, target: Path) -> None:
+        self.copies[target.parent] = list(self.entity_lists[handle])
+
+    def entities(self, handle: MemoryHandle) -> tuple[MemoryEntity, ...]:
+        return tuple(sorted(self.entity_lists[handle], key=lambda e: e.name))
+
+    def tool_calls(self, handle: MemoryHandle) -> tuple[ToolCall, ...]:
+        return tuple(sorted(self.tool_call_lists[handle], key=lambda c: c.at))
+
+    def clear_tool_calls(self, handle: MemoryHandle) -> None:
+        self.tool_call_lists[handle] = []
+
+    @contextmanager
+    def start(
+        self,
+        home: Path,
+        seed: tuple[MemoryEntity, ...] | None,
+        project: str,
+        workspace: Path,
+        env: Mapping[str, str],
+    ) -> Iterator[MemoryHandle]:
+        port = 41000 + len(self.started)
+        handle = MemoryHandle(f"http://127.0.0.1:{port}/mcp", port, home / "m.db")
+        self.entity_lists[handle] = list(
+            self.copies.get(home, ()) if seed is None else seed
+        )
+        self.tool_call_lists[handle] = []
+        self.started.append(handle)
+        self.calls.append((project, workspace))
+        try:
+            yield handle
+        finally:
+            self.stopped.append(handle)
+
+
+@pytest.fixture
+def fake_memory(monkeypatch: pytest.MonkeyPatch) -> FakeMemory:
+    from llm_prompts.benchmark.cell import memory
+
+    fake = FakeMemory()
+    monkeypatch.setattr(memory, "start", fake.start)
+    monkeypatch.setattr(memory, "read_entities", fake.entities)
+    monkeypatch.setattr(memory, "read_tool_calls", fake.tool_calls)
+    monkeypatch.setattr(memory, "copy_database", fake.copy_database)
+    monkeypatch.setattr(memory, "clear_tool_calls", fake.clear_tool_calls)
+    return fake
+
+
+@dataclass(frozen=True)
+class BenchDirs:
+    state: Path
+    cache: Path
+
+
+@pytest.fixture
+def bench_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> BenchDirs:
+    dirs = BenchDirs(state=tmp_path / "state", cache=tmp_path / "cache")
+    monkeypatch.setattr(paths, "state_dir", lambda: dirs.state)
+    monkeypatch.setattr(paths, "cache_dir", lambda: dirs.cache)
+    return dirs
 
 
 def _write_json(path: Path, data: object) -> None:
@@ -29,6 +104,30 @@ def judge_passes(fake_subprocess: FakeSubprocess) -> None:
 
 
 UNSCRIPTED_TRACE = make_trace(model="fake")
+
+
+@pytest.fixture
+def fake_variant(tmp_path: Path) -> Variant:
+    root = tmp_path / "variant"
+    (root / "src").mkdir(parents=True)
+    (root / "venv" / "bin").mkdir(parents=True)
+    claude, pi = root / "templates" / "claude", root / "templates" / "pi"
+    memory_url = {"memory": {"url": PLACEHOLDER_MEMORY_URL}}
+    _write_json(claude / ".claude" / "settings.json", {"env": {"TEMPLATE": "1"}})
+    _write_json(
+        claude / ".claude" / ".claude.json",
+        {"mcpServers": {"memory": {"type": "http", "url": PLACEHOLDER_MEMORY_URL}}},
+    )
+    _write_json(pi / ".pi" / "agent" / "mcp.json", {"mcpServers": memory_url})
+    return Variant(
+        "a",
+        "main",
+        "fake-variant-key",
+        root / "src",
+        root / "venv",
+        {"claude": claude, "pi": pi},
+        {"claude": "fake-build", "pi": "fake-build"},
+    )
 
 
 @pytest.fixture
