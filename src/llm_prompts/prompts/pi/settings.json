@@ -11,7 +11,7 @@
     "npm:pi-herdsman@0.45.0",
     "npm:pi-ask-user@0.17.2",
     { "source": "npm:tower-do@0.8.2", "extensions": [] },
-    "npm:pi-notify@1.5.0",
+    "npm:pi-notify@1.5.99",
     "npm:pi-lsp-extension@1.4.0",
     "npm:@henryqw/pi-herdr-tools@6.1.0",
     "npm:@henryqw/pi-task-models@9.4.0",
