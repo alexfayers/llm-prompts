@@ -106,6 +106,7 @@
 | tests/test\_overlay\_merge.py                                                 |       19 |        0 |    100% |           |
 | tests/test\_pi\_extension\_factories.py                                       |        8 |        0 |    100% |           |
 | tests/test\_plugins.py                                                        |      254 |        0 |    100% |           |
+| tests/test\_prompt\_checks\_entry\_points.py                                  |       13 |        0 |    100% |           |
 | tests/test\_prompt\_sizes.py                                                  |      664 |        0 |    100% |           |
 | tests/test\_removed\_agents\_notice.py                                        |       29 |        0 |    100% |           |
 | tests/test\_render\_template.py                                               |      135 |        0 |    100% |           |
@@ -122,7 +123,7 @@
 | tests/test\_uninstall.py                                                      |      119 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_pr.py                                       |       64 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **22056** |  **569** | **97%** |           |
+| **TOTAL**                                                                     | **22069** |  **569** | **97%** |           |
 
 
 ## Setup coverage badge
