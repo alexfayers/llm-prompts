@@ -13,22 +13,4 @@ permissions:
 
 jobs:
   parity:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Compare with the canonical copy in alexfayers/llm-prompts-ci
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-          FILES: review.instructions.md python.instructions.md typescript.instructions.md prompts.instructions.md
-        run: |
-          if [ "$HEAD_REF" = bot/copilot-review-rules ]; then
-            echo "Bot PR that syncs the copy: skipping"
-            exit 0
-          fi
-          for name in $FILES; do
-            gh api -H 'Accept: application/vnd.github.raw+json' "repos/$HEAD_REPO/contents/.github/instructions/$name?ref=$HEAD_SHA" > mirror.md
-            curl -fsSL "https://raw.githubusercontent.com/alexfayers/llm-prompts-ci/main/.github/instructions/$name" > canonical.md
-            cmp mirror.md canonical.md
-          done
+    uses: alexfayers/llm-prompts-ci/.github/workflows/review-instructions-parity.yml@main
