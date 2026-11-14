@@ -380,6 +380,51 @@ class TestChangedLocalTools:
         assert setup.detect_changed_local_tools(checkouts) == {"core"}
 
 
+class TestInstallPins:
+    @pytest.fixture
+    def tags(self, fake_subprocess: FakeSubprocess) -> FakeSubprocess:
+        fake_subprocess.on("ls-remote", "--tags", stdout="a1\trefs/tags/v0.2.0\n")
+        return fake_subprocess
+
+    @pytest.mark.parametrize(
+        ("tool", "pins"),
+        [
+            ({"name": "a", "source": "git+https://x/a.git"}, {"a": "v0.2.0"}),
+            (
+                {"name": "a", "source": "git+https://x/a.git", "ref": "dev"},
+                {"a": "dev"},
+            ),
+            ({"name": "a", "source": "git+https://x/a.git@abc123"}, {}),
+            ({"name": "a", "source": "~/git/a"}, {}),
+        ],
+    )
+    def test_remote_tools_follow_the_latest_release_unless_a_ref_is_set(
+        self, tags: FakeSubprocess, tool: dict[str, Any], pins: dict[str, str]
+    ) -> None:
+        assert setup._install_pins([tool]) == pins
+
+    def test_remote_without_release_tags_follows_head(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        fake_subprocess.on("ls-remote", "--tags", stdout="")
+        assert (
+            setup._install_pins([{"name": "a", "source": "git+https://x/a.git"}]) == {}
+        )
+
+    def test_failed_lookup_exits_with_a_reason(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        fake_subprocess.on("ls-remote", returncode=128)
+        with pytest.raises(SystemExit) as raised:
+            setup._install_pins([{"name": "a", "source": "git+https://x/a.git"}])
+        assert getattr(raised.value, "reason", None) == "tool_release_lookup_failed"
+
+    def test_install_command_pins_the_tool_source(self) -> None:
+        tools = [{"name": "a", "source": "git+https://x/a.git"}]
+        env = setup._build_commands(tools, set(), {"a": "v0.2.0"})
+        assert "git+https://x/a.git@v0.2.0" in env.install_cmd
+
+
 class TestRunSetup:
     @pytest.fixture
     def tools_dir(
@@ -528,6 +573,24 @@ class TestRunSetup:
 
         assert fake_subprocess.matching("uv", "tool", "install")
 
+    @pytest.mark.parametrize(("installed", "installs"), [("v1", 1), ("v2", 0)])
+    def test_installed_release_differing_from_the_pin_forces_an_install(
+        self,
+        tools_dir: Path,
+        fake_subprocess: FakeSubprocess,
+        monkeypatch: pytest.MonkeyPatch,
+        installed: str,
+        installs: int,
+    ) -> None:
+        monkeypatch.setattr(setup, "_install_pins", lambda tools: {"core": "v2"})
+        monkeypatch.setattr(
+            "llm_prompts.cli._get_installed_revision", lambda name: installed
+        )
+
+        setup.run_setup()
+
+        assert len(fake_subprocess.matching("uv", "tool", "install")) == installs
+
     def test_forced_reinstall_reports_a_change_even_if_uv_says_nothing_to_upgrade(
         self, tools_dir: Path, fake_subprocess: FakeSubprocess
     ) -> None:
@@ -658,6 +721,33 @@ class TestRemoteHead:
     ) -> None:
         fake_subprocess.on("ls-remote", stdout="")
         assert setup._remote_head("https://x/repo.git", "main") is None
+
+
+class TestLatestReleaseTag:
+    def test_picks_highest_stable_tag_with_its_peeled_commit(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        fake_subprocess.on(
+            "ls-remote",
+            "--tags",
+            stdout=(
+                "a1\trefs/tags/v0.9.0\n"
+                "b1\trefs/tags/v0.10.0\n"
+                "b2\trefs/tags/v0.10.0^{}\n"
+                "c1\trefs/tags/v0.11.0-rc1\n"
+                "d1\trefs/tags/v0.2.0\n"
+            ),
+        )
+        assert setup._latest_release_tag("https://x/repo.git") == ("v0.10.0", "b2")
+        assert fake_subprocess.matching("ls-remote")[0][-3:] == [
+            "--tags",
+            "https://x/repo.git",
+            "v*",
+        ]
+
+    def test_none_without_release_tags(self, fake_subprocess: FakeSubprocess) -> None:
+        fake_subprocess.on("ls-remote", "--tags", stdout="a1\trefs/tags/v1-beta\n")
+        assert setup._latest_release_tag("https://x/repo.git") is None
 
 
 class TestCommitSubjectsBetween:

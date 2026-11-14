@@ -21,6 +21,7 @@ Reason = Literal[
     "invalid_tool_paths",
     "tool_install_failed",
     "tool_unstartable",
+    "tool_release_lookup_failed",
     "no_installed_agents",
     "copy_blocked",
     "copy_failed",

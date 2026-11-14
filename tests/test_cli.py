@@ -171,6 +171,42 @@ class TestGetInstalledCommit:
 
 
 class TestRemoteSourceMessages:
+    @pytest.fixture(autouse=True)
+    def no_release_tags(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("llm_prompts.cli._latest_release_tag", lambda url: None)
+
+    def test_configured_ref_follows_that_ref_instead_of_release_tags(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "llm_prompts.cli._latest_release_tag", lambda url: ("v9.0.0", "zzz")
+        )
+        with (
+            patch("llm_prompts.cli._get_installed_commit", return_value="abc123aa"),
+            patch("llm_prompts.cli._remote_head", return_value="def456bb") as head,
+            patch("llm_prompts.cli._remote_commit_subjects", return_value=["Add X"]),
+        ):
+            result = _remote_source_messages("pkg", "git+https://x.io/r.git", "main")
+        assert result == ["[pkg] update available:\n- Add X"]
+        head.assert_called_once_with("https://x.io/r.git", "main")
+
+    def test_new_release_tag_lists_versions_and_commit_subjects(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "llm_prompts.cli._latest_release_tag", lambda url: ("v0.33.0", "def456bb")
+        )
+        with (
+            patch("llm_prompts.cli._get_installed_commit", return_value="abc123aa"),
+            patch("llm_prompts.cli._get_installed_revision", return_value="v0.32.0"),
+            patch(
+                "llm_prompts.cli._remote_commit_subjects", return_value=["Add X"]
+            ) as subjects,
+        ):
+            result = _remote_source_messages("pkg", "git+https://x.io/r.git")
+        assert result == ["[pkg] update available (v0.32.0 -> v0.33.0):\n- Add X"]
+        subjects.assert_called_once_with("https://x.io/r.git", "abc123aa", "def456bb")
+
     def test_not_a_git_url(self) -> None:
         assert _remote_source_messages("pkg", "some-pypi-package") == []
 
@@ -762,7 +798,11 @@ class TestCollectUpdateMessages:
     def test_mixed_sources(self) -> None:
         config = [
             {"name": "core", "source": "~/git/llm-prompts"},
-            {"name": "remote-pkg", "source": "git+https://github.com/user/repo.git"},
+            {
+                "name": "remote-pkg",
+                "source": "git+https://github.com/user/repo.git",
+                "ref": "main",
+            },
         ]
         with patch("llm_prompts.setup.config_path") as mock_config:
             mock_config.return_value.exists.return_value = True
@@ -787,7 +827,7 @@ class TestCollectUpdateMessages:
         ]
         mock_local.assert_called_once_with("core", "~/git/llm-prompts")
         mock_remote.assert_called_once_with(
-            "remote-pkg", "git+https://github.com/user/repo.git"
+            "remote-pkg", "git+https://github.com/user/repo.git", "main"
         )
 
     def test_failed_check_is_reported_without_credentials(
