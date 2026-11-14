@@ -30,6 +30,7 @@ Telemetry is anonymous. Turn it off with `DO_NOT_TRACK=1` or `LLM_PROMPTS_NO_TEL
 - [Reference](docs/reference.md): commands, what gets installed, config, plugins, overlays, Kiro, development.
 - [Pi](docs/pi.md): extensions, seeded config and roles.
 - [Telemetry](docs/telemetry.md): what is sent.
+- [Benchmark](docs/benchmark.md): compare two llm-prompts refs by running agents through scenarios.
 - [Contributing](CONTRIBUTING.md)
 
 ## Related
