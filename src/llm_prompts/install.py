@@ -1247,7 +1247,11 @@ def _apply_frontmatter_overrides(content: str, overrides: dict[str, str]) -> str
 
 
 def _link_layered_dir(
-    layers: Sequence[Path], dest: Path, label: str, reserved: Sequence[str] = ()
+    layers: Sequence[Path],
+    dest: Path,
+    label: str,
+    reserved: Sequence[str] = (),
+    render_part: Callable[[str], str] | None = None,
 ) -> bool:
     """Symlink the entries of the layers into ``dest``, merging directories held by several.
 
@@ -1259,6 +1263,8 @@ def _link_layered_dir(
         dest: Destination directory.
         label: Human-readable label for log messages.
         reserved: Entry names to leave alone in ``dest``.
+        render_part: Renders each top-level ``*.md`` file into ``dest`` instead
+            of symlinking it.
 
     Returns:
         Whether any entry was added, replaced or pruned.
@@ -1273,6 +1279,17 @@ def _link_layered_dir(
     for name in names:
         entries = [layer / name for layer in layers if (layer / name).exists()]
         directories = list(takewhile(Path.is_dir, reversed(entries)))[::-1]
+        if render_part and entries[-1].suffix == ".md" and entries[-1].is_file():
+            rendered = render_part(_read_text(entries[-1]))
+            target = dest / name
+            if target.is_symlink():
+                target.unlink()
+            elif target.is_dir():
+                shutil.rmtree(target)
+            if not target.exists() or _read_text(target) != rendered:
+                _write_text(target, rendered)
+                changed = True
+            continue
         if len(directories) < 2:
             action = _install_symlink(
                 entries[-1], dest / name, f"{label} sibling", set()
@@ -1329,7 +1346,12 @@ def _skill_part_files(layers: Sequence[Path]) -> list[Path]:
 
 
 def _materialize_skill_dir(
-    layers: Sequence[Path], dest: Path, content: str, label: str, managed: set[str]
+    layers: Sequence[Path],
+    dest: Path,
+    content: str,
+    label: str,
+    managed: set[str],
+    render_part: Callable[[str], str] | None = None,
 ) -> None:
     """Materialize a skill as a real directory with a rewritten ``SKILL.md``.
 
@@ -1346,6 +1368,7 @@ def _materialize_skill_dir(
         content: Content to write as ``dest``'s ``SKILL.md``.
         label: Human-readable label for log/error messages.
         managed: Set to accumulate the installed destination name into.
+        render_part: Renders each top-level ``*.md`` part instead of symlinking it.
     """
     name = dest.name
     try:
@@ -1358,7 +1381,10 @@ def _materialize_skill_dir(
             dest / "SKILL.md", content, f"{label} '{name}' SKILL.md", "skills"
         )
 
-        if _link_layered_dir(layers, dest, label, ["SKILL.md"]) and not is_new:
+        if (
+            _link_layered_dir(layers, dest, label, ["SKILL.md"], render_part)
+            and not is_new
+        ):
             _record_change("Updated", "skills", name)
 
         managed.add(name)
@@ -1439,9 +1465,10 @@ def _materialize_builtin_skill(
             managed.add(dest.name)
         return
     raw = _read_text(skill_md)
+    variables = _builtin_skill_vars(vars_path)
     try:
         substituted = strip_gating_keys(
-            substitute_variables(raw, _builtin_skill_vars(vars_path)),
+            substitute_variables(raw, variables),
             _GATING_FRONTMATTER_KEYS,
         )
     except TemplateError as e:
@@ -1449,7 +1476,14 @@ def _materialize_builtin_skill(
         return
     for var in find_unreplaced_variables(substituted):
         log("warn", f"Unreplaced variable '{{{{{var}}}}}' in skill '{source.name}'")
-    _materialize_skill_dir(layers or [source], dest, substituted, "skill", managed)
+    _materialize_skill_dir(
+        layers or [source],
+        dest,
+        substituted,
+        "skill",
+        managed,
+        lambda part: substitute_variables(part, variables),
+    )
 
 
 def _install_skills(
