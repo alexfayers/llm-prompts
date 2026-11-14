@@ -22,7 +22,7 @@ excludeAgent: "cloud-agent"
 ## Skills
 
 - A skill is a directory with `SKILL.md` and optional scripts. Its frontmatter `description` says what it does and when to use it.
-- Add a task that fits an existing skill as a part: a sibling `<part>.md` listed in that skill's index, never named `SKILL.md`. Parts are not templated, so per-target text stays in `SKILL.md`.
+- Add a task that fits an existing skill as a part: a sibling `<part>.md` listed in that skill's index, never named `SKILL.md`. Parts are rendered with the same variables as `SKILL.md`.
 - A skill that a hook or an agent definition's skill list names keeps its own `SKILL.md`.
 - Flag a skill step written as prose that a script could check or compute exactly. Put the script in the skill directory.
 

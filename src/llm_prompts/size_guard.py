@@ -337,7 +337,7 @@ def _iter_skill_artifacts(
     Skills never split by shared-vs-agent-specific the way rules/workflows do
     - every skill's `SKILL.md` is substituted (never rendered), matching
     `_materialize_builtin_skill`. Each installed sibling `*.md` part, from any
-    layer, is measured raw.
+    layer, is measured rendered like `SKILL.md`.
 
     Args:
         root: Prompts directory being scanned.
@@ -403,7 +403,7 @@ def _iter_skill_artifacts(
     for name in skill_names:
         for part in _skill_part_files(_skill_layers(candidate_dirs, name, gate)):
             yield from _iter_part_artifacts(
-                part, target, f"{name}/{part.name}", allowances
+                part, target, f"{name}/{part.name}", allowances, variables
             )
 
 
@@ -412,16 +412,22 @@ def _iter_part_artifacts(
     target: str,
     dest_name: str,
     allowances: dict[str, dict[str, int]],
+    variables: dict[str, str],
 ) -> Iterator[Artifact]:
-    """Yield size/validity artifacts for one unsubstituted skill part file.
+    """Yield size/validity artifacts for one skill part file, rendered.
 
     Args:
         part: Part file beside its skill's `SKILL.md`.
         target: Render target.
         dest_name: Installed name, ``<skill>/<part>.md``.
         allowances: This root's declared per-artifact ceilings.
+        variables: Variables the part is rendered with.
     """
-    content = _read_text(part)
+    try:
+        content = substitute_variables(_read_text(part), variables)
+    except TemplateError:
+        yield Artifact(TEMPLATE_RENDERS, target, dest_name, False, part)
+        return
     yield Artifact(
         SKILL_BODY_BYTES,
         target,

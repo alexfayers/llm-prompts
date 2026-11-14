@@ -203,15 +203,18 @@ def _skill_bytes(
                 substitute_variables(_read_text(skill_dir / "SKILL.md"), variables),
                 _GATING_FRONTMATTER_KEYS,
             )
+            parts = LoadedBytes(
+                body=sum(
+                    len(substitute_variables(_read_text(part), variables).encode())
+                    for part in _skill_part_files(
+                        _skill_layers(candidate_dirs, name, gate)
+                    )
+                )
+            )
         except TemplateError:
             continue
         total += LoadedBytes.of(substituted)
-        total += LoadedBytes(
-            body=sum(
-                len(part.read_bytes())
-                for part in _skill_part_files(_skill_layers(candidate_dirs, name, gate))
-            )
-        )
+        total += parts
     return total
 
 
