@@ -70,6 +70,7 @@
 | src/llm\_prompts/prompts/shared/skills/git-usage/inspect\_range.py            |       57 |        3 |     95% |59-60, 106 |
 | src/llm\_prompts/prompts/shared/skills/git-usage/rewrite\_range.py            |       90 |        3 |     97% |61, 64, 201 |
 | src/llm\_prompts/prompts/shared/skills/pr-review/filter\_findings.py          |       64 |        3 |     95% | 45-46, 91 |
+| src/llm\_prompts/prompts/shared/skills/session-start/checklist.py             |       50 |        1 |     98% |        96 |
 | src/llm\_prompts/prompts/shared/skills/tidy-code/check\_reduction.py          |       42 |        1 |     98% |        97 |
 | src/llm\_prompts/prompts/shared/skills/todos/find\_todos.py                   |       44 |        7 |     84% |96-98, 103-105, 109 |
 | src/llm\_prompts/removed\_agents\_notice.py                                   |       14 |        0 |    100% |           |
@@ -157,13 +158,14 @@
 | tests/test\_prompt\_checks\_entry\_points.py                                  |       13 |        0 |    100% |           |
 | tests/test\_prompt\_sizes.py                                                  |      664 |        0 |    100% |           |
 | tests/test\_removed\_agents\_notice.py                                        |       29 |        0 |    100% |           |
-| tests/test\_render\_template.py                                               |      137 |        0 |    100% |           |
+| tests/test\_render\_template.py                                               |      136 |        0 |    100% |           |
 | tests/test\_retrospective\_extract.py                                         |       90 |        0 |    100% |           |
 | tests/test\_rewrite\_range\_script.py                                         |       96 |        0 |    100% |           |
+| tests/test\_session\_start\_checklist.py                                      |       38 |        0 |    100% |           |
 | tests/test\_setup.py                                                          |      352 |        0 |    100% |           |
 | tests/test\_size\_guard.py                                                    |      156 |        0 |    100% |           |
 | tests/test\_size\_report.py                                                   |      223 |        0 |    100% |           |
-| tests/test\_skill\_injection.py                                               |       30 |        0 |    100% |           |
+| tests/test\_skill\_injection.py                                               |       36 |        0 |    100% |           |
 | tests/test\_squash\_subject.py                                                |        7 |        0 |    100% |           |
 | tests/test\_telemetry.py                                                      |      350 |        0 |    100% |           |
 | tests/test\_telemetry\_core.py                                                |      153 |        1 |     99% |       126 |
@@ -173,7 +175,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       28 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       31 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **27765** |  **656** | **98%** |           |
+| **TOTAL**                                                                     | **27858** |  **657** | **98%** |           |
 
 
 ## Setup coverage badge
