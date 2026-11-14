@@ -43,3 +43,7 @@ Where a `HANDOFF.md` is present in the workspace at session start, or the user p
 ## llm-prompts
 
 You MUST load the `llm-prompts` skill and follow its `edit.md` before creating, editing, or deleting any rule or skill source file in this repo, and its `setup.md` before running `llm-prompts setup`, `update` or `install` or changing its config.
+
+## PR triage
+
+When triaging PRs, you **MUST** use the `pr-triage` skill.
