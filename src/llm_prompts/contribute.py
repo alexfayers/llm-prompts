@@ -1,53 +1,39 @@
-"""Manage derived PR branches for a repo's rule/skill-source commits.
+"""Keep each worktree branch in sync with local main and its own PR.
 
-``main`` is the single source of truth. A PR branch is a disposable export
-built by cherry-picking specific ``main`` commits onto a fresh branch off the
-upstream base - never by moving a branch pointer onto a ``main`` commit
-directly, which would drag every earlier unmerged commit along too.
+A recorded worktree is any number of commits on its own branch. ``sync``
+squashes them into one commit in local ``main``, pulls remote changes into the
+worktree, pushes the branch and opens a draft PR once the entry is marked ready,
+and removes the worktree after its PR merges.
 """
 
 from __future__ import annotations
 
+import graphlib
 import json
 import re
-import shlex
 import shutil
 import subprocess
-import sys
-import tempfile
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
-from functools import cache, partial
+from functools import partial
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, TextIO
+from typing import Any, NamedTuple, TextIO
 
-from . import github_api, links
-from .batching import (
-    Batch,
-    BatchPlan,
-    SelectionError,
-    append_groups,
-    is_managed,
-    match_commits,
-    pending_plans,
-    regression_warning,
-    select_groups,
-)
+from . import github_api, main_sync, worktrees
 from .exit_reason import ExitReason
-from .listing import Entry, classify, pr_only_warning, render
 from .network import run_with_retries, with_retries
-from .size_guard import check
 from .squash_subject import squash_pr_number
+from .worktrees import Link, WorktreeEntry
 
-_COMPRESSION_PREFIX = "chore: compress "
-_CONVENTIONAL_PREFIX = re.compile(r"^[a-z]+(\([^)]*\))?!?: ", re.IGNORECASE)
-_CONVENTIONAL_SUBJECT = re.compile(r"^[a-z]+(\([^)]*\))?!?: .+", re.IGNORECASE)
-_NON_ALNUM = re.compile(r"[^a-z0-9]+")
 _DEPENDS_PREFIX = "Depends on "
-_GENERATED_PREFIXES = ("- ", _DEPENDS_PREFIX)
+_TEMPLATE_SECTIONS = json.loads(
+    (Path(__file__).parent / "pr_template_sections.json").read_text("utf-8")
+)
+WHAT_MARK = f" {_TEMPLATE_SECTIONS['syncMark']}"
 _WHAT_HEADING = re.compile(r"^## What\n", re.MULTILINE)
+_DEPENDENCIES_HEADING = re.compile(r"^## Dependencies\n", re.MULTILINE)
 _HEADING = re.compile(r"^## ", re.MULTILINE)
+_SECTION_HEADING = re.compile(r"^##[ \t]+(.*?)[ \t]*$", re.MULTILINE)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _BLANK_LINES = re.compile(r"\n{3,}")
 _PR_TEMPLATE_PATH = ".github/PULL_REQUEST_TEMPLATE.md"
@@ -63,15 +49,6 @@ class Commit(NamedTuple):
     paths: tuple[str, ...]
     patch_id: str = ""
     authored_date: str = ""
-
-
-class Group(NamedTuple):
-    """One or two commits destined for a single PR branch."""
-
-    commits: tuple[Commit, ...]
-    slug: str
-    branch: str
-    problems: tuple[str, ...]
 
 
 class Pr(NamedTuple):
@@ -94,29 +71,6 @@ class OpenPr(NamedTuple):
     head_sha: str = ""
     base_branch: str = ""
     title: str = ""
-
-
-class Inventory(NamedTuple):
-    """Remote batch and PR state needed to plan and report on pending commits."""
-
-    batches: tuple[Batch, ...]
-    done: frozenset[str]
-    merged_prs: dict[str, tuple[int, str]]
-    unmanaged: dict[str, Pr]
-    legacy_orphans: tuple[str, ...]
-    legacy_regressed: tuple[Batch, ...] = ()
-    past_slugs: frozenset[str] = frozenset()
-    skipped_prs: frozenset[int] = frozenset()
-    commits: tuple[Commit, ...] = ()
-
-
-class ApplyResult(NamedTuple):
-    """Outcome of applying one batch plan to its branch."""
-
-    outcome: Literal["picked", "conflict", "oversize"]
-    mode: Literal["append", "rebuild", "new"]
-    paths: tuple[str, ...]
-    message: str
 
 
 def _git(*args: str, repo: Path) -> str:
@@ -179,7 +133,7 @@ def _pr_list(repo: Path, state: str, fields: str) -> list[Any]:
             )
         except subprocess.CalledProcessError as error:
             raise ExitReason(
-                "pr_list_failed", f"gh pr list failed: {_first_stderr_line(error)}"
+                "pr_list_failed", f"gh pr list failed: {first_stderr_line(error)}"
             ) from error
     return with_retries(
         partial(github_api.pr_list, repo, _API_PR_QUALIFIERS[state], fields.split(","))
@@ -191,117 +145,6 @@ def _pr_view(repo: Path, number: int, fields: str) -> Any:
     if _gh_installed():
         return _gh_json("pr", "view", str(number), "--json", fields, repo=repo)
     return with_retries(partial(github_api.pr_view, repo, number, fields.split(",")))
-
-
-def slug_for(subject: str) -> str:
-    """Derive a branch-safe slug from a commit subject."""
-    body = _CONVENTIONAL_PREFIX.sub("", subject, count=1)
-    slug = _NON_ALNUM.sub("-", body.lower()).strip("-")
-    if len(slug) <= _SLUG_MAX_LEN:
-        return slug
-    truncated = slug[:_SLUG_MAX_LEN]
-    cut = truncated.rfind("-")
-    return truncated[:cut] if cut > 0 else truncated
-
-
-def branch_name(login: str, slug: str) -> str:
-    """Build the ``<login>/<slug>`` branch name for a slug."""
-    return f"{login}/{slug}"
-
-
-def is_conventional(subject: str) -> bool:
-    """Return whether a commit subject matches the conventional-commit format."""
-    return bool(_CONVENTIONAL_SUBJECT.match(subject))
-
-
-def _is_in_scope_candidate(commit: Commit, prefix: str) -> bool:
-    return any(path.startswith(prefix) for path in commit.paths)
-
-
-def _is_mixed_scope(commit: Commit, prefix: str) -> bool:
-    in_scope = any(path.startswith(prefix) for path in commit.paths)
-    out_of_scope = any(not path.startswith(prefix) for path in commit.paths)
-    return in_scope and out_of_scope
-
-
-def _manual_shas(commits: Sequence[Commit], prefix: str) -> frozenset[str]:
-    """Return the shas of commits whose PR is opened by hand: code-only or mixed-scope."""
-    return frozenset(
-        commit.sha
-        for commit in commits
-        if not _is_in_scope_candidate(commit, prefix) or _is_mixed_scope(commit, prefix)
-    )
-
-
-def _make_group(
-    commits: tuple[Commit, ...], login: str, problems: tuple[str, ...]
-) -> Group:
-    slug = slug_for(commits[-1].subject)
-    if any(not is_conventional(commit.subject) for commit in commits):
-        problems = (*problems, "non-conventional-subject")
-    return Group(
-        commits=commits, slug=slug, branch=branch_name(login, slug), problems=problems
-    )
-
-
-def _flag_slug_collisions(groups: list[Group]) -> list[Group]:
-    counts: dict[str, int] = {}
-    for group in groups:
-        counts[group.branch] = counts.get(group.branch, 0) + 1
-    return [
-        group._replace(problems=(*group.problems, "slug-collision"))
-        if counts[group.branch] > 1
-        else group
-        for group in groups
-    ]
-
-
-def group_commits(commits: Sequence[Commit], login: str, prefix: str) -> list[Group]:
-    """Pair each compression commit with its following commit, else group singly.
-
-    Mixed-scope commits never join a pair - each gets its own single-commit
-    group carrying only the ``mixed-scope`` problem.
-    """
-    groupable = [
-        (index, commit)
-        for index, commit in enumerate(commits)
-        if not _is_mixed_scope(commit, prefix)
-    ]
-
-    groups: dict[int, Group] = {
-        index: Group(
-            commits=(commit,),
-            slug=slug_for(commit.subject),
-            branch=branch_name(login, slug_for(commit.subject)),
-            problems=("mixed-scope",),
-        )
-        for index, commit in enumerate(commits)
-        if _is_mixed_scope(commit, prefix)
-    }
-
-    position = 0
-    while position < len(groupable):
-        index, commit = groupable[position]
-        if not commit.subject.startswith(_COMPRESSION_PREFIX):
-            groups[index] = _make_group((commit,), login, ())
-            position += 1
-            continue
-
-        if position + 1 >= len(groupable):
-            groups[index] = _make_group((commit,), login, ("unpaired-compression",))
-            position += 1
-            continue
-
-        _, next_commit = groupable[position + 1]
-        problems: tuple[str, ...] = ()
-        if next_commit.subject.startswith(_COMPRESSION_PREFIX):
-            problems = ("double-compression",)
-        elif not _is_in_scope_candidate(next_commit, prefix):
-            problems = ("compression-pairs-out-of-scope",)
-        groups[index] = _make_group((commit, next_commit), login, problems)
-        position += 2
-
-    return _flag_slug_collisions([groups[index] for index in sorted(groups)])
 
 
 def fetch_base(repo: Path, remote: str) -> None:
@@ -324,89 +167,6 @@ def stale_main_warning(repo: Path, base: str) -> str | None:
         "warning: local main has commits already merged upstream that are not "
         f"ancestors of {base} - fix with: llm-prompts update"
     )
-
-
-def log_commits(repo: Path, base: str) -> list[Commit]:
-    """List every commit between base and main with its paths, oldest first."""
-    log_output = _git(
-        "log", "--format=%H%x09%aI%x09%s", "--reverse", f"{base}..main", repo=repo
-    )
-    rows = []
-    for line in log_output.splitlines():
-        sha, _, rest = line.partition("\t")
-        authored_date, _, subject = rest.partition("\t")
-        rows.append((sha, authored_date, subject))
-    paths_by_sha = _paths_by_sha(repo, [sha for sha, _, _ in rows])
-    return [
-        Commit(
-            sha=sha,
-            subject=subject,
-            paths=paths_by_sha.get(sha, ()),
-            authored_date=authored_date,
-        )
-        for sha, authored_date, subject in rows
-    ]
-
-
-def _paths_by_sha(repo: Path, shas: Sequence[str]) -> dict[str, tuple[str, ...]]:
-    """Map each of ``shas`` to the paths it touches, from a single ``git show``."""
-    if not shas:
-        return {}
-    output = _git("show", "--pretty=format:%x00%H", "--name-only", *shas, repo=repo)
-    paths_by_sha = {}
-    for chunk in output.split("\x00")[1:]:
-        sha, *lines = chunk.splitlines()
-        paths_by_sha[sha] = tuple(line for line in lines if line)
-    return paths_by_sha
-
-
-def scope_commits(commits: Sequence[Commit], prefix: str) -> list[Commit]:
-    """Keep the scope-candidate commits of ``commits``, in order."""
-    return [commit for commit in commits if _is_in_scope_candidate(commit, prefix)]
-
-
-def remote_branches(repo: Path, login: str) -> set[str]:
-    """List this login's PR branches that already exist on origin."""
-    output = _git_network(
-        "ls-remote", "--heads", "origin", f"refs/heads/{login}/*", repo=repo
-    )
-    branches = set()
-    for line in output.splitlines():
-        _, _, ref = line.partition("\t")
-        if ref.startswith("refs/heads/"):
-            branches.add(ref.removeprefix("refs/heads/"))
-    return branches
-
-
-def all_prs(repo: Path) -> list[tuple[str, Pr]]:
-    """Fetch every PR (any state) authored by the current gh user, as (branch, Pr) pairs.
-
-    Unlike a dict keyed by branch, this keeps every PR when GitHub reports more
-    than one for the same branch name (e.g. an earlier closed PR alongside a
-    later one that reused the branch).
-    """
-    items = _pr_list(repo, "all", "number,state,url,headRefName,isDraft")
-    return [
-        (
-            item["headRefName"],
-            Pr(item["number"], item["state"], item["url"], item["isDraft"]),
-        )
-        for item in items
-    ]
-
-
-def _pr_recency(pr: Pr) -> tuple[int, int]:
-    """Sort key for picking one PR per branch: OPEN first, then MERGED, then newest."""
-    rank = {"OPEN": 0, "MERGED": 1}.get(pr.state, 2)
-    return (rank, -pr.number)
-
-
-def _prs_by_branch(pairs: list[tuple[str, Pr]]) -> dict[str, Pr]:
-    """Pick one PR per branch: an OPEN one if any, else MERGED, else the newest."""
-    grouped: dict[str, list[Pr]] = {}
-    for branch, pr in pairs:
-        grouped.setdefault(branch, []).append(pr)
-    return {branch: min(prs, key=_pr_recency) for branch, prs in grouped.items()}
 
 
 def _pr_commits_or_none(repo: Path, number: int) -> tuple[Commit, ...] | None:
@@ -463,8 +223,8 @@ def open_prs(repo: Path) -> tuple[list[OpenPr], frozenset[int]]:
     return prs, frozenset(skipped)
 
 
-def push_remote(repo: Path) -> tuple[str, bool]:
-    """Return the remote to push PR branches to and whether it is a fork, forking first if write access is lacking."""
+def push_remote(repo: Path, fork: bool = True) -> tuple[str, bool]:
+    """Return the remote to push PR branches to and whether it is a fork, forking first (when ``fork``) if write access is lacking."""
     if _gh_installed():
         view = _gh_json("repo", "view", "--json", "viewerPermission", repo=repo)
         permission = view.get("viewerPermission")
@@ -473,7 +233,8 @@ def push_remote(repo: Path) -> tuple[str, bool]:
     if permission in ("WRITE", "MAINTAIN", "ADMIN"):
         return "origin", False
     if _gh_installed():
-        _gh_json("repo", "fork", "--remote", repo=repo)
+        if fork:
+            _gh_json("repo", "fork", "--remote", repo=repo)
     elif not github_api.has_upstream(repo):
         owner, name = github_api.base_repo(repo)
         raise ExitReason(
@@ -491,6 +252,11 @@ def pr_title(commits: Sequence[Commit]) -> str:
     return commits[0].subject + (f" (+{extra} more)" if extra else "")
 
 
+def contribute_branch(login: str, branch: str) -> str:
+    """Return the ``<login>/contribute/<branch>`` name a worktree branch is pushed under."""
+    return f"{login}/contribute/{branch}"
+
+
 def pr_template(repo: Path, base: str) -> str:
     """Return the PR template committed on ``base``, or a minimal one when it has none."""
     try:
@@ -501,70 +267,142 @@ def pr_template(repo: Path, base: str) -> str:
 
 def _what_lines(commits: Sequence[Commit]) -> list[str]:
     """Return the What section's subject bullets, one per commit."""
-    return [f"- {commit.subject}" for commit in commits]
+    return [f"- {commit.subject}{WHAT_MARK}" for commit in commits]
 
 
-def _with_depends(body: str, depends_on: Sequence[str]) -> str:
-    """Return ``body`` with the Depends on lines for ``depends_on`` moved to one block at its end."""
-    if not depends_on:
+def _with_depends(
+    body: str, depends_on: Sequence[str], dropped: Sequence[str] = ()
+) -> str:
+    """Return ``body`` with the Depends on lines for ``depends_on`` in its Dependencies section, else at its end.
+
+    Sync owns the lines ``Depends on <ref>`` for each ref in ``depends_on`` and
+    ``dropped``. Dropped ones are removed and all other lines are kept.
+    """
+    written = {f"{_DEPENDS_PREFIX}{ref}" for ref in (*depends_on, *dropped)}
+    if not written:
         return body
-    written = {f"{_DEPENDS_PREFIX}{url}" for url in depends_on}
-    lines = body.rstrip().split("\n")
-    start = len(lines)
-    while start and lines[start - 1].startswith(_DEPENDS_PREFIX):
-        start -= 1
-    kept = lines[:start] + [line for line in lines[start:] if line not in written]
-    rest = "\n".join(kept).rstrip()
-    block = "\n".join(f"{_DEPENDS_PREFIX}{url}" for url in depends_on)
-    return f"{rest}\n\n{block}\n"
+    kept = "\n".join(
+        line for line in body.rstrip().split("\n") if line not in written
+    ).rstrip()
+    if not depends_on:
+        return f"{kept}\n" if kept != body.rstrip() else body
+    block = "\n".join(f"{_DEPENDS_PREFIX}{ref}" for ref in depends_on)
+    heading = _DEPENDENCIES_HEADING.search(f"{kept}\n")
+    if heading is None:
+        return f"{kept}\n\n{block}\n"
+    text = f"{kept}\n"
+    following = _HEADING.search(text, heading.end())
+    end = following.start() if following else len(text)
+    content = text[heading.end() : end].strip("\n")
+    section = f"\n{content}\n{block}\n" if content else f"\n{block}\n"
+    return text[: heading.end()] + section + (f"\n{text[end:]}" if following else "")
+
+
+def _sections(markdown: str) -> dict[str, str]:
+    """Return each ``## `` section's text without placeholder comments, by heading."""
+    parts = _SECTION_HEADING.split(markdown)
+    return {
+        heading: _HTML_COMMENT.sub("", text).strip()
+        for heading, text in zip(parts[1::2], parts[2::2])
+    }
+
+
+def unfilled_sections(template: str, body: str) -> list[str]:
+    """Return the headings of the template's required sections that ``body`` lacks or leaves empty."""
+    optional = _TEMPLATE_SECTIONS["optional"]
+    filled = _sections(body)
+    return [
+        heading
+        for heading in _sections(template)
+        if heading not in optional and not filled.get(heading)
+    ]
+
+
+def _fill_section(body: str, heading: str, text: str) -> str:
+    """Return ``body`` with ``text`` under ``heading`` when that section is missing or empty."""
+    if not text or _sections(body).get(heading):
+        return body
+    match = re.search(rf"^## {re.escape(heading)}[ \t]*\n", body, re.MULTILINE)
+    if match is None:
+        return f"{body.rstrip()}\n\n## {heading}\n\n{text}\n"
+    following = _HEADING.search(body, match.end())
+    end = following.start() if following else len(body)
+    rest = f"\n{body[end:]}" if following else ""
+    return f"{body[: match.end()]}\n{text}\n{rest}"
 
 
 def pr_body(
-    template: str, commits: Sequence[Commit], depends_on: Sequence[str] = ()
+    template: str,
+    commits: Sequence[Commit],
+    depends_on: Sequence[str] = (),
+    why: str = "",
 ) -> str:
-    """Return ``template`` without placeholder comments, with the What lines under its What heading and Depends on lines at the end."""
+    """Return ``template`` without placeholder comments, with the What lines under its What heading, ``why`` under Why and Depends on lines at the end."""
     lines = "\n".join(_what_lines(commits))
     template = _BLANK_LINES.sub("\n\n", _HTML_COMMENT.sub("", template))
     body, found = _WHAT_HEADING.subn(lambda m: f"{m[0]}\n{lines}\n", template, 1)
     return _with_depends(
-        body if found else f"## What\n\n{lines}\n\n{template}", depends_on
+        _fill_section(
+            body if found else f"## What\n\n{lines}\n\n{template}", "Why", why
+        ),
+        depends_on,
     )
 
 
 def rewrite_what(
-    body: str, commits: Sequence[Commit], depends_on: Sequence[str] = ()
+    body: str,
+    commits: Sequence[Commit],
+    depends_on: Sequence[str] = (),
+    dropped: Sequence[str] = (),
 ) -> str:
-    """Return ``body`` with its What section's generated lines and trailing Depends on lines rebuilt, all else kept."""
+    """Return ``body`` with its What section's marked lines and trailing Depends on lines rebuilt, all else kept.
+
+    A non-empty ``body`` without marked lines keeps its text apart from Depends on lines.
+    """
     lines = _what_lines(commits)
+    if body.strip() and WHAT_MARK not in body:
+        return _with_depends(body, depends_on, dropped)
     heading = _WHAT_HEADING.search(body)
     if heading is None:
         return _with_depends(
-            "## What\n\n" + "\n".join(lines) + f"\n\n{body}", depends_on
+            "## What\n\n" + "\n".join(lines) + f"\n\n{body}", depends_on, dropped
         )
     following = _HEADING.search(body, heading.end())
     end = following.start() if following else len(body)
     section = body[heading.end() : end]
     old = section.lstrip("\n").split("\n")
-    generated = next(
-        (i for i, line in enumerate(old) if not line.startswith(_GENERATED_PREFIXES)),
-        len(old),
-    )
-    stale = {f"{_DEPENDS_PREFIX}{url}" for url in depends_on}
+    stale = {f"{_DEPENDS_PREFIX}{ref}" for ref in (*depends_on, *dropped)}
     prose = "\n".join(
-        line
-        for i, line in enumerate(old)
-        if line not in stale and (i >= generated or line.startswith(_DEPENDS_PREFIX))
+        line for line in old if line not in stale and not line.endswith(WHAT_MARK)
     ).strip("\n")
     trailing = section[len(section.rstrip("\n")) :]
     rebuilt = "\n" + "\n".join(lines) + (f"\n\n{prose}" if prose else "") + trailing
-    return _with_depends(body[: heading.end()] + rebuilt + body[end:], depends_on)
+    return _with_depends(
+        body[: heading.end()] + rebuilt + body[end:], depends_on, dropped
+    )
 
 
 def refreshed_pr(
-    title: str, body: str, commits: Sequence[Commit], depends_on: Sequence[str] = ()
+    title: str,
+    body: str,
+    commits: Sequence[Commit],
+    depends_on: Sequence[str] = (),
+    dropped: Sequence[str] = (),
+    retitle: bool = True,
+    why: str = "",
 ) -> tuple[str, str] | None:
-    """Return the PR title and body ``commits`` call for, or None when both are already current."""
-    refreshed = pr_title(commits), rewrite_what(body, commits, depends_on)
+    """Return the PR title and body ``commits`` call for, or None when both are already current.
+
+    The title stays as it is unless ``retitle``. ``why`` fills an empty Why section.
+    """
+    refreshed = (
+        pr_title(commits) if retitle else title,
+        _fill_section(
+            rewrite_what(body, commits, depends_on, dropped),
+            "Why",
+            why,
+        ),
+    )
     return None if refreshed == (title, body) else refreshed
 
 
@@ -578,46 +416,6 @@ def open_draft_pr(repo: Path, base: str, head: str, title: str, body: str) -> st
     argv = ["gh", "pr", "create", "--draft", "--base", branch]
     argv += ["--head", head, "--title", title, "--body", body]
     return _run_with_retries(argv, repo).strip()
-
-
-def _pr_targets(
-    planned: dict[str, tuple[Commit, ...]],
-    batches_by_branch: dict[str, Batch],
-    plans: Sequence[BatchPlan],
-    scoped: bool,
-) -> dict[str, tuple[Commit, ...]]:
-    """Return the commits of each branch that needs a PR opened, keyed by branch."""
-    targets = {
-        branch: commits
-        for branch, commits in planned.items()
-        if (batch := batches_by_branch.get(branch)) is None or batch.pr is None
-    }
-    if not scoped:
-        planned_branches = {plan.branch for plan in plans}
-        targets |= {
-            batch.branch: batch.commits
-            for batch in batches_by_branch.values()
-            if batch.pr is None and batch.branch not in planned_branches
-        }
-    return targets
-
-
-def _pr_command(base: str, branch: str, commits: Sequence[Commit]) -> str:
-    """Return the ``gh pr create`` command a dry run would show for ``branch``."""
-    title = shlex.quote(pr_title(commits))
-    base_branch = base.split("/", 1)[1]
-    return f"gh pr create --draft --base {base_branch} --head {branch} --title {title}"
-
-
-def _branch_depends(
-    commits: Sequence[Commit], depends_on: dict[str, tuple[str, ...]]
-) -> tuple[str, ...]:
-    """Return the dependency PR urls of ``commits`` in commit order, without repeats."""
-    return tuple(
-        dict.fromkeys(
-            url for commit in commits for url in depends_on.get(commit.sha, ())
-        )
-    )
 
 
 def _contains(repo: Path, ancestor: str, sha: str) -> bool:
@@ -646,12 +444,12 @@ def behind_prs(
     )
 
 
-def _first_stderr_line(error: subprocess.CalledProcessError) -> str:
+def first_stderr_line(error: subprocess.CalledProcessError) -> str:
     """Return the first line of a failed command's stderr."""
     return (error.stderr or "").strip().split("\n")[0]
 
 
-def _pr_title_body(repo: Path, number: int) -> tuple[str, str]:
+def pr_title_body(repo: Path, number: int) -> tuple[str, str]:
     """Return the title and body of PR ``number``."""
     view = _pr_view(repo, number, "title,body")
     return view["title"] or "", view["body"] or ""
@@ -675,107 +473,6 @@ def update_pr_branch(repo: Path, number: int) -> None:
         with_retries(partial(github_api.update_pr_branch, repo, number))
 
 
-def _refresh_pr_whats(
-    repo: Path, targets: dict[str, tuple[Pr, tuple[Commit, ...], tuple[str, ...]]]
-) -> bool:
-    """Rebuild the title and What section of each target's open PR, print what changed and return whether any failed."""
-
-    def refresh_one(
-        item: tuple[str, tuple[Pr, tuple[Commit, ...], tuple[str, ...]]],
-    ) -> str | None:
-        branch, (pr, commits, depends_on) = item
-        try:
-            refreshed = refreshed_pr(
-                *_pr_title_body(repo, pr.number), commits, depends_on
-            )
-            if refreshed is None:
-                return None
-            edit_pr(repo, pr.number, *refreshed)
-        except subprocess.CalledProcessError as error:
-            return f"{branch}: PR title/What not updated ({_first_stderr_line(error)})"
-        return f"{branch}: updated PR title/What {pr.url}"
-
-    with ThreadPoolExecutor() as executor:
-        lines = [line for line in executor.map(refresh_one, targets.items()) if line]
-    if lines:
-        print("\n".join(lines))
-    return any("PR title/What not updated" in line for line in lines)
-
-
-def _open_draft_prs(
-    repo: Path,
-    base: str,
-    head_owner: str,
-    targets: dict[str, tuple[Commit, ...]],
-    depends_on: dict[str, tuple[str, ...]],
-) -> bool:
-    """Open a draft PR per target branch, print each outcome and return whether any failed."""
-    template = pr_template(repo, base)
-
-    def open_one(item: tuple[str, tuple[Commit, ...]]) -> str:
-        branch, commits = item
-        try:
-            url = open_draft_pr(
-                repo,
-                base,
-                f"{head_owner}{branch}",
-                pr_title(commits),
-                pr_body(template, commits, _branch_depends(commits, depends_on)),
-            )
-        except subprocess.CalledProcessError as error:
-            return f"{branch}: PR not opened ({_first_stderr_line(error)})"
-        return f"{branch}: opened draft PR {url}"
-
-    with ThreadPoolExecutor() as executor:
-        lines = list(executor.map(open_one, targets.items()))
-    print("\n".join(lines))
-    return any("PR not opened" in line for line in lines)
-
-
-def _branch_in_scope(repo: Path, base: str, remote_ref: str, prefix: str) -> bool:
-    paths = _git(
-        "diff", "--name-only", f"{base}...{remote_ref}", repo=repo
-    ).splitlines()
-    return any(path.startswith(prefix) for path in paths)
-
-
-def _patch_ids(repo: Path, shas: Sequence[str]) -> dict[str, str]:
-    """Map each of ``shas`` to its stable patch-id, computed from its own diff with no context."""
-    if not shas:
-        return {}
-    diff = _git("show", "-U0", *shas, repo=repo)
-    result = subprocess.run(
-        ["git", "patch-id", "--stable"],
-        cwd=repo,
-        input=diff,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return {
-        sha: patch_id
-        for patch_id, sha in (line.split() for line in result.stdout.splitlines())
-    }
-
-
-def _branch_commits(repo: Path, base: str, branch: str) -> tuple[Commit, ...]:
-    """List a pushed branch's commits ahead of ``base``, with their patch-ids."""
-    log_output = _git(
-        "log",
-        "--format=%H%x09%s",
-        "--reverse",
-        "--no-merges",
-        f"{base}..origin/{branch}",
-        repo=repo,
-    )
-    rows = [line.partition("\t") for line in log_output.splitlines()]
-    patch_ids = _patch_ids(repo, [sha for sha, _, _ in rows])
-    return tuple(
-        Commit(sha=sha, subject=subject, paths=(), patch_id=patch_ids.get(sha, ""))
-        for sha, _, subject in rows
-    )
-
-
 _ELLIPSIS = "\u2026"
 
 
@@ -792,702 +489,13 @@ def _rejoin_headline(headline: str, body: str) -> str:
     return headline
 
 
-def skipped_prs_warning(skipped: Collection[int]) -> str | None:
-    """Warn that merged PRs could not be fetched, so their commits may be re-proposed."""
-    if not skipped:
-        return None
-    numbers = ", ".join(f"#{number}" for number in sorted(skipped))
-    return (
-        f"warning: could not fetch merged PR {numbers} - their commits may be "
-        "reported as pending until the fetch succeeds"
-    )
-
-
-def behind_warning(behind: Sequence[OpenPr]) -> str | None:
-    """Warn that open PRs are behind main and name the command that updates them."""
-    if not behind:
-        return None
-    lines = [f"  #{pr.pr.number} {pr.branch}" for pr in behind]
-    return (
-        "warning: these PRs are behind main and must be updated before merging - "
-        "run: llm-prompts contribute update --apply\n" + "\n".join(lines)
-    )
-
-
-def _merged_pr_commits(
-    repo: Path, subjects: Collection[str], numbers: Collection[int]
-) -> tuple[list[tuple[int, str, list[Commit]]], frozenset[int]]:
-    """List the pre-merge commits of merged PRs that could match one of ``subjects``.
-
-    A merged PR is fetched only when its title (a single-commit PR's subject),
-    its branch slug (a multi-commit batch's first subject) or its number (a
-    squash-merge subject's suffix) matches, and the number of one whose fetch
-    fails is returned alongside the commits.
-    """
-    slugs = {slug_for(subject) for subject in subjects}
-    items = _pr_list(repo, "merged", "number,headRefName,title")
-    merged: list[tuple[int, str, list[Commit]]] = []
-    skipped: set[int] = set()
-    matching = [
-        item
-        for item in items
-        if item["title"] in subjects
-        or item["headRefName"].rpartition("/")[2] in slugs
-        or item["number"] in numbers
-    ]
-    with ThreadPoolExecutor() as pool:
-        fetched = list(
-            pool.map(lambda item: _pr_commits_or_none(repo, item["number"]), matching)
-        )
-    for item, pr_commits in zip(matching, fetched, strict=True):
-        if pr_commits is None:
-            skipped.add(item["number"])
-            continue
-        merged.append((item["number"], item["headRefName"], list(pr_commits)))
-    return merged, frozenset(skipped)
-
-
-def _first_commit_author_date(repo: Path, sha: str) -> datetime:
-    """Return `sha`'s author date, for chronological no-PR batch ordering.
-
-    A rebuild resets a batch tip's committer date to the rebuild time, so the
-    branch's first commit's author date is used instead - cherry-pick
-    preserves author dates across rebuilds.
-    """
-    return datetime.fromisoformat(_git("log", "-1", "--format=%aI", sha, repo=repo))
-
-
-def _same_instant(a: str, b: str) -> bool:
-    """Return whether two ISO 8601 datetime strings denote the same instant."""
-    return (
-        bool(a) and bool(b) and datetime.fromisoformat(a) == datetime.fromisoformat(b)
-    )
-
-
-def _same_commit(a: Commit, b: Commit) -> bool:
-    """Return whether two commits share a subject and authored instant."""
-    return a.subject == b.subject and _same_instant(a.authored_date, b.authored_date)
-
-
-def _open_pr_by_sha(
-    commits: Sequence[Commit], prs: Sequence[OpenPr]
-) -> dict[str, OpenPr]:
-    """Map each commit to the first open PR holding a same-subject, same-instant commit."""
-    by_sha: dict[str, OpenPr] = {}
-    for commit in commits:
-        for open_pr in prs:
-            if any(_same_commit(pr_commit, commit) for pr_commit in open_pr.commits):
-                by_sha[commit.sha] = open_pr
-                break
-    return by_sha
-
-
-def _squashed_pr_by_sha(
-    commits: Sequence[Commit],
-    manual: Collection[str],
-    prs: Sequence[OpenPr],
-    login: str,
-    by_sha: dict[str, OpenPr],
-) -> dict[str, OpenPr]:
-    """Map each manual commit to the one open PR, with no commit-matched commit, whose title is its subject."""
-    matched = {open_pr.pr.number for open_pr in by_sha.values()}
-    candidates = [
-        open_pr
-        for open_pr in prs
-        if open_pr.title
-        and not is_managed(open_pr.branch, login)
-        and open_pr.pr.number not in matched
-    ]
-    subject_counts: dict[str, int] = {}
-    for commit in commits:
-        subject_counts[commit.subject] = subject_counts.get(commit.subject, 0) + 1
-    by_title: dict[str, list[OpenPr]] = {}
-    for open_pr in candidates:
-        by_title.setdefault(open_pr.title, []).append(open_pr)
-    return {
-        commit.sha: by_title[commit.subject][0]
-        for commit in commits
-        if commit.sha in manual
-        and commit.sha not in by_sha
-        and subject_counts[commit.subject] == 1
-        and len(by_title.get(commit.subject, ())) == 1
-    }
-
-
-def _pr_only_commits(
-    commits: Sequence[Commit], prs: Sequence[OpenPr], login: str
-) -> dict[int, tuple[Commit, ...]]:
-    """Map each unmanaged open PR to its commits that no local commit matches."""
-    by_number: dict[int, tuple[Commit, ...]] = {}
-    for open_pr in prs:
-        if is_managed(open_pr.branch, login):
-            continue
-        missing = tuple(
-            pr_commit
-            for pr_commit in open_pr.commits
-            if not any(_same_commit(pr_commit, commit) for commit in commits)
-        )
-        if missing:
-            by_number[open_pr.pr.number] = missing
-    return by_number
-
-
-def inventory(repo: Path, login: str, base: str, prefix: str) -> Inventory:
-    """Build the remote batch/PR state needed to plan and report on pending commits."""
-    commits = log_commits(repo, base)
-    scoped = scope_commits(commits, prefix)
-    upstream_subjects = _git("log", "--format=%s", f"main..{base}", repo=repo)
-    numbers = {
-        number
-        for subject in upstream_subjects.splitlines()
-        if (number := squash_pr_number(subject)) is not None
-    }
-    with ThreadPoolExecutor() as pool:
-        merged_future = pool.submit(
-            _merged_pr_commits,
-            repo,
-            {commit.subject for commit in scoped},
-            numbers,
-        )
-        all_prs_future = pool.submit(all_prs, repo)
-        _git_network(
-            "fetch",
-            "--quiet",
-            "--prune",
-            "origin",
-            f"+refs/heads/{login}/*:refs/remotes/origin/{login}/*",
-            repo=repo,
-        )
-        pushed_future = pool.submit(remote_branches, repo, login)
-        patch_ids = _patch_ids(repo, [commit.sha for commit in scoped])
-        main_commits = tuple(
-            commit._replace(patch_id=patch_ids.get(commit.sha, "")) for commit in scoped
-        )
-        subject_counts: dict[str, int] = {}
-        by_subject: dict[str, Commit] = {}
-        for commit in main_commits:
-            subject_counts[commit.subject] = subject_counts.get(commit.subject, 0) + 1
-            by_subject[commit.subject] = commit
-        merged_pr_commits, skipped_prs = merged_future.result()
-        all_pr_pairs = all_prs_future.result()
-        pushed = pushed_future.result()
-
-    prs_by_branch = _prs_by_branch(all_pr_pairs)
-    branches = pushed | {
-        branch
-        for branch, pr in prs_by_branch.items()
-        if is_managed(branch, login) or pr.state == "MERGED"
-    }
-
-    batches: list[Batch] = []
-    done: set[str] = set()
-    merged_by_sha: dict[str, tuple[int, str]] = {}
-    unmanaged: dict[str, Pr] = {}
-    legacy_orphans: list[str] = []
-    legacy_regressed: list[Batch] = []
-    past_slugs: set[str] = set()
-
-    for number, head_branch, merged_commits in merged_pr_commits:
-        for pr_commit in merged_commits:
-            main_commit = by_subject.get(pr_commit.subject)
-            if (
-                main_commit is not None
-                and subject_counts.get(pr_commit.subject) == 1
-                and _same_instant(main_commit.authored_date, pr_commit.authored_date)
-            ):
-                done.add(main_commit.sha)
-                merged_by_sha[main_commit.sha] = (number, head_branch)
-
-    for branch in sorted(branches):
-        pr = prs_by_branch.get(branch)
-        managed = is_managed(branch, login)
-        slug = branch.removeprefix(f"{login}/contribute/") if managed else ""
-
-        if pr is not None and pr.state == "MERGED":
-            if managed:
-                past_slugs.add(slug)
-            continue
-
-        if managed and pr is not None and pr.state != "OPEN":
-            past_slugs.add(slug)
-            continue
-
-        if managed:
-            branch_commits = _branch_commits(repo, base, branch)
-            match = match_commits(branch_commits, main_commits)
-            batches.append(Batch(branch, slug, pr, branch_commits, match))
-            continue
-
-        if pr is not None and pr.state == "OPEN":
-            branch_commits = _branch_commits(repo, base, branch)
-            match = match_commits(branch_commits, main_commits)
-            for main_commit in match.owned.values():
-                unmanaged[main_commit.sha] = pr
-            continue
-
-        if pr is None and _branch_in_scope(repo, base, f"origin/{branch}", prefix):
-            branch_commits = _branch_commits(repo, base, branch)
-            match = match_commits(branch_commits, main_commits)
-            if match.unmatched:
-                legacy_regressed.append(Batch(branch, "", None, branch_commits, match))
-            else:
-                legacy_orphans.append(branch)
-
-    batches.sort(
-        key=lambda batch: (
-            (float(batch.pr.number), "")
-            if batch.pr
-            else (
-                float("inf"),
-                _first_commit_author_date(repo, batch.commits[0].sha)
-                if batch.commits
-                else datetime.max.replace(tzinfo=UTC),
-            )
-        )
-    )
-    return Inventory(
-        batches=tuple(batches),
-        done=frozenset(done),
-        merged_prs=merged_by_sha,
-        unmanaged=unmanaged,
-        legacy_orphans=tuple(legacy_orphans),
-        legacy_regressed=tuple(legacy_regressed),
-        past_slugs=frozenset(past_slugs),
-        skipped_prs=skipped_prs,
-        commits=tuple(commits),
-    )
-
-
-def _cherry_pick_onto(
-    repo: Path,
-    branch: str,
-    start: str,
-    commits: tuple[Commit, ...],
-    prefix: str,
-    mode: Literal["append", "rebuild", "new"],
-) -> ApplyResult:
-    """Cherry-pick ``commits`` onto a fresh ``branch`` starting from ``start``.
-
-    Deletes any pre-existing local branch of the same name first, so a batch can
-    be re-applied after an earlier successful or conflicting run without the
-    ``switch -c`` failing because that branch already exists.
-    """
-    if _git("branch", "--list", branch, repo=repo).strip():
-        _git("branch", "-D", branch, repo=repo)
-    tmp_dir = Path(tempfile.mkdtemp())
-    try:
-        _git("worktree", "add", "--detach", str(tmp_dir), start, repo=repo)
-        _git("switch", "-c", branch, start, repo=tmp_dir)
-        try:
-            _git("cherry-pick", *(commit.sha for commit in commits), repo=tmp_dir)
-        except subprocess.CalledProcessError as error:
-            paths = tuple(
-                _git(
-                    "diff", "--name-only", "--diff-filter=U", repo=tmp_dir
-                ).splitlines()
-            )
-            stderr_lines = [line for line in error.stderr.splitlines() if line.strip()]
-            message = stderr_lines[0] if stderr_lines else ""
-            _git("cherry-pick", "--abort", repo=tmp_dir)
-            return ApplyResult(
-                outcome="conflict", mode=mode, paths=paths, message=message
-            )
-        result = check([tmp_dir / prefix])
-        if not result.passed:
-            return ApplyResult(
-                outcome="oversize", mode=mode, paths=(), message=result.report
-            )
-        return ApplyResult(outcome="picked", mode=mode, paths=(), message="")
-    finally:
-        _git("worktree", "remove", "--force", str(tmp_dir), repo=repo)
-
-
-def apply_batch(
-    repo: Path, plan: BatchPlan, base: str, prefix: str, batch: Batch | None = None
-) -> ApplyResult:
-    """Apply a batch plan's groups onto its branch in a throwaway worktree.
-
-    ``append`` starts from ``origin/<branch>``, keeping that branch's existing
-    commits and cherry-picking only the groups from ``plan.groups`` not
-    already present on it (per ``batch``, required for this mode); ``rebuild``
-    and ``new`` start fresh from ``base`` and cherry-pick every one of
-    ``plan.groups``' commits in order. An ``append`` whose cherry-pick
-    conflicts falls back to a rebuild from ``base``, reporting
-    ``mode="rebuild"``.
-
-    Pushing the resulting branch is the caller's responsibility: plainly for an
-    ``append`` result, ``--force-with-lease`` otherwise.
-    """
-    all_commits = tuple(commit for group in plan.groups for commit in group.commits)
-    if plan.mode == "append":
-        if batch is None:
-            raise ValueError("append plan requires its existing batch")
-        new_groups = append_groups(plan, batch)
-        new_commits = tuple(commit for group in new_groups for commit in group.commits)
-        result = _cherry_pick_onto(
-            repo, plan.branch, f"origin/{plan.branch}", new_commits, prefix, "append"
-        )
-        if result.outcome == "conflict":
-            return _cherry_pick_onto(
-                repo, plan.branch, base, all_commits, prefix, "rebuild"
-            )
-        return result
-    return _cherry_pick_onto(repo, plan.branch, base, all_commits, prefix, plan.mode)
-
-
-def find_blocking_commits(
-    groups: list[Group], group: Group, paths: tuple[str, ...]
-) -> list[Commit]:
-    """Find earlier in-scope commits (outside `group`) touching any of `paths`."""
-    own_shas = {commit.sha for commit in group.commits}
-    blockers: list[Commit] = []
-    for earlier_group in groups:
-        if earlier_group is group:
-            break
-        for commit in earlier_group.commits:
-            if commit.sha in own_shas:
-                continue
-            if set(commit.paths) & set(paths):
-                blockers.append(commit)
-    return blockers
-
-
 def _print_warning(warning: str, out: TextIO | None = None) -> None:
     for line in warning.splitlines():
         print(f"  {line}", file=out)
 
 
 Target = tuple[str, Path, str]
-
-
-class Report(NamedTuple):
-    stale_warning: str | None
-    entries: list[Entry]
-    problems: list[Group]
-    warnings: list[str]
-    exit: int
-    statuses: dict[tuple[str, str], links.Status]
-    pr_bodies: dict[str, str]
-
-
-def _pending_statuses(
-    entries: Sequence[Entry], inv: Inventory, prs: Sequence[OpenPr]
-) -> dict[tuple[str, str], links.Status]:
-    """Map each pending commit's (subject, authored date) to its stage, PR url and branch."""
-    urls = {batch.branch: batch.pr.url for batch in inv.batches if batch.pr}
-    urls.update({open_pr.branch: open_pr.pr.url for open_pr in prs})
-    return {
-        (commit.subject, commit.authored_date): links.Status(
-            entry.stage, urls.get(entry.branch), entry.branch or None
-        )
-        for entry in entries
-        if entry.stage != "merged"
-        for commit, _ in entry.lines
-    }
-
-
-def _probed_statuses(
-    repo: Path,
-    commits: Sequence[Commit],
-    manual: Collection[str],
-    statuses: dict[tuple[str, str], links.Status],
-    probe: Collection[tuple[str, str]],
-) -> dict[tuple[str, str], links.Status]:
-    """Mark probed code-only commits with no PR as local only when no remote branch holds them.
-
-    Identity is the exact sha, so a rebased copy on the remote reads as unpushed, and
-    remote refs are only as fresh as the last fetch.
-    """
-    unpushed = {
-        key: links.Status("local only", None, None)
-        for commit in commits
-        if commit.sha in manual
-        and (key := (commit.subject, commit.authored_date)) in probe
-        and statuses.get(key) == links.Status("needs PR", None, None)
-        and not _git("branch", "-r", "--contains", commit.sha, repo=repo)
-    }
-    return {**statuses, **unpushed}
-
-
-def collect_report(
-    repo: Path,
-    login: str,
-    prefix: str,
-    probe: Collection[tuple[str, str]] = frozenset(),
-) -> Report:
-    """Gather pending commits, classify them, and compute warnings and exit code.
-
-    `probe` names (subject, authored date) keys of code-only commits to check against
-    remote branches when they have no PR.
-    """
-    base = base_ref(repo)
-    remote = base.split("/", 1)[0]
-    with ThreadPoolExecutor() as pool:
-        open_prs_future = pool.submit(open_prs, repo)
-        fetch_base(repo, remote)
-        stale_warning = stale_main_warning(repo, base)
-
-        inv = inventory(repo, login, base, prefix)
-        prs, skipped_open = open_prs_future.result()
-    commits = inv.commits
-    in_scope = scope_commits(commits, prefix)
-    code_only = _manual_shas(commits, prefix)
-    groups = group_commits(in_scope, login, prefix)
-    plans = pending_plans(groups, inv, login)
-    by_sha = _open_pr_by_sha(commits, prs)
-    squashed = _squashed_pr_by_sha(commits, code_only, prs, login, by_sha)
-    squashed_numbers = {open_pr.pr.number for open_pr in squashed.values()}
-    entries, problems = classify(
-        commits,
-        groups,
-        plans,
-        inv,
-        prs,
-        {**by_sha, **squashed},
-        code_only,
-        {
-            number: missing
-            for number, missing in _pr_only_commits(commits, prs, login).items()
-            if number not in squashed_numbers
-        },
-    )
-
-    pr_only = pr_only_warning(entries)
-    try:
-        behind = behind_warning(behind_prs(repo, base, remote, prs))
-    except subprocess.CalledProcessError as error:
-        behind = (
-            "warning: could not check which PRs are behind main "
-            f"({_first_stderr_line(error)})"
-        )
-    warnings = [
-        warning
-        for warning in (
-            regression_warning(inv.batches + inv.legacy_regressed),
-            pr_only,
-            skipped_prs_warning(inv.skipped_prs | skipped_open),
-            behind,
-        )
-        if warning is not None
-    ]
-    needs_sync = any(entry.stage == "needs sync" for entry in entries)
-    return Report(
-        stale_warning,
-        entries,
-        problems,
-        warnings,
-        int(needs_sync or bool(problems or pr_only)),
-        _probed_statuses(
-            repo, commits, code_only, _pending_statuses(entries, inv, prs), probe
-        ),
-        {open_pr.branch: open_pr.body for open_pr in prs},
-    )
-
-
-def _print_report(
-    report: Report,
-    out: TextIO | None = None,
-    notes: Mapping[str, Sequence[links.Note]] | None = None,
-) -> None:
-    if report.stale_warning is not None:
-        _print_warning(report.stale_warning, out)
-    for line in render(report.entries, report.problems, sys.stdout.isatty(), notes):
-        print(line, file=out)
-    for warning in report.warnings:
-        _print_warning(warning, out)
-
-
-def run_list(repo: Path, login: str, prefix: str, out: TextIO | None = None) -> int:
-    """Print pending commits grouped by stage; exit 0 iff nothing needs sync or is a problem."""
-    report = collect_report(repo, login, prefix)
-    _print_report(report, out)
-    return report.exit
-
-
-def _plan_commits(plan: BatchPlan) -> tuple[Commit, ...]:
-    """Return every commit across ``plan``'s groups."""
-    return tuple(commit for group in plan.groups for commit in group.commits)
-
-
-def _held_reasons(
-    groups: Sequence[Group], inv: Inventory, held: dict[str, str]
-) -> dict[str, str]:
-    """Expand `held` to the shas of each unowned group that holds a held commit."""
-    owned = {
-        commit.sha for batch in inv.batches for commit in batch.match.owned.values()
-    }
-    reasons: dict[str, str] = {}
-    for group in groups:
-        shas = [commit.sha for commit in group.commits]
-        reason = next((held[sha] for sha in shas if sha in held), None)
-        if reason is not None and not owned.intersection(shas):
-            reasons.update(dict.fromkeys(shas, reason))
-    return reasons
-
-
-def run_sync(
-    repo: Path,
-    login: str,
-    prefix: str,
-    apply: bool,
-    only: str | None,
-    cleanup: str | None,
-    commits: Sequence[str] = (),
-    held: dict[str, str] | None = None,
-    depends_on: dict[str, tuple[str, ...]] | None = None,
-) -> int:
-    """Preview or apply pending batch plans, or clean up one legacy orphan branch.
-
-    `held` maps commit shas to the unpushed dependency they wait on; each held
-    commit's whole group is left out unless a batch already owns it.
-    """
-    base = base_ref(repo)
-    remote = base.split("/", 1)[0]
-    fetch_base(repo, remote)
-    warning = stale_main_warning(repo, base)
-    if warning is not None:
-        print(warning)
-
-    inv = inventory(repo, login, base, prefix)
-    batches_by_branch = {batch.branch: batch for batch in inv.batches}
-    regression = regression_warning(inv.batches + inv.legacy_regressed)
-    if regression is not None:
-        print(regression)
-
-    skipped = skipped_prs_warning(inv.skipped_prs)
-    if skipped is not None:
-        print(skipped)
-        return 1
-
-    if cleanup is not None:
-        if cleanup not in inv.legacy_orphans:
-            print(f"{cleanup} is not a legacy orphan branch; refusing to clean up")
-            return 1
-        _git_network("push", "origin", "--delete", cleanup, repo=repo)
-        return 0
-
-    groups = group_commits(scope_commits(inv.commits, prefix), login, prefix)
-    selected = None
-    if commits:
-        try:
-            selected = select_groups(commits, groups, inv)
-        except SelectionError as error:
-            print("\n".join(error.lines))
-            return 1
-    held_reasons = _held_reasons(groups, inv, held or {})
-    if held_reasons:
-        selected = (
-            frozenset(commit.sha for group in groups for commit in group.commits)
-            if selected is None
-            else selected
-        ) - held_reasons.keys()
-    scoped = only is not None or bool(commits)
-    plans = pending_plans(groups, inv, login, selected)
-    if only is not None:
-        plans = [plan for plan in plans if plan.branch == only]
-
-    if not apply:
-        for sha, reason in held_reasons.items():
-            print(f"{sha}: held while {reason}")
-        dry_run_targets = _pr_targets(
-            {plan.branch: _plan_commits(plan) for plan in plans},
-            batches_by_branch,
-            plans,
-            scoped,
-        )
-        for plan in plans:
-            pick_groups = plan.groups
-            batch = batches_by_branch.get(plan.branch)
-            if plan.mode == "append" and batch is not None:
-                pick_groups = append_groups(plan, batch)
-            shas = " ".join(
-                commit.sha for group in pick_groups for commit in group.commits
-            )
-            start = f"origin/{plan.branch}" if plan.mode == "append" else base
-            print(f"git worktree add --detach <tmp-dir> {start}")
-            print(f"git switch -c {plan.branch} {start}")
-            print(f"git cherry-pick {shas}")
-            if plan.mode == "append":
-                print(f"git push <remote> {plan.branch}")
-            else:
-                print(f"git push --force-with-lease <remote> {plan.branch}")
-            if batch is not None and batch.pr is not None:
-                plan_commits = _plan_commits(plan)
-                print(
-                    f"gh pr edit {batch.pr.number} --title "
-                    f"{shlex.quote(pr_title(plan_commits))} "
-                    f"--body <What rebuilt from {len(plan_commits)} commits>"
-                )
-            if plan.branch in dry_run_targets:
-                print(_pr_command(base, plan.branch, dry_run_targets.pop(plan.branch)))
-        for branch, branch_commits in dry_run_targets.items():
-            print(_pr_command(base, branch, branch_commits))
-        if not scoped:
-            for branch in inv.legacy_orphans:
-                print(f"{branch}: would delete (orphan, no PR)")
-        return 1 if regression is not None else 0
-
-    remote, forked = push_remote(repo)
-    failure = regression is not None
-    pushed: dict[str, tuple[Commit, ...]] = {}
-    depends = depends_on or {}
-    for plan in plans:
-        result = apply_batch(
-            repo, plan, base, prefix, batches_by_branch.get(plan.branch)
-        )
-        if result.outcome == "conflict":
-            detail = f"{', '.join(result.paths)}: {result.message}"
-            print(f"{plan.branch}: conflict ({detail})")
-            if commits:
-                picked = {c.sha for g in plan.groups for c in g.commits}
-                blockers = {
-                    b.sha: b
-                    for g in plan.groups
-                    for b in find_blocking_commits(groups, g, result.paths)
-                    if b.sha not in picked and b.sha not in inv.done
-                }
-                if blockers:
-                    listed = ", ".join(
-                        f"{b.sha} {b.subject}" for b in blockers.values()
-                    )
-                    print(f"  blocked by earlier unselected commits: {listed}")
-            failure = True
-            continue
-        if result.outcome == "oversize":
-            print(f"{plan.branch}: size check failed\n{result.message}")
-            failure = True
-            continue
-        force = () if result.mode == "append" else ("--force-with-lease",)
-        try:
-            _git_network("push", *force, remote, plan.branch, repo=repo)
-        except subprocess.CalledProcessError:
-            print(f"{plan.branch}: rejected")
-            failure = True
-            continue
-        _git("branch", "-D", plan.branch, repo=repo)
-        print(f"{plan.branch}: pushed")
-        pushed[plan.branch] = _plan_commits(plan)
-
-    targets = _pr_targets(pushed, batches_by_branch, plans, scoped)
-    if targets:
-        head_owner = f"{login}:" if forked else ""
-        failure |= _open_draft_prs(repo, base, head_owner, targets, depends)
-    refreshes = {
-        branch: (batch.pr, commits, _branch_depends(commits, depends))
-        for branch, commits in pushed.items()
-        if (batch := batches_by_branch.get(branch)) and batch.pr
-    }
-    if refreshes:
-        failure |= _refresh_pr_whats(repo, refreshes)
-
-    if not scoped:
-        for branch in inv.legacy_orphans:
-            _git_network("push", "origin", "--delete", branch, repo=repo)
-            print(f"{branch}: deleted (orphan, no PR)")
-
-    print()
-    run_list(repo, login, prefix)
-    return 1 if failure else 0
+Node = tuple[str, str]
 
 
 def run_update(repo: Path, apply: bool, numbers: Collection[int] = ()) -> int:
@@ -1519,7 +527,7 @@ def run_update(repo: Path, apply: bool, numbers: Collection[int] = ()) -> int:
         try:
             update_pr_branch(repo, open_pr.pr.number)
         except subprocess.CalledProcessError as error:
-            return f"{open_pr.branch}: not updated ({_first_stderr_line(error)})"
+            return f"{open_pr.branch}: not updated ({first_stderr_line(error)})"
         return f"{open_pr.branch}: rebased onto main {open_pr.pr.url}"
 
     with ThreadPoolExecutor() as pool:
@@ -1542,296 +550,1586 @@ def update_targets(
     return status
 
 
-def _target_lookup(
-    targets: Sequence[Target], configured: Callable[[], Sequence[Target]] | None
-) -> tuple[Callable[[str], Target | None], Callable[[], set[str]]]:
-    """Build lookups of a target by name and of every configured name; `configured` loads lazily."""
-    every = cache(configured) if configured is not None else lambda: ()
+class SyncOptions(NamedTuple):
+    """What a ``sync`` run was asked to do."""
 
-    def find(name: str) -> Target | None:
-        return next((t for t in targets if t[0] == name), None) or next(
-            (t for t in every() if t[0] == name), None
-        )
+    apply: bool = False
+    branch: str | None = None
+    forget: str | None = None
+    ready: str | None = None
+    local: str | None = None
+    rescan: bool = False
+    depends_on: tuple[str, str] | None = None
+    no_depends_on: tuple[str, str] | None = None
+    why: tuple[str, str] | None = None
 
-    return find, lambda: {t[0] for t in [*targets, *every()]}
-
-
-def list_targets(
-    targets: Sequence[Target],
-    login: str,
-    configured: Callable[[], Sequence[Target]] | None = None,
-) -> int:
-    """Report every target in parallel, along with the repos its links depend on, and print each in order."""
-    find, configured_names = _target_lookup(targets, configured)
-    names = [name for name, _, _ in targets]
-    stored = [
-        link
-        for link in links.load_links(links.LINKS_PATH)
-        if link.dependent_tool in names
-    ]
-    dependencies = {link.dependency_tool for link in stored}
-    needed = [
-        *targets,
-        *filter(None, (find(n) for n in sorted(dependencies - set(names)))),
-    ]
-    with ThreadPoolExecutor() as pool:
-        futures = {
-            name: pool.submit(
-                collect_report,
-                repo,
-                login,
-                prefix,
-                *([keys] if (keys := _dependency_keys(stored, name)) else []),
+    @property
+    def record_edits(self) -> int:
+        """How many record-edit flags the run was given."""
+        return sum(
+            map(
+                bool,
+                (
+                    self.branch,
+                    self.forget,
+                    self.ready,
+                    self.local,
+                    self.depends_on,
+                    self.no_depends_on,
+                    self.why,
+                ),
             )
-            for name, repo, prefix in needed
-        }
-        reports = {name: future.result() for name, future in futures.items()}
-    statuses = {name: report.statuses for name, report in reports.items()}
-    annotations = links.annotate(
-        links.prune(
-            stored, {n: set(s) for n, s in statuses.items()}, configured_names()
         )
-        if stored
-        else (),
-        statuses,
+
+    @property
+    def edits_record(self) -> bool:
+        """Whether the run only edits the record, with no network call."""
+        return self.record_edits > 0
+
+
+class Checkout(NamedTuple):
+    """A branch checked out in a worktree of a repo."""
+
+    path: Path
+    branch: str
+
+
+def _repo_key(repo: Path) -> str:
+    return str(repo.expanduser().resolve())
+
+
+def checkouts(repo: Path) -> list[Checkout]:
+    """List the branches checked out in ``repo``'s linked worktrees."""
+    found: list[Checkout] = []
+    path: Path | None = None
+    for line in _git("worktree", "list", "--porcelain", repo=repo).splitlines():
+        if line.startswith("worktree "):
+            path = Path(line.removeprefix("worktree ")).resolve()
+        elif line.startswith("branch refs/heads/") and path is not None:
+            found.append(Checkout(path, line.removeprefix("branch refs/heads/")))
+    return [c for c in found if c.path != repo.resolve() and c.path.exists()]
+
+
+def _record_branch(
+    tool: str, repo: Path, entries: list[WorktreeEntry], branch: str
+) -> str:
+    key = _repo_key(repo)
+    if any(e.repo == key and e.branch == branch for e in entries):
+        return f"{branch}: already recorded"
+    checkout = next((c for c in checkouts(repo) if c.branch == branch), None)
+    if checkout is None:
+        raise LookupError(f"{branch}: no worktree has this branch checked out")
+    entries.append(WorktreeEntry(key, branch, str(checkout.path), None, None, None))
+    return f"{branch}: recorded, local only until: llm-prompts contribute sync --tool {tool} --ready {branch}"
+
+
+def _entry_edit(
+    repo: Path,
+    entries: list[WorktreeEntry],
+    branch: str,
+    edit: Callable[[WorktreeEntry], WorktreeEntry | None],
+    done: str,
+) -> str:
+    key = _repo_key(repo)
+    for index, entry in enumerate(entries):
+        if entry.repo == key and entry.branch == branch:
+            changed = edit(entry)
+            if changed is None:
+                del entries[index]
+            else:
+                entries[index] = changed
+            return f"{branch}: {done}"
+    raise LookupError(f"{branch}: not recorded")
+
+
+def _find(
+    entries: Sequence[WorktreeEntry], key: str, branch: str
+) -> WorktreeEntry | None:
+    return next((e for e in entries if (e.repo, e.branch) == (key, branch)), None)
+
+
+def _spec_target(tools: Sequence[Target], spec: str) -> tuple[str, str]:
+    """Return the repo key and branch a ``TOOL:BRANCH`` spec names."""
+    tool, _, branch = spec.partition(":")
+    repo = next((r for name, r, _ in tools if name == tool), None)
+    if repo is None or not branch:
+        raise LookupError(f"{spec}: not a TOOL:BRANCH of a locally cloned tool")
+    return _repo_key(repo), branch
+
+
+def _link_branches(
+    repo: Path,
+    entries: list[WorktreeEntry],
+    tools: Sequence[Target],
+    branch: str,
+    spec: str,
+) -> str:
+    """Record that ``branch`` depends on the ``TOOL:BRANCH`` named by ``spec``."""
+    lower_key, lower_branch = _spec_target(tools, spec)
+    lower = _find(entries, lower_key, lower_branch)
+    if lower is None:
+        raise LookupError(f"{spec}: not recorded")
+    dependent = _find(entries, _repo_key(repo), branch)
+    if dependent is None:
+        raise LookupError(f"{branch}: not recorded")
+    if dependent.pr is not None:
+        raise LookupError(
+            f"{branch} already has PR #{dependent.pr}; links must be added before sync opens it"
+        )
+    if any(
+        (k.repo, k.branch) == (lower_key, lower_branch) for k in dependent.depends_on
+    ):
+        raise LookupError(f"{branch} already depends on {spec}")
+    link = Link(lower_key, lower_branch)
+    if _has_cycle(entries, dependent, link):
+        raise LookupError(f"{spec}: {branch} would make a cycle")
+    base = None
+    if lower_key == dependent.repo:
+        if any(old.repo == dependent.repo for old in dependent.depends_on):
+            raise LookupError(f"{branch} already stacks on another branch of this repo")
+        base = _stack_base(repo, branch, lower_branch)
+        _refuse_small_stack(repo, lower_branch, branch)
+    return _entry_edit(
+        repo,
+        entries,
+        branch,
+        lambda e: e._replace(depends_on=(*e.depends_on, link), base=base or e.base),
+        f"depends on {spec}",
     )
-    status = 0
-    for name in names:
+
+
+def _refuse_small_stack(repo: Path, lower: str, upper: str) -> None:
+    """Raise when the diff the upper PR would show is small enough for one worktree."""
+    lines, binary = _diff_lines(repo, base_ref(repo), f"refs/heads/{upper}")
+    limit = yappy_limits()["lines"]
+    if not binary and lines <= limit:
+        raise LookupError(
+            f"{lower} and {upper} change {lines} lines together, within the "
+            f"slightly-yappy limit of {limit}. Combine them into one worktree."
+        )
+
+
+def _stack_base(repo: Path, upper: str, lower: str) -> str:
+    """Return the tip of ``lower`` when ``upper`` is on it."""
+    tip = _git("rev-parse", f"refs/heads/{lower}", repo=repo)
+    upper_ref = f"refs/heads/{upper}"
+    if not _contains(repo, tip, upper_ref):
+        raise LookupError(f"{upper} is not on {lower}; rebase it onto {lower} first")
+    return tip
+
+
+def _without_link(entry: WorktreeEntry, link: Link) -> WorktreeEntry:
+    """Return ``entry`` without ``link``; a ref sync wrote into a PR body is kept to be taken out again."""
+    written = (link.ref,) if entry.pr is not None and link.ref else ()
+    return entry._replace(
+        depends_on=tuple(old for old in entry.depends_on if old != link),
+        base=None if link.repo == entry.repo else entry.base,
+        dropped_refs=(*entry.dropped_refs, *written),
+    )
+
+
+def _unlink_branches(
+    repo: Path,
+    entries: list[WorktreeEntry],
+    tools: Sequence[Target],
+    branch: str,
+    spec: str,
+) -> str:
+    """Remove the link from ``branch`` to the ``TOOL:BRANCH`` named by ``spec``."""
+    lower_key, lower_branch = _spec_target(tools, spec)
+    dependent = _find(entries, _repo_key(repo), branch)
+    link = next(
+        (
+            old
+            for old in (dependent.depends_on if dependent else ())
+            if (old.repo, old.branch) == (lower_key, lower_branch)
+        ),
+        None,
+    )
+    if link is None:
+        raise LookupError(f"{branch} does not depend on {spec}")
+    return _entry_edit(
+        repo,
+        entries,
+        branch,
+        lambda e: _without_link(e, link),
+        f"no longer depends on {spec}",
+    )
+
+
+def _dependency_graph(entries: Sequence[WorktreeEntry]) -> dict[Node, set[Node]]:
+    return {
+        (e.repo, e.branch): {(link.repo, link.branch) for link in e.depends_on}
+        for e in entries
+    }
+
+
+def _has_cycle(
+    entries: Sequence[WorktreeEntry], dependent: WorktreeEntry, link: Link
+) -> bool:
+    graph = _dependency_graph(entries)
+    graph[(dependent.repo, dependent.branch)].add((link.repo, link.branch))
+    try:
+        graphlib.TopologicalSorter(graph).prepare()
+    except graphlib.CycleError:
+        return True
+    return False
+
+
+def _dependencies_first(
+    targets: Sequence[Target], entries: Sequence[WorktreeEntry]
+) -> list[Target]:
+    """Return ``targets`` with each tool after the tools its entries depend on, or as given when they depend on each other."""
+    by_key = {_repo_key(target[1]): target for target in targets}
+    graph = {
+        key: {
+            link.repo
+            for e in entries
+            if e.repo == key
+            for link in e.depends_on
+            if link.repo in by_key and link.repo != key
+        }
+        for key in by_key
+    }
+    try:
+        return [by_key[key] for key in graphlib.TopologicalSorter(graph).static_order()]
+    except graphlib.CycleError:
+        return list(targets)
+
+
+def edit_record(
+    tool: str,
+    repo: Path,
+    entries: list[WorktreeEntry],
+    options: SyncOptions,
+    tools: Sequence[Target] = (),
+) -> str:
+    """Apply the record edit ``options`` asks for to ``entries`` and describe it."""
+    if options.depends_on is not None:
+        return _link_branches(repo, entries, tools, *options.depends_on)
+    if options.no_depends_on is not None:
+        return _unlink_branches(repo, entries, tools, *options.no_depends_on)
+    if options.why is not None:
+        branch, why = options.why
+        return _entry_edit(
+            repo, entries, branch, lambda e: e._replace(why=why), "why recorded"
+        )
+    if options.branch is not None:
+        return _record_branch(tool, repo, entries, options.branch)
+    if options.forget is not None:
+        return _entry_edit(repo, entries, options.forget, lambda e: None, "forgotten")
+    if options.ready is not None:
+        return _entry_edit(
+            repo,
+            entries,
+            options.ready,
+            lambda e: e._replace(ready=True),
+            "ready: sync may push it and open its draft PR",
+        )
+    if options.local is not None:
+        return _entry_edit(
+            repo,
+            entries,
+            options.local,
+            lambda e: e._replace(ready=False),
+            "local only: sync will not push it",
+        )
+    raise AssertionError("no record edit asked for")
+
+
+class Tip(NamedTuple):
+    """A recorded worktree's commits on its floor, oldest first, and why it is skipped, if it is."""
+
+    entry: WorktreeEntry
+    floor: str
+    commits: list[str]
+    skipped: str | None
+
+
+def _tips(repo: Path, base: str, entries: Sequence[WorktreeEntry]) -> list[Tip]:
+    """Return each entry's commits on its floor, which is the lower commit for a stacked entry."""
+    return [
+        Tip(
+            entry,
+            entry.base or base,
+            _commit_shas(repo, entry.base or base, f"refs/heads/{entry.branch}"),
+            _skip_reason(repo, base, entry, f"refs/heads/{entry.branch}", entries),
+        )
+        for entry in entries
+    ]
+
+
+def _patch_id(repo: Path, *diff_args: str) -> str:
+    shown = _git(*diff_args, repo=repo)
+    done = subprocess.run(
+        ["git", "patch-id", "--stable"],
+        cwd=repo,
+        input=shown,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return done.stdout.split()[0] if done.stdout else ""
+
+
+def _squash_patch_id(repo: Path, squash: main_sync.Squash) -> str:
+    return _patch_id(repo, "diff", "-U0", squash.floor, squash.tip)
+
+
+def _squash_of(
+    repo: Path, floor: str, commits: Sequence[str], tip: str
+) -> main_sync.Squash:
+    """Return the squash of ``commits`` (oldest first) that end at ``tip`` on ``floor``."""
+    return main_sync.Squash(tip, _git("merge-base", floor, tip, repo=repo), commits[0])
+
+
+def _main_rows(repo: Path, base: str) -> list[list[str]]:
+    """Return the sha, author time and subject of each main commit ahead of ``base``."""
+    return [
+        row.split("\t", 2)
+        for row in _git(
+            "log", "--format=%H%x09%at%x09%s", f"{base}..main", repo=repo
+        ).splitlines()
+    ]
+
+
+def _squash_landed(repo: Path, base: str, number: int) -> bool:
+    """Return whether ``base`` holds the squash-merge commit of PR ``number``."""
+    subjects = _git(
+        "log", "--format=%s", "--fixed-strings", f"--grep=(#{number})", base, repo=repo
+    ).splitlines()
+    return any(squash_pr_number(subject) == number for subject in subjects)
+
+
+def _later_copies(
+    repo: Path, base: str, tips: Sequence[Tip], taken: Collection[str]
+) -> set[str]:
+    """Return the main commits ahead of ``base`` that copy a tip's later commit.
+
+    A copy matches by author time, subject and patch.
+    """
+    free = [row for row in _main_rows(repo, base) if row[0] not in taken]
+    found: set[str] = set()
+    for sha in (sha for tip in tips for sha in tip.commits[1:]):
+        at, subject = _commit_identity(repo, sha).split("\t", 1)
+        patch = _patch_id(repo, "show", "-U0", sha)
+        if match := next(
+            (
+                row
+                for row in free
+                if row[1:] == [at, subject]
+                and _patch_id(repo, "show", "-U0", row[0]) == patch
+            ),
+            None,
+        ):
+            free.remove(match)
+            found.add(match[0])
+    return found
+
+
+def _rewritten_copies(
+    repo: Path, base: str, tips: Sequence[Tip], taken: Collection[str]
+) -> set[str]:
+    """Return the main commits ahead of ``base`` that copy a commit an earlier version of a tip's branch held.
+
+    A copy matches by author time, subject and the patch of that commit or of the squash of an earlier version.
+    Commits that any earlier main held, or the branch still holds, are not an earlier version.
+    """
+    free = [row for row in _main_rows(repo, base) if row[0] not in taken]
+    found: set[str] = set()
+    earlier_mains = dict.fromkeys(
+        [
+            *_git("log", "-g", "--format=%H", "main", repo=repo).split(),
+            *_git(
+                "for-each-ref",
+                "--format=%(refname)",
+                main_sync.EARLIER_MAINS_REF,
+                repo=repo,
+            ).split(),
+        ]
+    )
+    for tip in tips:
+        past = _git(
+            "log", "-g", "--format=%H", f"refs/heads/{tip.entry.branch}", repo=repo
+        ).split()
+        if not past:
+            continue
+        held = _git(
+            "log",
+            "--format=%H",
+            *dict.fromkeys(past),
+            f"^{tip.floor}",
+            f"^{tip.commits[-1]}",
+            "^main",
+            *(f"^{sha}" for sha in earlier_mains),
+            repo=repo,
+        ).split()
+        proofs: dict[str, set[str]] = {}
+        for sha in held:
+            proofs.setdefault(_commit_identity(repo, sha), set()).add(
+                _patch_id(repo, "show", "-U0", sha)
+            )
+        for earlier in dict.fromkeys(past):
+            commits = _commit_shas(repo, tip.floor, earlier)
+            if commits and commits[0] in held:
+                proofs[_commit_identity(repo, commits[0])].add(
+                    _squash_patch_id(
+                        repo, _squash_of(repo, tip.floor, commits, earlier)
+                    )
+                )
+        found |= {
+            sha
+            for sha, at, subject in free
+            if (patches := proofs.get(f"{at}\t{subject}"))
+            and _patch_id(repo, "show", "-U0", sha) in patches - {""}
+        }
+    return found
+
+
+class Landed(NamedTuple):
+    """A merged PR's copy on main: the identity saved when it was copied and the squash it was copied from."""
+
+    identity: str
+    squash: main_sync.Squash
+
+
+class AmbiguousCopy(Exception):
+    """Several main commits could be a branch's copy and none is shown to be it."""
+
+
+def _is_copy(repo: Path, sha: str, squash: main_sync.Squash) -> bool:
+    """Return whether main commit ``sha`` holds the changes of ``squash`` or of its first commit."""
+    patch = _patch_id(repo, "show", "-U0", sha)
+    return patch in {
+        _squash_patch_id(repo, squash),
+        _patch_id(repo, "show", "-U0", squash.first),
+    } or main_sync.replays_to(repo, f"{sha}^", squash, sha)
+
+
+def _earlier_patches(repo: Path, tip: Tip) -> set[str]:
+    """Return the patch ids of every version of ``tip``'s branch and of each version's first commit."""
+    patches: set[str] = set()
+    for version in dict.fromkeys(
+        _git(
+            "log", "-g", "--format=%H", f"refs/heads/{tip.entry.branch}", repo=repo
+        ).split()
+    ):
+        if commits := _commit_shas(repo, tip.floor, version):
+            patches |= {
+                _squash_patch_id(repo, _squash_of(repo, tip.floor, commits, version)),
+                _patch_id(repo, "show", "-U0", commits[0]),
+            }
+    return patches - {""}
+
+
+def _copies_of(
+    repo: Path, base: str, tips: Sequence[Tip], squashes: Sequence[main_sync.Squash]
+) -> dict[str, str]:
+    """Map each squash's tip to its copy on main ahead of ``base``.
+
+    A copy matches by the identity saved when it was copied, else by its first
+    commit's author time and subject.
+    Either way it must hold the changes of the squash, of its first commit, or of an earlier version of the branch.
+    Else it matches by the patch of the squash.
+
+    Raises:
+        AmbiguousCopy: Several main commits have a saved identity and none holds changes of the branch.
+    """
+    free = _main_rows(repo, base)
+    found: dict[str, str] = {}
+    for tip, squash in zip(tips, squashes, strict=True):
+        if not (saved := tip.entry.copied):
+            continue
+        identity = saved.split("\t", 1)
+        matches = [row for row in free if row[1:] == identity]
+        proven = [
+            row
+            for row in matches
+            if _is_copy(repo, row[0], squash)
+            or _patch_id(repo, "show", "-U0", row[0]) in _earlier_patches(repo, tip)
+        ]
+        if len(matches) > 1 and not proven:
+            raise AmbiguousCopy(
+                f"several main commits match {identity[1]!r} and none is its copy"
+            )
+        if proven:
+            free.remove(proven[0])
+            found[squash.tip] = proven[0][0]
+    for squash in squashes:
+        if squash.tip in found:
+            continue
+        identity = _commit_identity(repo, squash.first).split("\t", 1)
+        if match := next(
+            (
+                row
+                for row in free
+                if row[1:] == identity and _is_copy(repo, row[0], squash)
+            ),
+            None,
+        ):
+            free.remove(match)
+            found[squash.tip] = match[0]
+    for squash in squashes:
+        if squash.tip in found or not free:
+            continue
+        patch = _squash_patch_id(repo, squash)
+        if match := next(
+            (row for row in free if _patch_id(repo, "show", "-U0", row[0]) == patch),
+            None,
+        ):
+            free.remove(match)
+            found[squash.tip] = match[0]
+    return found
+
+
+def _main_changes(
+    repo: Path, base: str, tips: Sequence[Tip], landed: Collection[Landed] = ()
+) -> tuple[
+    dict[str, main_sync.Squash],
+    set[str],
+    dict[str, str],
+    list[main_sync.Squash],
+]:
+    """Return the main commits to swap for newer squashes, the main commits to drop, the first commit each copy on main stands for and the squashes to replay on top.
+
+    A changed squash of a stacked branch replaces its copy in place when the copy is newer than its lower's.
+    Otherwise it replays on top with its old copy dropped, and so do the branches stacked above it.
+    Main commits copied from earlier versions of a branch's history are dropped, and so are the copies of ``landed`` squashes, given by identity, whatever changes review made since.
+    """
+    swaps: dict[str, main_sync.Squash] = {}
+    moves: set[str] = set()
+    replayed: set[str] = set()
+    adds: list[main_sync.Squash] = []
+    squashes = [_squash_of(repo, t.floor, t.commits, t.commits[-1]) for t in tips]
+    found = _copies_of(repo, base, tips, squashes)
+    copies = {found[s.tip]: s.first for s in squashes if s.tip in found}
+    rows = _main_rows(repo, base)
+    age = {row[0]: n for n, row in enumerate(rows)}
+    copy_of = {
+        t.entry.branch: found[s.tip]
+        for s, t in zip(squashes, tips, strict=True)
+        if s.tip in found
+    }
+    for squash, tip in zip(squashes, tips, strict=True):
+        copy = found.get(squash.tip)
+        lower = next(
+            (k.branch for k in tip.entry.depends_on if k.repo == tip.entry.repo), None
+        )
+        follows = lower in replayed
+        if copy is None:
+            adds.append(squash)
+            replayed.add(tip.entry.branch)
+        elif (
+            follows
+            or _commit_identity(repo, copy) != _commit_identity(repo, squash.first)
+            or (
+                _patch_id(repo, "show", "-U0", copy) != _squash_patch_id(repo, squash)
+                and not main_sync.replays_to(repo, f"{copy}^", squash, copy)
+            )
+        ):
+            if tip.entry.base is None or (
+                not follows and lower in copy_of and age[copy] < age[copy_of[lower]]
+            ):
+                swaps[copy] = squash
+            else:
+                moves.add(copy)
+                adds.append(squash)
+                replayed.add(tip.entry.branch)
+    later = _later_copies(repo, base, tips, found.values())
+    taken = {*found.values(), *later}
+    merged: set[str] = set()
+    for gone in landed:
+        at, subject = gone.identity.split("\t", 1)
+        matches = [
+            sha
+            for sha, row_at, row_subject in rows
+            if (row_at, row_subject) == (at, subject)
+        ]
+        proven = [sha for sha in matches if _is_copy(repo, sha, gone.squash)]
+        if len(matches) > 1 and not proven:
+            raise AmbiguousCopy(
+                f"several main commits match {subject!r} and none is its copy"
+            )
+        merged.update(proven or matches)
+    return (
+        swaps,
+        moves | later | merged | _rewritten_copies(repo, base, tips, taken),
+        copies,
+        adds,
+    )
+
+
+_PR_URL_NUMBER = re.compile(r"/pull/(\d+)")
+
+
+def _commit_of(repo: Path, sha: str) -> Commit:
+    subject = _git("log", "-1", "--format=%s", sha, repo=repo)
+    return Commit(sha, subject, ())
+
+
+def _pr_number_of(repo: Path, branch: str) -> int:
+    """Return the number of the open PR whose head is ``branch``, through gh or the GitHub API."""
+    if _gh_installed():
+        prs = _gh_json(
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--state",
+            "open",
+            "--json",
+            "number,headRefName",
+            repo=repo,
+        )
+    else:
+        prs = with_retries(
+            partial(
+                github_api.pr_list,
+                repo,
+                f"is:open head:{branch}",
+                ["number", "headRefName"],
+            )
+        )
+    [pr] = [pr for pr in prs if pr["headRefName"] == branch]
+    return int(pr["number"])
+
+
+def _open_pr_number(repo: Path, branch: str) -> int | None:
+    """Return the number of the open PR whose head is ``branch``, or None when it has none."""
+    try:
+        return _pr_number_of(repo, branch)
+    except (subprocess.CalledProcessError, ValueError):
+        return None
+
+
+def _open_pr(
+    repo: Path,
+    base: str,
+    branch: str,
+    head_owner: str,
+    commits: Sequence[Commit],
+    depends_on: Sequence[str] = (),
+    why: str = "",
+) -> tuple[int, bool]:
+    """Open a draft PR for ``branch`` and return its number, or that of the existing one and True."""
+    try:
+        url = open_draft_pr(
+            repo,
+            base,
+            f"{head_owner}{branch}",
+            pr_title(commits),
+            pr_body(pr_template(repo, base), commits, depends_on, why),
+        )
+    except subprocess.CalledProcessError as error:
+        if "already exists" not in (error.stderr or ""):
+            raise
+        return _pr_number_of(repo, branch), True
+    return int(_PR_URL_NUMBER.search(url)[1]), False  # type: ignore[index]
+
+
+class PrState(NamedTuple):
+    """A PR as GitHub reports it right now."""
+
+    state: str
+    is_draft: bool
+    head_sha: str
+    title: str
+    body: str
+    head_ref: str = ""
+
+
+_PR_STATE_FIELDS = "state isDraft headRefOid title body headRefName"
+
+
+def pr_states(repo: Path, numbers: Sequence[int]) -> dict[int, PrState]:
+    """Fetch the state of PRs ``numbers`` with one GraphQL query."""
+    owner, name = github_api.base_repo(repo)
+    aliases = " ".join(
+        f"pr{n}: pullRequest(number: {n}) {{ {_PR_STATE_FIELDS} }}" for n in numbers
+    )
+    query = (
+        "query($owner: String!, $name: String!) "
+        f"{{ repository(owner: $owner, name: $name) {{ {aliases} }} }}"
+    )
+    if _gh_installed():
+        data = _gh_json(
+            "api",
+            "graphql",
+            "-f",
+            f"query={query}",
+            "-f",
+            f"owner={owner}",
+            "-f",
+            f"name={name}",
+            repo=repo,
+        )["data"]
+    else:
+        data = with_retries(
+            partial(github_api.graphql, query, {"owner": owner, "name": name})
+        )
+    found = data["repository"]
+    return {
+        n: PrState(
+            item["state"],
+            item["isDraft"],
+            item["headRefOid"],
+            item["title"] or "",
+            item["body"] or "",
+            item["headRefName"],
+        )
+        for n in numbers
+        if (item := found.get(f"pr{n}")) is not None
+    }
+
+
+class _RepoSync:
+    """One repo's sync: observe the remote, pull, copy into main, publish, remove merged worktrees."""
+
+    def __init__(
+        self,
+        repo: Path,
+        entries: list[WorktreeEntry],
+        apply: bool,
+        login: str,
+        others: Sequence[WorktreeEntry] = (),
+        tool: str = "NAME",
+    ) -> None:
+        self.tool = tool
+        self.repo = repo
+        self.others = others
+        self.apply = apply
+        self.login = login
+        self.entries = list(entries)
+        self.status = 0
+        self.base = base_ref(repo)
+        self.remote_heads: dict[str, str] = {}
+        self.prs: dict[int, PrState] = {}
+        self._remote: tuple[str, bool] | None = None
+        self.landed: list[Landed] = []
+
+    def remote(self) -> tuple[str, bool]:
+        if self._remote is None:
+            self._remote = push_remote(self.repo, fork=self.apply)
+        return self._remote
+
+    def remote_name(self, entry: WorktreeEntry) -> str:
+        """Return the branch name the entry has on the remote: its PR's head, else under ``<login>/contribute/``."""
+        pr = self.prs.get(entry.pr) if entry.pr is not None else None
+        if pr is not None and pr.head_ref:
+            return pr.head_ref
+        return contribute_branch(self.login, entry.branch)
+
+    def say(self, entry: WorktreeEntry, message: str) -> None:
+        print(f"{entry.branch}: {message}")
+
+    def fail(self, entry: WorktreeEntry, message: str) -> None:
+        self.say(entry, message)
+        self.status = 1
+
+    def update(self, entry: WorktreeEntry, **changes: Any) -> WorktreeEntry:
+        updated = entry._replace(**changes)
+        self.entries[self.entries.index(entry)] = updated
+        return updated
+
+    def dependency(self, link: Link) -> WorktreeEntry | None:
+        return _find([*self.entries, *self.others], link.repo, link.branch)
+
+    def with_refs(self, entry: WorktreeEntry) -> tuple[WorktreeEntry, Link | None]:
+        """Return ``entry`` with every link's ref filled in, and the first link whose dependency has no PR."""
+        links = tuple(
+            _with_ref(link, self.dependency(link)) for link in entry.depends_on
+        )
+        waiting = next((link for link in links if not link.ref), None)
+        return self.update(entry, depends_on=links), waiting
+
+    def tip(self, entry: WorktreeEntry) -> str:
+        return _git("rev-parse", f"refs/heads/{entry.branch}", repo=self.repo)
+
+    def skip_reason(self, entry: WorktreeEntry, ref: str) -> str | None:
+        """Return why ``ref`` is not copied or pushed, or None when it has commits on the entry's floor."""
+        return _skip_reason(self.repo, self.base, entry, ref, self.open_entries())
+
+    def commits(self, entry: WorktreeEntry, ref: str) -> list[Commit]:
+        """Return the entry's own commits on its base, oldest first."""
+        return [
+            _commit_of(self.repo, sha)
+            for sha in _commit_shas(self.repo, entry.base or self.base, ref)
+        ]
+
+    def observe(self) -> None:
+        numbers = [e.pr for e in self.entries if e.pr is not None]
+        if numbers:
+            self.prs = pr_states(self.repo, numbers)
+            for entry in list(self.entries):
+                if (pr := self.prs.get(entry.pr or 0)) is not None:
+                    self.update(entry, pr_state=pr.state)
+        pushed = [e for e in self.entries if e.pr is not None or e.remote_head]
+        if pushed:
+            remote, _ = self.remote()
+            refs = [f"refs/heads/{self.remote_name(e)}" for e in pushed]
+            listing = _git_network("ls-remote", remote, *refs, repo=self.repo)
+            self.remote_heads = {
+                ref.removeprefix("refs/heads/"): sha
+                for sha, _, ref in (row.partition("\t") for row in listing.splitlines())
+            }
+            if self.remote_heads:
+                specs = [
+                    f"+refs/heads/{b}:refs/remotes/{remote}/{b}"
+                    for b in self.remote_heads
+                ]
+                _git_network("fetch", "--quiet", remote, *specs, repo=self.repo)
+
+    def relation(self, entry: WorktreeEntry) -> str:
+        """Compare the worktree tip with the remote branch: none, pull, push, force or diverged."""
+        tip, head = self.tip(entry), self.remote_heads.get(self.remote_name(entry))
+        if head is None or head == tip:
+            return "none"
+        if _contains(self.repo, tip, head):
+            return "pull"
+        if _contains(self.repo, head, tip):
+            return "push"
+        if entry.remote_head == head:
+            return "force"
+        return "pull" if entry.remote_head == tip else "diverged"
+
+    def pull(self, entry: WorktreeEntry) -> WorktreeEntry:
+        name = self.remote_name(entry)
+        head = self.remote_heads[name]
+        remote, _ = self.remote()
+        reason = self.skip_reason(entry, f"refs/remotes/{remote}/{name}")
+        if reason is not None:
+            self.say(entry, f"skipped: the remote branch has {reason}")
+            return entry
+        if not self.apply:
+            self.say(entry, "would pull the remote branch into the worktree")
+            return entry
+        done = subprocess.run(
+            ["git", "-C", entry.path, "reset", "--keep", head],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if done.returncode != 0:
+            self.fail(entry, f"not pulled ({done.stderr.strip()})")
+            return entry
+        self.say(entry, "pulled the remote branch into the worktree")
+        return self.update(entry, remote_head=head)
+
+    def blocker(self, entry: WorktreeEntry, tip: str) -> str | None:
+        """Return why a merged worktree must stay, or None when it holds nothing the PR lacks."""
+        pr = self.prs[entry.pr or 0]
+        if above := self.stacked_on(entry):
+            return f"{above[0].branch} sits on it"
+        if tip != pr.head_sha:
+            return "the branch has commits the PR lacks"
+        if _git("status", "--porcelain", repo=Path(entry.path)):
+            return "the worktree has uncommitted changes"
+        own = set(_git("rev-list", f"{self.base}..{tip}", repo=self.repo).split())
+        stashed_on = {
+            line.split()[0]
+            for line in _git(
+                "stash", "list", "--format=%P", repo=self.repo
+            ).splitlines()
+        }
+        if stashed_on & own:
+            return "a stash is based on the branch"
+        return None
+
+    def remove_merged(self) -> None:
+        for entry in list(self.entries):
+            if not self.merged(entry) or not Path(entry.path).exists():
+                continue
+            if reason := self.blocker(entry, self.tip(entry)):
+                self.say(entry, f"merged, but {reason}; kept")
+                continue
+            if not self.apply:
+                self.say(entry, "merged: would remove the worktree and branch")
+                continue
+            _remove_worktree(self.repo, Path(entry.path))
+            _git("branch", "-D", entry.branch, repo=self.repo)
+            self.entries.remove(entry)
+            self.say(entry, "merged: removed the worktree and branch")
+
+    def stack_link(self, entry: WorktreeEntry) -> Link | None:
+        return next((k for k in entry.depends_on if k.repo == entry.repo), None)
+
+    def stacked_on(self, lower: WorktreeEntry) -> list[WorktreeEntry]:
+        """Return the unmerged entries stacked directly on ``lower``."""
+        return [
+            e
+            for e in self.open_entries()
+            if (link := self.stack_link(e)) and link.branch == lower.branch
+        ]
+
+    def above(self, branch: str) -> list[str]:
+        """Return the branches that sit on ``branch``, directly or not."""
+        found: list[str] = []
+        pending = [branch]
+        while pending:
+            lower = pending.pop()
+            for entry in self.entries:
+                link = self.stack_link(entry)
+                if link and link.branch == lower and entry.branch not in found:
+                    found.append(entry.branch)
+                    pending.append(entry.branch)
+        return found
+
+    def edit_blocker(self, entry: WorktreeEntry) -> str | None:
+        """Return why sync must not rewrite ``entry``'s branch or PR body, or None when it may."""
+        if entry.pr is not None:
+            pr = self.prs.get(entry.pr)
+            if pr is None or not pr.is_draft:
+                return f"PR #{entry.pr} is not a draft"
+        if operation := main_sync._operation_in_progress(Path(entry.path)):
+            return f"a {operation} is in progress"
+        if _git("status", "--porcelain", repo=Path(entry.path)):
+            return "the worktree has uncommitted changes"
+        return None
+
+    def on(self, entry: WorktreeEntry, ref: str) -> bool:
+        """Return whether the entry's branch sits on ``ref``."""
+        return _contains(self.repo, ref, f"refs/heads/{entry.branch}")
+
+    def restack(self) -> None:
+        """Rebase each stacked branch onto its lower's new tip, or onto main once the lower merged or its unpublished branch was deleted, lowest first."""
+        held: set[str] = set()
+        for entry in self.open_entries():
+            link = self.stack_link(entry)
+            lower = self.dependency(link) if link else None
+            if (
+                link is None
+                or lower is None
+                or entry.base is None
+                or not Path(entry.path).exists()
+            ):
+                continue
+            merged = self.merged(lower)
+            abandoned = not merged and not _branch_exists(self.repo, lower.branch)
+            if abandoned and lower.pr is not None:
+                continue
+            released = merged or abandoned
+            if link.branch in held:
+                held.add(entry.branch)
+                continue
+            target = self.base if released else self.tip(lower)
+            if target == entry.base and not released:
+                continue
+            named = (
+                f"main ({lower.branch} {'was deleted' if abandoned else 'merged'})"
+                if released
+                else lower.branch
+            )
+            if self.on(entry, target) and not abandoned:
+                self.update(
+                    entry,
+                    **(
+                        _without_link(entry, link)._asdict()
+                        if released
+                        else {"base": target}
+                    ),
+                )
+                continue
+            reason = self.edit_blocker(entry)
+            if reason is None and not self.on(entry, entry.base):
+                reason = "it is not on its base"
+            if reason is None and not self.apply:
+                self.say(entry, f"would restack onto {named}")
+                continue
+            if reason is None:
+                done = subprocess.run(
+                    ["git", "-C", entry.path, "rebase", "--onto", target, entry.base],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if done.returncode != 0:
+                    subprocess.run(
+                        ["git", "-C", entry.path, "rebase", "--abort"],
+                        capture_output=True,
+                        check=False,
+                    )
+                    reason = "the rebase does not apply"
+            if reason is not None:
+                held.add(entry.branch)
+                above = self.above(entry.branch)
+                left = f"; {', '.join(above)} left alone too" if above else ""
+                self.say(entry, f"not restacked ({reason}){left}")
+                continue
+            if released:
+                entry = self.update(entry, **_without_link(entry, link)._asdict())
+            else:
+                entry = self.update(entry, base=target)
+            self.say(entry, f"restacked onto {named}")
+
+    def open_entries(self) -> list[WorktreeEntry]:
+        """Return the unmerged entries with each stack lower before the branches above it."""
+        open_ = {
+            e.branch: e
+            for e in self.entries
+            if not self.merged(e) and _branch_exists(self.repo, e.branch)
+        }
+        graph = {
+            branch: {
+                link.branch
+                for link in entry.depends_on
+                if link.repo == entry.repo and link.branch in open_
+            }
+            for branch, entry in open_.items()
+        }
+        return [
+            open_[branch] for branch in graphlib.TopologicalSorter(graph).static_order()
+        ]
+
+    def merged(self, entry: WorktreeEntry) -> bool:
+        pr = self.prs.get(entry.pr) if entry.pr is not None else None
+        return pr is not None and pr.state == "MERGED"
+
+    def forget_gone(self) -> None:
+        """Drop entries with no worktree, deleting the branch of a merged one that holds nothing new."""
+        checked_out = {c.branch: c.path for c in checkouts(self.repo)}
+        for entry in list(self.entries):
+            if entry.branch in checked_out:
+                self.update(entry, path=str(checked_out[entry.branch]))
+                continue
+            exists = _branch_exists(self.repo, entry.branch)
+            if (above := self.stacked_on(entry)) and (
+                exists or entry.pr is None or self.merged(entry)
+            ):
+                state = "merged" if self.merged(entry) else "worktree is gone"
+                self.say(entry, f"{state}, but {above[0].branch} sits on it; kept")
+                continue
+            if (
+                self.merged(entry)
+                and exists
+                and self.tip(entry) == self.prs[entry.pr or 0].head_sha
+            ):
+                if self.apply:
+                    _git("branch", "-D", entry.branch, repo=self.repo)
+                self.say(entry, "merged: worktree is gone; branch deleted")
+            else:
+                self.say(entry, "worktree is gone; forgotten")
+            self.entries.remove(entry)
+
+    def run(self) -> tuple[int, list[WorktreeEntry]]:
+        fetch_base(self.repo, self.base.split("/", 1)[0])
+        if (stale := stale_main_warning(self.repo, self.base)) is not None:
+            _print_warning(stale)
+        for entry in list(self.entries):
+            if entry.ready and entry.pr is None:
+                self.adopt(entry)
+        self.observe()
+        self.landed = [
+            Landed(
+                entry.copied,
+                _squash_of(self.repo, floor, commits, self.tip(entry)),
+            )
+            for entry in self.entries
+            if entry.copied
+            and entry.pr is not None
+            and self.merged(entry)
+            and _squash_landed(self.repo, self.base, entry.pr)
+            and _branch_exists(self.repo, entry.branch)
+            and self.tip(entry) == self.prs[entry.pr].head_sha
+            and (floor := entry.base or self.base)
+            and (commits := _commit_shas(self.repo, floor, self.tip(entry)))
+        ]
+        self.restack()
+        self.forget_gone()
+        self.remove_merged()
+        for entry in self.open_entries():
+            if (
+                self.skip_reason(entry, f"refs/heads/{entry.branch}") is None
+                and self.relation(entry) == "pull"
+            ):
+                self.pull(entry)
+        self.restack()
+        self.copy_into_main()
+        self.publish()
+        return self.status, self.entries
+
+    def copy_into_main(self) -> None:
+        tips = _tips(self.repo, self.base, self.open_entries())
+        for tip in tips:
+            if tip.skipped is not None:
+                self.say(tip.entry, f"skipped: {tip.skipped}")
+        usable = [tip for tip in tips if tip.skipped is None]
+        try:
+            swaps, drops, copies, adds = _main_changes(
+                self.repo, self.base, usable, self.landed
+            )
+        except AmbiguousCopy as ambiguous:
+            print(f"main not updated: {ambiguous}")
+            self.status = 1
+            return
+        changed = {squash.tip for squash in [*swaps.values(), *adds]}
+        result = None
+        if self.apply and (
+            swaps
+            or drops
+            or adds
+            or not _contains(self.repo, self.base, "refs/heads/main")
+        ):
+            result = main_sync.rebuild_local(
+                self.repo, self.base, swaps, drops, copies, adds
+            )
+            if result.mode == "failed":
+                print(f"main not updated: {result.detail}")
+                self.status = 1
+                return
+        skipped = {copy.first: copy.reason for copy in result.skipped} if result else {}
+        for tip in usable:
+            if tip.commits[0] in skipped:
+                self.say(tip.entry, f"not copied into main: {skipped[tip.commits[0]]}")
+            elif tip.commits[-1] in changed:
+                verb = "copied" if self.apply else "would copy"
+                self.say(tip.entry, f"{verb} into main")
+        if self.apply:
+            for tip in usable:
+                self.update(
+                    tip.entry,
+                    copied=None
+                    if tip.commits[0] in skipped
+                    else _commit_identity(self.repo, tip.commits[0]),
+                )
+
+    def publish(self) -> None:
+        for entry in self.open_entries():
+            tip = self.tip(entry)
+            if entry.ready and self.skip_reason(entry, tip) is None:
+                self.publish_one(entry, tip)
+
+    def publish_one(self, entry: WorktreeEntry, tip: str) -> None:
+        entry, waiting = self.with_refs(entry)
+        if entry.pr is None and waiting is not None:
+            self.say(entry, f"waiting: {waiting.branch} has no PR yet")
+            return
+        if entry.pr is None and self.unfilled(entry, self.commits(entry, tip)):
+            return
+        relation = self.relation(entry)
+        pr = self.prs.get(entry.pr) if entry.pr is not None else None
+        if relation == "diverged":
+            self.say(entry, "diverged from the remote branch; left alone")
+            return
+        if pr is not None and pr.state != "OPEN":
+            self.say(entry, f"PR #{entry.pr} is {pr.state.lower()}; left alone")
+            return
+        if relation == "force" and pr is not None and not pr.is_draft:
+            self.say(entry, f"PR #{entry.pr} is not a draft; not force-pushed")
+            return
+        name = self.remote_name(entry)
+        if entry.pr is None and name not in self.remote_heads:
+            action = "push and open a draft PR"
+        elif relation in ("push", "force"):
+            action = "push"
+        else:
+            action = ""
+        if not self.apply:
+            if action:
+                self.say(entry, f"would {action}")
+            return
+        remote, forked = self.remote()
+        number = entry.pr
+        try:
+            if action:
+                lease: tuple[str, ...] = ()
+                if relation == "force":
+                    lease = (f"--force-with-lease={name}:{self.remote_heads[name]}",)
+                _git_network(
+                    "push",
+                    *lease,
+                    remote,
+                    f"refs/heads/{entry.branch}:refs/heads/{name}",
+                    repo=self.repo,
+                )
+                entry = self.update(entry, remote_head=tip)
+            if number is None:
+                head_owner = f"{self.login}:" if forked else ""
+                title = pr_title(self.commits(entry, tip))
+                number, adopted = _open_pr(
+                    self.repo,
+                    self.base,
+                    name,
+                    head_owner,
+                    self.commits(entry, tip),
+                    [link.ref for link in entry.depends_on],
+                    entry.why,
+                )
+                entry = self.update(
+                    entry, pr=number, pr_state="OPEN", title="" if adopted else title
+                )
+                self.say(entry, f"pushed, opened draft PR #{number}")
+                if adopted:
+                    pr = pr_states(self.repo, [number]).get(number)
+            elif action:
+                self.say(entry, "pushed")
+            if pr is not None:
+                self.settle_body(entry, pr, tip)
+        except subprocess.CalledProcessError as error:
+            self.fail(entry, f"not pushed ({first_stderr_line(error)})")
+
+    def adopt(self, entry: WorktreeEntry) -> WorktreeEntry:
+        """Record the open PR already on ``entry``'s branch, if any."""
+        number = _open_pr_number(self.repo, entry.branch)
+        if number is None:
+            return entry
+        return self.update(entry, pr=number, pr_state="OPEN", title="")
+
+    def unfilled(self, entry: WorktreeEntry, commits: Sequence[Commit]) -> bool:
+        """Say which required PR sections ``entry``'s PR would leave empty, and return whether any."""
+        template = pr_template(self.repo, self.base)
+        missing = unfilled_sections(template, pr_body(template, commits, (), entry.why))
+        if missing:
+            self.fail(entry, f"not opened, {self.empty_message(entry, missing)}")
+        return bool(missing)
+
+    def empty_message(self, entry: WorktreeEntry, missing: Sequence[str]) -> str:
+        return (
+            f"PR section {', '.join(missing)} is empty. Set it with: "
+            f'llm-prompts contribute sync --tool {self.tool} --why {entry.branch} "<why>"'
+        )
+
+    def settle_body(self, entry: WorktreeEntry, pr: PrState, tip: str) -> None:
+        """Refresh a draft PR's title and body, or name a non-draft one whose Depends on lines are out of date."""
+        if pr.is_draft:
+            self.refresh(entry, pr, tip)
+            return
+        refs = [link.ref for link in entry.depends_on]
+        if _with_depends(pr.body, refs, entry.dropped_refs) != pr.body:
+            self.say(
+                entry,
+                f"PR #{entry.pr} is not a draft; Depends on lines left as they are",
+            )
+
+    def refresh(self, entry: WorktreeEntry, pr: PrState, tip: str) -> None:
+        refreshed = refreshed_pr(
+            pr.title,
+            pr.body,
+            self.commits(entry, tip),
+            [link.ref for link in entry.depends_on],
+            entry.dropped_refs,
+            retitle=bool(entry.title) and pr.title == entry.title,
+            why=entry.why,
+        )
+        template = pr_template(self.repo, self.base)
+        missing = unfilled_sections(template, refreshed[1] if refreshed else pr.body)
+        if missing:
+            self.fail(
+                entry,
+                f"PR #{entry.pr} body left as it is, {self.empty_message(entry, missing)}",
+            )
+            refreshed = (
+                (refreshed[0], pr.body)
+                if refreshed and refreshed[0] != pr.title
+                else None
+            )
+        if refreshed is not None:
+            edit_pr(self.repo, int(entry.pr or 0), *refreshed)
+            self.say(entry, f"updated PR #{entry.pr} title and What")
+            if entry.title and pr.title == entry.title:
+                entry = self.update(entry, title=refreshed[0])
+        if not missing:
+            self.update(entry, dropped_refs=())
+
+
+def _branch_exists(repo: Path, branch: str) -> bool:
+    done = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            f"refs/heads/{branch}",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    return done.returncode == 0
+
+
+def _remove_worktree(repo: Path, path: Path) -> None:
+    """Remove the worktree at ``path`` through Herdr when it has a workspace there, else through git."""
+    if shutil.which("herdr"):
+        listing = subprocess.run(
+            ["herdr", "worktree", "list", "--cwd", str(repo)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        try:
+            found = json.loads(listing.stdout)["result"]["worktrees"]
+        except (ValueError, KeyError):
+            found = []
+        workspace = next(
+            (w.get("open_workspace_id") for w in found if Path(w["path"]) == path), None
+        )
+        if (
+            workspace
+            and subprocess.run(
+                ["herdr", "worktree", "remove", "--workspace", workspace],
+                capture_output=True,
+                check=False,
+            ).returncode
+            == 0
+        ):
+            return
+    _git("worktree", "remove", str(path), repo=repo)
+
+
+def _with_ref(link: Link, dependency: WorktreeEntry | None) -> Link:
+    """Return ``link`` with the ``owner/repo#N`` of its dependency's PR once there is one; a ref never changes."""
+    if link.ref or dependency is None or dependency.pr is None:
+        return link
+    owner, name = github_api.base_repo(Path(dependency.repo))
+    return link._replace(ref=f"{owner}/{name}#{dependency.pr}")
+
+
+def _cached_refs(entries: Sequence[WorktreeEntry]) -> list[WorktreeEntry]:
+    """Return ``entries`` with every link's ref filled in where its dependency has a PR."""
+    return [
+        e._replace(
+            depends_on=tuple(
+                _with_ref(link, _find(entries, link.repo, link.branch))
+                for link in e.depends_on
+            )
+        )
+        for e in entries
+    ]
+
+
+def _sync_repo(
+    repo: Path,
+    entries: list[WorktreeEntry],
+    apply: bool,
+    login: str,
+    others: Sequence[WorktreeEntry] = (),
+    tool: str = "NAME",
+) -> tuple[int, list[WorktreeEntry]]:
+    """Sync one repo's recorded worktrees and return the status and the updated entries."""
+    return _RepoSync(repo, entries, apply, login, others, tool).run()
+
+
+def rescan_record(repo: Path, entries: list[WorktreeEntry], login: str) -> list[str]:
+    """Record each open PR of mine whose branch is checked out in a worktree; return what was added."""
+    key = _repo_key(repo)
+    open_by_branch = {
+        item["headRefName"]: item
+        for item in _pr_list(repo, "open", "number,headRefName,headRefOid,body")
+    }
+    lines: list[str] = []
+    for checkout in checkouts(repo):
+        item = open_by_branch.get(
+            contribute_branch(login, checkout.branch)
+        ) or open_by_branch.get(checkout.branch)
+        if item is None:
+            continue
+        found = WorktreeEntry(
+            key,
+            checkout.branch,
+            str(checkout.path),
+            item["number"],
+            "OPEN",
+            item["headRefOid"],
+            why=_sections(item["body"]).get("Why", ""),
+        )
+        old = next(
+            (e for e in entries if (e.repo, e.branch) == (key, checkout.branch)), None
+        )
+        if old is None:
+            entries.append(found)
+        else:
+            entries[entries.index(old)] = old._replace(
+                path=found.path,
+                pr=found.pr,
+                pr_state=found.pr_state,
+                remote_head=old.remote_head or found.remote_head,
+            )
+        lines.append(f"{checkout.branch}: recorded with PR #{item['number']}")
+    return lines
+
+
+def yappy_limits() -> dict[str, Any]:
+    """Read the slightly-yappy limits shared with the PR template check."""
+    return dict(
+        json.loads((Path(__file__).parent / "yappy_limits.json").read_text("utf-8"))
+    )
+
+
+def _count_numstat(numstat: str) -> tuple[int, bool]:
+    """Return the lines a numstat changes outside lockfiles, and whether it has a binary file."""
+    lockfiles = set(yappy_limits()["lockfiles"])
+    total, binary = 0, False
+    for row in numstat.splitlines():
+        added, deleted, path = row.split("\t", 2)
+        if added == "-":
+            binary = True
+        elif path.rsplit("/", 1)[-1] not in lockfiles:
+            total += int(added) + int(deleted)
+    return total, binary
+
+
+def _diff_lines(repo: Path, floor: str, ref: str) -> tuple[int, bool]:
+    """Count the lines ``ref`` changes on ``floor`` outside lockfiles, and say whether it has a binary file."""
+    return _count_numstat(
+        _git("diff", "--numstat", "--no-renames", f"{floor}...{ref}", repo=repo)
+    )
+
+
+def _commit_shas(repo: Path, floor: str, ref: str) -> list[str]:
+    """Return the commits ``ref`` has on ``floor``, oldest first."""
+    return _git("rev-list", "--reverse", f"{floor}..{ref}", repo=repo).splitlines()
+
+
+def _commit_identity(repo: Path, sha: str) -> str:
+    return _git("log", "-1", "--format=%at%x09%s", sha, repo=repo)
+
+
+def _on_main_only(repo: Path, base: str, entry: WorktreeEntry, sha: str) -> bool:
+    """Return whether ``sha`` is on local main but not on ``base`` and is not the entry's own copy."""
+    return (
+        _contains(repo, sha, "main")
+        and not _contains(repo, sha, base)
+        and _commit_identity(repo, sha) != entry.copied
+    )
+
+
+def _held_branch(
+    repo: Path,
+    base: str,
+    entry: WorktreeEntry,
+    commits: Sequence[str],
+    entries: Sequence[WorktreeEntry],
+) -> str | None:
+    """Return a branch whose first commit, in any version, is among ``commits``.
+
+    A branch sharing its first commit with another holds it only when it has more commits.
+    """
+    identities = [_commit_identity(repo, sha) for sha in commits]
+    for other in entries:
+        if other.branch == entry.branch or not _branch_exists(repo, other.branch):
+            continue
+        theirs = _commit_shas(repo, other.base or base, f"refs/heads/{other.branch}")
+        first = _commit_identity(repo, theirs[0]) if theirs else None
+        if first in identities and (
+            first != identities[0] or len(theirs) < len(commits)
+        ):
+            return other.branch
+    return None
+
+
+def _skip_reason(
+    repo: Path,
+    base: str,
+    entry: WorktreeEntry,
+    ref: str,
+    entries: Sequence[WorktreeEntry],
+) -> str | None:
+    """Return why ``ref`` is not copied or pushed, or None when it has commits of its own on its floor."""
+    commits = _commit_shas(repo, entry.base or base, ref)
+    if not commits:
+        return "no commits"
+    local_main = [sha for sha in commits if _on_main_only(repo, base, entry, sha)]
+    if held := _held_branch(repo, base, entry, commits, entries):
+        return f"holds commits of {held}"
+    return "holds local main commits" if local_main else None
+
+
+def _list_line(
+    repo: Path, base: str, entry: WorktreeEntry, entries: Sequence[WorktreeEntry]
+) -> str:
+    floor, ref = entry.base or base, f"refs/heads/{entry.branch}"
+    pr = f"PR #{entry.pr} ({entry.pr_state or 'unknown'})" if entry.pr else "no PR"
+    if not _branch_exists(repo, entry.branch):
+        detail = "skipped: branch is gone"
+    elif (reason := _skip_reason(repo, base, entry, ref, entries)) is not None:
+        detail = f"skipped: {reason}"
+    else:
+        count = len(_commit_shas(repo, floor, ref))
+        lines = _diff_lines(repo, floor, ref)[0]
+        detail = f"{count} commits, " if count > 1 else ""
+        detail += f"{lines} lines"
+        if lines > yappy_limits()["lines"]:
+            detail += f" (over the {yappy_limits()['lines']}-line limit)"
+    return f"{entry.branch}  {'ready' if entry.ready else 'local only'}  {pr}  {detail}"
+
+
+def list_targets(targets: Sequence[Target]) -> int:
+    """Print every recorded worktree from the record and local git, with no network calls."""
+    try:
+        entries = worktrees.load_entries(worktrees.record_path())
+    except worktrees.CorruptRecord as error:
+        print(error)
+        return 1
+    for name, repo, _ in targets:
+        key = _repo_key(repo)
         if len(targets) > 1:
             print(f"[{name}]")
-        report = reports[name]
-        notes = {
-            commit.sha: text
-            for entry in report.entries
-            for commit, _ in entry.lines
-            if (
-                text := links.describe(
-                    annotations.get((name, commit.subject, commit.authored_date), ()),
-                    report.pr_bodies.get(entry.branch) if entry.branch else None,
-                )
-            )
-        }
-        _print_report(report, notes=notes)
-        status = max(status, report.exit)
-        if len(targets) > 1:
-            print()
-    return status
+        base = base_ref(repo)
+        mine = [e for e in entries if e.repo == key]
+        unmerged = [e for e in mine if e.pr_state != "MERGED"]
+        for entry in mine:
+            print(_list_line(repo, base, entry, unmerged))
+    return 0
 
 
-def _dependency_keys(
-    linked: Sequence[links.Link], tool: str
-) -> frozenset[tuple[str, str]]:
-    """Return the (subject, authored date) keys of `tool`'s commits that `linked` depends on."""
-    return frozenset(
-        (link.dependency_subject, link.dependency_date)
-        for link in linked
-        if link.dependency_tool == tool
-    )
-
-
-def _rewritten_commits(
-    values: Sequence[str],
-    commits_by_tool: dict[str, list[Commit]],
-    find: Callable[[str], Target | None],
-) -> dict[str, tuple[str, Commit]]:
-    """Map each value that names an amended commit to the repo and commit that replaced it.
-
-    An amended commit keeps its subject and authored date, so its old sha still
-    resolves locally and is matched on those.
-    """
-    rewritten: dict[str, tuple[str, Commit]] = {}
-    for value in dict.fromkeys(values):
-        for tool, commits in commits_by_tool.items():
-            target = find(tool)
-            if target is None or not value.strip():
-                continue
-            shown = subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(target[1]),
-                    "show",
-                    "-s",
-                    "--format=%aI%x09%s",
-                    value,
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            date, _, subject = shown.stdout.strip().partition("\t")
-            match = next(
-                (c for c in commits if (c.subject, c.authored_date) == (subject, date)),
-                None,
-            )
-            if shown.returncode == 0 and match is not None:
-                rewritten[value] = (tool, match)
-    return rewritten
-
-
-def _held_commits(
-    name: str,
-    dependencies: Sequence[links.Link],
-    find: Callable[[str], Target | None],
+def _sync_locked(
+    targets: Sequence[Target],
     login: str,
-    local_commits: Sequence[Commit],
-) -> tuple[dict[str, str], dict[str, tuple[str, ...]]]:
-    """Return `name`'s commits waiting on an unpushed dependency, and the PR urls each depends on, both by sha."""
-    status_by_tool = {}
-    for tool in {link.dependency_tool for link in dependencies}:
-        target = find(tool)
-        if target is not None:
-            status_by_tool[tool] = collect_report(
-                target[1], login, target[2], _dependency_keys(dependencies, tool)
-            ).statuses
-    annotations = links.annotate(dependencies, status_by_tool)
-    reasons = {
-        key: next(
-            f"{a.dependency_tool}: {a.dependency_subject} is {a.stage}"
-            for a in annotations[key]
-            if a.stage in links.HELD_STAGES
+    options: SyncOptions,
+    tools: Sequence[Target],
+) -> int:
+    path = worktrees.record_path()
+    try:
+        entries = worktrees.load_entries(path)
+    except worktrees.CorruptRecord as error:
+        print(error)
+        if not options.rescan:
+            return 1
+        entries = []
+    editing = options.edits_record
+    status = 0
+    if not (editing or options.rescan):
+        targets = _dependencies_first(targets, entries)
+    for tool, repo, _ in targets:
+        key = _repo_key(repo)
+        if options.rescan:
+            for line in rescan_record(repo, entries, login):
+                print(line)
+            continue
+        if editing:
+            try:
+                print(edit_record(tool, repo, entries, options, tools))
+            except LookupError as error:
+                print(error)
+                status = 1
+            continue
+        entries = _cached_refs(entries)
+        mine = [e for e in entries if e.repo == key]
+        others = [e for e in entries if e.repo != key]
+        repo_status, updated = _sync_repo(
+            repo, mine, options.apply, login, others, tool
         )
-        for key in links.holds(dependencies, status_by_tool)
-    }
-    held = {
-        commit.sha: reasons[(name, commit.subject, commit.authored_date)]
-        for commit in local_commits
-        if (name, commit.subject, commit.authored_date) in reasons
-    }
-    depends_on = {
-        commit.sha: urls
-        for commit in local_commits
-        if (
-            urls := tuple(
-                dict.fromkeys(
-                    a.url
-                    for a in annotations.get(
-                        (name, commit.subject, commit.authored_date), ()
-                    )
-                    if a.url
-                )
-            )
-        )
-    }
-    return held, depends_on
+        status = max(status, repo_status)
+        entries = [e for e in entries if e.repo != key] + updated
+    if editing or options.rescan or options.apply:
+        worktrees.save_entries(path, entries)
+    return status
 
 
 def sync_targets(
     targets: Sequence[Target],
     login: str,
-    apply: bool,
-    only: str | None,
-    cleanup: str | None,
-    commits: Sequence[str] = (),
-    configured: Callable[[], Sequence[Target]] | None = None,
+    options: SyncOptions,
+    tools: Sequence[Target] = (),
 ) -> int:
-    """Sync every target, dependency repos first, holding commits whose linked dependency is unpushed.
+    """Edit the record or sync each target's recorded worktrees; return the highest status.
 
-    `--commit` values across several targets are resolved to their repos and
-    link later repos' commits to earlier ones; `--apply` saves the links
-    before any push.
+    ``tools`` are the tools a link may name, ``targets`` when empty.
     """
-    find, configured_names = _target_lookup(targets, configured)
-    names = [name for name, _, _ in targets]
-    by_name = {target[0]: target for target in targets}
-    ahead: dict[str, list[Commit]] = {}
-
-    def local_commits(name: str) -> list[Commit]:
-        if name not in ahead:
-            target = find(name)
-            assert target is not None
-            ahead[name] = log_commits(target[1], base_ref(target[1]))
-        return ahead[name]
-
-    stored = links.load_links(links.LINKS_PATH)
-    linked = stored
-    selection: dict[str, list[str]] | None = None
-    commit_of: dict[str, tuple[str, Commit]] = {}
     try:
-        if len(targets) > 1 and commits:
-            by_tool = {name: local_commits(name) for name in names}
-            try:
-                selection = links.resolve_commits(commits, by_tool)
-            except SelectionError:
-                selection = links.resolve_commits(
-                    commits, by_tool, _rewritten_commits(commits, by_tool, find)
-                )
-            commit_of = {
-                value: (tool, commit)
-                for tool, values in selection.items()
-                for value in values
-                for commit in local_commits(tool)
-                if commit.sha.startswith(value.strip().lower())
-            }
-            linked = links.add_links(
-                stored,
-                links.derive_links(
-                    [
-                        (tool, commit.subject, commit.authored_date)
-                        for tool, commit in (
-                            commit_of[v] for v in dict.fromkeys(commits)
-                        )
-                    ]
-                ),
-            )
-        ordered = links.order_targets(names, linked)
-    except SelectionError as error:
-        print("\n".join(error.lines))
+        with worktrees.locked(worktrees.record_path()):
+            return _sync_locked(targets, login, options, tools or targets)
+    except worktrees.LockHeld as error:
+        print(error)
         return 1
-
-    if linked:
-        known = configured_names()
-        linked = links.prune(
-            linked,
-            {
-                tool: {(c.subject, c.authored_date) for c in local_commits(tool)}
-                for link in linked
-                for tool in (link.dependent_tool, link.dependency_tool)
-                if tool in known
-            },
-            known,
-        )
-        if apply and linked != stored:
-            links.save_links(links.LINKS_PATH, linked)
-
-    status = 0
-    for name in ordered:
-        if selection is not None and name not in selection:
-            continue
-        _, repo, prefix = by_name[name]
-        own_commits = commits
-        manual_commits: list[Commit] = []
-        if selection is not None:
-            manual = _manual_shas(local_commits(name), prefix)
-            own_commits = [
-                v for v in selection[name] if commit_of[v][1].sha not in manual
-            ]
-            manual_commits = [
-                commit_of[v][1]
-                for v in selection[name]
-                if commit_of[v][1].sha in manual
-            ]
-        dependencies = [link for link in linked if link.dependent_tool == name]
-        held, depends_on = (
-            _held_commits(name, dependencies, find, login, local_commits(name))
-            if dependencies
-            else ({}, {})
-        )
-        extra_args = (held, depends_on) if depends_on else (held,) if held else ()
-        if len(targets) > 1:
-            print(f"[{name}]")
-        for commit in manual_commits:
-            print(
-                f"{commit.sha[:7]}: code-only, open its PR by hand "
-                "(llm-prompts-contribute skill)"
-            )
-        if selection is None or own_commits:
-            status = max(
-                status,
-                run_sync(
-                    repo, login, prefix, apply, only, cleanup, own_commits, *extra_args
-                ),
-            )
-        if len(targets) > 1:
-            print()
-    return status

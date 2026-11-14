@@ -21,7 +21,7 @@ llm-prompts setup --init                       # create the starter config
 llm-prompts check                              # check prompt sizes and pi extension headers
 llm-prompts size-report --base-root DIR        # markdown report of prompt size changes
 llm-prompts watch gh-pr|cmd TARGET --until COND  # wait for a PR or command to match, then exit (0 match, 124 --timeout, 1 error)
-llm-prompts contribute list|sync|update        # turn commits on local main into PR branches
+llm-prompts contribute list|sync|update        # keep each worktree branch in sync with local main and its own PR
 ```
 
 `install` runs `setup` first (installs or upgrades the tools in your config), then writes the files for the agent. `--no-update` skips `setup`. `update` pulls every git-based `[[tools]]` and `[[plugins]]` source and reinstalls for each agent you have already installed.

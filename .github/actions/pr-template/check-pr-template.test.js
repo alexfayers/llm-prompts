@@ -38,6 +38,20 @@ Users asked for it.
   assert.deepEqual(findBodyIssues(parsed, body), []);
 });
 
+test('findBodyIssues allows the marker sync puts on its What bullets', () => {
+  const parsed = parseTemplateSections(TEMPLATE);
+  const body = `## Summary
+
+- Added a new widget. <!--sync-->
+
+## Rationale
+
+Users asked for it.
+`;
+
+  assert.deepEqual(findBodyIssues(parsed, body), []);
+});
+
 test('findBodyIssues fails when an entire section is missing', () => {
   const parsed = parseTemplateSections(TEMPLATE);
   const body = `## Summary

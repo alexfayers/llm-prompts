@@ -36,6 +36,7 @@ from .setup import (
 )
 
 if TYPE_CHECKING:
+    from .contribute import SyncOptions
     from .manifest import AgentManifest
     from .size_guard import Artifact
 
@@ -801,6 +802,23 @@ def _flush_memory_telemetry() -> None:
                 )
 
 
+def _sync_options(args: argparse.Namespace) -> SyncOptions:
+    """Return the ``contribute sync`` options the parsed ``args`` ask for."""
+    from .contribute import SyncOptions
+
+    return SyncOptions(
+        args.apply,
+        args.branch,
+        args.forget,
+        args.ready,
+        args.local,
+        args.rescan,
+        tuple(args.depends_on) if args.depends_on else None,
+        tuple(args.no_depends_on) if args.no_depends_on else None,
+        tuple(args.why) if args.why else None,
+    )
+
+
 def _get_gh_login() -> str:
     """Return the current GitHub user's login, through gh or the GitHub API."""
     if shutil.which("gh") is None:
@@ -994,26 +1012,50 @@ def _run_command(run: telemetry.Run) -> int | None:
     )
     sync_parser = contribute_sub.add_parser(
         "sync",
-        help="Rebuild derived branches from main (dry run unless --apply).",
+        help="Sync recorded worktrees with main and GitHub (dry run unless --apply).",
         parents=[tool_parser],
     )
     sync_parser.add_argument(
-        "--apply", action="store_true", help="Actually cherry-pick and push."
+        "--apply", action="store_true", help="Actually copy, pull, push and remove."
     )
     sync_parser.add_argument(
-        "--only", metavar="BRANCH", help="Restrict to one derived branch."
+        "--branch", metavar="BRANCH", help="Record the worktree on this branch."
     )
     sync_parser.add_argument(
-        "--cleanup",
+        "--forget", metavar="BRANCH", help="Stop managing this recorded branch."
+    )
+    sync_parser.add_argument(
+        "--ready",
         metavar="BRANCH",
-        help="Close the PR and delete this orphaned branch.",
+        help="Let sync push this branch and open its draft PR.",
     )
     sync_parser.add_argument(
-        "--commit",
-        dest="commits",
-        action="append",
-        metavar="SHA",
-        help="Sync only the batches holding this commit; repeatable.",
+        "--local",
+        metavar="BRANCH",
+        help="Stop sync pushing this branch or touching its PR.",
+    )
+    sync_parser.add_argument(
+        "--depends-on",
+        nargs=2,
+        metavar=("BRANCH", "TOOL:BRANCH"),
+        help="Make BRANCH depend on TOOL:BRANCH, stacking it when in the same repo.",
+    )
+    sync_parser.add_argument(
+        "--no-depends-on",
+        nargs=2,
+        metavar=("BRANCH", "TOOL:BRANCH"),
+        help="Remove the dependency of BRANCH on TOOL:BRANCH.",
+    )
+    sync_parser.add_argument(
+        "--why",
+        nargs=2,
+        metavar=("BRANCH", "TEXT"),
+        help="Record the text sync puts under Why in BRANCH's PR.",
+    )
+    sync_parser.add_argument(
+        "--rescan",
+        action="store_true",
+        help="Record your open PRs whose branch is checked out in a worktree.",
     )
 
     update_parser = contribute_sub.add_parser(
@@ -1048,18 +1090,23 @@ def _run_command(run: telemetry.Run) -> int | None:
     if (
         args.command == "contribute"
         and args.contribute_command == "sync"
-        and args.cleanup
-        and args.tool is None
+        and _sync_options(args).record_edits > 1
     ):
-        sync_parser.error("--cleanup requires --tool NAME.")
+        sync_parser.error(
+            "Pass only one of --branch, --forget, --ready, --local, "
+            "--depends-on, --no-depends-on and --why."
+        )
 
     if (
         args.command == "contribute"
         and args.contribute_command == "sync"
-        and args.commits
-        and (args.only or args.cleanup)
+        and _sync_options(args).edits_record
+        and args.tool is None
     ):
-        sync_parser.error("--commit cannot be combined with --only or --cleanup.")
+        sync_parser.error(
+            "--branch, --forget, --ready, --local, --depends-on, "
+            "--no-depends-on and --why require --tool NAME."
+        )
 
     if args.command == "install" and args.root:
         set_root(args.root)
@@ -1313,19 +1360,17 @@ def _run_command(run: telemetry.Run) -> int | None:
                 targets = [_ContributeTarget(args.tool, repo, prefix)]
             else:
                 targets = _contribute_targets()
-        login = _get_gh_login()
         if args.contribute_command == "list":
-            return list_targets(targets, login, _contribute_targets)
+            return list_targets(targets)
         if args.contribute_command == "update":
             return update_targets(targets, args.apply, args.numbers or ())
+        sync_options = _sync_options(args)
+        linking = sync_options.depends_on or sync_options.no_depends_on
         return sync_targets(
             targets,
-            login,
-            args.apply,
-            args.only,
-            args.cleanup,
-            args.commits or (),
-            _contribute_targets,
+            "" if sync_options.edits_record else _get_gh_login(),
+            sync_options,
+            _contribute_targets() if linking else targets,
         )
     else:
         parser.print_help()
