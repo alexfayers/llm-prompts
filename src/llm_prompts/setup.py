@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from importlib import metadata
 from pathlib import Path
 from typing import Any, NamedTuple
+from urllib.parse import urlparse
 
 from . import home
 from .exit_reason import ExitReason
@@ -42,6 +43,9 @@ _DEFAULT_CONFIG = """\
 # `source` can be:
 #   - A git URL (e.g. "git+https://github.com/user/repo.git")
 #   - A local path (~/git/pkg or /abs/path) - installed from the checkout
+#
+# A git source installs its latest stable release tag (vX.Y.Z), or HEAD if it has
+# none. Set `ref = "main"` (a branch, tag or commit) on an entry to follow that instead.
 #
 # A local-path entry can set `test = "just test"`. `llm-prompts update` runs it in
 # the checkout after rebasing or replaying local commits or changing main by copying
@@ -100,6 +104,7 @@ def _format_update_message(
     local: str | None = None,
     remote: str | None = None,
     cap: int = 20,
+    release: tuple[str, str] | None = None,
 ) -> list[str]:
     """Build an update-availability message, listing commit messages when known.
 
@@ -108,21 +113,23 @@ def _format_update_message(
         subjects: Commit messages newer than the local commit, each a subject
             optionally followed by body lines, or ``None`` when the commit list
             could not be determined.
-        local: The local commit SHA, used only for the bare fallback message.
-        remote: The remote commit SHA, used only for the bare fallback message.
+        local: The local commit label, used only for the bare fallback message.
+        remote: The remote commit label, used only for the bare fallback message.
         cap: Maximum number of commits to list before truncating.
+        release: The installed and available versions, shown in the header.
 
     Returns:
         A single multi-line message listing the commits, body lines indented
         under their subject, or the bare "update available" fallback when
         ``subjects`` is empty/``None``.
     """
+    if release:
+        local, remote = release
+    versions = f" ({local} -> {remote})" if local and remote else ""
     if not subjects:
-        if local and remote:
-            return [f"[{name}] update available ({local[:8]} -> {remote[:8]})"]
-        return [f"[{name}] update available"]
+        return [f"[{name}] update available{versions}"]
 
-    lines = [f"[{name}] update available:"]
+    lines = [f"[{name}] update available{versions if release else ''}:"]
     lines.extend("- " + subject.replace("\n", "\n  ") for subject in subjects[:cap])
     if len(subjects) > cap:
         lines.append(f"... and {len(subjects) - cap} more")
@@ -152,6 +159,48 @@ def _remote_head(git_url: str, ref: str | None) -> str | None:
     if not result.stdout.strip():
         return None
     return result.stdout.split()[0]
+
+
+_RELEASE_TAG = re.compile(r"v(\d+)\.(\d+)\.(\d+)")
+
+
+def _latest_release_tag(git_url: str) -> tuple[str, str] | None:
+    """Return the highest stable ``vX.Y.Z`` tag of a remote and its commit, via ls-remote.
+
+    Args:
+        git_url: The remote git URL to query.
+
+    Returns:
+        The tag name and the commit it points at (the peeled commit for an
+        annotated tag), or ``None`` if the remote has no stable ``v*`` tag.
+
+    Raises:
+        subprocess.CalledProcessError: If ``git ls-remote`` exits non-zero.
+    """
+    result = run_with_retries(
+        ["git", "ls-remote", "--tags", git_url, "v*"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=GIT_TIMEOUT,
+    )
+    releases: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        sha, _, ref = line.partition("\t")
+        tag = ref.removeprefix("refs/tags/")
+        if tag.endswith("^{}"):
+            releases[tag.removesuffix("^{}")] = sha
+        else:
+            releases.setdefault(tag, sha)
+    versions = {
+        tuple(map(int, match.groups())): tag
+        for tag in releases
+        if (match := _RELEASE_TAG.fullmatch(tag))
+    }
+    if not versions:
+        return None
+    tag = versions[max(versions)]
+    return tag, releases[tag]
 
 
 _SQUASHED_MERGE_PREFIX = "* Merge "
@@ -524,13 +573,18 @@ class SharedEnv(NamedTuple):
     scripts: list[str]
 
 
-def _build_commands(tools: list[dict[str, Any]], changed_local: set[str]) -> SharedEnv:
+def _build_commands(
+    tools: list[dict[str, Any]],
+    changed_local: set[str],
+    pins: Mapping[str, str] | None = None,
+) -> SharedEnv:
     """Build the commands for the uv tool env owned by the first tool.
 
     Args:
         tools: The configured tools; the first owns the env and the rest are
             members installed alongside it.
         changed_local: Names of local tools whose upgrade must rebuild them.
+        pins: Tool names mapped to the ref their install source is pinned to.
 
     Returns:
         The install and upgrade commands, the member names and the script names
@@ -542,7 +596,9 @@ def _build_commands(tools: list[dict[str, Any]], changed_local: set[str]) -> Sha
     scripts = {_package_name(tool): _script_names(tool) for tool in tools}
     return SharedEnv(
         name,
-        _build_install_cmd(owner, members, [n for n in member_names if scripts[n]]),
+        _build_install_cmd(
+            owner, members, [n for n in member_names if scripts[n]], pins or {}
+        ),
         _build_upgrade_cmd(
             name,
             member_names,
@@ -555,12 +611,20 @@ def _build_commands(tools: list[dict[str, Any]], changed_local: set[str]) -> Sha
 
 
 def _build_install_cmd(
-    owner: dict[str, Any], members: list[dict[str, Any]], executable_members: list[str]
+    owner: dict[str, Any],
+    members: list[dict[str, Any]],
+    executable_members: list[str],
+    pins: Mapping[str, str],
 ) -> list[str]:
     """Build a full install command."""
-    cmd = ["uv", "tool", "install", _install_source(str(owner["source"]))]
+
+    def source(tool: dict[str, Any]) -> str:
+        pin = pins.get(str(tool["name"]))
+        return _install_source(str(tool["source"])) + (f"@{pin}" if pin else "")
+
+    cmd = ["uv", "tool", "install", source(owner)]
     for member in members:
-        cmd.extend(["--with", _install_source(str(member["source"]))])
+        cmd.extend(["--with", source(member)])
     if executable_members:
         cmd.extend(["--with-executables-from", ",".join(executable_members)])
     for package in [owner, *members]:
@@ -627,6 +691,43 @@ def source_state(source: str) -> str:
     if not _is_local_path(source):
         return ""
     return _checkout_state(_expand(source), include_prompts=True) or "unreadable"
+
+
+def _install_pins(tools: list[dict[str, Any]]) -> dict[str, str]:
+    """Return the ref each remote tool installs at: its configured ref, else its latest release tag.
+
+    Tools without a ref and without release tags install the remote's HEAD, and
+    are left out. So are local tools and sources that already name a ref.
+
+    Args:
+        tools: The configured tools.
+
+    Returns:
+        Tool names mapped to the ref to pin their install source to.
+    """
+    pins: dict[str, str] = {}
+    for tool in tools:
+        git_url = _extract_git_url(str(tool.get("source", "")))
+        if not git_url or "@" in urlparse(git_url).path:
+            continue
+        if ref := tool.get("ref"):
+            pins[str(tool["name"])] = str(ref)
+            continue
+        try:
+            release = _latest_release_tag(git_url)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+            print(f"[{tool['name']}] Could not list release tags.", file=sys.stderr)
+            raise ExitReason("tool_release_lookup_failed") from None
+        if release:
+            pins[str(tool["name"])] = release[0]
+    return pins
+
+
+def _pins_drifted(pins: Mapping[str, str]) -> bool:
+    """Check if any pinned tool is installed at a different ref."""
+    from .cli import _get_installed_revision
+
+    return any(_get_installed_revision(name) != ref for name, ref in pins.items())
 
 
 def _git_dependencies(tools: list[dict[str, Any]]) -> list[str]:
@@ -893,12 +994,15 @@ def run_setup(
     force_reinstall = {package_names.get(n, n) for n in force_reinstall}
 
     changed_local = detect_changed_local_tools(tools)
-    env = _build_commands(tools, changed_local)
+    pins = _install_pins(tools)
+    env = _build_commands(tools, changed_local, pins)
     name = env.name
 
     changed = False
-    needs_install = name in force_reinstall or any(
-        member in force_reinstall for member in env.members
+    needs_install = (
+        name in force_reinstall
+        or any(member in force_reinstall for member in env.members)
+        or _pins_drifted(pins)
     )
     if not needs_install:
         print(f"\n[{name}] {' '.join(env.upgrade_cmd)}")
