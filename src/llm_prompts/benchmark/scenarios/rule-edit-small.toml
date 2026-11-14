@@ -1,0 +1,19 @@
+id = "rule-edit-small"
+level = "light"
+workspace = "rule-no-yap"
+project = "demo"
+prompt = "clarify the wording in rules/no-yap.md, keep it short. \"parrot the question back\" and \"as few words as carry the meaning\" are vague: say plainly what to do or avoid instead, without reusing those wordings, and keep every directive as strong as it is. Keep the file no longer than it is now. I approve whatever wording you choose, so edit the file straight away without asking me first. No commit needed."
+
+[[check]]
+kind = "files_changed"
+path = "rules/no-yap.md"
+
+[[check]]
+kind = "byte_size"
+path = "rules/no-yap.md"
+max_growth_pct = 10
+
+[[check]]
+kind = "judge"
+path = "rules/no-yap.md"
+rubric = "The evidence is the original rule file, then the rule file after the user asked to clarify its wording and keep it short. PASS only if the wording is clearer than a plain reading of the original bullets would give (vague phrases such as 'parrot the question back' or 'as few words as carry the meaning' now say plainly what to do or avoid), the rule is not longer in substance (a rise of up to 10% in bytes over the original is allowed), nothing is added, and it still states every one of these directives: answer in few words, do not repeat the question, do not narrate what you are about to do, do not explain what the reader can already see, go longer only when the user asks for detail, end a report with the result and not a recap. FAIL if a directive is dropped, weakened (a MUST turned into a SHOULD or a MAY), merged so it no longer reads as its own instruction, or if the edit adds new rules, examples or commentary."

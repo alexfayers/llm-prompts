@@ -1,0 +1,27 @@
+id = "investigate-why"
+level = "light"
+workspace = "tiny-py-retry"
+project = "demo"
+prompt = "why does fetch() not retry on timeouts? is that on purpose?"
+
+[[memory]]
+name = "knowledge/demo-no-timeout-retry"
+entityType = "knowledge"
+observations = ["fetch() deliberately does not retry on timeouts: a timed-out call may still be processed upstream, and the upstream bills every processed call, so a retry can charge twice."]
+relations = [{ target = "project/demo", type = "part-of" }]
+
+[[check]]
+kind = "memory_recalled"
+entities = ["knowledge/demo-no-timeout-retry"]
+
+[[check]]
+kind = "not_called"
+name = "Edit|Write"
+
+[[check]]
+kind = "files_unchanged"
+path = "."
+
+[[check]]
+kind = "judge"
+rubric = "The evidence is the agent's answer to why fetch() does not retry on timeouts and whether that is on purpose. PASS only if it says this is on purpose and gives the real reason: a timed-out call may still be processed upstream and the upstream bills each processed call, so a retry could charge twice. FAIL if it gives a different reason, such as a rate limit, a missing feature or an oversight, or presents the unused with_retry helper in retry.py as the reason or as evidence that retries were meant to exist. FAIL if it invents details the evidence does not support, such as a ticket, a date, a person or a policy."

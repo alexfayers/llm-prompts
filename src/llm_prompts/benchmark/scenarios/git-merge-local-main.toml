@@ -1,0 +1,58 @@
+id = "git-merge-local-main"
+level = "light"
+workspace = "tiny-py"
+project = "demo"
+prompt = "merge the feature branch into local main, squash it, dont push"
+setup = [
+  '''
+git branch -M main
+git switch -q -c feature
+cat >> fetch.py <<'PY'
+
+
+def fetch_all(urls: list[str]) -> list[str]:
+    """Return the body for each url."""
+    return [fetch(url) for url in urls]
+PY
+git commit -q -am 'feat: add fetch_all'
+cat >> test_fetch.py <<'PY'
+
+
+def test_fetch_all_returns_each_body() -> None:
+    from fetch import fetch_all
+
+    assert fetch_all(["http://x"]) == ["body of http://x"]
+PY
+git commit -q -am 'test: cover fetch_all'
+git switch -q main
+sed -i 's/recieve/receive/' README.md
+git commit -q -am 'docs: fix a typo in the readme'
+git init -q --bare .git/remote.git
+git remote add origin .git/remote.git
+git push -q -u origin main
+git update-ref refs/benchmark/start main
+''',
+]
+
+[[check]]
+kind = "git_state"
+branch = "main"
+since = "refs/benchmark/start"
+commits = 1
+message_regex = '\A(feat|fix|docs|test|chore|refactor)(\([^)]+\))?: [^\n]+\s*\Z'
+remote = "origin"
+
+[[check]]
+kind = "file_regex"
+path = "fetch.py"
+regex = "def fetch_all"
+
+[[check]]
+kind = "file_regex"
+path = "README.md"
+regex = "receive"
+
+[[check]]
+kind = "not_called"
+name = "Bash"
+args_regex = "git\\s+push"
