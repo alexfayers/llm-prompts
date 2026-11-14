@@ -13,7 +13,7 @@ from types import TracebackType
 from typing import Any
 
 from . import telemetry_core
-from .exit_reason import ExitReason
+from .exit_reason import STOPPED_REASONS, ExitReason
 from .home import is_rooted
 from .install import log
 from .manifest import read_manifest
@@ -134,7 +134,11 @@ class Run(AbstractContextManager["Run"]):
         if failed and isinstance(exc, SystemExit):
             self.exit_reason = exc.reason if isinstance(exc, ExitReason) else "other"
         if failed and self.outcome == "ok":
-            self.outcome = f"error:{type(exc).__name__}"
+            self.outcome = (
+                "stopped"
+                if self.exit_reason in STOPPED_REASONS
+                else f"error:{type(exc).__name__}"
+            )
         if self._begun and not isinstance(exc, KeyboardInterrupt):
             try:
                 self._report(self._begun, exc)

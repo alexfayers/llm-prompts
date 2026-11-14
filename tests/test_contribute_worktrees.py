@@ -425,9 +425,10 @@ def test_update_stops_on_a_held_lock_without_touching_any_source(
     project.worktree("feat/a", "feat: a")
     project.run(branch="feat/a")
 
-    with worktrees.locked(project.record), pytest.raises(ExitReason):
+    with worktrees.locked(project.record), pytest.raises(ExitReason) as stopped:
         cli._pull_local_sources()
 
+    assert stopped.value.reason == "record_locked"
     assert "another contribute run is in progress" in capsys.readouterr().out
     assert project.main_subjects() == []
 
@@ -460,6 +461,26 @@ def test_update_still_reinstalls_when_a_copy_conflicts_and_names_the_worktree(
     assert "[tool] feat/a: not copied into main" in capsys.readouterr().out
 
 
+def test_update_stops_when_a_copy_fails_with_its_own_reason(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure_sources(project)
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+
+    with (
+        patch(
+            "llm_prompts.contribute.copy_recorded",
+            side_effect=subprocess.CalledProcessError(1, "git", stderr="boom"),
+        ),
+        pytest.raises(ExitReason) as stopped,
+    ):
+        run_update(project)
+
+    assert stopped.value.reason == "copy_failed"
+    assert "Update stopped: tool" in capsys.readouterr().out
+
+
 def test_update_warns_about_a_failing_test_after_a_copy_and_still_reinstalls(
     project: Project, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -488,9 +509,10 @@ def test_update_stops_before_pulling_when_a_source_is_not_on_main(
     project.run(branch="feat/a")
     git(project.repo, "switch", "-q", "-c", "elsewhere")
 
-    with pytest.raises(ExitReason):
+    with pytest.raises(ExitReason) as stopped:
         cli._pull_local_sources()
 
+    assert stopped.value.reason == "copy_blocked"
     assert "[tool] elsewhere is checked out, not main" in capsys.readouterr().out
     assert project.main_subjects() == []
 

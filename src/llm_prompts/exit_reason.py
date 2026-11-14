@@ -20,12 +20,21 @@ Reason = Literal[
     "config_exists",
     "invalid_tool_paths",
     "tool_install_failed",
+    "tool_unstartable",
+    "no_installed_agents",
+    "copy_blocked",
+    "copy_failed",
+    "record_locked",
+    "record_corrupt",
     "agent_config_missing",
     "invalid_size_declarations",
     "invalid_plugins",
     "other",
 ]
 REASONS: tuple[str, ...] = get_args(Reason)
+STOPPED_REASONS: frozenset[str] = frozenset(
+    {"copy_blocked", "copy_failed", "record_locked", "record_corrupt"}
+)
 
 
 class ExitReason(SystemExit):

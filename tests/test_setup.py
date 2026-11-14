@@ -508,7 +508,7 @@ class TestRunSetup:
         with pytest.raises(SystemExit) as raised:
             setup.run_setup(tool_filter)
 
-        assert getattr(raised.value, "reason", None) == "tool_install_failed"
+        assert getattr(raised.value, "reason", None) == "tool_unstartable"
         err = capsys.readouterr().err
         assert "No module named 'x'" in err
         assert "Traceback" not in err

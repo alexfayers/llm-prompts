@@ -29,7 +29,7 @@ from llm_prompts import (
     telemetry,
     telemetry_core,
 )
-from llm_prompts.exit_reason import REASONS, ExitReason
+from llm_prompts.exit_reason import REASONS, ExitReason, Reason
 
 A, B = "a" * 40, "b" * 40
 EVENT: dict[str, Any] = {"event": "command_run", "properties": {}}
@@ -395,7 +395,9 @@ def stubbed_cli(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     ("argv", "install_result", "outcome"),
     [
         (["update"], False, "ok"),
-        (["update"], True, "size_guard_failed"),
+        (["update"], "size_guard_failed", "size_guard_failed"),
+        (["update"], "pi_package_failed", "pi_package_failed"),
+        (["update"], "install_failed", "install_failed"),
         (["update"], ValueError("secret"), "error:ValueError"),
         (["setup"], False, "ok"),
         (["install", "kiro", "--no-update"], False, "ok"),
@@ -404,7 +406,11 @@ def stubbed_cli(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         (["update", "--only", "/synthetic/rule.md"], False, "ok"),
         (["setup", "--dry-run"], False, "ok"),
         (["check"], False, "ok"),
-        (["update", "--only", "/synthetic/rule.md"], True, "size_guard_failed"),
+        (
+            ["update", "--only", "/synthetic/rule.md"],
+            "size_guard_failed",
+            "size_guard_failed",
+        ),
     ],
 )
 def test_a_command_sends_at_most_one_event_naming_its_outcome(
@@ -691,6 +697,36 @@ def test_only_a_fixed_reason_code_is_sent_for_an_exit(
 
     assert _props(telemetry_popen)["exit_reason"] == reason
     assert "free text" not in json.dumps(_events(telemetry_popen))
+
+
+@pytest.mark.usefixtures("stubbed_cli")
+@pytest.mark.parametrize(
+    ("reason", "outcome"),
+    [
+        ("record_locked", "stopped"),
+        ("copy_blocked", "stopped"),
+    ],
+)
+def test_a_designed_stop_is_not_reported_as_an_error(
+    telemetry_popen: MagicMock, reason: Reason, outcome: str
+) -> None:
+    with patch("llm_prompts.install.main", side_effect=[ExitReason(reason)]):
+        _main("update")
+
+    assert _props(telemetry_popen)["outcome"] == outcome
+    assert _props(telemetry_popen)["exit_reason"] == reason
+
+
+@pytest.mark.usefixtures("stubbed_cli")
+def test_an_update_with_only_removed_agents_reports_no_installed_agents(
+    telemetry_popen: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("llm_prompts.manifest.read_manifest", lambda: {"cline": {}})
+    monkeypatch.setattr("llm_prompts.telemetry.read_manifest", lambda: {"cline": {}})
+
+    _main("update")
+
+    assert _props(telemetry_popen)["exit_reason"] == "no_installed_agents"
 
 
 def _own(error: type[Exception]) -> type[Exception]:

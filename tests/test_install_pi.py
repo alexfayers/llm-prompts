@@ -74,7 +74,7 @@ def _install(
     hooks_exit: int = 0,
     listed_models: str = "",
     wrapper: str | None = None,
-) -> bool:
+) -> str | None:
     """Run `install` into a fake home with overlays and manifest redirected, `cline-hook install pi` exiting with `hooks_exit`, `pi --list-models` printing `listed_models` and `pool` found at the given path."""
 
     def which(command: str, path: str | None = None) -> str | None:
@@ -2483,8 +2483,8 @@ class TestPiPackageInstall:
         installed: tuple[str, str | None] | None = None,
         pi: str | None = "/usr/bin/pi",
         returncode: int = 0,
-    ) -> tuple[list[list[str]], bool]:
-        """Install one synthetic package, returning the pi commands run and the failure flag."""
+    ) -> tuple[list[list[str]], str | None]:
+        """Install one synthetic package, returning the pi commands run and the failure."""
         home = tmp_path / "home"
         home.mkdir()
         if installed:
@@ -2536,7 +2536,7 @@ class TestPiPackageInstall:
     def test_failed_install_is_reported_as_failure(self, tmp_path: Path) -> None:
         _, failed = self._run(tmp_path, "npm:acme-ext@1.0.0", returncode=1)
 
-        assert failed
+        assert failed == "pi_package_failed"
 
 
 class TestPiPackageInstallFailure:
@@ -2553,7 +2553,7 @@ class TestPiPackageInstallFailure:
 
     def _install(
         self, tmp_path: Path, overlay: Path, *, fail: bool
-    ) -> tuple[bool, Path, dict[str, Any]]:
+    ) -> tuple[str | None, Path, dict[str, Any]]:
         """Install the overlay with a fake pi, returning the failure flag, the home and the pi manifest entry."""
         home = tmp_path / "home"
         home.mkdir(exist_ok=True)
@@ -2569,6 +2569,26 @@ class TestPiPackageInstallFailure:
             )
         recorded = json.loads((tmp_path / "installed.json").read_text("utf-8"))
         return failed, home, recorded["agents"]["pi"]
+
+    def test_a_failed_package_is_reported_ahead_of_a_size_guard_violation(
+        self, tmp_path: Path, overlay: Path
+    ) -> None:
+        violation = Violation(
+            metric="rule_bytes",
+            target="claude-code",
+            dest_name="r.md",
+            actual=99_999,
+            threshold=5_000,
+            source=tmp_path / "r.md",
+        )
+        failing = CheckResult(
+            passed=False, artifacts=[], violations=[violation], report="failed"
+        )
+
+        with patch("llm_prompts.size_guard.check", return_value=failing):
+            failed, _, _ = self._install(tmp_path, overlay, fail=True)
+
+        assert failed == "pi_package_failed"
 
     def test_first_install_still_seeds_and_records_the_manifest(
         self, tmp_path: Path, overlay: Path
@@ -2625,7 +2645,7 @@ class TestToolInstallIsolation:
         failed = _install(home, manifest, [overlay], targets=["claude-code", "pi"])
 
         recorded = json.loads(manifest.read_text("utf-8"))["agents"]
-        assert failed
+        assert failed == "install_failed"
         assert (home / ".claude/rules/r.md").is_file()
         assert str(home / ".claude/rules/r.md") in recorded["claude-code"]["files"]
         assert "pi" not in recorded
@@ -2650,7 +2670,7 @@ class TestPiHooksInstallFailure:
         ):
             failed = _install(home, manifest, [overlay], pi="/usr/bin/pi", hooks_exit=1)
 
-        assert failed
+        assert failed == "pi_package_failed"
         assert "pi" in json.loads(manifest.read_text("utf-8"))["agents"]
         assert not (home / ".pi/agent/agents/a.md").exists()
         err = capsys.readouterr().err
