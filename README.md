@@ -18,7 +18,7 @@
 | src/llm\_prompts/benchmark/runner/sandbox.py                                  |       61 |        2 |     97% |     47-48 |
 | src/llm\_prompts/benchmark/types.py                                           |      204 |        8 |     96% |71, 76, 107, 112, 115, 126, 157, 170 |
 | src/llm\_prompts/claude\_models.py                                            |       23 |        0 |    100% |           |
-| src/llm\_prompts/cli.py                                                       |      640 |       67 |     90% |97-98, 124-125, 132-145, 251-252, 364-365, 524, 527, 588, 657-669, 747-749, 757-760, 812-821, 1133-1135, 1138-1144, 1147-1149, 1160-1166, 1176, 1181, 1193, 1215-1219, 1338-1339, 1344 |
+| src/llm\_prompts/cli.py                                                       |      641 |       67 |     90% |97-98, 124-125, 132-145, 251-252, 364-365, 524, 527, 588, 657-669, 747-749, 757-760, 812-821, 1138-1140, 1143-1149, 1152-1154, 1165-1171, 1181, 1186, 1198, 1220-1224, 1344-1345, 1350 |
 | src/llm\_prompts/collection\_size.py                                          |      117 |        4 |     97% |245-246, 396, 453 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/contribute.py                                                |      867 |       11 |     99% |153, 300, 1124, 1149, 1349, 1366-1367, 1457-1459, 1800 |
@@ -44,7 +44,6 @@
 | src/llm\_prompts/prompts/shared/skills/git-usage/inspect\_range.py            |       57 |        3 |     95% |59-60, 106 |
 | src/llm\_prompts/prompts/shared/skills/git-usage/rewrite\_range.py            |       90 |        3 |     97% |61, 64, 201 |
 | src/llm\_prompts/prompts/shared/skills/pr-review/filter\_findings.py          |       64 |        3 |     95% | 45-46, 91 |
-| src/llm\_prompts/prompts/shared/skills/pr-triage/pr\_triage.py                |       61 |        1 |     98% |       151 |
 | src/llm\_prompts/prompts/shared/skills/tidy-code/check\_reduction.py          |       42 |        1 |     98% |        97 |
 | src/llm\_prompts/prompts/shared/skills/todos/find\_todos.py                   |       44 |        7 |     84% |96-98, 103-105, 109 |
 | src/llm\_prompts/removed\_agents\_notice.py                                   |       14 |        0 |    100% |           |
@@ -60,13 +59,14 @@
 | src/llm\_prompts/watch/\_\_init\_\_.py                                        |        0 |        0 |    100% |           |
 | src/llm\_prompts/watch/core/\_\_init\_\_.py                                   |        0 |        0 |    100% |           |
 | src/llm\_prompts/watch/core/condition.py                                      |       25 |        3 |     88% | 33, 49-50 |
-| src/llm\_prompts/watch/core/registry.py                                       |       12 |        0 |    100% |           |
-| src/llm\_prompts/watch/core/runner.py                                         |       55 |        1 |     98% |        48 |
+| src/llm\_prompts/watch/core/registry.py                                       |       13 |        0 |    100% |           |
+| src/llm\_prompts/watch/core/runner.py                                         |       66 |        1 |     98% |        55 |
 | src/llm\_prompts/watch/core/source.py                                         |       29 |        0 |    100% |           |
 | src/llm\_prompts/watch/core/store.py                                          |       57 |        1 |     98% |        48 |
 | src/llm\_prompts/watch/sources/\_\_init\_\_.py                                |        0 |        0 |    100% |           |
 | src/llm\_prompts/watch/sources/command.py                                     |       36 |        1 |     97% |        55 |
 | src/llm\_prompts/watch/sources/github\_pr.py                                  |       92 |        9 |     90% |29, 44-49, 88, 119-120, 132 |
+| src/llm\_prompts/watch/sources/github\_triage.py                              |       64 |        4 |     94% |101, 131, 142-143 |
 | tests/benchmark/\_\_init\_\_.py                                               |        0 |        0 |    100% |           |
 | tests/benchmark/conftest.py                                                   |       47 |        1 |     98% |        67 |
 | tests/benchmark/test\_bench\_audit.py                                         |       63 |        0 |    100% |           |
@@ -110,7 +110,6 @@
 | tests/test\_overlay\_merge.py                                                 |       19 |        0 |    100% |           |
 | tests/test\_pi\_extension\_factories.py                                       |        8 |        0 |    100% |           |
 | tests/test\_plugins.py                                                        |      254 |        0 |    100% |           |
-| tests/test\_pr\_triage\_script.py                                             |      108 |        0 |    100% |           |
 | tests/test\_prompt\_checks\_entry\_points.py                                  |       13 |        0 |    100% |           |
 | tests/test\_prompt\_sizes.py                                                  |      664 |        0 |    100% |           |
 | tests/test\_removed\_agents\_notice.py                                        |       29 |        0 |    100% |           |
@@ -127,9 +126,10 @@
 | tests/test\_todos\_script.py                                                  |       88 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      119 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_pr.py                                       |      116 |        0 |    100% |           |
-| tests/watch/test\_runner.py                                                   |       25 |        0 |    100% |           |
+| tests/watch/sources/test\_github\_triage.py                                   |       34 |        0 |    100% |           |
+| tests/watch/test\_runner.py                                                   |       31 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **22545** |  **572** | **97%** |           |
+| **TOTAL**                                                                     | **22493** |  **575** | **97%** |           |
 
 
 ## Setup coverage badge
