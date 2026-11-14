@@ -15,13 +15,14 @@ class StubSource:
     aliases: ClassVar[dict[str, list[str]]] = {}
 
     def __init__(self, label: str, *states: str) -> None:
-        self.label, self.states = label, iter(states)
+        self.label, self.states, self.state = label, iter(states), ""
 
     def describe(self) -> str:
         return self.label
 
     def poll(self) -> Fields:
-        return {"state": next(self.states)}
+        self.state = next(self.states, self.state)
+        return {"state": self.state}
 
 
 def test_watch_stops_when_any_source_matches(
@@ -46,3 +47,26 @@ def test_watch_stops_on_an_early_match_before_polling_a_failing_source() -> None
     sources = [StubSource("a", "done"), StubSource("b")]
 
     assert watch(sources, ["state=done"], interval=0, timeout=5) == 0
+
+
+@pytest.mark.parametrize(
+    ("until", "states", "expected"),
+    [
+        (
+            "changed:state",
+            ("x", "y", "y", "z"),
+            ["a: changed:state (state=y)", "a: changed:state (state=z)"],
+        ),
+        ("state=done", ("x", "done", "done", "x", "done"), ["a: state=done"] * 2),
+    ],
+)
+def test_watch_follow_prints_each_change_once_and_exits_only_on_timeout(
+    capsys: pytest.CaptureFixture[str],
+    until: str,
+    states: tuple[str, ...],
+    expected: list[str],
+) -> None:
+    source = StubSource("a", *states)
+
+    assert watch([source], [until], interval=0, timeout=0.05, follow=True) == 124
+    assert capsys.readouterr().out.splitlines()[:-1] == expected
