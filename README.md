@@ -157,7 +157,7 @@
 | tests/test\_prompt\_checks\_entry\_points.py                                  |       13 |        0 |    100% |           |
 | tests/test\_prompt\_sizes.py                                                  |      664 |        0 |    100% |           |
 | tests/test\_removed\_agents\_notice.py                                        |       29 |        0 |    100% |           |
-| tests/test\_render\_template.py                                               |      135 |        0 |    100% |           |
+| tests/test\_render\_template.py                                               |      137 |        0 |    100% |           |
 | tests/test\_retrospective\_extract.py                                         |       90 |        0 |    100% |           |
 | tests/test\_rewrite\_range\_script.py                                         |       96 |        0 |    100% |           |
 | tests/test\_setup.py                                                          |      352 |        0 |    100% |           |
@@ -173,7 +173,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       28 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       31 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **27763** |  **656** | **98%** |           |
+| **TOTAL**                                                                     | **27765** |  **656** | **98%** |           |
 
 
 ## Setup coverage badge
