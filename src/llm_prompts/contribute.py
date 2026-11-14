@@ -315,6 +315,16 @@ def unfilled_sections(template: str, body: str) -> list[str]:
     ]
 
 
+def empty_sections_message(missing: Sequence[str], tool: str, branch: str) -> str:
+    """Return a message naming the empty PR sections, with the sync flag for any that has one."""
+    many = len(missing) > 1
+    names = " and ".join([", ".join(missing[:-1]), missing[-1]] if many else missing)
+    message = f"PR {'sections' if many else 'section'} {names} {'are' if many else 'is'} empty."
+    if "Why" not in missing:
+        return message
+    return f'{message} Set Why with: llm-prompts contribute sync --tool {tool} --why {branch} "<why>"'
+
+
 def _fill_section(body: str, heading: str, text: str) -> str:
     """Return ``body`` with ``text`` under ``heading`` when that section is missing or empty."""
     if not text or _sections(body).get(heading):
@@ -1817,10 +1827,7 @@ class _RepoSync:
         return bool(missing)
 
     def empty_message(self, entry: WorktreeEntry, missing: Sequence[str]) -> str:
-        return (
-            f"PR section {', '.join(missing)} is empty. Set it with: "
-            f'llm-prompts contribute sync --tool {self.tool} --why {entry.branch} "<why>"'
-        )
+        return empty_sections_message(missing, self.tool, entry.branch)
 
     def settle_body(self, entry: WorktreeEntry, pr: PrState, tip: str) -> None:
         """Refresh a draft PR's title and body, or name a non-draft one whose Depends on lines are out of date."""

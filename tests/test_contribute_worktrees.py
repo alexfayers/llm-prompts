@@ -15,7 +15,7 @@ from unittest.mock import patch
 import pytest
 
 from llm_prompts import cli, contribute, github_api, main_sync, setup, worktrees
-from llm_prompts.contribute import SyncOptions
+from llm_prompts.contribute import SyncOptions, empty_sections_message
 from llm_prompts.exit_reason import ExitReason
 from llm_prompts.worktrees import Link, WorktreeEntry, load_entries
 
@@ -1147,7 +1147,7 @@ def test_a_worktree_without_a_why_is_not_opened_and_the_others_still_sync(
     [create] = project.gh_calls("pr", "create")
     assert create[create.index("--head") + 1] == _remote("feat/b")
     assert (
-        "feat/a: not opened, PR section Why is empty. Set it with: "
+        "feat/a: not opened, PR section Why is empty. Set Why with: "
         'llm-prompts contribute sync --tool tool --why feat/a "<why>"'
     ) in capsys.readouterr().out
 
@@ -1210,7 +1210,7 @@ def test_an_open_pr_with_an_empty_why_is_filled_from_the_record_or_left_alone_an
 
     assert pr_body(project, 100) == empty
     assert (
-        "feat/a: PR #100 body left as it is, PR section Why is empty. Set it with: "
+        "feat/a: PR #100 body left as it is, PR section Why is empty. Set Why with: "
         'llm-prompts contribute sync --tool tool --why feat/a "<why>"'
     ) in capsys.readouterr().out
 
@@ -1218,6 +1218,13 @@ def test_an_open_pr_with_an_empty_why_is_filled_from_the_record_or_left_alone_an
     assert project.run(apply=True) == 0
 
     assert f"## Why\n\n{WHY}\n" in pr_body(project, 100)
+
+
+def test_empty_sections_message_suggests_only_the_relevant_flag() -> None:
+    assert empty_sections_message(["What", "Why"], "tool", "feat/a") == (
+        "PR sections What and Why are empty. Set Why with: "
+        'llm-prompts contribute sync --tool tool --why feat/a "<why>"'
+    )
 
 
 def test_a_hand_written_why_is_kept_over_the_recorded_one(
