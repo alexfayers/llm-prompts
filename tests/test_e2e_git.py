@@ -13,7 +13,7 @@ from types import ModuleType
 
 import pytest
 
-from llm_prompts import cli, plugins, setup
+from llm_prompts import cli, main_sync, plugins, setup
 
 _SCRIPT = (
     Path(__file__).parent.parent
@@ -203,6 +203,49 @@ class TestPullLocalSourceE2E:
         assert list((clone / ".git").glob("rebase-*")) == []
         assert git(clone, "status", "--porcelain") == ""
         assert subjects(clone) == ["local change", "base"]
+
+
+class TestSquashedWorktreeCopyE2E:
+    """e2e: a local squash of a worktree is dropped once its PR is squash-merged upstream."""
+
+    @pytest.mark.parametrize("updated_branch", [False, True])
+    def test_e2e_squashed_copy_of_a_multi_commit_pr_is_dropped_after_its_squash_merge(
+        self, clone: Path, other: Path, updated_branch: bool
+    ) -> None:
+        lines = "".join(f"l{n}\n" for n in range(1, 11))
+        commit_file(other, "f.txt", lines, "chore: f")
+        git(other, "push", "-q", "origin", "main")
+        git(clone, "pull", "-q", "--ff-only")
+        git(other, "checkout", "-q", "-b", "pr")
+        first = lines.replace("l5\n", "a1\n")
+        commit_file(other, "f.txt", first, "feat: a")
+        commit_file(other, "f.txt", first.replace("l9\n", "a2\n"), "feat: a2")
+        git(other, "push", "-q", "origin", "pr:refs/pull/5/head")
+        date = git(other, "log", "--format=%aI", "--reverse", "main..pr").splitlines()[
+            0
+        ]
+        git(clone, "fetch", "-q", "origin", "refs/pull/5/head")
+        git(clone, "cherry-pick", "-n", "main..FETCH_HEAD")
+        git(clone, "commit", "-q", "-m", "feat: a", "--date", date)
+        if updated_branch:
+            git(other, "checkout", "-q", "main")
+            commit_file(other, "f.txt", lines.replace("l2\n", "u1\n"), "chore: u1")
+            git(other, "push", "-q", "origin", "main")
+            git(other, "checkout", "-q", "pr")
+            git(other, "merge", "-q", "--no-edit", "main")
+            git(other, "push", "-q", "origin", "pr:refs/pull/5/head")
+        git(other, "checkout", "-q", "main")
+        git(other, "merge", "-q", "--squash", "pr")
+        git(other, "commit", "-q", "-m", "feat: a (#5)")
+        later = git(other, "show", "main:f.txt").replace("a1\n", "z\n")
+        commit_file(other, "f.txt", later, "chore: later")
+        git(other, "push", "-q", "origin", "main")
+        git(clone, "fetch", "-q")
+
+        result = main_sync.sync_diverged(clone)
+
+        assert result.mode != "failed", result
+        assert git(clone, "log", "--format=%s", "origin/main..main") == ""
 
 
 class TestPluginsE2E:

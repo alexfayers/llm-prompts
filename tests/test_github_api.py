@@ -122,6 +122,22 @@ class TestRequest:
 
         assert caught.value.stderr == "HTTP 401: Bad credentials"
 
+    def test_http_error_details_reach_the_message(
+        self, fake_github: FakeGitHub
+    ) -> None:
+        fake_github.on(
+            "POST",
+            "/pulls",
+            http_error(422, "Validation Failed", "A pull request already exists."),
+        )
+
+        with pytest.raises(subprocess.CalledProcessError) as caught:
+            github_api.request("POST", "/pulls", {})
+
+        assert caught.value.stderr == (
+            "HTTP 422: Validation Failed: A pull request already exists."
+        )
+
     def test_connection_failure_matches_the_transient_pattern(
         self, fake_github: FakeGitHub
     ) -> None:

@@ -22,7 +22,7 @@ These rules MUST override others.
 - Same logical change also covers same-topic-different-angle, not just a bug fix - MUST fold it immediately: `--squash=<target>` when directly correcting (keeps both messages), `--fixup=<target>` for another angle (keeps the better message).
 - Before amending, MUST check `git -P log --oneline @{u}..HEAD`. Empty output means HEAD is already pushed - MUST NOT amend; make a new commit instead.
 - If using a focus chain, the last task MUST be committing the changes.
-- MUST work in a `git worktree` on your own unpushed branch, then squash it into local `main` as one commit (a fixup onto it is fine). PRs come from local `main` via `llm-prompts contribute`. MUST NOT use a fresh clone.
+- MUST work in a `git worktree` on your own unpushed branch, with your commits. PRs come from that worktree via `llm-prompts contribute`, which squashes them into one commit on local `main`. MUST NOT use a fresh clone.
 - MUST keep history linear, no merge commits. MUST fold one branch into another via `git rebase` or fast-forward; `git merge` only for an already-pushed/shared branch you can't rewrite. MUST rebase away an accidental unpushed merge commit.
 - MUST resolve conflicts with `git checkout <ref> -- <file>`, MUST NOT `--ours`/`--theirs` - `--ours` = base in `git rebase` but current branch in `git merge`. Name the ref (e.g. `origin/main`) instead.
 
