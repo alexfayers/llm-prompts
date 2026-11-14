@@ -39,6 +39,6 @@ description: Coding guidelines to follow when generating, reviewing, or modifyin
 - MUST verify an integration feature against the real target, not just a stub. MUST probe read-only first (`--dry-run`, `stat` before and after), then run the real path, and state which parts were stub-tested.
 - Tests MUST run through the project's standard build/test invocation, never a bespoke script outside it.
 - For any change that adds or repositions UI, you MUST render the page and look at it before claiming done. Where a plan flagged a layout risk, MUST resolve it in the design rather than defer.
-- MUST add tests only for new behaviour or a reported bug. A refactor MUST rely on existing tests. If no test covers the refactored code, MUST add one test through its public entry point.
+- MUST add tests only for new behaviour or a reported bug. A refactor MUST rely on existing tests. If no test covers the refactored code, MUST add one test through its public entry point. MUST decline a reviewer's request for tests that conflicts with the test rules, stating why.
 - When delegating test-writing, MUST state that the motivating real-world case stays out of the suite.
 - MUST NOT predict a runnable tool's output (linter, formatter, type checker, tests, compiler, `--help`) - run it and read the result.
