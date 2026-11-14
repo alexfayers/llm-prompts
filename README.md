@@ -9,12 +9,12 @@
 | src/llm\_prompts/benchmark/\_\_init\_\_.py                                    |        1 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/agents/\_\_init\_\_.py                             |       18 |        3 |     83% |25, 28, 31 |
 | src/llm\_prompts/benchmark/agents/adapter.py                                  |       32 |        3 |     91% |     17-19 |
-| src/llm\_prompts/benchmark/agents/claude.py                                   |      151 |       37 |     75% |56, 68-71, 75, 79-102, 127-142, 145-146, 158, 161, 168 |
+| src/llm\_prompts/benchmark/agents/claude.py                                   |      151 |       35 |     77% |56, 68-71, 75, 79-102, 127-142, 145-146, 158 |
 | src/llm\_prompts/benchmark/agents/files.py                                    |       53 |       21 |     60% |28, 32, 55-56, 63-70, 75-83 |
-| src/llm\_prompts/benchmark/agents/pi.py                                       |      129 |       14 |     89% |57-59, 109, 119, 126-143, 147 |
+| src/llm\_prompts/benchmark/agents/pi.py                                       |      129 |        3 |     98% |109, 128, 147 |
 | src/llm\_prompts/benchmark/cell/\_\_init\_\_.py                               |        0 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/cell/audit.py                                      |       96 |       11 |     89% |58-60, 126, 153-163 |
-| src/llm\_prompts/benchmark/cell/env.py                                        |       24 |        1 |     96% |        61 |
+| src/llm\_prompts/benchmark/cell/env.py                                        |       24 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/cell/home\_dirs.py                                 |       81 |        9 |     89% |60-63, 95, 104-109 |
 | src/llm\_prompts/benchmark/cell/memory.py                                     |      121 |        3 |     98% |   151-153 |
 | src/llm\_prompts/benchmark/guard/\_\_init\_\_.py                              |        0 |        0 |    100% |           |
@@ -24,7 +24,12 @@
 | src/llm\_prompts/benchmark/runner/events.py                                   |       64 |        1 |     98% |        52 |
 | src/llm\_prompts/benchmark/runner/process.py                                  |       79 |        3 |     96% | 67-68, 83 |
 | src/llm\_prompts/benchmark/runner/sandbox.py                                  |       61 |        2 |     97% |     47-48 |
-| src/llm\_prompts/benchmark/types.py                                           |      204 |        5 |     98% |71, 76, 112, 157, 170 |
+| src/llm\_prompts/benchmark/scenarios/\_\_init\_\_.py                          |        0 |        0 |    100% |           |
+| src/llm\_prompts/benchmark/scenarios/checks/\_\_init\_\_.py                   |      138 |        1 |     99% |        95 |
+| src/llm\_prompts/benchmark/scenarios/checks/context.py                        |       44 |        1 |     98% |        92 |
+| src/llm\_prompts/benchmark/scenarios/checks/judge.py                          |       89 |        1 |     99% |       121 |
+| src/llm\_prompts/benchmark/scenarios/loader.py                                |      138 |        0 |    100% |           |
+| src/llm\_prompts/benchmark/types.py                                           |      204 |        1 |     99% |       112 |
 | src/llm\_prompts/claude\_models.py                                            |       23 |        0 |    100% |           |
 | src/llm\_prompts/cli.py                                                       |      641 |       67 |     90% |97-98, 124-125, 132-145, 251-252, 364-365, 524, 527, 588, 657-669, 747-749, 757-760, 812-821, 1138-1140, 1143-1149, 1152-1154, 1165-1171, 1181, 1186, 1198, 1220-1224, 1344-1345, 1350 |
 | src/llm\_prompts/collection\_size.py                                          |      117 |        4 |     97% |245-246, 396, 453 |
@@ -76,9 +81,11 @@
 | src/llm\_prompts/watch/sources/github\_pr.py                                  |       92 |        9 |     90% |29, 44-49, 88, 119-120, 132 |
 | src/llm\_prompts/watch/sources/github\_triage.py                              |       64 |        4 |     94% |101, 131, 142-143 |
 | tests/benchmark/\_\_init\_\_.py                                               |        0 |        0 |    100% |           |
-| tests/benchmark/conftest.py                                                   |       60 |        1 |     98% |        89 |
+| tests/benchmark/conftest.py                                                   |       66 |        1 |     98% |       102 |
 | tests/benchmark/test\_bench\_agents.py                                        |       32 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_audit.py                                         |       63 |        0 |    100% |           |
+| tests/benchmark/test\_bench\_check\_sandbox.py                                |       59 |        0 |    100% |           |
+| tests/benchmark/test\_bench\_checks.py                                        |      180 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_env.py                                           |       54 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_guard\_pi.py                                     |       41 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_guard\_rules.py                                  |       17 |        0 |    100% |           |
@@ -87,8 +94,10 @@
 | tests/benchmark/test\_bench\_memory\_server.py                                |       79 |        1 |     99% |        85 |
 | tests/benchmark/test\_bench\_paths.py                                         |       13 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_process.py                                       |      124 |        0 |    100% |           |
+| tests/benchmark/test\_bench\_repo\_checks.py                                  |       98 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_runner\_events.py                                |       69 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_sandbox\_policy.py                               |       78 |        0 |    100% |           |
+| tests/benchmark/test\_bench\_scenarios.py                                     |      118 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_tool\_dirs.py                                    |       36 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_types.py                                         |        5 |        0 |    100% |           |
 | tests/benchmark/traces.py                                                     |        3 |        0 |    100% |           |
@@ -143,7 +152,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       28 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       31 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **23525** |  **658** | **97%** |           |
+| **TOTAL**                                                                     | **24395** |  **643** | **97%** |           |
 
 
 ## Setup coverage badge
