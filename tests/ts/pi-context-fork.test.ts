@@ -200,6 +200,20 @@ describe("fork tool", () => {
 			assert.equal(seen.args.includes("--no-mcp"), false);
 			assert.equal(seen.handshake.bridge, undefined);
 		});
+
+		test("without the proxy, reports whether the child's prefix matches main's last request and flags a mismatch in the result line", async () => {
+			delete process.env.PI_CONTEXT_MCP_PROXY;
+			trackMain();
+			process.env.STUB_PREFIX = prefixHash(mainPayload);
+			const matched = (await fork({ task: "x" })).tool;
+			assert.equal(matched.details.prefix, "match");
+			assert.doesNotMatch(matched.content[0].text, /prefix mismatch/);
+			process.env.STUB_PREFIX = "other";
+			const missed = (await fork({ task: "x" })).tool;
+			delete process.env.STUB_PREFIX;
+			assert.equal(missed.details.prefix, "mismatch");
+			assert.match(missed.content[0].text, /\[fork [\w-]+: prefix mismatch, cache /);
+		});
 	});
 
 	describe("as a cold worker", () => {

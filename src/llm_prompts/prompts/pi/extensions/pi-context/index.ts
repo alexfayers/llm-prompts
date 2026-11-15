@@ -2,7 +2,7 @@
 // Env: PI_CONTEXT_CHILD (path of the handshake JSON `{role, worktree?, bridge?}`; set only in a delegated session), PI_CONTEXT_MCP_PROXY (1: forks use main's MCP servers)
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Background, registerBackgroundHooks } from "./background.ts";
-import { mcpProxyEnabled, readBridgeConfig, registerChildBridge, trackPrefix } from "./bridge.ts";
+import { readBridgeConfig, registerChildBridge, reportPrefixToFile, trackPrefix } from "./bridge.ts";
 import { registerBtw } from "./btw.ts";
 import { registerFork } from "./fork.ts";
 import { childGuard } from "./roles.ts";
@@ -14,8 +14,9 @@ export default function (pi: ExtensionAPI) {
 		pi.on("tool_call", childGuard(handshake));
 		const bridge = readBridgeConfig(handshake);
 		if (bridge) registerChildBridge(pi, bridge);
+		else reportPrefixToFile(pi, handshake);
 	} else {
-		if (mcpProxyEnabled()) trackPrefix(pi);
+		trackPrefix(pi);
 		if (!process.env.PI_HERDSMAN_MAILBOX) registerBackgroundHooks(pi, background);
 	}
 	registerFork(pi, undefined, background);

@@ -5,7 +5,7 @@ import path from "node:path";
 import net from "node:net";
 import { after, describe, mock, test } from "node:test";
 import { loadExtension, useEnv } from "./helpers.ts";
-import { connectBridge, describeMain, prefixHash, serveBridge } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
+import { connectBridge, describeMain, prefixHash, reportPrefixToFile, serveBridge } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
 import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-bridge-"));
@@ -82,6 +82,18 @@ describe("prefixHash", () => {
 		assert.notEqual(prefixHash(base), prefixHash({ ...base, system: [{ text: "t" }] }));
 		assert.notEqual(prefixHash(base), prefixHash({ ...base, toolConfig: { tools: [{ name: "b" }] } }));
 		assert.notEqual(prefixHash({ system: "s", tools: [{ name: "a" }] }), prefixHash({ system: "s", tools: [] }));
+	});
+});
+
+describe("reportPrefixToFile", () => {
+	test("a delegate with its own MCP servers writes its first request's prefix hash next to the handshake", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-prefix-"));
+		let handler: any;
+		reportPrefixToFile({ on: (_event: string, listener: unknown) => (handler = listener) } as any, path.join(dir, "handshake.json"));
+		handler({ payload: { system: "s", tools: [] } });
+		handler({ payload: { system: "later", tools: [] } });
+		assert.equal(fs.readFileSync(path.join(dir, "prefix"), "utf8"), prefixHash({ system: "s", tools: [] }));
+		fs.rmSync(dir, { recursive: true });
 	});
 });
 

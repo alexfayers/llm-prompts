@@ -2,6 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import net from "node:net";
+import { dirname } from "node:path";
 import { createInterface } from "node:readline";
 
 const out = (record) => process.stdout.write(`${JSON.stringify(record)}\n`);
@@ -66,6 +67,8 @@ for await (const line of createInterface({ input: process.stdin })) {
 	const command = JSON.parse(line);
 	const respond = (data) => out({ id: command.id, type: "response", command: command.type, success: true, data });
 	if (command.type === "prompt") {
+		const bridged = JSON.parse(readFileSync(handshake, "utf8")).bridge;
+		if (process.env.STUB_PREFIX && !bridged) writeFileSync(`${dirname(handshake)}/prefix`, process.env.STUB_PREFIX);
 		reply = await replyTo(command.message);
 		respond({ disposition: "started" });
 		out({ type: "message_end", message: { role: "assistant", usage: usage(100) } });

@@ -7,7 +7,7 @@ import { getAgentDir, type ExtensionAPI, type ExtensionContext, type SessionEntr
 import { Type } from "typebox";
 import { parseOutcome, projectResult } from "../outcome-codes.ts";
 import { Background } from "./background.ts";
-import { describeMain, lastPrefixHash, mcpProxyEnabled, serveBridge, type BridgeOptions } from "./bridge.ts";
+import { describeMain, lastPrefixHash, mcpProxyEnabled, PREFIX_FILE, serveBridge, type BridgeOptions } from "./bridge.ts";
 import { createWorktree, land, type Event, type Landing, type Worktree } from "./merge.ts";
 import { coldCard, ROLES, type Role } from "./roles.ts";
 import { registryOf, type Run, type RunState } from "./registry.ts";
@@ -94,6 +94,8 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 			onUi: relayDialog(name, ctx),
 		});
 		const turn = await child.prompt(model ? message : `${role.card}\n\n${message}`);
+		const reported = !model && !bridge && readText(path.join(files, PREFIX_FILE));
+		if (reported) prefix = reported === lastPrefixHash() ? "match" : "mismatch";
 		await onTurn?.(turn, (next) => child!.prompt(next));
 		return { ...turn, prefix };
 	} finally {
@@ -104,6 +106,14 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 }
 
 const WORKTREES = "worktrees";
+
+const readText = (file: string) => {
+	try {
+		return fs.readFileSync(file, "utf8");
+	} catch {
+		return undefined;
+	}
+};
 
 function describeLanding(landing: Landing, tree: Worktree): string {
 	if (landing.state === "escalated") return `escalated: ${landing.reason}\nworktree kept at ${tree.path} on branch ${tree.branch}`;
@@ -204,7 +214,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			const end = endOf(ref, turn, merged.landing);
 			registry.update(runId, { ...end, endedAt: Date.now() });
 			pi.appendEntry("result-cap", { ref: end.ref, text: turn.text });
-			const cache = turn.firstUsage ? `cache ${turn.firstUsage.cacheRead}/${turn.firstUsage.cacheWrite}, ` : "";
+			const cache = `${turn.prefix === "mismatch" ? "prefix mismatch, " : ""}${turn.firstUsage ? `cache ${turn.firstUsage.cacheRead}/${turn.firstUsage.cacheWrite}, ` : ""}`;
 			return {
 				content: [{ type: "text", text: `${projectResult(turn.text)}\n[fork ${name}: ${cache}ref ${end.ref}]${merged.landing && tree ? `\n[merge: ${describeLanding(merged.landing, tree)}]` : ""}` }],
 				details: { name, role: role.name, outcome: end.outcome, usage: turn.usage, firstUsage: turn.firstUsage, prefix: turn.prefix, merge: merged.landing },

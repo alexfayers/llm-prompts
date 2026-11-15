@@ -161,6 +161,18 @@ export function trackPrefix(pi: ExtensionAPI): void {
 	pi.on("before_provider_request", ({ payload }) => void (lastPrefix = prefixHash(payload)));
 }
 
+export const PREFIX_FILE = "prefix";
+
+/** In a delegate with its own MCP servers: writes the prefix hash of its first provider request next to the handshake file. */
+export function reportPrefixToFile(pi: ExtensionAPI, handshakeFile: string): void {
+	let reported = false;
+	pi.on("before_provider_request", ({ payload }) => {
+		if (reported) return;
+		reported = true;
+		fs.writeFileSync(path.join(path.dirname(handshakeFile), PREFIX_FILE), prefixHash(payload), { mode: 0o600 });
+	});
+}
+
 /** In a delegate without MCP servers: registers main's MCP tools as proxies and declares main's tools and servers section. */
 export function registerChildBridge(pi: ExtensionAPI, config: BridgeConfig): void {
 	let connection: Promise<BridgeClient> | undefined;
