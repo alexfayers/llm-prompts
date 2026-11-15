@@ -17,37 +17,66 @@ const rows = (n: number) => Array.from({ length: 240 }, (_, i) => `row ${n}.${i}
 
 useEnv({ CONTEXT_FOLD: "on", CONTEXT_FOLD_PENDING_TOKENS: "100", CONTEXT_FOLD_KEEP_TOKENS: "1500", PI_CONTEXT_CHILD: undefined, AWS_REGION: process.env.AWS_REGION ?? "us-east-1" });
 
-for (const modelId of MODELS)
-	test(`after a fold ${modelId} accepts the next run and reads the cached prefix`, { skip: !process.env.PI_CONTEXT_INTEGRATION || !process.env.PI_CONTEXT_PROVIDER || !process.env.PI_CONTEXT_MODELS, timeout: 600_000 }, async () => {
-		const agentDir = process.env.PI_CONTEXT_AGENT_DIR;
-		assert.ok(agentDir && path.resolve(agentDir) !== path.join(os.homedir(), ".pi", "agent"), "PI_CONTEXT_AGENT_DIR must name a scratch agent directory");
-		process.env.PI_CODING_AGENT_DIR = agentDir;
-		const modelRuntime = await ModelRuntime.create({ authPath: path.join(agentDir, "auth.json"), modelsPath: path.join(agentDir, "models.json") });
-		const lookup = (pi: ExtensionAPI) =>
-			pi.registerTool({ name: "lookup", label: "lookup", description: "Returns the rows for n", parameters: Type.Object({ n: Type.Integer() }), async execute(_id, params) { return { content: [{ type: "text", text: rows(params.n) }], details: {} }; } });
-		const resourceLoader = new DefaultResourceLoader({ cwd: os.tmpdir(), agentDir, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, extensionFactories: [lookup, contextFold] });
-		await resourceLoader.reload();
-		const sessionManager = SessionManager.inMemory(os.tmpdir());
-		const { session } = await createAgentSession({ cwd: os.tmpdir(), agentDir, modelRuntime, thinkingLevel: "high", resourceLoader, sessionManager, settingsManager: SettingsManager.inMemory({ defaultProvider: PROVIDER, defaultModel: modelId } as any), tools: ["lookup"] });
-		const requests: { cacheRead: number; total: number; stop: string; error?: string }[] = [];
-		session.subscribe((event) => {
-			if (event.type !== "message_end" || event.message.role !== "assistant") return;
-			const { usage, stopReason, errorMessage } = event.message;
-			requests.push({ cacheRead: usage.cacheRead, total: usage.input + usage.cacheRead + usage.cacheWrite, stop: stopReason, error: errorMessage });
-		});
-		await session.bindExtensions({});
-		const model = modelRuntime.getModel(PROVIDER, modelId);
-		assert.ok(model, `model ${modelId} missing`);
-		await session.setModel(model);
+const FIRST_PROMPT = `${facts(500)}\n\nCall lookup with n=1. After its result, think hard about whether the rows are consistent, then call lookup with n=2. After its result, think hard again, then reply with only the word done.`;
 
-		await session.prompt(`${facts(500)}\n\nCall lookup with n=1. After its result, think hard about whether the rows are consistent, then call lookup with n=2. After its result, think hard again, then reply with only the word done.`);
-		const folds = sessionManager.getEntries().filter((entry: any) => entry.type === "custom" && entry.customType === "context-fold");
+async function open(modelId: string) {
+	const agentDir = process.env.PI_CONTEXT_AGENT_DIR;
+	assert.ok(agentDir && path.resolve(agentDir) !== path.join(os.homedir(), ".pi", "agent"), "PI_CONTEXT_AGENT_DIR must name a scratch agent directory");
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	const modelRuntime = await ModelRuntime.create({ authPath: path.join(agentDir, "auth.json"), modelsPath: path.join(agentDir, "models.json") });
+	const state = { rejectNext: false };
+	const lookup = (pi: ExtensionAPI) => {
+		pi.registerTool({ name: "lookup", label: "lookup", description: "Returns the rows for n", parameters: Type.Object({ n: Type.Integer() }), async execute(_id, params) { return { content: [{ type: "text", text: rows(params.n) }], details: {} }; } });
+		pi.on("before_provider_request", (event) => (state.rejectNext ? { ...(event.payload as object), messages: [] } : undefined));
+	};
+	const resourceLoader = new DefaultResourceLoader({ cwd: os.tmpdir(), agentDir, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, extensionFactories: [lookup, contextFold] });
+	await resourceLoader.reload();
+	const sessionManager = SessionManager.inMemory(os.tmpdir());
+	const { session } = await createAgentSession({ cwd: os.tmpdir(), agentDir, modelRuntime, thinkingLevel: "high", resourceLoader, sessionManager, settingsManager: SettingsManager.inMemory({ defaultProvider: PROVIDER, defaultModel: modelId } as any), tools: ["lookup"] });
+	const requests: { cacheRead: number; total: number; stop: string; error?: string }[] = [];
+	session.subscribe((event) => {
+		if (event.type !== "message_end" || event.message.role !== "assistant") return;
+		const { usage, stopReason, errorMessage } = event.message;
+		requests.push({ cacheRead: usage.cacheRead, total: usage.input + usage.cacheRead + usage.cacheWrite, stop: stopReason, error: errorMessage });
+	});
+	await session.bindExtensions({});
+	const model = modelRuntime.getModel(PROVIDER, modelId);
+	assert.ok(model, `model ${modelId} missing`);
+	await session.setModel(model);
+	const records = () => sessionManager.getEntries().filter((entry: any) => entry.type === "custom" && entry.customType === "context-fold").map((entry: any) => entry.data.trigger);
+	return { session, state, requests, records };
+}
+
+const skip = !process.env.PI_CONTEXT_INTEGRATION || !process.env.PI_CONTEXT_PROVIDER || !process.env.PI_CONTEXT_MODELS;
+
+for (const modelId of MODELS) {
+	test(`after a fold ${modelId} accepts the next run and reads the cached prefix`, { skip, timeout: 600_000 }, async () => {
+		const { session, requests, records } = await open(modelId);
+		await session.prompt(FIRST_PROMPT);
 		const firstRun = requests.length;
 		await session.prompt("Think step by step. Call lookup with n=3, then reply with only the word ok.");
 		session.dispose();
 
 		assert.deepEqual(requests.filter((request) => request.stop === "error").map((request) => request.error), []);
-		assert.ok(folds.length > 0, "the first run folded nothing");
+		assert.equal(records()[0], "run-end");
+		assert.ok(!records().includes("revert"));
 		assert.ok(requests.length - firstRun >= 2, "the second run made fewer than 2 requests");
 		assert.ok(requests[firstRun].cacheRead >= MIN_RATIO * requests[0].total, `cache read ${requests[firstRun].cacheRead} of a ${requests[0].total} token prefix`);
 	});
+
+	test(`after a rejected request ${modelId} gets the folded entries back and reads the cached prefix`, { skip, timeout: 600_000 }, async () => {
+		const { session, state, requests, records } = await open(modelId);
+		await session.prompt(FIRST_PROMPT);
+		state.rejectNext = true;
+		await session.prompt("Reply with only the word ok.");
+		state.rejectNext = false;
+		const rejected = requests.length;
+		await session.prompt("Reply with only the word ok.");
+		session.dispose();
+
+		assert.equal(requests[rejected - 1].stop, "error");
+		assert.deepEqual(records(), ["run-end", "revert"]);
+		assert.notEqual(requests[rejected].stop, "error");
+		assert.ok(requests[rejected].cacheRead >= MIN_RATIO * requests[0].total, `cache read ${requests[rejected].cacheRead} of a ${requests[0].total} token prefix`);
+	});
+}

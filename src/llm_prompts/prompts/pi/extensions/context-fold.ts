@@ -17,6 +17,7 @@ const CHARS_PER_TOKEN = 4;
 const NEVER_FOLDED = new Set(["checkpoint", "asks", "ask_user", "compact_now", "fork", "reload_now"]);
 const MIN_RESULT_CHARS = 800;
 const ARGS_CHARS = 120;
+const ERROR_CHARS = 200;
 const NO_TEXT = "(reasoning omitted)";
 
 const edit = (targetId: string, text: string): SessionBoundaryDraft => ({ type: "context_edit", targetId, replacement: { content: [{ type: "text", text }] } });
@@ -24,7 +25,8 @@ const tokens = (chars: number): number => Math.ceil(chars / CHARS_PER_TOKEN);
 const blocks = (message: Message): Block[] => (Array.isArray(message.content) ? message.content : []);
 const textOf = (message: Message): string => blocks(message).map((block) => block.text ?? "").join("");
 const envNumber = (name: string, fallback: number): number => Number(process.env[name]) || fallback;
-const sizeOf = ({ messages }: Projected): number => tokens(messages.reduce((sum, message) => sum + JSON.stringify(message.content ?? "").length, 0));
+const charsOf = (content: unknown): number => JSON.stringify(content ?? "", (key, value) => (key === "thinkingSignature" ? undefined : value)).length;
+const sizeOf = ({ messages }: Projected): number => tokens(messages.reduce((sum, message) => sum + charsOf(message.content), 0));
 
 function foldable({ sourceEntry, messages }: Projected): Message | undefined {
 	const [message] = messages;
@@ -33,7 +35,7 @@ function foldable({ sourceEntry, messages }: Projected): Message | undefined {
 	return JSON.stringify(message.content) === JSON.stringify(sourceEntry.message?.content) && full.length >= MIN_RESULT_CHARS && !HANDOFF_LINE.test(full) ? message : undefined;
 }
 
-export function planFold(entries: Projected[], branch: Entry[], { keepTokens }: { keepTokens: number }): FoldPlan {
+export function planFold(entries: Projected[], branch: Entry[], { keepTokens, skip = new Set() }: { keepTokens: number; skip?: ReadonlySet<string> }): FoldPlan {
 	const calls = new Map<string, Block>();
 	for (const { messages } of entries)
 		for (const message of messages) for (const block of message.role === "assistant" ? blocks(message) : []) if (block.type === "toolCall" && block.id) calls.set(block.id, block);
@@ -43,7 +45,7 @@ export function planFold(entries: Projected[], branch: Entry[], { keepTokens }: 
 	const refs = new Map<string, string>();
 	for (const entry of entries.slice(0, keepStart)) {
 		const message = foldable(entry);
-		if (!message) continue;
+		if (!message || skip.has(entry.sourceEntry.id)) continue;
 		const callId = message.toolCallId ?? "";
 		const stored = branch.find((candidate) => candidate.customType === "result-cap" && candidate.data?.ref === `rc-${callId}`)?.data;
 		const full = stored?.text ?? textOf(message);
@@ -60,29 +62,52 @@ export function planFold(entries: Projected[], branch: Entry[], { keepTokens }: 
 	for (const { sourceEntry, messages } of plan.targets.length ? entries : []) {
 		const [message] = messages;
 		const seen = message?.role === "toolResult" ? receiptEntryId(textOf(message)) : undefined;
-		if (seen && refs.has(seen))
+		if (seen && refs.has(seen) && !skip.has(sourceEntry.id))
 			plan.drafts.push(edit(sourceEntry.id, `unchanged since entry ${seen}, whose result was folded; result_fetch({ref:"${refs.get(seen)}"}) resends it`));
 	}
 	const first = entries.findIndex((entry) => plan.targets.includes(entry.sourceEntry.id));
 	for (const { sourceEntry, messages } of first < 0 ? [] : entries.slice(first)) {
 		const [message] = messages;
-		if (message?.role !== "assistant") continue;
+		if (message?.role !== "assistant" || skip.has(sourceEntry.id)) continue;
 		const kept = blocks(message).filter((block) => block.type !== "thinking");
 		if (kept.length === blocks(message).length) continue;
 		plan.drafts.push(kept.length ? { type: "context_edit", targetId: sourceEntry.id, replacement: { content: kept as unknown as ContextEditableContent } } : edit(sourceEntry.id, NO_TEXT));
-		plan.savedTokens += tokens(JSON.stringify(blocks(message)).length - JSON.stringify(kept).length);
+		plan.savedTokens += tokens(charsOf(blocks(message)) - charsOf(kept));
 	}
 	return plan;
 }
 
+export function restoreDrafts(entries: Projected[], ids: string[]): SessionBoundaryDraft[] {
+	return entries.flatMap(({ sourceEntry }) =>
+		ids.includes(sourceEntry.id) && sourceEntry.message?.content ? [{ type: "context_edit" as const, targetId: sourceEntry.id, replacement: { content: sourceEntry.message.content as ContextEditableContent } }] : [],
+	);
+}
+
 export default function (pi: ExtensionAPI) {
 	if (process.env.PI_CONTEXT_CHILD) return;
+	let unconfirmed: string[] = [];
+	let stopped = false;
+	pi.on("turn_end", (event) => {
+		if (event.outcome === "completed") unconfirmed = [];
+	});
 	pi.on("agent_before_settle", (event, ctx) => {
 		const mode = process.env.CONTEXT_FOLD ?? DEFAULT_MODE;
-		if (mode === "off" || event.outcome !== "completed") return;
-		const plan = planFold(event.context.contextEntries as unknown as Projected[], ctx.sessionManager.getBranch() as unknown as Entry[], { keepTokens: envNumber("CONTEXT_FOLD_KEEP_TOKENS", DEFAULT_KEEP_TOKENS) });
+		const entries = event.context.contextEntries as unknown as Projected[];
+		if (mode === "off") return;
+		if (event.outcome === "error" && unconfirmed.length) {
+			const reason = ([...event.context.contextMessages] as { errorMessage?: string }[]).reverse().find((message) => message.errorMessage)?.errorMessage ?? "";
+			const record = { type: "custom" as const, customType: "context-fold", data: { trigger: "revert", targets: unconfirmed } };
+			const drafts = restoreDrafts(entries, unconfirmed);
+			unconfirmed = [];
+			stopped = true;
+			if (ctx.hasUI) ctx.ui.notify(`context-fold: reverted ${drafts.length} folded entries and stopped folding after a rejected request: ${reason.slice(0, ERROR_CHARS)}`, "warning");
+			return { entries: [...event.entries, ...drafts, record] };
+		}
+		if (stopped || event.outcome !== "completed") return;
+		const plan = planFold(entries, ctx.sessionManager.getBranch() as unknown as Entry[], { keepTokens: envNumber("CONTEXT_FOLD_KEEP_TOKENS", DEFAULT_KEEP_TOKENS), skip: new Set(event.entries.flatMap((draft) => (draft.type === "context_edit" ? [draft.targetId] : []))) });
 		if (plan.savedTokens < envNumber("CONTEXT_FOLD_PENDING_TOKENS", DEFAULT_PENDING_TOKENS)) return;
 		const record = { type: "custom" as const, customType: "context-fold", data: { trigger: "run-end", mode, targets: plan.targets, savedTokens: plan.savedTokens, argChars: plan.argChars } };
+		if (mode === "on") unconfirmed = plan.drafts.flatMap((draft) => (draft.type === "context_edit" ? [draft.targetId] : []));
 		if (ctx.hasUI) ctx.ui.notify(`context-fold: ${mode === "on" ? "folded" : "would fold"} ${plan.targets.length} old tool results, saves ~${plan.savedTokens} tokens`, "info");
 		return { entries: [...event.entries, ...(mode === "on" ? plan.drafts : []), record] };
 	});

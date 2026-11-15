@@ -20,10 +20,11 @@ const project = (entries: Raw[], edits: Record<string, object[] | null> = {}) =>
 
 useEnv({ CONTEXT_FOLD: "on", CONTEXT_FOLD_PENDING_TOKENS: "100", CONTEXT_FOLD_KEEP_TOKENS: "1500", PI_CONTEXT_CHILD: undefined });
 
-async function settle(entries: Raw[], { edits = {}, outcome = "completed", branch = entries, proposed = [] as object[] } = {}) {
-	const ext = await loadExtension("context-fold");
+async function settle(entries: Raw[], { edits = {}, outcome = "completed", branch = entries, proposed = [] as object[], errorMessage = "", loaded = undefined as Awaited<ReturnType<typeof loadExtension>> | undefined } = {}) {
+	const ext = loaded ?? (await loadExtension("context-fold"));
 	const ctx = ext.makeCtx({ sessionManager: { getBranch: () => branch } as any });
-	const out = await ext.fire("agent_before_settle", { outcome, entries: proposed, continue: false, context: { contextEntries: project(entries, edits) } }, ctx);
+	const contextMessages = errorMessage ? [{ role: "assistant", stopReason: "error", errorMessage }] : [];
+	const out = await ext.fire("agent_before_settle", { outcome, entries: proposed, continue: false, context: { contextEntries: project(entries, edits), contextMessages } }, ctx);
 	return { ext, ctx, out, added: (out?.entries ?? []).slice(proposed.length) as any[] };
 }
 
@@ -133,5 +134,39 @@ describe("agent_before_settle", () => {
 		process.env.CONTEXT_FOLD = "on";
 		process.env.PI_CONTEXT_CHILD = "/tmp/handshake.json";
 		assert.deepEqual((await loadExtension("context-fold")).handlers, {});
+	});
+
+	test("a rejected request right after a fold restores the folded entries, stops folding and says why", async () => {
+		const first = await settle(OLD_RESULTS);
+		const folded = first.added.filter((draft) => draft.type === "context_edit").map((draft) => [draft.targetId, draft.replacement.content]);
+		const edits = Object.fromEntries(folded);
+		const { added, ctx, ext } = await settle(OLD_RESULTS, { loaded: first.ext, edits, outcome: "error", errorMessage: `400 bad request ${"!".repeat(300)}` });
+		assert.deepEqual(added.filter((draft) => draft.type === "context_edit").map((draft) => [draft.targetId, draft.replacement.content]), [["r1", [text(BIG)]]]);
+		assert.equal(added.at(-1).data.trigger, "revert");
+		assert.match(ctx.notices[0][0], /^context-fold: reverted .*400 bad request !+$/);
+		assert.ok(ctx.notices[0][0].length < 400);
+		assert.equal((await settle(OLD_RESULTS, { loaded: ext })).out, undefined);
+	});
+
+	test("an error with no fold before it, or after a completed turn, changes nothing", async () => {
+		assert.equal((await settle(OLD_RESULTS, { outcome: "error" })).out, undefined);
+		const { ext, ctx } = await settle(OLD_RESULTS);
+		await ext.fire("turn_end", { outcome: "completed", entries: [] }, ctx);
+		assert.equal((await settle(OLD_RESULTS, { loaded: ext, outcome: "error" })).out, undefined);
+	});
+
+	test("an entry another extension already proposed to edit is left to it", async () => {
+		const proposed = [{ type: "context_edit", targetId: "r1", replacement: null }, { type: "context_edit", targetId: "a2", replacement: { content: [text("x")] } }];
+		const entries = [user("u0"), assistant("a1", call("c1")), result("r1", "c1", "bash", BIG), assistant("a2", thinking("t"), call("c2")), result("r2", "c2", "bash", BIG), assistant("a3", text("done"))];
+		const { added } = await settle(entries, { proposed });
+		assert.deepEqual(added.filter((draft) => draft.targetId === "r1" || draft.targetId === "a2"), []);
+	});
+
+	test("a thinking signature counts toward neither the newest-context window nor the saving", async () => {
+		const signed = { type: "thinking", thinking: "t", thinkingSignature: "S".repeat(40000) };
+		const entries = [user("u0"), assistant("a1", call("c1")), result("r1", "c1", "bash", BIG), assistant("a2", signed, call("c2")), result("r2", "c2", "bash", BIG), assistant("a3", signed, text("done"))];
+		const { added } = await settle(entries);
+		assert.deepEqual(added.find((draft) => draft.customType === "context-fold").data.targets, ["r1"]);
+		assert.ok(added.find((draft) => draft.customType === "context-fold").data.savedTokens < 1100);
 	});
 });

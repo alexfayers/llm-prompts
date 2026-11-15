@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { fauxAssistantMessage, fauxProvider, fauxText, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxThinking, fauxToolCall, type FauxResponseStep } from "@earendil-works/pi-ai";
 import { createAgentSession, DefaultResourceLoader, type ExtensionAPI, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import contextFold from "../../src/llm_prompts/prompts/pi/extensions/context-fold.ts";
@@ -13,7 +13,7 @@ useEnv({ CONTEXT_FOLD: "on", CONTEXT_FOLD_PENDING_TOKENS: "100", CONTEXT_FOLD_KE
 
 const BIG = "z".repeat(4000);
 
-test("pi accepts a run-end fold and the next request holds the stub, no later thinking and every call with its result", async () => {
+async function start(...responses: FauxResponseStep[]) {
 	const dir = mkdtempSync(join(tmpdir(), "context-fold-"));
 	const faux = fauxProvider();
 	const modelRuntime = await ModelRuntime.create({ authPath: join(dir, "auth.json"), modelsPath: null, refreshOnCreate: false });
@@ -26,17 +26,29 @@ test("pi accepts a run-end fold and the next request holds the stub, no later th
 	const { session } = await createAgentSession({ cwd: dir, agentDir: dir, model: faux.getModel(), modelRuntime, resourceLoader, sessionManager, settingsManager: SettingsManager.inMemory({}), tools: ["big"] });
 	await session.bindExtensions({});
 	const requests: any[] = [];
-	faux.setResponses([
-		fauxAssistantMessage([fauxThinking("T1"), fauxToolCall("big", {})]),
-		fauxAssistantMessage([fauxThinking("T2"), fauxToolCall("big", {})]),
-		fauxAssistantMessage([fauxThinking("T3"), fauxText("done")]),
-		(context: unknown) => (requests.push(context), fauxAssistantMessage("again")),
-	]);
+	faux.setResponses(responses.map((step) => (typeof step === "function" ? (context, ...rest) => (requests.push(context), step(context, ...rest)) : step)));
+	return {
+		session,
+		sessionManager,
+		requests,
+		finish() {
+			session.dispose();
+			rmSync(dir, { recursive: true });
+		},
+	};
+}
 
+const TWO_BIG_CALLS = [
+	fauxAssistantMessage([fauxThinking("T1"), fauxToolCall("big", {})]),
+	fauxAssistantMessage([fauxThinking("T2"), fauxToolCall("big", {})]),
+	fauxAssistantMessage([fauxThinking("T3"), fauxText("done")]),
+];
+
+test("pi accepts a run-end fold and the next request holds the stub, no later thinking and every call with its result", async () => {
+	const { session, sessionManager, requests, finish } = await start(...TWO_BIG_CALLS, () => fauxAssistantMessage("again"));
 	await session.prompt("go");
 	await session.prompt("again?");
-	session.dispose();
-	rmSync(dir, { recursive: true });
+	finish();
 
 	const entries = sessionManager.getEntries();
 	assert.deepEqual(entries.filter((entry) => entry.type === "custom" && entry.customType === "context-fold").map((entry: any) => entry.data.mode), ["on"]);
@@ -47,4 +59,22 @@ test("pi accepts a run-end fold and the next request holds the stub, no later th
 	assert.ok(sent.includes("T1") && !sent.includes("T2") && !sent.includes("T3"));
 	const calls = messages.flatMap((message) => (message.role === "assistant" ? message.content.filter((block: any) => block.type === "toolCall").map((block: any) => block.id) : []));
 	assert.deepEqual(calls.sort(), messages.filter((message) => message.role === "toolResult").map((message) => message.toolCallId).sort());
+});
+
+test("pi accepts the undo of a fold after a rejected request and the request after it holds the full results again", async () => {
+	const { session, sessionManager, requests, finish } = await start(
+		...TWO_BIG_CALLS,
+		() => fauxAssistantMessage("", { stopReason: "error", errorMessage: "400 thinking block rejected" }),
+		() => fauxAssistantMessage("third"),
+	);
+	await session.prompt("go");
+	await session.prompt("again?");
+	await session.prompt("once more?");
+	finish();
+
+	const records = sessionManager.getEntries().filter((entry: any) => entry.type === "custom" && entry.customType === "context-fold").map((entry: any) => entry.data.trigger);
+	assert.deepEqual(records, ["run-end", "revert"]);
+	const sent = JSON.stringify(requests.at(-1).messages);
+	assert.equal(sent.split(BIG).length - 1, 2);
+	assert.ok(!sent.includes("[folded:") && sent.includes("T2"));
 });
