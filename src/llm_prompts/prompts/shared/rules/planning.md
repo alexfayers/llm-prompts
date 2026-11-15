@@ -58,7 +58,7 @@ Before planning, in order: Explore agents, one per independent dimension, for ex
 - This gates {% if AGENT == "pi" %}presenting a plan{% else %}calling `EnterPlanMode`{% endif %} however trivial, before any research or plan-writing spend. A context-usage notice stays live until {% if AGENT == "pi" %}compaction{% else %}a new session{% endif %}.
 - Once the user approves continuing past a context-usage notice, that approval stands for the session - MUST NOT re-ask, except on a new signal: a worse notice tier not yet seen, or a task the approval wouldn't cover.
 {% if AGENT == "pi" %}
-- Past the context threshold, MUST compact with `compact_now` and an `instructions` summary naming the open tasks, asks and decisions.
+- Past the context threshold, MUST first `checkpoint rewind` finished detours, then compact with `compact_now` and an `instructions` summary naming the open tasks, asks and decisions, only if that isn't enough.
 - At a clean point - work small, committed, verified, nothing mid-flight - SHOULD run `compact_now` or persist the plan and TODOs as memory `task/` entities rather than asking the user to pick.
 {% else %}
 - At a clean handoff point - work small, committed, verified, nothing mid-flight - SHOULD run `handoff` or persist the plan and TODOs as memory `task/` entities rather than asking the user to pick.
