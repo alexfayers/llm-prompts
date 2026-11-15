@@ -45,6 +45,21 @@ describe("reload_now", () => {
 		assert.equal(reloads, 0);
 	});
 
+	test("neither the tool nor the command reloads while a background fork is live", async () => {
+		const key = Symbol.for("pi-context.registry");
+		(globalThis as any)[key] = { live: () => [{ name: "a", background: true }, { name: "fg", background: false }, { name: "b", background: true }] };
+		try {
+			const ext = await loadExtension("reload-now");
+			await assert.rejects(ext.callTool("reload_now"), /background forks a, b are still running.*fork_cancel/);
+			await ext.fire("agent_settled", { aborted: false });
+			assert.deepEqual(ext.pi.sent, []);
+			const { reloads } = await runCommand(ext, true);
+			assert.equal(reloads, 0);
+		} finally {
+			delete (globalThis as any)[key];
+		}
+	});
+
 	test("the command reloads, then the new copy continues the task", async () => {
 		const ext = await loadExtension("reload-now");
 		const { copies: [copy] } = await runCommand(ext, true);

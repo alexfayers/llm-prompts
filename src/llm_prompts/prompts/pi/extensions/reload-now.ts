@@ -10,6 +10,16 @@ const RESUMES = Symbol.for("llm-prompts.reload-now");
 
 const resumes = ((globalThis as any)[RESUMES] ??= new Map<string, () => void>()) as Map<string, () => void>;
 
+const liveForks = (): string[] =>
+	((globalThis as { [key: symbol]: { live(): { name: string; background: boolean }[] } | undefined })[Symbol.for("pi-context.registry")]?.live() ?? []).filter((run) => run.background).map((run) => run.name);
+
+/** Why the session cannot reload now, if it cannot. */
+function blocker(): string | undefined {
+	if (process.env.PI_HERDSMAN_MAILBOX) return MANAGED_MESSAGE;
+	const forks = liveForks();
+	return forks.length ? `Not reloading: background forks ${forks.join(", ")} are still running, and a reload would end them. Wait for them to finish, or stop them with fork_cancel.` : undefined;
+}
+
 export default function (pi: ExtensionAPI) {
 	let requested = false;
 
@@ -32,7 +42,8 @@ export default function (pi: ExtensionAPI) {
 		promptSnippet: "Reload extensions, skills and context files after this turn, then continue",
 		parameters: Type.Object({}),
 		async execute() {
-			if (process.env.PI_HERDSMAN_MAILBOX) throw new Error(MANAGED_MESSAGE);
+			const blocked = blocker();
+			if (blocked) throw new Error(blocked);
 			requested = true;
 			return {
 				content: [{ type: "text", text: "Reload requested. Pi reloads after this turn, then sends a message to continue." }],
@@ -45,8 +56,9 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("reload-now", {
 		description: "Reload extensions, skills, prompts and context files, then continue the task",
 		handler: async (_args, ctx) => {
-			if (process.env.PI_HERDSMAN_MAILBOX) {
-				ctx.ui.notify(MANAGED_MESSAGE, "error");
+			const blocked = blocker();
+			if (blocked) {
+				ctx.ui.notify(blocked, "error");
 				return;
 			}
 			if (!ctx.isIdle()) {
