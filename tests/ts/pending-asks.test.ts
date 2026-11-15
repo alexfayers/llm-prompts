@@ -43,4 +43,16 @@ describe("pending asks", () => {
 		await ext.fire("session_start", {}, headless);
 		assert.deepEqual(widgets, []);
 	});
+
+	test("without a UI the restate rule is injected once per branch", async () => {
+		const { ext } = await load();
+		const branch: unknown[] = [];
+		const headless = ext.makeCtx({ hasUI: false, sessionManager: { getBranch: () => branch } as any });
+		const first = await ext.fire("before_agent_start", { prompt: "hi" }, headless);
+		assert.match(first.message.content, /MUST restate EVERY pending ask/);
+		assert.equal(first.message.display, false);
+		branch.push({ type: "custom_message", customType: first.message.customType });
+		assert.equal(await ext.fire("before_agent_start", { prompt: "again" }, headless), undefined);
+		assert.equal(await ext.fire("before_agent_start", { prompt: "hi" }, (await load()).ctx), undefined);
+	});
 });

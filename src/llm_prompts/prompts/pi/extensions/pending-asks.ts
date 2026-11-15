@@ -1,10 +1,12 @@
-// Pins the questions awaiting the user in a widget above the editor, so messages need not restate them.
+// Pins the questions awaiting the user in a widget above the editor, so messages need not restate them, and restores the restate rule when there is no UI.
 // Commands: /asks
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 const ENTRY_TYPE = "pending-asks";
 const WIDGET_KEY = "pending-asks";
+const RULE_TYPE = "pending-asks-rule";
+export const RESTATE_RULE = `Where something awaits the user's decision, MUST restate EVERY pending ask in full in each message until it is answered - MUST NOT back-reference them ("the two from earlier", "the previous proposal").`;
 
 type AskEntry = { type: string; customType?: string; data?: { action?: "add" | "resolve"; id?: string; text?: string } };
 export type Ask = { id: string; text: string };
@@ -43,6 +45,11 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", (_event, ctx) => refresh(ctx));
 	pi.on("session_tree", (_event, ctx) => refresh(ctx));
+
+	pi.on("before_agent_start", (_event, ctx) => {
+		if (ctx.hasUI || branchEntries(ctx).some((entry) => entry.customType === RULE_TYPE)) return undefined;
+		return { message: { customType: RULE_TYPE, content: `${RESTATE_RULE} This overrides any rule against restating pinned asks.`, display: false } };
+	});
 
 	pi.registerTool({
 		name: "asks",
