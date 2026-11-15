@@ -1,4 +1,4 @@
-// Closes finished agent panes in Herdr, reports merged worktrees, and kills orphaned processes left by dead agent panes, all within the current workspace.
+// Closes finished herdsman agent panes in Herdr (not under the pi-context runtime), reports merged worktrees, and kills orphaned processes left by dead agent panes, all within the current workspace.
 // Commands: /pane-reaper on|off|close <pane-id>
 // Config: pane-reaper.json keys enabled, graceSeconds, intervalSeconds
 // Env: HERDR_ENV (1 when running inside Herdr)
@@ -68,6 +68,8 @@ const MERGED_PR_LIMIT = 200;
 const mergedBranches = new Set<string>();
 const notMergedCheckedAt = new Map<string, number>();
 let mergedListing: Promise<Set<string> | undefined> | undefined;
+
+const isPiContext = (): boolean => Symbol.for("pi-context.registry") in globalThis;
 
 async function herdr(args: string[]): Promise<string> {
 	return (await execFileAsync("herdr", args, { timeout: HERDR_TIMEOUT_MS })).stdout;
@@ -485,7 +487,7 @@ export default function (pi: ExtensionAPI) {
 	async function check(ui: ExtensionContext["ui"], config: Config, listAll = false): Promise<number> {
 		const workspaceId = await currentWorkspaceId();
 		if (!workspaceId) return 0;
-		const result = await sweep(optionsFor(config, workspaceId));
+		const result = isPiContext() ? { closed: [], asked: [] } : await sweep(optionsFor(config, workspaceId));
 		for (const candidate of result.closed) ui.notify(`pane-reaper closed ${describe(candidate)}`, "info");
 		for (const candidate of result.asked) {
 			const message = `pane-reaper: ${describe(candidate)}. Close it with /pane-reaper close ${candidate.paneId}`;
@@ -542,7 +544,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", (_event, ctx) => {
 		if (ctx.mode !== "tui") return;
-		if (process.env.HERDR_ENV !== "1") tellOnce(ctx.ui, "no-herdr", NO_HERDR_WARNING, "warning");
+		if (process.env.HERDR_ENV !== "1" && !isPiContext()) tellOnce(ctx.ui, "no-herdr", NO_HERDR_WARNING, "warning");
 		if (isTopLevelLead(process.env) && readConfig(configPath).enabled) startTimer(ctx.ui);
 	});
 	pi.on("session_shutdown", () => stopTimer());

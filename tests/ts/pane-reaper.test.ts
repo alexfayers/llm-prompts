@@ -391,6 +391,25 @@ describe("session start", () => {
 		assert.deepEqual(notices(ext).map(([text, level]) => [level, /herdr/i.test(text)]), [["warning", true]]);
 	});
 
+	test("under pi-context skips the herdsman panes and the Herdr warning", async () => {
+		const key = Symbol.for("pi-context.registry");
+		(globalThis as any)[key] = {};
+		try {
+			setEnv();
+			world.panes = [pane("w1:p2", "w1:t2", recent())];
+			addState("w1:p2");
+			const inHerdr = await load();
+			await start(inHerdr);
+			assert.ok(!world.herdr.some((line) => line.endsWith("close w1:t2")));
+			setEnv({ HERDR_ENV: undefined });
+			const outside = await load();
+			await start(outside);
+			assert.deepEqual([...notices(inHerdr), ...notices(outside)], []);
+		} finally {
+			delete (globalThis as any)[key];
+		}
+	});
+
 	test("a flagged pane is mentioned once across sessions", async () => {
 		setEnv();
 		world.panes = [pane("w1:p3", "w1:t3", recent({ status: "working" }))];
