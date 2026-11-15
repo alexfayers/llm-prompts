@@ -45,7 +45,7 @@ describe("//btw", () => {
 		assert.equal(type, "pi-context-btw");
 		assert.equal(data.q, "STUB_INSPECT");
 		const seen = JSON.parse(data.a.replace(/^echo: /, ""));
-		assert.deepEqual(seen.handshake, { role: "btw" });
+		assert.deepEqual(seen.handshake, { role: "btw", inherited: "r1" });
 		assert.deepEqual(seen.seed.slice(1).map((entry: any) => entry.id), ["u1", "a1", "r1"]);
 		assert.match(seen.prompt, /one side question[\s\S]*STUB_INSPECT$/);
 		assert.deepEqual(sent, []);

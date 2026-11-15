@@ -20,8 +20,8 @@ export type Block = { block: true; reason: string };
 
 const WARM_OPENING = "You are the delegate that the conversation above asked to fork, so do not call fork.";
 const COLD_OPENING = "You are a delegate given one self-contained task, so do not call fork.";
-const OUTCOME = "Open the final reply with `OUTCOME <code> ref:<ref>`. Put any question for the user on a line starting `ASK:` and do not ask the user directly.";
-const READ_TOOLS = ["read", "grep", "find", "ls", "bash", "codemode", "lsp_diagnostics", "web_search", "fetch_content", "get_search_content", "result_fetch", "result_query", "transcript", "tower_do_status"];
+const OUTCOME = "Checkpoint rewind your own finished detours. Open the final reply with `OUTCOME <code> ref:<ref>`. Put any question for the user on a line starting `ASK:` and do not ask the user directly.";
+const READ_TOOLS = ["checkpoint", "read", "grep", "find", "ls", "bash", "codemode", "lsp_diagnostics", "web_search", "fetch_content", "get_search_content", "result_fetch", "result_query", "transcript", "tower_do_status"];
 const READ_MCP = [
 	"mcp__semble__*",
 	"mcp__memory__read_*",
@@ -150,11 +150,12 @@ export function rewriteForWorktree(toolName: string, input: Record<string, unkno
 
 const optionalString = (value: unknown) => (typeof value === "string" ? value : undefined);
 
-function readHandshake(file: string): { role: Role; worktree?: string; repo?: string } | undefined {
+/** Reads a delegate's handshake. `inherited` is the last entry a warm fork copied from main's session. */
+export function readHandshake(file: string): { role: Role; worktree?: string; repo?: string; inherited?: string } | undefined {
 	try {
-		const { role, worktree, repo } = JSON.parse(fs.readFileSync(file, "utf8")) as { role?: string; worktree?: unknown; repo?: unknown };
+		const { role, worktree, repo, inherited } = JSON.parse(fs.readFileSync(file, "utf8")) as { role?: string; worktree?: unknown; repo?: unknown; inherited?: unknown };
 		if (role === undefined || !Object.hasOwn(ROLES, role)) return undefined;
-		return { role: ROLES[role as Role["name"]], worktree: optionalString(worktree), repo: optionalString(repo) };
+		return { role: ROLES[role as Role["name"]], worktree: optionalString(worktree), repo: optionalString(repo), inherited: optionalString(inherited) };
 	} catch {
 		return undefined;
 	}

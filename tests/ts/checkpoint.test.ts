@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, test } from "node:test";
-import { loadExtension } from "./helpers.ts";
+import { decide, ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
+import { loadExtension, useEnv } from "./helpers.ts";
 
 type Details = Record<string, unknown>;
 const entry = (id: string, message: object) => ({ id, type: "message", message });
@@ -28,6 +32,8 @@ async function endTurn(ext: any, ctx: any, rewind: any, turn: { messageEntryId: 
 	const toolResults = turn.results ?? [rewind.message];
 	return ext.fire("turn_end", { toolResults, toolResultEntryIds: turn.resultIds, messageEntryId: turn.messageEntryId, entries: [] }, ctx);
 }
+
+useEnv({ PI_CONTEXT_CHILD: undefined });
 
 const nulled = (out: any) => out.entries.filter((e: any) => e.replacement === null).map((e: any) => e.targetId);
 const TWO_MARKS = [
@@ -211,4 +217,32 @@ test("a rewind keeps a user message sent after the target in context, in summary
 	const raw = await load(entries.map((e) => (e.id === "r5" ? rewindResult("r5", "c5", "a", "raw") : e)));
 	const rawOut = await endTurn(raw.ext, raw.ctx, rewindResult("r5", "c5", "a", "raw"), { messageEntryId: "a5", resultIds: ["r5"] });
 	assert.ok(!nulled(rawOut).includes("u1"));
+});
+
+describe("checkpoint in a fork", () => {
+	const handshake = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "checkpoint-fork-")), "handshake.json");
+	fs.writeFileSync(handshake, JSON.stringify({ role: "reader", inherited: "r2" }));
+	useEnv({ PI_CONTEXT_CHILD: handshake });
+
+	test("a fork may rewind within its own steps but not into the history it inherited, and may not compact", async () => {
+		const { ext, ctx } = await load([
+			entry("u0", { role: "user", content: "main" }),
+			call("a1", ["c1", "checkpoint", { action: "mark" }]),
+			mark("r1", "c1", "main"),
+			call("a2", ["c2", "read", { path: "x" }]),
+			result("r2", "c2", "read", "main text"),
+			entry("u3", { role: "user", content: "task" }),
+			call("a4", ["c4", "read", { path: "y" }]),
+			result("r4", "c4", "read", "fork text"),
+			call("a5", ["c5", "checkpoint", { action: "mark" }]),
+			mark("r5", "c5", "own"),
+		]);
+		assert.equal(decide(ROLES.reader, "checkpoint", {}), undefined);
+		assert.ok(decide(ROLES.writer, "compact_now", {}));
+		for (const target of ["own", "-1"]) assert.equal((await ext.callTool("checkpoint", { action: "rewind", target, summary: "s" }, ctx)).details.target, target);
+		for (const target of ["main", "-2"]) await assert.rejects(ext.callTool("checkpoint", { action: "rewind", target, summary: "s" }, ctx), /copied from the main session/);
+		const branch = ctx.sessionManager.getBranch() as any[];
+		ctx.sessionManager.buildSessionProjection = () => ({ entries: branch.slice(5).map((e) => ({ sourceEntry: e, messages: [e.message] })) }) as any;
+		assert.equal((await ext.callTool("checkpoint", { action: "rewind", target: "own", summary: "s" }, ctx)).details.target, "own");
+	});
 });

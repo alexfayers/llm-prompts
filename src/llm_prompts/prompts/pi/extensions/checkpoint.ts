@@ -1,5 +1,6 @@
 // Adds the checkpoint tool: mark a point, then rewind to replace the work since a mark or an earlier tool call with a summary or the raw tool results.
-// Env: CHECKPOINT_SHAPE (set to result to carry the fold in the rewind tool result instead of a separate message)
+// Env: CHECKPOINT_SHAPE (set to result to carry the fold in the rewind tool result instead of a separate message), PI_CONTEXT_CHILD (a delegate's handshake, whose inherited entries a rewind may not reach)
+import fs from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
@@ -50,6 +51,21 @@ function resolve(entries: Projected[], target: string): string | undefined {
 	return named ? calls.filter((call) => call.name === named[1])[Number(named[2]) - 1]?.callId : undefined;
 }
 
+/** The last entry a warm fork copied from main's session, named by its handshake. */
+function inheritedEntry(handshake: string | undefined): string | undefined {
+	try {
+		return handshake ? (JSON.parse(fs.readFileSync(handshake, "utf8")) as { inherited?: string }).inherited : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Whether the call comes after the entry `inherited`, so a rewind to it folds only the session's own steps. */
+function after(branch: Entry[], callId: string, inherited: string): boolean {
+	const floor = branch.findIndex((entry) => entry.id === inherited);
+	return floor >= 0 && branch.findIndex((entry) => callIds(entry.message).includes(callId)) > floor;
+}
+
 function boundary(entries: Projected[], callId: string): number {
 	const ids = callIds(entries.find((entry) => callIds(entry.sourceEntry.message).includes(callId))?.sourceEntry.message);
 	return entries.reduce((last, entry, index) => (ids.includes(entry.sourceEntry.message?.toolCallId ?? "") ? index : last), -1);
@@ -70,6 +86,7 @@ function rawResults(messages: Message[]): string {
 
 export default function (pi: ExtensionAPI) {
 	const inResult = process.env.CHECKPOINT_SHAPE === "result";
+	const inherited = inheritedEntry(process.env.PI_CONTEXT_CHILD);
 
 	pi.registerTool({
 		name: "checkpoint",
@@ -105,6 +122,8 @@ export default function (pi: ExtensionAPI) {
 					`${target ? `unknown checkpoint "${target}"` : "no marks to rewind to"}. Target ${marks}, -N for the Nth tool call back, or <tool>#<n> for the nth call of that tool back.${calls.length ? `\nRecent calls:\n${calls.join("\n")}` : ""}`,
 				);
 			}
+			if (inherited && !after(ctx.sessionManager.getBranch() as Entry[], resolve(entries, target) ?? "", inherited))
+				throw new Error(`checkpoint "${target}" is in the history this fork copied from the main session. Rewind only to a step after your task message.`);
 			const mode = params.mode ?? "summary";
 			if (mode === "summary" && !params.summary) throw new Error("rewind in summary mode needs a summary");
 			return reply(`rewinding to "${target}"`, { action: "rewind", target, mode, summary: params.summary });

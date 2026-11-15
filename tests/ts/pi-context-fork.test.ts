@@ -75,7 +75,7 @@ describe("fork tool", () => {
 		assert.deepEqual(seen.args.slice(0, 2), ["--mode", "rpc"]);
 		assert.deepEqual(seen.args.slice(4), ["--model", "prov/mod", "--thinking", "high"]);
 		assert.equal(seen.cwd, process.cwd());
-		assert.deepEqual(seen.handshake, { role: "reader" });
+		assert.deepEqual(seen.handshake, { role: "reader", inherited: "r1" });
 		assert.equal(seen.handshakeMode, 0o600);
 		assert.equal(seen.seed[0].cwd, process.cwd());
 		assert.notEqual(seen.seed[0].id, "main-id");

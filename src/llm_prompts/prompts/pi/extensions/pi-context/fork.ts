@@ -9,7 +9,7 @@ import { parseOutcome, projectResult } from "../outcome-codes.ts";
 import { Background } from "./background.ts";
 import { describeMain, lastPrefixHash, mcpProxyEnabled, PREFIX_FILE, serveBridge, type BridgeOptions } from "./bridge.ts";
 import { createWorktree, dropIfClean, gitOut, land, restoreWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
-import { coldCard, expandHome, ROLES, type Role } from "./roles.ts";
+import { coldCard, expandHome, readHandshake, ROLES, type Role } from "./roles.ts";
 import { isLive, registryOf, type Run, type RunState } from "./registry.ts";
 import { RpcChild, type Turn, type UiAnswer, type UiRequest } from "./runner.ts";
 import { pinForkAsks } from "./wake.ts";
@@ -94,7 +94,8 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 		let prefix: "match" | "mismatch" | undefined;
 		const onPrefix = model ? undefined : (hash: string) => void (prefix = hash === lastPrefixHash() ? "match" : "mismatch");
 		bridge = mcp && (await serveBridge(files, { role, execute: mcp, onPrefix }));
-		fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, repo, bridge: bridge && { ...describeMain(pi, ctx, model ? role : undefined), socket: bridge.socket } }), { mode: 0o600 });
+		const inherited = model ? undefined : resume ? readHandshake(handshake)?.inherited : entries.at(-1)?.id;
+		fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, repo, inherited, bridge: bridge && { ...describeMain(pi, ctx, model ? role : undefined), socket: bridge.socket } }), { mode: 0o600 });
 		if (model) fs.writeFileSync(cardFile, coldCard(role), { mode: 0o600 });
 		else if (!resume) fs.writeFileSync(seed, jsonl([{ ...ctx.sessionManager.getHeader(), id: randomUUID(), ...(cwd && { cwd }) }, ...entries]), { mode: 0o600 });
 		child = RpcChild.start({
