@@ -1,5 +1,7 @@
 // Decides which fork runs wake the main session, and builds their digest lines.
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { projectResult } from "../outcome-codes.ts";
+import { openAsks, pinAsk } from "../pending-asks.ts";
 import type { Run } from "./registry.ts";
 
 export type WakeReason = "blocked-on-user" | "failed" | "notify" | "invalid" | "error" | "lost" | "finished";
@@ -19,6 +21,18 @@ export function wakeReason(run: Run): WakeReason | undefined {
 }
 
 const NEVER_CUT = /^(ASK:|DENIED: ")/;
+
+const ASK = /^ASK:\s*(.*)$/;
+const askPrefix = (run: Pick<Run, "id" | "name">) => `fork-${run.name}-${run.id}-`;
+
+/** Pins each `ASK:` line of a fork's reply as a pending ask. */
+export function pinForkAsks(pi: Pick<ExtensionAPI, "appendEntry">, ctx: Pick<ExtensionContext, "hasUI" | "ui" | "sessionManager">, run: Pick<Run, "id" | "name">, text: string): void {
+	const asks = text.split("\n").flatMap((line) => ASK.exec(line)?.slice(1) ?? []);
+	asks.forEach((ask, index) => pinAsk(pi, ctx, `${askPrefix(run)}${index + 1}`, `${run.name}: ${ask}`));
+}
+
+/** Whether a fork's pinned asks are still open on the branch. */
+export const hasOpenAsks = (entries: Parameters<typeof openAsks>[0], run: Run): boolean => openAsks(entries).some((ask) => ask.id.startsWith(askPrefix(run)));
 
 /** One digest entry: the run, its code, the lines of its reply main keeps, a note and its ref. ASK and DENIED lines are never cut. */
 export function digestLine(run: Run, text: string, note?: string): string {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { beforeEach, describe, test } from "node:test";
+import { openAsks } from "../../src/llm_prompts/prompts/pi/extensions/pending-asks.ts";
 import { Background, registerBackgroundHooks } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/background.ts";
 import { Registry, type Run } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 
@@ -7,18 +8,28 @@ const run = (id: string, patch: Partial<Run> = {}): Run => ({ id, name: id, role
 const done = (code = "done") => ({ state: "done" as const, outcome: code, ref: "rc" });
 
 let sent: [{ customType: string; content: string }, Record<string, unknown>][];
+let appended: { type: string; customType: string; data: any }[];
 let registry: Registry;
 let background: Background;
 const ctx = (idle = true) => ({ isIdle: () => idle }) as any;
 beforeEach(() => {
 	sent = [];
+	appended = [];
 	registry = new Registry();
-	background = new Background({ sendMessage: (message: any, options: any) => sent.push([message, options]) } as any, registry);
+	background = new Background({ sendMessage: (message: any, options: any) => sent.push([message, options]), appendEntry: (customType: string, data: any) => appended.push({ type: "custom", customType, data }) } as any, registry);
 	registry.start(run("a"));
 	registry.start(run("b"));
 });
 
 describe("Background", () => {
+	test("each ASK line of a finished run is pinned as a pending ask named after the fork", () => {
+		background.finish(ctx(), "a", { state: "blocked", outcome: "blocked-on-user", ref: "rc" }, "OUTCOME blocked-on-user ref:rc\nASK: A or B?\nASK: keep it?");
+		assert.deepEqual(openAsks(appended), [
+			{ id: "fork-a-a-1", text: "a: A or B?" },
+			{ id: "fork-a-a-2", text: "a: keep it?" },
+		]);
+	});
+
 	test("each finished run wakes an idle main at once, while another run is still live", () => {
 		background.finish(ctx(), "a", done(), "OUTCOME done ref:rc");
 		assert.deepEqual(sent, [[{ customType: "pi-context-results", content: "[fork a done] ref rc", display: true }, { triggerTurn: true }]]);

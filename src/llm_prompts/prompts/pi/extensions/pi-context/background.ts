@@ -2,7 +2,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isLive, registryOf, type Registry, type Run } from "./registry.ts";
 import type { LiveView, Watchable } from "./live-view.ts";
-import { Coalescer, digestLine, wakeReason } from "./wake.ts";
+import { Coalescer, digestLine, pinForkAsks, wakeReason } from "./wake.ts";
 
 export const RESULTS_TYPE = "pi-context-results";
 
@@ -14,12 +14,12 @@ export class Background {
 	private children = new Map<string, Steerable>();
 	private coalescer = new Coalescer();
 	private holding = false;
-	private pi: Pick<ExtensionAPI, "sendMessage">;
+	private pi: Pick<ExtensionAPI, "sendMessage" | "appendEntry">;
 	private registry: Registry;
 	/** Shows the run's activity in the UI once its child is attached. */
 	view: LiveView | undefined;
 
-	constructor(pi: Pick<ExtensionAPI, "sendMessage">, registry: Registry = registryOf()) {
+	constructor(pi: Pick<ExtensionAPI, "sendMessage" | "appendEntry">, registry: Registry = registryOf()) {
 		this.pi = pi;
 		this.registry = registry;
 	}
@@ -47,8 +47,8 @@ export class Background {
 		if (refused) throw new Error(`fork ${name} did not take the message: ${refused}`);
 	}
 
-	/** Records how a background run ended, and wakes main. A cancelled run is ignored. */
-	finish(ctx: Pick<ExtensionContext, "isIdle">, runId: string, patch: Partial<Run>, text: string, note?: string): void {
+	/** Records how a background run ended, pins what it asks, and wakes main. A cancelled run is ignored. */
+	finish(ctx: Pick<ExtensionContext, "isIdle" | "hasUI" | "ui" | "sessionManager">, runId: string, patch: Partial<Run>, text: string, note?: string): void {
 		this.controllers.delete(runId);
 		this.children.delete(runId);
 		const current = this.registry.get(runId);
@@ -56,6 +56,7 @@ export class Background {
 		const held = this.holding;
 		const run = this.registry.update(runId, { ...patch, endedAt: Date.now() });
 		if (!run) return;
+		pinForkAsks(this.pi, ctx, run, text);
 		this.coalescer.add(run, text, note);
 		if (wakeReason(run) && !held) this.wake(ctx);
 	}

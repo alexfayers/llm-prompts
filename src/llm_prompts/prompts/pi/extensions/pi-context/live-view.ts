@@ -6,6 +6,7 @@ import os from "node:os";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { isLive, registryOf, type Registry, type Run } from "./registry.ts";
+import { hasOpenAsks } from "./wake.ts";
 
 type Event = { [key: string]: any };
 export type Watchable = { watch(listener: (record: Event) => void): () => void };
@@ -192,7 +193,9 @@ export function registerLiveView(pi: ExtensionAPI, view: LiveView, registry: Reg
 			const name = args.trim();
 			if (!name) {
 				const now = Date.now();
-				ctx.ui.notify(runs.length ? runs.slice(0, RECENT).map((run) => `${run.name} ${run.state} ${elapsed((run.endedAt ?? now) - run.startedAt)}`).join("\n") : "no forks", "info");
+				const entries = ctx.sessionManager.getBranch() as Parameters<typeof hasOpenAsks>[0];
+				const ask = (run: Run) => (hasOpenAsks(entries, run) ? ` ${ctx.ui.theme.fg("warning", "? ask")}` : "");
+				ctx.ui.notify(runs.length ? runs.slice(0, RECENT).map((run) => `${run.name} ${run.state} ${elapsed((run.endedAt ?? now) - run.startedAt)}${ask(run)}`).join("\n") : "no forks", "info");
 				return;
 			}
 			const run = runs.find((candidate) => candidate.name === name);

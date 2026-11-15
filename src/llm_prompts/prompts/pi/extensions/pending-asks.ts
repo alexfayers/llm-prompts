@@ -24,14 +24,22 @@ const lines = (asks: Ask[]): string[] => asks.map((ask) => `${ask.id}: ${ask.tex
 
 const nextId = (entries: AskEntry[]): string => `a${entries.filter((entry) => entry.customType === ENTRY_TYPE && entry.data?.action === "add").length + 1}`;
 
-export default function (pi: ExtensionAPI) {
-	const branchEntries = (ctx: ExtensionContext) => ctx.sessionManager.getBranch() as unknown as AskEntry[];
+type AskContext = Pick<ExtensionContext, "hasUI" | "ui" | "sessionManager">;
+const branchEntries = (ctx: Pick<ExtensionContext, "sessionManager">) => ctx.sessionManager.getBranch() as unknown as AskEntry[];
 
-	const refresh = (ctx: ExtensionContext) => {
-		if (!ctx.hasUI) return;
-		const asks = openAsks(branchEntries(ctx));
-		ctx.ui.setWidget(WIDGET_KEY, asks.length ? ["Pending asks", ...lines(asks)] : undefined);
-	};
+const refresh = (ctx: AskContext) => {
+	if (!ctx.hasUI) return;
+	const asks = openAsks(branchEntries(ctx));
+	ctx.ui.setWidget(WIDGET_KEY, asks.length ? ["Pending asks", ...lines(asks)] : undefined);
+};
+
+/** Pins an ask under the given id, as the `asks` tool's add does. */
+export function pinAsk(pi: Pick<ExtensionAPI, "appendEntry">, ctx: AskContext, id: string, text: string): void {
+	pi.appendEntry(ENTRY_TYPE, { action: "add", id, text });
+	refresh(ctx);
+}
+
+export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", (_event, ctx) => refresh(ctx));
 	pi.on("session_tree", (_event, ctx) => refresh(ctx));
@@ -51,12 +59,12 @@ export default function (pi: ExtensionAPI) {
 			if (params.action === "add") {
 				if (!params.text) throw new Error("add needs text");
 				id = nextId(entries);
-				pi.appendEntry(ENTRY_TYPE, { action: "add", id, text: params.text });
+				pinAsk(pi, ctx, id, params.text);
 			} else {
 				if (!openAsks(entries).some((ask) => ask.id === id)) throw new Error(`unknown ask "${id}"`);
 				pi.appendEntry(ENTRY_TYPE, { action: "resolve", id });
+				refresh(ctx);
 			}
-			refresh(ctx);
 			return { content: [{ type: "text" as const, text: `ask ${id} ${params.action === "add" ? "pinned" : "resolved"}` }], details: {} };
 		},
 	});

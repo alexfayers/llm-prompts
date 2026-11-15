@@ -12,6 +12,7 @@ import { createWorktree, dropIfClean, land, restoreWorktree, type Event, type La
 import { coldCard, ROLES, type Role } from "./roles.ts";
 import { isLive, registryOf, type Run, type RunState } from "./registry.ts";
 import { RpcChild, type Turn, type UiAnswer, type UiRequest } from "./runner.ts";
+import { pinForkAsks } from "./wake.ts";
 
 const holdsCall = (entry: SessionEntry, toolCallId: string) =>
 	entry.type === "message" && entry.message.role === "assistant" && entry.message.content.some((block) => block.type === "toolCall" && block.id === toolCallId);
@@ -251,6 +252,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			const end = endOf(ref, turn, merged.landing);
 			registry.update(runId, { ...end, endedAt: Date.now() });
 			pi.appendEntry("result-cap", { ref: end.ref, text: turn.text });
+			pinForkAsks(pi, ctx, { id: runId, name }, turn.text);
 			const cache = `${turn.prefix === "mismatch" ? "prefix mismatch, " : ""}${turn.firstUsage ? `cache ${turn.firstUsage.cacheRead}/${turn.firstUsage.cacheWrite}, ` : ""}`;
 			return {
 				content: [{ type: "text", text: `${projectResult(turn.text)}\n[fork ${name}: ${cache}ref ${end.ref}]${merged.landing && tree ? `\n[merge: ${describeLanding(merged.landing, tree)}]` : ""}` }],

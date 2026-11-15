@@ -46,7 +46,7 @@ test("/forks lists the forks, and /forks <name> shows a fork's own steps from it
 	let command: any;
 	registerLiveView({ on: () => undefined, registerCommand: (_name: string, spec: any) => (command = spec) } as any, new LiveView(registry), registry);
 	const notes: string[] = [];
-	const ctx = { hasUI: true, ui: { notify: (text: string) => notes.push(text) } };
+	const ctx = { hasUI: true, ui: { notify: (text: string) => notes.push(text), theme: { fg: (_color: string, text: string) => text } }, sessionManager: { getBranch: () => [] } };
 	await command.handler("", ctx);
 	await command.handler("scout", ctx);
 	assert.deepEqual(notes, ["scout done 2s", 'scout (reader, done, ctx 1k, cache 90%)\n  checking\n> read: a.ts']);
