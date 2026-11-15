@@ -6,25 +6,18 @@ import { Coalescer, digestLine, wakeReason } from "../../src/llm_prompts/prompts
 const run = (patch: Partial<Run> = {}): Run => ({ id: "a", name: "scan", role: "reader", background: true, state: "done", task: "t", outcome: "done", ref: "rc-fork-scan", startedAt: 1, ...patch });
 
 describe("wakeReason", () => {
-	test("a finished run wakes main only when it was the last live run, and a notify flag wakes it at once", () => {
-		assert.equal(wakeReason(run(), 1), undefined);
-		assert.equal(wakeReason(run({ state: "found-it", outcome: "found-it" }), 1), undefined);
-		assert.equal(wakeReason(run(), 0), "all-done");
-		assert.equal(wakeReason(run({ notify: true }), 1), "notify");
-	});
-
-	test("a run that needs main wakes it whatever else is live", () => {
-		assert.equal(wakeReason(run({ state: "blocked", outcome: "blocked-on-user" }), 2), "blocked-on-user");
-		assert.equal(wakeReason(run({ state: "blocked", outcome: "done" }), 2), "blocked-on-user");
-		assert.equal(wakeReason(run({ state: "failed", outcome: "failed" }), 2), "failed");
-		assert.equal(wakeReason(run({ state: "failed", outcome: undefined }), 2), "error");
-		assert.equal(wakeReason(run({ state: "lost", outcome: undefined }), 2), "lost");
-		assert.equal(wakeReason(run({ outcome: "maybe" }), 2), "invalid");
-		assert.equal(wakeReason(run({ outcome: undefined }), 2), "invalid");
-	});
-
-	test("a cancelled run does not wake main", () => {
-		assert.equal(wakeReason(run({ state: "cancelled", outcome: undefined }), 0), undefined);
+	test("every finished run wakes main, while a live or cancelled run does not", () => {
+		assert.equal(wakeReason(run()), "finished");
+		assert.equal(wakeReason(run({ notify: true })), "notify");
+		assert.equal(wakeReason(run({ state: "blocked", outcome: "blocked-on-user" })), "blocked-on-user");
+		assert.equal(wakeReason(run({ state: "blocked", outcome: "done" })), "blocked-on-user");
+		assert.equal(wakeReason(run({ state: "failed", outcome: "failed" })), "failed");
+		assert.equal(wakeReason(run({ state: "failed", outcome: undefined })), "error");
+		assert.equal(wakeReason(run({ state: "lost", outcome: undefined })), "lost");
+		assert.equal(wakeReason(run({ outcome: "maybe" })), "invalid");
+		assert.equal(wakeReason(run({ outcome: undefined })), "invalid");
+		assert.equal(wakeReason(run({ state: "cancelled", outcome: undefined })), undefined);
+		assert.equal(wakeReason(run({ state: "landing", outcome: undefined })), undefined);
 	});
 });
 
@@ -40,6 +33,19 @@ describe("digestLine", () => {
 		const head = "OUTCOME found-it ref:rc-fork-scan";
 		assert.equal(digestLine(run({ outcome: "found-it" }), `${head}\nsrc/a.ts:12\nmore`), "[fork scan found-it] src/a.ts:12 ref rc-fork-scan");
 		assert.equal(digestLine(run({ outcome: "found-it" }), `${head}\n${"x".repeat(201)}`), "[fork scan found-it] ref rc-fork-scan");
+	});
+
+	test("puts the note before the ref", () => {
+		assert.equal(digestLine(run(), "OUTCOME done ref:rc-fork-scan", "[merge: landed abc]"), "[fork scan done] [merge: landed abc] ref rc-fork-scan");
+	});
+
+	test("never cuts an ASK or DENIED line and marks the cut of the rest with the ref", () => {
+		const asks = `ASK: ${"q".repeat(600)}\nDENIED: "${"d".repeat(600)}"`;
+		const line = digestLine(run({ outcome: "blocked-on-user" }), `${"y".repeat(900)}\n${asks}`);
+		assert.ok(line.includes(`ASK: ${"q".repeat(600)}`));
+		assert.ok(line.includes(`DENIED: "${"d".repeat(600)}"`));
+		assert.ok(!line.includes("y".repeat(501)));
+		assert.ok(line.includes("… (cut, result_fetch rc-fork-scan)"));
 	});
 
 	test("cuts a reply without a valid OUTCOME line", () => {

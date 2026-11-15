@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { after, describe, test } from "node:test";
+import { after, before, describe, test } from "node:test";
 import { loadExtension, useEnv } from "./helpers.ts";
 import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
 import { prefixHash, trackPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
@@ -42,13 +42,15 @@ const forkDirs = () => fs.readdirSync(path.join(agentDir, "pi-context"), { recur
 
 const MAIN_TOOLS = [{ name: "mcp__semble__search", description: "d", parameters: {}, exposure: "codemode" }, { name: "read", description: "r", parameters: {}, exposure: "direct" }];
 
-async function fork(params: Record<string, unknown>, cwd = process.cwd(), main = { activeTools: ["read", "codemode"], allTools: MAIN_TOOLS }) {
+async function fork(params: Record<string, unknown>, cwd = process.cwd(), main = { activeTools: ["read", "codemode"], allTools: MAIN_TOOLS }, appendEntry?: () => void) {
 	const tools: Record<string, any> = {};
 	const appended: unknown[][] = [];
+	const sent: any[][] = [];
 	registerFork(
 		{
 			registerTool: (tool: any) => (tools[tool.name] = tool),
-			appendEntry: (...args: unknown[]) => appended.push(args),
+			appendEntry: appendEntry ?? ((...args: unknown[]) => appended.push(args)),
+			sendMessage: (...args: unknown[]) => sent.push(args),
 			getThinkingLevel: () => "high",
 			getActiveTools: () => main.activeTools,
 			getAllTools: () => main.allTools,
@@ -57,12 +59,13 @@ async function fork(params: Record<string, unknown>, cwd = process.cwd(), main =
 	);
 	const ctx = {
 		cwd,
+		isIdle: () => true,
 		getSystemPrompt: () => "<mcp_servers>\nsemble (codemode)\n</mcp_servers>",
 		executeTool: async (name: string, args: unknown) => ({ result: { content: [{ type: "text", text: `ran ${name} ${JSON.stringify(args)}` }], details: {} }, isError: false }),
 		model: { provider: "prov", id: "mod" },
 		sessionManager: { getBranch: () => branch, getHeader: () => ({ type: "session", version: 3, id: "main-id", timestamp: "t", cwd }) },
 	};
-	return { tool: await tools.fork.execute("call-id", params, undefined, undefined, ctx).catch((error: Error) => error), appended };
+	return { tool: await tools.fork.execute("call-id", params, undefined, undefined, ctx).catch((error: Error) => error), appended, sent, tools };
 }
 
 describe("fork tool", () => {
@@ -113,6 +116,53 @@ describe("fork tool", () => {
 		assert.ok(failed instanceof Error);
 		assert.match(failed.message, /fork setup failed/);
 		assert.deepEqual(forkDirs(), before);
+	});
+
+	describe("in the background", () => {
+		const eventually = async (done: () => boolean) => {
+			for (let attempt = 0; attempt < 500 && !done(); attempt++) await new Promise((resolve) => setTimeout(resolve, 10));
+		};
+		const unhandled: unknown[] = [];
+		const onUnhandled = (reason: unknown) => unhandled.push(reason);
+		before(() => void process.on("unhandledRejection", onUnhandled));
+		after(() => void process.off("unhandledRejection", onUnhandled));
+
+		test("returns at once and wakes main with the result when the run ends", async () => {
+			const { tool, sent, appended } = await fork({ task: "STUB_REPORT", name: "bg", background: true });
+			assert.equal(tool.content[0].text, "started fork bg (background)");
+			assert.equal(registryOf().all().find((run) => run.name === "bg")?.background, true);
+			await eventually(() => sent.length > 0);
+			assert.deepEqual(sent, [[{ customType: "pi-context-results", content: "[fork bg done] ref rc-fork-bg-call-id", display: true }, { triggerTurn: true }]]);
+			assert.equal(registryOf().all().find((run) => run.name === "bg")?.state, "done");
+			assert.deepEqual(appended, [["result-cap", { ref: "rc-fork-bg-call-id", text: "OUTCOME done ref:rc-fork-x\nbody line" }]]);
+		});
+
+		test("a run whose result cannot be saved is still finished and wakes main", async () => {
+			const { sent } = await fork({ task: "STUB_REPORT", name: "nosave", background: true }, process.cwd(), undefined, () => {
+				throw new Error("stale");
+			});
+			await eventually(() => sent.length > 0);
+			assert.equal(registryOf().all().find((run) => run.name === "nosave")?.state, "done");
+			assert.equal(sent.length, 1);
+		});
+
+		test("a crashing child wakes main with an error and raises no unhandled rejection", async () => {
+			const { sent } = await fork({ task: "STUB_CRASH", name: "boom", background: true });
+			await eventually(() => sent.length > 0);
+			assert.match(sent[0][0].content, /^\[fork boom failed\] .*ref/);
+			assert.equal(registryOf().all().find((run) => run.name === "boom")?.state, "failed");
+			assert.deepEqual(unhandled, []);
+		});
+
+		test("fork_cancel stops a live run without waking main", async () => {
+			const { tools, sent } = await fork({ task: "STUB_HANG", name: "slow", background: true });
+			const cancelled = await tools.fork_cancel.execute("c", { name: "slow" }, undefined, undefined, {});
+			assert.equal(cancelled.content[0].text, "cancelled fork slow");
+			assert.equal(registryOf().all().find((run) => run.name === "slow")?.state, "cancelled");
+			await assert.rejects(tools.fork_cancel.execute("c", { name: "slow" }, undefined, undefined, {}), /no live background fork slow/);
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			assert.deepEqual(sent, []);
+		});
 	});
 
 	describe("with the MCP proxy", () => {

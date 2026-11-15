@@ -30,4 +30,17 @@ describe("Registry", () => {
 	test("registryOf gives every caller the same registry", () => {
 		assert.equal(registryOf(), registryOf());
 	});
+
+	test("registryOf replaces a registry that an older version of the code left behind", () => {
+		const holder = globalThis as { [key: symbol]: unknown };
+		const key = Symbol.for("pi-context.registry");
+		const current = holder[key];
+		holder[key] = { version: 0 };
+		try {
+			assert.ok(registryOf() instanceof Registry);
+			assert.equal(registryOf(), registryOf());
+		} finally {
+			holder[key] = current;
+		}
+	});
 });

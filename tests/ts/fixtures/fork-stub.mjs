@@ -33,6 +33,12 @@ function callBridge(socketPath) {
 async function replyTo(text) {
 	if (text.includes("STUB_BRIDGE")) return `echo: ${await callBridge(JSON.parse(readFileSync(handshake, "utf8")).bridge.socket)}`;
 	if (text.includes("STUB_CRASH")) process.exit(3);
+	if (text.includes("STUB_HANG")) await new Promise(() => undefined);
+	const gate = /STUB_GATE:(\S+)/.exec(text)?.[1];
+	if (gate) {
+		while (!existsSync(gate)) await new Promise((resolve) => setTimeout(resolve, 20));
+		return `OUTCOME done ref:rc-fork-${gate.split("/").pop()}`;
+	}
 	if (text.includes("STUB_REPORT")) return "OUTCOME done ref:rc-fork-x\nbody line";
 	if (text.includes("STUB_WRITE")) {
 		const { worktree } = JSON.parse(readFileSync(handshake, "utf8"));

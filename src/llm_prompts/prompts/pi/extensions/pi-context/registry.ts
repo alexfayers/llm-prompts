@@ -15,11 +15,18 @@ export type Run = {
 	branch?: string;
 	startedAt: number;
 	endedAt?: number;
+	/** Why the session that ran it ended while it was live. */
+	endedBy?: string;
 };
 
 const LIVE: RunState[] = ["running", "landing"];
 
+export const isLive = (run: Run): boolean => LIVE.includes(run.state);
+
+const REGISTRY_VERSION = 1;
+
 export class Registry {
+	readonly version = REGISTRY_VERSION;
 	private runs = new Map<string, Run>();
 	private listeners = new Set<(run: Run) => void>();
 
@@ -37,12 +44,16 @@ export class Registry {
 		return run;
 	}
 
+	get(id: string): Run | undefined {
+		return this.runs.get(id);
+	}
+
 	all(): Run[] {
 		return [...this.runs.values()];
 	}
 
 	live(): Run[] {
-		return this.all().filter((run) => LIVE.includes(run.state));
+		return this.all().filter(isLive);
 	}
 
 	onChange(listener: (run: Run) => void): () => void {
@@ -50,11 +61,18 @@ export class Registry {
 		return () => void this.listeners.delete(listener);
 	}
 
-	/** Builds a registry from saved run records: the last record of a run wins, and a run still live in it is lost. */
+	/** Replaces the runs with saved records, where the last record of a run wins. Returns the runs that were still live in them, now lost. */
+	restore(records: Run[]): Run[] {
+		this.runs.clear();
+		for (const record of records) this.runs.set(record.id, { ...record });
+		const lost = this.live();
+		for (const run of lost) run.state = "lost";
+		return lost;
+	}
+
 	static rebuild(records: Run[]): Registry {
 		const registry = new Registry();
-		for (const record of records) registry.runs.set(record.id, { ...record });
-		for (const run of registry.runs.values()) if (LIVE.includes(run.state)) run.state = "lost";
+		registry.restore(records);
 		return registry;
 	}
 
@@ -67,5 +85,6 @@ const KEY = Symbol.for("pi-context.registry");
 
 export function registryOf(): Registry {
 	const holder = globalThis as { [KEY]?: Registry };
-	return (holder[KEY] ??= new Registry());
+	const existing = holder[KEY];
+	return existing?.version === REGISTRY_VERSION ? existing : (holder[KEY] = new Registry());
 }

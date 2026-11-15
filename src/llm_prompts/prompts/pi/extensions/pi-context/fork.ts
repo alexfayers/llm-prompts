@@ -6,10 +6,11 @@ import path from "node:path";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { parseOutcome, projectResult } from "../outcome-codes.ts";
+import { Background } from "./background.ts";
 import { describeMain, lastPrefixHash, mcpProxyEnabled, serveBridge, type BridgeOptions } from "./bridge.ts";
 import { createWorktree, land, type Event, type Landing, type Worktree } from "./merge.ts";
 import { coldCard, ROLES, type Role } from "./roles.ts";
-import { registryOf, type RunState } from "./registry.ts";
+import { registryOf, type Run, type RunState } from "./registry.ts";
 import { RpcChild, type Turn, type UiAnswer, type UiRequest } from "./runner.ts";
 
 const holdsCall = (entry: SessionEntry, toolCallId: string) =>
@@ -123,17 +124,35 @@ function finalState(code: string | undefined, landing: Landing | undefined): Run
 	return code === "found-it" ? "found-it" : "done";
 }
 
-export function registerFork(pi: ExtensionAPI, command?: string[]) {
+/** The run fields a finished delegate's reply decides. */
+function endOf(ref: string, turn: Turn, landing: Landing | undefined): Pick<Run, "state" | "outcome" | "notify" | "ref"> {
+	const parsed = parseOutcome(turn.text);
+	if (turn.error) return { state: "failed", ref };
+	return { state: finalState(parsed?.code, landing), outcome: parsed?.code, notify: parsed?.notify, ref };
+}
+
+function report(ctx: ExtensionContext, error: unknown) {
+	const message = `fork: ${error instanceof Error ? error.message : String(error)}`;
+	try {
+		if (ctx.hasUI) ctx.ui.notify(message, "error");
+		else process.stderr.write(`${message}\n`);
+	} catch {
+		process.stderr.write(`${message}\n`);
+	}
+}
+
+export function registerFork(pi: ExtensionAPI, command?: string[], background = new Background(pi)) {
 	pi.registerTool({
 		name: "fork",
 		label: "Fork",
 		description:
-			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. It blocks until the delegate replies with an OUTCOME line and the work has landed.",
+			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. It blocks until the delegate replies with an OUTCOME line and the work has landed. With background true it returns at once and the result arrives as a message when the delegate finishes.",
 		promptSnippet: "Run a read-only or worktree-writing delegate on a copy of this session and wait for its reply",
 		parameters: Type.Object({
 			task: Type.String({ description: "What the delegate should find out or check" }),
 			role: Type.Optional(Type.Union([Type.Literal("reader"), Type.Literal("writer")], { description: "reader (default) reads only, writer commits in its own worktree" })),
 			name: Type.Optional(Type.String({ pattern: "^[a-z0-9-]{1,24}$", description: "Short name for the delegate" })),
+			background: Type.Optional(Type.Boolean({ description: "Return at once and receive the result later as a message, so you can keep working" })),
 			model: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9][\\w./:@-]*$", description: "Run as a cold worker on this cheaper model (provider/id, optionally :thinking). It starts with an empty session, so the task must be self-contained" })),
 		}),
 		async execute(toolCallId, params, signal, _onUpdate, ctx) {
@@ -145,21 +164,35 @@ export function registerFork(pi: ExtensionAPI, command?: string[]) {
 			const entries = seedEntries(ctx.sessionManager.getBranch(), toolCallId);
 			const merged: { landing?: Landing } = {};
 			const runId = newRunId();
+			const ref = `rc-fork-${name}-${toolCallId}`;
 			const registry = registryOf();
-			registry.start({ id: runId, name, role: role.name, background: false, state: "running", task: params.task, worktree: tree?.path, branch: tree?.branch, startedAt: Date.now() });
+			registry.start({ id: runId, name, role: role.name, background: Boolean(params.background), state: "running", task: params.task, worktree: tree?.path, branch: tree?.branch, startedAt: Date.now() });
+			const runSignal = params.background ? background.track(runId) : signal;
 			const onTurn = tree && (async (turn: Turn, resume: (message: string) => Promise<Turn>) => {
 				if (turn.error) return;
 				registry.update(runId, { state: "landing" });
-				merged.landing = await land({ tree, signal, first: replyEvent(turn), resume: async (message) => replyEvent(await resume(message)) });
+				merged.landing = await land({ tree, signal: runSignal, first: replyEvent(turn), resume: async (message) => replyEvent(await resume(message)) });
 			});
 			const message = `${tree ? `Your worktree: ${tree.path}\n` : ""}Task: ${params.task}`;
 			const mcp = params.model || mcpProxyEnabled() ? async (tool: string, args: unknown) => {
-				const { result, isError } = await ctx.executeTool(tool, args, { signal });
+				const { result, isError } = await ctx.executeTool(tool, args, { signal: runSignal });
 				return { content: result.content, details: result.details, structuredContent: result.structuredContent, isError };
 			} : undefined;
-			let turn: Awaited<ReturnType<typeof runDelegate>>;
+			const running = runDelegate(pi, ctx, { role, name, entries, message, signal: runSignal, command, runId, model: params.model, mcp, worktree: tree?.path, onTurn });
+			if (params.background) {
+				const onEnd = (turn: Turn) => {
+					const end = endOf(ref, turn, merged.landing);
+					const text = turn.error ?? turn.text;
+					background.finish(ctx, runId, end, text, merged.landing && tree ? `[merge: ${describeLanding(merged.landing, tree)}]` : undefined);
+					pi.appendEntry("result-cap", { ref: end.ref, text });
+				};
+				const onFail = (error: unknown) => background.finish(ctx, runId, { state: "failed" }, error instanceof Error ? error.message : String(error));
+				void running.then(onEnd, onFail).catch((error) => report(ctx, error));
+				return { content: [{ type: "text", text: `started fork ${name} (background)` }], details: { name, runId, background: true } };
+			}
+			let turn: Awaited<typeof running>;
 			try {
-				turn = await runDelegate(pi, ctx, { role, name, entries, message, signal, command, runId, model: params.model, mcp, worktree: tree?.path, onTurn });
+				turn = await running;
 			} catch (error) {
 				registry.update(runId, { state: "failed", endedAt: Date.now() });
 				throw new Error(`fork ${name} failed: ${error instanceof Error ? error.message : String(error)}${tree ? ` (worktree ${tree.path} kept)` : ""}`, { cause: error });
@@ -168,15 +201,27 @@ export function registerFork(pi: ExtensionAPI, command?: string[]) {
 				registry.update(runId, { state: "failed", endedAt: Date.now() });
 				throw new Error(`fork ${name} failed: ${turn.error}${tree ? ` (worktree ${tree.path} kept)` : ""}`);
 			}
-			const ref = `rc-fork-${name}-${toolCallId}`;
-			const outcome = parseOutcome(turn.text)?.code;
-			registry.update(runId, { state: finalState(outcome, merged.landing), outcome, ref, endedAt: Date.now() });
-			pi.appendEntry("result-cap", { ref, text: turn.text });
+			const end = endOf(ref, turn, merged.landing);
+			registry.update(runId, { ...end, endedAt: Date.now() });
+			pi.appendEntry("result-cap", { ref: end.ref, text: turn.text });
 			const cache = turn.firstUsage ? `cache ${turn.firstUsage.cacheRead}/${turn.firstUsage.cacheWrite}, ` : "";
 			return {
-				content: [{ type: "text", text: `${projectResult(turn.text)}\n[fork ${name}: ${cache}ref ${ref}]${merged.landing && tree ? `\n[merge: ${describeLanding(merged.landing, tree)}]` : ""}` }],
-				details: { name, role: role.name, outcome, usage: turn.usage, firstUsage: turn.firstUsage, prefix: turn.prefix, merge: merged.landing },
+				content: [{ type: "text", text: `${projectResult(turn.text)}\n[fork ${name}: ${cache}ref ${end.ref}]${merged.landing && tree ? `\n[merge: ${describeLanding(merged.landing, tree)}]` : ""}` }],
+				details: { name, role: role.name, outcome: end.outcome, usage: turn.usage, firstUsage: turn.firstUsage, prefix: turn.prefix, merge: merged.landing },
 			};
+		},
+	});
+	pi.registerTool({
+		name: "fork_cancel",
+		label: "Fork cancel",
+		description: "Stop a live background fork by name. A writer's worktree stays where it is.",
+		promptSnippet: "Stop a live background fork",
+		parameters: Type.Object({ name: Type.String({ description: "Name of the background fork" }) }),
+		async execute(_toolCallId, params) {
+			if (process.env.PI_HERDSMAN_MAILBOX || process.env.PI_CONTEXT_CHILD) throw new Error("Only the top-level session can fork.");
+			const run = background.cancel(params.name);
+			if (!run) throw new Error(`no live background fork ${params.name}`);
+			return { content: [{ type: "text", text: `cancelled fork ${run.name}${run.worktree ? ` (worktree ${run.worktree} kept)` : ""}` }], details: { name: run.name } };
 		},
 	});
 }
