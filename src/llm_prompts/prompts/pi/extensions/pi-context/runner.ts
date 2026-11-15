@@ -86,6 +86,7 @@ export class RpcChild {
 	private ended: Exit | undefined;
 	private busy = false;
 	private onRecord: ((record: Message) => void) | undefined;
+	private watchers = new Set<(record: Message) => void>();
 
 	private constructor(options: RpcChildOptions) {
 		this.onUi = options.onUi;
@@ -137,6 +138,12 @@ export class RpcChild {
 
 	get pid(): number | undefined {
 		return this.child.pid;
+	}
+
+	/** Calls `listener` with every event record the child streams, and returns a function that stops it. */
+	watch(listener: (record: Message) => void): () => void {
+		this.watchers.add(listener);
+		return () => void this.watchers.delete(listener);
 	}
 
 	abort(): void {
@@ -253,6 +260,9 @@ export class RpcChild {
 		if (reply) {
 			this.replies.delete(record.id);
 			reply(record);
-		} else this.onRecord?.(record);
+		} else {
+			this.onRecord?.(record);
+			for (const watcher of this.watchers) watcher(record);
+		}
 	}
 }

@@ -1,11 +1,12 @@
 // Tracks background fork runs: wakes the main session when one finishes, delivers results that arrive during a run when it settles and holds a session without a UI until they finish.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isLive, registryOf, type Registry, type Run } from "./registry.ts";
+import type { LiveView, Watchable } from "./live-view.ts";
 import { Coalescer, digestLine, wakeReason } from "./wake.ts";
 
 export const RESULTS_TYPE = "pi-context-results";
 
-type Steerable = { steer(text: string): Promise<string | undefined> };
+type Steerable = Watchable & { steer(text: string): Promise<string | undefined> };
 const MAX_HOLD_MS = 2 * 60 * 60 * 1000;
 
 export class Background {
@@ -15,6 +16,8 @@ export class Background {
 	private holding = false;
 	private pi: Pick<ExtensionAPI, "sendMessage">;
 	private registry: Registry;
+	/** Shows the run's activity in the UI once its child is attached. */
+	view: LiveView | undefined;
 
 	constructor(pi: Pick<ExtensionAPI, "sendMessage">, registry: Registry = registryOf()) {
 		this.pi = pi;
@@ -31,6 +34,7 @@ export class Background {
 	/** Lets `steer` reach the run's child. */
 	attach(runId: string, child: Steerable): void {
 		this.children.set(runId, child);
+		this.view?.watch(runId, child);
 	}
 
 	/** Sends a steering message to a live background run by name. */

@@ -5,10 +5,12 @@ import { Background, registerBackgroundHooks } from "./background.ts";
 import { readBridgeConfig, registerChildBridge, reportPrefixToFile, trackPrefix } from "./bridge.ts";
 import { registerBtw } from "./btw.ts";
 import { registerFork } from "./fork.ts";
+import { LiveView, registerLiveView } from "./live-view.ts";
 import { childGuard } from "./roles.ts";
 
 export default function (pi: ExtensionAPI) {
 	const background = new Background(pi);
+	background.view = new LiveView();
 	const handshake = process.env.PI_CONTEXT_CHILD;
 	if (handshake) {
 		pi.on("tool_call", childGuard(handshake));
@@ -21,4 +23,5 @@ export default function (pi: ExtensionAPI) {
 	}
 	registerFork(pi, undefined, background);
 	registerBtw(pi);
+	registerLiveView(pi, background.view);
 }
