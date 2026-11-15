@@ -5,6 +5,7 @@ import { Background, registerBackgroundHooks } from "./background.ts";
 import { readBridgeConfig, registerChildBridge, reportPrefixToFile, trackPrefix } from "./bridge.ts";
 import { registerBtw } from "./btw.ts";
 import { registerFork } from "./fork.ts";
+import { Recorder, registerRecorder } from "./ghost/recorder.ts";
 import { LiveView, registerLiveView } from "./live-view.ts";
 import { childGuard } from "./roles.ts";
 
@@ -18,6 +19,7 @@ export default function (pi: ExtensionAPI) {
 		if (bridge) registerChildBridge(pi, bridge);
 		else reportPrefixToFile(pi, handshake);
 	} else {
+		registerRecorder(pi, new Recorder());
 		trackPrefix(pi);
 		if (!process.env.PI_HERDSMAN_MAILBOX) registerBackgroundHooks(pi, background);
 	}

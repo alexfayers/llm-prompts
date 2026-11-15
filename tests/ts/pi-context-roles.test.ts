@@ -119,8 +119,8 @@ describe("child mode", () => {
 	useEnv({ PI_CONTEXT_CHILD: undefined });
 
 	test("without PI_CONTEXT_CHILD no call is guarded", async () => {
-		const { ext } = await call(undefined, "edit", {});
-		assert.equal(ext.handlers.tool_call, undefined);
+		assert.equal((await call(undefined, "edit", { path: "/other/x" })).result, undefined);
+		assert.equal((await call(undefined, "fork", {})).result, undefined);
 	});
 
 	test("a writer's calls are rewritten into its worktree and blocked outside the role", async () => {
