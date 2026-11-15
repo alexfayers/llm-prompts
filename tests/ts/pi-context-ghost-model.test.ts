@@ -33,6 +33,7 @@ describe("checks", () => {
 
 	test("long output and output with a sha, a timestamp or a temp path derive no check", () => {
 		assert.equal(deriveCheck("a\nb\nc\nd\ne\nf", false), null);
+		assert.equal(deriveCheck("x".repeat(2000), false), null);
 		assert.equal(deriveCheck("HEAD is 0a1b2c3d4e5f", false), null);
 		assert.equal(deriveCheck("built at 2026-11-15T05:55:46Z", false), null);
 		assert.equal(deriveCheck("wrote /tmp/x/out.json", false), null);

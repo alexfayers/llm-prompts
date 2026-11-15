@@ -61,13 +61,14 @@ export function render(value: unknown, vars: Record<string, string>): { value: u
 }
 
 const MAX_EXACT_LINES = 5;
+const MAX_EXACT_CHARS = 1000;
 const VOLATILE = [/\b[0-9a-f]{7,40}\b/, /\d{4}-\d\d-\d\d|\d\d:\d\d:\d\d|\b\d{10,}\b/, /\/tmp\//];
 
 /** Derives the check a result is expected to pass again: empty, or exact when short and stable, else none. */
 export function deriveCheck(text: string, isError: boolean): Check | null {
 	const output = text.trim();
 	if (output === "") return { isError, output: { empty: true } };
-	const stable = output.split("\n").length <= MAX_EXACT_LINES && !VOLATILE.some((pattern) => pattern.test(output));
+	const stable = output.length <= MAX_EXACT_CHARS && output.split("\n").length <= MAX_EXACT_LINES && !VOLATILE.some((pattern) => pattern.test(output));
 	return stable ? { isError, output: { exact: output } } : null;
 }
 
