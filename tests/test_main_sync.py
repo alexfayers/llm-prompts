@@ -15,6 +15,7 @@ from llm_prompts.main_sync import (
     _Bail,
     _Conflict,
     _merge_tree,
+    _reuse_resolutions,
     sync_diverged,
 )
 
@@ -725,6 +726,16 @@ class TestMergeTree:
             _merge_tree(REPO, "base", "ours", "theirs")
 
         assert not isinstance(bail.value, _Conflict)
+
+
+class TestReuseResolutions:
+    def test_clean_cherry_pick_returns_the_tree(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        fake_subprocess.on("commit-tree", stdout="change\n")
+        fake_subprocess.on("write-tree", stdout="tree-x\n")
+
+        assert _reuse_resolutions(REPO, "base", "ours", "theirs") == "tree-x"
 
 
 class TestPullRequestHeads:
