@@ -67,6 +67,41 @@ class TestSubstituteVariables:
             substitute_variables("{% if AGENT %}unclosed\n", {"AGENT": "pi"})
 
 
+class TestPiRuntime:
+    TOOLS = "{{TOOL_AGENT}}|{{TOOL_STEER}}|{{TOOL_AGENT_RESULT}}|{{PI_RUNTIME}}"
+
+    @pytest.mark.parametrize(
+        ("config", "expected"),
+        [
+            (None, "delegate_agent|steer_agent|inspect_agent|herdsman"),
+            (
+                '[pi]\nruntime = "bogus"\n',
+                "delegate_agent|steer_agent|inspect_agent|herdsman",
+            ),
+            (
+                '[pi]\nruntime = "pi-context"\n',
+                "fork||result_fetch|pi-context",
+            ),
+            ("[pi\nruntime =", "delegate_agent|steer_agent|inspect_agent|herdsman"),
+            (
+                'pi = "pi-context"\n',
+                "delegate_agent|steer_agent|inspect_agent|herdsman",
+            ),
+            (
+                '[pi]\nruntime = ["pi-context"]\n',
+                "delegate_agent|steer_agent|inspect_agent|herdsman",
+            ),
+        ],
+    )
+    def test_pi_tool_names_follow_the_configured_runtime(
+        self, isolated_config_dir: Path, config: str | None, expected: str
+    ) -> None:
+        if config:
+            (isolated_config_dir / "config.toml").write_text(config, encoding="utf-8")
+
+        assert substitute_variables(self.TOOLS, {"AGENT": "pi"}) == expected
+
+
 class TestReadText:
     def test_unchanged_file_is_read_once_and_changed_file_is_reread(
         self, tmp_path: Path

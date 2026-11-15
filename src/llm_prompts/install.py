@@ -36,6 +36,8 @@ from .herdsman import (
     HERDSMAN_BUNDLED_RESETS,
     HERDSMAN_DISABLED_DEFINITIONS,
     herdr_available,
+    pi_runtime,
+    pi_runtime_problem,
 )
 from .home import is_rooted, set_root, user_home
 from .mcp import (
@@ -75,6 +77,7 @@ _TARGET_GATING_KEYS = {
     "requires_env",
     "requires_command",
     "requires_absent_command",
+    "requires_pi_runtime",
     "targets",
     "exclude_targets",
     "extra_variants",
@@ -444,7 +447,12 @@ def _requirements_met(declared: dict[str, str], target: str = "") -> bool:
     if required_command and not _command_on_path(required_command):
         return False
     absent_command = _gating_value(declared, "requires_absent_command", target)
-    return not (absent_command and _command_on_path(absent_command))
+    if absent_command and _command_on_path(absent_command):
+        return False
+    required_runtime = _gating_value(declared, "requires_pi_runtime", target)
+    return not (
+        target == "pi" and required_runtime and pi_runtime() != required_runtime
+    )
 
 
 def _target_names(src: Path, key: str, target: str = "") -> set[str]:
@@ -2733,6 +2741,11 @@ def _pi_base_extensions(fragments: list[Path]) -> list[str]:
 def _pi_core_base_extensions(root_dir: Path) -> list[str]:
     """Return the core base extensions, optional where this install cannot provide them."""
     unavailable = {"cline-hooks"} if is_rooted() else set()
+    unavailable |= {
+        name.removesuffix(".ts")
+        for name, gate in _extension_gates([root_dir / "pi" / "extensions"]).items()
+        if not _requirements_met(gate, "pi")
+    }
     if not _pi_package_dir("@gotgenes/pi-permission-system").exists():
         unavailable.add("@gotgenes/pi-permission-system")
     return [
@@ -3254,6 +3267,23 @@ def _pi_defaults(fragments: list[Path]) -> dict[str, Any]:
     return defaults
 
 
+def _extension_gates(source_dirs: list[Path]) -> dict[str, dict[str, str]]:
+    """Collect the ``requires_*`` gates of pi extensions from ``pi/extension-gates.json``.
+
+    Args:
+        source_dirs: Candidate ``pi/extensions`` directories, core first, then overlays.
+
+    Returns:
+        The gates of each gated extension by name; a later source wins.
+    """
+    gates: dict[str, dict[str, str]] = {}
+    for source_dir in source_dirs:
+        path = source_dir.parent / "extension-gates.json"
+        if path.is_file():
+            gates.update(json.loads(_read_text(path)))
+    return gates
+
+
 def _install_pi_extensions(
     source_dirs: list[Path], dest_dir: Path, previous_files: Collection[str]
 ) -> list[str]:
@@ -3284,7 +3314,10 @@ def _install_pi_extensions(
     if sources:
         dest_dir.mkdir(parents=True, exist_ok=True)
     installed: list[str] = []
+    gates = _extension_gates(source_dirs)
     for name, path in sources.items():
+        if not _requirements_met(gates.get(name, {}), "pi"):
+            continue
         dest = dest_dir / name
         if dest.exists() and str(dest) not in previous_files:
             log(
@@ -4433,7 +4466,10 @@ def main(
             agents_dest = dirs[agents_target]["agents"]
             agent_dirs = _agent_source_dirs(root_dir, overlay_dirs, agents_target)
             target_skip_set = skip_by_agent.get(agents_target, frozenset())
-            if agents_target == "pi" and (pi_bundle_held or pi_failed_sources):
+            pi_without_agents = agents_target == "pi" and pi_runtime() != "herdsman"
+            if pi_without_agents:
+                managed_agents = set()
+            elif agents_target == "pi" and (pi_bundle_held or pi_failed_sources):
                 if pi_failed_sources:
                     log(
                         "warn",
@@ -4490,7 +4526,7 @@ def main(
                         "agents",
                     )
                     installed_files["pi"].append(str(variants_path))
-            if agents_target == "pi":
+            if agents_target == "pi" and pi_runtime() == "herdsman":
                 managed_agents |= _install_disabled_definitions(agents_dest)
                 coordinators_dest = agents_dest.parent / "coordinators"
                 managed_roles = _install_herdsman_overlays(
@@ -4500,7 +4536,8 @@ def main(
                 installed_files["pi"].extend(
                     str(coordinators_dest / r) for r in managed_roles
                 )
-            _check_unmanaged(agents_dest, managed_agents, f"{agents_target} agents")
+            if not pi_without_agents:
+                _check_unmanaged(agents_dest, managed_agents, f"{agents_target} agents")
             installed_files[agents_target].extend(
                 str(agents_dest / a) for a in managed_agents
             )
@@ -4579,7 +4616,9 @@ def main(
                 if pi_bundle_held
                 else {name: sorted(r) for name, r in pi_bundle.roles.items()}
             )
-            if not herdr_available():
+            if problem := pi_runtime_problem():
+                log("warn", f"[pi] {problem}, using herdsman.")
+            if pi_runtime() == "herdsman" and not herdr_available():
                 log("warn", "[pi] `herdr` not found on PATH. pi needs herdr to run.")
             pi_skills = _claude_plugin_skill_dirs()
             if pi_skills is None:

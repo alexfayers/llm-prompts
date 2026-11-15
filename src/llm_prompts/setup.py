@@ -65,6 +65,10 @@ source = "git+https://github.com/alexfayers/cline-hooks.git"
 [[tools]]
 name = "mcp-memory"
 source = "git+https://github.com/alexfayers/mcp-memory.git"
+
+# Pi's delegation runtime: "herdsman" (default) or "pi-context".
+# [pi]
+# runtime = "herdsman"
 """
 
 

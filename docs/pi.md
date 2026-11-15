@@ -8,9 +8,19 @@ Pi needs Herdr. Install warns when `herdr` is not on PATH, and pi warns once on 
 
 - Rules go into the global `AGENTS.md`, or one file each under `rules/` when `herdr` is on PATH (see [Roles](#roles)).
 - [cline-hooks](https://github.com/alexfayers/cline-hooks) is wired in as a pi extension.
-- Pi packages listed in `prompts/pi/settings.json`, from core and overlays, are merged into `settings.json` in the agent dir. Pi installs them on startup. Packages you add yourself are left alone. A package can be an object with a `source` and the same `requires_env`, `requires_command` and `requires_absent_command` gates as frontmatter, and is added only where every gate passes.
+- Pi packages listed in `prompts/pi/settings.json`, from core and overlays, are merged into `settings.json` in the agent dir. Pi installs them on startup. Packages you add yourself are left alone. A package can be an object with a `source` and the same `requires_env`, `requires_command`, `requires_absent_command` and `requires_pi_runtime` gates as frontmatter, and is added only where every gate passes.
 - `mcp-memory install pi` registers the memory servers in `mcp.json`, which pi's MCP support reads.
 - Files under `prompts/pi/seed/` are copied into the agent dir only where absent, so they stay yours to edit. A later overlay replaces the same path. For an existing JSON file, seed keys it has never been offered are added once.
+
+## Runtime
+
+`runtime` under `[pi]` in `config.toml` picks pi's delegation runtime: `herdsman` (the default, also for a missing, unknown or unusable setting) or `pi-context`.
+
+- Under `herdsman`, install adds the pi-herdsman package, its coordinator profiles and the overrides disabling its bundled agent definitions, and rules use `delegate_agent`, `steer_agent` and `inspect_agent`.
+- Under `pi-context`, install adds none of those, installs no agent definitions and removes the ones it installed before, and rules use `fork` and `result_fetch`.
+- `prompts/pi/extension-gates.json` maps an extension's name to `requires_*` gates. The `pi-context` extension installs only under the `pi-context` runtime, and `herdsman-guidance-dedupe` and `role-switch` only under `herdsman`.
+- `requires_pi_runtime: <runtime>` in a pi package entry or in frontmatter skips it for pi under any other runtime. Templates can branch on `PI_RUNTIME`.
+- Run `llm-prompts install pi` after changing it.
 
 ## Roles
 

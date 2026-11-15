@@ -147,10 +147,17 @@ def _core_seed() -> Path:
     )
 
 
-def _core_packages() -> list[str]:
+def _core_packages() -> list[str | dict[str, Any]]:
     """Return the core packages pi installs."""
-    packages: list[str] = json.loads(_CORE_FRAGMENT.read_text())["packages"]
-    return packages
+    entries: list[str | dict[str, Any]] = json.loads(_CORE_FRAGMENT.read_text())[
+        "packages"
+    ]
+    return [
+        entry["source"]
+        if isinstance(entry, dict) and "extensions" not in entry
+        else entry
+        for entry in entries
+    ]
 
 
 _SHARED_HOMES: dict[bool, Path] = {}
@@ -478,7 +485,110 @@ class TestPiPackages:
         assert "npm:acme-pkg@1.0.0" not in packages
 
 
+class TestPiRuntime:
+    @staticmethod
+    def _reinstall(
+        home: Path, tmp_path: Path, config_dir: Path, runtime: str | None
+    ) -> None:
+        """Install into `home`, with the `[pi] runtime` setting `runtime` (unset when None) and `herdr` off PATH."""
+        config = config_dir / "config.toml"
+        config.unlink(missing_ok=True)
+        if runtime:
+            config.write_text(f'[pi]\nruntime = "{runtime}"\n', encoding="utf-8")
+        _install(home, tmp_path / "installed.json", herdr=False, trusted=True)
+
+    @staticmethod
+    def _herdsman_files(home: Path) -> list[Path]:
+        agent_dir = home / ".pi" / "agent"
+        return [
+            agent_dir / "coordinators" / "orchestrator-lead.md",
+            agent_dir / "agents" / "generalist.md",
+            agent_dir / "agent-role-variants.json",
+        ]
+
+    @pytest.mark.usefixtures("core_tree")
+    def test_runtime_setting_switches_the_herdsman_install_on_and_off(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_config_dir: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        home.mkdir()
+        agents_md = home / ".pi" / "agent" / "AGENTS.md"
+
+        def installed() -> tuple[bool, bool, bool]:
+            return (
+                "npm:pi-herdsman@0.47.1" in _settings(home)["packages"],
+                all(path.exists() for path in self._herdsman_files(home)),
+                "delegate_agent" in agents_md.read_text(encoding="utf-8"),
+            )
+
+        self._reinstall(home, tmp_path, isolated_config_dir, None)
+        assert installed() == (True, True, True)
+        assert "herdr` not found" in capsys.readouterr().err
+
+        self._reinstall(home, tmp_path, isolated_config_dir, "pi-context")
+        assert installed() == (False, False, False)
+        assert not any(path.exists() for path in self._herdsman_files(home))
+        assert "herdr` not found" not in capsys.readouterr().err
+
+        self._reinstall(home, tmp_path, isolated_config_dir, "herdsman")
+        assert installed() == (True, True, True)
+
+    def test_unknown_runtime_warns_and_installs_herdsman(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_config_dir: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        home.mkdir()
+
+        self._reinstall(home, tmp_path, isolated_config_dir, "bogus")
+
+        assert "npm:pi-herdsman@0.47.1" in _settings(home)["packages"]
+        assert "Unknown [pi] runtime 'bogus'" in capsys.readouterr().err
+
+
 class TestPiExtensions:
+    def test_gated_extension_follows_the_runtime(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_config_dir: Path,
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        overlay = tmp_path / "overlay"
+        (overlay / "pi" / "extensions").mkdir(parents=True)
+        for name in ("gated", "plain"):
+            (overlay / "pi" / "extensions" / f"{name}.ts").write_text(
+                "export default () => {};\n", encoding="utf-8"
+            )
+        (overlay / "pi" / "extension-gates.json").write_text(
+            json.dumps({"gated.ts": {"requires_pi_runtime": "pi-context"}}),
+            encoding="utf-8",
+        )
+        extensions = home / ".pi" / "agent" / "extensions"
+
+        def installed_under(runtime: str) -> tuple[bool, bool]:
+            (isolated_config_dir / "config.toml").write_text(
+                f'[pi]\nruntime = "{runtime}"\n', encoding="utf-8"
+            )
+            _install(home, tmp_path / "installed.json", [overlay], trusted=True)
+            return (extensions / "gated.ts").exists(), (
+                extensions / "plain.ts"
+            ).exists()
+
+        assert installed_under("herdsman") == (False, True)
+        assert installed_under("pi-context") == (True, True)
+        assert installed_under("herdsman") == (False, True)
+
     def test_overlay_extension_is_installed_and_removed_when_undeclared(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
