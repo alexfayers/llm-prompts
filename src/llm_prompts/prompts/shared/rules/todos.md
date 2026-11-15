@@ -21,6 +21,8 @@ NOTE: You are allowed to write to files in {{PLAN_MODE}} for this use case, but 
 
 An idea YOU raised is a suggestion until the user says go - MUST NOT act on it, and MUST NOT create a tracking task for it either - this does not cover the steps of an approved plan. Immediate tracking applies only to work the user asked for.
 
+A gap found in delivered work - an unverified check, a known caveat, a bug outside scope - is not an idea. MUST track it in the same turn: draft an issue to fix it in the project's tracker where one exists, or at minimum one to review it, plus its memory `task/`. MUST show every drafted issue to the user and open it only once they approve. A note only in memory or a handoff doc is not tracking.
+
 ## Tracking completion in an existing TODO/task-list file
 
 When working through a list of items in an existing file (a `TODO.md`, a checklist in a plan doc, a persisted task list), mark each entry done as soon as you finish it - the same way completed work is marked `resolved` in memory. Do not wait until the end of the session to update the file in one batch.
