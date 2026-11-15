@@ -1201,6 +1201,12 @@ def _run_command(run: telemetry.Run) -> int | None:
         help="Set this environment variable for the agents of ref B only. Repeatable.",
     )
     add(
+        "--b-drop",
+        action="append",
+        metavar="RULE",
+        help="Leave this shared rule out of ref B's build. Repeatable.",
+    )
+    add(
         "--no-reuse",
         dest="reuse",
         action="store_false",

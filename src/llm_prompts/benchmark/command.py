@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import cast, get_args
 
 from llm_prompts import setup, size_report
+from llm_prompts.attic.pinned import PINNED_RULES
 from llm_prompts.benchmark import paths, reuse
 from llm_prompts.benchmark.agents import AGENTS, DEFAULT_MODELS
 from llm_prompts.benchmark.agents.adapter import VariantBuildError
@@ -83,6 +84,12 @@ def _at_least_one(name: str, value: int) -> int:
     return value
 
 
+def _unpinned_rules(names: Sequence[str] | None) -> tuple[str, ...]:
+    if pinned := PINNED_RULES.intersection(names or ()):
+        raise ValueError(f"{', '.join(sorted(pinned))}: pinned, never demoted")
+    return tuple(dict.fromkeys(names or ()))
+
+
 @dataclass(frozen=True)
 class RunOptions:
     a: str = "origin/main"
@@ -100,6 +107,7 @@ class RunOptions:
     a_tools: Mapping[str, str] = field(default_factory=dict)
     b_tools: Mapping[str, str] = field(default_factory=dict)
     b_env: Mapping[str, str] = field(default_factory=dict)
+    b_drop: tuple[str, ...] = ()
     reuse: bool = True
     fail_fast: bool = False
     fail_fast_after: int = DEFAULT_FAIL_FAST_AFTER
@@ -152,6 +160,7 @@ class RunOptions:
             a_tools=_pairs("tool", args.a_tool),
             b_tools=_pairs("tool", args.b_tool),
             b_env=_pairs("env", args.b_env),
+            b_drop=_unpinned_rules(args.b_drop),
             reuse=args.reuse,
             fail_fast=args.fail_fast,
             fail_fast_after=_at_least_one(
@@ -250,7 +259,12 @@ def _build_plan(options: RunOptions) -> _Plan:
     a_cells = plan(built, options.agents, scenarios, range(options.repeats or 1))
     selected = _reused(options, built[0], a_cells)
     b = variants.build(
-        "b", options.b, options.agents, options.overlays, options.b_tools
+        "b",
+        options.b,
+        options.agents,
+        options.overlays,
+        options.b_tools,
+        drop=options.b_drop,
     )
     built.append(replace(b, env=options.b_env))
     cells = plan(built, options.agents, scenarios, range(options.repeats or 1))
@@ -358,6 +372,7 @@ def _build_report(
         usage(rows),
         judge_reasons(rows),
         options.b_env,
+        options.b_drop,
     )
 
 

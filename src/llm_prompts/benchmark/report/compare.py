@@ -176,11 +176,18 @@ class Report:
     usage: Usage
     judge_reasons: tuple[JudgeReason, ...] = ()
     b_env: Mapping[str, str] = field(default_factory=dict)
+    b_drop: tuple[str, ...] = ()
 
 
 def b_label(report: Report) -> str:
-    """Return ref B with its environment."""
-    return " ".join([report.b, *(f"{k}={v}" for k, v in report.b_env.items())])
+    """Return ref B with its environment and dropped rules."""
+    return " ".join(
+        [
+            report.b,
+            *(f"{k}={v}" for k, v in report.b_env.items()),
+            *(f"-{rule}" for rule in report.b_drop),
+        ]
+    )
 
 
 def _median(values: Sequence[float]) -> float:

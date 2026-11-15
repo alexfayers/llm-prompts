@@ -296,6 +296,53 @@ def test_build_worktree_keys_on_content(repo: Path) -> None:
     assert (second.src / "tracked.txt").read_text() == "changed"
 
 
+RULES = "src/llm_prompts/prompts/shared/rules"
+
+
+def test_build_drop_removes_the_rules_from_a_separately_keyed_source(
+    repo: Path, fake_subprocess: FakeSubprocess
+) -> None:
+    fake_subprocess.on(
+        "ls-files", stdout=f"tracked.txt\0{RULES}/one.md\0{RULES}/two.md\0"
+    )
+    for name in ("one", "two"):
+        (repo / RULES).mkdir(parents=True, exist_ok=True)
+        (repo / RULES / f"{name}.md").write_text(name)
+
+    plain = variants.build("b", WORKTREE, ("pi",), (), repo=repo)
+    dropped = variants.build("b", WORKTREE, ("pi",), (), drop=("two", "one"), repo=repo)
+    other = variants.build("b", WORKTREE, ("pi",), (), drop=("one",), repo=repo)
+
+    assert [
+        (p / RULES / f"{n}.md").exists()
+        for p in (plain.src, dropped.src)
+        for n in ("one", "two")
+    ] == [True, True, False, False]
+    assert (dropped.src / "tracked.txt").read_text() == "one"
+    assert dropped.key.startswith(f"{plain.key}-drop-")
+    assert len({plain.key, dropped.key, other.key}) == 3
+    assert (
+        variants.build("b", WORKTREE, ("pi",), (), drop=("one", "two"), repo=repo).key
+        == dropped.key
+    )
+
+
+@pytest.mark.parametrize("name", ["../outside", "sub/inner"])
+def test_build_drop_rejects_a_name_that_is_not_a_plain_rule(
+    repo: Path, fake_subprocess: FakeSubprocess, name: str
+) -> None:
+    shared = RULES.rsplit("/", 1)[0]
+    fake_subprocess.on(
+        "ls-files", stdout=f"tracked.txt\0{shared}/outside.md\0{RULES}/sub/inner.md\0"
+    )
+    (repo / RULES / "sub").mkdir(parents=True, exist_ok=True)
+    (repo / shared / "outside.md").write_text("x")
+    (repo / RULES / "sub" / "inner.md").write_text("x")
+
+    with pytest.raises(VariantBuildError, match="unknown rule"):
+        variants.build("b", WORKTREE, ("pi",), (), drop=(name,), repo=repo)
+
+
 def test_build_fails_on_unknown_ref_and_live_path_in_template(
     repo: Path, fake_subprocess: FakeSubprocess
 ) -> None:

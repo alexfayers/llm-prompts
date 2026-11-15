@@ -15,6 +15,7 @@ Run it from an llm-prompts checkout. Any commit, branch or `:worktree` works for
 | `--a REF`, `--b REF` | Refs to compare (default: `origin/main` and `:worktree`). |
 | `--a-tool NAME=SOURCE`, `--b-tool NAME=SOURCE` | Use this source for a configured tool (such as `mcp-memory`) in that ref only. Repeatable. A remote source must end in `@<40 character commit sha>`, or that side's runs are not reused. |
 | `--b-env NAME=VALUE` | Set this environment variable for the agents of ref B only. Repeatable. |
+| `--b-drop RULE` | Leave this shared rule (a `shared/rules/RULE.md` source) out of ref B's build. A pinned rule is refused. Repeatable. |
 | `--no-reuse` | Run A and B again instead of reusing finished runs. |
 | `--level LEVEL` | `light`, `medium` or `heavy` (default: `light`). A level includes all lower levels. |
 | `--agents LIST` | Comma separated agents (default: `claude,pi`). |
