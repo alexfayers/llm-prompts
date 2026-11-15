@@ -1,0 +1,19 @@
+{
+	"gates": [
+		{ "any": ["justfile", "Justfile", ".justfile"], "command": "just" },
+		{ "all": ["package.json", "pnpm-lock.yaml"], "match": { "file": "package.json", "pattern": "\"test\"\\s*:" }, "command": "pnpm test" },
+		{ "all": ["package.json", "yarn.lock"], "match": { "file": "package.json", "pattern": "\"test\"\\s*:" }, "command": "yarn test" },
+		{ "all": ["package.json"], "match": { "file": "package.json", "pattern": "\"test\"\\s*:" }, "command": "npm test" },
+		{ "all": ["pyproject.toml", "uv.lock"], "any": ["tests", "pytest.ini", "conftest.py"], "command": "uv run pytest" },
+		{ "all": ["pyproject.toml", "uv.lock"], "match": { "file": "pyproject.toml", "pattern": "\\[tool\\.pytest" }, "command": "uv run pytest" },
+		{ "any": ["Makefile", "makefile", "GNUmakefile"], "match": { "pattern": "^test:" }, "command": "make test" },
+		{ "all": ["Cargo.toml"], "command": "cargo test" },
+		{ "all": ["go.mod"], "command": "go test ./..." }
+	],
+	"dependencies": [
+		{ "lock": "pnpm-lock.yaml", "installed": "node_modules", "command": ["pnpm", "install", "--offline", "--frozen-lockfile"] },
+		{ "lock": "yarn.lock", "installed": "node_modules", "command": ["yarn", "install", "--frozen-lockfile", "--offline"] },
+		{ "lock": "package-lock.json", "installed": "node_modules", "command": ["npm", "ci", "--prefer-offline", "--no-audit", "--no-fund"] },
+		{ "lock": "uv.lock", "installed": ".venv", "command": ["uv", "sync", "--frozen", "--offline"] }
+	]
+}

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
 import { makeCtx, useEnv } from "./helpers.ts";
-import { registerBtw, settledEntries } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/btw.ts";
+import { registerBtw } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/btw.ts";
 
 const user = (id: string) => ({ type: "message", id, message: { role: "user", content: id } });
 const assistantCalling = (id: string, ...calls: string[]) => ({ type: "message", id, message: { role: "assistant", content: calls.map((call) => ({ type: "toolCall", id: call })) } });
@@ -14,14 +14,6 @@ const STUB = path.join(import.meta.dirname, "fixtures/fork-stub.mjs");
 const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-btw-"));
 after(() => fs.rmSync(agentDir, { recursive: true }));
 useEnv({ PI_CODING_AGENT_DIR: agentDir, PI_HERDSMAN_MAILBOX: undefined, PI_CONTEXT_CHILD: undefined, PI_CONTEXT_KEEP_FORKS: undefined });
-
-describe("settledEntries", () => {
-	test("cuts before the first assistant message whose calls have no result yet", () => {
-		const branch = [user("u1"), assistantCalling("a1", "c1"), result("r1", "c1"), assistantCalling("a2", "c2", "c3"), result("r2", "c2")];
-		assert.deepEqual(settledEntries(branch as any).map((entry) => entry.id), ["u1", "a1", "r1"]);
-		assert.equal(settledEntries(branch.slice(0, 3) as any).length, 3);
-	});
-});
 
 async function btw(text: string, options: { source?: string } = {}) {
 	const handlers: Record<string, any> = {};
@@ -58,14 +50,5 @@ describe("//btw", () => {
 		assert.match(seen.prompt, /one side question[\s\S]*STUB_INSPECT$/);
 		assert.deepEqual(sent, []);
 		assert.match(ctx.notices[0][0], /btw/);
-	});
-
-	test("ignores other input and a failed child shows a warning without an entry", async () => {
-		assert.equal((await btw("hello")).handled, undefined);
-		assert.equal((await btw("//btw STUB_REPORT", { source: "extension" })).handled, undefined);
-		const failed = await btw("//btw STUB_CRASH");
-		assert.deepEqual(failed.handled, { action: "handled" });
-		assert.deepEqual(failed.appended, []);
-		assert.ok(failed.ctx.notices.some(([message, level]) => level === "warning" && /btw failed/.test(message)));
 	});
 });

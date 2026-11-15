@@ -1,5 +1,6 @@
 // Stands in for `pi --mode rpc` as a fork child: the task text picks the reply, and STUB_INSPECT reports how the child was started.
-import { readFileSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 const out = (record) => process.stdout.write(`${JSON.stringify(record)}\n`);
@@ -7,10 +8,19 @@ const usage = (cacheRead) => ({ input: 10, output: 5, cacheRead, cacheWrite: 1 }
 const seed = process.argv[process.argv.indexOf("--session") + 1];
 const handshake = process.env.PI_CONTEXT_CHILD;
 let reply = "";
+let body = "";
 
 function replyTo(text) {
 	if (text.includes("STUB_CRASH")) process.exit(3);
 	if (text.includes("STUB_REPORT")) return "OUTCOME done ref:rc-fork-x\nbody line";
+	if (text.includes("STUB_WRITE")) {
+		const { worktree } = JSON.parse(readFileSync(handshake, "utf8"));
+		body = `${readFileSync(handshake, "utf8")}\n${text}`;
+		writeFileSync(`${worktree}/written-${process.pid}.txt`, "from the fork");
+		execFileSync("git", ["-C", worktree, "add", "."]);
+		execFileSync("git", ["-C", worktree, "commit", "-m", "write"]);
+		return `OUTCOME done ref:rc-fork-w\n${body}`;
+	}
 	if (!text.includes("STUB_INSPECT")) return `echo: ${text}`;
 	return JSON.stringify({
 		args: process.argv.slice(2),

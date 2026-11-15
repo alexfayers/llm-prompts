@@ -31,7 +31,7 @@ const READ_MCP = [
 export const ROLES: Record<Role["name"], Role> = {
 	reader: {
 		name: "reader",
-		card: `You are a read-only delegate. Investigate and report. Do not change files, git state or memory. ${OUTCOME}`,
+		card: `You are the delegate that the conversation above asked to fork, so do not call fork. You are read-only. Investigate and report. Do not change files, git state or memory. ${OUTCOME}`,
 		tools: READ_TOOLS,
 		mcp: READ_MCP,
 		skills: [],
@@ -39,7 +39,7 @@ export const ROLES: Record<Role["name"], Role> = {
 	},
 	writer: {
 		name: "writer",
-		card: `You are a delegate that works in its own git worktree. Commit your work there. Do not touch other paths or memory. ${OUTCOME}`,
+		card: `You are the delegate that the conversation above asked to fork, so do not call fork. You work in your own git worktree. Commit your work there. Do not touch other paths or memory. ${OUTCOME}`,
 		tools: [...READ_TOOLS, "edit", "write", "process"],
 		mcp: READ_MCP,
 		skills: [],
