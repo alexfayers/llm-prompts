@@ -419,6 +419,19 @@ def test_update_says_when_main_has_no_copy_code_to_add_the_recorded_copies_next_
     assert "no copy-into-main code" not in capsys.readouterr().out
 
 
+def test_list_stops_on_a_held_lock(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    capsys.readouterr()
+
+    with worktrees.locked(project.record):
+        assert contribute.list_targets(project.targets) == 1
+
+    assert "another contribute run is in progress" in capsys.readouterr().out
+
+
 def test_update_stops_on_a_held_lock_without_touching_any_source(
     project: Project, capsys: pytest.CaptureFixture[str]
 ) -> None:

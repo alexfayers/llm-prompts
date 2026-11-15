@@ -2170,9 +2170,11 @@ def _list_line(
 
 def list_targets(targets: Sequence[Target]) -> int:
     """Print every recorded worktree from the record and local git, with no network calls."""
+    path = worktrees.record_path()
     try:
-        entries = worktrees.load_entries(worktrees.record_path())
-    except worktrees.CorruptRecord as error:
+        with worktrees.locked(path):
+            entries = worktrees.load_entries(path)
+    except (worktrees.LockHeld, worktrees.CorruptRecord) as error:
         print(error)
         return 1
     for name, repo, _ in targets:
