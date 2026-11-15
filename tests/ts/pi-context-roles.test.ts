@@ -72,6 +72,35 @@ describe("rewriteForWorktree", () => {
 		rewriteForWorktree("bash", input, "/main/.wt/a", main);
 		assert.equal(input.command, "cd '/main/.wt/a' && ls /main/.wt/a/x /main/.wt/a/y");
 	});
+
+	test("the target of an ln command keeps naming the main checkout", () => {
+		assert.equal(rewrite("bash", { command: "ln -s /main/node_modules node_modules && ln -sf /main/a /main/b" }).command, "cd '/wt/a' && ln -s /main/node_modules node_modules && ln -sf /main/a /wt/a/b");
+	});
+
+	test("bash remaps ~, $HOME and symlink aliases of the main directory", () => {
+		const home = path.join(os.homedir(), "proj");
+		const input = { command: "ls ~/proj/a $HOME/proj ${HOME}/proj/b ~/proj2 ~/projx/c" };
+		rewriteForWorktree("bash", input, wt, home);
+		assert.equal(input.command, "cd '/wt/a' && ls /wt/a/a /wt/a /wt/a/b ~/proj2 ~/projx/c");
+		const real = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-alias-")));
+		const link = `${real}-link`;
+		fs.symlinkSync(real, link);
+		const viaReal = { command: `cat ${real}/x ${link}/y` };
+		rewriteForWorktree("bash", viaReal, wt, link);
+		const edit = { path: `${real}/z` };
+		rewriteForWorktree("edit", edit, wt, link);
+		fs.rmSync(link);
+		fs.rmSync(real, { recursive: true });
+		assert.equal(viaReal.command, "cd '/wt/a' && cat /wt/a/x /wt/a/y");
+		assert.equal(edit.path, "/wt/a/z");
+	});
+
+	test("the process tool starts inside the worktree, with a main directory remapped into it", () => {
+		assert.equal(rewrite("process", { action: "start", command: "ls" }).cwd, "/wt/a");
+		assert.equal(rewrite("process", { action: "start", command: "ls", cwd: "/main/sub" }).cwd, "/wt/a/sub");
+		assert.equal(rewrite("process", { action: "start", command: "cat /main/x" }).command, "cat /wt/a/x");
+		assert.equal(rewrite("process", { action: "list" }).cwd, undefined);
+	});
 });
 
 describe("child mode", () => {

@@ -97,7 +97,7 @@ export class RpcChild {
 		});
 		this.exited = new Promise((resolve) => {
 			let spawnError: string | undefined;
-			this.child.once("error", (error) => {
+			this.child.on("error", (error) => {
 				spawnError = error.message;
 				this.end(resolve, { code: null, signal: null, reason: error.message });
 			});
@@ -143,12 +143,12 @@ export class RpcChild {
 		this.send({ type: "abort" });
 	}
 
-	/** Closes the child's input, then terminates it once `graceMs` pass without an exit. */
+	/** Closes the child's input, terminates it once `graceMs` pass without an exit, and kills it after another `graceMs`. */
 	close(graceMs = CLOSE_GRACE_MS): Promise<Exit> {
 		this.child.stdin?.end();
-		const timer = setTimeout(() => this.kill(), graceMs);
-		timer.unref();
-		return this.exited.finally(() => clearTimeout(timer));
+		const timers = [setTimeout(() => this.kill(), graceMs), setTimeout(() => this.child.kill("SIGKILL"), graceMs * 2)];
+		for (const timer of timers) timer.unref();
+		return this.exited.finally(() => timers.forEach(clearTimeout));
 	}
 
 	kill(): void {

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { after, describe, test } from "node:test";
+import net from "node:net";
+import { after, describe, mock, test } from "node:test";
 import { loadExtension, useEnv } from "./helpers.ts";
 import { connectBridge, describeMain, prefixHash, serveBridge } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
 import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
@@ -62,6 +63,15 @@ describe("bridge", () => {
 		client.close();
 		await server.close();
 		assert.deepEqual(seen, ["abc"]);
+	});
+
+	test("a server error after listening does not crash the process", async () => {
+		const created = mock.method(net, "createServer");
+		const server = await serveBridge(dir, { role: ROLES.reader, execute: async () => reply("x") });
+		const listening = created.mock.calls[0].result as net.Server;
+		created.mock.restore();
+		assert.doesNotThrow(() => listening.emit("error", new Error("EMFILE")));
+		await server.close();
 	});
 });
 

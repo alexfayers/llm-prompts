@@ -126,3 +126,18 @@ describe("RpcChild shutdown", { timeout: 10_000 }, () => {
 		assert.equal(alive(), false);
 	});
 });
+
+describe("RpcChild shutdown", { timeout: 10_000 }, () => {
+	test("close kills a child that ignores both the closed input and SIGTERM", async () => {
+		const child = start({ env: { ...process.env, STUB_IGNORE_EOF: "1", STUB_IGNORE_TERM: "1" } });
+		child.close(50);
+		assert.equal((await child.exited).signal, "SIGKILL");
+	});
+
+	test("a second error event on the child does not go unhandled", async () => {
+		const child = start();
+		const process_ = (child as unknown as { child: { emit(event: string, error: Error): boolean } }).child;
+		assert.doesNotThrow(() => (process_.emit("error", new Error("first")), process_.emit("error", new Error("second"))));
+		assert.match((await child.exited).reason ?? "", /first/);
+	});
+});

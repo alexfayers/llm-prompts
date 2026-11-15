@@ -69,6 +69,25 @@ const PATH_ARGS = [...PATH_KEYS, "cwd"];
 const startsProcess = (toolName: string, input: Record<string, unknown>) => toolName === "process" && input.action === "start";
 
 const inside = (root: string, target: string) => target === root || target.startsWith(root + path.sep);
+const realOr = (target: string) => {
+	try {
+		return fs.realpathSync(target);
+	} catch {
+		return target;
+	}
+};
+const escapeRegExp = (text: string) => text.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+
+/** Every absolute spelling of `target`: itself, its real path, and each of those through the home directory's real path or symlink. */
+function aliasesOf(target: string): string[] {
+	const homes = [...new Set([os.homedir(), realOr(os.homedir())])];
+	const known = [...new Set([target, realOr(target)])];
+	return [...new Set(known.flatMap((alias) => [alias, ...homes.filter((home) => inside(home, alias)).flatMap((from) => homes.map((to) => to + alias.slice(from.length)))]))];
+}
+
+/** The ways a shell command can name `dir`: its aliases, and the aliases under the home directory spelled `~`, `$HOME` and `${HOME}`. */
+const shellSpellings = (dir: string) => aliasesOf(dir).flatMap((alias) => [alias, ...(inside(os.homedir(), alias) ? ["~", "$HOME", "${HOME}"].map((home) => home + alias.slice(os.homedir().length)) : [])]);
+
 const expandHome = (target: string) => (target === "~" || target.startsWith("~/") ? path.join(os.homedir(), target.slice(1)) : target);
 
 /** Returns a block when the role may not make this call. A role with `writes` may write only inside its worktree. */
@@ -78,28 +97,39 @@ export function decide(role: Role, toolName: string, input: Record<string, unkno
 	if (!role.writes || !(WRITE_TOOLS.includes(toolName) || startsProcess(toolName, input))) return undefined;
 	if (!worktree) return { block: true, reason: `role ${role.name} has no worktree to write in` };
 	const target = PATH_ARGS.map((key) => input[key]).find((value) => typeof value === "string");
-	if (typeof target === "string" && inside(worktree, path.resolve(worktree, expandHome(target)))) return undefined;
+	if (typeof target === "string" && aliasesOf(worktree).some((root) => inside(root, path.resolve(worktree, expandHome(target))))) return undefined;
 	return { block: true, reason: `role ${role.name} may write only inside ${worktree}` };
 }
 
 const shellQuote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
 
+const SEPARATOR = /[;&|\n]/;
+
+/** Whether the text at `offset` is an operand of an `ln` command other than its last, which names what the link points at, not a path it writes. */
+function isLinkTarget(command: string, offset: number, length: number): boolean {
+	const start = Math.max(...[";", "&", "|", "\n"].map((separator) => command.lastIndexOf(separator, offset - 1))) + 1;
+	const rest = command.slice(offset + length).replace(/^\S*/, "");
+	const end = rest.search(SEPARATOR);
+	return /^\s*ln\s/.test(command.slice(start, offset)) && /\S/.test(end === -1 ? rest : rest.slice(0, end));
+}
+
 /** Points main-directory paths in the call at the worktree, in place. Bash and started processes also run in the worktree. */
 export function rewriteForWorktree(toolName: string, input: Record<string, unknown>, worktree: string, mainCwd: string): void {
-	const mainPath = new RegExp(`${mainCwd.replace(/[.+?^${}()|[\]\\]/g, "\\$&")}(?![\\w.-])`, "g");
-	const shell = toolName === "bash" || toolName === "process";
-	if (startsProcess(toolName, input)) input.cwd = worktree;
-	if (shell && typeof input.command === "string") {
+	if ((toolName === "bash" || toolName === "process") && typeof input.command === "string") {
+		const spellings = [...shellSpellings(worktree), ...shellSpellings(mainCwd)].sort((a, b) => b.length - a.length);
+		const mainPath = new RegExp(`(?<![\\w.~/$])(?:${spellings.map(escapeRegExp).join("|")})(?![\\w.-])`, "g");
+		const command = input.command.replace(mainPath, (spelling, offset: number, whole: string) => (aliasesOf(worktree).includes(spelling) || isLinkTarget(whole, offset, spelling.length) ? spelling : worktree));
 		const prefix = `cd ${shellQuote(worktree)} && `;
-		const command = input.command.split(worktree).map((part) => part.replace(mainPath, worktree)).join(worktree);
 		input.command = toolName === "process" || command.startsWith(prefix) ? command : prefix + command;
 	}
-	if (shell) return;
+	if (toolName === "bash") return;
 	for (const key of PATH_ARGS) {
 		const value = typeof input[key] === "string" ? expandHome(input[key]) : undefined;
-		if (value === undefined || inside(worktree, value)) continue;
-		input[key] = inside(mainCwd, value) ? worktree + value.slice(mainCwd.length) : path.resolve(worktree, value);
+		if (value === undefined || aliasesOf(worktree).some((root) => inside(root, value))) continue;
+		const main = aliasesOf(mainCwd).find((root) => inside(root, value));
+		input[key] = main === undefined ? path.resolve(worktree, value) : worktree + value.slice(main.length);
 	}
+	if (startsProcess(toolName, input) && !(typeof input.cwd === "string" && aliasesOf(worktree).some((root) => inside(root, input.cwd as string)))) input.cwd = worktree;
 }
 
 function readHandshake(file: string): { role: Role; worktree?: string } | undefined {

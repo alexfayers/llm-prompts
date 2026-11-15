@@ -17,7 +17,7 @@ const holdsCall = (entry: SessionEntry, toolCallId: string) =>
 
 /** The entries before the assistant message holding the call: the part of the session the last request cached. */
 export function seedEntries(branch: SessionEntry[], toolCallId: string): SessionEntry[] {
-	const at = branch.findIndex((entry) => holdsCall(entry, toolCallId));
+	const at = branch.findIndex((entry) => holdsCall(entry, toolCallId.split("/")[0]));
 	return at < 0 ? branch : branch.slice(0, at);
 }
 
@@ -71,31 +71,34 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 	const seed = path.join(files, "seed.jsonl");
 	const handshake = path.join(files, "handshake.json");
 	const cardFile = path.join(files, "card.md");
-	fs.mkdirSync(files, { recursive: true, mode: 0o700 });
-	let prefix: "match" | "mismatch" | undefined;
-	const onPrefix = model ? undefined : (hash: string) => void (prefix = hash === lastPrefixHash() ? "match" : "mismatch");
-	const bridge = mcp && (await serveBridge(files, { role, execute: mcp, onPrefix }));
-	fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, bridge: bridge && { ...describeMain(pi, ctx, model ? role : undefined), socket: bridge.socket } }), { mode: 0o600 });
-	if (model) fs.writeFileSync(cardFile, coldCard(role), { mode: 0o600 });
-	else fs.writeFileSync(seed, jsonl([{ ...ctx.sessionManager.getHeader(), id: randomUUID() }, ...entries]), { mode: 0o600 });
-	const child = RpcChild.start({
-		command,
-		cwd: (model && worktree) || ctx.cwd,
-		args: model
-			? coldArgs(role, { model, sessionDir: path.join(files, "session"), cardFile, skillsDir: path.join(agentDir, "skills") })
-			: ["--mode", "rpc", "--session", seed, "--model", `${ctx.model.provider}/${ctx.model.id}`, "--thinking", pi.getThinkingLevel(), ...(bridge ? ["--no-mcp"] : [])],
-		env: { ...process.env, PI_CONTEXT_CHILD: handshake, PI_CONTEXT_ROLE: role.name, PI_CONTEXT_RUN_ID: runId },
-		signal,
-		onUi: relayDialog(name, ctx),
-	});
+	const sessionDir = path.join(files, "session");
+	let bridge: Awaited<ReturnType<typeof serveBridge>> | undefined;
+	let child: RpcChild | undefined;
 	try {
+		fs.mkdirSync(files, { recursive: true, mode: 0o700 });
+		let prefix: "match" | "mismatch" | undefined;
+		const onPrefix = model ? undefined : (hash: string) => void (prefix = hash === lastPrefixHash() ? "match" : "mismatch");
+		bridge = mcp && (await serveBridge(files, { role, execute: mcp, onPrefix }));
+		fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, bridge: bridge && { ...describeMain(pi, ctx, model ? role : undefined), socket: bridge.socket } }), { mode: 0o600 });
+		if (model) fs.writeFileSync(cardFile, coldCard(role), { mode: 0o600 });
+		else fs.writeFileSync(seed, jsonl([{ ...ctx.sessionManager.getHeader(), id: randomUUID() }, ...entries]), { mode: 0o600 });
+		child = RpcChild.start({
+			command,
+			cwd: (model && worktree) || ctx.cwd,
+			args: model
+				? coldArgs(role, { model, sessionDir, cardFile, skillsDir: path.join(agentDir, "skills") })
+				: ["--mode", "rpc", "--session", seed, "--model", `${ctx.model.provider}/${ctx.model.id}`, "--thinking", pi.getThinkingLevel(), ...(bridge ? ["--no-mcp"] : [])],
+			env: { ...process.env, PI_CONTEXT_CHILD: handshake, PI_CONTEXT_ROLE: role.name, PI_CONTEXT_RUN_ID: runId },
+			signal,
+			onUi: relayDialog(name, ctx),
+		});
 		const turn = await child.prompt(model ? message : `${role.card}\n\n${message}`);
-		await onTurn?.(turn, (next) => child.prompt(next));
+		await onTurn?.(turn, (next) => child!.prompt(next));
 		return { ...turn, prefix };
 	} finally {
-		await child.close();
+		await child?.close();
 		await bridge?.close();
-		if (!process.env.PI_CONTEXT_KEEP_FORKS) fs.rmSync(files, { recursive: true });
+		if (!process.env.PI_CONTEXT_KEEP_FORKS) fs.rmSync(files, { recursive: true, force: true });
 	}
 }
 
@@ -159,7 +162,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[]) {
 				turn = await runDelegate(pi, ctx, { role, name, entries, message, signal, command, runId, model: params.model, mcp, worktree: tree?.path, onTurn });
 			} catch (error) {
 				registry.update(runId, { state: "failed", endedAt: Date.now() });
-				throw error;
+				throw new Error(`fork ${name} failed: ${error instanceof Error ? error.message : String(error)}${tree ? ` (worktree ${tree.path} kept)` : ""}`, { cause: error });
 			}
 			if (turn.error) {
 				registry.update(runId, { state: "failed", endedAt: Date.now() });

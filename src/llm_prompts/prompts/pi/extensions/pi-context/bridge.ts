@@ -19,6 +19,8 @@ export type BridgeOptions = {
 };
 
 const SOCKET = "b.sock";
+const MCP_RESOURCE_TOOLS = new Set(["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"]);
+const isProxied = (name: string) => name.startsWith("mcp__") || MCP_RESOURCE_TOOLS.has(name);
 
 /** Calls `onRecord` for every complete LF-terminated JSON record on the socket. */
 function readRecords(socket: net.Socket, onRecord: (record: Record<string, unknown>) => void): void {
@@ -51,7 +53,7 @@ export async function serveBridge(dir: string, { role, execute, onPrefix }: Brid
 		readRecords(connection, (record) => {
 			if (typeof record.prefix === "string") return onPrefix?.(record.prefix);
 			const { id, tool, args } = record as Request;
-			if (!tool.startsWith("mcp__") && !MCP_RESOURCE_TOOLS.has(tool)) return send(connection, { id, error: `${tool} is not an MCP tool` });
+			if (!isProxied(tool)) return send(connection, { id, error: `${tool} is not an MCP tool` });
 			const blocked = decide(role, tool, (args ?? {}) as Record<string, unknown>);
 			if (blocked) return send(connection, { id, error: blocked.reason });
 			execute(tool, args).then(
@@ -64,6 +66,7 @@ export async function serveBridge(dir: string, { role, execute, onPrefix }: Brid
 		server.once("error", reject);
 		server.listen(socketPath, () => resolve());
 	});
+	server.on("error", () => undefined);
 	fs.chmodSync(socketPath, 0o600);
 	return {
 		socket: socketPath,
@@ -119,7 +122,6 @@ export type ProxyTool = { name: string; description: string; parameters: unknown
 export type MainDescription = { activeTools: string[]; tools: ProxyTool[]; section?: string };
 export type BridgeConfig = MainDescription & { socket: string };
 
-const MCP_RESOURCE_TOOLS = new Set(["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"]);
 const SERVERS_SECTION = "mcp_servers";
 const SECTION_PATTERN = new RegExp(`<${SERVERS_SECTION}>\\n([\\s\\S]*?)\\n</${SERVERS_SECTION}>`);
 
@@ -134,7 +136,7 @@ export function prefixHash(payload: unknown): string {
 /** Describes main's tools and servers section, cut to the tools `role` may use when given. */
 export function describeMain(pi: ExtensionAPI, ctx: ExtensionContext, role?: Role): MainDescription {
 	const allowed = (name: string) => !role || !decide(role, name, {});
-	const tools = pi.getAllTools().filter(({ name }) => (name.startsWith("mcp__") || MCP_RESOURCE_TOOLS.has(name)) && allowed(name));
+	const tools = pi.getAllTools().filter(({ name }) => isProxied(name) && allowed(name));
 	return {
 		activeTools: pi.getActiveTools().filter(allowed),
 		tools: tools.map(({ name, description, parameters, exposure, namespace, annotations }) => ({ name, description, parameters, exposure, namespace, annotations })),

@@ -14,6 +14,12 @@ const user = (id: string) => ({ type: "message", id, message: { role: "user", co
 const assistantCalling = (id: string, ...calls: string[]) => ({ type: "message", id, message: { role: "assistant", content: calls.map((call) => ({ type: "toolCall", id: call })) } });
 const result = (id: string, call: string) => ({ type: "message", id, message: { role: "toolResult", toolCallId: call } });
 
+describe("seedEntries", () => {
+	test("a call nested in another, like one from codemode, cuts before its parent's message", () => {
+		const branch = [user("u1"), assistantCalling("a1", "c1"), result("r1", "c1"), assistantCalling("a2", "c2"), result("r2", "c2")];
+		assert.deepEqual(seedEntries(branch as any, "c2/1").map((entry) => entry.id), ["u1", "a1", "r1"]);
+	});
+});
 
 describe("coldArgs", () => {
 	test("starts a worker with its own session directory, only the role's skills and the role card appended", () => {
@@ -100,6 +106,15 @@ describe("fork tool", () => {
 		assert.equal(registryOf().live().length, 0);
 	});
 
+	test("a setup failure leaves no files and no bridge socket behind", async () => {
+		process.env.PI_CONTEXT_MCP_PROXY = "1";
+		const before = forkDirs();
+		const failed = (await fork({ task: "hi", name: "setup" }, process.cwd(), { activeTools: [], allTools: undefined as never })).tool;
+		assert.ok(failed instanceof Error);
+		assert.match(failed.message, /fork setup failed/);
+		assert.deepEqual(forkDirs(), before);
+	});
+
 	describe("with the MCP proxy", () => {
 		const mainPayload = { system: "s", tools: [{ name: "read" }] };
 		const trackMain = () => {
@@ -168,6 +183,14 @@ describe("fork tool", () => {
 			const text = (appended[0][1] as { text: string }).text;
 			assert.equal(text.split("\ncwd ")[1], JSON.parse(text.split("\n")[1]).worktree);
 			assert.match(tool.content[0].text, /\[merge: landed [0-9a-f]{9}\]/);
+		});
+
+		test("a failure before the child starts names the kept worktree", async () => {
+			process.env.PI_CONTEXT_MCP_PROXY = "1";
+			const failed = (await fork({ task: "hi", role: "writer", name: "early" }, repo, { activeTools: [], allTools: undefined as never })).tool;
+			assert.ok(failed instanceof Error);
+			assert.match(failed.message, /fork early failed[\s\S]*worktree [^\s]+early kept/);
+			assert.ok(fs.existsSync(failed.message.match(/worktree ([^\s]+) kept/)![1]));
 		});
 	});
 });

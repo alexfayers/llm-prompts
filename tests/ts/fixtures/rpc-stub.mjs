@@ -55,5 +55,6 @@ process.stdin.on("data", (chunk) => {
 		if (line) onLine(line);
 	}
 });
+if (process.env.STUB_IGNORE_TERM) process.on("SIGTERM", () => undefined);
 if (process.env.STUB_IGNORE_EOF) setInterval(() => undefined, 1000);
 else process.stdin.on("end", () => process.exit(0));
