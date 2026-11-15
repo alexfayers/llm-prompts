@@ -641,6 +641,34 @@ class TestPiExtensions:
         _install(home, manifest, [overlay])
         assert not installed.exists()
 
+    @pytest.mark.real_prompts
+    @pytest.mark.parametrize("runtime", ["herdsman", "pi-context"])
+    def test_installed_extensions_import_only_installed_files(
+        self,
+        runtime: str,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_config_dir: Path,
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        home.mkdir()
+        (isolated_config_dir / "config.toml").write_text(
+            f'[pi]\nruntime = "{runtime}"\n', encoding="utf-8"
+        )
+        _install(home, tmp_path / "installed.json", herdr=False)
+        extensions = home / ".pi" / "agent" / "extensions"
+        relative_import = re.compile(r"""(?:from|import)\s*["'](\.{1,2}/[^"']+)["']""")
+
+        missing = [
+            f"{source.relative_to(extensions)} -> {target}"
+            for source in extensions.rglob("*.ts")
+            for target in relative_import.findall(source.read_text(encoding="utf-8"))
+            if not (source.parent / target).is_file()
+        ]
+
+        assert missing == []
+
     def test_core_net_guard_extension_is_installed(self, pi_home: Path) -> None:
         source = _CORE_FRAGMENT.parent / "extensions" / "net-guard.ts"
 

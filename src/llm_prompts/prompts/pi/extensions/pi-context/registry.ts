@@ -70,12 +70,6 @@ export class Registry {
 		return lost;
 	}
 
-	static rebuild(records: Run[]): Registry {
-		const registry = new Registry();
-		registry.restore(records);
-		return registry;
-	}
-
 	private notify(run: Run) {
 		for (const listener of this.listeners) listener(run);
 	}

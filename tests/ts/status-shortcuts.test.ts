@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { after, describe, test } from "node:test";
 import { loadExtension } from "./helpers.ts";
+import { registryOf } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 
 const AGENT_DIR = "/agent";
 const towerUrl = (file: string) => pathToFileURL(join(AGENT_DIR, "npm", "node_modules", "tower-do", file)).href;
@@ -46,6 +47,20 @@ describe("status shortcuts", () => {
 		assert.match(shown(), /1 in progress.*1 blocked/s);
 		assert.match(shown(), /1 pending ask/);
 		assert.deepEqual(ext.pi.sent, []);
+	});
+
+	test("/status lists the live fork runs with their states", async () => {
+		const { ext, ctx, shown } = await load();
+		registryOf().restore([]);
+		await ext.runCommand("status", "", ctx);
+		assert.doesNotMatch(shown(), /forks/);
+		registryOf().start({ id: "a", name: "scan", role: "reader", background: true, state: "running", task: "t", startedAt: 1 });
+		registryOf().start({ id: "b", name: "fix", role: "writer", background: true, state: "landing", task: "t", startedAt: 1 });
+		registryOf().start({ id: "c", name: "old", role: "reader", background: true, state: "done", task: "t", startedAt: 1 });
+		await ext.runCommand("status", "", ctx);
+		assert.match(shown(), /forks: scan running, fix landing$/);
+		assert.deepEqual(ext.pi.sent, []);
+		registryOf().restore([]);
 	});
 
 	test("/board lists the in-progress and blocked tasks", async () => {

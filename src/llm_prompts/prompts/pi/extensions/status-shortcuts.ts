@@ -7,6 +7,8 @@ import { loadTowerDo } from "./tower-do-patch.ts";
 export type Task = { key: string; subject?: string; status: string; owner?: string };
 
 const UNAVAILABLE = "unavailable";
+const liveForks = (): { name: string; state: string }[] =>
+	(globalThis as { [key: symbol]: { live(): { name: string; state: string }[] } | undefined })[Symbol.for("pi-context.registry")]?.live() ?? [];
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 export function formatGit(porcelain: string | undefined): string {
@@ -16,10 +18,11 @@ export function formatGit(porcelain: string | undefined): string {
 	return `${branch ?? header}${tracking ? ` [${tracking}]` : ""}, ${changes.length} dirty`;
 }
 
-export function formatStatus(porcelain: string | undefined, tasks: Task[] | undefined, asks: number): string {
+export function formatStatus(porcelain: string | undefined, tasks: Task[] | undefined, asks: number, forks: { name: string; state: string }[] = []): string {
 	const inStatus = (status: string) => tasks?.filter((task) => task.status === status).length ?? 0;
 	const board = tasks ? `${inStatus("in_progress")} in progress, ${inStatus("blocked")} blocked` : UNAVAILABLE;
-	return [`git: ${formatGit(porcelain)}`, `board: ${board}`, `asks: ${count(asks, "pending ask")}`].join("\n");
+	const live = forks.length ? [`forks: ${forks.map(({ name, state }) => `${name} ${state}`).join(", ")}`] : [];
+	return [`git: ${formatGit(porcelain)}`, `board: ${board}`, `asks: ${count(asks, "pending ask")}`, ...live].join("\n");
 }
 
 export function formatBoard(tasks: Task[] | undefined): string {
@@ -50,7 +53,7 @@ async function readBoard(cwd: string): Promise<Task[] | undefined> {
 export default function (pi: ExtensionAPI) {
 	const asks = (ctx: ExtensionContext) => openAsks(ctx.sessionManager.getBranch() as never);
 	const views: Record<string, (ctx: ExtensionContext) => Promise<string>> = {
-		status: async (ctx) => formatStatus(await readGit(pi), await readBoard(ctx.cwd), asks(ctx).length),
+		status: async (ctx) => formatStatus(await readGit(pi), await readBoard(ctx.cwd), asks(ctx).length, liveForks()),
 		board: async (ctx) => formatBoard(await readBoard(ctx.cwd)),
 		asks: async (ctx) => asks(ctx).map(({ id, text }) => `${id}: ${text}`).join("\n") || "no pending asks",
 	};

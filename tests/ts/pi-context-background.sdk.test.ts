@@ -52,7 +52,11 @@ async function setup(options: { withUi: boolean }) {
 	const open = (name: string) => writeFileSync(gate(name), "");
 	const forks = (...names: string[]) => names.map((name) => fauxToolCall("fork", { task: `STUB_GATE:${gate(name)}`, name, background: true }));
 	const finished = (name: string) => registryOf().all().find((run) => run.name === name)?.state === "done";
-	const end = () => (session.dispose(), rmSync(dir, { recursive: true }));
+	const end = async () => {
+		await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+		session.dispose();
+		rmSync(dir, { recursive: true });
+	};
 	return { faux, session, requests, reply, open, forks, finished, release, end, background: () => held! };
 }
 
@@ -70,7 +74,7 @@ describe("background forks in a session", () => {
 		assert.equal(requests.length, 3);
 		assert.match(requests[2], /\[fork sb done\]/);
 		assert.deepEqual(unhandled, []);
-		end();
+		await end();
 	});
 
 	test("session.abort does not reach the hold, but cancelling the live runs releases it without another request", async () => {
@@ -82,7 +86,7 @@ describe("background forks in a session", () => {
 		assert.equal(background().cancel("ha")?.state, "cancelled");
 		await prompting;
 		assert.equal(requests.length, 1);
-		end();
+		await end();
 	});
 
 	test("with a UI each finished run wakes the idle session, while the other is still live", async () => {
@@ -99,7 +103,7 @@ describe("background forks in a session", () => {
 		await session.waitForIdle();
 		assert.match(requests[2], /\[fork ub done\]/);
 		assert.deepEqual(unhandled, []);
-		end();
+		await end();
 	});
 
 	test("with a UI a result that arrives while the session is busy is delivered after its run, in one request", async () => {
@@ -118,6 +122,6 @@ describe("background forks in a session", () => {
 		assert.equal(requests.length, 2);
 		assert.match(requests[1], /\[fork ba done\][\s\S]*\[fork bb done\]/);
 		assert.deepEqual(unhandled, []);
-		end();
+		await end();
 	});
 });

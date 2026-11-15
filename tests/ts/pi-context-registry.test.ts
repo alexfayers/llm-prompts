@@ -21,10 +21,12 @@ describe("Registry", () => {
 		assert.equal(registry.update("nope", { state: "done" }), undefined);
 	});
 
-	test("rebuilds from saved records: the last record per run wins and a run that was running or landing is lost", () => {
-		const rebuilt = Registry.rebuild([run("a"), run("b"), run("a", { state: "done" }), run("c", { state: "landing" }), run("d", { state: "blocked" })]);
-		assert.deepEqual(rebuilt.all().map((r) => [r.id, r.state]), [["a", "done"], ["b", "lost"], ["c", "lost"], ["d", "blocked"]]);
-		assert.deepEqual(rebuilt.live(), []);
+	test("restores saved records: the last record per run wins and a run that was running or landing is lost", () => {
+		const restored = new Registry();
+		const lost = restored.restore([run("a"), run("b"), run("a", { state: "done" }), run("c", { state: "landing" }), run("d", { state: "blocked" })]);
+		assert.deepEqual(lost.map((r) => r.id), ["b", "c"]);
+		assert.deepEqual(restored.all().map((r) => [r.id, r.state]), [["a", "done"], ["b", "lost"], ["c", "lost"], ["d", "blocked"]]);
+		assert.deepEqual(restored.live(), []);
 	});
 
 	test("registryOf gives every caller the same registry", () => {
