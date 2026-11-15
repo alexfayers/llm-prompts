@@ -1,10 +1,10 @@
 // Creates a git worktree for a writer delegate and lands its commits on the main checkout through a one-at-a-time queue: rebase, fold fixups, test, fast-forward.
 // Env: PI_CONTEXT_TEST_CMD (test command run in the worktree before landing; default detected from the repository's files by test-gates.json), PI_CONTEXT_LAND_FOLD=off (land `fixup!`, `squash!` and `amend!` commits as they are, instead of folding them into their target in the fork's range or in main's unpushed range)
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { repoKey } from "./ghost/model.ts";
 
 export const MAX_RETURNS = 2;
 export const MAX_MAIN_MOVED = 3;
@@ -171,7 +171,7 @@ export async function createWorktree(cwd: string, root: string, name: string): P
 	const repo = await gitOut(cwd, "rev-parse", "--show-toplevel");
 	if (fs.realpathSync(repo) !== fs.realpathSync(cwd)) throw new Error(`Writers need the repository root as the directory, not ${cwd}.`);
 	const base = await gitOut(repo, "symbolic-ref", "--short", "HEAD");
-	const dir = path.join(root, `${path.basename(repo)}-${createHash("sha1").update(repo).digest("hex").slice(0, 8)}`, name);
+	const dir = path.join(root, repoKey(repo), name);
 	const branch = `fork/${name}`;
 	const snapshot = await mainSnapshot(repo);
 	await gitOut(repo, "worktree", "add", "-b", branch, dir, base);
