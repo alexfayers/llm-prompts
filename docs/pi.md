@@ -59,6 +59,7 @@ These live in `src/llm_prompts/prompts/pi/extensions/`. Each file starts with a 
 | `popup-defer` | `/popup-defer on\|off\|<ms>` defers dialogs while you type. |
 | `prompt-cache-stabilizer` | Keeps the system prompt unchanged between turns so the prompt cache stays valid. |
 | `role-switch` | Spawns the listed `role@model:effort` names by switching the delegating agent's model and thinking around `delegate_agent`, so the child inherits them. |
+| `reload-now` | Adds the `reload_now` tool. Pi runs `/reload` once the agent settles, then sends a message so the agent continues. The tool sends the internal `/reload-now` command, because only a command handler can reload. An aborted run drops the request. A managed Herdsman agent cannot call it. |
 | `tower-do-patch` | Adds the `tower_do_patch` tool, which changes single tasks on the board. |
 | `tower-do-slim` | Re-registers `tower_do`, `tower_do_talk` and `tower_do_status` with shorter descriptions. |
 | `tower-widget` | Hides the tower-do widget above the editor by default. `/tower-widget` toggles it for the session. |
