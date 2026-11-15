@@ -59,12 +59,14 @@ class Builds:
     def __init__(self, variant: Variant) -> None:
         self.labels: list[str] = []
         self.args: dict[str, tuple[Any, ...]] = {}
+        self.kwargs: dict[str, dict[str, Any]] = {}
         self.error: Exception | None = None
         self.variant = variant
 
-    def build(self, label: str, *args: Any) -> Variant:
+    def build(self, label: str, *args: Any, **kwargs: Any) -> Variant:
         self.labels.append(label)
         self.args[label] = args
+        self.kwargs[label] = kwargs
         if self.error:
             raise self.error
         return replace(self.variant, label="a" if label == "a" else "b")
@@ -592,6 +594,20 @@ def test_b_env_reaches_only_the_b_cells_environment_and_names_ref_b_in_the_repor
         p.cell.variant.label: p.env.get("MCP_MEMORY_FEATURE_FIRST_BLOCK")
         for p in fake_agent.executed
     } == {"a": None, "b": "0"}
+
+
+def test_b_drop_removes_rules_from_the_b_build_only_and_names_them_in_the_report(
+    bench_dirs: BenchDirs, builds: Builds, add: Any, fake_agent: FakeAgent
+) -> None:
+    fake_agent.script("s1", trace=trace(tool_calls=OK))
+
+    run(b_drop=("coding-python",))
+
+    (run_dir,) = (bench_dirs.state / "runs").iterdir()
+    report = json.loads((run_dir / "report.json").read_text())
+    assert report["b_drop"] == ["coding-python"]
+    assert "-coding-python" in (run_dir / "report.md").read_text().splitlines()[0]
+    assert builds.kwargs == {"a": {}, "b": {"drop": ("coding-python",)}}
 
 
 def test_a_finished_run_prunes_cached_builds_that_are_not_the_newest_of_a_ref(

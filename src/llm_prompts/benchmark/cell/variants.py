@@ -106,8 +106,33 @@ def _source_worktree(repo: Path) -> tuple[str, Path]:
     return key, src
 
 
-def source(ref: str, repo: Path) -> tuple[str, Path]:
-    """Return the cache key and a source tree for ``ref``."""
+def _without_rules(
+    ref: str, key: str, src: Path, drop: Iterable[str]
+) -> tuple[str, Path]:
+    names = sorted(set(drop))
+    rules = PROMPTS / "shared" / "rules"
+    for name in names:
+        if not (src / rules / f"{name}.md").is_file():
+            raise VariantBuildError(ref, f"unknown rule '{name}'")
+    digest = hashlib.sha256("\0".join(names).encode()).hexdigest()[:8]
+    key = f"{key}-drop-{digest}"
+    dropped = _fresh_src(key)
+    if dropped is None:
+        return key, paths.variant_dir(key) / "src"
+    shutil.copytree(src, dropped, dirs_exist_ok=True)
+    for name in names:
+        (dropped / rules / f"{name}.md").unlink()
+    (dropped / SRC_COMPLETE).touch()
+    return key, dropped
+
+
+def source(ref: str, repo: Path, drop: Iterable[str] = ()) -> tuple[str, Path]:
+    """Return the cache key and a source tree for ``ref`` without the rules in ``drop``."""
+    key, src = _source(ref, repo)
+    return _without_rules(ref, key, src, drop) if drop else (key, src)
+
+
+def _source(ref: str, repo: Path) -> tuple[str, Path]:
     if ref == WORKTREE:
         return _source_worktree(repo)
     try:
@@ -396,10 +421,11 @@ def build(
     overlays: Collection[str],
     tool_sources: Mapping[str, str] | None = None,
     repo: Path | None = None,
+    drop: Iterable[str] = (),
 ) -> Variant:
     """Build, or reuse from cache, the variant for ``ref``.
 
-    Both variants install the core tools and the named ``overlays``. Variant ``a`` installs every local tool at its origin default-branch commit. ``tool_sources`` replaces configured tool sources.
+    Both variants install the core tools and the named ``overlays``. Variant ``a`` installs every local tool at its origin default-branch commit. ``tool_sources`` replaces configured tool sources. ``drop`` names shared rules to leave out of the source.
     """
     if repo is None:
         try:
@@ -410,7 +436,7 @@ def build(
         raise VariantBuildError(
             ref, f"{repo} is not an llm-prompts checkout. {NOT_IN_CHECKOUT}"
         )
-    key, src = source(ref, repo)
+    key, src = source(ref, repo, drop)
     config = setup.read_config()
     overlays = tuple(dict.fromkeys((*overlays, *provider_overlays(config, agents))))
     if label == "a":
