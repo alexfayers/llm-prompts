@@ -73,6 +73,68 @@ def test_corrupt_record_is_set_aside_and_names_rescan(tmp_path: Path) -> None:
     assert aside.read_text(encoding="utf-8") == "{not json"
 
 
+def _add_to_record(path: Path, key: str, value: Any) -> None:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["entries"][0][key] = value
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_unknown_entry_fields_load_and_survive_a_save(tmp_path: Path) -> None:
+    path = tmp_path / "record.json"
+    save_entries(path, [_entry()])
+    _add_to_record(path, "title", "kept")
+
+    [loaded] = load_entries(path)
+    save_entries(path, [loaded])
+
+    [saved] = json.loads(path.read_text(encoding="utf-8"))["entries"]
+    assert saved["title"] == "kept"
+    assert "extra" not in saved
+
+
+def test_a_field_named_extra_survives_a_save(tmp_path: Path) -> None:
+    path = tmp_path / "record.json"
+    save_entries(path, [_entry()])
+    _add_to_record(path, "extra", {"note": "kept"})
+
+    [loaded] = load_entries(path)
+    save_entries(path, [loaded])
+
+    [saved] = json.loads(path.read_text(encoding="utf-8"))["entries"]
+    assert saved["extra"] == {"note": "kept"}
+
+
+def test_a_link_with_unknown_fields_loads(tmp_path: Path) -> None:
+    path = tmp_path / "record.json"
+    save_entries(path, [_entry(depends_on=(Link("/r", "feat/b", "o/r#7"),))])
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["entries"][0]["depends_on"][0]["future"] = "ignored"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    [loaded] = load_entries(path)
+
+    assert loaded.depends_on == (Link("/r", "feat/b", "o/r#7"),)
+
+
+def test_unreadable_entry_is_skipped_with_a_warning_and_backed_up(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "record.json"
+    save_entries(path, [_entry("good")])
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["entries"] += [{"branch": "bad"}, "junk"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    assert [entry.branch for entry in load_entries(path)] == ["good"]
+
+    warning = capsys.readouterr().err
+    assert "bad" in warning
+    assert "entry 2" in warning
+    assert json.loads(path.read_text(encoding="utf-8")) == data
+    [backup] = tmp_path.glob("record.json.corrupt-*")
+    assert json.loads(backup.read_text(encoding="utf-8")) == data
+
+
 def test_links_and_base_round_trip_and_old_records_load(tmp_path: Path) -> None:
     path = tmp_path / "record.json"
     linked = _entry(
