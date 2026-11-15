@@ -88,3 +88,16 @@ class TestHerdrRule:
 
         assert ("pi-herdsman" in rendered) is kept
         assert ("## Feature worktrees" in rendered) is kept
+
+
+class TestPlanningRule:
+    @pytest.mark.parametrize(
+        ("runtime", "wording"),
+        [("herdsman", "to subagents"), ("pi-context", "to `fork` readers")],
+    )
+    def test_bulk_work_goes_to_the_runtimes_delegates(
+        self, set_runtime: Callable[[str], None], runtime: str, wording: str
+    ) -> None:
+        set_runtime(runtime)
+
+        assert wording in render_for_pi("shared/rules/planning.md")

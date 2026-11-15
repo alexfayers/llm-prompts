@@ -30,7 +30,11 @@ Before planning, in order: Explore agents, one per independent dimension, for ex
 
 ## Subagent usage during implementation
 
+{% if PI_RUNTIME == "pi-context" %}
+- SHOULD run review `fork`s alongside implementation, push bulk read-only work (audits, memory review, summaries) to `fork` readers, and make about one `fork` call per 50 turns.
+{% else %}
 - SHOULD run review agents alongside implementation, push bulk read-only work (audits, memory review, summaries) to subagents, and make about one {{TOOL_AGENT}} call per 50 turns.
+{% endif %}
 
 ## Scope discipline during execution
 
