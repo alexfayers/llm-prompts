@@ -29,12 +29,13 @@ excludeAgent: "cloud-agent"
 ## Hooks
 
 - Flag a new or changed rule, skill or agent directive that a hook could enforce deterministically. Name the hook event (before or after a tool, prompt submit, session start or stop, compaction) and the mechanism (a Claude Code hook that runs a cline-hooks plugin, or a Pi extension).
+- Accept a linked paired hook PR (`Depends on`) as the hook for a MUST.
 - Where the natural event fires only after the change lands, check whether an earlier event can predict the outcome from the tool's input. Only then accept that no hook can enforce it.
 
 ## Size
 
 - Compression keeps every directive. Flag a dropped one.
-- In llm-prompts, check sizes against `src/llm_prompts/size_limits.py` and the allowances declared in the repo. `llm-prompts check` and the CI size report measure them.
+- Don't measure sizes. CI's size report does.
 - Reject a file split or a ceiling raise made only to stay under a budget.
 
 ## Example

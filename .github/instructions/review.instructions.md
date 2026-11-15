@@ -17,7 +17,7 @@ excludeAgent: "cloud-agent"
 
 - Read `CONTRIBUTING.md` at the repository root. Flag a change that breaks a rule there.
 - In llm-prompts, the rules below summarise the shared rules in `src/llm_prompts/prompts/shared/rules/`. Where they differ, the shared rule wins. Flag the drift.
-- Flag a change to a shared rule that the rules below summarise, or to `CONTRIBUTING.md`, when `.github/instructions/*` is not updated to match. Flag the reverse too.
+- Review instructions are synced from llm-prompts-ci. Do not require a same-PR edit of the synced copy. Skip the sync PRs.
 
 ## Scope
 
@@ -27,7 +27,7 @@ excludeAgent: "cloud-agent"
 ## Severity
 
 - Comment only on a defect that breaks normal use, leaks data or fails CI.
-- Skip races between API calls, rare corner cases and dry-run or preview output, unless they lose data.
+- Skip races between API calls, rare corner cases, visual polish and dry-run or preview output, unless they lose data.
 - Flag only a defect in a line the PR adds or edits. Skip a problem in code the PR leaves unchanged, even where a changed line calls it or sits next to it. This applies to inline comments and the review summary.
 - Count code the PR only moves or renames, with no logic change, as unchanged.
 - Don't flag a change only a consumer in another repo can make.
@@ -45,6 +45,7 @@ excludeAgent: "cloud-agent"
 
 - Push back on a long, bundled or hard-to-follow change. Name what to cut to shrink it.
 - Flag changes unrelated to the title, additions nothing uses, and duplicated code or tests. Name the part to remove.
+- Skip an unused addition when the PR body links the PR that adds its caller.
 - Flag a test that repeats a case another test already covers.
 - Flag a refactor mixed with a behavior change. The refactor goes in its own PR.
 
@@ -87,6 +88,8 @@ excludeAgent: "cloud-agent"
 - The delegation plugin's read-only command allow-lists only gate reminders, and are deliberate. Do not ask for a write-detection list or a read-only exception for an unlisted command. A command wrongly treated as an edit only adds a reminder. A missed write only loses a reminder. Do flag a listed command that can still write.
 - `is_read_only_git` also decides checkout-lock and skill-guard blocks. Flag a git subcommand that can write but is treated as read-only, and one that blocks a read.
 
+- Reminder and note guards, such as commit-message rules and read and edit trackers, are best-effort. Flag only a plain common form. Skip adversarial syntax.
+
 ## Tests
 
 - Flag a mock of the project's own modules.
@@ -122,15 +125,15 @@ Comment only when you can name a concrete check or hook. Do not flag judgment no
 
 ## Verdict
 
-- APPROVE only when the review is complete with no actionable findings and no unresolved material uncertainty.
-- Don't withhold approval only because CI can't test runtime behaviour.
+- MUST APPROVE when the review finds nothing actionable. MUST NOT submit COMMENT only to say so.
+- Runtime, secret, permission or browser behaviour that CI can't verify is not a reason to withhold approval.
+- Withhold approval for a change to secrets, permissions, migrations, destructive operations or a sandbox or guard bypass. Name the risk for a human.
 - Otherwise COMMENT. Give the evidence, the impact and the smallest fix.
-- Zero inline comments is not approval.
 - In each comment, name the rule that applies and give the problem and the fix in one or two plain sentences.
 
 ## Noise
 
 - No praise, no speculation.
-- Do not repeat a finding CI already reports.
+- Do not repeat a finding CI already reports. Do not predict type, lint or test failures CI reports.
 - Close a finding when the pushed diff fixes it.
 - Do not claim tests ran without evidence.
