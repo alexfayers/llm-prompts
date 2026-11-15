@@ -1,11 +1,11 @@
-// Folds old tool results into short stubs at the end of a run, keeping their full text fetchable with result_fetch.
+// Folds old tool results and aborted turns into short stubs at the end of a run, keeping their full text fetchable with result_fetch.
 // Env: CONTEXT_FOLD (on, dry to only record what it would fold, or off; default on), CONTEXT_FOLD_PENDING_TOKENS (tokens a fold must save, default 30000), CONTEXT_FOLD_KEEP_TOKENS (newest tokens never folded, default 40000)
 import type { ContextEditableContent, ExtensionAPI, SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
 import { receiptEntryId } from "./already-seen.ts";
 import { HANDOFF_LINE } from "./result-cap.ts";
 
 type Block = { type: string; id?: string; name?: string; text?: string; thinking?: string; arguments?: unknown };
-type Message = { role: string; content?: string | Block[]; toolCallId?: string; toolName?: string; isError?: boolean };
+type Message = { role: string; stopReason?: string; content?: string | Block[]; toolCallId?: string; toolName?: string; isError?: boolean };
 type Entry = { id: string; type: string; message?: Message; customType?: string; data?: { ref: string; text: string } };
 type Projected = { sourceEntry: Entry; messages: Message[] };
 export type FoldPlan = { drafts: SessionBoundaryDraft[]; targets: string[]; savedTokens: number; argChars: number };
@@ -17,6 +17,8 @@ const CHARS_PER_TOKEN = 4;
 const NEVER_FOLDED = new Set(["checkpoint", "asks", "ask_user", "compact_now", "fork", "reload_now"]);
 const MIN_RESULT_CHARS = 800;
 const ARGS_CHARS = 120;
+const ABORTED_ARGS_CHARS = 60;
+const ABORTED_TEXT_CHARS = 120;
 const ERROR_CHARS = 200;
 const NO_TEXT = "(reasoning omitted)";
 
@@ -28,11 +30,14 @@ const envNumber = (name: string, fallback: number): number => Number(process.env
 const charsOf = (content: unknown): number => JSON.stringify(content ?? "", (key, value) => (key === "thinkingSignature" ? undefined : value)).length;
 const sizeOf = ({ messages }: Projected): number => tokens(messages.reduce((sum, message) => sum + charsOf(message.content), 0));
 
-function foldable({ sourceEntry, messages }: Projected): Message | undefined {
-	const [message] = messages;
-	if (messages.length !== 1 || message?.role !== "toolResult" || message.isError || NEVER_FOLDED.has(message.toolName ?? "") || !blocks(message).every((block) => block.type === "text")) return;
+const unedited = ({ sourceEntry, messages }: Projected): Message | undefined =>
+	messages.length === 1 && JSON.stringify(messages[0].content) === JSON.stringify(sourceEntry.message?.content) ? messages[0] : undefined;
+
+function foldable(entry: Projected): Message | undefined {
+	const message = unedited(entry);
+	if (message?.role !== "toolResult" || message.isError || NEVER_FOLDED.has(message.toolName ?? "") || !blocks(message).every((block) => block.type === "text")) return;
 	const full = textOf(message);
-	return JSON.stringify(message.content) === JSON.stringify(sourceEntry.message?.content) && full.length >= MIN_RESULT_CHARS && !HANDOFF_LINE.test(full) ? message : undefined;
+	return full.length >= MIN_RESULT_CHARS && !HANDOFF_LINE.test(full) ? message : undefined;
 }
 
 export function planFold(entries: Projected[], branch: Entry[], { keepTokens, skip = new Set() }: { keepTokens: number; skip?: ReadonlySet<string> }): FoldPlan {
@@ -43,19 +48,46 @@ export function planFold(entries: Projected[], branch: Entry[], { keepTokens, sk
 	for (let index = entries.length - 1, newest = 0; index >= 0 && (newest += sizeOf(entries[index])) <= keepTokens; index--) keepStart = index;
 	const plan: FoldPlan = { drafts: [], targets: [], savedTokens: 0, argChars: 0 };
 	const refs = new Map<string, string>();
+	const edited = new Set<string>();
+	const stash = (callId: string, text: string): { ref: string; full: string } => {
+		const stored = branch.find((candidate) => candidate.customType === "result-cap" && candidate.data?.ref === `rc-${callId}`)?.data;
+		if (!stored) plan.drafts.push({ type: "custom", customType: "result-cap", data: { ref: `fold-${callId}`, text } });
+		return { ref: stored?.ref ?? `fold-${callId}`, full: stored?.text ?? text };
+	};
+	const lastAssistant = entries.map(({ messages }) => messages[0]?.role).lastIndexOf("assistant");
+	for (const [index, entry] of entries.slice(0, keepStart).entries()) {
+		const message = unedited(entry);
+		if (message?.role !== "assistant" || message.stopReason !== "aborted" || index === lastAssistant || skip.has(entry.sourceEntry.id) || HANDOFF_LINE.test(textOf(message))) continue;
+		const used = blocks(message).filter((block) => block.type === "toolCall");
+		const results = entries.flatMap((candidate, at) => (used.some((block) => block.id === candidate.messages[0]?.toolCallId) ? [{ at, id: candidate.sourceEntry.id, body: unedited(candidate), size: sizeOf(candidate) }] : []));
+		const whole = results.every(({ at, id, body }) => at < keepStart && !skip.has(id) && body && !HANDOFF_LINE.test(textOf(body)) && blocks(body).every((block) => block.type === "text"));
+		if (!whole || used.some((block) => NEVER_FOLDED.has(block.name ?? ""))) continue;
+		const kept = results.map(({ id, body }) => ({ id, ...stash(body?.toolCallId ?? "", textOf(body as Message)) }));
+		const outcome = (block: Block): string => `${block.name} ${JSON.stringify(block.arguments).slice(0, ABORTED_ARGS_CHARS)}: ${results.some(({ body }) => body?.toolCallId === block.id && !body?.isError) ? "done" : "aborted"}`;
+		const stub = used.length ? `[abandoned turn: ${used.map(outcome).join(", ")}${kept.length ? `; result_fetch refs: ${kept.map(({ ref }) => ref).join(", ")}` : ""}]` : `[abandoned: ${textOf(message).slice(0, ABORTED_TEXT_CHARS) || NO_TEXT}]`;
+		plan.drafts.push(edit(entry.sourceEntry.id, stub));
+		for (const { id, ref } of kept) {
+			plan.drafts.push({ type: "context_edit", targetId: id, replacement: null });
+			refs.set(id, ref);
+		}
+		for (const id of [entry.sourceEntry.id, ...kept.map(({ id }) => id)]) {
+			edited.add(id);
+			plan.targets.push(id);
+		}
+		plan.savedTokens += tokens(JSON.stringify(blocks(message)).length - stub.length) + results.reduce((sum, { size }) => sum + size, 0);
+		plan.argChars += used.reduce((sum, block) => sum + JSON.stringify(block.arguments).length, 0);
+	}
 	for (const entry of entries.slice(0, keepStart)) {
 		const message = foldable(entry);
-		if (!message || skip.has(entry.sourceEntry.id)) continue;
+		if (!message || skip.has(entry.sourceEntry.id) || edited.has(entry.sourceEntry.id)) continue;
 		const callId = message.toolCallId ?? "";
-		const stored = branch.find((candidate) => candidate.customType === "result-cap" && candidate.data?.ref === `rc-${callId}`)?.data;
-		const full = stored?.text ?? textOf(message);
-		const ref = stored?.ref ?? `fold-${callId}`;
+		const { ref, full } = stash(callId, textOf(message));
 		const args = JSON.stringify(calls.get(callId)?.arguments ?? {});
 		const stub = `[folded: ${message.toolName} ${args.slice(0, ARGS_CHARS)} -> ${full.length} chars; result_fetch({ref:"${ref}"}) resends it]`;
-		if (!stored) plan.drafts.push({ type: "custom", customType: "result-cap", data: { ref, text: full } });
 		plan.drafts.push(edit(entry.sourceEntry.id, stub));
 		plan.targets.push(entry.sourceEntry.id);
 		refs.set(entry.sourceEntry.id, ref);
+		edited.add(entry.sourceEntry.id);
 		plan.savedTokens += tokens(textOf(message).length - stub.length);
 		plan.argChars += args.length;
 	}
@@ -68,7 +100,7 @@ export function planFold(entries: Projected[], branch: Entry[], { keepTokens, sk
 	const first = entries.findIndex((entry) => plan.targets.includes(entry.sourceEntry.id));
 	for (const { sourceEntry, messages } of first < 0 ? [] : entries.slice(first)) {
 		const [message] = messages;
-		if (message?.role !== "assistant" || skip.has(sourceEntry.id)) continue;
+		if (message?.role !== "assistant" || skip.has(sourceEntry.id) || edited.has(sourceEntry.id)) continue;
 		const kept = blocks(message).filter((block) => block.type !== "thinking");
 		if (kept.length === blocks(message).length) continue;
 		plan.drafts.push(kept.length ? { type: "context_edit", targetId: sourceEntry.id, replacement: { content: kept as unknown as ContextEditableContent } } : edit(sourceEntry.id, NO_TEXT));

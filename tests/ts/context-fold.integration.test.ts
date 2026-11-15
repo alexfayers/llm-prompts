@@ -64,6 +64,28 @@ for (const modelId of MODELS) {
 		assert.ok(requests[firstRun].cacheRead >= MIN_RATIO * requests[0].total, `cache read ${requests[firstRun].cacheRead} of a ${requests[0].total} token prefix`);
 	});
 
+	test(`an aborted message is pruned and ${modelId} accepts the next run`, { skip, timeout: 600_000 }, async () => {
+		const { session, requests, records } = await open(modelId);
+		let streamed = 0;
+		const aborts: Promise<void>[] = [];
+		session.subscribe((event) => {
+			if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta" && !aborts.length && (streamed += event.assistantMessageEvent.delta.length) > 1500) aborts.push(session.abort());
+		});
+		await session.prompt("Write a 600 word story about a lighthouse.");
+		await Promise.all(aborts);
+		await session.prompt(FIRST_PROMPT);
+		await session.prompt("Reply with only the word ok.");
+		const entries = session.sessionManager.getEntries() as any[];
+		session.dispose();
+
+		const abortedId = entries.find((entry) => entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason === "aborted")?.id;
+		assert.ok(abortedId, "no aborted message was recorded");
+		assert.deepEqual(requests.filter((request) => request.stop === "error").map((request) => request.error), []);
+		assert.ok(records().includes("run-end"));
+		assert.ok(entries.some((entry) => entry.type === "custom" && entry.customType === "context-fold" && entry.data.targets.includes(abortedId)));
+		assert.notEqual(requests.at(-1)?.stop, "error");
+	});
+
 	test(`after a rejected request ${modelId} gets the folded entries back and reads the cached prefix`, { skip, timeout: 600_000 }, async () => {
 		const { session, state, requests, records } = await open(modelId);
 		await session.prompt(FIRST_PROMPT);

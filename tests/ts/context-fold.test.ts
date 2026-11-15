@@ -7,6 +7,7 @@ type Raw = { id: string; type: string; message?: any; customType?: string; data?
 const entry = (id: string, message: object): Raw => ({ id, type: "message", message });
 const user = (id: string) => entry(id, { role: "user", content: "go" });
 const assistant = (id: string, ...content: object[]) => entry(id, { role: "assistant", content });
+const aborted = (id: string, ...content: object[]) => entry(id, { role: "assistant", content, stopReason: "aborted" });
 const call = (id: string, name = "bash", args: object = { command: "ls" }) => ({ type: "toolCall", id, name, arguments: args });
 const text = (value: string) => ({ type: "text", text: value });
 const thinking = (value: string) => ({ type: "thinking", thinking: value });
@@ -168,5 +169,54 @@ describe("agent_before_settle", () => {
 		const { added } = await settle(entries);
 		assert.deepEqual(added.find((draft) => draft.customType === "context-fold").data.targets, ["r1"]);
 		assert.ok(added.find((draft) => draft.customType === "context-fold").data.savedTokens < 1100);
+	});
+
+	test("an aborted turn before the newest context becomes one line that lists the refs of its results", async () => {
+		const entries = [
+			user("u0"),
+			aborted("a1", thinking("hmm"), call("c1", "bash", { command: "make" }), call("c2", "bash", { command: "sleep 99" })),
+			result("r1", "c1", "bash", BIG),
+			result("r2", "c2", "bash", "Tool execution was aborted", { isError: true }),
+			user("u1"),
+			assistant("a2", thinking("later"), call("c3")),
+			result("r3", "c3", "bash", BIG + BIG),
+			assistant("a3", text("done")),
+		];
+		const { added } = await settle(entries);
+		const edits = Object.fromEntries(added.filter((draft) => draft.type === "context_edit").map((draft) => [draft.targetId, draft.replacement]));
+		assert.equal(edits.a1.content[0].text, '[abandoned turn: bash {"command":"make"}: done, bash {"command":"sleep 99"}: aborted; result_fetch refs: fold-c1, fold-c2]');
+		assert.deepEqual([edits.r1, edits.r2], [null, null]);
+		assert.deepEqual(added.filter((draft) => draft.customType === "result-cap" && draft.data.ref !== "fold-c3").map((draft) => draft.data), [{ ref: "fold-c1", text: BIG }, { ref: "fold-c2", text: "Tool execution was aborted" }]);
+		assert.ok(edits.a2.content.every((block: any) => block.type !== "thinking"));
+		assert.equal(added.filter((draft) => draft.targetId === "r1").length, 1);
+	});
+
+	test("aborted turns that hold a handoff line or edited result, the last assistant message and text-only aborted messages are handled safely", async () => {
+		const huge = entry("uh", { role: "user", content: "y".repeat(8000) });
+		const entries = [
+			user("u0"),
+			aborted("a1", call("c1")),
+			result("r1", "c1", "bash", `${BIG}\nASK: which one?`),
+			aborted("a2", call("c2")),
+			result("r2", "c2", "bash", `DENIED: "no"`),
+			aborted("a3", call("c3")),
+			result("r3", "c3", "bash", "ran"),
+			aborted("a4", thinking("hm"), text("I was going to check the config file and then edit it")),
+			aborted("a5", call("c5")),
+			result("r5", "c5", "bash", BIG),
+			aborted("a6", call("c6")),
+			result("r6", "c6", "bash", BIG),
+			huge,
+		];
+		const { added } = await settle(entries, { edits: { r3: [text("[folded already]")] } });
+		const edits = Object.fromEntries(added.filter((draft) => draft.type === "context_edit").map((draft) => [draft.targetId, draft.replacement]));
+		assert.deepEqual(Object.keys(edits).sort(), ["a4", "a5", "r5", "r6"]);
+		assert.equal(edits.a4.content[0].text, "[abandoned: I was going to check the config file and then edit it]");
+	});
+
+	test("an aborted turn inside the newest context stays", async () => {
+		const entries = [user("u0"), aborted("a1", call("c1")), result("r1", "c1", "bash", "Tool execution was aborted", { isError: true }), assistant("a2", text("done"))];
+		const { out } = await settle(entries);
+		assert.equal(out, undefined);
 	});
 });

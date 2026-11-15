@@ -78,3 +78,17 @@ test("pi accepts the undo of a fold after a rejected request and the request aft
 	assert.equal(sent.split(BIG).length - 1, 2);
 	assert.ok(!sent.includes("[folded:") && sent.includes("T2"));
 });
+
+test("pi accepts the pruning of an aborted message and the next request holds its one-line stub", async () => {
+	const PLAN = "plan ".repeat(300);
+	const { session, sessionManager, requests, finish } = await start(fauxAssistantMessage(PLAN, { stopReason: "aborted" }), ...TWO_BIG_CALLS, () => fauxAssistantMessage("again"));
+	await session.prompt("go");
+	await session.prompt("go on");
+	await session.prompt("again?");
+	finish();
+
+	assert.ok(sessionManager.getEntries().some((entry: any) => entry.type === "custom" && entry.customType === "context-fold"));
+	const sent = JSON.stringify(requests.at(-1).messages);
+	assert.ok(sent.includes("[abandoned: plan plan"));
+	assert.ok(!sent.includes(PLAN));
+});
