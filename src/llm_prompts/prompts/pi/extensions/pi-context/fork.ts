@@ -8,8 +8,8 @@ import { Type } from "typebox";
 import { parseOutcome, projectResult } from "../outcome-codes.ts";
 import { Background } from "./background.ts";
 import { describeMain, lastPrefixHash, mcpProxyEnabled, PREFIX_FILE, serveBridge, type BridgeOptions } from "./bridge.ts";
-import { createWorktree, dropIfClean, land, restoreWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
-import { coldCard, ROLES, type Role } from "./roles.ts";
+import { createWorktree, dropIfClean, gitOut, land, restoreWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
+import { coldCard, expandHome, ROLES, type Role } from "./roles.ts";
 import { isLive, registryOf, type Run, type RunState } from "./registry.ts";
 import { RpcChild, type Turn, type UiAnswer, type UiRequest } from "./runner.ts";
 import { pinForkAsks } from "./wake.ts";
@@ -63,6 +63,8 @@ export type DelegateOptions = {
 	worktree?: string;
 	/** The main checkout the writer's worktree belongs to. */
 	repo?: string;
+	/** The directory the delegate works in instead of main's. */
+	cwd?: string;
 	/** The run's file directory. A new one is made when it is not given. */
 	files?: string;
 	/** Continue the session already in `files` instead of seeding a new one. */
@@ -76,7 +78,7 @@ export type DelegateOptions = {
 };
 
 /** Runs the role's session on a copy of the given entries with main's model, thinking level and directory, or as a cold worker with `model`, and returns its first turn. */
-export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { role, name, entries = [], message, signal, command, runId = newRunId(), model, mcp, worktree, repo, files = path.join(getAgentDir(), "pi-context", randomUUID()), resume, keep, onChild, onTurn }: DelegateOptions): Promise<Turn & { prefix?: "match" | "mismatch" }> {
+export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { role, name, entries = [], message, signal, command, runId = newRunId(), model, mcp, worktree, repo, cwd, files = path.join(getAgentDir(), "pi-context", randomUUID()), resume, keep, onChild, onTurn }: DelegateOptions): Promise<Turn & { prefix?: "match" | "mismatch" }> {
 	if (!ctx.model) throw new Error("Cannot start a delegate without a model.");
 	if (resume && model) throw new Error("A cold worker cannot resume.");
 	const agentDir = getAgentDir();
@@ -94,10 +96,10 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 		bridge = mcp && (await serveBridge(files, { role, execute: mcp, onPrefix }));
 		fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, repo, bridge: bridge && { ...describeMain(pi, ctx, model ? role : undefined), socket: bridge.socket } }), { mode: 0o600 });
 		if (model) fs.writeFileSync(cardFile, coldCard(role), { mode: 0o600 });
-		else if (!resume) fs.writeFileSync(seed, jsonl([{ ...ctx.sessionManager.getHeader(), id: randomUUID() }, ...entries]), { mode: 0o600 });
+		else if (!resume) fs.writeFileSync(seed, jsonl([{ ...ctx.sessionManager.getHeader(), id: randomUUID(), ...(cwd && { cwd }) }, ...entries]), { mode: 0o600 });
 		child = RpcChild.start({
 			command,
-			cwd: (model && worktree) || ctx.cwd,
+			cwd: (model && worktree) || cwd || ctx.cwd,
 			args: model
 				? coldArgs(role, { model, sessionDir, cardFile, skillsDir: path.join(agentDir, "skills") })
 				: ["--mode", "rpc", "--session", seed, "--model", `${ctx.model.provider}/${ctx.model.id}`, "--thinking", pi.getThinkingLevel(), ...(bridge ? ["--no-mcp"] : [])],
@@ -119,6 +121,18 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 }
 
 const WORKTREES = "worktrees";
+
+/** The toplevel of the git checkout at `target`, with `~` expanded and a relative path taken from `cwd`. */
+async function checkoutOf(cwd: string, target: string): Promise<string> {
+	const dir = path.resolve(cwd, expandHome(target));
+	try {
+		return await gitOut(dir, "rev-parse", "--show-toplevel");
+	} catch {
+		throw new Error(`target ${target} is not a git checkout`);
+	}
+}
+
+const sameDir = (a: string, b: string) => fs.realpathSync(a) === fs.realpathSync(b);
 
 /** Whether a lost run's session is still there to continue. A cold worker's is not kept. */
 export const canResume = (run: Run): boolean => run.state === "lost" && run.background && !run.model && Boolean(run.files && fs.existsSync(path.join(run.files, "seed.jsonl")));
@@ -174,7 +188,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 	const registry = registryOf();
 
 	/** Starts the delegate of a registered run. A background run reports its end to `background`. */
-	function startRun(ctx: ExtensionToolContext, run: { id: string; name: string; ref: string; role: Role; tree?: Worktree; model?: string; files: string; background: boolean; signal?: AbortSignal }, delegate: Pick<DelegateOptions, "entries" | "message" | "resume">) {
+	function startRun(ctx: ExtensionToolContext, run: { id: string; name: string; ref: string; role: Role; tree?: Worktree; target?: string; model?: string; files: string; background: boolean; signal?: AbortSignal }, delegate: Pick<DelegateOptions, "entries" | "message" | "resume">) {
 		const { id: runId, name, ref, tree } = run;
 		const merged: { landing?: Landing } = {};
 		const runSignal = run.background ? background.track(runId) : run.signal;
@@ -188,7 +202,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			return { content: result.content, details: result.details, structuredContent: result.structuredContent, isError };
 		} : undefined;
 		const keep = () => registry.get(runId)?.state === "lost";
-		const running = runDelegate(pi, ctx, { role: run.role, name, ...delegate, signal: runSignal, command, runId, model: run.model, mcp, worktree: tree?.path, repo: tree?.repo, files: run.files, keep, onChild: run.background ? (child) => background.attach(runId, child) : undefined, onTurn });
+		const running = runDelegate(pi, ctx, { role: run.role, name, ...delegate, signal: runSignal, command, runId, model: run.model, mcp, worktree: tree?.path, repo: tree?.repo, cwd: run.target, files: run.files, keep, onChild: run.background ? (child) => background.attach(runId, child) : undefined, onTurn });
 		if (run.background) {
 			const onEnd = async (turn: Turn) => {
 				const current = registry.get(runId);
@@ -213,13 +227,14 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		name: "fork",
 		label: "Fork",
 		description:
-			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. It blocks until the delegate replies with an OUTCOME line and the work has landed. With background true it returns at once and the result arrives as a message when the delegate finishes.",
+			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. target points either role at another git checkout. It blocks until the delegate replies with an OUTCOME line and the work has landed. With background true it returns at once and the result arrives as a message when the delegate finishes.",
 		promptSnippet: "Run a read-only or worktree-writing delegate on a copy of this session and wait for its reply",
 		parameters: Type.Object({
 			task: Type.String({ description: "What the delegate should find out or check" }),
 			role: Type.Optional(Type.Union([Type.Literal("reader"), Type.Literal("writer")], { description: "reader (default) reads only, writer commits in its own worktree" })),
 			name: Type.Optional(Type.String({ pattern: "^[a-z0-9-]{1,24}$", description: "Short name for the delegate" })),
 			background: Type.Optional(Type.Boolean({ description: "Return at once and receive the result later as a message, so you can keep working" })),
+			target: Type.Optional(Type.String({ description: "Path of another git checkout or worktree to read or land in, instead of this session's" })),
 			model: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9][\\w./:@-]*$", description: "Run as a cold worker on this cheaper model (provider/id, optionally :thinking). It starts with an empty session, so the task must be self-contained" })),
 		}),
 		async execute(toolCallId, params, signal, _onUpdate, ctx) {
@@ -227,14 +242,16 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			if (!ctx.model) throw new Error("Cannot fork without a model.");
 			const role: Role = ROLES[params.role ?? "reader"];
 			const name = params.name ?? `fork-${randomUUID().slice(0, 6)}`;
-			const tree = role.writes ? await createWorktree(ctx.cwd, path.join(getAgentDir(), "pi-context", WORKTREES), name) : undefined;
+			const checkout = params.target === undefined ? undefined : await checkoutOf(ctx.cwd, params.target);
+			const target = checkout && !sameDir(checkout, ctx.cwd) ? checkout : undefined;
+			const tree = role.writes ? await createWorktree(checkout ?? ctx.cwd, path.join(getAgentDir(), "pi-context", WORKTREES), name) : undefined;
 			const entries = seedEntries(ctx.sessionManager.getBranch(), toolCallId);
 			const runId = newRunId();
 			const ref = `rc-fork-${name}-${toolCallId}`;
 			const files = path.join(getAgentDir(), "pi-context", randomUUID());
-			registry.start({ id: runId, name, role: role.name, background: Boolean(params.background), state: "running", task: params.task, worktree: tree?.path, branch: tree?.branch, tree, startedAt: Date.now() });
+			registry.start({ id: runId, name, role: role.name, background: Boolean(params.background), state: "running", task: params.task, worktree: tree?.path, branch: tree?.branch, tree, target, startedAt: Date.now() });
 			const message = `${tree ? `Your worktree: ${tree.path}\n` : ""}Task: ${params.task}`;
-			const { running, merged } = startRun(ctx, { id: runId, name, ref, role, tree, model: params.model, files, background: Boolean(params.background), signal }, { entries, message });
+			const { running, merged } = startRun(ctx, { id: runId, name, ref, role, tree, target, model: params.model, files, background: Boolean(params.background), signal }, { entries, message });
 			if (params.background) {
 				return { content: [{ type: "text", text: `started fork ${name} (background)` }], details: { name, runId, background: true } };
 			}
@@ -287,7 +304,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			if (run.tree) await restoreWorktree(run.tree);
 			registry.update(run.id, { state: "running", endedAt: undefined, endedBy: undefined });
 			const message = `${run.tree ? `Your worktree: ${run.tree.path}\n` : ""}Your session stopped before you finished. Continue the task from where you left off, and end with your OUTCOME line.`;
-			startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${toolCallId}`, role: ROLES[run.role as Role["name"]], tree: run.tree, files: run.files, background: true }, { message, resume: true });
+			startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${toolCallId}`, role: ROLES[run.role as Role["name"]], tree: run.tree, target: run.target, files: run.files, background: true }, { message, resume: true });
 			return { content: [{ type: "text", text: `resumed fork ${run.name} (background)` }], details: { name: run.name, runId: run.id, background: true } };
 		},
 	});

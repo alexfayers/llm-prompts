@@ -89,7 +89,7 @@ function aliasesOf(target: string): string[] {
 /** The ways a shell command can name `dir`: its aliases, and the aliases under the home directory spelled `~`, `$HOME` and `${HOME}`. */
 const shellSpellings = (dir: string) => aliasesOf(dir).flatMap((alias) => [alias, ...(inside(os.homedir(), alias) ? ["~", "$HOME", "${HOME}"].map((home) => home + alias.slice(os.homedir().length)) : [])]);
 
-const expandHome = (target: string) => (target === "~" || target.startsWith("~/") ? path.join(os.homedir(), target.slice(1)) : target);
+export const expandHome = (target: string) => (target === "~" || target.startsWith("~/") ? path.join(os.homedir(), target.slice(1)) : target);
 
 /** Matches any shell spelling of the given directories as a whole path or path prefix. */
 const shellPathPattern = (dirs: string[]) => new RegExp(`(?<![\\w.~/$])(?:${dirs.flatMap(shellSpellings).sort((a, b) => b.length - a.length).map(escapeRegExp).join("|")})(?![\\w.-])`, "g");

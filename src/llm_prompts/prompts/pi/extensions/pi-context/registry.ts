@@ -15,6 +15,8 @@ export type Run = {
 	branch?: string;
 	/** A writer's worktree, as the landing needs it. */
 	tree?: { repo: string; path: string; branch: string; base: string; snapshot: string };
+	/** The git checkout the delegate works in, when it is not the session's directory. */
+	target?: string;
 	/** The directory of the delegate's seed, handshake and session files. */
 	files?: string;
 	/** The model of a cold worker. */

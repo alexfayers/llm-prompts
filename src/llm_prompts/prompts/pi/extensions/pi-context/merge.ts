@@ -123,7 +123,7 @@ const run = (command: string, args: string[], cwd: string, signal?: AbortSignal,
 
 const git = (cwd: string, ...args: string[]) => run("git", args, cwd);
 
-async function gitOut(cwd: string, ...args: string[]): Promise<string> {
+export async function gitOut(cwd: string, ...args: string[]): Promise<string> {
 	const { code, out } = await git(cwd, ...args);
 	if (code) throw new Error(`git ${args.join(" ")} failed: ${out.trim()}`);
 	return out.trim();
@@ -333,11 +333,12 @@ async function landNow({ tree, first, resume, signal }: LandOptions): Promise<La
 	}
 }
 
-let queue: Promise<unknown> = Promise.resolve();
+const queues = new Map<string, Promise<unknown>>();
 
-/** Lands the worktree's commits on the main checkout, one landing at a time. Never pushes. */
+/** Lands the worktree's commits on its main checkout, one landing at a time per checkout. Never pushes. */
 export function land(options: LandOptions): Promise<Landing> {
-	const landing = queue.then(() => landNow(options));
-	queue = landing.then(undefined, () => undefined);
+	const key = fs.realpathSync(options.tree.repo);
+	const landing = (queues.get(key) ?? Promise.resolve()).then(() => landNow(options));
+	queues.set(key, landing.then(undefined, () => undefined));
 	return landing;
 }

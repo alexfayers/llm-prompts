@@ -35,9 +35,13 @@ const short = (text: string, max = SNIPPET): string => {
 const homePath = (file: string): string => {
 	const relative = path.relative(process.cwd(), file);
 	if (!relative.startsWith("..") && !path.isAbsolute(relative)) return relative || ".";
+	return tilde(file);
+};
+const tilde = (file: string): string => {
 	const home = os.homedir();
 	return file === home || file.startsWith(`${home}/`) ? `~${file.slice(home.length)}` : file;
 };
+const targetText = (run: Run): string => (run.target ? ` · ${tilde(run.target)}` : "");
 const argOf = (args: Event): string | undefined => {
 	if (typeof args.command === "string") return args.command;
 	if (typeof args.path === "string") return homePath(args.path);
@@ -127,7 +131,7 @@ export class LiveView {
 				const turns = activity?.turns ?? 0;
 				const role = run.model ? "cold" : run.role;
 				const glyph = run.state === "landing" ? paint.fg("success", "↳") : paint.fg("accent", frame);
-				const meta = paint.fg("dim", `${elapsed(now - run.startedAt)} · ${turns} turn${turns === 1 ? "" : "s"}`) + usageText(activity?.usage, this.window, paint) + (run.state === "landing" ? paint.fg("dim", " · landing") : "");
+				const meta = paint.fg("dim", `${elapsed(now - run.startedAt)} · ${turns} turn${turns === 1 ? "" : "s"}${targetText(run)}`) + usageText(activity?.usage, this.window, paint) + (run.state === "landing" ? paint.fg("dim", " · landing") : "");
 				const last = activity?.last ? `  ${paint.fg("muted", activity.last)}` : "";
 				return fit(`${glyph} ${paint.fg("accent", paint.bold(run.name))} ${paint.fg(run.model ? COLD_COLOR : (ROLE_COLORS[run.role] ?? COLD_COLOR), `[${role}]`)} ${meta}${last}`);
 			}),
@@ -195,7 +199,7 @@ export function registerLiveView(pi: ExtensionAPI, view: LiveView, registry: Reg
 				const now = Date.now();
 				const entries = ctx.sessionManager.getBranch() as Parameters<typeof hasOpenAsks>[0];
 				const ask = (run: Run) => (hasOpenAsks(entries, run) ? ` ${ctx.ui.theme.fg("warning", "? ask")}` : "");
-				ctx.ui.notify(runs.length ? runs.slice(0, RECENT).map((run) => `${run.name} ${run.state} ${elapsed((run.endedAt ?? now) - run.startedAt)}${ask(run)}`).join("\n") : "no forks", "info");
+				ctx.ui.notify(runs.length ? runs.slice(0, RECENT).map((run) => `${run.name} ${run.state} ${elapsed((run.endedAt ?? now) - run.startedAt)}${targetText(run)}${ask(run)}`).join("\n") : "no forks", "info");
 				return;
 			}
 			const run = runs.find((candidate) => candidate.name === name);

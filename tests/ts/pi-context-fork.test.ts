@@ -275,6 +275,22 @@ describe("fork tool", () => {
 			assert.equal(fs.existsSync(handshake.worktree), false);
 		});
 
+		test("with a target lands its commits on the target and leaves the session repo untouched", async () => {
+			const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-target-")));
+			after(() => fs.rmSync(other, { recursive: true }));
+			git(other, "init", "-b", "trunk");
+			git(other, "config", "user.email", "t@example.com");
+			git(other, "config", "user.name", "t");
+			git(other, "commit", "--allow-empty", "-m", "start");
+			const before = git(repo, "rev-parse", "HEAD");
+			const { tool, appended } = await fork({ task: "STUB_WRITE", role: "writer", name: "elsewhere", target: path.relative(repo, other) }, repo);
+			assert.equal(JSON.parse((appended[0][1] as { text: string }).text.split("\n")[1]).repo, other);
+			assert.match(tool.content[0].text, /\[merge: landed [0-9a-f]{9}\]/);
+			assert.equal(git(other, "log", "-1", "--format=%s", "trunk"), "write");
+			assert.equal(git(repo, "rev-parse", "HEAD"), before);
+			assert.equal(git(repo, "status", "--porcelain"), "");
+		});
+
 		test("a cold writer starts in its worktree and lands through the same queue", async () => {
 			const { tool, appended } = await fork({ task: "STUB_WRITE", role: "writer", name: "cold", model: "prov/cheap" }, repo);
 			const text = (appended[0][1] as { text: string }).text;
