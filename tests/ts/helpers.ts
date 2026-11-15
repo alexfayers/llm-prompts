@@ -125,6 +125,7 @@ function makePi(state: Partial<FakePi>): FakePi & ExtensionAPI {
 		getAllTools: () => pi.allTools,
 		setActiveTools: (names: string[]) => void (pi.activeTools = names),
 		getCommands: () => pi.commandNames.map((name) => ({ name })),
+		getSessionName: () => undefined,
 		getThinkingLevel: () => pi.thinking,
 		setThinkingLevel: (level: string) => void (pi.thinking = level),
 		setModel: async (model: unknown) => ((pi.model = model), true),
