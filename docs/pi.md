@@ -53,6 +53,7 @@ These live in `src/llm_prompts/prompts/pi/extensions/`. Each file starts with a 
 | `context-total` | `/context-total` reports live context and cost for the session and its running agents. `/context-total footer on\|off` toggles a status-line total. |
 | `diff-preview` | Shows the pending change of `edit` and `write` calls, and any other ask with a long preview, as a scrollable preview in the permission box. Uses the diff renderer of pi-compact-tools, or pi's own with a one-time warning where that is missing. Scroll with the mouse wheel (fullscreen mode) or `Alt+Up`/`Alt+Down`. |
 | `herdr-permission-blocked` | Shows the Herdr "?" state while a permission prompt waits for the user, including prompts forwarded from subagents. |
+| `herdsman-guidance-dedupe` | Replaces the pi-herdsman delegation reminder with a short stub before it is saved, and sends only the first one to the model. |
 | `hide-tools` | Hides rarely used LSP and AST tools from the model, and the task board and process tools in non-interactive sessions. `lsp_diagnostics` stays. |
 | `lsp-defaults` | Uses installed `ty` or `ruff` when pyright is absent and no Python server is configured. |
 | `mcp-hints` | Helps `codemode` scripts call MCP tools: parses JSON text in results into `structuredContent`, lists tool names once per session, and adds the schema of a tool when a message names it or a script first calls it. Schemas and result shapes are cached in `mcp-hints-cache.json`. |

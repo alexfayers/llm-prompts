@@ -21,4 +21,10 @@ describe("handler", () => {
 		const out = await ext.fire("context_with_system", { messages: [system, guidance(1), user(2), guidance(3, "other")] });
 		assert.equal(out, undefined);
 	});
+
+	test("message_end replaces the guidance and keeps its role and type", async () => {
+		const ext = await loadExtension("herdsman-guidance-dedupe");
+		const out = await ext.fire("message_end", { message: guidance(1) });
+		assert.deepEqual(out.message, { ...guidance(1), content: "(delegation reminder omitted)" });
+	});
 });
