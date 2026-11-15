@@ -1,0 +1,5 @@
+{
+  "rules": ["stop-on-fail"],
+  "skills": ["git-usage"],
+  "tools": ["bash", "edit", "read", "unlock", "write"]
+}
