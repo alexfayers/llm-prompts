@@ -65,6 +65,13 @@ describe("result_fetch", () => {
 		assert.equal((await fetch({ ref: "rc-t1", offset: 7, limit: 6 })).content[0].text, lines.slice(7, 13) + "\n[more: offset 13]");
 		assert.equal((await fetch({ ref: "rc-t1", pattern: "match", limit: 10000 })).content[0].text, "0: line 0 match\n3: line 3 match\n6: line 6 match\n9: line 9 match");
 	});
+
+	test("a ref stored twice returns the later text", async () => {
+		const { makeCtx, callTool } = await loadExtension("result-cap");
+		const branch = ["old", "new"].map((stored) => ({ type: "custom", customType: "result-cap", data: { ref: "rc-fork-x", text: stored } }));
+		const fetched = await callTool("result_fetch", { ref: "rc-fork-x" }, makeCtx({ sessionManager: { getBranch: () => branch } }));
+		assert.equal(fetched.content[0].text, "new");
+	});
 });
 
 describe("result_query", () => {

@@ -85,7 +85,7 @@ export function listShape(list: Rows, ref: string, cap: number): string {
 
 type Stored = { type: string; customType?: string; data?: { ref: string; text: string } };
 
-const lookup = (ctx: ExtensionContext, ref: string) => (ctx.sessionManager.getBranch() as Stored[]).find((entry) => entry.customType === "result-cap" && entry.data?.ref === ref)?.data;
+const lookup = (ctx: ExtensionContext, ref: string) => (ctx.sessionManager.getBranch() as Stored[]).filter((entry) => entry.customType === "result-cap" && entry.data?.ref === ref).at(-1)?.data;
 
 const cell = (row: Row, field: string): string => {
 	const value = row.values[field];
