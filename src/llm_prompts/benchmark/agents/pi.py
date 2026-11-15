@@ -81,7 +81,9 @@ class PiAdapter:
 
     @property
     def judge_model(self) -> str:
-        return _pi_default_model()
+        """Return the default model, as its Bedrock inference profile when it is a bare Anthropic id."""
+        model = _pi_default_model()
+        return f"global.{model}" if model.startswith("anthropic.") else model
 
     def point_memory(self, home: Path, url: str) -> None:
         config_path = home / ".pi" / "agent" / "mcp.json"

@@ -157,6 +157,8 @@ def judge(args: Mapping[str, CheckArg], ctx: CheckContext) -> CheckOutcome:
             f"judge exited {result.returncode}: {result.stderr.strip()[:500]}",
             tokens,
         )
+    if reply.error:
+        return CheckOutcome("judge", False, f"judge failed: {reply.error}", tokens)
     first, _, reason = reply.final_text.strip().partition("\n")
     match = VERDICT_LINE.fullmatch(first.strip())
     if match:
