@@ -1,4 +1,5 @@
 import importlib
+import itertools
 import json
 import os
 import shutil
@@ -109,6 +110,21 @@ def test_build_installs_an_overridden_tool_source_into_its_own_cache(
     assert variant.venv != default.venv
 
 
+def test_build_ignores_the_variants_own_uv_sources_for_every_installed_tool(
+    repo: Path, fake_subprocess: FakeSubprocess
+) -> None:
+    _build(repo)
+
+    (install,) = fake_subprocess.matching("uv", "pip", "install")
+    ignored = {
+        name
+        for flag, name in itertools.pairwise(install)
+        if flag == "--no-sources-package"
+    }
+    assert ignored == {"cline-hooks", "mcp-memory", "overlay-prompts"}
+    assert not fake_subprocess.matching("clone")
+
+
 def test_only_the_named_overlays_are_installed_each_in_its_own_cache(
     repo: Path, fake_subprocess: FakeSubprocess, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -199,11 +215,34 @@ def test_a_builds_local_tools_from_their_origin_sha_and_b_from_the_checkout(
     pinned = variants.build("a", "main", ("pi",), (), {"mcp-memory": "/m/a"}, repo=repo)
 
     installs = fake_subprocess.matching("uv", "pip", "install")
-    assert f"git+ssh://git@example.invalid/me/hooks.git@{SHA}" in installs[0]
+    assert (
+        f"cline-hooks @ git+ssh://git@example.invalid/me/hooks.git@{SHA}" in installs[0]
+    )
     assert str(tmp_path / "cline-hooks") in installs[1]
     assert "/m/a" in installs[2]
-    assert f"git+ssh://git@example.invalid/me/hooks.git@{SHA}" in installs[2]
+    assert (
+        f"cline-hooks @ git+ssh://git@example.invalid/me/hooks.git@{SHA}" in installs[2]
+    )
     assert len({a.venv, b.venv, pinned.venv}) == 3
+
+
+def test_a_ignores_uv_sources_for_a_local_tool_by_its_package_name(
+    tmp_path: Path, repo: Path, fake_subprocess: FakeSubprocess,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    camel = tmp_path / "camel"
+    camel.mkdir()
+    (camel / "pyproject.toml").write_text('[project]\nname = "Camel_Tool"\n')
+    config = {"tools": [*CONFIG["tools"], {"name": "CamelTool", "source": str(camel)}]}
+    monkeypatch.setattr(setup, "read_config", lambda: config)
+    fake_subprocess.on(
+        "remote", "get-url", stdout="https://example.invalid/camel.git\n"
+    )
+
+    variants.build("a", "main", ("pi",), ("CamelTool",), None, repo=repo)
+
+    (install,) = fake_subprocess.matching("uv", "pip", "install")
+    assert ("--no-sources-package", "camel-tool") in itertools.pairwise(install)
 
 
 def test_a_builds_overlays_from_their_origin_sha_and_prints_the_shas(
@@ -217,7 +256,7 @@ def test_a_builds_overlays_from_their_origin_sha_and_prints_the_shas(
     variants.build("b", "main", ("pi",), ("overlay-prompts",), None, repo=repo)
 
     installs = fake_subprocess.matching("uv", "pip", "install")
-    assert f"git+https://example.invalid/me/t.git@{SHA}" in installs[0]
+    assert f"cline-hooks @ git+https://example.invalid/me/t.git@{SHA}" in installs[0]
     assert str(tmp_path / "overlay-prompts") not in installs[0]
     assert str(tmp_path / "overlay-prompts") in installs[1]
     assert (

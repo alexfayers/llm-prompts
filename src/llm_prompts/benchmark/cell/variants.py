@@ -170,8 +170,9 @@ def _pip_git_url(url: str) -> str:
     raise ValueError(f"unsupported remote URL: {url}")
 
 
-def _origin_source(name: str, checkout: Path) -> str:
-    """Return the pip source of the checkout's remote default branch tip."""
+def _origin_source(tool: dict[str, Any], checkout: Path) -> str:
+    """Return the pip requirement, by package name, of the checkout's remote default branch tip."""
+    name = tool["name"]
     for origin_ref in ORIGIN_REFS:
         try:
             sha = _run(
@@ -191,7 +192,7 @@ def _origin_source(name: str, checkout: Path) -> str:
             name, ["git", "-C", str(checkout), "remote", "get-url", "origin"]
         ).strip()
         try:
-            return f"{_pip_git_url(url)}@{sha}"
+            return f"{setup.package_name(tool)} @ {_pip_git_url(url)}@{sha}"
         except ValueError as error:
             raise VariantBuildError(name, str(error)) from error
     raise VariantBuildError(
@@ -211,7 +212,7 @@ def _with_origin_tools(
     for tool in config.get("tools", []):
         checkout = setup.local_source_path(tool["source"])
         if tool["name"] in installed and tool["name"] not in kept and checkout:
-            tool = {**tool, "source": _origin_source(tool["name"], checkout)}
+            tool = {**tool, "source": _origin_source(tool, checkout)}
         tools.append(tool)
     return {**config, "tools": tools}
 
