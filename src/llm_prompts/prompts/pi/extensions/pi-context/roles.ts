@@ -64,6 +64,7 @@ const globRegExp = (pattern: string) => new RegExp(`^${pattern.replace(/[.+?^${}
 const matches = (globs: string[], name: string) => globs.some((glob) => globRegExp(glob).test(name));
 
 const WRITE_TOOLS = ["edit", "write"];
+const SHELL_TOOLS = ["bash", "process"];
 const PATH_KEYS = ["path", "file_path"];
 const PATH_ARGS = [...PATH_KEYS, "cwd"];
 const startsProcess = (toolName: string, input: Record<string, unknown>) => toolName === "process" && input.action === "start";
@@ -90,14 +91,31 @@ const shellSpellings = (dir: string) => aliasesOf(dir).flatMap((alias) => [alias
 
 const expandHome = (target: string) => (target === "~" || target.startsWith("~/") ? path.join(os.homedir(), target.slice(1)) : target);
 
-/** Returns a block when the role may not make this call. A role with `writes` may write only inside its worktree. */
-export function decide(role: Role, toolName: string, input: Record<string, unknown>, worktree?: string): Block | undefined {
+/** Matches any shell spelling of the given directories as a whole path or path prefix. */
+const shellPathPattern = (dirs: string[]) => new RegExp(`(?<![\\w.~/$])(?:${dirs.flatMap(shellSpellings).sort((a, b) => b.length - a.length).map(escapeRegExp).join("|")})(?![\\w.-])`, "g");
+
+/** Whether the shell command names `repo` other than as part of `worktree` or as an `ln` target. */
+function namesMainCheckout(command: string, worktree: string, repo: string): boolean {
+	const worktreePath = shellPathPattern([worktree]);
+	const inWorktree = (offset: number) => [...command.matchAll(worktreePath)].some((match) => match.index === offset);
+	return [...command.matchAll(shellPathPattern([repo]))].some(({ index, 0: spelling }) => !inWorktree(index) && !isLinkTarget(command, index, spelling.length));
+}
+
+/** Returns a block when the role may not make this call. A role with `writes` may write only inside its worktree, and may not name its main checkout `repo` in a shell command. */
+export function decide(role: Role, toolName: string, input: Record<string, unknown>, worktree?: string, repo?: string): Block | undefined {
 	const allowed = matches(toolName.startsWith("mcp__") ? role.mcp : role.tools, toolName);
 	if (!allowed) return { block: true, reason: `role ${role.name} may not use ${toolName}` };
-	if (!role.writes || !(WRITE_TOOLS.includes(toolName) || startsProcess(toolName, input))) return undefined;
+	if (!role.writes) return undefined;
+	if (worktree && repo && SHELL_TOOLS.includes(toolName) && typeof input.command === "string" && namesMainCheckout(input.command, worktree, repo)) {
+		return { block: true, reason: `role ${role.name} may not name the main checkout ${repo} in a command, even to read it. Use your worktree ${worktree} instead` };
+	}
+	if (!(WRITE_TOOLS.includes(toolName) || startsProcess(toolName, input))) return undefined;
 	if (!worktree) return { block: true, reason: `role ${role.name} has no worktree to write in` };
 	const target = PATH_ARGS.map((key) => input[key]).find((value) => typeof value === "string");
-	if (typeof target === "string" && aliasesOf(worktree).some((root) => inside(root, path.resolve(worktree, expandHome(target))))) return undefined;
+	const resolved = typeof target === "string" ? path.resolve(worktree, expandHome(target)) : undefined;
+	if (resolved && aliasesOf(worktree).some((root) => inside(root, resolved))) return undefined;
+	const main = resolved && repo ? aliasesOf(repo).find((root) => inside(root, resolved)) : undefined;
+	if (main !== undefined && resolved) return { block: true, reason: `role ${role.name} may not change the main checkout ${repo}. Use ${worktree + resolved.slice(main.length)} in your worktree instead` };
 	return { block: true, reason: `role ${role.name} may write only inside ${worktree}` };
 }
 
@@ -116,9 +134,7 @@ function isLinkTarget(command: string, offset: number, length: number): boolean 
 /** Points main-directory paths in the call at the worktree, in place. Bash and started processes also run in the worktree. */
 export function rewriteForWorktree(toolName: string, input: Record<string, unknown>, worktree: string, mainCwd: string): void {
 	if ((toolName === "bash" || toolName === "process") && typeof input.command === "string") {
-		const spellings = [...shellSpellings(worktree), ...shellSpellings(mainCwd)].sort((a, b) => b.length - a.length);
-		const mainPath = new RegExp(`(?<![\\w.~/$])(?:${spellings.map(escapeRegExp).join("|")})(?![\\w.-])`, "g");
-		const command = input.command.replace(mainPath, (spelling, offset: number, whole: string) => (aliasesOf(worktree).includes(spelling) || isLinkTarget(whole, offset, spelling.length) ? spelling : worktree));
+		const command = input.command.replace(shellPathPattern([worktree, mainCwd]), (spelling, offset: number, whole: string) => (aliasesOf(worktree).includes(spelling) || isLinkTarget(whole, offset, spelling.length) ? spelling : worktree));
 		const prefix = `cd ${shellQuote(worktree)} && `;
 		input.command = toolName === "process" || command.startsWith(prefix) ? command : prefix + command;
 	}
@@ -132,11 +148,13 @@ export function rewriteForWorktree(toolName: string, input: Record<string, unkno
 	if (startsProcess(toolName, input) && !(typeof input.cwd === "string" && aliasesOf(worktree).some((root) => inside(root, input.cwd as string)))) input.cwd = worktree;
 }
 
-function readHandshake(file: string): { role: Role; worktree?: string } | undefined {
+const optionalString = (value: unknown) => (typeof value === "string" ? value : undefined);
+
+function readHandshake(file: string): { role: Role; worktree?: string; repo?: string } | undefined {
 	try {
-		const { role, worktree } = JSON.parse(fs.readFileSync(file, "utf8")) as { role?: string; worktree?: string };
+		const { role, worktree, repo } = JSON.parse(fs.readFileSync(file, "utf8")) as { role?: string; worktree?: unknown; repo?: unknown };
 		if (role === undefined || !Object.hasOwn(ROLES, role)) return undefined;
-		return { role: ROLES[role as Role["name"]], worktree: typeof worktree === "string" ? worktree : undefined };
+		return { role: ROLES[role as Role["name"]], worktree: optionalString(worktree), repo: optionalString(repo) };
 	} catch {
 		return undefined;
 	}
@@ -149,6 +167,6 @@ export function childGuard(handshakeFile: string): (event: ToolCallEvent, ctx: E
 		if (!child) return { block: true, reason: `pi-context handshake ${handshakeFile} is unreadable or names an unknown role` };
 		const worktree = child.role.writes ? child.worktree : undefined;
 		if (worktree) rewriteForWorktree(toolName, input, worktree, cwd);
-		return decide(child.role, toolName, input, worktree);
+		return decide(child.role, toolName, input, worktree, child.repo);
 	};
 }

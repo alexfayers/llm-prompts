@@ -133,6 +133,16 @@ describe("child mode", () => {
 		assert.match(String(((await call(handshake({ role: "writer" }), "write", { path: "x" })).result as any).reason), /no worktree/);
 	});
 
+	test("a writer whose directory is its worktree may not change or name the main checkout", async () => {
+		const file = handshake({ role: "writer", worktree: "/wt/a", repo: "/repo" });
+		process.env.PI_CONTEXT_CHILD = file;
+		const ext = await loadExtension("pi-context/index", { ctx: { cwd: "/wt/a" } });
+		const fire = (toolName: string, input: Record<string, unknown>) => ext.fire("tool_call", { toolName, input }) as unknown;
+		assert.deepEqual(await fire("edit", { path: "/repo/src/x.md" }), { block: true, reason: "role writer may not change the main checkout /repo. Use /wt/a/src/x.md in your worktree instead" });
+		assert.equal(await fire("edit", { path: "/wt/a/src/x.md" }), undefined);
+		assert.match(String(((await fire("bash", { command: "cd /repo && git status" })) as any).reason), /may not name the main checkout \/repo in a command, even to read it. Use your worktree \/wt\/a/);
+	});
+
 	test("a reader cannot edit and its bash command is unchanged", async () => {
 		const file = handshake({ role: "reader" });
 		const input = { command: "ls /main" };

@@ -60,6 +60,8 @@ export type DelegateOptions = {
 	mcp?: BridgeOptions["execute"];
 	/** The worktree a writer works in. */
 	worktree?: string;
+	/** The main checkout the writer's worktree belongs to. */
+	repo?: string;
 	/** The run's file directory. A new one is made when it is not given. */
 	files?: string;
 	/** Continue the session already in `files` instead of seeding a new one. */
@@ -73,7 +75,7 @@ export type DelegateOptions = {
 };
 
 /** Runs the role's session on a copy of the given entries with main's model, thinking level and directory, or as a cold worker with `model`, and returns its first turn. */
-export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { role, name, entries = [], message, signal, command, runId = newRunId(), model, mcp, worktree, files = path.join(getAgentDir(), "pi-context", randomUUID()), resume, keep, onChild, onTurn }: DelegateOptions): Promise<Turn & { prefix?: "match" | "mismatch" }> {
+export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { role, name, entries = [], message, signal, command, runId = newRunId(), model, mcp, worktree, repo, files = path.join(getAgentDir(), "pi-context", randomUUID()), resume, keep, onChild, onTurn }: DelegateOptions): Promise<Turn & { prefix?: "match" | "mismatch" }> {
 	if (!ctx.model) throw new Error("Cannot start a delegate without a model.");
 	if (resume && model) throw new Error("A cold worker cannot resume.");
 	const agentDir = getAgentDir();
@@ -89,7 +91,7 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 		let prefix: "match" | "mismatch" | undefined;
 		const onPrefix = model ? undefined : (hash: string) => void (prefix = hash === lastPrefixHash() ? "match" : "mismatch");
 		bridge = mcp && (await serveBridge(files, { role, execute: mcp, onPrefix }));
-		fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, bridge: bridge && { ...describeMain(pi, ctx, model ? role : undefined), socket: bridge.socket } }), { mode: 0o600 });
+		fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, repo, bridge: bridge && { ...describeMain(pi, ctx, model ? role : undefined), socket: bridge.socket } }), { mode: 0o600 });
 		if (model) fs.writeFileSync(cardFile, coldCard(role), { mode: 0o600 });
 		else if (!resume) fs.writeFileSync(seed, jsonl([{ ...ctx.sessionManager.getHeader(), id: randomUUID() }, ...entries]), { mode: 0o600 });
 		child = RpcChild.start({
@@ -185,7 +187,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			return { content: result.content, details: result.details, structuredContent: result.structuredContent, isError };
 		} : undefined;
 		const keep = () => registry.get(runId)?.state === "lost";
-		const running = runDelegate(pi, ctx, { role: run.role, name, ...delegate, signal: runSignal, command, runId, model: run.model, mcp, worktree: tree?.path, files: run.files, keep, onChild: run.background ? (child) => background.attach(runId, child) : undefined, onTurn });
+		const running = runDelegate(pi, ctx, { role: run.role, name, ...delegate, signal: runSignal, command, runId, model: run.model, mcp, worktree: tree?.path, repo: tree?.repo, files: run.files, keep, onChild: run.background ? (child) => background.attach(runId, child) : undefined, onTurn });
 		if (run.background) {
 			const onEnd = async (turn: Turn) => {
 				const current = registry.get(runId);
