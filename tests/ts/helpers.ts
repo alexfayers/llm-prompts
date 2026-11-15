@@ -131,6 +131,7 @@ function makePi(state: Partial<FakePi>): FakePi & ExtensionAPI {
 		setModel: async (model: unknown) => ((pi.model = model), true),
 		sendUserMessage: async (...args: unknown[]) => void pi.sent.push(args),
 		appendEntry: (customType: string, data: unknown) => void pi.appended.push([customType, data]),
+		registerEntryRenderer: () => {},
 	};
 	return pi as FakePi & ExtensionAPI;
 }

@@ -6,8 +6,8 @@ import path from "node:path";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { projectResult } from "../outcome-codes.ts";
-import { ROLES } from "./roles.ts";
-import { RpcChild, type UiAnswer, type UiRequest } from "./runner.ts";
+import { ROLES, type Role } from "./roles.ts";
+import { RpcChild, type Turn, type UiAnswer, type UiRequest } from "./runner.ts";
 
 const holdsCall = (entry: SessionEntry, toolCallId: string) =>
 	entry.type === "message" && entry.message.role === "assistant" && entry.message.content.some((block) => block.type === "toolCall" && block.id === toolCallId);
@@ -31,6 +31,34 @@ function relayDialog(name: string, ctx: ExtensionContext) {
 	};
 }
 
+export type DelegateOptions = { role: Role; name: string; entries: SessionEntry[]; message: string; signal?: AbortSignal; command?: string[] };
+
+/** Runs the role's session on a copy of the given entries with main's model, thinking level and directory, and returns its turn. */
+export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { role, name, entries, message, signal, command }: DelegateOptions): Promise<Turn> {
+	if (!ctx.model) throw new Error("Cannot start a delegate without a model.");
+	const files = path.join(getAgentDir(), "pi-context", randomUUID());
+	const seed = path.join(files, "seed.jsonl");
+	const handshake = path.join(files, "handshake.json");
+	fs.mkdirSync(files, { recursive: true, mode: 0o700 });
+	const header = { ...ctx.sessionManager.getHeader(), id: randomUUID() };
+	fs.writeFileSync(seed, jsonl([header, ...entries]), { mode: 0o600 });
+	fs.writeFileSync(handshake, JSON.stringify({ role: role.name }), { mode: 0o600 });
+	const child = RpcChild.start({
+		command,
+		cwd: ctx.cwd,
+		args: ["--mode", "rpc", "--session", seed, "--model", `${ctx.model.provider}/${ctx.model.id}`, "--thinking", pi.getThinkingLevel()],
+		env: { ...process.env, PI_CONTEXT_CHILD: handshake },
+		signal,
+		onUi: relayDialog(name, ctx),
+	});
+	try {
+		return await child.prompt(`${role.card}\n\n${message}`);
+	} finally {
+		await child.close();
+		if (!process.env.PI_CONTEXT_KEEP_FORKS) fs.rmSync(files, { recursive: true });
+	}
+}
+
 export function registerFork(pi: ExtensionAPI, command?: string[]) {
 	const role = ROLES.reader;
 	pi.registerTool({
@@ -47,35 +75,16 @@ export function registerFork(pi: ExtensionAPI, command?: string[]) {
 			if (process.env.PI_HERDSMAN_MAILBOX || process.env.PI_CONTEXT_CHILD) throw new Error("Only the top-level session can fork.");
 			if (!ctx.model) throw new Error("Cannot fork without a model.");
 			const name = params.name ?? `fork-${randomUUID().slice(0, 6)}`;
-			const files = path.join(getAgentDir(), "pi-context", randomUUID());
-			const seed = path.join(files, "seed.jsonl");
-			const handshake = path.join(files, "handshake.json");
-			fs.mkdirSync(files, { recursive: true, mode: 0o700 });
-			const header = { ...ctx.sessionManager.getHeader(), id: randomUUID() };
-			fs.writeFileSync(seed, jsonl([header, ...seedEntries(ctx.sessionManager.getBranch(), toolCallId)]), { mode: 0o600 });
-			fs.writeFileSync(handshake, JSON.stringify({ role: role.name }), { mode: 0o600 });
-			const child = RpcChild.start({
-				command,
-				cwd: ctx.cwd,
-				args: ["--mode", "rpc", "--session", seed, "--model", `${ctx.model.provider}/${ctx.model.id}`, "--thinking", pi.getThinkingLevel()],
-				env: { ...process.env, PI_CONTEXT_CHILD: handshake },
-				signal,
-				onUi: relayDialog(name, ctx),
-			});
-			try {
-				const turn = await child.prompt(`${role.card}\n\nTask: ${params.task}`);
-				if (turn.error) throw new Error(`fork ${name} failed: ${turn.error}`);
-				const ref = `rc-fork-${name}-${toolCallId}`;
-				pi.appendEntry("result-cap", { ref, text: turn.text });
-				const cache = turn.firstUsage ? `cache ${turn.firstUsage.cacheRead}/${turn.firstUsage.cacheWrite}, ` : "";
-				return {
-					content: [{ type: "text", text: `${projectResult(turn.text)}\n[fork ${name}: ${cache}ref ${ref}]` }],
-					details: { name, role: role.name, outcome: /^OUTCOME (\S+)/m.exec(turn.text)?.[1], usage: turn.usage, firstUsage: turn.firstUsage },
-				};
-			} finally {
-				await child.close();
-				if (!process.env.PI_CONTEXT_KEEP_FORKS) fs.rmSync(files, { recursive: true });
-			}
+			const entries = seedEntries(ctx.sessionManager.getBranch(), toolCallId);
+			const turn = await runDelegate(pi, ctx, { role, name, entries, message: `Task: ${params.task}`, signal, command });
+			if (turn.error) throw new Error(`fork ${name} failed: ${turn.error}`);
+			const ref = `rc-fork-${name}-${toolCallId}`;
+			pi.appendEntry("result-cap", { ref, text: turn.text });
+			const cache = turn.firstUsage ? `cache ${turn.firstUsage.cacheRead}/${turn.firstUsage.cacheWrite}, ` : "";
+			return {
+				content: [{ type: "text", text: `${projectResult(turn.text)}\n[fork ${name}: ${cache}ref ${ref}]` }],
+				details: { name, role: role.name, outcome: /^OUTCOME (\S+)/m.exec(turn.text)?.[1], usage: turn.usage, firstUsage: turn.firstUsage },
+			};
 		},
 	});
 }
