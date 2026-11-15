@@ -875,6 +875,7 @@ _KEPT_EXTENSIONS = {
         "tower-do-patch.ts",
         "tower-do-slim.ts",
         "tower-widget.ts",
+        "usage-ledger.ts",
     )
 }
 _KEPT_CORE = {

@@ -67,3 +67,4 @@ These live in `src/llm_prompts/prompts/pi/extensions/`. Each file starts with a 
 | `tower-do-patch` | Adds the `tower_do_patch` tool, which changes single tasks on the board. |
 | `tower-do-slim` | Re-registers `tower_do`, `tower_do_talk` and `tower_do_status` with shorter descriptions. |
 | `tower-widget` | Hides the tower-do widget above the editor by default. `/tower-widget` toggles it for the session. |
+| `usage-ledger` | Appends one JSON line per tool call to `usage-ledger.jsonl` in the agent directory: time, session, agent role (also `PI_CONTEXT_ROLE` in a fork), tool, whether another tool made the call, and the path of any `SKILL.md` read. Also loads in child agents. |
