@@ -7,6 +7,7 @@ import { registerBtw } from "./btw.ts";
 import { registerFork } from "./fork.ts";
 import { registerGhostCommand } from "./ghost/command.ts";
 import { Recorder, registerRecorder } from "./ghost/recorder.ts";
+import { registerGhostRun } from "./ghost/run.ts";
 import { LiveView, registerLiveView } from "./live-view.ts";
 import { childGuard } from "./roles.ts";
 
@@ -26,6 +27,7 @@ export default function (pi: ExtensionAPI) {
 		trackPrefix(pi);
 		if (!process.env.PI_HERDSMAN_MAILBOX) registerBackgroundHooks(pi, background);
 	}
+	registerGhostRun(pi);
 	registerFork(pi, undefined, background);
 	registerBtw(pi);
 	registerLiveView(pi, background.view);

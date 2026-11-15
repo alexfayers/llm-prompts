@@ -1,13 +1,11 @@
 // The /ghost command: saves the last run as a ghost and lists the repository's ghosts.
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { VERSION } from "@earendil-works/pi-coding-agent";
-import { deriveCheck, findSecret, type Ghost, parameterize, type Step, stepsHash } from "./model.ts";
+import { deriveCheck, findSecret, type Ghost, PARAM_VALUE, parameterize, READ_ONLY, type Step, stepsHash } from "./model.ts";
 import type { Recorder } from "./recorder.ts";
 import { currentRepo } from "./repo.ts";
 import { ghostPath, listGhosts, NAME, readGhost, removeGhost, writeGhost } from "./store.ts";
 
-const PARAM_VALUE = /^[A-Za-z0-9._/@:+-]{1,200}$/;
-const READ_ONLY = new Set(["read", "grep", "find", "ls", "lsp_diagnostics"]);
 const MAX_SHOWN = 200;
 const USAGE = "Usage: /ghost save <name> [param=value ...] | /ghost list";
 
