@@ -19,6 +19,7 @@ llm-prompts setup <tool>                       # reinstall the shared environmen
 llm-prompts setup --dry-run                    # show the commands without running them
 llm-prompts setup --init                       # create the starter config
 llm-prompts benchmark                          # compare two llm-prompts refs by running agents through scenarios
+llm-prompts attic build [--dry-run]            # list the skills and tools the usage ledger shows as unused, in `attic.json` next to the ledger
 llm-prompts check                              # check prompt sizes and pi extension headers
 llm-prompts size-report --base-root DIR        # markdown report of prompt size changes
 llm-prompts watch gh-pr|gh-triage|cmd TARGET... --until COND [--all] [--follow]  # wait for a PR, a repo's ready-PR list or a command to match, then exit (0 match, 124 --timeout, 1 error). Several targets: any match ends it, --all waits for every one, --follow prints each match and keeps watching until --timeout
