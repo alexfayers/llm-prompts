@@ -76,13 +76,17 @@ A node's only tests - write no others. Each criterion:
 
 ## Autonomy check
 
+{% if PI_RUNTIME == "pi-context" %}
+- MUST run one cold-worker `fork` per node (`model` set), given only its brief file (`focus.py briefs <dir> --out <folder>`).
+{% else %}
 - MUST give each node a fresh `eagle-vision-checker-haiku-low` with only its brief file (`focus.py briefs <dir> --out <folder>`).
 - {% if TOOL_WORKFLOW %}With {{TOOL_WORKFLOW}}, MUST run `autonomy-check.js` as {% if AGENT == "pi" %}`scriptPath`{% else %}`script`{% endif %}, paths as `args`, else {% endif %}one {{TOOL_AGENT}} call per node.
+{% endif %}
 - MUST NOT dismiss a NO: fix it (asking the user what only they decide) or re-run the changed nodes, until none say NO.
 
 ## Build
 
-- Per wave, MUST run `build-wave.js` {% if TOOL_WORKFLOW %}with {{TOOL_WORKFLOW}} as {% if AGENT == "pi" %}`scriptPath`{% else %}`script`{% endif %}, args{% else %}by hand, one {{TOOL_AGENT}} per `agent()` call, with{% endif %} `{plan: <dir>, skill: <base-dir>, wave, stamp}` (`probeOnly` before wave 1).
+- Per wave, MUST run `build-wave.js` {% if TOOL_WORKFLOW %}with {{TOOL_WORKFLOW}} as {% if AGENT == "pi" %}`scriptPath`{% else %}`script`{% endif %}, args{% else %}by hand, one {{TOOL_AGENT}} per `agent()` call{% if PI_RUNTIME == "pi-context" %} as a cold `writer` (`model` set){% endif %}, with{% endif %} `{plan: <dir>, skill: <base-dir>, wave, stamp}` (`probeOnly` before wave 1).
 - Build steps go in `<dir>/build.sh`, overriding the script's `HOOKS`.
 - MUST fix each escalation (asking the user what only they decide), then `resume: true`.
 - MUST check running waves every 5 min and hand off to a new lead every 3-4 waves or before 300k context.

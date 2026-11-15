@@ -78,7 +78,11 @@ Then include, in order:
 - Do not push to get uncommitted work committed before writing the handoff,
   unless the user asks. Capture the tree as-is, dirty or not, and note what is
   uncommitted and where it lives.
-{% if AGENT == "pi" %}
+{% if PI_RUNTIME == "pi-context" %}
+- Before writing, MUST `fork_steer` each live background fork to reach a commit or
+  checkpoint and report its state, and MUST read the result message it sends before ending.
+- The doc and the reply MUST name every `fork` worktree not yet landed and what state it left.
+{% elif AGENT == "pi" %}
 - Before writing, MUST `{{TOOL_STEER}}` each running delegate to reach a commit or
   checkpoint and report its state, and MUST read that report with
   `{{TOOL_AGENT_RESULT}}` before ending. A handoff request is not an instruction to stop in-flight work.

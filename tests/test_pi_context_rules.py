@@ -117,3 +117,39 @@ class TestAntiYapRule:
         set_runtime(runtime)
 
         assert wording in render_for_pi("shared/rules/anti-yap.md")
+
+
+class TestDelegatingSkills:
+    @pytest.mark.parametrize(
+        ("source", "runtime", "wording"),
+        [
+            ("handoff", "herdsman", "MUST `steer_agent` each running delegate"),
+            ("handoff", "pi-context", "every `fork` worktree not yet landed"),
+            (
+                "pickup",
+                "herdsman",
+                "`delegate_agent` with a definition that has `bash`",
+            ),
+            ("pickup", "pi-context", "a subagent spawn (`fork`)"),
+            ("refine-plan", "herdsman", "validation subagent via `delegate_agent`"),
+            (
+                "refine-plan",
+                "pi-context",
+                "validation cold worker (`fork` with `model`)",
+            ),
+            ("eagle-vision", "herdsman", "`eagle-vision-checker-haiku-low`"),
+            ("eagle-vision", "pi-context", "one cold-worker `fork` per node"),
+        ],
+    )
+    def test_skill_delegates_the_way_the_runtime_does(
+        self,
+        set_runtime: Callable[[str], None],
+        monkeypatch: pytest.MonkeyPatch,
+        source: str,
+        runtime: str,
+        wording: str,
+    ) -> None:
+        monkeypatch.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
+        set_runtime(runtime)
+
+        assert wording in render_for_pi(f"shared/skills/{source}/SKILL.md")
