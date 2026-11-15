@@ -101,3 +101,19 @@ class TestPlanningRule:
         set_runtime(runtime)
 
         assert wording in render_for_pi("shared/rules/planning.md")
+
+
+class TestAntiYapRule:
+    @pytest.mark.parametrize(
+        ("runtime", "wording"),
+        [
+            ("herdsman", "a file holding the full report"),
+            ("pi-context", "The `fork` tool shows main only that line"),
+        ],
+    )
+    def test_outcome_line_follows_how_the_runtime_returns_the_reply(
+        self, set_runtime: Callable[[str], None], runtime: str, wording: str
+    ) -> None:
+        set_runtime(runtime)
+
+        assert wording in render_for_pi("shared/rules/anti-yap.md")
