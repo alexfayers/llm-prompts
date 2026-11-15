@@ -6,7 +6,7 @@ import { Type } from "typebox";
 const DEFAULT_CAP = 6000;
 const HEAD_SHARE = 2 / 3;
 const EXEMPT = new Set(["read", "edit", "write", "result_fetch", "result_query", "checkpoint", "ask_user", "asks"]);
-const HANDOFF_LINE = /^(ASK:|DENIED:)/m;
+export const HANDOFF_LINE = /^(ASK:|DENIED:)/m;
 const LIST_MIN_ROWS = 20;
 const LIST_PREVIEW_ROWS = 20;
 const LIST_MATCH_SHARE = 0.9;
@@ -112,7 +112,7 @@ export default function (pi: ExtensionAPI) {
 		name: "result_fetch",
 		label: "Result fetch",
 		description:
-			"Read the full text of a capped tool result by its `ref`. `pattern` (regex) keeps only matching lines, as `<line>: <text>`. `offset` and `limit` slice the text in characters.",
+			"Read the full text of a capped or folded tool result by its `ref`. `pattern` (regex) keeps only matching lines, as `<line>: <text>`. `offset` and `limit` slice the text in characters.",
 		parameters: Type.Object({
 			ref: Type.String(),
 			offset: Type.Optional(Type.Integer({ minimum: 0 })),

@@ -669,6 +669,32 @@ class TestPiExtensions:
 
         assert missing == []
 
+    @pytest.mark.real_prompts
+    @pytest.mark.parametrize(
+        ("runtime", "expected"), [("herdsman", False), ("pi-context", True)]
+    )
+    def test_context_extensions_install_only_under_the_pi_context_runtime(
+        self,
+        runtime: str,
+        expected: bool,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_config_dir: Path,
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        home.mkdir()
+        (isolated_config_dir / "config.toml").write_text(
+            f'[pi]\nruntime = "{runtime}"\n', encoding="utf-8"
+        )
+
+        _install(home, tmp_path / "installed.json", herdr=False)
+
+        extensions = home / ".pi" / "agent" / "extensions"
+        assert (extensions / "context-fold.ts").exists() is expected
+        assert (extensions / "pi-context").exists() is expected
+        assert (extensions / "herdsman-guidance-dedupe.ts").exists() is not expected
+
     def test_core_net_guard_extension_is_installed(self, pi_home: Path) -> None:
         source = _CORE_FRAGMENT.parent / "extensions" / "net-guard.ts"
 

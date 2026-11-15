@@ -1,5 +1,6 @@
 {
   "pi-context": { "requires_pi_runtime": "pi-context" },
+  "context-fold.ts": { "requires_pi_runtime": "pi-context" },
   "herdsman-guidance-dedupe.ts": { "requires_pi_runtime": "herdsman" },
   "role-switch.ts": { "requires_pi_runtime": "herdsman" }
 }
