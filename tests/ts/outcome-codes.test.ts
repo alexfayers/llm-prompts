@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { loadExtension } from "./helpers.ts";
+import { parseOutcome } from "../../src/llm_prompts/prompts/pi/extensions/outcome-codes.ts";
 
 const RESULT_TYPE = "pi-herdsman-agent-result";
 const system = { role: "system", content: "base", sections: {}, timestamp: 0 };
@@ -31,5 +32,13 @@ describe("handler", () => {
 		const status = "Delegation status: 0 active direct agents; 0 pending direct results; all direct agent assignments are resolved.";
 		const text = await project(result(`${code}\ndetails\n${ask}\nmore\n${denied}`, status));
 		assert.equal(text, [...head, code, ask, denied, status].join("\n"));
+	});
+});
+
+describe("parseOutcome", () => {
+	test("reads the code, the notify flag and the ref from the OUTCOME line anywhere in the text", () => {
+		assert.deepEqual(parseOutcome("body\nOUTCOME blocked-on-user notify ref:rc-fork-x\nASK: q?"), { code: "blocked-on-user", notify: true, ref: "rc-fork-x" });
+		assert.deepEqual(parseOutcome("OUTCOME maybe"), { code: "maybe", notify: false, ref: undefined });
+		assert.equal(parseOutcome("no code here"), undefined);
 	});
 });

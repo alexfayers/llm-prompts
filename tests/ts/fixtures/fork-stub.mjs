@@ -52,6 +52,7 @@ async function replyTo(text) {
 		seed: seed && readFileSync(seed, "utf8").trim().split("\n").map((line) => JSON.parse(line)),
 		card: card && readFileSync(card, "utf8"),
 		prompt: text,
+		env: { role: process.env.PI_CONTEXT_ROLE, runId: process.env.PI_CONTEXT_RUN_ID },
 	});
 }
 

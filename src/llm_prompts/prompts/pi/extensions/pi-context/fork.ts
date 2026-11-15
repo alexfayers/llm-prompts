@@ -1,14 +1,15 @@
 // Adds the fork tool, which runs a delegate on a copy of this session that shares its prompt cache, or a cold worker on a cheaper model. A writer works in a git worktree and lands its commits through the merge queue.
-// Env: PI_CONTEXT_KEEP_FORKS (keep the seed, session and handshake files of finished forks), PI_CONTEXT_MCP_PROXY (1: a fork uses main's MCP servers), PI_HERDSMAN_MAILBOX and PI_CONTEXT_CHILD (set in a delegate, which cannot fork)
+// Env: PI_CONTEXT_KEEP_FORKS (keep the seed, session and handshake files of finished forks), PI_CONTEXT_MCP_PROXY (1: a fork uses main's MCP servers), PI_HERDSMAN_MAILBOX and PI_CONTEXT_CHILD (set in a delegate, which cannot fork), PI_CONTEXT_ROLE and PI_CONTEXT_RUN_ID (set for a delegate)
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { projectResult } from "../outcome-codes.ts";
+import { parseOutcome, projectResult } from "../outcome-codes.ts";
 import { describeMain, lastPrefixHash, mcpProxyEnabled, serveBridge, type BridgeOptions } from "./bridge.ts";
 import { createWorktree, land, type Event, type Landing, type Worktree } from "./merge.ts";
 import { coldCard, ROLES, type Role } from "./roles.ts";
+import { registryOf, type RunState } from "./registry.ts";
 import { RpcChild, type Turn, type UiAnswer, type UiRequest } from "./runner.ts";
 
 const holdsCall = (entry: SessionEntry, toolCallId: string) =>
@@ -41,6 +42,8 @@ function relayDialog(name: string, ctx: ExtensionContext) {
 	};
 }
 
+export const newRunId = () => randomUUID().slice(0, 8);
+
 export type DelegateOptions = {
 	role: Role;
 	name: string;
@@ -48,6 +51,8 @@ export type DelegateOptions = {
 	message: string;
 	signal?: AbortSignal;
 	command?: string[];
+	/** Names the run in the delegate's environment (PI_CONTEXT_RUN_ID). */
+	runId?: string;
 	/** Runs the delegate as a cold worker on this model: an empty session, and only the role's skills and MCP tools. */
 	model?: string;
 	/** Runs the delegate's MCP calls in main, so the delegate starts no MCP servers of its own. */
@@ -59,7 +64,7 @@ export type DelegateOptions = {
 };
 
 /** Runs the role's session on a copy of the given entries with main's model, thinking level and directory, or as a cold worker with `model`, and returns its first turn. */
-export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { role, name, entries, message, signal, command, model, mcp, worktree, onTurn }: DelegateOptions): Promise<Turn & { prefix?: "match" | "mismatch" }> {
+export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { role, name, entries, message, signal, command, runId = newRunId(), model, mcp, worktree, onTurn }: DelegateOptions): Promise<Turn & { prefix?: "match" | "mismatch" }> {
 	if (!ctx.model) throw new Error("Cannot start a delegate without a model.");
 	const agentDir = getAgentDir();
 	const files = path.join(agentDir, "pi-context", randomUUID());
@@ -79,7 +84,7 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 		args: model
 			? coldArgs(role, { model, sessionDir: path.join(files, "session"), cardFile, skillsDir: path.join(agentDir, "skills") })
 			: ["--mode", "rpc", "--session", seed, "--model", `${ctx.model.provider}/${ctx.model.id}`, "--thinking", pi.getThinkingLevel(), ...(bridge ? ["--no-mcp"] : [])],
-		env: { ...process.env, PI_CONTEXT_CHILD: handshake },
+		env: { ...process.env, PI_CONTEXT_CHILD: handshake, PI_CONTEXT_ROLE: role.name, PI_CONTEXT_RUN_ID: runId },
 		signal,
 		onUi: relayDialog(name, ctx),
 	});
@@ -104,8 +109,15 @@ function describeLanding(landing: Landing, tree: Worktree): string {
 /** What a delegate's reply says about its work: done, or an outcome that stops the landing. */
 function replyEvent(turn: Turn): Extract<Event, { type: "fork-done" | "fork-failed" | "fork-blocked" }> {
 	const reason = turn.error ?? projectResult(turn.text);
-	if (turn.error || /^OUTCOME failed /m.test(turn.text)) return { type: "fork-failed", reason };
-	return /^OUTCOME blocked-on-user /m.test(turn.text) ? { type: "fork-blocked", reason } : { type: "fork-done" };
+	const code = parseOutcome(turn.text)?.code;
+	if (turn.error || code === "failed") return { type: "fork-failed", reason };
+	return code === "blocked-on-user" ? { type: "fork-blocked", reason } : { type: "fork-done" };
+}
+
+function finalState(code: string | undefined, landing: Landing | undefined): RunState {
+	if (code === "failed") return "failed";
+	if (code === "blocked-on-user" || landing?.state === "escalated") return "blocked";
+	return code === "found-it" ? "found-it" : "done";
 }
 
 export function registerFork(pi: ExtensionAPI, command?: string[]) {
@@ -129,22 +141,38 @@ export function registerFork(pi: ExtensionAPI, command?: string[]) {
 			const tree = role.writes ? await createWorktree(ctx.cwd, path.join(getAgentDir(), "pi-context", WORKTREES), name) : undefined;
 			const entries = seedEntries(ctx.sessionManager.getBranch(), toolCallId);
 			const merged: { landing?: Landing } = {};
+			const runId = newRunId();
+			const registry = registryOf();
+			registry.start({ id: runId, name, role: role.name, background: false, state: "running", task: params.task, worktree: tree?.path, branch: tree?.branch, startedAt: Date.now() });
 			const onTurn = tree && (async (turn: Turn, resume: (message: string) => Promise<Turn>) => {
-				if (!turn.error) merged.landing = await land({ tree, signal, first: replyEvent(turn), resume: async (message) => replyEvent(await resume(message)) });
+				if (turn.error) return;
+				registry.update(runId, { state: "landing" });
+				merged.landing = await land({ tree, signal, first: replyEvent(turn), resume: async (message) => replyEvent(await resume(message)) });
 			});
 			const message = `${tree ? `Your worktree: ${tree.path}\n` : ""}Task: ${params.task}`;
 			const mcp = params.model || mcpProxyEnabled() ? async (tool: string, args: unknown) => {
 				const { result, isError } = await ctx.executeTool(tool, args, { signal });
 				return { content: result.content, details: result.details, structuredContent: result.structuredContent, isError };
 			} : undefined;
-			const turn = await runDelegate(pi, ctx, { role, name, entries, message, signal, command, model: params.model, mcp, worktree: tree?.path, onTurn });
-			if (turn.error) throw new Error(`fork ${name} failed: ${turn.error}${tree ? ` (worktree ${tree.path} kept)` : ""}`);
+			let turn: Awaited<ReturnType<typeof runDelegate>>;
+			try {
+				turn = await runDelegate(pi, ctx, { role, name, entries, message, signal, command, runId, model: params.model, mcp, worktree: tree?.path, onTurn });
+			} catch (error) {
+				registry.update(runId, { state: "failed", endedAt: Date.now() });
+				throw error;
+			}
+			if (turn.error) {
+				registry.update(runId, { state: "failed", endedAt: Date.now() });
+				throw new Error(`fork ${name} failed: ${turn.error}${tree ? ` (worktree ${tree.path} kept)` : ""}`);
+			}
 			const ref = `rc-fork-${name}-${toolCallId}`;
+			const outcome = parseOutcome(turn.text)?.code;
+			registry.update(runId, { state: finalState(outcome, merged.landing), outcome, ref, endedAt: Date.now() });
 			pi.appendEntry("result-cap", { ref, text: turn.text });
 			const cache = turn.firstUsage ? `cache ${turn.firstUsage.cacheRead}/${turn.firstUsage.cacheWrite}, ` : "";
 			return {
 				content: [{ type: "text", text: `${projectResult(turn.text)}\n[fork ${name}: ${cache}ref ${ref}]${merged.landing && tree ? `\n[merge: ${describeLanding(merged.landing, tree)}]` : ""}` }],
-				details: { name, role: role.name, outcome: /^OUTCOME (\S+)/m.exec(turn.text)?.[1], usage: turn.usage, firstUsage: turn.firstUsage, prefix: turn.prefix, merge: merged.landing },
+				details: { name, role: role.name, outcome, usage: turn.usage, firstUsage: turn.firstUsage, prefix: turn.prefix, merge: merged.landing },
 			};
 		},
 	});

@@ -4,14 +4,16 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { after, describe, test } from "node:test";
-import { useEnv } from "./helpers.ts";
+import { loadExtension, useEnv } from "./helpers.ts";
 import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
 import { prefixHash, trackPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
-import { coldArgs, registerFork } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
+import { registryOf } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
+import { coldArgs, registerFork, seedEntries } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
 
 const user = (id: string) => ({ type: "message", id, message: { role: "user", content: id } });
 const assistantCalling = (id: string, ...calls: string[]) => ({ type: "message", id, message: { role: "assistant", content: calls.map((call) => ({ type: "toolCall", id: call })) } });
 const result = (id: string, call: string) => ({ type: "message", id, message: { role: "toolResult", toolCallId: call } });
+
 
 describe("coldArgs", () => {
 	test("starts a worker with its own session directory, only the role's skills and the role card appended", () => {
@@ -30,6 +32,7 @@ after(() => fs.rmSync(agentDir, { recursive: true }));
 useEnv({ PI_CODING_AGENT_DIR: agentDir, PI_HERDSMAN_MAILBOX: undefined, PI_CONTEXT_CHILD: undefined, PI_CONTEXT_KEEP_FORKS: undefined, PI_CONTEXT_MCP_PROXY: undefined });
 
 const branch = [user("u1"), assistantCalling("a1", "c1"), result("r1", "c1"), assistantCalling("a2", "call-id")];
+const forkDirs = () => fs.readdirSync(path.join(agentDir, "pi-context"), { recursive: true });
 
 const MAIN_TOOLS = [{ name: "mcp__semble__search", description: "d", parameters: {}, exposure: "codemode" }, { name: "read", description: "r", parameters: {}, exposure: "direct" }];
 
@@ -84,6 +87,19 @@ describe("fork tool", () => {
 		assert.deepEqual(fs.readdirSync(path.join(agentDir, "pi-context")).filter((file) => file !== "worktrees"), []);
 	});
 
+	test("tells the child its role and run id, and records the run with its outcome in the registry", async () => {
+		const seen = JSON.parse((await fork({ task: "STUB_INSPECT", name: "inspect" })).tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
+		assert.equal(seen.env.role, "reader");
+		assert.match(seen.env.runId, /^[0-9a-f]{8}$/);
+		assert.equal(registryOf().all().find((run) => run.id === seen.env.runId)?.state, "done");
+		await fork({ task: "STUB_REPORT", name: "reported" });
+		await fork({ task: "STUB_CRASH", name: "crashed" });
+		const byName = (name: string) => registryOf().all().find((run) => run.name === name)!;
+		assert.deepEqual([byName("reported").state, byName("reported").outcome, byName("reported").ref], ["done", "done", "rc-fork-reported-call-id"]);
+		assert.equal(byName("crashed").state, "failed");
+		assert.equal(registryOf().live().length, 0);
+	});
+
 	describe("with the MCP proxy", () => {
 		const mainPayload = { system: "s", tools: [{ name: "read" }] };
 		const trackMain = () => {
@@ -121,6 +137,10 @@ describe("fork tool", () => {
 		});
 	});
 
+	describe("as a cold worker", () => {
+		const seen = async (params: Record<string, unknown>, ...rest: [string?, any?]) => JSON.parse((await fork({ task: "STUB_INSPECT", model: "prov/cheap", ...params }, ...rest)).tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
+		const main = { activeTools: ["read", "edit", "codemode", "mcp__semble__search", "mcp__builder_mcp__TaskeiCreateTask"], allTools: [...MAIN_TOOLS, { name: "mcp__builder_mcp__TaskeiCreateTask", description: "w", parameters: {}, exposure: "codemode" }] };
+	});
 
 	describe("as a writer", () => {
 		const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();

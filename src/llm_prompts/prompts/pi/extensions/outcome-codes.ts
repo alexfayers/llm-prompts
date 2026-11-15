@@ -18,6 +18,14 @@ export function projectResult(text: string): string {
 		.join("\n");
 }
 
+const OUTCOME_LINE = /^OUTCOME (\S+)( notify)?(?: ref:(\S+))?/m;
+
+/** The code, notify flag and ref of the first OUTCOME line in a reply, whatever the code word is. */
+export function parseOutcome(text: string): { code: string; notify: boolean; ref: string | undefined } | undefined {
+	const match = OUTCOME_LINE.exec(text);
+	return match ? { code: match[1], notify: Boolean(match[2]), ref: match[3] } : undefined;
+}
+
 type Message = { role: string; customType?: string; content?: unknown };
 
 export default function (pi: ExtensionAPI) {
