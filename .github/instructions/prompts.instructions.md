@@ -34,7 +34,7 @@ excludeAgent: "cloud-agent"
 
 ## Size
 
-- Compression keeps every directive. Flag a dropped one.
+- Compression keeps every directive. Flag a dropped one, unless another rule file with the same effective scope, already holds it.
 - Don't measure sizes. CI's size report does.
 - Reject a file split or a ceiling raise made only to stay under a budget.
 
