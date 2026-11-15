@@ -3,6 +3,7 @@ level = "light"
 workspace = "tiny-py-retry"
 project = "demo"
 prompt = "why does fetch() not retry on timeouts? is that on purpose?"
+covers = ["local-before-remote"]
 
 [[memory]]
 name = "knowledge/demo-no-timeout-retry"

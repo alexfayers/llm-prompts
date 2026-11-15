@@ -211,6 +211,7 @@ def parse(path: Path, parents: tuple[str, ...] = ()) -> Scenario:
         headline=_get(path, data, "headline", bool, False),
         setup=base.setup if base else _strings(path, data, "setup", []),
         delegation=delegation,
+        covers=_strings(path, data, "covers", []),
     )
 
 
