@@ -283,12 +283,12 @@ def test_a_fresh_follow_up_of_a_follow_up_is_reused_together_with_all_its_ancest
     assert fake_agent.executed == []
 
 
-def test_marking_a_scenario_as_the_headline_does_not_stop_its_a_cell_being_reused(
+def test_marking_a_scenario_as_the_headline_or_naming_the_rules_it_covers_does_not_stop_its_a_cell_being_reused(
     builds: Builds, add: Any, fake_agent: FakeAgent
 ) -> None:
     fake_agent.script("s1", trace=trace(tool_calls=OK))
     run()
-    add(extra='agents = ["claude"]\nheadline = true')
+    add(extra='agents = ["claude"]\nheadline = true\ncovers = ["x"]')
     fake_agent.executed.clear()
 
     assert run() == 0
@@ -599,13 +599,15 @@ def test_b_env_reaches_only_the_b_cells_environment_and_names_ref_b_in_the_repor
 def test_b_drop_removes_rules_from_the_b_build_only_and_names_them_in_the_report(
     bench_dirs: BenchDirs, builds: Builds, add: Any, fake_agent: FakeAgent
 ) -> None:
+    add(extra='agents = ["claude"]\ncovers = ["coding-python"]')
     fake_agent.script("s1", trace=trace(tool_calls=OK))
 
     run(b_drop=("coding-python",))
 
     (run_dir,) = (bench_dirs.state / "runs").iterdir()
     report = json.loads((run_dir / "report.json").read_text())
-    assert report["b_drop"] == ["coding-python"]
+    assert (report["b_drop"], report["ablation"]) == (["coding-python"], "need-runs")
+    assert "Ablation: need-runs" in (run_dir / "report.md").read_text()
     assert "-coding-python" in (run_dir / "report.md").read_text().splitlines()[0]
     assert builds.kwargs == {"a": {}, "b": {"drop": ("coding-python",)}}
 

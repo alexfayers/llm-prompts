@@ -86,6 +86,8 @@ The context rule needs at least 3 completed runs on each side. The cost and time
 
 With more than one agent, each agent gets a line with its own pass rate, cost, time and context change, followed by its `Prompt:` line. The `Overall` line summarises the run and comes last. The result is `improved` when B has more passing cells and no scenario's pass rate fell, `regressed` when B has fewer passing cells or the gate regressed, and `no change` otherwise. A scenario with `headline = true` is shown first.
 
+With `--b-drop`, the report adds `Ablation:` with `demotable` when the gate is ok and every dropped rule is named in the `covers = ["<rule>"]` list of a scenario that ran at least 3 times on each side. Otherwise it is `uncovered`, `need-runs` or `keep`. `covers` does not change the build or reuse of a run.
+
 ## Add a scenario
 
 Add one file named `<id>.toml` in `src/llm_prompts/benchmark/scenarios/`, with its workspace folder in `fixtures/`.

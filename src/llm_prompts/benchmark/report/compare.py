@@ -19,6 +19,7 @@ BYTES_PER_KB = 1024
 MIN_GATED_RUNS = 3
 WILSON_Z = 1.96
 Verdict = Literal["ok", "regressed", "all errored", "incomplete", "aborted"]
+AblationVerdict = Literal["demotable", "keep", "uncovered", "need-runs"]
 
 
 def rise(a: float | None, b: float | None) -> float | None:
@@ -177,6 +178,7 @@ class Report:
     judge_reasons: tuple[JudgeReason, ...] = ()
     b_env: Mapping[str, str] = field(default_factory=dict)
     b_drop: tuple[str, ...] = ()
+    ablation: AblationVerdict | None = None
 
 
 def b_label(report: Report) -> str:
@@ -482,6 +484,29 @@ def verdict(rows: Sequence[ResultRow], deltas: Sequence[ScenarioDelta]) -> Verdi
     ):
         return "incomplete"
     return "regressed" if regressed(deltas) else "ok"
+
+
+def ablation_verdict(
+    rows: Sequence[ResultRow],
+    deltas: Sequence[ScenarioDelta],
+    dropped: Sequence[str],
+    covers: Mapping[str, Sequence[str]],
+) -> AblationVerdict:
+    """Return whether the dropped rules are proven unneeded.
+
+    ``demotable`` needs an ok gate and, for every dropped rule, a scenario that covers it and ran at least ``MIN_GATED_RUNS`` times on both sides.
+    """
+    gate = verdict(rows, deltas)
+    if gate == "regressed":
+        return "keep"
+    covering = [
+        [d for d in deltas if rule in covers.get(d.scenario, ())] for rule in dropped
+    ]
+    if not all(covering):
+        return "uncovered"
+    ran = [d for group in covering for d in group]
+    enough = all(min(d.a.total, d.b.total) >= MIN_GATED_RUNS for d in ran)
+    return "demotable" if enough and gate == "ok" else "need-runs"
 
 
 def _agent_cost(rows: Sequence[ResultRow]) -> float | None:

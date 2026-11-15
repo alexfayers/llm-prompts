@@ -23,6 +23,7 @@ from llm_prompts.benchmark.fail_fast import SETUP_ERROR, is_setup_error
 from llm_prompts.benchmark.report.compare import (
     MIN_GATED_RUNS,
     Report,
+    ablation_verdict,
     compare,
     judge_reasons,
     needs_more_runs,
@@ -347,7 +348,11 @@ def _execute(options: RunOptions, chosen: _Plan, run_dir: Path) -> list[ResultRo
 
 
 def _build_report(
-    options: RunOptions, built: list[Variant], rows: list[ResultRow], run_id: str
+    options: RunOptions,
+    built: list[Variant],
+    planned: Sequence[Scenario],
+    rows: list[ResultRow],
+    run_id: str,
 ) -> Report:
     deltas = compare(rows)
     base, head = (variant.src / variants.PROMPTS for variant in built)
@@ -373,6 +378,14 @@ def _build_report(
         judge_reasons(rows),
         options.b_env,
         options.b_drop,
+        ablation_verdict(
+            rows,
+            deltas,
+            options.b_drop,
+            {scenario.id: scenario.covers for scenario in planned},
+        )
+        if options.b_drop
+        else None,
     )
 
 
@@ -412,7 +425,9 @@ def _run(options: RunOptions) -> int:
         run_dir.mkdir(parents=True)
         rows = _execute(options, chosen, run_dir)
         variants.prune(chosen.built)
-        report = _build_report(options, chosen.built, rows, run_dir.name)
+        report = _build_report(
+            options, chosen.built, chosen.scenarios, rows, run_dir.name
+        )
         _publish(report, rows, run_dir)
         return EXIT_CODES[report.verdict]
     except (

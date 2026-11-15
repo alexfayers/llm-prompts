@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from benchmark.conftest import UNSCRIPTED_TRACE
+from llm_prompts.attic.pinned import PINNED_RULES
 from llm_prompts.benchmark.scenarios import loader as scenarios
 from llm_prompts.benchmark.scenarios.checks import CHECKS, evaluate
 from llm_prompts.benchmark.scenarios.checks.context import CheckContext
@@ -33,7 +34,7 @@ name = "done"
 FULL = (
     REQUIRED.replace(
         '"light"',
-        '"medium"\nagents = ["pi"]\ntimeout_s = 60\nsetup = ["git branch x", "ls"]',
+        '"medium"\nagents = ["pi"]\ntimeout_s = 60\nsetup = ["git branch x", "ls"]\ncovers = ["a", "b"]',
     )
     + """
 [gate]
@@ -77,7 +78,7 @@ def test_parse_full_file_and_defaults(data_dir: Path) -> None:
         replace(DEFAULT_GATE, max_pass_drop=0.1, max_time_rise=0.2),
         (MemoryEntity("pattern/retry", "pattern", ("retry 3 times",), (("project/demo", "part-of"),), "active"),),
         (CheckSpec("tool_called", {"name": "done"}), CheckSpec("tool_called", {"name": "a", "before": ("Edit", "Write")})),
-        setup=("git branch x", "ls"),
+        setup=("git branch x", "ls"), covers=("a", "b"),
     )  # fmt: skip
     assert (plain.agents, plain.timeout_s, plain.gate) == (
         ("claude", "pi"),
@@ -98,6 +99,7 @@ def test_parse_full_file_and_defaults(data_dir: Path) -> None:
         ('"light"', '"light"\nagents = "x"'),
         ('"light"', '"light"\nagents = [1]'),
         ('"light"', '"light"\nagents = []'),
+        ('"light"', '"light"\ncovers = [1]'),
         ('"light"', '"light"\nmemory = [1]'),
         ('"light"', '"light"\ntimeout_s = 0'),
         ('"light"', '"light"\n='),
@@ -347,3 +349,16 @@ def test_an_agent_that_does_nothing_passes_no_shipped_scenario(
     )
     for scenario in scenarios.load("heavy", ("claude", "pi")):
         assert not check_shipped(scenario.id, tmp_path / scenario.id)
+
+
+def test_shipped_scenarios_cover_only_unpinned_shared_rules() -> None:
+    rules = Path(__file__).parents[2] / "src/llm_prompts/prompts/shared/rules"
+    covered = {
+        name
+        for path in Path(scenarios.DATA_DIR).glob("*.toml")
+        for name in scenarios.parse(path).covers
+    }
+
+    assert covered
+    assert all((rules / f"{name}.md").is_file() for name in covered)
+    assert not covered & PINNED_RULES
