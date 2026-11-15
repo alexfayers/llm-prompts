@@ -504,6 +504,33 @@ class TestPiExtensions:
         assert not installed.exists()
         assert str(installed) not in _frontmatter(listed)["extensions"]
 
+    def test_overlay_extension_directory_is_installed_whole_and_removed_when_undeclared(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        manifest = tmp_path / "installed.json"
+        overlay = tmp_path / "overlay"
+        source = overlay / "pi" / "extensions" / "acme-suite"
+        source.mkdir(parents=True)
+        (source / "index.ts").write_text("export default () => {};\n", encoding="utf-8")
+        (source / "helper.ts").write_text("export const x = 1;\n", encoding="utf-8")
+        installed = home / ".pi" / "agent" / "extensions" / "acme-suite"
+
+        _install(home, manifest, [overlay])
+        assert (installed / "helper.ts").read_text(
+            encoding="utf-8"
+        ) == "export const x = 1;\n"
+
+        (source / "helper.ts").unlink()
+        _install(home, manifest, [overlay])
+        assert not (installed / "helper.ts").exists()
+        assert (installed / "index.ts").is_file()
+
+        shutil.rmtree(source)
+        _install(home, manifest, [overlay])
+        assert not installed.exists()
+
     def test_core_net_guard_extension_is_installed(self, pi_home: Path) -> None:
         source = _CORE_FRAGMENT.parent / "extensions" / "net-guard.ts"
 

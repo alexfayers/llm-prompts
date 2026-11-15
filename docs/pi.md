@@ -38,7 +38,7 @@ With Herdr on PATH, each rule is its own file under `rules/` and the global `AGE
 
 ## Extensions
 
-These live in `src/llm_prompts/prompts/pi/extensions/`. Each file starts with a `//` header naming its commands, config and env vars.
+These live in `src/llm_prompts/prompts/pi/extensions/`. Each file starts with a `//` header naming its commands, config and env vars. A subdirectory holding an `index.ts` is one extension and is installed whole.
 
 | Extension | Effect |
 |---|---|

@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 
 from . import github_api, telemetry
 from .exit_reason import ExitReason
+from .extension_factories import extension_entries
 from .home import set_root
 from .install import AGENT_CLASSES, REMOVED_AGENTS, log, prompts_dir, user_binary
 from .network import run_with_retries
@@ -122,8 +123,9 @@ def _collect_sources(agent: str) -> dict[str, Path]:
     # Extensions and seed files (pi only); the last overlay wins, as when installed
     if agent == "pi":
         for prompts in [root, *overlay_dirs]:
-            for ext in sorted((prompts / "pi" / "extensions").glob("*.ts")):
-                sources[f"extensions/{ext.name}"] = ext
+            extensions = prompts / "pi" / "extensions"
+            for ext in extension_entries(extensions):
+                sources[f"extensions/{ext.relative_to(extensions)}"] = ext
             seed_dir = prompts / "pi" / "seed"
             for seed in sorted(seed_dir.rglob("*")):
                 if seed.is_file():

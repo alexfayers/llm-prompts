@@ -3257,8 +3257,9 @@ def _pi_defaults(fragments: list[Path]) -> dict[str, Any]:
 def _install_pi_extensions(
     source_dirs: list[Path], dest_dir: Path, previous_files: Collection[str]
 ) -> list[str]:
-    """Copy every ``*.ts`` pi extension from the source directories into ``dest_dir``.
+    """Copy every pi extension from the source directories into ``dest_dir``.
 
+    An extension is a ``*.ts`` file or a subdirectory holding an ``index.ts``, copied whole.
     A destination file that exists but was not installed by llm-prompts is left alone.
     A file installed last time and no longer a source is removed.
 
@@ -3274,7 +3275,11 @@ def _install_pi_extensions(
     for source_dir in source_dirs:
         if source_dir.is_dir():
             sources.update(
-                {path.name: path for path in sorted(source_dir.glob("*.ts"))}
+                {
+                    path.name: path
+                    for path in sorted(source_dir.glob("*.ts"))
+                    + sorted(path.parent for path in source_dir.glob("*/index.ts"))
+                }
             )
     if sources:
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -3287,11 +3292,20 @@ def _install_pi_extensions(
                 f"[pi] Skipped extension {name}: {dest} is not managed by llm-prompts.",
             )
             continue
-        _write_text(dest, _read_text(path))
+        if path.is_dir():
+            if dest.exists():
+                shutil.rmtree(dest)
+            shutil.copytree(path, dest)
+        else:
+            _write_text(dest, _read_text(path))
         installed.append(str(dest))
     for stale in set(previous_files) - set(installed):
-        if Path(stale).parent == dest_dir:
-            Path(stale).unlink(missing_ok=True)
+        stale_path = Path(stale)
+        if stale_path.parent == dest_dir:
+            if stale_path.is_dir():
+                shutil.rmtree(stale_path)
+            else:
+                stale_path.unlink(missing_ok=True)
     return installed
 
 
