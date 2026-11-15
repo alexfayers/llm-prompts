@@ -8,10 +8,14 @@ targets: claude-code, pi
 - MUST delegate complex thought to {% if AGENT == "pi" %}a judgment agent{% else %}an Opus agent{% endif %}, not inline.
 {% if TOOL_AGENT == "delegate_agent" %}
 - SHOULD match {{TOOL_AGENT}}'s `model` to the work. A name labels only the live agent.
+{% elif PI_RUNTIME == "pi-context" %}
+- SHOULD run mechanical or lookup work as a cold worker (`fork` with `model`), judgment work as a warm fork.
 {% else %}
 - SHOULD match {{TOOL_AGENT}}'s `model` to the work; name one only for expected follow-up.
 {% endif %}
+{% if PI_RUNTIME != "pi-context" %}
   - A foreseeable-blocker stop (size/lint gate, permission denial, build slot) implies follow-up: name it.
+{% endif %}
 {% if AGENT == "pi" %}
   - By job, the cheapest installed model that meets it; escalate on evidence.
   - Judgment (`opus`-class) - design, architecture, root-cause work, debugging, planning, synthesis.
@@ -22,12 +26,22 @@ targets: claude-code, pi
   - **Sonnet** - parallel mechanical work Opus decided: edit pattern, bounded search.
   - **Haiku** - trivial work: a lookup, exact change, known shell recipe. Judgment, not file count, sets tier; never real reasoning.
 {% endif %}
+{% if PI_RUNTIME == "pi-context" %}
+- A known target (file, symbol, doc) is a trivial lookup: read it yourself, or `fork` a cold worker if cheaper. MUST NOT let it become "find out about X". 2+ units: one `fork` each, in one turn.
+- A fork commits that dimension: MUST NOT resume reads on it or re-read its report.
+{% else %}
 - A known target (file, symbol, doc) is a trivial lookup: SHOULD go to {% if AGENT == "pi" %}the lookup agent{% else %}Haiku{% endif %}, or read it yourself if cheaper; MUST NOT let it become "find out about X". 2+ units go to `coordinator`.
 - A spawn commits that dimension: MUST NOT resume reads on it or re-read its report; {% if AGENT == "pi" %}`{{TOOL_STEER}}`{% else %}`SendMessage`{% endif %} instead.
+{% endif %}
 - Design/editor agents MUST NOT run tests.
 
 ## Who holds `{{TOOL_AGENT}}`
 
+{% if PI_RUNTIME == "pi-context" %}
+- Only main holds `fork`. A delegate MUST NOT fork.
+- A `reader` (default) only reads. A `writer` works in its own git worktree and its commits land on the current branch.
+- A warm fork inherits the session and its rules. A cold worker (`model` set) starts with an empty session: its `task` MUST carry every binding constraint.
+{% else %}
 {% if TOOL_AGENT == "delegate_agent" %}
 - MUST use only named tiers, passing the `<tier>@<model>:<effort>` name from the tier's description (e.g. `reasoner@opus:high`), never the bare tier - `reasoner` ({% if AGENT == "pi" %}judgment{% else %}Opus{% endif %}), `worker` (mechanical), `surveyor` (read-only), `reviewer` (read-only review), `coordinator` (breakdown, spawns all of these and `Explore`); never `general-purpose`.
 {% else %}
@@ -43,10 +57,11 @@ targets: claude-code, pi
 {% else %}
 - Only main spawns a NAMED teammate; roster is flat. `reasoner` MAY fan out unnamed subagents (may recurse), `coordinator` unnamed `Explore` only; else report to `coordinator` for the AGENT REQUEST.
 {% endif %}
+{% endif %}
 
 ## Spawn prompt contract
 
-State the change concisely. State derivable mechanics only if risky or ambiguous. {% if AGENT == "pi" %}`{{TOOL_STEER}}` and `tower_do_talk` follow{% else %}`SendMessage` follows{% endif %} this plus `anti-yap.md`: ask/answer only.
+State the change concisely. State derivable mechanics only if risky or ambiguous.{% if PI_RUNTIME != "pi-context" %} {% if AGENT == "pi" %}`{{TOOL_STEER}}` and `tower_do_talk` follow{% else %}`SendMessage` follows{% endif %} this plus `anti-yap.md`: ask/answer only.{% endif +%}
 
 Every spawn prompt MUST specify:
 
@@ -61,7 +76,7 @@ Every spawn prompt MUST specify:
 - for code/prose, the output-size limit - minimal diff, no unrequested comments/refactors/reformatting, terse report.
 - for a UI/visual change: coding.md's rendered check, reported as seen - MUST NOT accept "done" from a test pass or "folded into another slice".
 - for a shell-restricted delegate: name {% if AGENT == "pi" %}`read`/`grep`/`find`{% else %}Read/Grep/Glob{% endif %} for investigation, and exactly which command it MAY run - never implicit {% if AGENT == "pi" %}`bash`{% else %}Bash{% endif %}.
-- MUST NOT ask a role without write tools to write files - artifacts go to a `worker`. Scratch notes stay in the report unless a file is requested.
+- MUST NOT ask a role without write tools to write files - artifacts go to a `{% if PI_RUNTIME == "pi-context" %}writer{% else %}worker{% endif %}`. Scratch notes stay in the report unless a file is requested.
 - a delegate asked a question MUST report the answer, not raw output or file text (except failure, error or named value). A drafted edit returns new wording only.
 - For a code comment, state policy/convention, not draft prose.
 - A design/planning prompt MUST route full output to implementers, plus a few lines to main: what changes, what it buys, the risk. MUST NOT make it main's deliverable.
@@ -75,19 +90,23 @@ Every spawn prompt MUST specify:
 
 - Unset, a delegate inherits the spawner's effort: {% if AGENT == "pi" %}a mechanical/lookup agent SHOULD run `low`/`medium`{% else %}a mechanical Sonnet/Haiku SHOULD run `low`/`medium`{% endif %}.
 - Within {% if AGENT == "pi" %}judgment{% else %}Opus{% endif %}: a quick or two-option call is `medium`; `high`/`xhigh` only for architecture, hard root cause, cross-source synthesis.
+{% if PI_RUNTIME == "pi-context" %}
+- A warm fork runs at main's model and effort. A cold worker runs at its `model`'s `:<effort>` suffix.
+{% else %}
 - {% if AGENT != "pi" %}`{{TOOL_AGENT}}` has no `effort` param - a{% else %}A{% endif %} delegate runs at its `subagent_type`'s pin{% if TOOL_WORKFLOW %}; `{{TOOL_WORKFLOW}}`'s `agent()` takes `opts.effort`{% if AGENT == "pi" %} (minimal/low/medium/high/xhigh/max){% endif %}{% endif %}.
+{% endif %}
 
 ## Escalation and waiting
 
 - A delegate stuck on ambiguity or needing a user preference SHOULD escalate.
 - A delegate whose work outgrows its estimate (more steps/files/phases) MUST stop and escalate up the ownership edge, noting more agents may help - MUST NOT grind alone.
-- MUST NOT idle-wait on a background agent/command, `sleep` or placeholder - completion re-invokes you; work or end turn.{% if AGENT == "pi" %} Under `pi -p`, MUST `{{TOOL_AGENT_RESULT}}` each background agent first.{% else %} Exception: while any delegate runs, MUST keep ONE background `sleep 300` armed per session, never one per delegate. When it fires, MUST `SendMessage` each delegate silent since arming for status, then re-arm. MUST NOT request status from a delegate that messaged since.{% endif +%}
+- MUST NOT idle-wait on a background agent/command, `sleep` or placeholder - completion re-invokes you; work or end turn.{% if AGENT == "pi" %}{% if PI_RUNTIME != "pi-context" %} Under `pi -p`, MUST `{{TOOL_AGENT_RESULT}}` each background agent first.{% endif %}{% else %} Exception: while any delegate runs, MUST keep ONE background `sleep 300` armed per session, never one per delegate. When it fires, MUST `SendMessage` each delegate silent since arming for status, then re-arm. MUST NOT request status from a delegate that messaged since.{% endif +%}
 {% if AGENT == "pi" %}
 {% if TOOL_AGENT == 'delegate_agent' %}
 - MUST `continue_agent` a finished agent's exact session for same-scope follow-up (fix, gate retry, missing section), never a fresh delegate.
 - `Plan` means a named `reasoner`. Outside a Herdr pane `delegate_agent` is unavailable; work inline.
 - On "input contains a N-byte line ... 1024-byte limit" from `delegate_agent` or `continue_agent`, MUST retry `delegate_agent` once with the earlier result ref in `files`.
-{% else %}
+{% elif PI_RUNTIME != "pi-context" %}
 - Resume a finished NAMED delegate with `{{TOOL_AGENT}}` - ask for a missing/truncated section, not a re-derive.
 {% endif %}
 {% else %}
