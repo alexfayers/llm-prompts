@@ -4,14 +4,25 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { after, describe, test } from "node:test";
-import { loadExtension, useEnv } from "./helpers.ts";
+import { useEnv } from "./helpers.ts";
+import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
 import { prefixHash, trackPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
-import { registerFork, seedEntries } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
+import { coldArgs, registerFork } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
 
 const user = (id: string) => ({ type: "message", id, message: { role: "user", content: id } });
 const assistantCalling = (id: string, ...calls: string[]) => ({ type: "message", id, message: { role: "assistant", content: calls.map((call) => ({ type: "toolCall", id: call })) } });
 const result = (id: string, call: string) => ({ type: "message", id, message: { role: "toolResult", toolCallId: call } });
 
+describe("coldArgs", () => {
+	test("starts a worker with its own session directory, only the role's skills and the role card appended", () => {
+		const role = { ...ROLES.reader, skills: ["alpha", "beta"] };
+		assert.deepEqual(coldArgs(role, { model: "prov/mod:low", sessionDir: "/s", cardFile: "/c.md", skillsDir: "/skills" }), [
+			"--mode", "rpc", "--session-dir", "/s", "--model", "prov/mod:low",
+			"--no-skills", "--skill", "/skills/alpha", "--skill", "/skills/beta",
+			"--append-system-prompt", "/c.md", "--no-mcp",
+		]);
+	});
+});
 
 const STUB = path.join(import.meta.dirname, "fixtures/fork-stub.mjs");
 const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-fork-"));
@@ -19,9 +30,10 @@ after(() => fs.rmSync(agentDir, { recursive: true }));
 useEnv({ PI_CODING_AGENT_DIR: agentDir, PI_HERDSMAN_MAILBOX: undefined, PI_CONTEXT_CHILD: undefined, PI_CONTEXT_KEEP_FORKS: undefined, PI_CONTEXT_MCP_PROXY: undefined });
 
 const branch = [user("u1"), assistantCalling("a1", "c1"), result("r1", "c1"), assistantCalling("a2", "call-id")];
-const forkDirs = () => fs.readdirSync(path.join(agentDir, "pi-context"), { recursive: true });
 
-async function fork(params: Record<string, unknown>, cwd = process.cwd()) {
+const MAIN_TOOLS = [{ name: "mcp__semble__search", description: "d", parameters: {}, exposure: "codemode" }, { name: "read", description: "r", parameters: {}, exposure: "direct" }];
+
+async function fork(params: Record<string, unknown>, cwd = process.cwd(), main = { activeTools: ["read", "codemode"], allTools: MAIN_TOOLS }) {
 	const tools: Record<string, any> = {};
 	const appended: unknown[][] = [];
 	registerFork(
@@ -29,8 +41,8 @@ async function fork(params: Record<string, unknown>, cwd = process.cwd()) {
 			registerTool: (tool: any) => (tools[tool.name] = tool),
 			appendEntry: (...args: unknown[]) => appended.push(args),
 			getThinkingLevel: () => "high",
-			getActiveTools: () => ["read", "codemode"],
-			getAllTools: () => [{ name: "mcp__semble__search", description: "d", parameters: {}, exposure: "codemode" }, { name: "read", description: "r", parameters: {}, exposure: "direct" }],
+			getActiveTools: () => main.activeTools,
+			getAllTools: () => main.allTools,
 		} as any,
 		[process.execPath, STUB],
 	);
@@ -65,6 +77,11 @@ describe("fork tool", () => {
 		assert.deepEqual(appended, [["result-cap", { ref: "rc-fork-x-call-id", text: "OUTCOME done ref:rc-fork-x\nbody line" }]]);
 		assert.equal(tool.details.outcome, "done");
 		assert.equal(tool.details.usage.cacheRead, 300);
+	});
+
+	test("a cold worker leaves no session or fork files behind", async () => {
+		await fork({ task: "STUB_REPORT", model: "prov/cheap" });
+		assert.deepEqual(fs.readdirSync(path.join(agentDir, "pi-context")).filter((file) => file !== "worktrees"), []);
 	});
 
 	describe("with the MCP proxy", () => {
@@ -104,6 +121,7 @@ describe("fork tool", () => {
 		});
 	});
 
+
 	describe("as a writer", () => {
 		const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 		const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-writer-")));
@@ -123,6 +141,13 @@ describe("fork tool", () => {
 			assert.match(tool.content[0].text, /\[merge: landed [0-9a-f]{9}\]/);
 			assert.equal(fs.readFileSync(path.join(repo, fs.readdirSync(repo).find((file) => file.startsWith("written-"))!), "utf8"), "from the fork");
 			assert.equal(fs.existsSync(handshake.worktree), false);
+		});
+
+		test("a cold writer starts in its worktree and lands through the same queue", async () => {
+			const { tool, appended } = await fork({ task: "STUB_WRITE", role: "writer", name: "cold", model: "prov/cheap" }, repo);
+			const text = (appended[0][1] as { text: string }).text;
+			assert.equal(text.split("\ncwd ")[1], JSON.parse(text.split("\n")[1]).worktree);
+			assert.match(tool.content[0].text, /\[merge: landed [0-9a-f]{9}\]/);
 		});
 	});
 });

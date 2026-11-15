@@ -131,10 +131,12 @@ export function prefixHash(payload: unknown): string {
 	return createHash("sha256").update(JSON.stringify([system, tools ?? toolConfig])).digest("hex");
 }
 
-export function describeMain(pi: ExtensionAPI, ctx: ExtensionContext): MainDescription {
-	const tools = pi.getAllTools().filter(({ name }) => name.startsWith("mcp__") || MCP_RESOURCE_TOOLS.has(name));
+/** Describes main's tools and servers section, cut to the tools `role` may use when given. */
+export function describeMain(pi: ExtensionAPI, ctx: ExtensionContext, role?: Role): MainDescription {
+	const allowed = (name: string) => !role || !decide(role, name, {});
+	const tools = pi.getAllTools().filter(({ name }) => (name.startsWith("mcp__") || MCP_RESOURCE_TOOLS.has(name)) && allowed(name));
 	return {
-		activeTools: pi.getActiveTools(),
+		activeTools: pi.getActiveTools().filter(allowed),
 		tools: tools.map(({ name, description, parameters, exposure, namespace, annotations }) => ({ name, description, parameters, exposure, namespace, annotations })),
 		section: SECTION_PATTERN.exec(ctx.getSystemPrompt())?.[1],
 	};

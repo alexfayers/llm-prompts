@@ -1,13 +1,16 @@
 // Stands in for `pi --mode rpc` as a fork child: the task text picks the reply, and STUB_INSPECT reports how the child was started.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { createInterface } from "node:readline";
 
 const out = (record) => process.stdout.write(`${JSON.stringify(record)}\n`);
 const usage = (cacheRead) => ({ input: 10, output: 5, cacheRead, cacheWrite: 1 });
-const seed = process.argv[process.argv.indexOf("--session") + 1];
+const flag = (name) => process.argv[process.argv.indexOf(name) + 1];
+const seed = process.argv.includes("--session") ? flag("--session") : undefined;
+const card = process.argv.includes("--append-system-prompt") ? flag("--append-system-prompt") : undefined;
 const handshake = process.env.PI_CONTEXT_CHILD;
+if (process.argv.includes("--session-dir")) mkdirSync(flag("--session-dir"), { recursive: true }), writeFileSync(`${flag("--session-dir")}/${process.pid}.jsonl`, "");
 let reply = "";
 let body = "";
 
@@ -33,7 +36,7 @@ async function replyTo(text) {
 	if (text.includes("STUB_REPORT")) return "OUTCOME done ref:rc-fork-x\nbody line";
 	if (text.includes("STUB_WRITE")) {
 		const { worktree } = JSON.parse(readFileSync(handshake, "utf8"));
-		body = `${readFileSync(handshake, "utf8")}\n${text}`;
+		body = `${readFileSync(handshake, "utf8")}\n${text}\ncwd ${process.cwd()}`;
 		writeFileSync(`${worktree}/written-${process.pid}.txt`, "from the fork");
 		execFileSync("git", ["-C", worktree, "add", "."]);
 		execFileSync("git", ["-C", worktree, "commit", "-m", "write"]);
@@ -46,7 +49,8 @@ async function replyTo(text) {
 		cwd: process.cwd(),
 		handshake: JSON.parse(readFileSync(handshake, "utf8")),
 		handshakeMode: statSync(handshake).mode & 0o777,
-		seed: readFileSync(seed, "utf8").trim().split("\n").map((line) => JSON.parse(line)),
+		seed: seed && readFileSync(seed, "utf8").trim().split("\n").map((line) => JSON.parse(line)),
+		card: card && readFileSync(card, "utf8"),
 		prompt: text,
 	});
 }

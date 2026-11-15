@@ -18,6 +18,8 @@ export type Role = {
 
 export type Block = { block: true; reason: string };
 
+const WARM_OPENING = "You are the delegate that the conversation above asked to fork, so do not call fork.";
+const COLD_OPENING = "You are a delegate given one self-contained task, so do not call fork.";
 const OUTCOME = "Open the final reply with `OUTCOME <code> ref:<ref>`. Put any question for the user on a line starting `ASK:` and do not ask the user directly.";
 const READ_TOOLS = ["read", "grep", "find", "ls", "bash", "codemode", "lsp_diagnostics", "web_search", "fetch_content", "get_search_content", "result_fetch", "result_query"];
 const READ_MCP = [
@@ -31,7 +33,7 @@ const READ_MCP = [
 export const ROLES: Record<Role["name"], Role> = {
 	reader: {
 		name: "reader",
-		card: `You are the delegate that the conversation above asked to fork, so do not call fork. You are read-only. Investigate and report. Do not change files, git state or memory. ${OUTCOME}`,
+		card: `${WARM_OPENING} You are read-only. Investigate and report. Do not change files, git state or memory. ${OUTCOME}`,
 		tools: READ_TOOLS,
 		mcp: READ_MCP,
 		skills: [],
@@ -39,7 +41,7 @@ export const ROLES: Record<Role["name"], Role> = {
 	},
 	writer: {
 		name: "writer",
-		card: `You are the delegate that the conversation above asked to fork, so do not call fork. You work in your own git worktree. Commit your work there. Do not touch other paths or memory. ${OUTCOME}`,
+		card: `${WARM_OPENING} You work in your own git worktree. Commit your work there. Do not touch other paths or memory. ${OUTCOME}`,
 		tools: [...READ_TOOLS, "edit", "write", "process"],
 		mcp: READ_MCP,
 		skills: [],
@@ -54,6 +56,9 @@ export const ROLES: Record<Role["name"], Role> = {
 		writes: false,
 	},
 };
+
+/** The role card for a worker that has no conversation above it. */
+export const coldCard = ({ card }: Role): string => card.replace(WARM_OPENING, COLD_OPENING);
 
 const globRegExp = (pattern: string) => new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`);
 const matches = (globs: string[], name: string) => globs.some((glob) => globRegExp(glob).test(name));
