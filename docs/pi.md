@@ -42,6 +42,7 @@ These live in `src/llm_prompts/prompts/pi/extensions/`. Each file starts with a 
 
 | Extension | Effect |
 |---|---|
+| `attic` | Only when a manifest written by `llm-prompts attic build` is readable, at `llmPrompts.attic.manifest` in pi's `settings.json` or else `attic.json` in pi's agent directory: hides the skills and tools it lists, except the pinned ones, from the system prompt and adds one stub line for each. Adds the `unlock` tool, which returns a hidden skill's file text or makes a hidden tool available. The hidden set is saved in the session. Without a readable manifest it does nothing and turns the `unlock` tool off. |
 | `cd` | `/cd <dir>` and a `change_dir` tool move the session (history kept) to another working directory. Both refuse in a managed Herdsman agent, and in a lead that still owns Herdsman agents. |
 | `codemode-error-header` | Puts the first error line of a failed `codemode` script in the `Script failed` header. Reading a missing tool name (`tools.foo ? a : b`, `typeof tools.foo`) gives `undefined` instead of throwing, so calling a missing tool fails with a plain `not a function`. Adds a hint for common mistakes and for a script that prints `[object Object]`. |
 | `codemode-sleep` | Adds the `sleep` tool: `await tools.sleep({ ms })` in a `codemode` script waits up to 10 minutes. |
