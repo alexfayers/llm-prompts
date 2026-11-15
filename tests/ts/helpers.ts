@@ -316,3 +316,10 @@ export function makeEvents(): FakeEvents {
 	};
 	return events;
 }
+
+/** The model a pi-context integration test runs, from PI_CONTEXT_MODEL. */
+export function integrationModel(): string {
+	const model = process.env.PI_CONTEXT_MODEL;
+	if (!model) throw new Error("PI_CONTEXT_MODEL must name the model to run, as provider/id");
+	return model;
+}
