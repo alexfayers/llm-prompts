@@ -28,6 +28,7 @@ llm-prompts-skill-injection = "llm_prompts.skill_injection:SkillStartupBlocks"
 llm-prompts-handoff = "llm_prompts.handoff_block:HandoffBlock"
 llm-prompts-removed-agents = "llm_prompts.removed_agents_notice:RemovedAgentsNotice"
 llm-prompts-commit-guard = "llm_prompts.guards.commit_guard:CommitGuard"
+llm-prompts-shell-rules = "llm_prompts.guards.shell_rules:ShellRules"
 
 [tool.ruff.lint]
 ignore = [

@@ -19,6 +19,7 @@ Pi needs Herdr. Install warns when `herdr` is not on PATH, and pi warns once on 
 - Under `herdsman`, install adds the pi-herdsman package, its coordinator profiles and the overrides disabling its bundled agent definitions, and rules use `delegate_agent`, `steer_agent` and `inspect_agent`.
 - Under `pi-context`, install adds none of those, installs no agent definitions and removes the ones it installed before, and rules use `fork`, `fork_steer` and `result_fetch`.
 - Under `pi-context`, the `CommitGuard` hook blocks a git commit or push until the repository's test command passed on the current files, and a push while the tree has uncommitted changes. The test command is `PI_CONTEXT_TEST_CMD`, or else the one `pi-context/test-gates.json` detects from the repository's files, with each overlay's gates checked first.
+- Under `pi-context`, the `ShellRules` hook blocks `set -e`, killing processes by port and Docker volume removal.
 - `prompts/pi/extension-gates.json` maps an extension's name to `requires_*` gates. The `pi-context` and `context-fold` extensions install only under the `pi-context` runtime, and `herdsman-guidance-dedupe` and `role-switch` only under `herdsman`.
 - `requires_pi_runtime: <runtime>` in a pi package entry or in frontmatter skips it for pi under any other runtime. Templates can branch on `PI_RUNTIME`.
 - Run `llm-prompts install pi` after changing it.
