@@ -131,7 +131,7 @@ export default function (pi: ExtensionAPI) {
 		const turnIds = [event.messageEntryId, ...event.toolResultEntryIds];
 		const content = mode === "raw" ? rawResults(region.filter((entry) => !(inResult ? turnIds : [resultEntryId]).includes(entry.sourceEntry.id)).flatMap((entry) => entry.messages)) : (summary ?? "");
 		const removedMarks = removed.length ? `\n\nMarks removed with them: ${removed.join(", ")}.` : "";
-		const foldText = `[checkpoint ${mode} to "${targetName}"] The steps since ${visibleMarks(entries).some((mark) => mark.name === targetName) ? "mark" : "call"} "${targetName}" were run, then removed from your context. Their outcome:\n${content}${removedMarks}`;
+		const foldText = `[checkpoint ${mode} to "${targetName}"] The steps since ${visibleMarks(entries).some((mark) => mark.name === targetName) ? "mark" : "call"} "${targetName}" were run, then removed from your context; transcript() reads them back. Their outcome:\n${content}${removedMarks}`;
 		const kept = inResult ? turnIds : [];
 		const edit = (targetId: string, replacement: { content: { type: "text"; text: string }[] } | null) => ({ type: "context_edit" as const, targetId, replacement });
 		return {

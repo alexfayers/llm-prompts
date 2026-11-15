@@ -36,7 +36,7 @@ describe("agent_before_settle", () => {
 		const { added } = await settle(OLD_RESULTS);
 		const edit = added.find((draft) => draft.type === "context_edit");
 		assert.equal(edit.targetId, "r1");
-		assert.equal(edit.replacement.content[0].text, '[folded: bash {"command":"ls"} -> 4000 chars; result_fetch({ref:"fold-c1"}) resends it]');
+		assert.equal(edit.replacement.content[0].text, '[folded: bash {"command":"ls"} -> 4000 chars; result_fetch({ref:"fold-c1"}) resends it, transcript() shows the steps around it]');
 		assert.deepEqual(added.find((draft) => draft.customType === "result-cap").data, { ref: "fold-c1", text: BIG });
 		assert.deepEqual(added.find((draft) => draft.customType === "context-fold").data.targets, ["r1"]);
 		assert.equal(added.filter((draft) => draft.type === "context_edit").length, 1);
@@ -87,7 +87,7 @@ describe("agent_before_settle", () => {
 		const capped = { id: "k1", type: "custom", customType: "result-cap", data: { ref: "rc-c1", text: full } };
 		const entries = [user("u0"), assistant("a1", call("c1")), result("r1", "c1", "bash", BIG), assistant("a2", call("c2")), result("r2", "c2", "bash", BIG), assistant("a3", text("done"))];
 		const { added } = await settle(entries, { branch: [capped, ...entries] as Raw[] });
-		assert.equal(added.find((draft) => draft.type === "context_edit").replacement.content[0].text, '[folded: bash {"command":"ls"} -> 20000 chars; result_fetch({ref:"rc-c1"}) resends it]');
+		assert.equal(added.find((draft) => draft.type === "context_edit").replacement.content[0].text, '[folded: bash {"command":"ls"} -> 20000 chars; result_fetch({ref:"rc-c1"}) resends it, transcript() shows the steps around it]');
 		assert.equal(added.filter((draft) => draft.customType === "result-cap").length, 0);
 
 		const fresh = (await settle(OLD_RESULTS)).added.find((draft) => draft.customType === "result-cap");

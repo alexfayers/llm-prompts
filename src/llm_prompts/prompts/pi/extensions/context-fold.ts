@@ -17,7 +17,7 @@ const DEFAULT_IDLE_MIN_TOKENS = 5000;
 const CACHE_MS = 5 * 60_000;
 const LONG_CACHE_MS = 60 * 60_000;
 const CHARS_PER_TOKEN = 4;
-const NEVER_FOLDED = new Set(["checkpoint", "asks", "ask_user", "compact_now", "fork", "reload_now"]);
+const NEVER_FOLDED = new Set(["checkpoint", "asks", "ask_user", "compact_now", "fork", "reload_now", "transcript"]);
 const MIN_RESULT_CHARS = 800;
 const ARGS_CHARS = 120;
 const ABORTED_ARGS_CHARS = 60;
@@ -86,7 +86,7 @@ export function planFold(entries: Projected[], branch: Entry[], { keepTokens, sk
 		const callId = message.toolCallId ?? "";
 		const { ref, full } = stash(callId, textOf(message));
 		const args = JSON.stringify(calls.get(callId)?.arguments ?? {});
-		const stub = `[folded: ${message.toolName} ${args.slice(0, ARGS_CHARS)} -> ${full.length} chars; result_fetch({ref:"${ref}"}) resends it]`;
+		const stub = `[folded: ${message.toolName} ${args.slice(0, ARGS_CHARS)} -> ${full.length} chars; result_fetch({ref:"${ref}"}) resends it, transcript() shows the steps around it]`;
 		plan.drafts.push(edit(entry.sourceEntry.id, stub));
 		plan.targets.push(entry.sourceEntry.id);
 		refs.set(entry.sourceEntry.id, ref);

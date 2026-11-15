@@ -5,7 +5,7 @@ import { Type } from "typebox";
 
 const DEFAULT_CAP = 6000;
 const HEAD_SHARE = 2 / 3;
-const EXEMPT = new Set(["read", "edit", "write", "result_fetch", "result_query", "checkpoint", "ask_user", "asks"]);
+const EXEMPT = new Set(["read", "edit", "write", "result_fetch", "result_query", "checkpoint", "ask_user", "asks", "transcript"]);
 export const HANDOFF_LINE = /^(ASK:|DENIED:)/m;
 const LIST_MIN_ROWS = 20;
 const LIST_PREVIEW_ROWS = 20;

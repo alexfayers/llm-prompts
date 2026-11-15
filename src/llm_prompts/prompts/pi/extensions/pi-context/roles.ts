@@ -21,7 +21,7 @@ export type Block = { block: true; reason: string };
 const WARM_OPENING = "You are the delegate that the conversation above asked to fork, so do not call fork.";
 const COLD_OPENING = "You are a delegate given one self-contained task, so do not call fork.";
 const OUTCOME = "Open the final reply with `OUTCOME <code> ref:<ref>`. Put any question for the user on a line starting `ASK:` and do not ask the user directly.";
-const READ_TOOLS = ["read", "grep", "find", "ls", "bash", "codemode", "lsp_diagnostics", "web_search", "fetch_content", "get_search_content", "result_fetch", "result_query"];
+const READ_TOOLS = ["read", "grep", "find", "ls", "bash", "codemode", "lsp_diagnostics", "web_search", "fetch_content", "get_search_content", "result_fetch", "result_query", "transcript", "tower_do_status"];
 const READ_MCP = [
 	"mcp__semble__*",
 	"mcp__memory__read_*",

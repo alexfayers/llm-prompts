@@ -54,7 +54,7 @@ test("pi accepts a run-end fold and the next request holds the stub, no later th
 	assert.deepEqual(entries.filter((entry) => entry.type === "custom" && entry.customType === "context-fold").map((entry: any) => entry.data.mode), ["on"]);
 	const messages: any[] = requests.at(-1).messages;
 	const sent = JSON.stringify(messages);
-	assert.ok(/\[folded: big \{\} -> 4000 chars; result_fetch\(\{ref:\\"fold-[^"\\]+\\"\}\) resends it\]/.test(sent));
+	assert.ok(/\[folded: big \{\} -> 4000 chars; result_fetch\(\{ref:\\"fold-[^"\\]+\\"\}\) resends it, transcript\(\) shows the steps around it\]/.test(sent));
 	assert.equal(sent.split(BIG).length - 1, 1);
 	assert.ok(sent.includes("T1") && !sent.includes("T2") && !sent.includes("T3"));
 	const calls = messages.flatMap((message) => (message.role === "assistant" ? message.content.filter((block: any) => block.type === "toolCall").map((block: any) => block.id) : []));
