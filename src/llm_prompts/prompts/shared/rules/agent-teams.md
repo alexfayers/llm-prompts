@@ -2,6 +2,7 @@
 roles: lead
 requires_env: CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
 pi_requires_env: ""
+requires_pi_runtime: herdsman
 targets: claude-code, pi
 ---
 
