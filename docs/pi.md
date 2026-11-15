@@ -65,6 +65,7 @@ These live in `src/llm_prompts/prompts/pi/extensions/`. Each file starts with a 
 | `permission-box` | Shows the permission prompt as one centred box (92% wide, up to 85% of the terminal height) with the `diff-preview` content above the prompt. A dialog it does not recognise is shown unchanged. |
 | `popup-defer` | `/popup-defer on\|off\|<ms>` defers dialogs while you type. |
 | `prompt-cache-stabilizer` | Keeps the system prompt unchanged between turns so the prompt cache stays valid, and warns when the system prompt or tool list changes without a new system entry. |
+| `result-cap` | Cuts a tool result over 6000 characters (`RESULT_CAP_CHARS`) to its first two thirds of the cap, a marker with a ref, and its last third. The `result_fetch` tool reads the full text back by `ref`, by `offset` and `limit` in characters, or by `pattern` (matching lines). Skips `read`, `edit` and `write`, errors, results with `ASK:` or `DENIED:` lines, and calls made by another tool such as `codemode`. |
 | `role-switch` | Spawns the listed `role@model:effort` names by switching the delegating agent's model and thinking around `delegate_agent`, so the child inherits them. |
 | `reload-now` | Adds the `reload_now` tool. Pi runs `/reload` once the agent settles, then sends a message so the agent continues. `/reload-now` does the same by hand. An aborted run drops the request. A managed Herdsman agent cannot call it. |
 | `tower-do-patch` | Adds the `tower_do_patch` tool, which changes single tasks on the board. |
