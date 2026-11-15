@@ -1,11 +1,11 @@
 // Folds old tool results and aborted turns into short stubs at the end of a run, keeping their full text fetchable with result_fetch.
-// Env: CONTEXT_FOLD (on, dry to only record what it would fold, or off; default on), CONTEXT_FOLD_PENDING_TOKENS (tokens a fold must save, default 30000), CONTEXT_FOLD_KEEP_TOKENS (newest tokens never folded, default 40000)
+// Env: CONTEXT_FOLD (on, dry to only record what it would fold, or off; default on), CONTEXT_FOLD_PENDING_TOKENS (tokens a fold must save, default 30000), CONTEXT_FOLD_KEEP_TOKENS (newest tokens never folded, default 40000), CONTEXT_FOLD_IDLE (on or off; default on), CONTEXT_FOLD_IDLE_MIN_TOKENS (tokens an idle fold must save, default 5000), PI_CACHE_RETENTION (long means a one hour cache, otherwise five minutes)
 import type { ContextEditableContent, ExtensionAPI, SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
 import { receiptEntryId } from "./already-seen.ts";
 import { HANDOFF_LINE } from "./result-cap.ts";
 
 type Block = { type: string; id?: string; name?: string; text?: string; thinking?: string; arguments?: unknown };
-type Message = { role: string; stopReason?: string; content?: string | Block[]; toolCallId?: string; toolName?: string; isError?: boolean };
+type Message = { role: string; timestamp?: number; stopReason?: string; content?: string | Block[]; toolCallId?: string; toolName?: string; isError?: boolean };
 type Entry = { id: string; type: string; message?: Message; customType?: string; data?: { ref: string; text: string } };
 type Projected = { sourceEntry: Entry; messages: Message[] };
 export type FoldPlan = { drafts: SessionBoundaryDraft[]; targets: string[]; savedTokens: number; argChars: number };
@@ -13,6 +13,9 @@ export type FoldPlan = { drafts: SessionBoundaryDraft[]; targets: string[]; save
 const DEFAULT_MODE = "on";
 const DEFAULT_PENDING_TOKENS = 30000;
 const DEFAULT_KEEP_TOKENS = 40000;
+const DEFAULT_IDLE_MIN_TOKENS = 5000;
+const CACHE_MS = 5 * 60_000;
+const LONG_CACHE_MS = 60 * 60_000;
 const CHARS_PER_TOKEN = 4;
 const NEVER_FOLDED = new Set(["checkpoint", "asks", "ask_user", "compact_now", "fork", "reload_now"]);
 const MIN_RESULT_CHARS = 800;
@@ -109,6 +112,19 @@ export function planFold(entries: Projected[], branch: Entry[], { keepTokens, sk
 	return plan;
 }
 
+const messageKey = (message: Message): string => [message.role, message.toolCallId ?? blocks(message).find((block) => block.type === "toolCall")?.id ?? "", message.timestamp ?? ""].join("|");
+
+/** Applies a plan's edits to the messages of one request, the way pi shows them once the plan is saved. */
+export function applyPlan(messages: Message[], entries: Projected[], plan: FoldPlan): Message[] {
+	const keys = new Map(entries.flatMap(({ sourceEntry, messages: shown }) => (shown[0] ? [[sourceEntry.id, messageKey(shown[0])] as const] : [])));
+	const edits = new Map<string, ContextEditableContent | null>();
+	for (const draft of plan.drafts) if (draft.type === "context_edit" && keys.has(draft.targetId)) edits.set(keys.get(draft.targetId) as string, draft.replacement && draft.replacement.content);
+	return messages.flatMap((message) => {
+		const edit = edits.get(messageKey(message));
+		return edit === undefined ? [message] : edit === null ? [] : [{ ...message, content: edit as Message["content"] }];
+	});
+}
+
 export function restoreDrafts(entries: Projected[], ids: string[]): SessionBoundaryDraft[] {
 	return entries.flatMap(({ sourceEntry }) =>
 		ids.includes(sourceEntry.id) && sourceEntry.message?.content ? [{ type: "context_edit" as const, targetId: sourceEntry.id, replacement: { content: sourceEntry.message.content as ContextEditableContent } }] : [],
@@ -119,8 +135,44 @@ export default function (pi: ExtensionAPI) {
 	if (process.env.PI_CONTEXT_CHILD) return;
 	let unconfirmed: string[] = [];
 	let stopped = false;
-	pi.on("turn_end", (event) => {
+	let armed = false;
+	let lastRequestAt: number | undefined;
+	let idle: FoldPlan | undefined;
+	const keepTokens = (): number => envNumber("CONTEXT_FOLD_KEEP_TOKENS", DEFAULT_KEEP_TOKENS);
+	pi.on("agent_start", () => {
+		armed = true;
+	});
+	pi.on("before_provider_request", () => {
+		lastRequestAt = Date.now();
+	});
+	pi.on("context_with_system", (event, ctx) => {
+		const wasArmed = armed;
+		armed = false;
+		idle = undefined;
+		const lastAssistantAt = ([...event.messages] as Message[]).reverse().find((message) => message.role === "assistant")?.timestamp;
+		const last = lastRequestAt ?? lastAssistantAt;
+		if (!wasArmed || stopped || (process.env.CONTEXT_FOLD ?? DEFAULT_MODE) !== "on" || (process.env.CONTEXT_FOLD_IDLE ?? "on") === "off" || last === undefined) return;
+		if (Date.now() - last <= (process.env.PI_CACHE_RETENTION === "long" ? LONG_CACHE_MS : CACHE_MS)) return;
+		const entries = ctx.sessionManager.buildSessionProjection().entries as unknown as Projected[];
+		const plan = planFold(entries, ctx.sessionManager.getBranch() as unknown as Entry[], { keepTokens: keepTokens() });
+		if (plan.savedTokens < envNumber("CONTEXT_FOLD_IDLE_MIN_TOKENS", DEFAULT_IDLE_MIN_TOKENS)) return;
+		idle = plan;
+		return { messages: applyPlan(event.messages as unknown as Message[], entries, plan) as unknown as typeof event.messages };
+	});
+	pi.on("turn_end", (event, ctx) => {
+		const applied = idle;
+		idle = undefined;
 		if (event.outcome === "completed") unconfirmed = [];
+		if (applied && event.outcome === "error") {
+			stopped = true;
+			if (ctx.hasUI) ctx.ui.notify("context-fold: the request with the idle fold was rejected, so folding stops for this session", "warning");
+		}
+		if (!applied || event.outcome !== "completed") return;
+		const proposed = new Set(event.entries.flatMap((draft) => (draft.type === "context_edit" ? [draft.targetId] : [])));
+		const drafts = applied.drafts.filter((draft) => draft.type !== "context_edit" || !proposed.has(draft.targetId));
+		const record = { type: "custom" as const, customType: "context-fold", data: { trigger: "idle", mode: "on", targets: applied.targets, savedTokens: applied.savedTokens, argChars: applied.argChars } };
+		if (ctx.hasUI) ctx.ui.notify(`context-fold: folded ${applied.targets.length} old tool results after the cache expired, saves ~${applied.savedTokens} tokens`, "info");
+		return { entries: [...event.entries, ...drafts, record] };
 	});
 	pi.on("agent_before_settle", (event, ctx) => {
 		const mode = process.env.CONTEXT_FOLD ?? DEFAULT_MODE;
@@ -136,7 +188,7 @@ export default function (pi: ExtensionAPI) {
 			return { entries: [...event.entries, ...drafts, record] };
 		}
 		if (stopped || event.outcome !== "completed") return;
-		const plan = planFold(entries, ctx.sessionManager.getBranch() as unknown as Entry[], { keepTokens: envNumber("CONTEXT_FOLD_KEEP_TOKENS", DEFAULT_KEEP_TOKENS), skip: new Set(event.entries.flatMap((draft) => (draft.type === "context_edit" ? [draft.targetId] : []))) });
+		const plan = planFold(entries, ctx.sessionManager.getBranch() as unknown as Entry[], { keepTokens: keepTokens(), skip: new Set(event.entries.flatMap((draft) => (draft.type === "context_edit" ? [draft.targetId] : []))) });
 		if (plan.savedTokens < envNumber("CONTEXT_FOLD_PENDING_TOKENS", DEFAULT_PENDING_TOKENS)) return;
 		const record = { type: "custom" as const, customType: "context-fold", data: { trigger: "run-end", mode, targets: plan.targets, savedTokens: plan.savedTokens, argChars: plan.argChars } };
 		if (mode === "on") unconfirmed = plan.drafts.flatMap((draft) => (draft.type === "context_edit" ? [draft.targetId] : []));

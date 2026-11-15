@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, test } from "node:test";
+import { afterEach, describe, mock, test } from "node:test";
 import { loadExtension, useEnv } from "./helpers.ts";
 import { receipt as readReceipt } from "../../src/llm_prompts/prompts/pi/extensions/already-seen.ts";
 
@@ -19,7 +19,7 @@ const BIG = "x".repeat(4000);
 const project = (entries: Raw[], edits: Record<string, object[] | null> = {}) =>
 	entries.map((sourceEntry) => ({ sourceEntry, messages: edits[sourceEntry.id] === null ? [] : [{ ...sourceEntry.message, ...(edits[sourceEntry.id] ? { content: edits[sourceEntry.id] } : {}) }] }));
 
-useEnv({ CONTEXT_FOLD: "on", CONTEXT_FOLD_PENDING_TOKENS: "100", CONTEXT_FOLD_KEEP_TOKENS: "1500", PI_CONTEXT_CHILD: undefined });
+useEnv({ CONTEXT_FOLD: "on", CONTEXT_FOLD_PENDING_TOKENS: "100", CONTEXT_FOLD_KEEP_TOKENS: "1500", PI_CONTEXT_CHILD: undefined, CONTEXT_FOLD_IDLE: undefined, CONTEXT_FOLD_IDLE_MIN_TOKENS: "100", PI_CACHE_RETENTION: undefined });
 
 async function settle(entries: Raw[], { edits = {}, outcome = "completed", branch = entries, proposed = [] as object[], errorMessage = "", loaded = undefined as Awaited<ReturnType<typeof loadExtension>> | undefined } = {}) {
 	const ext = loaded ?? (await loadExtension("context-fold"));
@@ -218,5 +218,60 @@ describe("agent_before_settle", () => {
 		const entries = [user("u0"), aborted("a1", call("c1")), result("r1", "c1", "bash", "Tool execution was aborted", { isError: true }), assistant("a2", text("done"))];
 		const { out } = await settle(entries);
 		assert.equal(out, undefined);
+	});
+});
+
+describe("idle fold", () => {
+	const MINUTE = 60_000;
+	const clock = (minutes: number) => mock.method(Date, "now", () => 1_000_000 + minutes * MINUTE);
+	afterEach(() => mock.restoreAll());
+
+	const IDLE_ENTRIES = [user("u0"), assistant("a1", thinking("t1"), call("c1")), result("r1", "c1", "bash", BIG), assistant("a2", thinking("t2"), call("c2")), result("r2", "c2", "bash", BIG), assistant("a3", text("done")), user("u1")];
+
+	async function firstRequest(minutesIdle: number, { entries = IDLE_ENTRIES, loaded = undefined as Awaited<ReturnType<typeof loadExtension>> | undefined } = {}) {
+		const ext = loaded ?? (await loadExtension("context-fold"));
+		const ctx = ext.makeCtx({ sessionManager: { getBranch: () => entries, buildSessionProjection: () => ({ entries: project(entries) }) } as any });
+		clock(0);
+		await ext.fire("before_provider_request", { payload: {} }, ctx);
+		clock(minutesIdle);
+		await ext.fire("agent_start", {}, ctx);
+		const system = { role: "system", content: "prompt" };
+		const out = await ext.fire("context_with_system", { messages: [system, ...project(entries).flatMap(({ messages }) => messages)] }, ctx);
+		return { ext, ctx, out };
+	}
+	const turnEnd = (ext: Awaited<ReturnType<typeof loadExtension>>, ctx: any, outcome = "completed", entries: object[] = []) => ext.fire("turn_end", { outcome, entries }, ctx);
+
+	test("the first request after the cache expired is folded and the turn end keeps the same fold", async () => {
+		const { ext, ctx, out } = await firstRequest(6);
+		const sent: any[] = out.messages;
+		assert.equal(sent[0].content, "prompt");
+		assert.equal(sent.length, IDLE_ENTRIES.length + 1);
+		assert.match(sent.find((message) => message.toolCallId === "c1").content[0].text, /^\[folded: bash/);
+		assert.equal(sent.find((message) => message.toolCallId === "c2").content[0].text, BIG);
+		const thinks = (callId: string) => sent.find((message) => message.role === "assistant" && message.content.some((block: any) => block.id === callId)).content.some((block: any) => block.type === "thinking");
+		assert.deepEqual([thinks("c1"), thinks("c2")], [true, false]);
+
+		const kept = await turnEnd(ext, ctx, "completed", [{ type: "context_edit", targetId: "r2", replacement: null }]);
+		const edited = kept.entries.filter((draft: any) => draft.type === "context_edit").map((draft: any) => draft.targetId);
+		assert.deepEqual(edited.sort(), ["a2", "r1", "r2"]);
+		assert.equal(kept.entries.find((draft: any) => draft.customType === "context-fold").data.trigger, "idle");
+		assert.equal(await turnEnd(ext, ctx), undefined);
+	});
+
+	test("a request inside the cache time, or one that saves little, is left alone", async () => {
+		assert.equal((await firstRequest(4)).out, undefined);
+		process.env.PI_CACHE_RETENTION = "long";
+		assert.equal((await firstRequest(30)).out, undefined);
+		process.env.CONTEXT_FOLD_IDLE_MIN_TOKENS = "100000";
+		assert.equal((await firstRequest(90)).out, undefined);
+		process.env.CONTEXT_FOLD_IDLE = "off";
+		process.env.CONTEXT_FOLD_IDLE_MIN_TOKENS = "100";
+		assert.equal((await firstRequest(90)).out, undefined);
+	});
+
+	test("a rejected folded request is not kept and stops folding for the session", async () => {
+		const { ext, ctx } = await firstRequest(6);
+		assert.equal(await turnEnd(ext, ctx, "error"), undefined);
+		assert.equal((await firstRequest(6, { loaded: ext })).out, undefined);
 	});
 });
