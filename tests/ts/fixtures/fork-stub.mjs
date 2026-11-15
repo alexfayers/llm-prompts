@@ -1,6 +1,7 @@
 // Stands in for `pi --mode rpc` as a fork child: the task text picks the reply, and STUB_INSPECT reports how the child was started.
 import { execFileSync } from "node:child_process";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import net from "node:net";
 import { createInterface } from "node:readline";
 
 const out = (record) => process.stdout.write(`${JSON.stringify(record)}\n`);
@@ -10,7 +11,24 @@ const handshake = process.env.PI_CONTEXT_CHILD;
 let reply = "";
 let body = "";
 
-function replyTo(text) {
+/** Sends the bridge one prefix report and one MCP call, and returns the call's reply text. */
+function callBridge(socketPath) {
+	return new Promise((resolve, reject) => {
+		const socket = net.connect(socketPath, () => {
+			socket.write(`${JSON.stringify({ prefix: process.env.STUB_PREFIX })}\n`);
+			socket.write(`${JSON.stringify({ id: 1, tool: "mcp__semble__search", args: { query: "q" } })}\n`);
+		});
+		socket.setEncoding("utf8");
+		socket.once("data", (data) => {
+			socket.destroy();
+			resolve(JSON.parse(data).result.content[0].text);
+		});
+		socket.once("error", reject);
+	});
+}
+
+async function replyTo(text) {
+	if (text.includes("STUB_BRIDGE")) return `echo: ${await callBridge(JSON.parse(readFileSync(handshake, "utf8")).bridge.socket)}`;
 	if (text.includes("STUB_CRASH")) process.exit(3);
 	if (text.includes("STUB_REPORT")) return "OUTCOME done ref:rc-fork-x\nbody line";
 	if (text.includes("STUB_WRITE")) {
@@ -23,6 +41,7 @@ function replyTo(text) {
 	}
 	if (!text.includes("STUB_INSPECT")) return `echo: ${text}`;
 	return JSON.stringify({
+		socketExists: existsSync(JSON.parse(readFileSync(handshake, "utf8")).bridge?.socket ?? ""),
 		args: process.argv.slice(2),
 		cwd: process.cwd(),
 		handshake: JSON.parse(readFileSync(handshake, "utf8")),
@@ -36,7 +55,7 @@ for await (const line of createInterface({ input: process.stdin })) {
 	const command = JSON.parse(line);
 	const respond = (data) => out({ id: command.id, type: "response", command: command.type, success: true, data });
 	if (command.type === "prompt") {
-		reply = replyTo(command.message);
+		reply = await replyTo(command.message);
 		respond({ disposition: "started" });
 		out({ type: "message_end", message: { role: "assistant", usage: usage(100) } });
 		out({ type: "message_end", message: { role: "assistant", usage: usage(200) } });

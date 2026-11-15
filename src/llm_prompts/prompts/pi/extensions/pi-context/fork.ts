@@ -1,11 +1,12 @@
 // Adds the fork tool, which runs a delegate on a copy of this session that shares its prompt cache. A writer works in a git worktree and lands its commits through the merge queue.
-// Env: PI_CONTEXT_KEEP_FORKS (keep the seed and handshake files of finished forks), PI_HERDSMAN_MAILBOX and PI_CONTEXT_CHILD (set in a delegate, which cannot fork)
+// Env: PI_CONTEXT_KEEP_FORKS (keep the seed and handshake files of finished forks), PI_CONTEXT_MCP_PROXY (1: a fork uses main's MCP servers), PI_HERDSMAN_MAILBOX and PI_CONTEXT_CHILD (set in a delegate, which cannot fork)
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { projectResult } from "../outcome-codes.ts";
+import { describeMain, lastPrefixHash, mcpProxyEnabled, serveBridge, type BridgeOptions } from "./bridge.ts";
 import { createWorktree, land, type Event, type Landing, type Worktree } from "./merge.ts";
 import { ROLES, type Role } from "./roles.ts";
 import { RpcChild, type Turn, type UiAnswer, type UiRequest } from "./runner.ts";
@@ -39,6 +40,8 @@ export type DelegateOptions = {
 	message: string;
 	signal?: AbortSignal;
 	command?: string[];
+	/** Runs the delegate's MCP calls in main, so the delegate starts no MCP servers of its own. */
+	mcp?: BridgeOptions["execute"];
 	/** The worktree a writer works in. */
 	worktree?: string;
 	/** Runs after the first turn while the session is still open; `resume` prompts it again. */
@@ -46,7 +49,7 @@ export type DelegateOptions = {
 };
 
 /** Runs the role's session on a copy of the given entries with main's model, thinking level and directory, and returns its first turn. */
-export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { role, name, entries, message, signal, command, worktree, onTurn }: DelegateOptions): Promise<Turn> {
+export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { role, name, entries, message, signal, command, mcp, worktree, onTurn }: DelegateOptions): Promise<Turn & { prefix?: "match" | "mismatch" }> {
 	if (!ctx.model) throw new Error("Cannot start a delegate without a model.");
 	const files = path.join(getAgentDir(), "pi-context", randomUUID());
 	const seed = path.join(files, "seed.jsonl");
@@ -54,11 +57,13 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 	fs.mkdirSync(files, { recursive: true, mode: 0o700 });
 	const header = { ...ctx.sessionManager.getHeader(), id: randomUUID() };
 	fs.writeFileSync(seed, jsonl([header, ...entries]), { mode: 0o600 });
-	fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree }), { mode: 0o600 });
+	let prefix: "match" | "mismatch" | undefined;
+	const bridge = mcp && (await serveBridge(files, { role, execute: mcp, onPrefix: (hash) => void (prefix = hash === lastPrefixHash() ? "match" : "mismatch") }));
+	fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, bridge: bridge && { ...describeMain(pi, ctx), socket: bridge.socket } }), { mode: 0o600 });
 	const child = RpcChild.start({
 		command,
 		cwd: ctx.cwd,
-		args: ["--mode", "rpc", "--session", seed, "--model", `${ctx.model.provider}/${ctx.model.id}`, "--thinking", pi.getThinkingLevel()],
+		args: ["--mode", "rpc", "--session", seed, "--model", `${ctx.model.provider}/${ctx.model.id}`, "--thinking", pi.getThinkingLevel(), ...(bridge ? ["--no-mcp"] : [])],
 		env: { ...process.env, PI_CONTEXT_CHILD: handshake },
 		signal,
 		onUi: relayDialog(name, ctx),
@@ -66,9 +71,10 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 	try {
 		const turn = await child.prompt(`${role.card}\n\n${message}`);
 		await onTurn?.(turn, (next) => child.prompt(next));
-		return turn;
+		return { ...turn, prefix };
 	} finally {
 		await child.close();
+		await bridge?.close();
 		if (!process.env.PI_CONTEXT_KEEP_FORKS) fs.rmSync(files, { recursive: true });
 	}
 }
@@ -111,14 +117,18 @@ export function registerFork(pi: ExtensionAPI, command?: string[]) {
 				if (!turn.error) merged.landing = await land({ tree, signal, first: replyEvent(turn), resume: async (message) => replyEvent(await resume(message)) });
 			});
 			const message = `${tree ? `Your worktree: ${tree.path}\n` : ""}Task: ${params.task}`;
-			const turn = await runDelegate(pi, ctx, { role, name, entries, message, signal, command, worktree: tree?.path, onTurn });
+			const mcp = mcpProxyEnabled() ? async (tool: string, args: unknown) => {
+				const { result, isError } = await ctx.executeTool(tool, args, { signal });
+				return { content: result.content, details: result.details, structuredContent: result.structuredContent, isError };
+			} : undefined;
+			const turn = await runDelegate(pi, ctx, { role, name, entries, message, signal, command, mcp, worktree: tree?.path, onTurn });
 			if (turn.error) throw new Error(`fork ${name} failed: ${turn.error}${tree ? ` (worktree ${tree.path} kept)` : ""}`);
 			const ref = `rc-fork-${name}-${toolCallId}`;
 			pi.appendEntry("result-cap", { ref, text: turn.text });
 			const cache = turn.firstUsage ? `cache ${turn.firstUsage.cacheRead}/${turn.firstUsage.cacheWrite}, ` : "";
 			return {
 				content: [{ type: "text", text: `${projectResult(turn.text)}\n[fork ${name}: ${cache}ref ${ref}]${merged.landing && tree ? `\n[merge: ${describeLanding(merged.landing, tree)}]` : ""}` }],
-				details: { name, role: role.name, outcome: /^OUTCOME (\S+)/m.exec(turn.text)?.[1], usage: turn.usage, firstUsage: turn.firstUsage, merge: merged.landing },
+				details: { name, role: role.name, outcome: /^OUTCOME (\S+)/m.exec(turn.text)?.[1], usage: turn.usage, firstUsage: turn.firstUsage, prefix: turn.prefix, merge: merged.landing },
 			};
 		},
 	});
