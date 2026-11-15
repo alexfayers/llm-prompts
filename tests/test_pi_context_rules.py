@@ -73,3 +73,18 @@ class TestDelegationRule:
         rendered = render_for_pi("shared/rules/delegation.md")
 
         assert "`coordinator` (breakdown, spawns all of these" in rendered
+
+
+class TestHerdrRule:
+    @pytest.mark.parametrize(
+        ("runtime", "kept"), [("herdsman", True), ("pi-context", False)]
+    )
+    def test_herdsman_sections_follow_the_runtime(
+        self, set_runtime: Callable[[str], None], runtime: str, kept: bool
+    ) -> None:
+        set_runtime(runtime)
+
+        rendered = render_for_pi("shared/rules/herdr.md")
+
+        assert ("pi-herdsman" in rendered) is kept
+        assert ("## Feature worktrees" in rendered) is kept
