@@ -9,6 +9,7 @@ export type Run = {
 	state: RunState;
 	task: string;
 	outcome?: string;
+	notify?: boolean;
 	ref?: string;
 	worktree?: string;
 	branch?: string;

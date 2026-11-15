@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { after, afterEach, describe, mock, test } from "node:test";
 import { loadExtension } from "./helpers.ts";
+import { registryOf, type Run } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 
 const AGENT_DIR = "/agent";
 const towerUrl = (file: string) => pathToFileURL(join(AGENT_DIR, "npm", "node_modules", "tower-do", file)).href;
@@ -20,6 +21,7 @@ const hooks = registerHooks({
 });
 after(() => hooks.deregister());
 afterEach(() => {
+	for (const run of registryOf().live()) registryOf().update(run.id, { state: "done" });
 	mock.timers.reset();
 	board.tasks = [];
 });
@@ -47,5 +49,12 @@ describe("cache warming", () => {
 
 	test("stops 2 hours after the last request even with a task in progress", async () => {
 		assert.deepEqual(await decide(["in_progress"], { idleHours: 2 }), { action: "stop" });
+	});
+
+	test("warms while a fork run is live, but not 2 hours after the last request", async () => {
+		registryOf().start({ id: "live", name: "scan", role: "reader", background: true, state: "running", task: "t", startedAt: 0 } as Run);
+		assert.deepEqual(await decide(["completed"]), { action: "warm" });
+		mock.timers.reset();
+		assert.deepEqual(await decide(["completed"], { idleHours: 2 }), { action: "stop" });
 	});
 });

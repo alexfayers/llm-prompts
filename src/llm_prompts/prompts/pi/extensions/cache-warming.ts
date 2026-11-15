@@ -1,5 +1,6 @@
-// Keeps the prompt cache warm while a tower-do task this session owns is in progress, for up to 2 hours after the last request.
+// Keeps the prompt cache warm while a tower-do task this session owns is in progress or a fork run is live, for up to 2 hours after the last request.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { registryOf } from "./pi-context/registry.ts";
 import { loadTowerDo } from "./tower-do-patch.ts";
 
 const MAX_IDLE_MS = 2 * 60 * 60 * 1000;
@@ -14,6 +15,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("cache_warming_decision", async (_event, ctx) => {
 		if (Date.now() - lastRequestAt >= MAX_IDLE_MS) return { action: "stop" };
+		if (registryOf().live().length) return { action: "warm" };
 		try {
 			type Entry = { board: { fold(): Promise<{ tasks: { status: string; owner?: string }[] }> }; config: { identity?: string } };
 			const { BoardCache } = await loadTowerDo<{ BoardCache: new () => { entryFor(cwd: string): Entry } }>("paths.ts");
