@@ -265,6 +265,37 @@ class TestDelegationModelOptionsArePiOnly:
         assert not self.GPT_NAMES.search(self._render(source, "pi"))
 
 
+class TestOutcomeCodeRuleIsPiOnly:
+    PROMPTS = Path(__file__).parent.parent / "src/llm_prompts/prompts"
+    OUTCOME = "OUTCOME <done|blocked-on-user|failed|found-it>[ notify] ref:<path>"
+    OLD = "The summary MUST carry every decision, every ask and the key facts."
+    SOURCES = (
+        "shared/rules/anti-yap.md",
+        "shared/agents/reasoner.md",
+        "shared/agents/surveyor.md",
+    )
+
+    def _render(self, source: str, agent: str) -> str:
+        variables = {
+            **load_vars(self.PROMPTS / agent / "vars.json"),
+            "AGENT": agent,
+        }
+        return substitute_variables(
+            (self.PROMPTS / source).read_text(encoding="utf-8"), variables
+        )
+
+    @pytest.mark.parametrize("source", SOURCES)
+    def test_pi_replies_with_an_outcome_line(self, source: str) -> None:
+        rendered = self._render(source, "pi")
+        assert self.OUTCOME in rendered
+        assert self.OLD not in rendered
+
+    def test_other_targets_keep_the_summary_rule(self) -> None:
+        rendered = self._render("shared/rules/anti-yap.md", "claude-code")
+        assert self.OLD in rendered
+        assert "OUTCOME" not in rendered
+
+
 class TestReloadRuleIsPiOnly:
     SHARED = Path(__file__).parent.parent / "src/llm_prompts/prompts/shared"
     SOURCE = "rules/000-rule-sources.md"
