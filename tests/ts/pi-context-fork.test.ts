@@ -282,12 +282,12 @@ describe("fork tool", () => {
 			assert.match(tool.content[0].text, /\[merge: landed [0-9a-f]{9}\]/);
 		});
 
-		test("a failure before the child starts names the kept worktree", async () => {
+		test("a failure before the child starts removes the clean worktree and its branch", async () => {
 			process.env.PI_CONTEXT_MCP_PROXY = "1";
 			const failed = (await fork({ task: "hi", role: "writer", name: "early" }, repo, { activeTools: [], allTools: undefined as never })).tool;
 			assert.ok(failed instanceof Error);
-			assert.match(failed.message, /fork early failed[\s\S]*worktree [^\s]+early kept/);
-			assert.ok(fs.existsSync(failed.message.match(/worktree ([^\s]+) kept/)![1]));
+			assert.match(failed.message, /fork early failed[\s\S]*\(worktree removed: clean\)/);
+			assert.equal(execFileSync("git", ["-C", repo, "branch", "--list", "fork/early"], { encoding: "utf8" }), "");
 		});
 	});
 });

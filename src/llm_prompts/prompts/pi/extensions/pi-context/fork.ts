@@ -8,7 +8,7 @@ import { Type } from "typebox";
 import { parseOutcome, projectResult } from "../outcome-codes.ts";
 import { Background } from "./background.ts";
 import { describeMain, lastPrefixHash, mcpProxyEnabled, PREFIX_FILE, serveBridge, type BridgeOptions } from "./bridge.ts";
-import { createWorktree, land, type Event, type Landing, type Worktree } from "./merge.ts";
+import { createWorktree, dropIfClean, land, restoreWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
 import { coldCard, ROLES, type Role } from "./roles.ts";
 import { isLive, registryOf, type Run, type RunState } from "./registry.ts";
 import { RpcChild, type Turn, type UiAnswer, type UiRequest } from "./runner.ts";
@@ -129,9 +129,12 @@ const readText = (file: string) => {
 };
 
 function describeLanding(landing: Landing, tree: Worktree): string {
-	if (landing.state === "escalated") return `escalated: ${landing.reason}\nworktree kept at ${tree.path} on branch ${tree.branch}`;
+	if (landing.state === "escalated") return `escalated: ${landing.reason}\n${landing.removed ? "worktree removed: clean" : `worktree kept at ${tree.path} on branch ${tree.branch}`}`;
 	return [landing.sha ? `landed ${landing.sha.slice(0, 9)}` : "nothing to land", landing.note].filter(Boolean).join("; ");
 }
+
+/** Removes a clean worktree of a fork that ended without landing, and says what happened to it. */
+const treeNote = async (tree?: Worktree) => (!tree ? "" : (await dropIfClean(tree)) ? " (worktree removed: clean)" : ` (worktree ${tree.path} kept)`);
 
 /** What a delegate's reply says about its work: done, or an outcome that stops the landing. */
 function replyEvent(turn: Turn): Extract<Event, { type: "fork-done" | "fork-failed" | "fork-blocked" }> {
@@ -184,15 +187,20 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		const keep = () => registry.get(runId)?.state === "lost";
 		const running = runDelegate(pi, ctx, { role: run.role, name, ...delegate, signal: runSignal, command, runId, model: run.model, mcp, worktree: tree?.path, files: run.files, keep, onChild: run.background ? (child) => background.attach(runId, child) : undefined, onTurn });
 		if (run.background) {
-			const onEnd = (turn: Turn) => {
+			const onEnd = async (turn: Turn) => {
 				const current = registry.get(runId);
 				if (!current || !isLive(current)) return;
 				const end = endOf(ref, turn, merged.landing);
 				const text = turn.error ?? turn.text;
-				background.finish(ctx, runId, end, text, merged.landing && tree ? `[merge: ${describeLanding(merged.landing, tree)}]` : undefined);
+				const note = merged.landing && tree ? `[merge: ${describeLanding(merged.landing, tree)}]` : tree && (await dropIfClean(tree)) ? "[merge: worktree removed: clean]" : undefined;
+				background.finish(ctx, runId, end, text, note);
 				pi.appendEntry("result-cap", { ref: end.ref, text });
 			};
-			const onFail = (error: unknown) => background.finish(ctx, runId, { state: "failed" }, error instanceof Error ? error.message : String(error));
+			const onFail = async (error: unknown) => {
+				if (registry.get(runId)?.state === "lost") return;
+				const removed = tree && (await dropIfClean(tree));
+				background.finish(ctx, runId, { state: "failed" }, error instanceof Error ? error.message : String(error), removed ? "[merge: worktree removed: clean]" : undefined);
+			};
 			void running.then(onEnd, onFail).catch((error) => report(ctx, error));
 		}
 		return { running, merged };
@@ -232,11 +240,11 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 				turn = await running;
 			} catch (error) {
 				registry.update(runId, { state: "failed", endedAt: Date.now() });
-				throw new Error(`fork ${name} failed: ${error instanceof Error ? error.message : String(error)}${tree ? ` (worktree ${tree.path} kept)` : ""}`, { cause: error });
+				throw new Error(`fork ${name} failed: ${error instanceof Error ? error.message : String(error)}${await treeNote(tree)}`, { cause: error });
 			}
 			if (turn.error) {
 				registry.update(runId, { state: "failed", endedAt: Date.now() });
-				throw new Error(`fork ${name} failed: ${turn.error}${tree ? ` (worktree ${tree.path} kept)` : ""}`);
+				throw new Error(`fork ${name} failed: ${turn.error}${await treeNote(tree)}`);
 			}
 			const end = endOf(ref, turn, merged.landing);
 			registry.update(runId, { ...end, endedAt: Date.now() });
@@ -272,6 +280,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			const resumable = registry.all().filter(canResume);
 			const run = resumable.filter((candidate) => candidate.name === params.name).at(-1);
 			if (!run?.files) throw new Error(`no lost fork ${params.name} to resume. Resumable: ${resumable.map((candidate) => candidate.name).join(", ") || "none"}`);
+			if (run.tree) await restoreWorktree(run.tree);
 			registry.update(run.id, { state: "running", endedAt: undefined, endedBy: undefined });
 			const message = `${run.tree ? `Your worktree: ${run.tree.path}\n` : ""}Your session stopped before you finished. Continue the task from where you left off, and end with your OUTCOME line.`;
 			startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${toolCallId}`, role: ROLES[run.role as Role["name"]], tree: run.tree, files: run.files, background: true }, { message, resume: true });

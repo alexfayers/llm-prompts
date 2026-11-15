@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
 import { useEnv } from "./helpers.ts";
-import { type Event, createWorktree, detectGate, land } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/merge.ts";
+import { type Event, createWorktree, detectGate, land, restoreWorktree } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/merge.ts";
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-merge-"));
 after(() => fs.rmSync(scratch, { recursive: true }));
@@ -66,6 +66,19 @@ describe("detectGate", () => {
 });
 
 describe("landing", () => {
+	test("a fork that stops without landing loses its worktree only when it left nothing in it, and a resume brings it back", async () => {
+		const repo = newRepo();
+		const [clean, worked] = [await writer(repo, "clean"), await writer(repo, "worked")];
+		commit(worked.path, "worked.txt", "1");
+		const blocked: Event = { type: "fork-blocked", reason: "needs the user" };
+		const [dropped, kept] = await Promise.all([land({ tree: clean, first: blocked, resume: never }), land({ tree: worked, first: blocked, resume: never })]);
+		assert.deepEqual([dropped.state, dropped.removed, kept.state, kept.removed], ["escalated", true, "escalated", false]);
+		assert.equal(fs.existsSync(clean.path), false);
+		assert.equal(git(repo, "branch", "--list", "fork/*").replace(/[ *+]/g, ""), "fork/worked");
+		await restoreWorktree(clean);
+		assert.equal(git(clean.path, "symbolic-ref", "--short", "HEAD"), "fork/clean");
+	});
+
 	test("a rebase conflict goes back to the same fork, which resolves it", async () => {
 		const repo = newRepo();
 		const tree = await writer(repo, "clash");

@@ -278,11 +278,31 @@ async function cleanup(tree: Worktree): Promise<string | undefined> {
 	return failed.length ? `cleanup left files: ${failed.join("; ")}` : undefined;
 }
 
+/** Removes the worktree and its branch when the fork left no changes and no commits in it. */
+export async function dropIfClean(tree: Worktree): Promise<boolean> {
+	if (!fs.existsSync(tree.path)) return false;
+	const status = await git(tree.path, "status", "--porcelain");
+	const ahead = await git(tree.path, "rev-list", "--count", `${tree.base}..HEAD`);
+	if (status.code || status.out.trim() || ahead.code || ahead.out.trim() !== "0") return false;
+	return (await cleanup(tree)) === undefined;
+}
+
+/** Makes the worktree again on its branch, or on a new branch from its base, when it is gone. */
+export async function restoreWorktree(tree: Worktree): Promise<void> {
+	if (fs.existsSync(tree.path)) return;
+	await git(tree.repo, "worktree", "prune");
+	const hasBranch = (await git(tree.repo, "rev-parse", "--verify", "--quiet", `refs/heads/${tree.branch}`)).code === 0;
+	await gitOut(tree.repo, "worktree", "add", ...(hasBranch ? [tree.path, tree.branch] : ["-b", tree.branch, tree.path, tree.base]));
+	await installDependencies(tree.repo, tree.path);
+}
+
 export interface Landing {
 	state: "landed" | "escalated";
 	sha?: string;
 	reason?: string;
 	note?: string;
+	/** The fork left the worktree clean, so it and its branch were removed. */
+	removed?: boolean;
 }
 
 export interface LandOptions {
@@ -305,7 +325,7 @@ async function landNow({ tree, first, resume, signal }: LandOptions): Promise<La
 			const notes = [entry.untested && "untested: no test command found", await cleanup(tree)].filter(Boolean);
 			return { state: "landed", sha: action.sha, note: notes.length ? notes.join("; ") : undefined };
 		}
-		if (action.type === "escalate") return { state: "escalated", reason: action.reason };
+		if (action.type === "escalate") return { state: "escalated", reason: action.reason, removed: await dropIfClean(tree) };
 		if (action.type === "rebase") event = await rebase(tree);
 		else if (action.type === "test") event = await test(tree, signal);
 		else if (action.type === "ff") event = await fastForward(tree);
