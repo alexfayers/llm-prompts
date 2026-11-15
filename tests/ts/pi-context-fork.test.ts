@@ -109,6 +109,12 @@ describe("fork tool", () => {
 		assert.equal(registryOf().live().length, 0);
 	});
 
+	test("records the delegate's files directory and model in the registry", async () => {
+		const seen = JSON.parse((await fork({ task: "STUB_INSPECT", name: "recorded", model: "prov/cheap" })).tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
+		const run = registryOf().all().find((run) => run.name === "recorded")!;
+		assert.deepEqual([run.files, run.model], [path.dirname(seen.args[seen.args.indexOf("--session-dir") + 1]), "prov/cheap"]);
+	});
+
 	test("a setup failure leaves no files and no bridge socket behind", async () => {
 		process.env.PI_CONTEXT_MCP_PROXY = "1";
 		const before = forkDirs();

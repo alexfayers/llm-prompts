@@ -13,6 +13,10 @@ export type Run = {
 	ref?: string;
 	worktree?: string;
 	branch?: string;
+	/** The directory of the delegate's seed, handshake and session files. */
+	files?: string;
+	/** The model of a cold worker. */
+	model?: string;
 	startedAt: number;
 	endedAt?: number;
 	/** Why the session that ran it ended while it was live. */

@@ -69,6 +69,7 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 	if (!ctx.model) throw new Error("Cannot start a delegate without a model.");
 	const agentDir = getAgentDir();
 	const files = path.join(agentDir, "pi-context", randomUUID());
+	registryOf().update(runId, { files, model });
 	const seed = path.join(files, "seed.jsonl");
 	const handshake = path.join(files, "handshake.json");
 	const cardFile = path.join(files, "card.md");

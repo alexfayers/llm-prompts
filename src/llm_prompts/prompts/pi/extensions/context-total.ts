@@ -30,6 +30,7 @@ type ContextUsage = { tokens: number | null; contextWindow: number; percent: num
 type Details = Record<string, unknown>;
 type Entry = {
 	type?: string;
+	timestamp?: string;
 	provider?: string;
 	modelId?: string;
 	customType?: string;
@@ -46,6 +47,8 @@ export type Child = {
 	requestId: string;
 	done: boolean;
 	usage?: ContextUsage;
+	/** Cost before this time belongs to another session, as in a fork's seed. */
+	since?: number;
 };
 
 export type Scan = {
@@ -59,7 +62,10 @@ export type Scan = {
 	children: Map<string, Child>;
 	provider?: string;
 	modelId?: string;
+	since?: number;
 };
+
+export type ForkRun = { id: string; name: string; role: string; state: string; files?: string; model?: string; startedAt: number };
 
 export type LeadTracker = { sessionId?: string; index: number; scan: Scan };
 
@@ -83,12 +89,12 @@ export type SampleOptions = {
 	windowOf?: (provider: string, modelId: string) => number | undefined;
 };
 
-export function createScan(ownerId: string): Scan {
-	return { ownerId, offset: 0, usageTokens: 0, trailingBytes: 0, usage: { tokens: 0, cost: 0 }, compacted: false, partial: false, children: new Map() };
+export function createScan(ownerId: string, since?: number): Scan {
+	return { ownerId, since, offset: 0, usageTokens: 0, trailingBytes: 0, usage: { tokens: 0, cost: 0 }, compacted: false, partial: false, children: new Map() };
 }
 
 function resetScan(scan: Scan): void {
-	Object.assign(scan, createScan(scan.ownerId), { usage: { tokens: scan.usage.tokens, cost: 0 } });
+	Object.assign(scan, createScan(scan.ownerId, scan.since), { usage: { tokens: scan.usage.tokens, cost: 0 } });
 }
 
 function validUsage(message: NonNullable<Entry["message"]>): number {
@@ -127,7 +133,7 @@ export function scanUsage(scan: Scan): UsageTotals {
 }
 
 export function feedEntry(scan: Scan, entry: Entry, size: number): void {
-	addUsage(scan, entry.type === "message" ? entry.message?.usage : entry.usage);
+	if (!scan.since || !entry.timestamp || Date.parse(entry.timestamp) >= scan.since) addUsage(scan, entry.type === "message" ? entry.message?.usage : entry.usage);
 	if (entry.type === "model_change") {
 		scan.provider = entry.provider;
 		scan.modelId = entry.modelId;
@@ -264,7 +270,7 @@ export async function sampleChildren(root: Scan, scans: Map<string, Scan>, optio
 			if (visited.has(child.sessionId)) continue;
 			visited.add(child.sessionId);
 			let childScan = scans.get(child.sessionId);
-			if (!childScan) scans.set(child.sessionId, (childScan = createScan(child.sessionId)));
+			if (!childScan) scans.set(child.sessionId, (childScan = createScan(child.sessionId, child.since)));
 			touched.push(childScan);
 			await readIfPresent(childScan, child.sessionPath);
 			if (child.done) {
@@ -296,6 +302,37 @@ export async function sampleChildren(root: Scan, scans: Map<string, Scan>, optio
 		{ tokens: 0, cost: 0 },
 	);
 	return { nodes, partial: touched.some((scan) => scan.partial), session: scanUsage(root), tree };
+}
+
+const LIVE_FORK_STATES = ["running", "landing"];
+
+const forkRuns = (): ForkRun[] | undefined =>
+	(globalThis as { [key: symbol]: { all(): ForkRun[] } | undefined })[Symbol.for("pi-context.registry")]?.all();
+
+function forkSessionFile({ files = "", model }: ForkRun): string {
+	const seed = path.join(files, "seed.jsonl");
+	if (!model) return seed;
+	const sessions = path.join(files, "sessions");
+	const name = fs.existsSync(sessions) ? fs.readdirSync(sessions).find((file) => file.endsWith(".jsonl")) : undefined;
+	return name ? path.join(sessions, name) : seed;
+}
+
+/** Records each pi-context fork run as a child of the root, a finished one with its last sampled context. */
+export function addForkChildren(root: Scan, scans: Map<string, Scan>, runs: ForkRun[]): void {
+	for (const run of runs) {
+		const done = !LIVE_FORK_STATES.includes(run.state);
+		const tokens = scans.has(run.id) ? scanTokens(scans.get(run.id)!) : null;
+		root.children.set(run.id, {
+			sessionId: run.id,
+			sessionPath: forkSessionFile(run),
+			label: run.name,
+			definition: run.role,
+			requestId: run.id,
+			done,
+			usage: done ? { tokens, contextWindow: 0, percent: null } : undefined,
+			since: run.startedAt,
+		});
+	}
 }
 
 const TOKENS_PER_K = 1000;
@@ -376,7 +413,7 @@ function nodeLine(node: Node, indent: string): string {
 	return `${indent}${node.label} (${node.definition})  ${usage}${node.state === "lost" ? " [lost]" : ""}`;
 }
 
-export function formatReport(lead: LeadUsage, sample: Sample): string {
+export function formatReport(lead: LeadUsage, sample: Sample, stats = true): string {
 	const { tokens, sessions, unknown } = liveTotal(lead, sample);
 	const ended = sample.nodes.filter((node) => node.state !== "live");
 	return [
@@ -386,7 +423,7 @@ export function formatReport(lead: LeadUsage, sample: Sample): string {
 		...sample.nodes.filter((node) => node.state === "live").map((node) => nodeLine(node, "  ".repeat(node.depth + 1))),
 		...(ended.length ? ["Finished (last known)", ...ended.map((node) => nodeLine(node, "  "))] : []),
 		`Tree cumulative: ${formatTokens(sample.tree.tokens)} tokens, ${formatDollars(sample.tree.cost)}`,
-		STATS_LINE,
+		...(stats ? [STATS_LINE] : []),
 	].join("\n");
 }
 
@@ -418,8 +455,10 @@ export default function (pi: ExtensionAPI) {
 
 	async function sample(ctx: ExtensionContext): Promise<{ lead: LeadUsage; sampled: Sample }> {
 		const root = syncLead(tracker, ctx.sessionManager.getSessionId(), ctx.sessionManager.getEntries() as Entry[]);
+		const forks = forkRuns();
+		if (forks) addForkChildren(root, scans, forks);
 		const sampled = await sampleChildren(root, scans, {
-			mailboxIds: await readMailboxIds(agentDir),
+			mailboxIds: forks ? undefined : await readMailboxIds(agentDir),
 			windowOf: (provider, modelId) => ctx.modelRegistry.find(provider, modelId)?.contextWindow,
 		});
 		return { lead: ctx.getContextUsage(), sampled };
@@ -485,7 +524,7 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			const { lead, sampled } = await sample(ctx);
-			ctx.ui.notify(formatReport(lead, sampled), "info");
+			ctx.ui.notify(formatReport(lead, sampled, !forkRuns()), "info");
 		},
 	});
 }

@@ -251,6 +251,35 @@ test("config clamps the interval and rewrites the footer keeping other keys", ()
 	assert.deepEqual(JSON.parse(memory.read(file)), { footer: true, intervalSeconds: 1, x: 1 });
 });
 
+test("under pi-context the report counts live and finished fork runs, without the seed's cost", async () => {
+	const key = Symbol.for("pi-context.registry");
+	const forks = join(dir, "forks");
+	const run = (id: string, state: string) => ({ id, name: id, role: "reader", state, files: join(forks, id), startedAt: 1000 });
+	const runs = [run("live", "running"), run("ended", "done")];
+	(globalThis as any)[key] = { all: () => runs };
+	const stamped = (at: number, entry: string) => JSON.stringify({ ...JSON.parse(entry), timestamp: new Date(at).toISOString() }) + "\n";
+	writeFileSync(join(forks, "live", "seed.jsonl"), stamped(0, costed(5)) + stamped(2000, assistant(3000)) + stamped(2000, costed(0.5)));
+	writeFileSync(join(forks, "ended", "seed.jsonl"), assistant(700));
+	try {
+		const ctx = ext.makeCtx({
+			mode: "tui",
+			sessionManager: { getSessionId: () => "lead", getEntries: () => [] } as any,
+			modelRegistry: { find: () => undefined } as any,
+			getContextUsage: () => undefined,
+		});
+		await ext.runCommand("context-total", "", ctx);
+		memory.remove(join(forks, "ended"));
+		runs[0].state = "done";
+		runs[1].state = "done";
+		await ext.runCommand("context-total", "", ctx);
+		const [first, second] = ctx.notices.map(([text]) => text);
+		assert.match(first, /^Live context: .* across 2 sessions\nRunning\n {2}lead {2}unknown\n {2}live \(reader\) {2}.*\nFinished \(last known\)\n {2}ended \(reader\) {2}unknown\nTree cumulative: .*\$0\.50$/);
+		assert.match(second, /Finished \(last known\)\n {2}live \(reader\) {2}\d.*\n {2}ended \(reader\) {2}700\n/);
+	} finally {
+		delete (globalThis as any)[key];
+	}
+});
+
 describe("headless modes", () => {
 	const SETTLE_MS = 300;
 
