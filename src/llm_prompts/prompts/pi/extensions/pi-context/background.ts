@@ -112,8 +112,8 @@ export class Background {
 
 const RUN_TYPE = "pi-context-run";
 
-const lostNote = ({ endedBy, worktree, task }: Run) =>
-	`${endedBy === "reload" ? "a /reload ended it" : "its session ended"} before it finished.${worktree ? ` Its worktree ${worktree} is kept.` : ""} Task: ${task}`;
+const lostNote = ({ endedBy, worktree, task, files, model, name }: Run) =>
+	`${endedBy === "reload" ? "a /reload ended it" : "its session ended"} before it finished.${worktree ? ` Its worktree ${worktree} is kept.` : ""}${files && !model ? ` fork_resume ${name} continues it.` : ""} Task: ${task}`;
 
 /** Hooks that deliver the digest, hold a session without a UI, and save and restore the runs across sessions. */
 export function registerBackgroundHooks(pi: ExtensionAPI, background: Background, registry: Registry = registryOf()) {

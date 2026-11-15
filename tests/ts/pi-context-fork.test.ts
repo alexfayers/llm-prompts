@@ -8,6 +8,7 @@ import { loadExtension, useEnv } from "./helpers.ts";
 import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
 import { prefixHash, trackPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
 import { registryOf } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
+import { Background } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/background.ts";
 import { coldArgs, registerFork, seedEntries } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
 
 const user = (id: string) => ({ type: "message", id, message: { role: "user", content: id } });
@@ -46,17 +47,16 @@ async function fork(params: Record<string, unknown>, cwd = process.cwd(), main =
 	const tools: Record<string, any> = {};
 	const appended: unknown[][] = [];
 	const sent: any[][] = [];
-	registerFork(
-		{
-			registerTool: (tool: any) => (tools[tool.name] = tool),
-			appendEntry: appendEntry ?? ((...args: unknown[]) => appended.push(args)),
-			sendMessage: (...args: unknown[]) => sent.push(args),
-			getThinkingLevel: () => "high",
-			getActiveTools: () => main.activeTools,
-			getAllTools: () => main.allTools,
-		} as any,
-		[process.execPath, STUB],
-	);
+	const pi = {
+		registerTool: (tool: any) => (tools[tool.name] = tool),
+		appendEntry: appendEntry ?? ((...args: unknown[]) => appended.push(args)),
+		sendMessage: (...args: unknown[]) => sent.push(args),
+		getThinkingLevel: () => "high",
+		getActiveTools: () => main.activeTools,
+		getAllTools: () => main.allTools,
+	} as any;
+	const background = new Background(pi);
+	registerFork(pi, [process.execPath, STUB], background);
 	const ctx = {
 		cwd,
 		isIdle: () => true,
@@ -65,7 +65,7 @@ async function fork(params: Record<string, unknown>, cwd = process.cwd(), main =
 		model: { provider: "prov", id: "mod" },
 		sessionManager: { getBranch: () => branch, getHeader: () => ({ type: "session", version: 3, id: "main-id", timestamp: "t", cwd }) },
 	};
-	return { tool: await tools.fork.execute("call-id", params, undefined, undefined, ctx).catch((error: Error) => error), appended, sent, tools };
+	return { tool: await tools.fork.execute("call-id", params, undefined, undefined, ctx).catch((error: Error) => error), appended, sent, tools, background, ctx };
 }
 
 describe("fork tool", () => {
@@ -179,6 +179,22 @@ describe("fork tool", () => {
 			await eventually(() => sent.length > 0);
 			assert.match(sent[0][0].content, /^\[fork steer done\]/);
 			assert.match(JSON.stringify(appended), /steered: look at b/);
+		});
+
+		test("a fork that the session's end stopped keeps its session, and fork_resume continues it", async () => {
+			const { tools, sent, appended, background, ctx } = await fork({ task: "STUB_STEER", name: "cut", background: true });
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			background.shutdown();
+			const run = () => registryOf().all().find((candidate) => candidate.name === "cut");
+			await eventually(() => run()?.state === "lost");
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			assert.equal(fs.existsSync(path.join(run()!.files!, "seed.jsonl")), true);
+			await assert.rejects(tools.fork_resume.execute("r", { name: "nope" }, undefined, undefined, ctx), /no lost fork nope to resume\. Resumable: .*cut/);
+			assert.equal((await tools.fork_resume.execute("r", { name: "cut" }, undefined, undefined, ctx)).content[0].text, "resumed fork cut (background)");
+			await eventually(() => sent.length > 0);
+			assert.equal(run()?.id, registryOf().all().filter((candidate) => candidate.name === "cut").at(-1)?.id);
+			assert.match(JSON.stringify(appended), /echo: Your session stopped before you finished/);
+			await eventually(() => !fs.existsSync(run()!.files!));
 		});
 	});
 

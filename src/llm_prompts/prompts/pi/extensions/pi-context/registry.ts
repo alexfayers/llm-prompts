@@ -13,6 +13,8 @@ export type Run = {
 	ref?: string;
 	worktree?: string;
 	branch?: string;
+	/** A writer's worktree, as the landing needs it. */
+	tree?: { repo: string; path: string; branch: string; base: string; snapshot: string };
 	/** The directory of the delegate's seed, handshake and session files. */
 	files?: string;
 	/** The model of a cold worker. */
