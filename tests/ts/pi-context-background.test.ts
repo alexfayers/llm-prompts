@@ -73,6 +73,12 @@ describe("Background", () => {
 		await cancelled;
 	});
 
+	test("hold ends after its maximum time even while a run is live", async () => {
+		await background.hold(10);
+		assert.equal(registry.live().length, 2);
+		assert.equal((background as any).holding, false);
+	});
+
 	test("shutdown stops every live background run and marks it lost", () => {
 		const signal = background.track("a");
 		background.shutdown();

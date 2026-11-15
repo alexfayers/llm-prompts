@@ -4,6 +4,7 @@ import { isLive, registryOf, type Registry, type Run } from "./registry.ts";
 import { Coalescer, digestLine, wakeReason } from "./wake.ts";
 
 export const RESULTS_TYPE = "pi-context-results";
+const MAX_HOLD_MS = 2 * 60 * 60 * 1000;
 
 export class Background {
 	private controllers = new Map<string, AbortController>();
@@ -50,17 +51,23 @@ export class Background {
 		return this.coalescer.take().join("\n") || undefined;
 	}
 
-	/** Waits until no run is live or one needs main. */
-	hold(): Promise<void> {
+	/** Waits until no run is live or one needs main, or `maxMs` has passed. */
+	hold(maxMs = MAX_HOLD_MS): Promise<void> {
 		if (!this.registry.live().length) return Promise.resolve();
 		this.holding = true;
 		return new Promise<void>((resolve) => {
-			const off = this.registry.onChange((run) => {
-				if (this.registry.live().length && !wakeReason(run)) return;
+			const release = () => {
 				off();
+				clearTimeout(timer);
 				this.holding = false;
 				resolve();
+			};
+			const off = this.registry.onChange((run) => {
+				if (this.registry.live().length && !wakeReason(run)) return;
+				release();
 			});
+			const timer = setTimeout(release, maxMs);
+			timer.unref();
 		});
 	}
 
