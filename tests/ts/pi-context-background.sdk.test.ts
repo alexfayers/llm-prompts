@@ -112,8 +112,9 @@ describe("background forks in a session", () => {
 		const prompting = session.prompt("go");
 		await eventually(() => registryOf().live().length === 2);
 		open("ba");
+		await eventually(() => finished("ba"));
 		open("bb");
-		await eventually(() => finished("ba") && finished("bb"));
+		await eventually(() => finished("bb"));
 		await quiet();
 		assert.equal(requests.length, 0);
 		release();

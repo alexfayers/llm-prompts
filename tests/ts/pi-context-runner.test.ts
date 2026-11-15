@@ -130,6 +130,7 @@ describe("RpcChild shutdown", { timeout: 10_000 }, () => {
 describe("RpcChild shutdown", { timeout: 10_000 }, () => {
 	test("close kills a child that ignores both the closed input and SIGTERM", async () => {
 		const child = start({ env: { ...process.env, STUB_IGNORE_EOF: "1", STUB_IGNORE_TERM: "1" } });
+		await child.prompt("handled");
 		child.close(50);
 		assert.equal((await child.exited).signal, "SIGKILL");
 	});
