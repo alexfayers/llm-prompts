@@ -109,3 +109,33 @@ describe("cwd move", () => {
 		assert.deepEqual(folded(out.messages), { skills: "S" });
 	});
 });
+
+describe("prefix drift alarm", () => {
+	const payload = (system: string, tools: string[]) => ({ system: [{ text: system }], toolConfig: { tools: tools.map((name) => ({ toolSpec: { name } })) } });
+
+	async function drift(...requests: { payload: object; branch?: object[] }[]) {
+		const ext = await loadExtension("prompt-cache-stabilizer");
+		let branch: object[] = [];
+		const ctx = ext.makeCtx({ sessionManager: { getBranch: () => entries(...branch) } as any });
+		for (const request of requests) {
+			branch = request.branch ?? branch;
+			await ext.fire("before_provider_request", { payload: request.payload }, ctx);
+		}
+		return ctx.notices.map(([message]) => message);
+	}
+
+	test("a changed tool list is reported once", async () => {
+		const notices = await drift({ payload: payload("S", ["a"]) }, { payload: payload("S", ["a", "b"]) }, { payload: payload("S", ["a", "b"]) });
+		assert.deepEqual(notices, ["prefix changed: tools"]);
+	});
+
+	test("a changed tool list in the anthropic-messages shape is reported", async () => {
+		const notices = await drift({ payload: { system: "S", tools: [{ name: "a" }] } }, { payload: { system: "S", tools: [{ name: "b" }] } });
+		assert.deepEqual(notices, ["prefix changed: tools"]);
+	});
+
+	test("a change after a new system entry is a known patch", async () => {
+		const notices = await drift({ payload: payload("S", ["a"]) }, { payload: payload("S2", ["a"]), branch: [system(3, { custom: "C" })] });
+		assert.deepEqual(notices, []);
+	});
+});

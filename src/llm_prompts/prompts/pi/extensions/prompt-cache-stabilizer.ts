@@ -121,7 +121,17 @@ function foldsSystemMessages(model: { api?: string; compat?: object } | undefine
 	);
 }
 
+type Prefix = { system?: unknown; tools?: unknown; toolConfig?: { tools?: unknown } };
+
+export function changedPrefixParts(previous: Record<string, string>, payload: Prefix): { current: Record<string, string>; changed: string[] } {
+	const parts = { system: payload.system, tools: payload.toolConfig?.tools ?? payload.tools };
+	const current = Object.fromEntries(Object.entries(parts).flatMap(([name, value]) => (value === undefined ? [] : [[name, JSON.stringify(value)]])));
+	return { current, changed: Object.keys(previous).filter((name) => name in current && previous[name] !== current[name]) };
+}
+
 export default function (pi: ExtensionAPI) {
+	let previousPrefix: Record<string, string> = {};
+	let systemEntries = 0;
 	let pendingPrompted = false;
 	let triggered = false;
 	let lastPromptedAt = 0;
@@ -129,6 +139,8 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", (_event, ctx) => {
 		pendingPrompted = false;
 		triggered = false;
+		previousPrefix = {};
+		systemEntries = 0;
 		const lastUser = ctx.sessionManager
 			.getBranch()
 			.flatMap((entry) => (entry.type === "message" && entry.message.role === "user" ? [entry.message.timestamp] : []))
@@ -142,6 +154,14 @@ export default function (pi: ExtensionAPI) {
 		if (pendingPrompted) lastPromptedAt = Date.now();
 		triggered = !pendingPrompted;
 		pendingPrompted = false;
+	});
+	pi.on("before_provider_request", (event, ctx) => {
+		const { current, changed } = changedPrefixParts(previousPrefix, event.payload as Prefix);
+		if (Object.keys(current).length === 0) return;
+		const entries = ctx.sessionManager.getBranch().filter((entry) => entry.type === "message" && entry.message.role === "system").length;
+		if (changed.length > 0 && entries === systemEntries) ctx.ui.notify(`prefix changed: ${changed.join("|")}`, "warning");
+		previousPrefix = current;
+		systemEntries = entries;
 	});
 	pi.on("context_with_system", (event, ctx) => {
 		const eventMessages = event.messages as Message[];
