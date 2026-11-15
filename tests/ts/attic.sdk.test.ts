@@ -6,7 +6,7 @@ import { after, test } from "node:test";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from "@earendil-works/pi-ai";
 import { createAgentSession, DefaultResourceLoader, type ExtensionAPI, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import attic from "../../src/llm_prompts/prompts/pi/extensions/attic/index.ts";
+import attic from "../../src/llm_prompts/prompts/pi/extensions/attic.ts";
 import { useEnv } from "./helpers.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "attic-sdk-"));

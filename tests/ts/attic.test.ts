@@ -35,7 +35,7 @@ const skills = () => [
 ];
 
 async function start(branch: unknown[] = []) {
-	const ext = await loadExtension("attic/index", {
+	const ext = await loadExtension("attic", {
 		pi: { activeTools: ["read", "ast_search", "unlock", "bash"] },
 		ctx: { sessionManager: { getBranch: () => branch } as any },
 	});
