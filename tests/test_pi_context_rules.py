@@ -103,6 +103,19 @@ class TestPlanningRule:
         assert wording in render_for_pi("shared/rules/planning.md")
 
 
+class TestLocalBeforeRemoteRule:
+    @pytest.mark.parametrize(
+        ("runtime", "wording"),
+        [("herdsman", "goes to a `coordinator`"), ("pi-context", "parallel `fork`s")],
+    )
+    def test_multi_unit_lookups_go_to_the_runtimes_delegates(
+        self, set_runtime: Callable[[str], None], runtime: str, wording: str
+    ) -> None:
+        set_runtime(runtime)
+
+        assert wording in render_for_pi("shared/rules/local-before-remote.md")
+
+
 class TestAntiYapRule:
     @pytest.mark.parametrize(
         ("runtime", "wording"),
