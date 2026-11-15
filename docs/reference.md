@@ -93,6 +93,7 @@ An overlay is a separate package that adds rules, skills and agents on top of th
 - Skills: overlay files are added into the core skill directory, and a file at the same relative path overrides core's.
 - Agents: frontmatter is merged, `tools` are appended without duplicates, and a non-blank overlay body replaces the core body.
 - `pi/seed` JSON: deep merged over core. Other seed files are replaced.
+- `pi/extensions/pi-context/test-gates.json`: the overlay's `gates` and `dependencies` are checked before core's, in the same format.
 
 To write one, register the package under the `llm_prompts` entry point group:
 

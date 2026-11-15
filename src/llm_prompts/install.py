@@ -48,7 +48,12 @@ from .mcp import (
     pi_tool_name,
     read_only_tools,
 )
-from .overlay_merge import merge_agent_text, merged_seed_text
+from .overlay_merge import (
+    TEST_GATES,
+    merge_agent_text,
+    merged_seed_text,
+    merged_test_gates,
+)
 from .render_template import (
     _read_text,
     clear_read_cache,
@@ -3284,6 +3289,17 @@ def _extension_gates(source_dirs: list[Path]) -> dict[str, dict[str, str]]:
     return gates
 
 
+def _install_pi_test_gates(roots: list[Path]) -> None:
+    """Write every root's test gates into the installed pi-context extension.
+
+    Args:
+        roots: Prompt directories, highest priority first.
+    """
+    dest = _pi_agent_dir() / "extensions" / TEST_GATES.relative_to("pi/extensions")
+    if dest.is_file():
+        _write_text(dest, json.dumps(merged_test_gates(roots), indent="\t") + "\n")
+
+
 def _install_pi_extensions(
     source_dirs: list[Path], dest_dir: Path, previous_files: Collection[str]
 ) -> list[str]:
@@ -4444,6 +4460,7 @@ def main(
                     set(previous_manifest.get("pi", {}).get("files", [])),
                 )
             )
+            _install_pi_test_gates([*overlay_dirs, root_dir])
             if not is_rooted() and try_install_hooks_pi():
                 pi_failed_sources.append("cline-hooks")
             pi_seeded_keys = _seed_pi_files(

@@ -589,6 +589,36 @@ class TestPiExtensions:
         assert installed_under("pi-context") == (True, True)
         assert installed_under("herdsman") == (False, True)
 
+    def test_an_overlay_test_gate_is_merged_ahead_of_the_core_gate(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_config_dir: Path,
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        overlay = tmp_path / "overlay"
+        gates = overlay / "pi" / "extensions" / "pi-context" / "test-gates.json"
+        gates.parent.mkdir(parents=True)
+        gates.write_text(
+            json.dumps({"gates": [{"all": ["a.txt"], "command": "make check"}]}),
+            encoding="utf-8",
+        )
+        (isolated_config_dir / "config.toml").write_text(
+            '[pi]\nruntime = "pi-context"\n', encoding="utf-8"
+        )
+        dest = home / ".pi" / "agent" / "extensions" / "pi-context" / "test-gates.json"
+        dest.parent.mkdir(parents=True)
+        dest.write_text(
+            json.dumps({"gates": [{"any": ["justfile"], "command": "just"}]}),
+            encoding="utf-8",
+        )
+
+        _install(home, tmp_path / "installed.json", [overlay], trusted=True)
+
+        merged = json.loads(dest.read_text(encoding="utf-8"))
+        assert merged["gates"][0]["command"] == "make check"
+
     def test_overlay_extension_is_installed_and_removed_when_undeclared(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
