@@ -40,6 +40,7 @@ class WorktreeEntry(NamedTuple):
     ``copied`` is the author time and subject of the first commit when sync last
     copied the branch into local main.
     ``why`` is the text sync puts under Why when it opens the PR.
+    ``synced_title`` is the PR title sync last wrote, so a title edited since is kept.
     ``extra`` holds the record keys this version does not know, kept so a save
     writes them back.
     """
@@ -56,6 +57,7 @@ class WorktreeEntry(NamedTuple):
     dropped_refs: tuple[str, ...] = ()
     copied: str | None = None
     why: str = ""
+    synced_title: str = ""
     extra: tuple[tuple[str, Any], ...] = ()
 
 

@@ -26,7 +26,7 @@ from .squash_subject import squash_pr_number
 from .worktrees import Link, WorktreeEntry
 
 _DEPENDS_PREFIX = "Depends on "
-_GENERATED_PREFIXES = ("- ", _DEPENDS_PREFIX)
+WHAT_MARK = " [](#sync)"
 _OPTIONAL_SECTIONS = ("Dependencies", "Issues")
 _WHAT_HEADING = re.compile(r"^## What\n", re.MULTILINE)
 _DEPENDENCIES_HEADING = re.compile(r"^## Dependencies\n", re.MULTILINE)
@@ -265,7 +265,7 @@ def pr_template(repo: Path, base: str) -> str:
 
 def _what_lines(commits: Sequence[Commit]) -> list[str]:
     """Return the What section's subject bullets, one per commit."""
-    return [f"- {commit.subject}" for commit in commits]
+    return [f"- {commit.subject}{WHAT_MARK}" for commit in commits]
 
 
 def _with_depends(
@@ -362,26 +362,27 @@ def rewrite_what(
     depends_on: Sequence[str] = (),
     dropped: Sequence[str] = (),
 ) -> str:
-    """Return ``body`` with its What section's generated lines and trailing Depends on lines rebuilt, all else kept."""
+    """Return ``body`` with its What section's marked lines and trailing Depends on lines rebuilt, all else kept.
+
+    A non-empty ``body`` without marked lines keeps its text apart from Depends on lines.
+    """
     lines = _what_lines(commits)
     heading = _WHAT_HEADING.search(body)
     if heading is None:
+        if body.strip():
+            return _with_depends(body, depends_on, dropped)
         return _with_depends(
             "## What\n\n" + "\n".join(lines) + f"\n\n{body}", depends_on, dropped
         )
     following = _HEADING.search(body, heading.end())
     end = following.start() if following else len(body)
     section = body[heading.end() : end]
+    if WHAT_MARK not in section:
+        return _with_depends(body, depends_on, dropped)
     old = section.lstrip("\n").split("\n")
-    generated = next(
-        (i for i, line in enumerate(old) if not line.startswith(_GENERATED_PREFIXES)),
-        len(old),
-    )
     stale = {f"{_DEPENDS_PREFIX}{ref}" for ref in (*depends_on, *dropped)}
     prose = "\n".join(
-        line
-        for i, line in enumerate(old)
-        if line not in stale and (i >= generated or line.startswith(_DEPENDS_PREFIX))
+        line for line in old if line not in stale and not line.endswith(WHAT_MARK)
     ).strip("\n")
     trailing = section[len(section.rstrip("\n")) :]
     rebuilt = "\n" + "\n".join(lines) + (f"\n\n{prose}" if prose else "") + trailing
@@ -396,14 +397,15 @@ def refreshed_pr(
     commits: Sequence[Commit],
     depends_on: Sequence[str] = (),
     dropped: Sequence[str] = (),
+    retitle: bool = True,
     why: str = "",
 ) -> tuple[str, str] | None:
     """Return the PR title and body ``commits`` call for, or None when both are already current.
 
-    ``why`` fills an empty Why section.
+    The title stays as it is unless ``retitle``. ``why`` fills an empty Why section.
     """
     refreshed = (
-        pr_title(commits),
+        pr_title(commits) if retitle else title,
         _fill_section(rewrite_what(body, commits, depends_on, dropped), "Why", why),
     )
     return None if refreshed == (title, body) else refreshed
@@ -1173,12 +1175,21 @@ def _commit_of(repo: Path, sha: str) -> Commit:
 def _pr_number_of(repo: Path, branch: str) -> int:
     """Return the number of the open PR whose head is ``branch``, through gh or the GitHub API."""
     if _gh_installed():
-        return int(
-            _gh_json("pr", "view", branch, "--json", "number", repo=repo)["number"]
+        prs = _gh_json(
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--author",
+            "@me",
+            "--state",
+            "open",
+            "--json",
+            "number,headRefName",
+            repo=repo,
         )
-    [pr] = [
-        pr
-        for pr in with_retries(
+    else:
+        prs = with_retries(
             partial(
                 github_api.pr_list,
                 repo,
@@ -1186,9 +1197,16 @@ def _pr_number_of(repo: Path, branch: str) -> int:
                 ["number", "headRefName"],
             )
         )
-        if pr["headRefName"] == branch
-    ]
+    [pr] = [pr for pr in prs if pr["headRefName"] == branch]
     return int(pr["number"])
+
+
+def _open_pr_number(repo: Path, branch: str) -> int | None:
+    """Return the number of the open PR whose head is ``branch``, or None when it has none."""
+    try:
+        return _pr_number_of(repo, branch)
+    except (subprocess.CalledProcessError, ValueError):
+        return None
 
 
 def _open_pr(
@@ -1644,6 +1662,9 @@ class _RepoSync:
         self.refresh_upstream()
         if (stale := stale_main_warning(self.repo, self.main_base)) is not None:
             _print_warning(stale)
+        for entry in list(self.entries):
+            if entry.ready and entry.pr is None:
+                self.adopt(entry)
         self.observe()
         self.landed = self.landed_copies()
         self.restack()
@@ -1827,6 +1848,7 @@ class _RepoSync:
                 entry = self.update(entry, remote_head=tip)
             if number is None:
                 head_owner = f"{self.login}:" if forked else ""
+                title = pr_title(self.commits(entry, tip))
                 number, adopted = _open_pr(
                     self.repo,
                     self.base,
@@ -1836,7 +1858,12 @@ class _RepoSync:
                     [link.ref for link in entry.depends_on],
                     entry.why,
                 )
-                entry = self.update(entry, pr=number, pr_state="OPEN")
+                entry = self.update(
+                    entry,
+                    pr=number,
+                    pr_state="OPEN",
+                    synced_title="" if adopted else title,
+                )
                 self.say(entry, f"pushed, opened draft PR #{number}")
                 if adopted:
                     pr = pr_states(self.repo, [number]).get(number)
@@ -1846,6 +1873,15 @@ class _RepoSync:
                 self.settle_body(entry, pr, tip)
         except subprocess.CalledProcessError as error:
             self.fail(entry, f"not pushed ({first_stderr_line(error)})")
+
+    def adopt(self, entry: WorktreeEntry) -> WorktreeEntry:
+        """Record the open PR already on ``entry``'s branch, if any."""
+        number = _open_pr_number(self.repo, self.remote_name(entry))
+        if number is None:
+            number = _open_pr_number(self.repo, entry.branch)
+        if number is None:
+            return entry
+        return self.update(entry, pr=number, pr_state="OPEN", synced_title="")
 
     def unfilled(self, entry: WorktreeEntry, commits: Sequence[Commit]) -> bool:
         """Say which required PR sections ``entry``'s PR would leave empty, and return whether any."""
@@ -1877,6 +1913,7 @@ class _RepoSync:
             self.commits(entry, tip),
             [link.ref for link in entry.depends_on],
             entry.dropped_refs,
+            retitle=bool(entry.synced_title) and pr.title == entry.synced_title,
             why=entry.why,
         )
         missing = unfilled_sections(
@@ -1891,6 +1928,8 @@ class _RepoSync:
         if refreshed is not None:
             edit_pr(self.repo, int(entry.pr or 0), *refreshed)
             self.say(entry, f"updated PR #{entry.pr} title and What")
+            if entry.synced_title and pr.title == entry.synced_title:
+                entry = self.update(entry, synced_title=refreshed[0])
         self.update(entry, dropped_refs=())
 
 

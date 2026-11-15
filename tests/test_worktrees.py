@@ -82,13 +82,13 @@ def _add_to_record(path: Path, key: str, value: Any) -> None:
 def test_unknown_entry_fields_load_and_survive_a_save(tmp_path: Path) -> None:
     path = tmp_path / "record.json"
     save_entries(path, [_entry()])
-    _add_to_record(path, "title", "kept")
+    _add_to_record(path, "future", "kept")
 
     [loaded] = load_entries(path)
     save_entries(path, [loaded])
 
     [saved] = json.loads(path.read_text(encoding="utf-8"))["entries"]
-    assert saved["title"] == "kept"
+    assert saved["future"] == "kept"
     assert "extra" not in saved
 
 
@@ -168,9 +168,16 @@ def test_links_and_base_round_trip_and_old_records_load(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     [old] = load_entries(path)
-    assert (old.depends_on, old.base, old.dropped_refs, old.copied) == (
+    assert (
+        old.depends_on,
+        old.base,
+        old.dropped_refs,
+        old.copied,
+        old.synced_title,
+    ) == (
         (),
         None,
         (),
         None,
+        "",
     )

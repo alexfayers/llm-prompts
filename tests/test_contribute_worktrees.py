@@ -1411,6 +1411,28 @@ def test_a_hand_written_why_is_kept_over_the_recorded_one(
     assert WHY not in pr_body(project, 100)
 
 
+def _set_title(project: Project, number: int, title: str) -> None:
+    state = project.load_state()
+    state["prs"][str(number)]["title"] = title
+    project.state = state
+    project.save_state()
+
+
+def test_a_title_edited_by_hand_is_kept_but_one_sync_wrote_follows_the_commits(
+    project: Project, pushed: Path
+) -> None:
+    _amend(project, pushed, "fix: a")
+    assert project.run(apply=True) == 0
+    assert project.load_state()["prs"]["100"]["title"] == "fix: a"
+
+    _set_title(project, 100, "My own title")
+    _amend(project, pushed, "fix: b")
+    assert project.run(apply=True) == 0
+
+    assert project.load_state()["prs"]["100"]["title"] == "My own title"
+    assert "- fix: b" in pr_body(project, 100)
+
+
 def _amend_remotely(project: Project, branch: str, message: str) -> str:
     other = project.root / "other"
     if not other.exists():
@@ -2017,6 +2039,39 @@ def test_an_existing_pr_for_the_branch_is_adopted(project: Project) -> None:
     assert project.run(apply=True) == 0
 
     assert [e.pr for e in project.entries()] == [7]
+
+
+def test_a_pr_on_the_published_branch_is_adopted_without_a_recorded_why(
+    project: Project,
+) -> None:
+    project.auto_why = False
+    project.worktree("feat/a", "feat: a")
+    git(project.repo, "push", "-q", "origin", "feat/a:" + _remote("feat/a"))
+    body = "## What\n\n- my own summary\n\n## Why\n\nMy reason.\n"
+    project.add_pr(7, _remote("feat/a"), body=body)
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+
+    assert project.run(apply=True) == 0
+
+    assert [e.pr for e in project.entries()] == [7]
+
+
+def test_an_existing_pr_with_a_hand_written_why_is_adopted_without_a_recorded_why(
+    project: Project,
+) -> None:
+    project.auto_why = False
+    project.worktree("feat/a", "feat: a")
+    git(project.repo, "push", "-q", "origin", "feat/a")
+    body = "## What\n\n- my own summary\n\n## Why\n\nMy reason.\n"
+    project.add_pr(7, "feat/a", body=body)
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+
+    assert project.run(apply=True) == 0
+
+    assert [e.pr for e in project.entries()] == [7]
+    assert pr_body(project, 7) == body
 
 
 def test_a_worktree_with_no_commits_is_skipped_by_sync_and_list(
