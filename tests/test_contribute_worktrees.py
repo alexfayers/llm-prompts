@@ -1695,9 +1695,9 @@ def test_list_shows_each_entry_offline(
     out = capsys.readouterr().out
     assert "feat/a  ready  no PR  1 lines" in out
     assert "feat/b  local only  no PR  2 commits, 2 lines" in out
-    assert "lines (over the 100-line limit)" in out.splitlines()[2]
+    assert "lines (over the 100-line guideline)" in out.splitlines()[2]
     assert (
-        "feat/d  local only  no PR  2 commits, 120 lines (over the 100-line limit)"
+        "feat/d  local only  no PR  2 commits, 120 lines (over the 100-line guideline)"
         in out
     )
     assert project.gh_calls() == []
@@ -2299,7 +2299,7 @@ def test_a_small_same_repo_stack_is_refused(
 
     assert (
         "feat/a and feat/b change 90 lines together, within the slightly-yappy "
-        "limit of 100. Combine them into one worktree." in capsys.readouterr().out
+        "guideline of 100. Combine them into one worktree." in capsys.readouterr().out
     )
     assert project.entries()[1].depends_on == ()
 

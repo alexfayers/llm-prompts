@@ -717,7 +717,7 @@ def _refuse_small_stack(repo: Path, lower: str, upper: str) -> None:
     if not binary and lines <= limit:
         raise LookupError(
             f"{lower} and {upper} change {lines} lines together, within the "
-            f"slightly-yappy limit of {limit}. Combine them into one worktree."
+            f"slightly-yappy guideline of {limit}. Combine them into one worktree."
         )
 
 
@@ -2181,7 +2181,7 @@ def _list_line(
         detail = f"{count} commits, " if count > 1 else ""
         detail += f"{lines} lines"
         if lines > yappy_limits()["lines"]:
-            detail += f" (over the {yappy_limits()['lines']}-line limit)"
+            detail += f" (over the {yappy_limits()['lines']}-line guideline)"
     return f"{entry.branch}  {'ready' if entry.ready else 'local only'}  {pr}  {detail}"
 
 

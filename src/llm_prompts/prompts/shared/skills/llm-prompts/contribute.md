@@ -10,7 +10,7 @@ Covers llm-prompts, cline-hooks, and mcp-memory. Read the TARGET repo's CONTRIBU
 
 All three repos' prompts trees go through `llm-prompts contribute` (`list`, `sync`, `update`), never a manual branch. Each worktree branch is one PR:
 
-- MUST work in a `git worktree` on your own branch with its commits ahead of `origin/main`, or of the worktree it depends on. Any number is allowed. `list` flags a worktree whose combined diff is over the line limit in `yappy_limits.json`.
+- MUST work in a `git worktree` on your own branch with its commits ahead of `origin/main`, or of the worktree it depends on. Any number is allowed. `list` flags a worktree whose combined diff is over the line guideline in `yappy_limits.json`.
 - MUST start the worktree from `origin/main`, or from the lower worktree's branch and link it with `--depends-on`. `sync` skips a branch holding another worktree's commits or other local `main` commits (`skipped: holds commits of <branch>`).
 - `sync --tool NAME --branch B` records the worktree, local only. `sync` copies it into local `main` as one squashed commit and pulls remote changes, never pushing or touching a PR.
 - `sync --tool NAME --why B "TEXT"` records the Why for B's PR, local only. MUST record it before `--ready`. `sync` skips a PR (nonzero exit) while a required template section is empty.
