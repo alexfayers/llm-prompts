@@ -19,7 +19,7 @@ DEFAULT_PI_RUNTIME = "herdsman"
 
 PI_CONTEXT_OVERRIDES: dict[str, str] = {
     "TOOL_AGENT": "fork",
-    "TOOL_STEER": "",
+    "TOOL_STEER": "fork_steer",
     "TOOL_AGENT_RESULT": "result_fetch",
     "TOOL_WORKFLOW": "",
 }

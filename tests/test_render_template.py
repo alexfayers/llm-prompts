@@ -80,7 +80,7 @@ class TestPiRuntime:
             ),
             (
                 '[pi]\nruntime = "pi-context"\n',
-                "fork||result_fetch|pi-context",
+                "fork|fork_steer|result_fetch|pi-context",
             ),
             ("[pi\nruntime =", "delegate_agent|steer_agent|inspect_agent|herdsman"),
             (

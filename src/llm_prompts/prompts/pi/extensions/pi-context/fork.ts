@@ -60,12 +60,14 @@ export type DelegateOptions = {
 	mcp?: BridgeOptions["execute"];
 	/** The worktree a writer works in. */
 	worktree?: string;
+	/** Receives the child once it has started. */
+	onChild?: (child: RpcChild) => void;
 	/** Runs after the first turn while the session is still open; `resume` prompts it again. */
 	onTurn?: (turn: Turn, resume: (message: string) => Promise<Turn>) => Promise<void>;
 };
 
 /** Runs the role's session on a copy of the given entries with main's model, thinking level and directory, or as a cold worker with `model`, and returns its first turn. */
-export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { role, name, entries, message, signal, command, runId = newRunId(), model, mcp, worktree, onTurn }: DelegateOptions): Promise<Turn & { prefix?: "match" | "mismatch" }> {
+export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { role, name, entries, message, signal, command, runId = newRunId(), model, mcp, worktree, onChild, onTurn }: DelegateOptions): Promise<Turn & { prefix?: "match" | "mismatch" }> {
 	if (!ctx.model) throw new Error("Cannot start a delegate without a model.");
 	const agentDir = getAgentDir();
 	const files = path.join(agentDir, "pi-context", randomUUID());
@@ -94,6 +96,7 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 			signal,
 			onUi: relayDialog(name, ctx),
 		});
+		onChild?.(child);
 		const turn = await child.prompt(model ? message : `${role.card}\n\n${message}`);
 		const reported = !model && !bridge && readText(path.join(files, PREFIX_FILE));
 		if (reported) prefix = reported === lastPrefixHash() ? "match" : "mismatch";
@@ -189,7 +192,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 				const { result, isError } = await ctx.executeTool(tool, args, { signal: runSignal });
 				return { content: result.content, details: result.details, structuredContent: result.structuredContent, isError };
 			} : undefined;
-			const running = runDelegate(pi, ctx, { role, name, entries, message, signal: runSignal, command, runId, model: params.model, mcp, worktree: tree?.path, onTurn });
+			const running = runDelegate(pi, ctx, { role, name, entries, message, signal: runSignal, command, runId, model: params.model, mcp, worktree: tree?.path, onChild: params.background ? (child) => background.attach(runId, child) : undefined, onTurn });
 			if (params.background) {
 				const onEnd = (turn: Turn) => {
 					const end = endOf(ref, turn, merged.landing);
@@ -233,6 +236,18 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			const run = background.cancel(params.name);
 			if (!run) throw new Error(`no live background fork ${params.name}`);
 			return { content: [{ type: "text", text: `cancelled fork ${run.name}${run.worktree ? ` (worktree ${run.worktree} kept)` : ""}` }], details: { name: run.name } };
+		},
+	});
+	pi.registerTool({
+		name: "fork_steer",
+		label: "Fork steer",
+		description: "Send a message to a live background fork. It reaches the fork after its current tool calls, before its next model call.",
+		promptSnippet: "Steer a live background fork",
+		parameters: Type.Object({ name: Type.String({ description: "Name of the background fork" }), message: Type.String({ description: "What the fork should do differently or also do" }) }),
+		async execute(_toolCallId, params) {
+			if (process.env.PI_HERDSMAN_MAILBOX || process.env.PI_CONTEXT_CHILD) throw new Error("Only the top-level session can steer a fork.");
+			await background.steer(params.name, params.message);
+			return { content: [{ type: "text", text: `steered fork ${params.name}` }], details: { name: params.name } };
 		},
 	});
 }

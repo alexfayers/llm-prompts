@@ -169,6 +169,17 @@ describe("fork tool", () => {
 			await new Promise((resolve) => setTimeout(resolve, 100));
 			assert.deepEqual(sent, []);
 		});
+
+		test("fork_steer reaches a live background fork, and an unknown name lists the live forks", async () => {
+			const { tools, sent, appended } = await fork({ task: "STUB_STEER", name: "steer", background: true });
+			await assert.rejects(tools.fork_steer.execute("s", { name: "nope", message: "m" }), /no live background fork nope\. Live forks: .*steer/);
+			await eventually(() => registryOf().all().find((run) => run.name === "steer")?.state === "running");
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			assert.equal((await tools.fork_steer.execute("s", { name: "steer", message: "look at b" })).content[0].text, "steered fork steer");
+			await eventually(() => sent.length > 0);
+			assert.match(sent[0][0].content, /^\[fork steer done\]/);
+			assert.match(JSON.stringify(appended), /steered: look at b/);
+		});
 	});
 
 	describe("with the MCP proxy", () => {

@@ -1,4 +1,4 @@
-// Stands in for `pi --mode rpc` as a fork child: the task text picks the reply, and STUB_INSPECT reports how the child was started.
+// Stands in for `pi --mode rpc` as a fork child: the task text picks the reply, STUB_STEER waits for a steer command, and STUB_INSPECT reports how the child was started.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import net from "node:net";
@@ -66,7 +66,13 @@ async function replyTo(text) {
 for await (const line of createInterface({ input: process.stdin })) {
 	const command = JSON.parse(line);
 	const respond = (data) => out({ id: command.id, type: "response", command: command.type, success: true, data });
-	if (command.type === "prompt") {
+	if (command.type === "prompt" && command.message.includes("STUB_STEER")) respond({ disposition: "started" });
+	else if (command.type === "steer") {
+		respond({ disposition: "queued" });
+		reply = `OUTCOME done ref:rc-fork-s\nsteered: ${command.message}`;
+		out({ type: "message_end", message: { role: "assistant", usage: usage(100) } });
+		out({ type: "agent_settled", aborted: false });
+	} else if (command.type === "prompt") {
 		const bridged = JSON.parse(readFileSync(handshake, "utf8")).bridge;
 		if (process.env.STUB_PREFIX && !bridged) writeFileSync(`${dirname(handshake)}/prefix`, process.env.STUB_PREFIX);
 		reply = await replyTo(command.message);

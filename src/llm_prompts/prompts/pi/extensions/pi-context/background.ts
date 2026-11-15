@@ -4,10 +4,13 @@ import { isLive, registryOf, type Registry, type Run } from "./registry.ts";
 import { Coalescer, digestLine, wakeReason } from "./wake.ts";
 
 export const RESULTS_TYPE = "pi-context-results";
+
+type Steerable = { steer(text: string): Promise<string | undefined> };
 const MAX_HOLD_MS = 2 * 60 * 60 * 1000;
 
 export class Background {
 	private controllers = new Map<string, AbortController>();
+	private children = new Map<string, Steerable>();
 	private coalescer = new Coalescer();
 	private holding = false;
 	private pi: Pick<ExtensionAPI, "sendMessage">;
@@ -25,9 +28,25 @@ export class Background {
 		return controller.signal;
 	}
 
+	/** Lets `steer` reach the run's child. */
+	attach(runId: string, child: Steerable): void {
+		this.children.set(runId, child);
+	}
+
+	/** Sends a steering message to a live background run by name. */
+	async steer(name: string, message: string): Promise<void> {
+		const live = this.registry.live().filter((run) => run.background);
+		const run = live.find((candidate) => candidate.name === name);
+		const child = run && this.children.get(run.id);
+		if (!child) throw new Error(`no live background fork ${name}. Live forks: ${live.map((candidate) => candidate.name).join(", ") || "none"}`);
+		const refused = await child.steer(message);
+		if (refused) throw new Error(`fork ${name} did not take the message: ${refused}`);
+	}
+
 	/** Records how a background run ended, and wakes main. A cancelled run is ignored. */
 	finish(ctx: Pick<ExtensionContext, "isIdle">, runId: string, patch: Partial<Run>, text: string, note?: string): void {
 		this.controllers.delete(runId);
+		this.children.delete(runId);
 		const current = this.registry.get(runId);
 		if (!current || !isLive(current)) return;
 		const held = this.holding;
@@ -43,6 +62,7 @@ export class Background {
 		if (!run) return undefined;
 		this.controllers.get(run.id)?.abort();
 		this.controllers.delete(run.id);
+		this.children.delete(run.id);
 		return this.registry.update(run.id, { state: "cancelled", endedAt: Date.now() });
 	}
 
@@ -77,6 +97,7 @@ export class Background {
 			if (!run.background) continue;
 			this.controllers.get(run.id)?.abort();
 			this.controllers.delete(run.id);
+			this.children.delete(run.id);
 			this.registry.update(run.id, { state: "lost", endedAt: Date.now() });
 		}
 	}

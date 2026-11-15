@@ -143,6 +143,13 @@ export class RpcChild {
 		this.send({ type: "abort" });
 	}
 
+	/** Queues a steering message for the running prompt, and returns why the child refused it, if it did. */
+	async steer(text: string): Promise<string | undefined> {
+		if (!this.busy) return "it is not running a prompt";
+		const reply = await this.request({ type: "steer", message: text });
+		return reply.success ? undefined : (reply.error ?? this.endReason());
+	}
+
 	/** Closes the child's input, terminates it once `graceMs` pass without an exit, and kills it after another `graceMs`. */
 	close(graceMs = CLOSE_GRACE_MS): Promise<Exit> {
 		this.child.stdin?.end();
