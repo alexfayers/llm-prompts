@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import tomllib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -36,12 +35,9 @@ def _load_plugins() -> list[dict[str, Any]]:
         The ``[[plugins]]`` entries, or an empty list if config or the key is
         absent. Independent of the ``[[tools]]`` list, which is optional here.
     """
-    from .setup import config_path
+    from .setup import read_config
 
-    if not config_path().exists():
-        return []
-    config = tomllib.loads(config_path().read_text(encoding="utf-8"))
-    plugins = config.get("plugins", [])
+    plugins = read_config().get("plugins", [])
     if not isinstance(plugins, list):
         return []
     return plugins

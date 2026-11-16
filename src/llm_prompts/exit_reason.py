@@ -16,6 +16,7 @@ Reason = Literal[
     "pr_list_failed",
     "uv_missing",
     "config_missing",
+    "config_invalid",
     "config_no_tools",
     "config_exists",
     "invalid_tool_paths",

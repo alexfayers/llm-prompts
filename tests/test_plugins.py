@@ -8,6 +8,7 @@ import pytest
 from conftest import FakeSubprocess
 
 from llm_prompts import plugins, setup
+from llm_prompts.exit_reason import ExitReason
 
 
 class TestLoadPlugins:
@@ -23,6 +24,16 @@ class TestLoadPlugins:
         config.write_text('[[tools]]\nname = "x"\nsource = "https://x.git"\n')
         monkeypatch.setattr(setup, "config_path", lambda: config)
         assert plugins._load_plugins() == []
+
+    def test_malformed_config_exits_naming_the_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config = tmp_path / "config.toml"
+        config.write_text('[[plugins]\nname = "a"\n')
+        monkeypatch.setattr(setup, "config_path", lambda: config)
+        with pytest.raises(ExitReason) as stopped:
+            plugins._load_plugins()
+        assert str(stopped.value.code).startswith(f"{config} is not valid TOML: ")
 
     def test_config_with_plugins_returns_all(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
