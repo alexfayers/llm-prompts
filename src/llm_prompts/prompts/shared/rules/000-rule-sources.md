@@ -16,7 +16,7 @@ Anything specific to one person, one incident, one repo, or one past conversatio
 Before adding a rule, MUST check it would still read correctly in an unrelated repo for a different person.
 
 {% if AGENT == "pi" %}
-After changing pi extensions, packages, settings, agent definitions or AGENTS.md, MUST tell the user to run `/reload`. `/reload` refreshes the current session only. New sessions and delegates pick up changes on their own. The user MAY `/reload` while delegates are running.
+After changing pi extensions, packages, settings, agent definitions or AGENTS.md, MUST call `reload_now` as the last call of the turn. It runs `/reload` after the turn, then continues the task. Where `reload_now` is missing, MUST tell the user to run `/reload`. A delegate MUST report the change to its lead instead. `/reload` refreshes the current session only. New sessions and delegates pick up changes on their own. The lead MAY reload while delegates are running.
 A new pi extension MUST start with a `// <one-sentence summary>` header, optionally followed by `// Commands:`, `// Config:` and `// Env:` lines.
 Changes that invalidate a hand-written `pi-help` fact MUST update that fact.
 {% endif %}
