@@ -9,6 +9,8 @@
 - [cline-hooks](https://github.com/alexfayers/cline-hooks) is wired in as a pi extension.
 - Pi packages listed in `prompts/pi/settings.json`, from core and overlays, are merged into `settings.json` in the agent dir. Pi installs them on startup. Packages you add yourself are left alone. A package can be an object with a `source` and the same `requires_env`, `requires_command` and `requires_absent_command` gates as frontmatter, and is added only where every gate passes.
 - `mcp-memory install pi` registers the memory servers in `mcp.json`, which pi's MCP support reads.
+- The `CommitGuard` hook blocks a git commit or push until the repository's test command passed on the current files, and a push while the tree has uncommitted changes. The test command is `PI_CONTEXT_TEST_CMD`, or else the one `shared/test-gates.json` detects from the repository's files, with each overlay's gates checked first.
+- The `ShellRules` hook blocks `set -e`, killing processes by port and Docker volume removal.
 - Files under `prompts/pi/seed/` are copied into the agent dir only where absent, so they stay yours to edit. A later overlay replaces the same path. For an existing JSON file, seed keys it has never been offered are added once.
 
 ## Roles

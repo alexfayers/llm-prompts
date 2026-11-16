@@ -1,0 +1,9 @@
+{
+	"gates": [
+		{ "any": ["justfile", "Justfile", ".justfile"], "command": "just" },
+		{ "all": ["package.json", "pnpm-lock.yaml"], "match": { "file": "package.json", "pattern": "\"test\"\\s*:" }, "command": "pnpm test" },
+		{ "all": ["package.json"], "match": { "file": "package.json", "pattern": "\"test\"\\s*:" }, "command": "npm test" },
+		{ "all": ["pyproject.toml", "uv.lock"], "any": ["tests", "pytest.ini", "conftest.py"], "command": "uv run pytest" },
+		{ "all": ["pyproject.toml", "uv.lock"], "match": { "file": "pyproject.toml", "pattern": "\\[tool\\.pytest" }, "command": "uv run pytest" }
+	]
+}
