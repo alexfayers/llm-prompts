@@ -653,8 +653,7 @@ def _build_install_cmd(
     if executable_members:
         cmd.extend(["--with-executables-from", ",".join(executable_members)])
     for package in [owner, *members]:
-        if _is_local_path(str(package["source"])):
-            cmd.extend(["--no-sources-package", package_name(package)])
+        cmd.extend(["--no-sources-package", package_name(package)])
     cmd.extend(["--reinstall", "--force"])
     return cmd
 
