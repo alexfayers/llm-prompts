@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from cline_hooks.core.plugin import HookResult
 
-from llm_prompts.guards.commit_guard import CommitGuard
+from llm_prompts.guards.commit_guard import CommitGuard, PrimaryCheckoutGuard
 from llm_prompts.guards.receipts import ReceiptStore, tree_fingerprint
 
 LOGGER = logging.getLogger("test")
@@ -247,3 +247,100 @@ def test_receipts_from_parallel_sessions_are_all_kept(tmp_path: Path) -> None:
 @pytest.mark.real_io
 def test_a_failed_file_listing_never_matches_a_receipt(tmp_path: Path) -> None:
     assert tree_fingerprint(tmp_path) != tree_fingerprint(tmp_path)
+
+
+@pytest.mark.real_io
+class TestPrimaryCheckoutGuard:
+    @pytest.fixture
+    def primary(self, repo: Path, monkeypatch: pytest.MonkeyPatch) -> RunHook:
+        """Return a hook runner for the primary checkout guard, with no frontend set."""
+        monkeypatch.delenv("CLINE_HOOKS_FRONTEND", raising=False)
+
+        def run(command: str, root: Path = repo) -> HookResult | None:
+            return PrimaryCheckoutGuard().on_hook(
+                "PreShell", logger=LOGGER, workspace_roots=[str(root)], command=command
+            )
+
+        return run
+
+    def test_blocks_changes_to_the_primary_checkout(self, primary: RunHook) -> None:
+        blocked = primary("git commit -m x")
+        assert blocked is not None and "worktree" in (blocked.block or "")
+
+    def test_allows_reads_fast_forwards_and_worktree_commands(
+        self, primary: RunHook
+    ) -> None:
+        for command in [
+            "git status",
+            "git merge --ff-only b",
+            "git pull --ff-only",
+            "git worktree add ../w",
+            "git branch -d b",
+            "git stash list",
+            "just",
+        ]:
+            assert primary(command) is None, command
+
+    def test_blocks_gh_pr_create_and_stash_pop(self, primary: RunHook) -> None:
+        assert primary("gh pr create --draft") is not None
+        assert primary("git stash pop") is not None
+
+    def test_blocks_a_forced_branch_move_but_not_a_branch_delete(
+        self, primary: RunHook
+    ) -> None:
+        assert primary("git branch -f main HEAD~1") is not None
+        assert primary("git branch --force main HEAD~1") is not None
+        assert primary("git branch -fM old new") is not None
+        assert primary("git branch -d done") is None
+
+    def test_the_exact_same_command_again_proceeds_once(self, primary: RunHook) -> None:
+        assert primary("git reset --hard") is not None
+        assert primary("git commit -m y") is not None
+        assert primary("git commit -m y") is None
+        assert primary("git commit -m y") is not None
+
+    def test_allows_everything_in_a_linked_worktree(
+        self, primary: RunHook, repo: Path, tmp_path: Path
+    ) -> None:
+        git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run(
+            [*git, "commit", "-q", "--allow-empty", "-m", "init"], check=True
+        )
+        subprocess.run(
+            [*git, "worktree", "add", "-q", "-b", "w", str(tmp_path / "w")], check=True
+        )
+        assert primary("git commit -m x", tmp_path / "w") is None
+        assert primary(f"cd {tmp_path / 'w'} && git rebase main") is None
+
+    def test_blocks_a_git_dash_c_call_into_the_primary_checkout(
+        self,
+        primary: RunHook,
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run(
+            [*git, "commit", "-q", "--allow-empty", "-m", "init"], check=True
+        )
+        subprocess.run(
+            [*git, "worktree", "add", "-q", "-b", "w", str(tmp_path / "w")], check=True
+        )
+        assert primary(f"git -C {repo} commit -m x", tmp_path / "w") is not None
+        assert primary(f"git -C{repo} commit -m x", tmp_path / "w") is not None
+        assert (
+            primary(f"git -C {repo.parent} -C {repo.name} commit -m x", tmp_path / "w")
+            is not None
+        )
+        assert primary(f"git -C {repo} log -C", tmp_path / "w") is None
+        monkeypatch.setenv("PRIMARY_REPO", str(repo))
+        assert primary("git -C $PRIMARY_REPO commit -m y", tmp_path / "w") is not None
+        monkeypatch.setenv("HOME", str(repo.parent))
+        assert primary(f"git -C ~/{repo.name} commit -m z", tmp_path / "w") is not None
+        assert (
+            primary(f"git --work-tree={repo} commit -m w", tmp_path / "w") is not None
+        )
+        assert (
+            primary(f"git --git-dir {repo}/.git commit -m v", tmp_path / "w")
+            is not None
+        )

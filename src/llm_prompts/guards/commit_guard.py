@@ -21,6 +21,7 @@ from cline_hooks.handlers.commands import (
 )
 from cline_hooks.handlers.search_scope import effective_cwd
 
+from .. import home
 from ..overlay_merge import merged_test_gates
 from .gate import guards_active
 from .receipts import ReceiptStore, tree_fingerprint
@@ -139,6 +140,31 @@ def _git_verb(cmd: ParsedCommand) -> str | None:
     return "commit" if "commit" in cmd.args else None
 
 
+def _git_directory(commands: list[ParsedCommand], index: int, roots: list[str]) -> str:
+    """Return the directory the command at ``index`` runs git in, following each ``-C``, ``--work-tree`` and ``--git-dir`` option before the subcommand, as git does."""
+    directory = effective_cwd(commands, index, roots[0] if roots else os.getcwd())
+    words = iter(commands[index].words)
+    for word in words:
+        if not word.startswith("-"):
+            break
+        option, _, attached = word.partition("=")
+        if option in ("-C", "-c", "--git-dir", "--work-tree") and not attached:
+            attached = next(words, "")
+        if word.startswith("-C") and option != "-C":
+            option, attached = "-C", word[2:]
+        if option == "-C" or option == "--work-tree":
+            directory = os.path.join(
+                directory, os.path.expandvars(os.path.expanduser(attached))
+            )
+        elif option == "--git-dir":
+            directory = os.path.dirname(
+                os.path.join(
+                    directory, os.path.expandvars(os.path.expanduser(attached))
+                )
+            )
+    return directory
+
+
 class CommitGuard(HooksPlugin):
     """Records passing test runs and blocks a commit or push without one on the current files."""
 
@@ -200,14 +226,7 @@ class CommitGuard(HooksPlugin):
             verb = _git_verb(cmd)
             if verb is None or commands is None:
                 continue
-            directory = effective_cwd(
-                commands, index, workspace_roots[0] if workspace_roots else os.getcwd()
-            )
-            if "-C" in cmd.words:
-                directory = os.path.join(
-                    directory, cmd.words[cmd.words.index("-C") + 1]
-                )
-            repo = _repo(directory)
+            repo = _repo(_git_directory(commands, index, workspace_roots))
             test = repo and _test_command(repo[0])
             if (
                 not repo
@@ -223,4 +242,108 @@ class CommitGuard(HooksPlugin):
                 return HookResult(
                     block=f"MUST run `{' '.join(test)}` and see it pass on the current files before git {verb}."
                 )
+        return None
+
+
+_PRIMARY_BLOCKED = {
+    "commit",
+    "reset",
+    "cherry-pick",
+    "rebase",
+    "revert",
+    "am",
+    "merge",
+    "pull",
+    "stash",
+    "push",
+}
+_FF_ONLY = {"merge", "pull"}
+_STASH_ALLOWED = {"list", "show", "push", "save"}
+_PRIMARY_MESSAGE = (
+    "MUST NOT change the primary checkout. Work in a worktree:"
+    " `git worktree add -b <login>/<slug> ../<repo>-worktrees/<slug> origin/main`."
+    " To land it, rebase it onto main there, then run `git merge --ff-only <branch>` here,"
+    " then `git worktree remove <path> && git branch -d <branch>`."
+    " In llm-prompts, cline-hooks and mcp-memory, land with `llm-prompts contribute sync`."
+    " If this change is intentional, run the exact same command again to proceed."
+)
+
+
+def _primary_verb(cmd: ParsedCommand) -> str | None:
+    """Return the verb of a git or gh call that changes a checkout's branch, else None."""
+    if cmd.name == "gh":
+        return "pr create" if cmd.words[:2] == ["pr", "create"] else None
+    if cmd.name != "git" or is_read_only_git(cmd):
+        return None
+    verb = next((word for word in cmd.words if word in _PRIMARY_BLOCKED), None)
+    if verb in _FF_ONLY and "--ff-only" in cmd.words:
+        return None
+    if verb == "stash" and not {"pop", "apply"} & set(cmd.words):
+        return None
+    if verb is None and cmd.words[:1] == ["branch"] and _forces(cmd.words[1:]):
+        return "branch --force"
+    return verb
+
+
+def _forces(words: list[str]) -> bool:
+    """Whether the options force a branch move: ``--force`` or a short-option group holding ``f``."""
+    return any(
+        word == "--force" or (word[:1] == "-" and word[1:2] != "-" and "f" in word)
+        for word in words
+    )
+
+
+def _is_primary(directory: str) -> Path | None:
+    """Return the top level of the repo holding the directory where it is the primary checkout, else None."""
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            directory,
+            "rev-parse",
+            "--show-toplevel",
+            "--absolute-git-dir",
+            "--git-common-dir",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    lines = result.stdout.splitlines()
+    if result.returncode != 0 or len(lines) != 3:
+        return None
+    toplevel, git_dir, common = (
+        Path(lines[0]),
+        Path(lines[1]),
+        Path(directory, lines[2]).resolve(),
+    )
+    if git_dir != common or any((git_dir / marker).exists() for marker in _IN_PROGRESS):
+        return None
+    return toplevel
+
+
+class PrimaryCheckoutGuard(HooksPlugin):
+    """Blocks agent changes to a repo's primary checkout, so work happens in worktrees; the exact same command again proceeds."""
+
+    def on_hook(
+        self, hook_name: str, *, logger: logging.Logger, **kwargs: object
+    ) -> HookResult | None:
+        """Block a branch-changing git or gh call in a primary checkout, once per exact command."""
+        if hook_name != PluginScope.PRE_SHELL:
+            return None
+        command = cast("str", kwargs.get("command") or "")
+        roots = cast("list[str]", kwargs.get("workspace_roots") or [])
+        commands = _parse(command) or []
+        for index, cmd in enumerate(commands):
+            if _primary_verb(cmd) is None:
+                continue
+            toplevel = _is_primary(_git_directory(commands, index, roots))
+            if toplevel is None:
+                continue
+            retries = ReceiptStore(home.config_dir() / "primary-blocks.json")
+            if retries.fresh(toplevel, command):
+                retries.record(toplevel, "")
+                return None
+            retries.record(toplevel, command)
+            return HookResult(block=_PRIMARY_MESSAGE)
         return None
