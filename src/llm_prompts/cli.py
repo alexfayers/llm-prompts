@@ -686,7 +686,7 @@ def _copy_blocker(repo: Path) -> str | None:
 def _copy_recorded_into(
     name: str, repo: Path, entries: list[WorktreeEntry], test: str = ""
 ) -> tuple[bool, bool, list[WorktreeEntry]]:
-    """Copy the recorded worktrees of ``repo`` into its main, then run ``test`` when copying moved main.
+    """Copy the ready worktrees of ``repo`` into its main, then run ``test`` when copying moved main.
 
     Returns:
         Whether main moved, whether copying failed, and the updated record entries.
@@ -736,7 +736,7 @@ def _pull_and_copy(
     failed: set[str],
     copy_failed: set[str],
 ) -> tuple[set[str], list[WorktreeEntry]]:
-    """Pull every local source, then copy recorded worktrees into each main that pulled cleanly.
+    """Pull every local source, then copy ready worktrees into each main that pulled cleanly.
 
     Args:
         tools: The configured tool sources.
@@ -790,7 +790,7 @@ def _pull_and_copy(
 def _pull_local_sources(
     failed: set[str] | None = None, copy_failed: set[str] | None = None
 ) -> set[str]:
-    """Pull upstream changes for all local-path tool sources, then copy recorded worktrees into each main.
+    """Pull upstream changes for all local-path tool sources, then copy ready worktrees into each main.
 
     Args:
         failed: Collects the names of the tool sources that could not be pulled or copied.
