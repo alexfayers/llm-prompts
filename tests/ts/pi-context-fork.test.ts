@@ -307,15 +307,25 @@ describe("fork tool", () => {
 
 	describe("as a writer", () => {
 		const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
-		const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-writer-")));
-		after(() => fs.rmSync(repo, { recursive: true }));
 		useEnv({ PI_CONTEXT_TEST_CMD: "true" });
 
+		const primary = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-primary-")));
+		const repo = path.join(primary, "lead");
+		after(() => fs.rmSync(primary, { recursive: true }));
+
+		test("refuses at once when the session is a primary checkout and no target is given", async () => {
+			git(primary, "init", "-b", "main");
+			git(primary, "config", "user.email", "t@example.com");
+			git(primary, "config", "user.name", "t");
+			git(primary, "commit", "--allow-empty", "-m", "start");
+			git(primary, "worktree", "add", "-q", "-b", "lead", repo);
+			const { tool } = await fork({ task: "STUB_WRITE", role: "writer", name: "primary" }, primary);
+			assert.ok(tool instanceof Error);
+			assert.match(tool.message, /change_dir to a worktree first/);
+			assert.equal(git(primary, "branch", "--list", "fork/primary"), "");
+		});
+
 		test("works in a worktree under the agent directory and lands its commits on the main checkout", async () => {
-			git(repo, "init", "-b", "main");
-			git(repo, "config", "user.email", "t@example.com");
-			git(repo, "config", "user.name", "t");
-			git(repo, "commit", "--allow-empty", "-m", "start");
 			const { tool, appended } = await fork({ task: "STUB_WRITE", role: "writer", name: "w" }, repo);
 			const handshake = JSON.parse((appended[0][1] as { text: string }).text.split("\n")[1]);
 			assert.equal(handshake.role, "writer");

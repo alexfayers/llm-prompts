@@ -210,6 +210,10 @@ const WORKTREES = "worktrees";
 
 /** The toplevel of the git checkout at `dir`, or undefined when it is not one. */
 const checkoutOf = (dir: string) => gitOut(dir, "rev-parse", "--show-toplevel").catch(() => undefined);
+const isPrimaryCheckout = async (dir: string) => {
+	const [gitDir, commonDir] = (await gitOut(dir, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir")).split("\n");
+	return gitDir === commonDir;
+};
 
 const sameDir = (a: string, b: string) => fs.realpathSync(a) === fs.realpathSync(b);
 
@@ -340,6 +344,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			const dir = path.resolve(ctx.cwd, expandHome(params.target ?? "."));
 			if (!fs.existsSync(dir)) throw new Error(`target ${params.target} does not exist`);
 			const checkout = await checkoutOf(dir);
+			if (role.writes && params.target === undefined && checkout && (await isPrimaryCheckout(checkout))) throw new Error(`${checkout} is a primary checkout: change_dir to a worktree first`);
 			const home = params.target === undefined ? ctx.cwd : role.writes ? (checkout ?? dir) : dir;
 			const target = sameDir(home, ctx.cwd) ? undefined : home;
 			const tree = role.writes && checkout ? await createWorktree(home, path.join(getAgentDir(), "pi-context", WORKTREES), name) : undefined;
