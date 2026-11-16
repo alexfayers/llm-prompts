@@ -653,11 +653,13 @@ _GIT_LOCATION_VARS = (
 )
 
 
-@pytest.fixture(autouse=True)
-def no_git_location_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Drop git's repository location variables, which `git rebase --exec` exports, so test repos never resolve to the caller's repo."""
-    for name in _GIT_LOCATION_VARS:
-        monkeypatch.delenv(name, raising=False)
+@pytest.fixture(scope="session", autouse=True)
+def no_git_location_env() -> Iterator[None]:
+    """Drop git's repository location variables, which `git rebase --exec` exports, before any fixture runs, so test repos never resolve to the caller's repo."""
+    with pytest.MonkeyPatch.context() as patch:
+        for name in _GIT_LOCATION_VARS:
+            patch.delenv(name, raising=False)
+        yield
 
 
 @pytest.fixture(autouse=True)
