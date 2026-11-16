@@ -405,6 +405,21 @@ class TestPiPackages:
         assert settings["theme"] == "dark"
         assert settings["packages"] == [user_entry, *_core_packages()]
 
+    def test_retired_packages_are_removed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        settings_path = home / ".pi" / "agent" / "settings.json"
+        settings_path.parent.mkdir(parents=True)
+        settings_path.write_text(
+            json.dumps({"packages": ["npm:pi-herdsman@0.47.1"]}), encoding="utf-8"
+        )
+
+        _install(home, tmp_path / "installed.json")
+
+        assert _settings(home)["packages"] == _core_packages()
+
     def test_overlay_packages_are_added_and_dropped_when_undeclared(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

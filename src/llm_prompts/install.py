@@ -3425,6 +3425,13 @@ def _pi_package_dir(name: str) -> Path:
     return _pi_agent_dir() / "npm" / "node_modules" / name
 
 
+_RETIRED_PI_PACKAGES = {
+    "pi-herdsman",
+    "@henryqw/pi-herdr-tools",
+    "@henryqw/pi-task-models",
+}
+
+
 def _sync_pi_packages(
     wanted: Mapping[str, str | dict[str, Any]],
     previous: list[str],
@@ -3434,7 +3441,7 @@ def _sync_pi_packages(
 
     Packages the user added themselves are left alone; a package llm-prompts
     managed before but no longer declares is removed, as is another version
-    of a declared npm package. Each default the user's
+    of a declared npm package or any version of a retired one. Each default the user's
     settings lack is filled in; one already set is kept.
 
     Args:
@@ -3456,7 +3463,7 @@ def _sync_pi_packages(
         for source in map(_package_source, current)
         if source.startswith("npm:")
         and source not in wanted
-        and _npm_names([source]) & _npm_names(wanted)
+        and _npm_names([source]) & (_npm_names(wanted) | _RETIRED_PI_PACKAGES)
     }
     packages = [
         wanted[entry]
