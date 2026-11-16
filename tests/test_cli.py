@@ -2398,6 +2398,10 @@ class TestContributeSubcommand:
             (["--ready", "feat/x"], SyncOptions(ready="feat/x")),
             (["--why", "feat/x", "Because."], SyncOptions(why=("feat/x", "Because."))),
             (
+                ["--title", "feat/x", "feat: x"],
+                SyncOptions(title=("feat/x", "feat: x")),
+            ),
+            (
                 ["--depends-on", "feat/x", "b:feat/y"],
                 SyncOptions(depends_on=("feat/x", "b:feat/y")),
             ),

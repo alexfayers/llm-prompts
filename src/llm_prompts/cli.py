@@ -1039,6 +1039,7 @@ def _sync_options(args: argparse.Namespace) -> SyncOptions:
         tuple(args.depends_on) if args.depends_on else None,
         tuple(args.no_depends_on) if args.no_depends_on else None,
         tuple(args.why) if args.why else None,
+        tuple(args.title) if args.title else None,
     )
 
 
@@ -1400,6 +1401,12 @@ def _run_command(
         help="Record the text sync puts under Why in BRANCH's PR.",
     )
     sync_parser.add_argument(
+        "--title",
+        nargs=2,
+        metavar=("BRANCH", "TEXT"),
+        help="Record the title sync gives BRANCH's PR instead of its first commit's subject.",
+    )
+    sync_parser.add_argument(
         "--rescan",
         action="store_true",
         help="Record your open PRs whose branch is checked out in a worktree.",
@@ -1441,7 +1448,7 @@ def _run_command(
     ):
         sync_parser.error(
             "Pass only one of --branch, --forget, --ready, --local, "
-            "--depends-on, --no-depends-on, --why and --rescan."
+            "--depends-on, --no-depends-on, --why, --title and --rescan."
         )
 
     if (
@@ -1452,7 +1459,7 @@ def _run_command(
     ):
         sync_parser.error(
             "--branch, --forget, --ready, --local, --depends-on, "
-            "--no-depends-on and --why require --tool NAME."
+            "--no-depends-on, --why and --title require --tool NAME."
         )
 
     if args.command == "install" and args.root:

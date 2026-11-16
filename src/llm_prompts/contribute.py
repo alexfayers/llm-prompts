@@ -244,6 +244,11 @@ def push_remote(repo: Path, fork: bool = True) -> tuple[str, bool]:
     return "origin", True
 
 
+def _wanted_title(entry: WorktreeEntry, commits: Sequence[Commit]) -> str:
+    """Return the title ``entry``'s PR calls for: the recorded one, else one made from ``commits``."""
+    return entry.title or pr_title(commits)
+
+
 def pr_title(commits: Sequence[Commit]) -> str:
     """Return the first commit's subject, noting how many further commits the PR carries."""
     extra = len(commits) - 1
@@ -397,15 +402,15 @@ def refreshed_pr(
     commits: Sequence[Commit],
     depends_on: Sequence[str] = (),
     dropped: Sequence[str] = (),
-    retitle: bool = True,
+    new_title: str | None = None,
     why: str = "",
 ) -> tuple[str, str] | None:
     """Return the PR title and body ``commits`` call for, or None when both are already current.
 
-    The title stays as it is unless ``retitle``. ``why`` fills an empty Why section.
+    ``new_title`` replaces the title when given. ``why`` fills an empty Why section.
     """
     refreshed = (
-        pr_title(commits) if retitle else title,
+        title if new_title is None else new_title,
         _fill_section(rewrite_what(body, commits, depends_on, dropped), "Why", why),
     )
     return None if refreshed == (title, body) else refreshed
@@ -567,6 +572,7 @@ class SyncOptions(NamedTuple):
     depends_on: tuple[str, str] | None = None
     no_depends_on: tuple[str, str] | None = None
     why: tuple[str, str] | None = None
+    title: tuple[str, str] | None = None
 
     @property
     def record_edits(self) -> int:
@@ -582,6 +588,7 @@ class SyncOptions(NamedTuple):
                     self.depends_on,
                     self.no_depends_on,
                     self.why,
+                    self.title,
                 ),
             )
         )
@@ -818,6 +825,11 @@ def edit_record(
         branch, why = options.why
         return _entry_edit(
             repo, entries, branch, lambda e: e._replace(why=why), "why recorded"
+        )
+    if options.title is not None:
+        branch, title = options.title
+        return _entry_edit(
+            repo, entries, branch, lambda e: e._replace(title=title), "title recorded"
         )
     if options.branch is not None:
         return _record_branch(tool, repo, entries, options.branch)
@@ -1214,17 +1226,18 @@ def _open_pr(
     base: str,
     branch: str,
     head_owner: str,
+    title: str,
     commits: Sequence[Commit],
     depends_on: Sequence[str] = (),
     why: str = "",
 ) -> tuple[int, bool]:
-    """Open a draft PR for ``branch`` and return its number, or that of the existing one and True."""
+    """Open a draft PR for ``branch`` titled ``title`` and return its number, or that of the existing one and True."""
     try:
         url = open_draft_pr(
             repo,
             base,
             f"{head_owner}{branch}",
-            pr_title(commits),
+            title,
             pr_body(pr_template(repo, base), commits, depends_on, why),
         )
     except subprocess.CalledProcessError as error:
@@ -1848,13 +1861,15 @@ class _RepoSync:
                 entry = self.update(entry, remote_head=tip)
             if number is None:
                 head_owner = f"{self.login}:" if forked else ""
-                title = pr_title(self.commits(entry, tip))
+                commits = self.commits(entry, tip)
+                title = _wanted_title(entry, commits)
                 number, adopted = _open_pr(
                     self.repo,
                     self.base,
                     name,
                     head_owner,
-                    self.commits(entry, tip),
+                    title,
+                    commits,
                     [link.ref for link in entry.depends_on],
                     entry.why,
                 )
@@ -1907,13 +1922,15 @@ class _RepoSync:
             )
 
     def refresh(self, entry: WorktreeEntry, pr: PrState, tip: str) -> None:
+        retitle = bool(entry.synced_title) and pr.title == entry.synced_title
+        commits = self.commits(entry, tip)
         refreshed = refreshed_pr(
             pr.title,
             pr.body,
-            self.commits(entry, tip),
+            commits,
             [link.ref for link in entry.depends_on],
             entry.dropped_refs,
-            retitle=bool(entry.synced_title) and pr.title == entry.synced_title,
+            new_title=_wanted_title(entry, commits) if retitle else None,
             why=entry.why,
         )
         missing = unfilled_sections(
@@ -1928,7 +1945,7 @@ class _RepoSync:
         if refreshed is not None:
             edit_pr(self.repo, int(entry.pr or 0), *refreshed)
             self.say(entry, f"updated PR #{entry.pr} title and What")
-            if entry.synced_title and pr.title == entry.synced_title:
+            if retitle:
                 entry = self.update(entry, synced_title=refreshed[0])
         self.update(entry, dropped_refs=())
 

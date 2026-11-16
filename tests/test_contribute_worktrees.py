@@ -170,6 +170,7 @@ class Project:
                 "depends_on",
                 "no_depends_on",
                 "why",
+                "title",
             )
         )
         name = tool or ("tool" if editing else None)
@@ -1316,6 +1317,18 @@ def test_a_recorded_why_fills_the_pr_body_sync_opens(project: Project) -> None:
     assert f"## Why\n\n{WHY}\n" in body
 
 
+def test_a_recorded_title_names_the_pr_sync_opens(project: Project) -> None:
+    project.worktree("feat/a", "feat: a", "fix: a")
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+    project.run(title=("feat/a", "feat: add a"))
+
+    assert project.run(apply=True) == 0
+
+    [create] = project.gh_calls("pr", "create")
+    assert create[create.index("--title") + 1] == "feat: add a"
+
+
 def test_a_worktree_without_a_why_is_not_opened_and_the_others_still_sync(
     project: Project, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1444,6 +1457,20 @@ def test_a_title_edited_by_hand_is_kept_but_one_sync_wrote_follows_the_commits(
 
     assert project.load_state()["prs"]["100"]["title"] == "My own title"
     assert "- fix: b" in pr_body(project, 100)
+
+
+def test_a_recorded_title_replaces_one_sync_wrote_but_not_one_edited_by_hand(
+    project: Project, pushed: Path
+) -> None:
+    project.run(title=("feat/a", "feat: add a"))
+    assert project.run(apply=True) == 0
+    assert project.load_state()["prs"]["100"]["title"] == "feat: add a"
+
+    _set_title(project, 100, "My own title")
+    project.run(title=("feat/a", "feat: add a better a"))
+    assert project.run(apply=True) == 0
+
+    assert project.load_state()["prs"]["100"]["title"] == "My own title"
 
 
 def _amend_remotely(project: Project, branch: str, message: str) -> str:

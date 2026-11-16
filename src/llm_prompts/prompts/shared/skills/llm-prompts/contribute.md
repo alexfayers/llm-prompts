@@ -42,6 +42,6 @@ All three repos' prompts trees go through `llm-prompts contribute` (`list`, `syn
 
 - Follow the template structure (What/Why, optional Dependencies/Issues).
 - `sync` writes the recorded Why and no placeholder comments. A body edit MUST NOT contain `<!--`. Sync marks its What bullets with `[](#sync)`. Use at most 3 short bullets per section, not restating the title. Descriptions MUST be easy for reluctant reviewers to follow.
-- Title: the first commit's subject (`type: subject`), plus `(+N more)` when the PR has more commits.
+- Title: first commit's subject, plus `(+N more)`. It is the squash commit subject: a multi-commit PR MUST set one with `--title B "TEXT"`.
 - Description: bullet points, not paragraphs, each a full sentence. State WHAT and WHY, not HOW. No restating the diff, no process commentary.
 - If you used an eagle-vision plan directory or the user names one, MUST post the plan once as a separate PR comment: `python3 "<base-dir>/../eagle-vision/focus.py" comment <dir> | gh pr comment <pr-url> --body-file -`. MUST NOT put it in the description.
