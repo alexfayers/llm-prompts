@@ -298,7 +298,7 @@ def copy_recorded(project: Project) -> int:
     return status
 
 
-def test_copying_recorded_worktrees_puts_them_in_main_and_sends_nothing_to_github(
+def test_copying_recorded_worktrees_puts_the_ready_ones_in_main_and_sends_nothing_to_github(
     project: Project,
 ) -> None:
     project.worktree("feat/a", "feat: a")
@@ -309,7 +309,7 @@ def test_copying_recorded_worktrees_puts_them_in_main_and_sends_nothing_to_githu
 
     assert copy_recorded(project) == 0
 
-    assert project.main_subjects() == ["feat: a", "feat: b"]
+    assert project.main_subjects() == ["feat: b"]
     assert project.remote_branches() == []
     assert project.gh_calls() == []
 
@@ -378,12 +378,14 @@ def run_update(project: Project) -> Any:
     return install
 
 
-def test_update_copies_recorded_worktrees_into_main_though_upstream_has_nothing_new(
+def test_update_copies_ready_worktrees_into_main_though_upstream_has_nothing_new(
     project: Project, capsys: pytest.CaptureFixture[str]
 ) -> None:
     configure_sources(project)
     project.worktree("feat/a", "feat: a")
     project.run(branch="feat/a")
+    project.run(ready="feat/a")
+    capsys.readouterr()
 
     assert cli._pull_local_sources() == {"tool"}
 
@@ -439,6 +441,7 @@ def test_update_still_reinstalls_when_a_copy_conflicts_and_names_the_worktree(
     configure_sources(project)
     path = project.worktree("feat/a", "feat: a")
     project.run(branch="feat/a")
+    project.run(ready="feat/a")
     (path / "base.txt").write_text("worktree\n", encoding="utf-8")
     git(path, "commit", "-q", "-am", "feat: a edits base")
     project.commit(project.repo, "base.txt", "main\n", "feat: main edits base")
@@ -458,7 +461,9 @@ def test_update_still_reinstalls_when_a_copy_conflicts_and_names_the_worktree(
 
     install.assert_called_once()
     assert git(project.repo, "rev-parse", "main") == before
-    assert "[tool] feat/a: not copied into main" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "[tool] main not updated: " in out
+    assert "resolve the files there, git add them, then rerun" in out
 
 
 def test_update_stops_when_a_copy_fails_with_its_own_reason(
@@ -488,6 +493,7 @@ def test_update_warns_about_a_failing_test_after_a_copy_and_still_reinstalls(
     configure_sources(project, command)
     project.worktree("feat/a", "feat: a")
     project.run(branch="feat/a")
+    project.run(ready="feat/a")
 
     install = run_update(project)
 
@@ -787,17 +793,12 @@ def hand_resolved(project: Project) -> main_sync.Squash:
     git(repo, "checkout", "-q", "main")
     project.commit(repo, "base.txt", "main\n", "feat: main")
     squash = main_sync.Squash(tip=tip, floor=base, first=tip)
-    skipped = main_sync.rebuild_local(repo, base, {}, (), {}, [squash]).skipped
-    assert [copy.first for copy in skipped] == [tip]
-    rerere = ("-c", "rerere.enabled=true")
-    git(repo, "checkout", "-q", "--detach")
-    with pytest.raises(subprocess.CalledProcessError):
-        git(repo, *rerere, "cherry-pick", tip)
-    (repo / "base.txt").write_text("resolved\n", encoding="utf-8")
-    git(repo, "add", "base.txt")
-    git(repo, *rerere, "commit", "-q", "--no-edit")
-    git(repo, "checkout", "-q", "main")
-    assert main_sync.rebuild_local(repo, base, {}, (), {}, [squash]).mode == "rebuilt"
+    assert main_sync.rebuild_local(repo, base, {}, (), (), [squash]).mode == "stopped"
+    work = main_sync.resolve_worktree(repo)
+    (work / "base.txt").write_text("resolved\n", encoding="utf-8")
+    git(work, "add", "base.txt")
+    assert main_sync.rebuild_local(repo, base, {}, (), (), [squash]).mode == "rebuilt"
+    assert not work.exists()
     return squash
 
 
@@ -1708,56 +1709,64 @@ def test_main_is_left_alone_unless_it_is_checked_out(
     assert "main not updated" in capsys.readouterr().out
 
 
-def test_a_copy_that_cannot_replay_is_skipped_and_the_others_still_copy(
-    project: Project, capsys: pytest.CaptureFixture[str]
-) -> None:
-    project.worktree("feat/a", "feat: a")
-    project.worktree("feat/b", "feat: b")
-    project.run(branch="feat/a")
-    project.run(branch="feat/b")
-    project.commit(project.repo, "feat-a-7.txt", "other\n", "feat: other")
+@pytest.fixture
+def swapped(project: Project) -> Path:
+    """Main holds copies of feat/x, feat/y and feat/z, then feat/x is rewritten so feat/y's copy conflicts; returns the resolve worktree path."""
+    lines = [f"line {n}\n" for n in range(40)]
 
-    assert project.run(apply=True) == 1
+    def shared(edits: dict[int, str]) -> str:
+        return "".join(edits.get(n, line) for n, line in enumerate(lines))
 
-    out = capsys.readouterr().out
-    assert "feat/a: not copied into main: " in out
-    assert "(feat: a) conflicts with main in feat-a-7.txt" in out
-    assert "feat/b: copied into main" in out
-    assert project.main_subjects() == ["feat: other", "feat: b"]
-    assert [(e.branch, e.copied is None) for e in project.entries()] == [
-        ("feat/a", True),
-        ("feat/b", False),
-    ]
-
-
-def test_an_upper_copy_that_conflicts_after_its_lower_is_amended_is_skipped_and_forgotten(
-    project: Project, capsys: pytest.CaptureFixture[str]
-) -> None:
-    lines = [f"line {n}\n" for n in range(60)]
-
-    def shared(middle: str) -> str:
-        return "".join([*lines[:30], middle, *lines[31:]])
-
-    lower = project.worktree("feat/a")
-    project.commit(lower, "shared.txt", shared("lower\n"), "feat: lower")
-    upper = project.worktree("feat/b", "feat: upper", start="feat/a", lines=60)
-    project.commit(upper, "shared.txt", shared("upper\n"), "feat: upper edit")
-    project.run(branch="feat/a")
-    project.run(branch="feat/b")
-    assert project.run("tool", depends_on=("feat/b", "tool:feat/a")) == 0
+    project.commit(project.repo, "shared.txt", shared({}), "chore: shared")
+    git(project.repo, "push", "-q", "origin", "main")
+    x = project.worktree("feat/x")
+    project.commit(x, "shared.txt", shared({10: "x\n"}), "feat: x")
+    y = project.worktree("feat/y")
+    project.commit(y, "shared.txt", shared({20: "y\n"}), "feat: y")
+    project.worktree("feat/z", "feat: z")
+    for branch in ("feat/x", "feat/y", "feat/z"):
+        project.run(branch=branch)
     assert project.run(apply=True) == 0
-    (lower / "shared.txt").write_text(shared("amended\n"), encoding="utf-8")
-    git(lower, "commit", "-q", "-a", "--amend", "--no-edit")
+    (x / "shared.txt").write_text(
+        shared({n: "x\n" for n in range(10, 21)}), encoding="utf-8"
+    )
+    git(x, "commit", "-q", "-a", "--amend", "--no-edit")
+    return main_sync.resolve_worktree(project.repo)
+
+
+def test_a_conflicting_copy_stops_sync_in_a_kept_worktree(
+    project: Project, swapped: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    before = git(project.repo, "rev-parse", "main")
     capsys.readouterr()
 
     assert project.run(apply=True) == 1
 
-    assert "feat/b: not copied into main: " in capsys.readouterr().out
-    assert project.main_subjects() == ["feat: lower"]
-    assert [(e.branch, e.copied is None) for e in project.entries()] == [
-        ("feat/a", False),
-        ("feat/b", True),
-    ]
+    out = capsys.readouterr().out
+    assert "(feat: y) conflicts with main in shared.txt" in out
+    assert str(swapped) in out
+    assert git(project.repo, "rev-parse", "main") == before
+    assert git(swapped, "diff", "--name-only", "--diff-filter=U") == "shared.txt"
+
+
+def test_a_rerun_records_the_hand_resolution_and_finishes_the_rebuild(
+    project: Project, swapped: Path
+) -> None:
+    project.run(apply=True)
+    resolved = (swapped / "shared.txt").read_text(encoding="utf-8")
+    resolved = (
+        resolved.split("<<<<<<<")[0]
+        + "resolved\n"
+        + resolved.split(">>>>>>>")[1].split("\n", 1)[1]
+    )
+    (swapped / "shared.txt").write_text(resolved, encoding="utf-8")
+    git(swapped, "add", "shared.txt")
+
+    assert project.run(apply=True) == 0
+
+    assert not swapped.exists()
+    assert project.main_subjects() == ["feat: x", "feat: y", "feat: z"]
+    assert (project.repo / "shared.txt").read_text(encoding="utf-8") == resolved
 
 
 def test_a_second_run_waits_for_nothing_and_stops(

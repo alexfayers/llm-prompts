@@ -1090,10 +1090,10 @@ def _main_changes(
 ) -> tuple[
     dict[str, main_sync.Squash],
     set[str],
-    dict[str, str],
+    set[str],
     list[main_sync.Squash],
 ]:
-    """Return the main commits to swap for newer squashes, the main commits to drop, the first commit each copy on main stands for and the squashes to replay on top.
+    """Return the main commits to swap for newer squashes, the main commits to drop, the copies on main and the squashes to replay on top.
 
     A changed squash of a stacked branch replaces its copy in place when the copy is newer than its lower's.
     Otherwise it replays on top with its old copy dropped, and so do the branches stacked above it.
@@ -1105,7 +1105,7 @@ def _main_changes(
     adds: list[main_sync.Squash] = []
     squashes = [_squash_of(repo, t.floor, t.commits, t.commits[-1]) for t in tips]
     found = _copies_of(repo, base, tips, squashes)
-    copies = {found[s.tip]: s.first for s in squashes if s.tip in found}
+    copies = {found[s.tip] for s in squashes if s.tip in found}
     rows = _main_rows(repo, base)
     age = {row[0]: n for n, row in enumerate(rows)}
     copy_of = {
@@ -1283,8 +1283,10 @@ class _RepoSync:
         others: Sequence[WorktreeEntry] = (),
         tool: str = "NAME",
         label: str = "",
+        ready_only: bool = False,
     ) -> None:
         self.tool = tool
+        self.ready_only = ready_only
         self.label = label
         self.repo = repo
         self.others = others
@@ -1647,7 +1649,7 @@ class _RepoSync:
             ):
                 self.pull(entry)
         self.restack()
-        if self.copy_into_main(fail_skipped=True):
+        if self.copy_into_main(fail_stopped=True):
             self.finish_cleanup()
         self.publish()
         return self.status, self.entries
@@ -1671,7 +1673,7 @@ class _RepoSync:
         ]
 
     def copy_only(self) -> tuple[int, list[WorktreeEntry]]:
-        """Copy the recorded worktrees into main without touching a remote, a PR or a worktree."""
+        """Copy the recorded worktrees, or only the ready ones when ``ready_only``, into main without touching a remote, a PR or a worktree."""
         if self.copyable():
             self.landed = self.landed_copies()
             self.copy_into_main()
@@ -1698,9 +1700,13 @@ class _RepoSync:
                     self.fail(entry, "the branch is gone")
         return self.status == 0
 
-    def copy_into_main(self, fail_skipped: bool = False) -> bool:
-        """Return whether main is up to date, so merged entries may go. A skipped copy counts as a failure when ``fail_skipped``."""
-        tips = _tips(self.repo, self.base, self.open_entries())
+    def copy_into_main(self, fail_stopped: bool = False) -> bool:
+        """Return whether main is up to date, so merged entries may go. A conflict waiting for its hand resolution counts as a failure when ``fail_stopped``."""
+        tips = _tips(
+            self.repo,
+            self.base,
+            [e for e in self.open_entries() if e.ready or not self.ready_only],
+        )
         for tip in tips:
             if tip.skipped is not None:
                 self.say(tip.entry, f"skipped: {tip.skipped}")
@@ -1724,25 +1730,19 @@ class _RepoSync:
             result = main_sync.rebuild_local(
                 self.repo, self.base, swaps, drops, copies, adds
             )
-            if result.mode == "failed":
+            if result.mode in ("failed", "stopped"):
                 print(f"{self.label}main not updated: {result.detail}")
-                self.status = 1
+                if result.mode == "failed" or fail_stopped:
+                    self.status = 1
                 return False
-        skipped = {copy.first: copy.reason for copy in result.skipped} if result else {}
         for tip in usable:
-            if tip.commits[0] in skipped:
-                report = self.fail if fail_skipped else self.say
-                report(tip.entry, f"not copied into main: {skipped[tip.commits[0]]}")
-            elif tip.commits[-1] in changed:
+            if tip.commits[-1] in changed:
                 verb = "copied" if self.apply else "would copy"
                 self.say(tip.entry, f"{verb} into main")
         if self.apply:
             for tip in usable:
                 self.update(
-                    tip.entry,
-                    copied=None
-                    if tip.commits[0] in skipped
-                    else _commit_identity(self.repo, tip.commits[0]),
+                    tip.entry, copied=_commit_identity(self.repo, tip.commits[0])
                 )
         return True
 
@@ -1947,12 +1947,12 @@ def _sync_repo(
 def copy_recorded(
     repo: Path, entries: list[WorktreeEntry], others: Sequence[WorktreeEntry], tool: str
 ) -> tuple[int, list[WorktreeEntry]]:
-    """Copy one repo's recorded worktrees into its local main and return the status and the updated entries.
+    """Copy one repo's ready worktrees into its local main and return the status and the updated entries.
 
-    Every line it prints starts with ``[tool]``.
+    Every line it prints starts with ``[tool]``. A conflict waiting for its hand resolution leaves main as it is and the status 0.
     """
     return _RepoSync(
-        repo, entries, True, "", others, tool, label=f"[{tool}] "
+        repo, entries, True, "", others, tool, label=f"[{tool}] ", ready_only=True
     ).copy_only()
 
 

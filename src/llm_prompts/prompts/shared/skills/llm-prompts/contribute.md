@@ -19,7 +19,7 @@ All three repos' prompts trees go through `llm-prompts contribute` (`list`, `syn
 - `sync` is a dry run until `--apply`. It force-pushes only a draft PR whose remote branch is unchanged since the last sync. Once the PR merges, `sync --apply` removes the worktree and branch.
 - `list` - shows each recorded worktree and its state, offline.
 - `update --apply` - rebases your open PRs behind `main`.
-- MUST NOT commit to local `main` for a recorded worktree. `sync` overwrites its copy.
+- MUST NOT edit local `main` by hand. `sync` overwrites its copies. `update` copies ready worktrees into it, then installs. On a conflict both print a worktree: MUST resolve its files, `git add`, rerun.
 
 ## Everything else
 
