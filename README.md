@@ -77,7 +77,7 @@
 | src/llm\_prompts/prompts/shared/skills/todos/find\_todos.py                   |       44 |        7 |     84% |96-98, 103-105, 109 |
 | src/llm\_prompts/removed\_agents\_notice.py                                   |       14 |        0 |    100% |           |
 | src/llm\_prompts/render\_template.py                                          |      171 |       14 |     92% |149, 433-434, 443-459, 471-475, 479 |
-| src/llm\_prompts/setup.py                                                     |      449 |       34 |     92% |219, 314-343, 388, 436, 439, 460-461, 507-508, 867-868, 958-961, 991-992, 995, 1051-1052 |
+| src/llm\_prompts/setup.py                                                     |      448 |       34 |     92% |219, 314-343, 388, 436, 439, 460-461, 507-508, 866-867, 957-960, 990-991, 994, 1050-1051 |
 | src/llm\_prompts/size\_guard.py                                               |      371 |       10 |     97% |247-248, 479-481, 516, 538, 542-544 |
 | src/llm\_prompts/size\_limits.py                                              |       61 |        1 |     98% |       138 |
 | src/llm\_prompts/size\_report.py                                              |      196 |        2 |     99% |  198, 200 |
@@ -166,7 +166,7 @@
 | tests/test\_retrospective\_extract.py                                         |       90 |        0 |    100% |           |
 | tests/test\_rewrite\_range\_script.py                                         |       96 |        0 |    100% |           |
 | tests/test\_session\_start\_checklist.py                                      |       38 |        0 |    100% |           |
-| tests/test\_setup.py                                                          |      397 |        0 |    100% |           |
+| tests/test\_setup.py                                                          |      402 |        0 |    100% |           |
 | tests/test\_size\_guard.py                                                    |      168 |        0 |    100% |           |
 | tests/test\_size\_report.py                                                   |      223 |        0 |    100% |           |
 | tests/test\_skill\_injection.py                                               |       36 |        0 |    100% |           |
@@ -180,7 +180,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       31 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **28319** |  **755** | **97%** |           |
+| **TOTAL**                                                                     | **28323** |  **755** | **97%** |           |
 
 
 ## Setup coverage badge
