@@ -48,6 +48,7 @@ These live in `src/llm_prompts/prompts/pi/extensions/`. Each file starts with a 
 | `codemode-sleep` | Adds the `sleep` tool: `await tools.sleep({ ms })` in a `codemode` script waits up to 10 minutes. |
 | `codemode-wait-until` | Defines `waitUntil(check, { intervalMs, timeoutMs })` at the top of each `codemode` script. |
 | `compact-now` | Adds the `compact_now` tool, which compacts the session with a model-written `instructions` summary. |
+| `consult` | Adds the `consult` tool. It sends one question and up to 16000 bytes of evidence to an expert in a fresh context, with no tools and no view of the session, at the model's highest thinking level, and returns its answer. The expert is the session's model unless `llmPrompts.consult.model` in `settings.json` names one as `<provider>/<id>`. A larger evidence list, an unavailable model or a failed call is an error result. |
 | `context-total` | `/context-total` reports live context and cost for the session and its running agents. `/context-total footer on\|off` toggles a status-line total. |
 | `diff-preview` | Shows the pending change of `edit` and `write` calls, and any other ask with a long preview, as a scrollable preview in the permission box. Uses the diff renderer of pi-compact-tools, or pi's own with a one-time warning where that is missing. Scroll with the mouse wheel (fullscreen mode) or `Alt+Up`/`Alt+Down`. |
 | `herdr-permission-blocked` | Shows the Herdr "?" state while a permission prompt waits for the user, including prompts forwarded from subagents. |
