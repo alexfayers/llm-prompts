@@ -14,13 +14,14 @@ from pathlib import Path
 from typing import Literal, NamedTuple
 
 from .network import run_with_retries
-from .setup import GIT_TIMEOUT
+from .setup import GIT_TIMEOUT, release_version
 from .squash_subject import squash_pr_number
 
 _Identity = tuple[str, str]
 GIT_TIMED_OUT = 124
 PRE_SYNC_REF = "refs/llm-prompts/pre-sync"
 EARLIER_MAINS_REF = "refs/llm-prompts/earlier-mains"
+UPSTREAM = "refs/llm-prompts/upstream"
 _EARLIER_MAINS_IDENTITY = {
     f"GIT_{role}_{field}": value
     for role in ("AUTHOR", "COMMITTER")
@@ -131,11 +132,45 @@ def _failed(repo: Path, detail: str) -> SyncResult:
     return SyncResult("failed", detail=detail + _recovery(repo))
 
 
-def sync_diverged(repo: Path) -> SyncResult:
+def point_upstream(repo: Path, ref: str = "") -> bool:
+    """Point ``UPSTREAM`` at what local main follows: ``ref`` on the remote, else the latest release tag, else the upstream branch.
+
+    Returns:
+        Whether ``UPSTREAM`` now points at a ref.
+    """
+    if ref:
+        remote = run_git(repo, "rev-parse", "--abbrev-ref", "@{u}").stdout
+        target = f"refs/remotes/{remote.strip().partition('/')[0]}/{ref}"
+    elif releases := {
+        version: tag
+        for tag in run_git(repo, "tag", "--list", "v*").stdout.split()
+        if (version := release_version(tag))
+    }:
+        target = f"refs/tags/{releases[max(releases)]}"
+    else:
+        target = run_git(
+            repo, "rev-parse", "--symbolic-full-name", "@{u}"
+        ).stdout.strip()
+    return (
+        bool(target) and run_git(repo, "symbolic-ref", UPSTREAM, target).returncode == 0
+    )
+
+
+def unreleased(repo: Path) -> set[str]:
+    """The upstream branch commits local main holds that the release ``UPSTREAM`` follows does not, or none when it follows a branch."""
+    target = run_git(repo, "symbolic-ref", UPSTREAM).stdout
+    if not target.startswith("refs/tags/"):
+        return set()
+    ahead = set(run_git(repo, "rev-list", f"{UPSTREAM}..HEAD").stdout.split())
+    return ahead & set(run_git(repo, "rev-list", f"{UPSTREAM}..@{{u}}").stdout.split())
+
+
+def sync_diverged(repo: Path, upstream: str = "@{u}") -> SyncResult:
     """Bring a local main whose fast-forward pull failed onto its upstream.
 
     Args:
         repo: The local clone.
+        upstream: The ref local main follows.
 
     Returns:
         How the clone was synced, or a failed result that leaves it untouched.
@@ -148,7 +183,7 @@ def sync_diverged(repo: Path) -> SyncResult:
         ):
             detail += f"; the state before the last sync is saved as {PRE_SYNC_REF}"
         return SyncResult("failed", detail=detail)
-    identical = run_git(repo, "diff", "--quiet", "HEAD", "@{u}").returncode == 0
+    identical = run_git(repo, "diff", "--quiet", "HEAD", upstream).returncode == 0
     saved = run_git(
         repo,
         "update-ref",
@@ -165,11 +200,11 @@ def sync_diverged(repo: Path) -> SyncResult:
     except _Bail as bail:
         return SyncResult("failed", detail=f"main left untouched: {bail}")
     if identical:
-        reset = run_git(repo, "reset", "--soft", "@{u}")
+        reset = run_git(repo, "reset", "--soft", upstream)
         if reset.returncode != 0:
             return _failed(repo, reset.stderr.strip())
         return SyncResult("reset")
-    rebase = run_git(repo, "rebase", "--quiet", "@{u}")
+    rebase = run_git(repo, "rebase", "--quiet", upstream)
     if rebase.returncode == 0:
         return SyncResult("rebased")
     abort = run_git(repo, "rebase", "--abort")
@@ -177,7 +212,7 @@ def sync_diverged(repo: Path) -> SyncResult:
         return _failed(repo, rebase.stderr.strip())
     if abort.returncode != 0:
         return _failed(repo, abort.stderr.strip())
-    synced = _squash_sync(repo)
+    synced = _squash_sync(repo, upstream)
     return _failed(repo, synced.detail) if synced.mode == "failed" else synced
 
 
@@ -273,8 +308,8 @@ def _fetch_missing(repo: Path, remote: str, heads: dict[str, str]) -> dict[str, 
     return heads
 
 
-def _upstream_pr_numbers(repo: Path) -> dict[str, int]:
-    ups = _cherry(repo, "HEAD", "@{u}", "+")
+def _upstream_pr_numbers(repo: Path, upstream: str) -> dict[str, int]:
+    ups = _cherry(repo, "HEAD", upstream, "+")
     if not ups:
         return {}
     numbers: dict[str, int] = {}
@@ -288,12 +323,12 @@ def _upstream_pr_numbers(repo: Path) -> dict[str, int]:
 
 
 def _merged_pr_commits(
-    repo: Path, remote: str
+    repo: Path, remote: str, upstream: str
 ) -> tuple[list[str], dict[_Identity, list[tuple[str, ...]]]]:
     """Return the accepted PR heads and, per commit identity, each PR's commits from that one to its head."""
     accepted: list[str] = []
     pr_commits: dict[_Identity, list[tuple[str, ...]]] = {}
-    numbers = _upstream_pr_numbers(repo)
+    numbers = _upstream_pr_numbers(repo, upstream)
     if not numbers:
         return accepted, pr_commits
     heads = _pull_heads(
@@ -333,7 +368,9 @@ def _merged_pr_commits(
     return accepted, pr_commits
 
 
-def _open_pr_commits(repo: Path, remote: str) -> dict[_Identity, list[_OpenPrCommit]]:
+def _open_pr_commits(
+    repo: Path, remote: str, upstream: str
+) -> dict[_Identity, list[_OpenPrCommit]]:
     """Map each commit of an open pull request, by identity, to its versions in each head.
 
     A pull request is open when its head is also the tip of a branch on the remote.
@@ -357,7 +394,11 @@ def _open_pr_commits(repo: Path, remote: str) -> dict[_Identity, list[_OpenPrCom
     commits: dict[_Identity, list[_OpenPrCommit]] = {}
     for head in heads.values():
         for line in _read(
-            repo, "log", "--no-merges", "--format=%H%x09%at%x09%s", f"@{{u}}..{head}"
+            repo,
+            "log",
+            "--no-merges",
+            "--format=%H%x09%at%x09%s",
+            f"{upstream}..{head}",
         ).splitlines():
             sha, _, rest = line.partition("\t")
             commits.setdefault(_identity(rest), []).append(_OpenPrCommit(sha, head))
@@ -546,13 +587,13 @@ def _autosquash(repo: Path, commits: list[LocalCommit]) -> list[LocalCommit]:
     return grouped
 
 
-def _build_sync(repo: Path) -> SyncResult:
+def _build_sync(repo: Path, upstream: str) -> SyncResult:
     remote = _read(repo, "rev-parse", "--abbrev-ref", "@{u}").strip().partition("/")[0]
-    merge_base = _read(repo, "merge-base", "HEAD", "@{u}").strip()
+    merge_base = _read(repo, "merge-base", "HEAD", upstream).strip()
     local = _local_commits(repo, merge_base)
-    heads, pr_commits = _merged_pr_commits(repo, remote)
+    heads, pr_commits = _merged_pr_commits(repo, remote, upstream)
     covered = {
-        *_cherry(repo, "@{u}", "HEAD", "-"),
+        *_cherry(repo, upstream, "HEAD", "-"),
         *(sha for head in heads for sha in _cherry(repo, head, "HEAD", "-")),
     }
     replayed = [
@@ -562,8 +603,8 @@ def _build_sync(repo: Path) -> SyncResult:
         )
         if not _equivalent(repo, commit, pr_commits)
     ]
-    tip = _read(repo, "rev-parse", "@{u}").strip()
-    open_pr_commits = cache(lambda: _open_pr_commits(repo, remote))
+    tip = _read(repo, "rev-parse", upstream).strip()
+    open_pr_commits = cache(lambda: _open_pr_commits(repo, remote, upstream))
     local_shas = {commit.sha for commit in local}
     for commit in replayed:
         tip = _replay_or_open_pr_version(
@@ -575,9 +616,9 @@ def _build_sync(repo: Path) -> SyncResult:
     return SyncResult("squash-synced", replayed=len(replayed))
 
 
-def _squash_sync(repo: Path) -> SyncResult:
+def _squash_sync(repo: Path, upstream: str) -> SyncResult:
     try:
-        return _build_sync(repo)
+        return _build_sync(repo, upstream)
     except _Bail as bail:
         return SyncResult("failed", detail=f"squash sync stopped: {bail}")
 

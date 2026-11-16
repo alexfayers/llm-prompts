@@ -271,6 +271,15 @@ class TestRemoteSourceMessages:
             assert result == []
 
 
+@pytest.fixture
+def upstream_branch(fake_subprocess: FakeSubprocess) -> None:
+    """Give a faked checkout an upstream branch, so UPSTREAM can point at it."""
+    fake_subprocess.on(
+        "rev-parse", "--symbolic-full-name", stdout="refs/remotes/origin/main\n"
+    )
+
+
+@pytest.mark.usefixtures("upstream_branch")
 class TestLocalSourceMessages:
     def test_has_updates_lists_commit_subjects(
         self, tmp_path: Path, fake_subprocess: FakeSubprocess
@@ -328,6 +337,7 @@ WARNING = (
 )
 
 
+@pytest.mark.usefixtures("upstream_branch")
 class TestPullLocalSources:
     def test_diverged_repo_is_rebased_onto_upstream(
         self,
@@ -338,7 +348,7 @@ class TestPullLocalSources:
         clone = tmp_path / "clone"
         (clone / ".git").mkdir(parents=True)
         fake_subprocess.on("rev-list", "--count", stdout="1\n")
-        fake_subprocess.on("pull", "--ff-only", returncode=1)
+        fake_subprocess.on("merge", "--ff-only", returncode=1)
         fake_subprocess.on("diff", "--quiet", returncode=1)
         fake_subprocess.on("rebase", "--quiet", returncode=0)
 
@@ -350,8 +360,12 @@ class TestPullLocalSources:
 
         fake_subprocess.assert_sequence(
             "fetch",
+            "tag --list",
+            "rev-parse --symbolic-full-name",
+            "symbolic-ref",
             "rev-list --count",
-            "pull --ff-only",
+            "symbolic-ref",
+            "merge --ff-only",
             "rev-parse --git-path",
             "diff --quiet",
             "update-ref",
@@ -372,7 +386,7 @@ class TestPullLocalSources:
         (clone / ".git").mkdir(parents=True)
         fake_subprocess.on("rev-list", "--count", stdout="2\n")
         fake_subprocess.on(
-            "pull",
+            "merge",
             "--ff-only",
             side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=30),
         )
@@ -382,7 +396,7 @@ class TestPullLocalSources:
         assert not outcome.changed
         assert outcome.messages == [
             "[core] 2 new commit(s) available but sync failed",
-            "  git pull timed out",
+            "  git merge timed out",
         ]
         assert fake_subprocess.matching("rebase") == []
         assert fake_subprocess.matching("diff") == []
@@ -396,7 +410,7 @@ class TestPullLocalSources:
             "fetch", side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=30)
         )
         fake_subprocess.on("rev-list", "--count", stdout="1\n")
-        fake_subprocess.on("pull", "--ff-only", returncode=0)
+        fake_subprocess.on("merge", "--ff-only", returncode=0)
 
         outcome = cli._pull_one_local_source("core", str(clone))
 
@@ -417,7 +431,7 @@ class TestPullLocalSources:
 
         assert not outcome.changed
         assert outcome.messages == []
-        assert fake_subprocess.matching("pull") == []
+        assert fake_subprocess.matching("merge") == []
 
     def test_fast_forwardable_repo_is_pulled_without_rebase(
         self,
@@ -428,7 +442,7 @@ class TestPullLocalSources:
         clone = tmp_path / "clone"
         (clone / ".git").mkdir(parents=True)
         fake_subprocess.on("rev-list", "--count", stdout="1\n")
-        fake_subprocess.on("pull", "--ff-only", returncode=0)
+        fake_subprocess.on("merge", "--ff-only", returncode=0)
 
         config = [{"name": "core", "source": str(clone)}]
         with patch("llm_prompts.setup.config_path") as mock_config:
@@ -446,7 +460,7 @@ class TestPullLocalSources:
         (clone / ".git").mkdir(parents=True)
         fake_subprocess.on("rev-list", "--count", stdout="1\n")
         fake_subprocess.on(
-            "pull",
+            "merge",
             "--ff-only",
             side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=30),
         )
@@ -488,6 +502,22 @@ class TestPullLocalSources:
         assert outcome.failed
         assert outcome.messages == ["[core] could not fetch: network down"]
 
+    def test_failed_fetch_does_not_move_main_to_a_cached_release(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        clone = tmp_path / "clone"
+        (clone / ".git").mkdir(parents=True)
+        fake_subprocess.on("fetch", returncode=1, stderr="network down")
+        fake_subprocess.on("tag", "--list", stdout="v1.0.0\n")
+        fake_subprocess.on("symbolic-ref", stdout="refs/tags/v1.0.0\n")
+        fake_subprocess.on("rev-list", "--count", stdout="0\n")
+        fake_subprocess.on("rev-list", stdout="abc\n")
+
+        outcome = cli._pull_one_local_source("core", str(clone))
+
+        assert outcome.failed
+        assert outcome.messages == ["[core] could not fetch: network down"]
+
     def test_conflicting_rebase_is_aborted_and_reported(
         self,
         tmp_path: Path,
@@ -497,7 +527,7 @@ class TestPullLocalSources:
         clone = tmp_path / "clone"
         (clone / ".git").mkdir(parents=True)
         fake_subprocess.on("rev-list", "--count", stdout="1\n")
-        fake_subprocess.on("pull", "--ff-only", returncode=1)
+        fake_subprocess.on("merge", "--ff-only", returncode=1)
         fake_subprocess.on("diff", "--quiet", returncode=1)
         fake_subprocess.on("rebase", "--quiet", returncode=1)
         fake_subprocess.on("merge-base", returncode=1)
@@ -510,8 +540,12 @@ class TestPullLocalSources:
 
         fake_subprocess.assert_sequence(
             "fetch",
+            "tag --list",
+            "rev-parse --symbolic-full-name",
+            "symbolic-ref",
             "rev-list --count",
-            "pull --ff-only",
+            "symbolic-ref",
+            "merge --ff-only",
             "rev-parse --git-path",
             "diff --quiet",
             "update-ref",
@@ -539,7 +573,7 @@ class TestPullLocalSources:
         for clone in clones.values():
             (clone / ".git").mkdir(parents=True)
         fake_subprocess.on("rev-list", "--count", stdout="1\n")
-        fake_subprocess.on("pull", "--ff-only", returncode=0)
+        fake_subprocess.on("merge", "--ff-only", returncode=0)
 
         config = [
             {"name": name, "source": str(clone)} for name, clone in clones.items()
@@ -564,7 +598,7 @@ class TestPullLocalSources:
         (current / ".git").mkdir(parents=True)
         fake_subprocess.on("rev-list", "--count", stdout="1\n", repo=changed)
         fake_subprocess.on("rev-list", "--count", stdout="0\n", repo=current)
-        fake_subprocess.on("pull", "--ff-only", returncode=0, repo=changed)
+        fake_subprocess.on("merge", "--ff-only", returncode=0, repo=changed)
 
         config = [
             {"name": "changed", "source": str(changed)},
@@ -586,8 +620,8 @@ class TestPullLocalSources:
         ff = tmp_path / "ff"
         (ff / ".git").mkdir(parents=True)
         fake_subprocess.on("rev-list", "--count", stdout="1\n")
-        fake_subprocess.on("pull", "--ff-only", returncode=1, repo=conflict)
-        fake_subprocess.on("pull", "--ff-only", returncode=0, repo=ff)
+        fake_subprocess.on("merge", "--ff-only", returncode=1, repo=conflict)
+        fake_subprocess.on("merge", "--ff-only", returncode=0, repo=ff)
         fake_subprocess.on("diff", "--quiet", returncode=1, repo=conflict)
         fake_subprocess.on("rebase", "--quiet", returncode=1, repo=conflict)
         fake_subprocess.on("merge-base", returncode=1, repo=conflict)
@@ -641,7 +675,7 @@ class TestPullLocalSources:
         clone = tmp_path / "clone"
         (clone / ".git").mkdir(parents=True)
         fake_subprocess.on("rev-list", "--count", stdout="1\n")
-        fake_subprocess.on("pull", "--ff-only", returncode=1)
+        fake_subprocess.on("merge", "--ff-only", returncode=1)
 
         config = [{"name": "core", "source": str(clone)}]
         with (
@@ -674,7 +708,7 @@ class TestPullLocalSources:
         clone = tmp_path / "clone"
         (clone / ".git").mkdir(parents=True)
         fake_subprocess.on("rev-list", "--count", stdout="1\n")
-        fake_subprocess.on("pull", "--ff-only", returncode=1)
+        fake_subprocess.on("merge", "--ff-only", returncode=1)
         fake_subprocess.on("just", "test", returncode=test_returncode)
 
         with patch("llm_prompts.main_sync.sync_diverged", return_value=result):
@@ -694,7 +728,7 @@ class TestPullLocalSources:
         clone = tmp_path / "clone"
         (clone / ".git").mkdir(parents=True)
         fake_subprocess.on("rev-list", "--count", stdout="1\n")
-        fake_subprocess.on("pull", "--ff-only", returncode=1)
+        fake_subprocess.on("merge", "--ff-only", returncode=1)
         fake_subprocess.on(
             "just",
             "test",
@@ -720,7 +754,7 @@ class TestPullLocalSources:
         clone = tmp_path / "clone"
         (clone / ".git").mkdir(parents=True)
         fake_subprocess.on("rev-list", "--count", stdout="1\n")
-        fake_subprocess.on("pull", "--ff-only", returncode=1)
+        fake_subprocess.on("merge", "--ff-only", returncode=1)
 
         with patch(
             "llm_prompts.main_sync.sync_diverged",
@@ -743,7 +777,7 @@ class TestPullLocalSources:
         clone = tmp_path / "clone"
         (clone / ".git").mkdir(parents=True)
         fake_subprocess.on("rev-list", "--count", stdout="1\n")
-        fake_subprocess.on("pull", "--ff-only", returncode=1)
+        fake_subprocess.on("merge", "--ff-only", returncode=1)
         fake_subprocess.on("just", "test", returncode=1)
 
         config = [{"name": "core", "source": str(clone), "test": "just test"}]
@@ -769,7 +803,7 @@ class TestPullLocalSources:
         clone = tmp_path / "clone"
         (clone / ".git").mkdir(parents=True)
         fake_subprocess.on("rev-list", "--count", stdout="1\n")
-        fake_subprocess.on("pull", "--ff-only", returncode=1)
+        fake_subprocess.on("merge", "--ff-only", returncode=1)
 
         config = [{"name": "core", "source": str(clone)}]
         with (
@@ -825,7 +859,7 @@ class TestCollectUpdateMessages:
             "[remote-pkg] update available (aa -> bb)",
             _UPDATE_INSTRUCTION,
         ]
-        mock_local.assert_called_once_with("core", "~/git/llm-prompts")
+        mock_local.assert_called_once_with("core", "~/git/llm-prompts", "")
         mock_remote.assert_called_once_with(
             "remote-pkg", "git+https://github.com/user/repo.git", "main"
         )
@@ -891,7 +925,7 @@ class TestCollectUpdateMessages:
                 patch("llm_prompts.plugins._load_plugins", return_value=[]),
                 patch(
                     "llm_prompts.cli._local_source_messages",
-                    side_effect=lambda name, _source: _format_update_message(
+                    side_effect=lambda name, _source, _ref: _format_update_message(
                         name, ["Add X"]
                     ),
                 ),

@@ -1293,6 +1293,14 @@ class _RepoSync:
         self.entries = list(entries)
         self.status = 0
         self.base = base_ref(repo)
+        self.main_base = (
+            main_sync.UPSTREAM
+            if main_sync.run_git(
+                repo, "rev-parse", "--verify", "--quiet", main_sync.UPSTREAM
+            ).returncode
+            == 0
+            else self.base
+        )
         self.remote_heads: dict[str, str] = {}
         self.prs: dict[int, PrState] = {}
         self._remote: tuple[str, bool] | None = None
@@ -1633,7 +1641,8 @@ class _RepoSync:
 
     def run(self) -> tuple[int, list[WorktreeEntry]]:
         fetch_base(self.repo, self.base.split("/", 1)[0])
-        if (stale := stale_main_warning(self.repo, self.base)) is not None:
+        self.refresh_upstream()
+        if (stale := stale_main_warning(self.repo, self.main_base)) is not None:
             _print_warning(stale)
         self.observe()
         self.landed = self.landed_copies()
@@ -1653,7 +1662,7 @@ class _RepoSync:
         return self.status, self.entries
 
     def landed_copies(self) -> list[Landed]:
-        """Return each copy whose PR merged and whose squash is on the base."""
+        """Return each copy whose PR merged and whose squash is on the base main follows."""
         return [
             Landed(
                 entry.copied,
@@ -1663,7 +1672,7 @@ class _RepoSync:
             if entry.copied
             and entry.pr is not None
             and self.merged(entry)
-            and _squash_landed(self.repo, self.base, entry.pr)
+            and _squash_landed(self.repo, self.main_base, entry.pr)
             and _branch_exists(self.repo, entry.branch)
             and self.tip(entry) == self.prs[entry.pr].head_sha
             and (floor := entry.base or self.base)
@@ -1698,6 +1707,26 @@ class _RepoSync:
                     self.fail(entry, "the branch is gone")
         return self.status == 0
 
+    def refresh_upstream(self) -> None:
+        """Point ``UPSTREAM`` at the latest release, or at the configured ``ref``, when config lists this repo as a local source or ``UPSTREAM`` is already set."""
+        from .setup import _expand, _is_local_path, read_config
+
+        source = next(
+            (
+                tool
+                for tool in read_config().get("tools", [])
+                if _is_local_path(str(tool.get("source", "")))
+                and _expand(str(tool["source"])).resolve() == self.repo.resolve()
+            ),
+            None,
+        )
+        if source is None and self.main_base != main_sync.UPSTREAM:
+            return
+        _git_network("fetch", "--quiet", "--tags", repo=self.repo)
+        ref = str(source.get("ref", "")) if source else ""
+        if main_sync.point_upstream(self.repo, ref):
+            self.main_base = main_sync.UPSTREAM
+
     def copy_into_main(self, fail_skipped: bool = False) -> bool:
         """Return whether main is up to date, so merged entries may go. A skipped copy counts as a failure when ``fail_skipped``."""
         tips = _tips(self.repo, self.base, self.open_entries())
@@ -1707,7 +1736,7 @@ class _RepoSync:
         usable = [tip for tip in tips if tip.skipped is None]
         try:
             swaps, drops, copies, adds = _main_changes(
-                self.repo, self.base, usable, self.landed
+                self.repo, self.main_base, usable, self.landed
             )
         except AmbiguousCopy as ambiguous:
             print(f"{self.label}main not updated: {ambiguous}")
@@ -1719,10 +1748,10 @@ class _RepoSync:
             swaps
             or drops
             or adds
-            or not _contains(self.repo, self.base, "refs/heads/main")
+            or not _contains(self.repo, self.main_base, "refs/heads/main")
         ):
             result = main_sync.rebuild_local(
-                self.repo, self.base, swaps, drops, copies, adds
+                self.repo, self.main_base, swaps, drops, copies, adds
             )
             if result.mode == "failed":
                 print(f"{self.label}main not updated: {result.detail}")

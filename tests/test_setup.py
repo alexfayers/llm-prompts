@@ -763,6 +763,44 @@ class TestLatestReleaseTag:
         assert setup._latest_release_tag("https://x/repo.git") is None
 
 
+CHANGELOG = """# Changelog
+
+## [0.3.0](https://x/compare/v0.2.0...v0.3.0) (2026-03-01)
+
+
+### Features
+
+* three
+
+## [0.2.0](https://x/compare/v0.1.0...v0.2.0) (2026-02-01)
+
+### Bug Fixes
+
+* two
+
+## [0.1.0](https://x/compare/v0.0.1...v0.1.0) (2026-01-01)
+
+* one
+"""
+
+
+class TestReleaseNotes:
+    def test_lists_the_sections_after_old_up_to_new_newest_first(self) -> None:
+        assert setup.release_notes(CHANGELOG, "v0.1.0", "v0.3.0") == [
+            (
+                "## [0.3.0](https://x/compare/v0.2.0...v0.3.0) (2026-03-01)\n"
+                "### Features\n* three"
+            ),
+            (
+                "## [0.2.0](https://x/compare/v0.1.0...v0.2.0) (2026-02-01)\n"
+                "### Bug Fixes\n* two"
+            ),
+        ]
+
+    def test_empty_when_new_is_not_newer(self) -> None:
+        assert setup.release_notes(CHANGELOG, "v0.3.0", "v0.3.0") == []
+
+
 class TestCommitSubjectsBetween:
     def test_lists_subjects_between_shas(
         self, fake_subprocess: FakeSubprocess, tmp_path: Path
