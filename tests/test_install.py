@@ -2874,6 +2874,35 @@ class TestPiVersionDrift:
         err = capsys.readouterr().err
         assert (expected in err) if expected else (err == "")
 
+    def test_reads_the_pi_package_that_pi_on_path_runs(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        set_root(tmp_path)
+        version_file = tmp_path / ".pi" / "agent" / "install" / "current-version"
+        version_file.parent.mkdir(parents=True)
+        version_file.write_text("1.0.0\n", encoding="utf-8")
+        package = tmp_path / "node_modules" / "@earendil-works" / "pi-coding-agent"
+        (package / "dist").mkdir(parents=True)
+        (package / "dist" / "cli.js").write_text("", encoding="utf-8")
+        (package / "package.json").write_text(
+            json.dumps({"name": "@earendil-works/pi-coding-agent", "version": "1.2.0"}),
+            encoding="utf-8",
+        )
+        bin_dir = tmp_path / "node_modules" / ".bin"
+        bin_dir.mkdir()
+        (bin_dir / "pi").symlink_to(package / "dist" / "cli.js")
+        monkeypatch.setattr(
+            "llm_prompts.install.shutil.which",
+            lambda command: str(bin_dir / command) if command == "pi" else None,
+        )
+
+        _warn_pi_version_drift(["npm:@earendil-works/pi-coding-agent@1.2.0"])
+
+        assert capsys.readouterr().err == ""
+
 
 class TestLogBrokenPipe:
     def test_closed_stderr_pipe_is_silenced_and_the_run_continues(self) -> None:
