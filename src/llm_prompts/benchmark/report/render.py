@@ -254,6 +254,7 @@ def render(report: Report) -> str:
         f"# Benchmark {report.a} -> {b_label(report)}",
         (
             f"Run {report.run_id}, level {report.level}, agents {', '.join(report.agents)}. Gate: {gate}."
+            + (f" Ablation: {report.ablation}." if report.ablation else "")
             + (
                 "\n\n"
                 + "\n".join(["Gate breaches:", *(f"- {b}" for b in found.breaches)])

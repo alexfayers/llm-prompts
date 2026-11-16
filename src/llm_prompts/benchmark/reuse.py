@@ -32,7 +32,7 @@ def _tree_digest(root: Path) -> list[str]:
 
 def _definition(scenario: Scenario) -> dict[str, JsonValue]:
     fields = asdict(scenario)
-    for judged in ("gate", "base", "checks", "headline"):
+    for judged in ("gate", "base", "checks", "headline", "covers"):
         fields.pop(judged)
     for unset in ("setup", "delegation"):
         if not fields[unset]:

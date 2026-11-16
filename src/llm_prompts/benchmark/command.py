@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import cast, get_args
 
 from llm_prompts import setup, size_report
+from llm_prompts.attic.pinned import PINNED_RULES
 from llm_prompts.benchmark import paths, reuse
 from llm_prompts.benchmark.agents import AGENTS, DEFAULT_MODELS
 from llm_prompts.benchmark.agents.adapter import VariantBuildError
@@ -22,6 +23,7 @@ from llm_prompts.benchmark.fail_fast import SETUP_ERROR, is_setup_error
 from llm_prompts.benchmark.report.compare import (
     MIN_GATED_RUNS,
     Report,
+    ablation_verdict,
     compare,
     judge_reasons,
     needs_more_runs,
@@ -83,6 +85,12 @@ def _at_least_one(name: str, value: int) -> int:
     return value
 
 
+def _unpinned_rules(names: Sequence[str] | None) -> tuple[str, ...]:
+    if pinned := PINNED_RULES.intersection(names or ()):
+        raise ValueError(f"{', '.join(sorted(pinned))}: pinned, never demoted")
+    return tuple(dict.fromkeys(names or ()))
+
+
 @dataclass(frozen=True)
 class RunOptions:
     a: str = "origin/main"
@@ -100,6 +108,7 @@ class RunOptions:
     a_tools: Mapping[str, str] = field(default_factory=dict)
     b_tools: Mapping[str, str] = field(default_factory=dict)
     b_env: Mapping[str, str] = field(default_factory=dict)
+    b_drop: tuple[str, ...] = ()
     reuse: bool = True
     fail_fast: bool = False
     fail_fast_after: int = DEFAULT_FAIL_FAST_AFTER
@@ -152,6 +161,7 @@ class RunOptions:
             a_tools=_pairs("tool", args.a_tool),
             b_tools=_pairs("tool", args.b_tool),
             b_env=_pairs("env", args.b_env),
+            b_drop=_unpinned_rules(args.b_drop),
             reuse=args.reuse,
             fail_fast=args.fail_fast,
             fail_fast_after=_at_least_one(
@@ -250,7 +260,12 @@ def _build_plan(options: RunOptions) -> _Plan:
     a_cells = plan(built, options.agents, scenarios, range(options.repeats or 1))
     selected = _reused(options, built[0], a_cells)
     b = variants.build(
-        "b", options.b, options.agents, options.overlays, options.b_tools
+        "b",
+        options.b,
+        options.agents,
+        options.overlays,
+        options.b_tools,
+        drop=options.b_drop,
     )
     built.append(replace(b, env=options.b_env))
     cells = plan(built, options.agents, scenarios, range(options.repeats or 1))
@@ -333,7 +348,11 @@ def _execute(options: RunOptions, chosen: _Plan, run_dir: Path) -> list[ResultRo
 
 
 def _build_report(
-    options: RunOptions, built: list[Variant], rows: list[ResultRow], run_id: str
+    options: RunOptions,
+    built: list[Variant],
+    planned: Sequence[Scenario],
+    rows: list[ResultRow],
+    run_id: str,
 ) -> Report:
     deltas = compare(rows)
     base, head = (variant.src / variants.PROMPTS for variant in built)
@@ -358,6 +377,15 @@ def _build_report(
         usage(rows),
         judge_reasons(rows),
         options.b_env,
+        options.b_drop,
+        ablation_verdict(
+            rows,
+            deltas,
+            options.b_drop,
+            {scenario.id: scenario.covers for scenario in planned},
+        )
+        if options.b_drop
+        else None,
     )
 
 
@@ -397,7 +425,9 @@ def _run(options: RunOptions) -> int:
         run_dir.mkdir(parents=True)
         rows = _execute(options, chosen, run_dir)
         variants.prune(chosen.built)
-        report = _build_report(options, chosen.built, rows, run_dir.name)
+        report = _build_report(
+            options, chosen.built, chosen.scenarios, rows, run_dir.name
+        )
         _publish(report, rows, run_dir)
         return EXIT_CODES[report.verdict]
     except (

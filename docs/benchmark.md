@@ -15,6 +15,7 @@ Run it from an llm-prompts checkout. Any commit, branch or `:worktree` works for
 | `--a REF`, `--b REF` | Refs to compare (default: `origin/main` and `:worktree`). |
 | `--a-tool NAME=SOURCE`, `--b-tool NAME=SOURCE` | Use this source for a configured tool (such as `mcp-memory`) in that ref only. Repeatable. A remote source must end in `@<40 character commit sha>`, or that side's runs are not reused. |
 | `--b-env NAME=VALUE` | Set this environment variable for the agents of ref B only. Repeatable. |
+| `--b-drop RULE` | Leave this shared rule (a `shared/rules/RULE.md` source) out of ref B's build. A pinned rule is refused. Repeatable. |
 | `--no-reuse` | Run A and B again instead of reusing finished runs. |
 | `--level LEVEL` | `light`, `medium` or `heavy` (default: `light`). A level includes all lower levels. |
 | `--agents LIST` | Comma separated agents (default: `claude,pi`). |
@@ -84,6 +85,8 @@ Defaults are 0.34, 0.25, 0.5 and 0.5. A scenario can set its own under `[gate]`.
 The context rule needs at least 3 completed runs on each side. The cost and time rules need at least 3 repeats on each side that finished every session. With fewer, a rise over its limit shows as a `Gate info:` line and does not breach the gate.
 
 With more than one agent, each agent gets a line with its own pass rate, cost, time and context change, followed by its `Prompt:` line. The `Overall` line summarises the run and comes last. The result is `improved` when B has more passing cells and no scenario's pass rate fell, `regressed` when B has fewer passing cells or the gate regressed, and `no change` otherwise. A scenario with `headline = true` is shown first.
+
+With `--b-drop`, the report adds `Ablation:` with `demotable` when the gate is ok and every dropped rule is named in the `covers = ["<rule>"]` list of a scenario that ran at least 3 times on each side. Otherwise it is `uncovered`, `need-runs` or `keep`. `covers` does not change the build or reuse of a run.
 
 ## Add a scenario
 

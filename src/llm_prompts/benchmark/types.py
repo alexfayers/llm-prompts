@@ -64,6 +64,7 @@ class Scenario:
     headline: bool = False
     setup: tuple[str, ...] = ()
     delegation: bool = False
+    covers: tuple[str, ...] = ()
 
     @property
     def ask(self) -> str:

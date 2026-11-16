@@ -12,6 +12,7 @@ from llm_prompts.benchmark.report.compare import (
     Summary,
     Usage,
     Verdict,
+    ablation_verdict,
     gate_breaches,
     gate_notes,
     outcome_summary,
@@ -135,6 +136,42 @@ def delta(b: Summary) -> ScenarioDelta:
 def test_verdict_applies_the_gate(b: Summary, regressed: bool) -> None:
     assert verdict([row()], [delta(b)]) == ("regressed" if regressed else "ok")
     assert verdict([row(error="x")], [delta(b)]) == "all errored"
+
+
+ABLATION_OK = Summary(
+    12, 12, completed=12, median_context=1000, median_cost_usd=1.0, median_wall_s=10
+)
+
+
+@pytest.mark.parametrize(
+    ("b", "covers", "expected"),
+    [
+        (ABLATION_OK, {"s1": ("r",)}, "demotable"),
+        (ABLATION_OK, {"s1": ("other",)}, "uncovered"),
+        (ABLATION_OK, {"s1": ("r",), "s2": ("q",)}, "uncovered"),
+        (Summary(2, 2, 2, median_context=1000, median_cost_usd=1.0), {"s1": ("r",)}, "need-runs"),
+        (Summary(0, 12, median_context=1000, median_cost_usd=1.0), {"s1": ("r",)}, "keep"),
+        (Summary(12, 12, 2, median_context=1000, median_cost_usd=1.0), {"s1": ("r",)}, "need-runs"),
+    ],
+)  # fmt: skip
+def test_ablation_verdict_needs_a_covering_scenario_with_enough_runs_on_both_sides(
+    b: Summary, covers: dict[str, tuple[str, ...]], expected: str
+) -> None:
+    dropped = ("r", "q") if "s2" in covers else ("r",)
+
+    assert ablation_verdict(parsed([row()]), [delta(b)], dropped, covers) == expected
+
+
+def test_ablation_verdict_needs_only_one_covering_scenario_with_enough_runs() -> None:
+    short = replace(
+        delta(Summary(2, 2, 2, median_context=1000, median_cost_usd=1.0)), scenario="s2"
+    )
+    covers = {"s1": ("r",), "s2": ("r",)}
+
+    assert (
+        ablation_verdict(parsed([row()]), [delta(ABLATION_OK), short], ("r",), covers)
+        == "demotable"
+    )
 
 
 def test_render_json_and_summaries() -> None:
