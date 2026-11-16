@@ -13,6 +13,7 @@ type Entry = {
 	timestamp?: string;
 	kind?: string;
 	usage?: Usage;
+	customType?: string;
 	thinkingLevel?: string;
 	modelId?: string;
 	message?: { role: string; usage?: Usage; timestamp?: number };
@@ -31,6 +32,7 @@ const entryCause = (entry: Entry): string | undefined => {
 	if (entry.type === "thinking_level_change") return `a thinking level change to ${entry.thinkingLevel}`;
 	if (entry.type === "model_change") return `a model change to ${entry.modelId}`;
 	if (entry.type === "compaction" || entry.type === "branch_summary") return "a compaction";
+	if (entry.type === "custom" && entry.customType === "context-fold") return "a context fold";
 	if (entry.type === "message" && entry.message?.role === "system") return "a system prompt change";
 };
 
