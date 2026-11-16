@@ -327,27 +327,35 @@ def _update_check_or_failure(name: str, check: Callable[[], list[str]]) -> list[
         return [UpdateCheckFailure(f"[{name}] update check failed: {reason}")]
 
 
-def _local_source_messages(name: str, source: str) -> list[str]:
+def _local_source_messages(name: str, source: str, ref: str = "") -> list[str]:
     """Return update-availability messages for a local-path git source.
+
+    Args:
+        name: The tool name.
+        source: The configured source.
+        ref: A remote branch to follow instead of the latest release tag.
 
     Returns:
         Message lines describing available updates, or an empty list.
     """
-    from .setup import _expand
+    from .main_sync import UPSTREAM, point_upstream, run_git, unreleased
+    from .setup import _expand, release_notes, release_version
 
     repo = _expand(source)
     if not (repo / ".git").is_dir():
         return []
 
     run_with_retries(
-        ["git", "-C", str(repo), "fetch", "--quiet"],
+        ["git", "-C", str(repo), "fetch", "--quiet", "--tags"],
         check=True,
         capture_output=True,
         text=True,
         timeout=GIT_TIMEOUT,
     )
+    if not point_upstream(repo, ref):
+        return []
     result = subprocess.run(
-        ["git", "-C", str(repo), "rev-list", "--count", "HEAD..@{u}"],
+        ["git", "-C", str(repo), "rev-list", "--count", f"HEAD..{UPSTREAM}"],
         capture_output=True,
         text=True,
         check=False,
@@ -358,12 +366,24 @@ def _local_source_messages(name: str, source: str) -> list[str]:
 
     count = int(result.stdout.strip())
     if count == 0:
-        return []
+        if not unreleased(repo):
+            return []
+        new = run_git(repo, "symbolic-ref", "--short", UPSTREAM).stdout.strip()
+        return [f"[{name}] update available: move main back to release {new}"]
 
-    subjects = _commit_subjects_between(repo, "HEAD", "@{u}", SHIPPED_PATHS)
+    subjects = _commit_subjects_between(repo, "HEAD", UPSTREAM, SHIPPED_PATHS)
     if subjects == []:
         return []
-    return _format_update_message(name, subjects)
+    new = run_git(repo, "symbolic-ref", "--short", UPSTREAM).stdout.strip()
+    old = run_git(
+        repo, "describe", "--tags", "--abbrev=0", "--match", "v*", "HEAD"
+    ).stdout.strip()
+    if not (release_version(new) and release_version(old)):
+        return _format_update_message(name, subjects)
+    changelog = run_git(repo, "show", f"{UPSTREAM}:CHANGELOG.md").stdout
+    return _format_update_message(
+        name, release_notes(changelog, old, new) or subjects, release=(old, new)
+    )
 
 
 def _prompts_prefix(repo: Path) -> str | None:
@@ -532,13 +552,16 @@ def _source_test_warnings(name: str, repo: Path, test: str) -> list[str]:
     ]
 
 
-def _pull_one_local_source(name: str, source: str, test: str = "") -> _PullOutcome:
+def _pull_one_local_source(
+    name: str, source: str, test: str = "", ref: str = ""
+) -> _PullOutcome:
     """Pull upstream changes for a single local-path tool source.
 
     Args:
         name: The source name, used in the messages.
         source: The configured source string.
         test: Optional command run in the source after local commits are rebased or replayed.
+        ref: A remote branch to follow instead of the latest release tag.
 
     Returns:
         Whether the source moved, and message lines describing the pull outcome.
@@ -546,9 +569,13 @@ def _pull_one_local_source(name: str, source: str, test: str = "") -> _PullOutco
     from .main_sync import (
         GIT_TIMED_OUT,
         PRE_SYNC_REF,
+        UPSTREAM,
         SyncResult,
+        point_upstream,
+        rebuild_local,
         run_git,
         sync_diverged,
+        unreleased,
     )
     from .setup import _expand, _is_local_path
 
@@ -558,23 +585,41 @@ def _pull_one_local_source(name: str, source: str, test: str = "") -> _PullOutco
     repo = _expand(source)
     if not (repo / ".git").is_dir():
         return unchanged
-    fetch = run_git(repo, "fetch", "--quiet")
+    fetch = run_git(repo, "fetch", "--quiet", "--tags")
     fetch_failed = fetch.returncode != 0
     fetch_error = f"[{name}] could not fetch: {fetch.stderr.strip()}"
     fetch_failure = _PullOutcome(name, False, [fetch_error], failed=True)
-    result = run_git(repo, "rev-list", "--count", "HEAD..@{u}")
+    if not point_upstream(repo, ref):
+        return fetch_failure if fetch_failed else unchanged
+    result = run_git(repo, "rev-list", "--count", f"HEAD..{UPSTREAM}")
     if result.returncode != 0:
         return fetch_failure if fetch_failed else unchanged
     count = int(result.stdout.strip())
+    if not fetch_failed and (drops := unreleased(repo)):
+        release = run_git(repo, "symbolic-ref", "--short", UPSTREAM).stdout.strip()
+        synced = rebuild_local(repo, UPSTREAM, {}, drops, {}, [])
+        if synced.mode == "failed":
+            return _PullOutcome(
+                name,
+                False,
+                [f"[{name}] could not move to release {release}", f"  {synced.detail}"],
+                failed=True,
+            )
+        moved = [
+            f"[{name}] moved to release {release}; left {len(drops)} unreleased commit(s); undo with: git reset --keep {PRE_SYNC_REF}"
+        ]
+        if test:
+            moved += _source_test_warnings(name, repo, test)
+        return _PullOutcome(name, True, moved)
     if count == 0:
         return fetch_failure if fetch_failed else unchanged
-    pull = run_git(repo, "pull", "--ff-only", "--quiet")
+    pull = run_git(repo, "merge", "--ff-only", "--quiet", UPSTREAM)
     if pull.returncode == 0:
         return _PullOutcome(name, True, [f"[{name}] pulled {count} new commit(s)"])
     if pull.returncode == GIT_TIMED_OUT:
         synced = SyncResult("failed", detail=pull.stderr.strip())
     else:
-        synced = sync_diverged(repo)
+        synced = sync_diverged(repo, UPSTREAM)
     if synced.mode == "failed":
         return _PullOutcome(
             name,
@@ -718,6 +763,7 @@ def _pull_and_copy(
             str(tool.get("name", "")),
             str(tool.get("source", "")),
             str(tool.get("test", "")),
+            str(tool.get("ref", "")),
         )
         for tool in tools
     ]
@@ -804,7 +850,9 @@ def _collect_update_messages() -> list[str]:
         name = str(tool.get("name", ""))
         source = str(tool.get("source", ""))
         if _is_local_path(source):
-            check = partial(_local_source_messages, name, source)
+            check = partial(
+                _local_source_messages, name, source, str(tool.get("ref", ""))
+            )
         else:
             check = partial(_remote_source_messages, name, source, tool.get("ref"))
         checks.append(partial(_update_check_or_failure, name, check))

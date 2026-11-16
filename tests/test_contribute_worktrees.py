@@ -337,12 +337,13 @@ def test_copying_stops_on_a_recorded_branch_that_is_gone(
     assert [e.branch for e in project.entries()] == ["feat/a", "feat/b"]
 
 
-def configure_sources(project: Project, test: str = "") -> None:
-    """Point the config at every cloned tool of ``project``, each with the test command ``test``."""
+def configure_sources(project: Project, test: str = "", ref: str = "") -> None:
+    """Point the config at every cloned tool of ``project``, each with the test command ``test`` and the ref ``ref``."""
     test_line = f"test = {json.dumps(test)}\n" if test else ""
+    ref_line = f"ref = {json.dumps(ref)}\n" if ref else ""
     setup.config_path().write_text(
         "".join(
-            f'[[tools]]\nname = "{name}"\nsource = "{repo}"\n{test_line}'
+            f'[[tools]]\nname = "{name}"\nsource = "{repo}"\n{test_line}{ref_line}'
             for name, repo, _ in project.targets
         ),
         encoding="utf-8",
@@ -515,6 +516,177 @@ def test_update_stops_before_pulling_when_a_source_is_not_on_main(
     assert stopped.value.reason == "copy_blocked"
     assert "[tool] elsewhere is checked out, not main" in capsys.readouterr().out
     assert project.main_subjects() == []
+
+
+def _publish_release(project: Project) -> None:
+    """Tag base as v0.1.0, then publish a v0.2.0 release and an unreleased commit to origin main from another clone."""
+    git(project.repo, "tag", "v0.1.0")
+    git(project.repo, "push", "-q", "origin", "v0.1.0")
+    other = project.root / "upstream-clone"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "pyproject.toml", "two\n", "feat: two")
+    project.commit(
+        other,
+        "CHANGELOG.md",
+        "## [0.2.0](https://x) (2026-02-01)\n\n* two\n",
+        "chore: release 0.2.0",
+    )
+    git(other, "tag", "v0.2.0")
+    project.commit(other, "later.txt", "later\n", "feat: unreleased")
+    git(other, "push", "-q", "--tags", "origin", "main")
+
+
+def test_update_moves_main_to_the_latest_release_with_copies_on_top(
+    project: Project,
+) -> None:
+    configure_sources(project)
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+    _publish_release(project)
+
+    run_update(project)
+
+    assert git(project.repo, "log", "--format=%s", "main").splitlines() == [
+        "feat: a",
+        "chore: release 0.2.0",
+        "feat: two",
+        "chore: base",
+    ]
+
+
+def test_update_moves_a_main_ahead_of_the_release_back_onto_it_keeping_local_commits(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure_sources(project)
+    _publish_release(project)
+    git(project.repo, "pull", "-q", "--ff-only")
+    project.commit(project.repo, "local.txt", "local\n", "feat: local")
+
+    run_update(project)
+
+    assert git(project.repo, "log", "--format=%s", "main").splitlines() == [
+        "feat: local",
+        "chore: release 0.2.0",
+        "feat: two",
+        "chore: base",
+    ]
+    assert "[tool] moved to release v0.2.0" in capsys.readouterr().out
+
+
+def test_a_worktree_on_the_release_is_copied_when_origin_main_is_ahead_of_it(
+    project: Project,
+) -> None:
+    configure_sources(project)
+    _publish_release(project)
+    run_update(project)
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+
+    assert project.run(apply=True) == 0
+
+    assert git(project.repo, "log", "--format=%s", "main").splitlines()[0] == "feat: a"
+
+
+def test_sync_rebuilds_main_on_a_release_published_since_the_last_update(
+    project: Project,
+) -> None:
+    _publish_release(project)
+    git(project.repo, "fetch", "-q", "origin", "refs/tags/v0.1.0:refs/tags/v0.1.0")
+    main_sync.point_upstream(project.repo)
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+
+    assert project.run(apply=True) == 0
+
+    assert git(project.repo, "log", "--format=%s", "main").splitlines()[:2] == [
+        "feat: a",
+        "chore: release 0.2.0",
+    ]
+
+
+def test_update_runs_the_source_test_after_moving_main_back_onto_the_release(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure_sources(project, test="false")
+    _publish_release(project)
+    git(project.repo, "pull", "-q", "--ff-only")
+    project.commit(project.repo, "local.txt", "local\n", "feat: local")
+
+    run_update(project)
+
+    assert "[tool] warning: `false`" in capsys.readouterr().out
+
+
+def test_first_sync_of_a_configured_source_rebuilds_main_on_the_latest_release(
+    project: Project,
+) -> None:
+    configure_sources(project)
+    _publish_release(project)
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+
+    assert project.run(apply=True) == 0
+
+    assert git(project.repo, "log", "--format=%s", "main").splitlines()[:2] == [
+        "feat: a",
+        "chore: release 0.2.0",
+    ]
+
+
+def test_update_shows_the_release_change_with_its_changelog(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure_sources(project)
+    _publish_release(project)
+
+    run_update(project)
+
+    assert (
+        "[tool] update available (v0.1.0 -> v0.2.0):\n"
+        "- ## [0.2.0](https://x) (2026-02-01)\n  * two\n"
+    ) in capsys.readouterr().out
+
+
+def test_update_with_a_ref_follows_that_branch_instead_of_releases(
+    project: Project,
+) -> None:
+    configure_sources(project, ref="main")
+    _publish_release(project)
+
+    run_update(project)
+
+    assert git(project.repo, "rev-parse", "main") == git(
+        project.repo, "rev-parse", "origin/main"
+    )
+
+
+def test_update_with_a_ref_keeps_commits_that_are_only_on_the_tracked_branch(
+    project: Project,
+) -> None:
+    git(project.repo, "push", "-q", "origin", "main:dev")
+    configure_sources(project, ref="dev")
+    _land_upstream(project, "main-only.txt")
+
+    run_update(project)
+
+    assert (
+        git(project.repo, "log", "-1", "--format=%s", "main") == "chore: main-only.txt"
+    )
+
+
+def test_update_without_release_tags_follows_the_upstream_branch(
+    project: Project,
+) -> None:
+    configure_sources(project)
+    _land_upstream(project, "upstream.txt", pull=False)
+
+    run_update(project)
+
+    assert git(project.repo, "rev-parse", "main") == git(
+        project.repo, "rev-parse", "origin/main"
+    )
 
 
 def test_a_worktree_with_several_commits_is_squashed_into_one_main_commit(
@@ -1522,6 +1694,49 @@ def test_the_main_copy_of_a_merged_worktree_is_dropped_once_its_squash_landed(
     assert project.run(apply=True) == 0
 
     assert project.main_subjects() == []
+
+
+def test_the_main_copy_of_a_merged_worktree_stays_until_a_release_holds_its_squash(
+    project: Project,
+) -> None:
+    git(project.repo, "tag", "v0.1.0")
+    main_sync.point_upstream(project.repo)
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    project.add_pr(
+        7, "feat/a", state="MERGED", headRefOid=git(path, "rev-parse", "HEAD")
+    )
+    worktrees.save_entries(
+        project.record, [e._replace(pr=7) for e in project.entries()]
+    )
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "feat-a-7.txt", "reviewed\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a"]
+
+
+def test_sync_does_not_call_main_stale_for_a_copy_merged_after_the_release_it_follows(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    git(project.repo, "tag", "v0.1.0")
+    main_sync.point_upstream(project.repo)
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "feat-a-7.txt", "feat: a\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+    capsys.readouterr()
+
+    assert project.run(apply=True) == 0
+
+    assert "already merged upstream" not in capsys.readouterr().out
 
 
 def test_a_merged_worktree_is_kept_until_the_main_rebuild_that_drops_its_copy_succeeds(

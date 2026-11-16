@@ -203,6 +203,31 @@ def _latest_release_tag(git_url: str) -> tuple[str, str] | None:
     return tag, releases[tag]
 
 
+def release_version(tag: str) -> tuple[int, ...] | None:
+    """Return the version numbers of a stable ``vX.Y.Z`` tag, or ``None`` for any other tag."""
+    match = _RELEASE_TAG.fullmatch(tag)
+    return tuple(map(int, match.groups())) if match else None
+
+
+_CHANGELOG_SECTION = re.compile(r"^## \[(\d+)\.(\d+)\.(\d+)\]", re.MULTILINE)
+
+
+def release_notes(changelog: str, old: str, new: str) -> list[str]:
+    """Return the CHANGELOG sections of the releases after tag ``old`` up to tag ``new``, newest first, without blank lines."""
+    low, high = release_version(old), release_version(new)
+    if low is None or high is None:
+        return []
+    starts = list(_CHANGELOG_SECTION.finditer(changelog))
+    ends = [start.start() for start in starts[1:]] + [len(changelog)]
+    return [
+        "\n".join(
+            line for line in changelog[start.start() : end].splitlines() if line.strip()
+        )
+        for start, end in zip(starts, ends, strict=True)
+        if low < tuple(map(int, start.groups())) <= high
+    ]
+
+
 _SQUASHED_MERGE_PREFIX = "* Merge "
 _SQUASHED_COMMIT_PREFIX = "* "
 _MORE_SUFFIX = re.compile(r" \(\+\d+ more\)(?= \(#\d+\)$|$)")
