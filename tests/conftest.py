@@ -643,6 +643,23 @@ def no_pi_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name)
 
 
+_GIT_LOCATION_VARS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_PREFIX",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+)
+
+
+@pytest.fixture(autouse=True)
+def no_git_location_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drop git's repository location variables, which `git rebase --exec` exports, so test repos never resolve to the caller's repo."""
+    for name in _GIT_LOCATION_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture(autouse=True)
 def isolated_home(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch

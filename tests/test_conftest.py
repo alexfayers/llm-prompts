@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -181,3 +182,28 @@ def test_real_prompts_test_reads_the_packaged_prompts_tree() -> None:
     tree = install.prompts_dir("llm_prompts")
 
     assert (tree / "shared" / "rules" / "coding.md").is_file()
+
+
+@pytest.fixture(scope="module")
+def inherited_git_dir(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
+    """Set GIT_DIR before the per-test fixtures run, as `git rebase --exec` does."""
+    outer = tmp_path_factory.mktemp("outer")
+    subprocess.run(["git", "init", "-q", str(outer)], check=True)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("GIT_DIR", str(outer / ".git"))
+        yield outer
+
+
+@pytest.mark.real_io
+def test_git_in_a_temp_repo_ignores_an_inherited_git_dir(
+    inherited_git_dir: Path, tmp_path: Path
+) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    git_dir = subprocess.run(
+        ["git", "rev-parse", "--absolute-git-dir"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert Path(git_dir) == tmp_path / ".git"
