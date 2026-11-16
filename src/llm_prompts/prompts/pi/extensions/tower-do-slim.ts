@@ -1,4 +1,4 @@
-// Re-registers the tower_do, tower_do_talk and tower_do_status tools with shorter descriptions, parameter schemas and guidelines.
+// Re-registers the tower_do, tower_do_talk and tower_do_status tools with shorter descriptions, parameter schemas and guidelines, and shortens the board reminder to counts, task keys and the tasks changed since the last reminder.
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -48,6 +48,35 @@ export function slimTools({ formatTakeoverWindow, MAX_TOWER_DO_OPEN_TASKS }: Tow
 	};
 }
 
+const REMINDER_HEADER = /^TowerDo shared board — you are (.+?) \(revision (\d+); \d+ task\(s\), (\d+) open(?:, \d+ completed hidden)?, (\d+) blocked, (\d+) unread message\(s\) for you\)\.$/;
+const TASK_LINE = /^- \[[^\]]+\] ([^:]+): /;
+const OVERFLOW_LINE = /^… and \d+ more open task\(s\): (.+)$/;
+
+/** Rewrites a tower-do board reminder to counts and task keys, with the full line only for tasks new or changed since the lines in `seen`, which it updates. */
+export function compactReminder(text: string, seen: Map<string, string>): string {
+	const [header = "", ...rest] = text.split("\n");
+	const match = REMINDER_HEADER.exec(header);
+	if (!match) return text;
+	const [, identity, revision, open, blocked, unread] = match;
+	const tasks = new Map<string, string>();
+	for (const line of rest) {
+		const key = TASK_LINE.exec(line)?.[1];
+		if (key) tasks.set(key, line);
+		for (const hidden of OVERFLOW_LINE.exec(line)?.[1].split(", ") ?? []) tasks.set(hidden, seen.get(hidden) ?? "");
+	}
+	const changed = [...tasks].filter(([key, line]) => line && seen.get(key) !== line);
+	const others = [...tasks.keys()].filter((key) => !changed.some(([other]) => other === key));
+	const gone = [...seen.keys()].filter((key) => !tasks.has(key));
+	seen.clear();
+	for (const [key, line] of tasks) seen.set(key, line);
+	return [
+		`[board] revision ${revision}, you are ${identity}: ${open} open (${blocked} blocked), ${unread} unread. tower_do_status for details.`,
+		...(changed.length ? ["Changed since the last board note:", ...changed.map(([, line]) => line)] : []),
+		...(others.length ? [`Other open: ${others.join(", ")}`] : []),
+		...(gone.length ? [`Completed or removed: ${gone.join(", ")}`] : []),
+	].join("\n");
+}
+
 const towerDir = () => join(getAgentDir(), "npm", "node_modules", "tower-do");
 const loadFromTowerDo = <T>(file: string): Promise<T> => import(pathToFileURL(join(towerDir(), file)).href);
 
@@ -59,18 +88,25 @@ export default async function (pi: ExtensionAPI) {
 		pi.registerTool(override ? { ...tool, ...override, parameters: withoutDescriptions(tool.parameters) } : tool);
 	};
 	let pendingReminder: string | undefined;
+	const seenTasks = new Map<string, string>();
+	let seenSession: string | undefined;
 	const detachReminder = (handler: Function) => async (event: any, ctx: any) => {
 		const result = await handler(event, ctx);
 		const messages: any[] | undefined = result?.messages;
 		const last = messages?.at(-1);
 		if (!messages || last?.customType !== REMINDER_TYPE) return result;
-		pendingReminder = typeof last.content === "string" ? last.content : last.content.map((part: { text?: string }) => part.text ?? "").join("");
+		const session = ctx?.sessionManager?.getSessionId?.();
+		if (session !== seenSession) seenTasks.clear();
+		seenSession = session;
+		pendingReminder = compactReminder(typeof last.content === "string" ? last.content : last.content.map((part: { text?: string }) => part.text ?? "").join(""), seenTasks);
 		return { ...result, messages: messages.slice(0, -1) };
 	};
 	const on = (event: string, handler: Function) => pi.on(event as never, (event === "context" ? detachReminder(handler) : handler) as never);
 	pi.on("turn_end", () => {
 		pendingReminder = undefined;
 	});
+	pi.on("session_compact", () => seenTasks.clear());
+	pi.on("session_tree", () => seenTasks.clear());
 	pi.on("tool_result", (event) => {
 		if (pendingReminder === undefined) return;
 		const text = pendingReminder;
