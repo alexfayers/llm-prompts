@@ -123,14 +123,14 @@
 | tests/benchmark/test\_bench\_types.py                                         |        5 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_variant.py                                       |      213 |        0 |    100% |           |
 | tests/benchmark/traces.py                                                     |        3 |        0 |    100% |           |
-| tests/conftest.py                                                             |      439 |       23 |     95% |160, 294-295, 298, 301, 304, 309, 364, 443-454, 459-461, 479-480, 494, 566-570, 643, 786, 826 |
+| tests/conftest.py                                                             |      441 |       23 |     95% |160, 294-295, 298, 301, 304, 309, 364, 443-454, 459-461, 479-480, 494, 566-570, 643, 788, 828 |
 | tests/test\_build\_wave.py                                                    |      282 |        1 |     99% |       112 |
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
 | tests/test\_check\_repos\_script.py                                           |       67 |        0 |    100% |           |
 | tests/test\_claude\_models.py                                                 |       25 |        0 |    100% |           |
 | tests/test\_cli.py                                                            |     1049 |        1 |     99% |      1172 |
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
-| tests/test\_conftest.py                                                       |       90 |        0 |    100% |           |
+| tests/test\_conftest.py                                                       |       94 |        4 |     96% |194-196, 209 |
 | tests/test\_contribute.py                                                     |      338 |        0 |    100% |           |
 | tests/test\_contribute\_worktrees.py                                          |     1512 |        0 |    100% |           |
 | tests/test\_e2e\_git.py                                                       |      185 |        0 |    100% |           |
@@ -175,7 +175,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       31 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **27826** |  **733** | **97%** |           |
+| **TOTAL**                                                                     | **27832** |  **737** | **97%** |           |
 
 
 ## Setup coverage badge
