@@ -290,6 +290,36 @@ class TestPlanningRuleLinesAreClaudeCodeOnly:
         )
 
 
+class TestPendingAsksRestateRuleIsPiCut:
+    PROMPTS = Path(__file__).parent.parent / "src/llm_prompts/prompts"
+    PIN = "MUST pin each pending ask"
+
+    def _render(self, agent: str) -> str:
+        variables = {
+            **load_vars(self.PROMPTS / agent / "vars.json"),
+            "AGENT": agent,
+        }
+        return substitute_variables(
+            (self.PROMPTS / "shared/rules/anti-yap.md").read_text(encoding="utf-8"),
+            variables,
+        )
+
+    def test_pi_pins_asks_instead_of_restating_them(self) -> None:
+        rendered = self._render("pi")
+        assert self.PIN in rendered
+        assert "restate EVERY" not in rendered
+
+    def test_other_targets_keep_the_restate_rule_the_extension_injects(self) -> None:
+        extension = (self.PROMPTS / "pi/extensions/pending-asks.ts").read_text(
+            encoding="utf-8"
+        )
+        restate = re.search(r"RESTATE_RULE = `(.*)`;", extension)
+        assert restate
+        rendered = self._render("claude-code")
+        assert restate.group(1) in rendered
+        assert self.PIN not in rendered
+
+
 class TestStartUpStepsAreHookDriven:
     SHARED = Path(__file__).parent.parent / "src/llm_prompts/prompts/shared"
 

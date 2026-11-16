@@ -121,6 +121,7 @@ function makePi(state: Partial<FakePi>): FakePi & ExtensionAPI {
 		on: (event: string, handler: Handler) => void (pi.handlers[event] ??= []).push(handler),
 		registerTool: (tool: Tool) => void (pi.tools[tool.name] = tool),
 		registerCommand: (name: string, command: Command) => void (pi.commands[name] = command),
+		registerShortcut: () => {},
 		getActiveTools: () => pi.activeTools,
 		getAllTools: () => pi.allTools,
 		setActiveTools: (names: string[]) => void (pi.activeTools = names),
