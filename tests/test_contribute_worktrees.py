@@ -3029,3 +3029,106 @@ def test_unlinking_a_non_draft_pr_keeps_its_line_and_the_record_and_says_so(
     )
     assert "Depends on o/repo#100" in pr_body(project, 101)
     assert project.entries_of(chain)[0].dropped_refs == ("o/repo#100",)
+
+
+def test_an_upper_rewritten_before_its_lower_was_amended_replaces_its_main_copy(
+    project: Project, stack: Path
+) -> None:
+    assert project.run("tool", depends_on=("feat/b", "tool:feat/a")) == 0
+    assert project.run(apply=True) == 0
+    (stack / "upper-fix.txt").write_text("fix\n", encoding="utf-8")
+    git(stack, "add", "upper-fix.txt")
+    git(stack, "commit", "-q", "--amend", "--no-edit")
+    _amend(project, project.root / "wt" / "feat-a", "feat: a")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a", "feat: b"]
+    assert (project.repo / "upper-fix.txt").read_text(encoding="utf-8") == "fix\n"
+
+
+def test_a_skipped_upper_copy_that_conflicts_stops_sync_as_a_copy(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    lines = [f"line {n}\n" for n in range(60)]
+
+    def shared(middle: str) -> str:
+        return "".join([*lines[:30], middle, *lines[31:]])
+
+    lower = project.worktree("feat/a")
+    project.commit(lower, "shared.txt", shared("lower\n"), "feat: lower")
+    upper = project.worktree("feat/b", "feat: upper", start="feat/a", lines=60)
+    project.commit(upper, "shared.txt", shared("upper\n"), "feat: upper edit")
+    project.run(branch="feat/a")
+    project.run(branch="feat/b")
+    assert project.run("tool", depends_on=("feat/b", "tool:feat/a")) == 0
+    assert project.run(apply=True) == 0
+    assert project.run("tool", no_depends_on=("feat/b", "tool:feat/a")) == 0
+    (lower / "shared.txt").write_text(shared("amended\n"), encoding="utf-8")
+    git(lower, "commit", "-q", "-a", "--amend", "--no-edit")
+    before = git(project.repo, "rev-parse", "main")
+    capsys.readouterr()
+
+    assert project.run(apply=True) == 1
+
+    out = capsys.readouterr().out
+    assert "feat/b: skipped: holds commits of feat/a" in out
+    assert "(feat: upper) conflicts with main in shared.txt" in out
+    assert git(project.repo, "rev-parse", "main") == before
+
+
+def test_a_changed_branch_replaces_its_hand_resolved_copy_on_main(
+    project: Project,
+) -> None:
+    body = "".join(f"line {n}\n" for n in range(9))
+    project.commit(project.repo, "s.txt", body, "chore: add s")
+    git(project.repo, "push", "-q", "origin", "main")
+    project.commit(
+        project.repo, "s.txt", body.replace("line 1", "local"), "chore: local"
+    )
+    path = project.worktree("feat/a", start="origin/main")
+    project.commit(path, "s.txt", body.replace("line 1", "a"), "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    work = main_sync.resolve_worktree(project.repo)
+    resolved = body.replace("line 1", "local a")
+    (work / "s.txt").write_text(resolved, encoding="utf-8")
+    git(work, "add", "s.txt")
+    assert project.run(apply=True) == 0
+    project.commit(
+        path, "s.txt", body.replace("line 1", "a").replace("line 7", "b"), "fix: a"
+    )
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["chore: local", "feat: a"]
+    assert (project.repo / "s.txt").read_text(encoding="utf-8") == resolved.replace(
+        "line 7", "b"
+    )
+
+
+def test_a_changed_branch_replaces_every_top_up_copy_on_main(
+    project: Project,
+) -> None:
+    body = "".join(f"line {n}\n" for n in range(9))
+    project.commit(project.repo, "s.txt", body, "chore: add s")
+    git(project.repo, "push", "-q", "origin", "main")
+    path = project.worktree("feat/a", start="origin/main")
+    project.commit(path, "s.txt", body.replace("line 1", "a"), "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    date = git(project.repo, "log", "-1", "--format=%ad", "--date=raw", "main")
+    (project.repo / "s.txt").write_text(
+        body.replace("line 1", "a").replace("line 3", "top"), encoding="utf-8"
+    )
+    git(project.repo, "commit", "-q", "-am", "feat: a", "--date", date)
+    project.commit(
+        path, "s.txt", body.replace("line 1", "a").replace("line 7", "b"), "fix: a"
+    )
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a"]
+    assert (project.repo / "s.txt").read_text(encoding="utf-8") == body.replace(
+        "line 1", "a"
+    ).replace("line 7", "b")

@@ -1023,6 +1023,29 @@ def _is_copy(repo: Path, sha: str, squash: main_sync.Squash) -> bool:
     } or main_sync.replays_to(repo, f"{sha}^", squash, sha)
 
 
+def _paths(repo: Path, *commits: str) -> set[str]:
+    """Return the files changed by commit ``commits[0]``, or between two commits."""
+    args = (
+        ("diff", "--name-only", *commits)
+        if len(commits) > 1
+        else ("show", "--format=", "--name-only", *commits)
+    )
+    return set(_git(*args, repo=repo).split())
+
+
+def _version_floor(repo: Path, tip: Tip, version: str) -> str:
+    """Return the commit ``version`` of ``tip``'s branch started from: the parent of its copied first commit, else the floor."""
+    rows = _git("log", "--format=%H%x09%at%x09%s", f"{tip.floor}..{version}", repo=repo)
+    return next(
+        (
+            f"{sha}^"
+            for sha, identity in (row.split("\t", 1) for row in rows.splitlines())
+            if identity == tip.entry.copied
+        ),
+        tip.floor,
+    )
+
+
 def _earlier_patches(repo: Path, tip: Tip) -> set[str]:
     """Return the patch ids of every version of ``tip``'s branch and of each version's first commit."""
     patches: set[str] = set()
@@ -1031,9 +1054,10 @@ def _earlier_patches(repo: Path, tip: Tip) -> set[str]:
             "log", "-g", "--format=%H", f"refs/heads/{tip.entry.branch}", repo=repo
         ).split()
     ):
-        if commits := _commit_shas(repo, tip.floor, version):
+        floor = _version_floor(repo, tip, version)
+        if commits := _commit_shas(repo, floor, version):
             patches |= {
-                _squash_patch_id(repo, _squash_of(repo, tip.floor, commits, version)),
+                _squash_patch_id(repo, _squash_of(repo, floor, commits, version)),
                 _patch_id(repo, "show", "-U0", commits[0]),
             }
     return patches - {""}
@@ -1041,19 +1065,22 @@ def _earlier_patches(repo: Path, tip: Tip) -> set[str]:
 
 def _copies_of(
     repo: Path, base: str, tips: Sequence[Tip], squashes: Sequence[main_sync.Squash]
-) -> dict[str, str]:
-    """Map each squash's tip to its copy on main ahead of ``base``.
+) -> tuple[dict[str, str], set[str]]:
+    """Map each squash's tip to its copy on main ahead of ``base``, and return the extra copies to drop.
 
     A copy matches by the identity saved when it was copied, else by its first
     commit's author time and subject.
-    Either way it must hold the changes of the squash, of its first commit, or of an earlier version of the branch.
+    A sole match of the saved identity that touches the squash's files is the copy, since a hand resolution may have changed it.
+    Every other match that touches those files is an extra copy, such as a top-up.
+    Otherwise it must hold the changes of the squash, of its first commit, or of an earlier version of the branch.
     Else it matches by the patch of the squash.
 
     Raises:
-        AmbiguousCopy: Several main commits have a saved identity and none holds changes of the branch.
+        AmbiguousCopy: Several main commits have a saved identity, none holds changes of the branch and one does not touch its files.
     """
     free = _main_rows(repo, base)
     found: dict[str, str] = {}
+    extra: set[str] = set()
     for tip, squash in zip(tips, squashes, strict=True):
         if not (saved := tip.entry.copied):
             continue
@@ -1065,13 +1092,19 @@ def _copies_of(
             if _is_copy(repo, row[0], squash)
             or _patch_id(repo, "show", "-U0", row[0]) in _earlier_patches(repo, tip)
         ]
-        if len(matches) > 1 and not proven:
+        touching = [
+            row
+            for row in matches
+            if _paths(repo, row[0]) & _paths(repo, squash.floor, squash.tip)
+        ]
+        if len(matches) > 1 and not proven and len(touching) < len(matches):
             raise AmbiguousCopy(
                 f"several main commits match {identity[1]!r} and none is its copy"
             )
-        if proven:
-            free.remove(proven[0])
-            found[squash.tip] = proven[0][0]
+        if copy := proven or touching[:1]:
+            free = [row for row in free if row != copy[0] and row not in touching]
+            found[squash.tip] = copy[0][0]
+            extra |= {row[0] for row in touching} - {copy[0][0]}
     for squash in squashes:
         if squash.tip in found:
             continue
@@ -1096,7 +1129,21 @@ def _copies_of(
         ):
             free.remove(match)
             found[squash.tip] = match[0]
-    return found
+    return found, extra
+
+
+def _held_copies(
+    repo: Path, base: str, tips: Sequence[Tip], copies: Collection[str]
+) -> set[str]:
+    """Return the main copy of each skipped tip, found by its saved identity."""
+    rows = [row for row in _main_rows(repo, base) if row[0] not in copies]
+    return {
+        row[0]
+        for tip in tips
+        if tip.skipped is not None and tip.entry.copied
+        for row in rows
+        if "\t".join(row[1:]) == tip.entry.copied
+    }
 
 
 def _main_changes(
@@ -1118,7 +1165,7 @@ def _main_changes(
     replayed: set[str] = set()
     adds: list[main_sync.Squash] = []
     squashes = [_squash_of(repo, t.floor, t.commits, t.commits[-1]) for t in tips]
-    found = _copies_of(repo, base, tips, squashes)
+    found, extra = _copies_of(repo, base, tips, squashes)
     copies = {found[s.tip] for s in squashes if s.tip in found}
     rows = _main_rows(repo, base)
     age = {row[0]: n for n, row in enumerate(rows)}
@@ -1153,7 +1200,7 @@ def _main_changes(
                 adds.append(squash)
                 replayed.add(tip.entry.branch)
     later = _later_copies(repo, base, tips, found.values())
-    taken = {*found.values(), *later}
+    taken = {*found.values(), *later, *extra}
     merged: set[str] = set()
     for gone in landed:
         at, subject = gone.identity.split("\t", 1)
@@ -1170,7 +1217,7 @@ def _main_changes(
         merged.update(proven or matches)
     return (
         swaps,
-        moves | later | merged | _rewritten_copies(repo, base, tips, taken),
+        moves | later | merged | extra | _rewritten_copies(repo, base, tips, taken),
         copies,
         adds,
     )
@@ -1782,6 +1829,7 @@ class _RepoSync:
             print(f"{self.label}main not updated: {ambiguous}")
             self.status = 1
             return False
+        copies |= _held_copies(self.repo, self.base, tips, copies)
         changed = {squash.tip for squash in [*swaps.values(), *adds]}
         result = None
         if self.apply and (
