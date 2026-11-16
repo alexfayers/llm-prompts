@@ -1,4 +1,4 @@
-// Pins the questions awaiting the user, and each ASK line of a tool result, in a widget above the editor, so messages need not restate them, and restores the restate rule when there is no UI.
+// Pins the questions awaiting the user, and each ASK line of a tool result, in a widget above the editor, so messages need not restate them, resolves them when the user answers an ask_user call, and restores the restate rule when there is no UI.
 // Commands: /answer [<id> [<text>]] (also ctrl+shift+a)
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -10,6 +10,11 @@ const REMIND_TYPE = "pending-asks-remind";
 const REMIND_TURNS = 5;
 const ANSWER_SHORTCUT = "ctrl+shift+a";
 const ASK_LINE = /^ASK:[ \t]*(.*)$/gm;
+/** Tools whose results carry a fork's reply, whose asks the fork pins itself. */
+const FORK_REPLY_TOOLS = new Set(["fork", "result_fetch"]);
+const ASK_USER_TOOL = "ask_user";
+/** A fork reply starts here. Its ASK lines are the fork's own, which it pins itself. */
+const OUTCOME_LINE = /^OUTCOME /m;
 const RESTATE_RULE = `Where something awaits the user's decision, MUST restate EVERY pending ask in full in each message until it is answered - MUST NOT back-reference them ("the two from earlier", "the previous proposal").`;
 
 type AskEntry = { type: string; customType?: string; message?: { role?: string }; data?: { action?: "add" | "resolve"; id?: string; text?: string } };
@@ -42,12 +47,12 @@ const refresh = (ctx: AskContext) => {
 	ctx.ui.setWidget(WIDGET_KEY, asks.length ? [`Pending asks - /answer or ${ANSWER_SHORTCUT}`, ...lines(asks)] : undefined);
 };
 
-function pinAsk(pi: Pick<ExtensionAPI, "appendEntry">, ctx: AskContext, id: string, text: string): void {
+export function pinAsk(pi: Pick<ExtensionAPI, "appendEntry">, ctx: AskContext, id: string, text: string): void {
 	pi.appendEntry(ENTRY_TYPE, { action: "add", id, text });
 	refresh(ctx);
 }
 
-const resolveAsk = (pi: Pick<ExtensionAPI, "appendEntry">, ctx: AskContext, id: string) => {
+export const resolveAsk = (pi: Pick<ExtensionAPI, "appendEntry">, ctx: AskContext, id: string) => {
 	pi.appendEntry(ENTRY_TYPE, { action: "resolve", id });
 	refresh(ctx);
 };
@@ -82,10 +87,21 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", (_event, ctx) => refresh(ctx));
 	pi.on("session_tree", (_event, ctx) => refresh(ctx));
 
+	const openBeforeAskUser = new Map<string, string[]>();
+	pi.on("tool_call", (event, ctx) => {
+		if (event.toolName === ASK_USER_TOOL) openBeforeAskUser.set(event.toolCallId, openAsks(branchEntries(ctx)).map((ask) => ask.id));
+	});
+
 	pi.on("tool_result", (event, ctx) => {
-		if (event.isError) return;
+		const answered = openBeforeAskUser.get(event.toolCallId);
+		openBeforeAskUser.delete(event.toolCallId);
+		if (answered && !event.isError && !(event.details as { cancelled?: boolean } | undefined)?.cancelled) {
+			const open = new Set(openAsks(branchEntries(ctx)).map((ask) => ask.id));
+			for (const id of answered) if (open.has(id)) resolveAsk(pi, ctx, id);
+		}
+		if (event.isError || FORK_REPLY_TOOLS.has(event.toolName)) return;
 		const open = openAsks(branchEntries(ctx)).map((ask) => ask.text);
-		const text = event.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+		const text = event.content.map((block) => (block.type === "text" ? block.text : "")).join("\n").split(OUTCOME_LINE)[0];
 		for (const [index, [, ask]] of [...text.matchAll(ASK_LINE)].entries()) if (!open.includes(ask)) pinAsk(pi, ctx, `${event.toolCallId}-${index + 1}`, ask);
 	});
 

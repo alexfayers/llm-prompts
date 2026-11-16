@@ -1,5 +1,5 @@
 // Tells the model about a large prompt cache miss and its likely cause, by adding one line to the next tool result.
-// Env: PI_CACHE_RETENTION (long means a one hour cache, otherwise five minutes)
+// Env: PI_CACHE_RETENTION (long means a one hour cache, otherwise five minutes), PI_CONTEXT_CHILD (a delegate's handshake, whose first request misses by design)
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { changedPrefixParts } from "./prompt-cache-stabilizer.ts";
 
@@ -57,6 +57,7 @@ function findMiss(entries: Entry[], current: Request, prefixChanges: string[] = 
 export default function (pi: ExtensionAPI) {
 	let previousPrefix: Record<string, string> = {};
 	let prefixChanges: string[] = [];
+	let skipNext = Boolean(process.env.PI_CONTEXT_CHILD);
 	let pending: string | undefined;
 	pi.on("before_provider_request", (event) => {
 		const { current, changed } = changedPrefixParts(previousPrefix, event.payload as never);
@@ -67,6 +68,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("message_end", (event, ctx) => {
 		const message = event.message as { role: string; usage?: Usage; timestamp?: number };
 		if (message.role !== "assistant" || !message.usage) return;
+		if (skipNext) return void (skipNext = false);
 		pending = findMiss(ctx.sessionManager.getBranch() as Entry[], { usage: message.usage, timestamp: message.timestamp ?? Date.now() }, prefixChanges) ?? pending;
 	});
 	pi.on("turn_end", () => {

@@ -132,6 +132,7 @@ function makePi(state: Partial<FakePi>): FakePi & ExtensionAPI {
 		setModel: async (model: unknown) => ((pi.model = model), true),
 		sendUserMessage: async (...args: unknown[]) => void pi.sent.push(args),
 		appendEntry: (customType: string, data: unknown) => void pi.appended.push([customType, data]),
+		registerEntryRenderer: () => {},
 	};
 	return pi as FakePi & ExtensionAPI;
 }
@@ -309,4 +310,11 @@ export function makeEvents(): FakeEvents {
 		},
 	};
 	return events;
+}
+
+/** The provider/id model that integration tests run, from PI_CONTEXT_MODEL. */
+export function integrationModel(): string {
+	const model = process.env.PI_CONTEXT_MODEL;
+	if (!model) throw new Error("PI_CONTEXT_MODEL must name the model to run, as provider/id");
+	return model;
 }

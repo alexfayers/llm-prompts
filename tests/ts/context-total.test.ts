@@ -88,6 +88,19 @@ test("sampling reads live children and counts every child's usage in the tree", 
 	assert.deepEqual(tree, { tokens: 20 + 2000 + 20, cost: 3.5 });
 });
 
+test("fork runs become children whose seed cost before the fork started is not counted", async () => {
+	const startedAt = Date.parse("2026-01-02T00:00:00Z");
+	const stamped = (cost: number, timestamp: string) => line({ ...JSON.parse(costed(cost)), timestamp });
+	writeFileSync(join(dir, "f", "seed.jsonl"), stamped(5, "2026-01-01T00:00:00Z") + stamped(0.5, "2026-01-03T00:00:00Z") + assistant(3000));
+	ext.module.addForkChildren(scan, new Map(), [
+		{ id: "r1", name: "warm", role: "reader", state: "running", files: join(dir, "f"), startedAt },
+		{ id: "r2", name: "gone", role: "writer", state: "done", files: join(dir, "none"), startedAt },
+	]);
+	const { tree, nodes } = await ext.module.sampleChildren(scan, new Map());
+	assert.deepEqual(nodes.map((n: any) => [n.label, n.definition, n.state, n.tokens]), [["warm", "reader", "live", 3000], ["gone", "writer", "finished", null]]);
+	assert.equal(tree.cost, 0.5);
+});
+
 test("the total counts only live sessions and marks unknown and partial", () => {
 	const sample = {
 		nodes: [node("a", "live", 2000, 10000, 20), node("b", "live", null, null, null), node("c", "finished", 400, 1000, 40)],

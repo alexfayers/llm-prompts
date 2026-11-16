@@ -36,3 +36,14 @@ def test_lists_only_extensions_not_starting_with_a_summary(tmp_path: Path) -> No
     empty = _write_extension(tmp_path, "empty", "// \n// Does a thing.\n")
 
     assert find_missing_summary_header([tmp_path]) == [no_comment, empty, env_first]
+
+
+def test_directory_extension_is_checked_by_its_index_file_only(tmp_path: Path) -> None:
+    directory = tmp_path / "pi" / "extensions" / "suite"
+    directory.mkdir(parents=True)
+    index = directory / "index.ts"
+    index.write_text("import x from './helper.ts';\n", encoding="utf-8")
+    (directory / "helper.ts").write_text("export const x = 1;\n", encoding="utf-8")
+
+    assert find_missing_default_factory([tmp_path]) == [index]
+    assert find_missing_summary_header([tmp_path]) == [index]

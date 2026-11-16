@@ -35,6 +35,34 @@ describe("pending asks", () => {
 		assert.deepEqual(lastWidget(), ["Pending asks - /answer or ctrl+shift+a", "t1-1: use A or B?", "t1-2: keep it?"]);
 	});
 
+	test("the ASK lines of a fork or result_fetch result are left to the fork, which pins them itself", async () => {
+		const { ext, ctx, lastWidget } = await load();
+		for (const toolName of ["fork", "result_fetch"]) await ext.fire("tool_result", { toolCallId: toolName, toolName, content: [{ type: "text", text: "ASK: keep it?" }], isError: false }, ctx);
+		assert.equal(lastWidget(), undefined);
+	});
+
+
+	test("an ASK line after an OUTCOME line came from a fork reply through another tool and is left to the fork", async () => {
+		const { ext, ctx, lastWidget } = await load();
+		await ext.fire("tool_result", { toolCallId: "t1", toolName: "codemode", content: [{ type: "text", text: "ASK: mine?\nOUTCOME found-it ref:x\nASK: the fork's?" }], isError: false }, ctx);
+		assert.deepEqual(lastWidget(), ["Pending asks - /answer or ctrl+shift+a", "t1-1: mine?"]);
+	});
+
+	test("an answered ask_user call resolves the asks open before it, and a cancelled or failed one resolves none", async () => {
+		const { ext, ctx, lastWidget } = await load();
+		const askUser = async (toolCallId: string, details: object, isError = false) => {
+			await ext.fire("tool_call", { toolCallId, toolName: "ask_user", input: {} }, ctx);
+			await ext.fire("tool_result", { toolCallId, toolName: "ask_user", content: [{ type: "text", text: "answer" }], details, isError }, ctx);
+		};
+		await ext.callTool("asks", { action: "add", text: "pick a name" }, ctx);
+		await askUser("u1", { cancelled: true });
+		await askUser("u2", { cancelled: false }, true);
+		assert.match(lastWidget()!.join("\n"), /pick a name/);
+		await ext.fire("tool_call", { toolCallId: "u3", toolName: "ask_user", input: {} }, ctx);
+		await ext.callTool("asks", { action: "add", text: "later" }, ctx);
+		await ext.fire("tool_result", { toolCallId: "u3", toolName: "ask_user", content: [{ type: "text", text: "A" }], details: { cancelled: false }, isError: false }, ctx);
+		assert.deepEqual(lastWidget(), ["Pending asks - /answer or ctrl+shift+a", "a2: later"]);
+	});
 
 	test("without a UI nothing is drawn", async () => {
 		const { ext, widgets } = await load();

@@ -7,7 +7,7 @@ const assistant = (cacheRead: number, cacheWrite: number, timestamp: number) => 
 const result = { toolCallId: "c", toolName: "bash", input: {}, content: [{ type: "text", text: "out" }], isError: false };
 
 describe("cache miss notice", () => {
-	useEnv({ PI_CACHE_RETENTION: undefined });
+	useEnv({ PI_CONTEXT_CHILD: undefined, PI_CACHE_RETENTION: undefined });
 
 	test("tells the model once, on the next tool result, about a miss after a thinking level change", async () => {
 		const branch: unknown[] = [{ type: "message", message: assistant(100_000, 40_000, 0) }, { type: "thinking_level_change", thinkingLevel: "high" }];

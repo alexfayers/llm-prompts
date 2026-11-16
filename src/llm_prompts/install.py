@@ -802,6 +802,7 @@ class _PiAgent(_CodexAgent):
     """Pi agent that concatenates all rules into its global AGENTS.md file."""
 
     AGENTS_MD: ClassVar[str] = "AGENTS.md"
+    DELEGATE_AGENTS_MD: ClassVar[str] = "AGENTS.delegate.md"
 
 
 REMOVED_AGENTS = ("cline", "copilot")
@@ -818,6 +819,7 @@ AGENT_CLASSES: dict[str, type[_Agent]] = {
 # These are stripped from agent-specific files before install so they never
 # leak into the installed copy.
 _GATING_FRONTMATTER_KEYS = {
+    "audience",
     "generate_variants",
     "roles",
     "rules",
@@ -827,6 +829,7 @@ _GATING_FRONTMATTER_KEYS = {
 
 _AGENT_ROLES = ("coordinator", "reasoner", "worker", "surveyor", "reviewer")
 _RULE_ROLES = frozenset({"lead", *_AGENT_ROLES})
+_MAIN_AUDIENCE = "main"
 
 
 def _parse_roles(content: str, label: str) -> frozenset[str]:
@@ -838,30 +841,43 @@ def _parse_roles(content: str, label: str) -> frozenset[str]:
 
     Returns:
         The declared roles, or ``{"core"}`` when the rule declares none or
-        declares ``all``.
+        declares ``all``, plus ``main`` when ``audience: main`` keeps the rule
+        out of delegates.
 
     Raises:
         ValueError: ``roles`` is empty, malformed, or names an unknown role
-            (``core`` is the default and cannot be declared).
+            (``core`` is the default and cannot be declared), or ``audience``
+            is not ``main``.
     """
     split = split_frontmatter(content)
-    declared = [
-        line.partition(":")[2]
-        for line in (split[0] if split else [])
-        if line.partition(":")[0].strip() == "roles"
-    ]
-    if not declared:
-        return frozenset({"core"})
-    tokens = [t.strip() for t in declared[0].strip().strip("'\"").split(",")]
+    lines = split[0] if split else []
+
+    def declared(key: str) -> list[str]:
+        return [
+            line.partition(":")[2].strip()
+            for line in lines
+            if line.partition(":")[0].strip() == key
+        ]
+
+    audience = declared("audience")
+    if audience and audience[0] != _MAIN_AUDIENCE:
+        raise ValueError(
+            f"{label}: invalid audience '{audience[0]}' - use '{_MAIN_AUDIENCE}'"
+        )
+    extra = frozenset({_MAIN_AUDIENCE} if audience else ())
+    roles_value = declared("roles")
+    if not roles_value:
+        return frozenset({"core"}) | extra
+    tokens = [t.strip() for t in roles_value[0].strip("'\"").split(",")]
     if tokens == ["all"]:
-        return frozenset({"core"})
+        return frozenset({"core"}) | extra
     roles = frozenset(tokens)
     if "" in roles or not roles <= _RULE_ROLES:
         raise ValueError(
-            f"{label}: invalid roles '{declared[0].strip()}' - "
+            f"{label}: invalid roles '{roles_value[0]}' - "
             f"use 'all' (or omit roles) for a core rule, or any of {sorted(_RULE_ROLES)}"
         )
-    return roles
+    return roles | extra
 
 
 _CODEX_DOC_LIMIT = 32768
@@ -2212,14 +2228,22 @@ class _PiRuleBundle:
             name for name in self.texts if self.roles[name] & {"core", "lead"}
         )
 
-    def lead_text(self) -> str:
+    def lead_text(self, *, delegate: bool = False) -> str:
         """Return the global ``AGENTS.md`` text: the core and lead rules.
+
+        Args:
+            delegate: Leave out the ``audience: main`` rules, for
+                ``AGENTS.delegate.md``.
 
         Returns:
             The selected rules joined in installed-filename order.
         """
         return normalize_whitespace(
-            "\n\n".join(self.texts[name] for name in self.lead_names())
+            "\n\n".join(
+                self.texts[name]
+                for name in self.lead_names()
+                if not (delegate and _MAIN_AUDIENCE in self.roles[name])
+            )
         )
 
     def select(self, frontmatter: dict[str, str]) -> list[str]:
@@ -2994,28 +3018,31 @@ def _install_pi_rule_files(bundle: _PiRuleBundle, rules_dir: Path) -> set[str]:
 
 
 def _install_pi_lead_rules(agent: _Agent, bundle: _PiRuleBundle) -> set[str]:
-    """Write the global ``AGENTS.md`` holding the core and lead rules.
+    """Write the global ``AGENTS.md`` holding the core and lead rules, and
+    ``AGENTS.delegate.md`` holding them without the ``audience: main`` rules.
 
     Args:
         agent: The pi agent configuration.
         bundle: The rules pi installs.
 
     Returns:
-        The installed filename.
+        The installed filenames.
     """
     from .manifest import write_rendered_rules
 
     log("debug", f"[{agent.name}] Installing rules...")
-    output = bundle.lead_text()
-    for var in find_unreplaced_variables(output):
-        log("warn", f"Unreplaced variable '{{{{{var}}}}}' in {_PiAgent.AGENTS_MD}")
     dest_dir = agent.dest_dir("rules")
     dest_dir.mkdir(parents=True, exist_ok=True)
-    _write_if_changed(
-        dest_dir / _PiAgent.AGENTS_MD, output, _PiAgent.AGENTS_MD, "rules"
-    )
+    for filename, delegate in (
+        (_PiAgent.AGENTS_MD, False),
+        (_PiAgent.DELEGATE_AGENTS_MD, True),
+    ):
+        output = bundle.lead_text(delegate=delegate)
+        for var in find_unreplaced_variables(output):
+            log("warn", f"Unreplaced variable '{{{{{var}}}}}' in {filename}")
+        _write_if_changed(dest_dir / filename, output, filename, "rules")
     write_rendered_rules(agent.name, bundle.texts)
-    return {_PiAgent.AGENTS_MD}
+    return {_PiAgent.AGENTS_MD, _PiAgent.DELEGATE_AGENTS_MD}
 
 
 def _previous_pi_bundle_files(
@@ -3029,12 +3056,14 @@ def _previous_pi_bundle_files(
         agents_md: Pi's global ``AGENTS.md``.
 
     Returns:
-        The previous definitions, rule files and ``AGENTS.md``.
+        The previous definitions, rule files, ``AGENTS.md`` and
+        ``AGENTS.delegate.md``.
     """
+    agents_mds = (agents_md, agents_md.with_name(_PiAgent.DELEGATE_AGENTS_MD))
     return [
         f
         for f in previous_manifest.get("pi", {}).get("files", [])
-        if Path(f).parent in (agents_dir, _pi_rules_dir()) or Path(f) == agents_md
+        if Path(f).parent in (agents_dir, _pi_rules_dir()) or Path(f) in agents_mds
     ]
 
 
@@ -3196,8 +3225,9 @@ def _pi_defaults(fragments: list[Path]) -> dict[str, Any]:
 def _install_pi_extensions(
     source_dirs: list[Path], dest_dir: Path, previous_files: Collection[str]
 ) -> list[str]:
-    """Copy every ``*.ts`` pi extension from the source directories into ``dest_dir``.
+    """Copy every pi extension from the source directories into ``dest_dir``.
 
+    An extension is a ``*.ts`` file or a subdirectory holding an ``index.ts``, copied whole.
     A destination file that exists but was not installed by llm-prompts is left alone.
     A file installed last time and no longer a source is removed.
 
@@ -3213,7 +3243,11 @@ def _install_pi_extensions(
     for source_dir in source_dirs:
         if source_dir.is_dir():
             sources.update(
-                {path.name: path for path in sorted(source_dir.glob("*.ts"))}
+                {
+                    path.name: path
+                    for path in sorted(source_dir.glob("*.ts"))
+                    + sorted(path.parent for path in source_dir.glob("*/index.ts"))
+                }
             )
     if sources:
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -3226,11 +3260,20 @@ def _install_pi_extensions(
                 f"[pi] Skipped extension {name}: {dest} is not managed by llm-prompts.",
             )
             continue
-        _write_text(dest, _read_text(path))
+        if path.is_dir():
+            if dest.exists():
+                shutil.rmtree(dest)
+            shutil.copytree(path, dest)
+        else:
+            _write_text(dest, _read_text(path))
         installed.append(str(dest))
     for stale in set(previous_files) - set(installed):
-        if Path(stale).parent == dest_dir:
-            Path(stale).unlink(missing_ok=True)
+        stale_path = Path(stale)
+        if stale_path.parent == dest_dir:
+            if stale_path.is_dir():
+                shutil.rmtree(stale_path)
+            else:
+                stale_path.unlink(missing_ok=True)
     return installed
 
 

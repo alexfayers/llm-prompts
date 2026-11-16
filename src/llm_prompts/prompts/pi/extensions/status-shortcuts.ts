@@ -2,13 +2,13 @@
 // Commands: /board
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { listAsks, openAsks } from "./pending-asks.ts";
+import { forkRegistry } from "./pi-context/registry.ts";
 import { loadTowerDo } from "./tower-do-patch.ts";
 
 type Task = { key: string; subject?: string; status: string; owner?: string };
 
 const UNAVAILABLE = "unavailable";
-const liveForks = (): { name: string; state: string }[] =>
-	(globalThis as { [key: symbol]: { live(): { name: string; state: string }[] } | undefined })[Symbol.for("pi-context.registry")]?.live() ?? [];
+const liveForks = () => forkRegistry()?.live() ?? [];
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 function formatGit(porcelain: string | undefined): string {

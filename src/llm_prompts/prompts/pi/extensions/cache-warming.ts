@@ -1,9 +1,10 @@
 // Keeps the prompt cache warm while a tower-do task this session owns is in progress or a fork run is live, for up to 2 hours after the last request.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { forkRegistry } from "./pi-context/registry.ts";
 import { loadTowerDo } from "./tower-do-patch.ts";
 
 const MAX_IDLE_MS = 2 * 60 * 60 * 1000;
-const liveForkCount = (): number => (globalThis as { [key: symbol]: { live(): unknown[] } | undefined })[Symbol.for("pi-context.registry")]?.live().length ?? 0;
+const liveForkCount = (): number => forkRegistry()?.live().length ?? 0;
 
 export default function (pi: ExtensionAPI) {
 	let lastRequestAt = Date.now();

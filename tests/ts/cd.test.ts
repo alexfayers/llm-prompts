@@ -28,3 +28,16 @@ test("change_dir moves after the turn and continues", async () => {
 	assert.deepEqual(ext.ctx.switched, [join("/", "fork-of-s.jsonl")]);
 	assert.deepEqual(ext.ctx.continued, [["Directory changed. Continue the task."]]);
 });
+
+test("/cd refuses to move while a background fork is live", async () => {
+	const key = Symbol.for("pi-context.registry");
+	(globalThis as any)[key] = { live: () => [{ name: "a", background: true }, { name: "fg", background: false }] };
+	try {
+		const ext = await load();
+		await ext.runCommand("cd", "/");
+		assert.deepEqual(ext.ctx.switched, []);
+		assert.match(ext.ctx.notices[0][0], /background forks a are still running.*fork_cancel/);
+	} finally {
+		delete (globalThis as any)[key];
+	}
+});

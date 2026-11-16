@@ -1,10 +1,11 @@
-// Shows live context size and cost for the session and its agents.
+// Shows live context size and cost for the session and its forks.
 // Commands: /context-total [footer on|off]
 // Config: context-total.json keys footer, intervalSeconds
 import fs from "node:fs";
 import path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { forkRegistry, isLive, type Run } from "./pi-context/registry.ts";
 
 const BYTES_PER_TOKEN = 4;
 const MESSAGE_LINE_START = '{"type":"message"';
@@ -24,6 +25,7 @@ export type UsageTotals = { tokens: number; cost: number };
 type ContextUsage = { tokens: number | null; contextWindow: number; percent: number | null };
 type Entry = {
 	type?: string;
+	timestamp?: string;
 	provider?: string;
 	modelId?: string;
 	usage?: Usage;
@@ -37,10 +39,13 @@ export type Child = {
 	definition: string;
 	done: boolean;
 	usage?: ContextUsage;
+	/** Cost before this time belongs to another session, as in a fork's seed. */
+	since?: number;
 };
 
 export type Scan = {
 	ownerId: string;
+	since?: number;
 	offset: number;
 	usageTokens: number;
 	trailingBytes: number;
@@ -72,12 +77,12 @@ export type SampleOptions = {
 	windowOf?: (provider: string, modelId: string) => number | undefined;
 };
 
-export function createScan(ownerId: string): Scan {
-	return { ownerId, offset: 0, usageTokens: 0, trailingBytes: 0, usage: { tokens: 0, cost: 0 }, compacted: false, partial: false, children: new Map() };
+export function createScan(ownerId: string, since?: number): Scan {
+	return { ownerId, since, offset: 0, usageTokens: 0, trailingBytes: 0, usage: { tokens: 0, cost: 0 }, compacted: false, partial: false, children: new Map() };
 }
 
 function resetScan(scan: Scan): void {
-	Object.assign(scan, createScan(scan.ownerId), { usage: { tokens: scan.usage.tokens, cost: 0 } });
+	Object.assign(scan, createScan(scan.ownerId, scan.since), { usage: { tokens: scan.usage.tokens, cost: 0 } });
 }
 
 function validUsage(message: NonNullable<Entry["message"]>): number {
@@ -96,7 +101,7 @@ export function scanUsage(scan: Scan): UsageTotals {
 }
 
 export function feedEntry(scan: Scan, entry: Entry, size: number): void {
-	addUsage(scan, entry.type === "message" ? entry.message?.usage : entry.usage);
+	if (!scan.since || !entry.timestamp || Date.parse(entry.timestamp) >= scan.since) addUsage(scan, entry.type === "message" ? entry.message?.usage : entry.usage);
 	if (entry.type === "model_change") {
 		scan.provider = entry.provider;
 		scan.modelId = entry.modelId;
@@ -201,7 +206,7 @@ export async function sampleChildren(root: Scan, scans: Map<string, Scan>, optio
 	const touched: Scan[] = [root];
 	for (const child of listChildren(root)) {
 		let childScan = scans.get(child.sessionId);
-		if (!childScan) scans.set(child.sessionId, (childScan = createScan(child.sessionId)));
+		if (!childScan) scans.set(child.sessionId, (childScan = createScan(child.sessionId, child.since)));
 		touched.push(childScan);
 		await readIfPresent(childScan, child.sessionPath);
 		if (child.done) {
@@ -217,6 +222,31 @@ export async function sampleChildren(root: Scan, scans: Map<string, Scan>, optio
 		{ tokens: 0, cost: 0 },
 	);
 	return { nodes, partial: touched.some((scan) => scan.partial), session: scanUsage(root), tree };
+}
+
+function forkSessionFile({ files = "", model }: Run): string {
+	const seed = path.join(files, "seed.jsonl");
+	if (!model) return seed;
+	const sessions = path.join(files, "sessions");
+	const name = fs.existsSync(sessions) ? fs.readdirSync(sessions).find((file) => file.endsWith(".jsonl")) : undefined;
+	return name ? path.join(sessions, name) : seed;
+}
+
+/** Records each fork run as a child of the root, a finished one with its last sampled context. */
+export function addForkChildren(root: Scan, scans: Map<string, Scan>, runs: Run[]): void {
+	for (const run of runs) {
+		const done = !isLive(run);
+		const scan = scans.get(run.id);
+		root.children.set(run.id, {
+			sessionId: run.id,
+			sessionPath: forkSessionFile(run),
+			label: run.name,
+			definition: run.role,
+			done,
+			usage: done ? { tokens: scan ? scanTokens(scan) : null, contextWindow: 0, percent: null } : undefined,
+			since: run.startedAt,
+		});
+	}
 }
 
 const TOKENS_PER_K = 1000;
@@ -337,6 +367,7 @@ export default function (pi: ExtensionAPI) {
 
 	async function sample(ctx: ExtensionContext): Promise<{ lead: LeadUsage; sampled: Sample }> {
 		const root = syncLead(tracker, ctx.sessionManager.getSessionId(), ctx.sessionManager.getEntries() as Entry[]);
+		addForkChildren(root, scans, forkRegistry()?.all() ?? []);
 		const sampled = await sampleChildren(root, scans, {
 			windowOf: (provider, modelId) => ctx.modelRegistry.find(provider, modelId)?.contextWindow,
 		});

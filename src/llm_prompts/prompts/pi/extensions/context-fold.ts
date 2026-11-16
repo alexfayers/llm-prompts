@@ -16,7 +16,10 @@ const DEFAULT_PENDING_TOKENS = 30000;
 const DEFAULT_KEEP_TOKENS = 40000;
 const DEFAULT_IDLE_MIN_TOKENS = 5000;
 const CACHE_MS = 5 * 60_000;
-const LONG_CACHE_MS = 60 * 60_000;
+export const LONG_CACHE_MS = 60 * 60_000;
+
+/** How long a prompt cache lives: an hour with PI_CACHE_RETENTION=long, otherwise five minutes. */
+export const cacheLifetimeMs = (): number => (process.env.PI_CACHE_RETENTION === "long" ? LONG_CACHE_MS : CACHE_MS);
 const CHARS_PER_TOKEN = 4;
 const NEVER_FOLDED = new Set(["checkpoint", "asks", "ask_user", "compact_now", "fork", "reload_now", "transcript"]);
 const MIN_RESULT_CHARS = 800;
@@ -153,7 +156,7 @@ export default function (pi: ExtensionAPI) {
 		const lastAssistantAt = ([...event.messages] as Message[]).reverse().find((message) => message.role === "assistant")?.timestamp;
 		const last = lastRequestAt ?? lastAssistantAt;
 		if (!wasArmed || stopped || !IDLE_MODES.has(process.env.CONTEXT_FOLD ?? DEFAULT_MODE) || (process.env.CONTEXT_FOLD_IDLE ?? "on") === "off" || last === undefined) return;
-		if (Date.now() - last <= (process.env.PI_CACHE_RETENTION === "long" ? LONG_CACHE_MS : CACHE_MS)) return;
+		if (Date.now() - last <= cacheLifetimeMs()) return;
 		const entries = ctx.sessionManager.buildSessionProjection().entries as unknown as Projected[];
 		const plan = planFold(entries, ctx.sessionManager.getBranch() as unknown as Entry[], { keepTokens: keepTokens() });
 		if (plan.savedTokens < envNumber("CONTEXT_FOLD_IDLE_MIN_TOKENS", DEFAULT_IDLE_MIN_TOKENS)) return;
