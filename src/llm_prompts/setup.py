@@ -591,9 +591,9 @@ def _build_commands(
         the env must expose.
     """
     owner, *members = tools
-    name = _package_name(owner)
-    member_names = [_package_name(member) for member in members]
-    scripts = {_package_name(tool): _script_names(tool) for tool in tools}
+    name = package_name(owner)
+    member_names = [package_name(member) for member in members]
+    scripts = {package_name(tool): _script_names(tool) for tool in tools}
     return SharedEnv(
         name,
         _build_install_cmd(
@@ -602,7 +602,7 @@ def _build_commands(
         _build_upgrade_cmd(
             name,
             member_names,
-            {_package_name(t) for t in tools if str(t["name"]) in changed_local},
+            {package_name(t) for t in tools if str(t["name"]) in changed_local},
             _git_dependencies(tools),
         ),
         member_names,
@@ -629,15 +629,20 @@ def _build_install_cmd(
         cmd.extend(["--with-executables-from", ",".join(executable_members)])
     for package in [owner, *members]:
         if _is_local_path(str(package["source"])):
-            cmd.extend(["--no-sources-package", _package_name(package)])
+            cmd.extend(["--no-sources-package", package_name(package)])
     cmd.extend(["--reinstall", "--force"])
     return cmd
 
 
-def _package_name(tool: dict[str, Any]) -> str:
+def _canonical_name(name: str) -> str:
+    """Return the PEP 503 normalised form of a package name."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def package_name(tool: dict[str, Any]) -> str:
     """Return the canonical package name of a tool, falling back to its config name."""
     project = (_read_pyproject(tool) or {}).get("project", {})
-    return re.sub(r"[-_.]+", "-", str(project.get("name", tool["name"]))).lower()
+    return _canonical_name(str(project.get("name", tool["name"])))
 
 
 def _install_source(source: str) -> str:
@@ -649,20 +654,24 @@ def install_args(tools: Mapping[str, str]) -> list[str]:
     """Return the ``uv pip install`` arguments for tools given as name to source.
 
     Args:
-        tools: Tool names mapped to their configured sources.
+        tools: Tool names mapped to their configured sources. A remote source
+            may name its package as a ``<package> @ <url>`` requirement.
 
     Returns:
-        The expanded sources, then the flags that ignore local ``tool.uv.sources``.
+        The expanded sources, then the flags that ignore ``tool.uv.sources`` for them.
     """
     return [
         *(_install_source(source) for source in tools.values()),
         *(
             arg
             for name, source in tools.items()
-            if _is_local_path(source)
             for arg in (
                 "--no-sources-package",
-                _package_name({"name": name, "source": source}),
+                package_name({"name": name, "source": source})
+                if _is_local_path(source)
+                else _canonical_name(
+                    source.split(" @ ")[0] if " @ " in source else name
+                ),
             )
         ),
     ]
@@ -677,7 +686,7 @@ def missing_tools() -> dict[str, str]:
     return {
         str(tool["name"]): str(tool["source"])
         for tool in read_config().get("tools", [])
-        if _package_name(tool) not in installed
+        if package_name(tool) not in installed
     }
 
 
@@ -990,7 +999,7 @@ def run_setup(
             print(f"No tool named '{tool_filter}' in config.", file=sys.stderr)
             raise ExitReason("tool_not_configured")
         force_reinstall = {str(tools[0]["name"])}
-    package_names = {str(tool["name"]): _package_name(tool) for tool in tools}
+    package_names = {str(tool["name"]): package_name(tool) for tool in tools}
     force_reinstall = {package_names.get(n, n) for n in force_reinstall}
 
     changed_local = detect_changed_local_tools(tools)

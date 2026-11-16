@@ -427,6 +427,19 @@ def test_judge_uses_pi_when_it_is_on_path(pi_judge: FakeSubprocess) -> None:
     assert "AWS_REGION" not in kwargs["env"]
 
 
+def test_judge_reports_the_error_pi_replied_with(pi_judge: FakeSubprocess) -> None:
+    message = {"role": "assistant", "stopReason": "error", "errorMessage": "no profile"}
+    pi_judge.on_match(
+        lambda argv: argv[1:2] == ["-p"],
+        stdout=json.dumps({"type": "message_end", "message": message}),
+    )
+
+    outcome = run("judge", {"rubric": "r"}, text="x")
+
+    assert not outcome.passed
+    assert "no profile" in outcome.detail
+
+
 def test_judge_needs_a_pi_default_model(pi_judge: FakeSubprocess) -> None:
     pi_settings_path().unlink()
 

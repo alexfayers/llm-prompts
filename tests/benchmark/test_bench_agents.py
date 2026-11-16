@@ -47,6 +47,12 @@ def test_pi_models_come_from_the_pi_settings() -> None:
     assert DEFAULT_MODELS["pi"] == "test-model"
 
 
+def test_pi_judge_model_is_an_inference_profile_for_a_bare_bedrock_id() -> None:
+    pi_settings_path().write_text('{"defaultModel": "anthropic.claude-opus-5-5"}')
+
+    assert AGENTS["pi"].judge_model == "global.anthropic.claude-opus-5-5"
+
+
 @pytest.mark.parametrize("settings", [None, "{}", '{"defaultModel": ""}', "[]"])
 def test_pi_without_a_default_model_fails_naming_the_setting(
     settings: str | None,

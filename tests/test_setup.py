@@ -50,6 +50,19 @@ class TestReadPyproject:
         mock.assert_not_called()
 
 
+class TestInstallArgs:
+    def test_a_remote_source_without_a_package_name_uses_its_config_name(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        source = "git+https://github.com/user/repo.git"
+        assert setup.install_args({"Config_Name": source}) == [
+            source,
+            "--no-sources-package",
+            "config-name",
+        ]
+        assert not fake_subprocess.matching("clone")
+
+
 class TestFetchRemotePyproject:
     def test_git_missing(self, capsys: pytest.CaptureFixture[str]) -> None:
         with patch("llm_prompts.setup.shutil.which", return_value=None):
