@@ -196,6 +196,8 @@ class TestUvCommands:
             "cli",
             "--no-sources-package",
             "lib",
+            "--no-sources-package",
+            "git-member",
             "--reinstall",
             "--force",
         ]
@@ -436,6 +438,17 @@ class TestInstallPins:
         tools = [{"name": "a", "source": "git+https://x/a.git"}]
         env = setup._build_commands(tools, set(), {"a": "v0.2.0"})
         assert "git+https://x/a.git@v0.2.0" in env.install_cmd
+
+    def test_install_command_ignores_uv_sources_of_remote_tools(self) -> None:
+        tools = [
+            {"name": "a", "source": "git+https://x/a.git"},
+            {"name": "b", "source": "git+https://x/b.git"},
+        ]
+        cmd = setup._build_commands(tools, set(), {"b": "v0.1.1"}).install_cmd
+        flags = [
+            cmd[i + 1] for i, arg in enumerate(cmd) if arg == "--no-sources-package"
+        ]
+        assert flags == ["a", "b"]
 
 
 class TestRunSetup:
