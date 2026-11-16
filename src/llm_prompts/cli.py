@@ -1386,7 +1386,7 @@ def _run_command(
         "--depends-on",
         nargs=2,
         metavar=("BRANCH", "TOOL:BRANCH"),
-        help="Make BRANCH depend on TOOL:BRANCH, stacking it when in the same repo.",
+        help="Make BRANCH depend on TOOL:BRANCH in another repo.",
     )
     sync_parser.add_argument(
         "--no-depends-on",

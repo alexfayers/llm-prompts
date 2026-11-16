@@ -135,11 +135,10 @@ def test_unreadable_entry_is_skipped_with_a_warning_and_backed_up(
     assert json.loads(backup.read_text(encoding="utf-8")) == data
 
 
-def test_links_and_base_round_trip_and_old_records_load(tmp_path: Path) -> None:
+def test_links_round_trip_and_old_records_load(tmp_path: Path) -> None:
     path = tmp_path / "record.json"
     linked = _entry(
         depends_on=(Link("/r", "feat/a", "o/r#7"),),
-        base="abc",
         dropped_refs=("o/r#3",),
         copied="1700000000\tfeat: a",
     )
@@ -170,13 +169,11 @@ def test_links_and_base_round_trip_and_old_records_load(tmp_path: Path) -> None:
     [old] = load_entries(path)
     assert (
         old.depends_on,
-        old.base,
         old.dropped_refs,
         old.copied,
         old.synced_title,
     ) == (
         (),
-        None,
         (),
         None,
         "",

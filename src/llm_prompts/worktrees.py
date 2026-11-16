@@ -34,7 +34,6 @@ class Link(NamedTuple):
 class WorktreeEntry(NamedTuple):
     """One worktree branch that is one PR, with the state last seen for it.
 
-    ``base`` is the lower commit a same-repo stacked branch sits on.
     ``dropped_refs`` are refs of removed links whose Depends on line sync wrote
     and has not yet taken out of the PR body.
     ``copied`` is the author time and subject of the first commit when sync last
@@ -54,7 +53,6 @@ class WorktreeEntry(NamedTuple):
     remote_head: str | None
     ready: bool = False
     depends_on: tuple[Link, ...] = ()
-    base: str | None = None
     dropped_refs: tuple[str, ...] = ()
     copied: str | None = None
     why: str = ""

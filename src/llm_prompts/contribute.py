@@ -678,6 +678,10 @@ def _link_branches(
 ) -> str:
     """Record that ``branch`` depends on the ``TOOL:BRANCH`` named by ``spec``."""
     lower_key, lower_branch = _spec_target(tools, spec)
+    if lower_key == _repo_key(repo):
+        raise LookupError(
+            f"{spec} is in the same repo: put {branch}'s change in {lower_branch}'s worktree"
+        )
     lower = _find(entries, lower_key, lower_branch)
     if lower is None:
         raise LookupError(f"{spec}: not recorded")
@@ -695,39 +699,13 @@ def _link_branches(
     link = Link(lower_key, lower_branch)
     if _has_cycle(entries, dependent, link):
         raise LookupError(f"{spec}: {branch} would make a cycle")
-    base = None
-    if lower_key == dependent.repo:
-        if any(old.repo == dependent.repo for old in dependent.depends_on):
-            raise LookupError(f"{branch} already stacks on another branch of this repo")
-        base = _stack_base(repo, branch, lower_branch)
-        _refuse_small_stack(repo, lower_branch, branch)
     return _entry_edit(
         repo,
         entries,
         branch,
-        lambda e: e._replace(depends_on=(*e.depends_on, link), base=base or e.base),
+        lambda e: e._replace(depends_on=(*e.depends_on, link)),
         f"depends on {spec}",
     )
-
-
-def _refuse_small_stack(repo: Path, lower: str, upper: str) -> None:
-    """Raise when the diff the upper PR would show is small enough for one worktree."""
-    lines, binary = _diff_lines(repo, base_ref(repo), f"refs/heads/{upper}")
-    limit = yappy_limits()["lines"]
-    if not binary and lines <= limit:
-        raise LookupError(
-            f"{lower} and {upper} change {lines} lines together, within the "
-            f"slightly-yappy guideline of {limit}. Combine them into one worktree."
-        )
-
-
-def _stack_base(repo: Path, upper: str, lower: str) -> str:
-    """Return the tip of ``lower`` when ``upper`` is on it."""
-    tip = _git("rev-parse", f"refs/heads/{lower}", repo=repo)
-    upper_ref = f"refs/heads/{upper}"
-    if not _contains(repo, tip, upper_ref):
-        raise LookupError(f"{upper} is not on {lower}; rebase it onto {lower} first")
-    return tip
 
 
 def _without_link(entry: WorktreeEntry, link: Link) -> WorktreeEntry:
@@ -735,7 +713,6 @@ def _without_link(entry: WorktreeEntry, link: Link) -> WorktreeEntry:
     written = (link.ref,) if entry.pr is not None and link.ref else ()
     return entry._replace(
         depends_on=tuple(old for old in entry.depends_on if old != link),
-        base=None if link.repo == entry.repo else entry.base,
         dropped_refs=(*entry.dropped_refs, *written),
     )
 
@@ -864,12 +841,12 @@ class Tip(NamedTuple):
 
 
 def _tips(repo: Path, base: str, entries: Sequence[WorktreeEntry]) -> list[Tip]:
-    """Return each entry's commits on its floor, which is the lower commit for a stacked entry."""
+    """Return each entry's commits on the base."""
     return [
         Tip(
             entry,
-            entry.base or base,
-            _commit_shas(repo, entry.base or base, f"refs/heads/{entry.branch}"),
+            base,
+            _commit_shas(repo, base, f"refs/heads/{entry.branch}"),
             _skip_reason(repo, base, entry, f"refs/heads/{entry.branch}", entries),
         )
         for entry in entries
@@ -1156,49 +1133,24 @@ def _main_changes(
 ]:
     """Return the main commits to swap for newer squashes, the main commits to drop, the copies on main and the squashes to replay on top.
 
-    A changed squash of a stacked branch replaces its copy in place when the copy is newer than its lower's.
-    Otherwise it replays on top with its old copy dropped, and so do the branches stacked above it.
+    A changed squash replaces its copy in place.
     Main commits copied from earlier versions of a branch's history are dropped, and so are the copies of ``landed`` squashes, given by identity, whatever changes review made since.
     """
     swaps: dict[str, main_sync.Squash] = {}
-    moves: set[str] = set()
-    replayed: set[str] = set()
     adds: list[main_sync.Squash] = []
     squashes = [_squash_of(repo, t.floor, t.commits, t.commits[-1]) for t in tips]
     found, extra = _copies_of(repo, base, tips, squashes)
     copies = {found[s.tip] for s in squashes if s.tip in found}
     rows = _main_rows(repo, base)
-    age = {row[0]: n for n, row in enumerate(rows)}
-    copy_of = {
-        t.entry.branch: found[s.tip]
-        for s, t in zip(squashes, tips, strict=True)
-        if s.tip in found
-    }
-    for squash, tip in zip(squashes, tips, strict=True):
+    for squash in squashes:
         copy = found.get(squash.tip)
-        lower = next(
-            (k.branch for k in tip.entry.depends_on if k.repo == tip.entry.repo), None
-        )
-        follows = lower in replayed
         if copy is None:
             adds.append(squash)
-            replayed.add(tip.entry.branch)
-        elif (
-            follows
-            or _commit_identity(repo, copy) != _commit_identity(repo, squash.first)
-            or (
-                _patch_id(repo, "show", "-U0", copy) != _squash_patch_id(repo, squash)
-                and not main_sync.replays_to(repo, f"{copy}^", squash, copy)
-            )
+        elif _commit_identity(repo, copy) != _commit_identity(repo, squash.first) or (
+            _patch_id(repo, "show", "-U0", copy) != _squash_patch_id(repo, squash)
+            and not main_sync.replays_to(repo, f"{copy}^", squash, copy)
         ):
-            if tip.entry.base is None or (
-                not follows and lower in copy_of and age[copy] < age[copy_of[lower]]
-            ):
-                swaps[copy] = squash
-            else:
-                moves.add(copy)
-                adds.append(squash)
-                replayed.add(tip.entry.branch)
+            swaps[copy] = squash
     later = _later_copies(repo, base, tips, found.values())
     taken = {*found.values(), *later, *extra}
     merged: set[str] = set()
@@ -1217,7 +1169,7 @@ def _main_changes(
         merged.update(proven or matches)
     return (
         swaps,
-        moves | later | merged | extra | _rewritten_copies(repo, base, tips, taken),
+        later | merged | extra | _rewritten_copies(repo, base, tips, taken),
         copies,
         adds,
     )
@@ -1433,7 +1385,7 @@ class _RepoSync:
         """Return the entry's own commits on its base, oldest first."""
         return [
             _commit_of(self.repo, sha)
-            for sha in _commit_shas(self.repo, entry.base or self.base, ref)
+            for sha in _commit_shas(self.repo, self.base, ref)
         ]
 
     def observe(self) -> None:
@@ -1501,8 +1453,6 @@ class _RepoSync:
     def blocker(self, entry: WorktreeEntry, tip: str) -> str | None:
         """Return why a merged worktree must stay, or None when it holds nothing the PR lacks."""
         pr = self.prs[entry.pr or 0]
-        if above := self.stacked_on(entry):
-            return f"{above[0].branch} sits on it"
         if tip != pr.head_sha:
             return "the branch has commits the PR lacks"
         if _git("status", "--porcelain", repo=Path(entry.path)):
@@ -1551,134 +1501,12 @@ class _RepoSync:
             self.say(entry, message)
         self.cleanup = []
 
-    def stack_link(self, entry: WorktreeEntry) -> Link | None:
-        return next((k for k in entry.depends_on if k.repo == entry.repo), None)
-
-    def stacked_on(self, lower: WorktreeEntry) -> list[WorktreeEntry]:
-        """Return the unmerged entries stacked directly on ``lower``."""
+    def open_entries(self) -> list[WorktreeEntry]:
+        """Return the unmerged entries whose branches exist."""
         return [
             e
-            for e in self.open_entries()
-            if (link := self.stack_link(e)) and link.branch == lower.branch
-        ]
-
-    def above(self, branch: str) -> list[str]:
-        """Return the branches that sit on ``branch``, directly or not."""
-        found: list[str] = []
-        pending = [branch]
-        while pending:
-            lower = pending.pop()
-            for entry in self.entries:
-                link = self.stack_link(entry)
-                if link and link.branch == lower and entry.branch not in found:
-                    found.append(entry.branch)
-                    pending.append(entry.branch)
-        return found
-
-    def edit_blocker(self, entry: WorktreeEntry) -> str | None:
-        """Return why sync must not rewrite ``entry``'s branch or PR body, or None when it may."""
-        if entry.pr is not None:
-            pr = self.prs.get(entry.pr)
-            if pr is None or not pr.is_draft:
-                return f"PR #{entry.pr} is not a draft"
-        if operation := main_sync._operation_in_progress(Path(entry.path)):
-            return f"a {operation} is in progress"
-        if _git("status", "--porcelain", repo=Path(entry.path)):
-            return "the worktree has uncommitted changes"
-        return None
-
-    def on(self, entry: WorktreeEntry, ref: str) -> bool:
-        """Return whether the entry's branch sits on ``ref``."""
-        return _contains(self.repo, ref, f"refs/heads/{entry.branch}")
-
-    def restack(self) -> None:
-        """Rebase each stacked branch onto its lower's new tip, or onto main once the lower merged or its unpublished branch was deleted, lowest first."""
-        held: set[str] = set()
-        for entry in self.open_entries():
-            link = self.stack_link(entry)
-            lower = self.dependency(link) if link else None
-            if (
-                link is None
-                or lower is None
-                or entry.base is None
-                or not Path(entry.path).exists()
-            ):
-                continue
-            merged = self.merged(lower)
-            abandoned = not merged and not _branch_exists(self.repo, lower.branch)
-            if abandoned and lower.pr is not None:
-                continue
-            released = merged or abandoned
-            if link.branch in held:
-                held.add(entry.branch)
-                continue
-            target = self.base if released else self.tip(lower)
-            if target == entry.base and not released:
-                continue
-            named = (
-                f"main ({lower.branch} {'was deleted' if abandoned else 'merged'})"
-                if released
-                else lower.branch
-            )
-            if self.on(entry, target) and not abandoned:
-                self.update(
-                    entry,
-                    **(
-                        _without_link(entry, link)._asdict()
-                        if released
-                        else {"base": target}
-                    ),
-                )
-                continue
-            reason = self.edit_blocker(entry)
-            if reason is None and not self.on(entry, entry.base):
-                reason = "it is not on its base"
-            if reason is None and not self.apply:
-                self.say(entry, f"would restack onto {named}")
-                continue
-            if reason is None:
-                done = subprocess.run(
-                    ["git", "-C", entry.path, "rebase", "--onto", target, entry.base],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                if done.returncode != 0:
-                    subprocess.run(
-                        ["git", "-C", entry.path, "rebase", "--abort"],
-                        capture_output=True,
-                        check=False,
-                    )
-                    reason = "the rebase does not apply"
-            if reason is not None:
-                held.add(entry.branch)
-                above = self.above(entry.branch)
-                left = f"; {', '.join(above)} left alone too" if above else ""
-                self.say(entry, f"not restacked ({reason}){left}")
-                continue
-            if released:
-                entry = self.update(entry, **_without_link(entry, link)._asdict())
-            else:
-                entry = self.update(entry, base=target)
-            self.say(entry, f"restacked onto {named}")
-
-    def open_entries(self) -> list[WorktreeEntry]:
-        """Return the unmerged entries with each stack lower before the branches above it."""
-        open_ = {
-            e.branch: e
             for e in self.entries
             if not self.merged(e) and _branch_exists(self.repo, e.branch)
-        }
-        graph = {
-            branch: {
-                link.branch
-                for link in entry.depends_on
-                if link.repo == entry.repo and link.branch in open_
-            }
-            for branch, entry in open_.items()
-        }
-        return [
-            open_[branch] for branch in graphlib.TopologicalSorter(graph).static_order()
         ]
 
     def merged(self, entry: WorktreeEntry) -> bool:
@@ -1693,12 +1521,6 @@ class _RepoSync:
                 self.update(entry, path=str(checked_out[entry.branch]))
                 continue
             exists = _branch_exists(self.repo, entry.branch)
-            if (above := self.stacked_on(entry)) and (
-                exists or entry.pr is None or self.merged(entry)
-            ):
-                state = "merged" if self.merged(entry) else "worktree is gone"
-                self.say(entry, f"{state}, but {above[0].branch} sits on it; kept")
-                continue
             if (
                 self.merged(entry)
                 and exists
@@ -1729,7 +1551,6 @@ class _RepoSync:
                 self.adopt(entry)
         self.observe()
         self.landed = self.landed_copies()
-        self.restack()
         self.forget_gone()
         self.remove_merged()
         for entry in self.open_entries():
@@ -1738,7 +1559,6 @@ class _RepoSync:
                 and self.relation(entry) == "pull"
             ):
                 self.pull(entry)
-        self.restack()
         if self.copy_into_main(fail_stopped=True):
             self.finish_cleanup()
         self.publish()
@@ -1749,7 +1569,7 @@ class _RepoSync:
         return [
             Landed(
                 entry.copied,
-                _squash_of(self.repo, floor, commits, self.tip(entry)),
+                _squash_of(self.repo, self.base, commits, self.tip(entry)),
             )
             for entry in self.entries
             if entry.copied
@@ -1758,8 +1578,7 @@ class _RepoSync:
             and _squash_landed(self.repo, self.main_base, entry.pr)
             and _branch_exists(self.repo, entry.branch)
             and self.tip(entry) == self.prs[entry.pr].head_sha
-            and (floor := entry.base or self.base)
-            and (commits := _commit_shas(self.repo, floor, self.tip(entry)))
+            and (commits := _commit_shas(self.repo, self.base, self.tip(entry)))
         ]
 
     def copy_only(self) -> tuple[int, list[WorktreeEntry]]:
@@ -2188,7 +2007,7 @@ def _held_branch(
     for other in entries:
         if other.branch == entry.branch or not _branch_exists(repo, other.branch):
             continue
-        theirs = _commit_shas(repo, other.base or base, f"refs/heads/{other.branch}")
+        theirs = _commit_shas(repo, base, f"refs/heads/{other.branch}")
         first = _commit_identity(repo, theirs[0]) if theirs else None
         if first in identities and (
             first != identities[0] or len(theirs) < len(commits)
@@ -2205,7 +2024,7 @@ def _skip_reason(
     entries: Sequence[WorktreeEntry],
 ) -> str | None:
     """Return why ``ref`` is not copied or pushed, or None when it has commits of its own on its floor."""
-    commits = _commit_shas(repo, entry.base or base, ref)
+    commits = _commit_shas(repo, base, ref)
     if not commits:
         return "no commits"
     local_main = [sha for sha in commits if _on_main_only(repo, base, entry, sha)]
@@ -2217,7 +2036,7 @@ def _skip_reason(
 def _list_line(
     repo: Path, base: str, entry: WorktreeEntry, entries: Sequence[WorktreeEntry]
 ) -> str:
-    floor, ref = entry.base or base, f"refs/heads/{entry.branch}"
+    floor, ref = base, f"refs/heads/{entry.branch}"
     pr = f"PR #{entry.pr} ({entry.pr_state or 'unknown'})" if entry.pr else "no PR"
     if not _branch_exists(repo, entry.branch):
         detail = "skipped: branch is gone"
