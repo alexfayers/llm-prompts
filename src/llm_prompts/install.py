@@ -32,11 +32,6 @@ from jinja2 import TemplateError
 from .claude_models import catalogue
 from .colors import Color, paint
 from .exit_reason import ExitReason
-from .herdsman import (
-    HERDSMAN_BUNDLED_RESETS,
-    HERDSMAN_DISABLED_DEFINITIONS,
-    herdr_available,
-)
 from .home import is_rooted, set_root, user_home
 from .mcp import (
     CLAUDE_NAMING,
@@ -1967,7 +1962,6 @@ def _expand_agent_variants(
 
 
 _ROLE_VARIANTS_FILE = "agent-role-variants.json"
-_ROLE_SWITCH_EXTENSION = "role-switch"
 
 
 def _pi_role_variants(
@@ -2649,10 +2643,6 @@ def _herdsman_agent_content(
             lines.append(f"skills: {json.dumps(resolve_skills(value))}")
         elif key == "extensions":
             names = frontmatter_list(value)
-            if _PI_SWITCHED_ROLES & {
-                n.strip() for n in frontmatter.get("allowed_subagents", "").split(",")
-            }:
-                names = [_ROLE_SWITCH_EXTENSION, *names]
             lines.append("noExtensions: true")
             if paths := resolve_extensions(names):
                 lines.append(f"extensions: {json.dumps(paths)}")
@@ -2660,12 +2650,6 @@ def _herdsman_agent_content(
             raise ValueError(
                 f"No herdsman equivalent for agent frontmatter key '{key}'"
             )
-    lines += [
-        f"{key}: {json.dumps(value)}"
-        for key, value in HERDSMAN_BUNDLED_RESETS.get(
-            frontmatter.get("name", ""), {}
-        ).items()
-    ]
     inherit = str(frontmatter.get("omitClaudeMd") != "true").lower()
     lines += [
         "inheritSkills: true",
@@ -2833,51 +2817,6 @@ def _pi_agent_dialect(
             + [d / "pi" / "agent-additions.json" for d in overlay_dirs]
         ),
     )
-
-
-def _install_disabled_definitions(agents_dir: Path) -> set[str]:
-    """Write overlays that disable herdsman's bundled agent definitions.
-
-    Args:
-        agents_dir: Destination agents directory.
-
-    Returns:
-        Set of installed overlay filenames.
-    """
-    managed: set[str] = set()
-    for name in HERDSMAN_DISABLED_DEFINITIONS:
-        filename = f"{name}.md"
-        dest = agents_dir / filename
-        if dest.is_symlink():
-            dest.unlink()
-        _write_if_changed(
-            dest,
-            f"---\nname: {name}\nenabled: false\n---\n",
-            f"agent {filename}",
-            "agents",
-        )
-        managed.add(filename)
-    return managed
-
-
-def _install_herdsman_overlays(overlays_dir: Path, coordinators_dir: Path) -> set[str]:
-    """Copy overlays of herdsman's coordinator profiles verbatim.
-
-    Args:
-        overlays_dir: Source directory of overlay definitions.
-        coordinators_dir: Destination coordinator profiles directory.
-
-    Returns:
-        Set of installed overlay filenames.
-    """
-    managed: set[str] = set()
-    for src in sorted(overlays_dir.glob("*.md")):
-        dest = coordinators_dir / src.name
-        if dest.is_symlink():
-            dest.unlink()
-        _write_if_changed(dest, _read_text(src), f"role {src.name}", "roles")
-        managed.add(src.name)
-    return managed
 
 
 def _generated_agents(
@@ -4494,16 +4433,6 @@ def main(
                         "agents",
                     )
                     installed_files["pi"].append(str(variants_path))
-            if agents_target == "pi":
-                managed_agents |= _install_disabled_definitions(agents_dest)
-                coordinators_dest = agents_dest.parent / "coordinators"
-                managed_roles = _install_herdsman_overlays(
-                    root_dir / "pi" / "herdsman-overlays", coordinators_dest
-                )
-                _check_unmanaged(coordinators_dest, managed_roles, "pi coordinators")
-                installed_files["pi"].extend(
-                    str(coordinators_dest / r) for r in managed_roles
-                )
             _check_unmanaged(agents_dest, managed_agents, f"{agents_target} agents")
             installed_files[agents_target].extend(
                 str(agents_dest / a) for a in managed_agents
@@ -4583,8 +4512,6 @@ def main(
                 if pi_bundle_held
                 else {name: sorted(r) for name, r in pi_bundle.roles.items()}
             )
-            if not herdr_available():
-                log("warn", "[pi] `herdr` not found on PATH. pi needs herdr to run.")
             pi_skills = _claude_plugin_skill_dirs()
             if pi_skills is None:
                 pi_skills = previous_manifest.get("pi", {}).get("skills", [])

@@ -10,7 +10,7 @@ export function ledgerRecord(event: ToolCallEvent, ctx: Pick<ExtensionContext, "
 	return {
 		ts: Date.now(),
 		session: ctx.sessionManager.getSessionId(),
-		role: process.env.PI_HERDSMAN_AGENT_DEFINITION ?? process.env.PI_CONTEXT_ROLE ?? "main",
+		role: process.env.PI_CONTEXT_ROLE ?? "main",
 		tool: event.toolName,
 		nested: event.parentToolCallId !== undefined,
 		...(typeof path === "string" && path.endsWith(SKILL_FILE) ? { skillPath: path } : {}),

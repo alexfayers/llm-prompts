@@ -1,11 +1,8 @@
-// Closes finished agent panes in Herdr, reports merged worktrees, and kills orphaned processes left by dead agent panes, all within the current workspace.
-// Commands: /pane-reaper on|off|close <pane-id>
-// Config: pane-reaper.json keys enabled, graceSeconds, intervalSeconds
+// Reports merged worktrees and kills orphaned processes left by dead agent panes in Herdr, all within the current workspace.
+// Commands: /pane-reaper on|off
+// Config: pane-reaper.json keys enabled, intervalSeconds
 // Env: HERDR_ENV (1 when running inside Herdr)
-// Env: PI_HERDSMAN_MAILBOX (set for managed agents, which never run the periodic check)
 // Env: PI_SUBAGENT_CHILD (set for subagents, which never run the periodic check)
-// Env: PI_SESSION_ID (own session id, kept out of the sweep)
-// Env: PANE_REAPER_DRY_RUN (set to report orphaned processes without killing them)
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -14,50 +11,31 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const execFileAsync = promisify(execFile);
-const KNOWN_STATE_VERSION = 5;
-const MAILBOX_DIR = path.join("pi-herdsman", "runtime", `mailboxes-v${KNOWN_STATE_VERSION}`);
 const CONFIG_FILE = "pane-reaper.json";
-const USAGE = "Usage: /pane-reaper [on|off|close <pane-id>]";
-const NO_HERDR_WARNING = "pi is not running inside Herdr. Delegation and the herdsman agent tools need Herdr, so start pi from a Herdr pane.";
+const USAGE = "Usage: /pane-reaper [on|off]";
 const MS_PER_SECOND = 1000;
 const MS_PER_HOUR = 60 * 60 * MS_PER_SECOND;
 const FRESH_HOURS = 24;
 const HERDR_TIMEOUT_MS = 5000;
-const DEFAULT_GRACE_SECONDS = 900;
 const DEFAULT_INTERVAL_SECONDS = 60;
 const MIN_INTERVAL_SECONDS = 10;
 const PS_TIMEOUT_MS = 5000;
 const PS_FIELDS = "pid=,uid=,ppid=,pgid=,stat=,%cpu=,time=,lstart=,command=";
-const DRY_RUN_VARIABLE = "PANE_REAPER_DRY_RUN";
 const INIT_PID = 1;
 const COMMAND_PREVIEW_LENGTH = 80;
 const SECONDS_PER_MINUTE = 60;
 
 type Pane = {
 	pane_id: string;
-	tab_id: string;
 	workspace_id?: string;
 	cwd?: string;
 	foreground_cwd?: string;
-	agent_status?: string;
-	display_agent?: string;
-	agent_session?: { value?: string };
-	tokens?: Record<string, string>;
 };
-type State = { version: number; ownerSessionId: string; paneId: string; activeRequestId?: string; completedRequestId?: string };
-export type Candidate = { paneId: string; tabId: string; label: string; reason: string; closeArgs: string[] };
-export type SweepOptions = { now: number; graceSeconds: number; selfSessionId: string; workspaceId: string };
-export type SweepResult = { closed: Candidate[]; asked: Candidate[] };
 export type Worktree = { path: string; branch: string; reason: string };
 export type WorktreeResult = { candidates: Worktree[]; kept: Worktree[] };
 type Checkout = { path: string; head: string; branch: string };
 type Workspace = { workspace_id: string; worktree?: { checkout_path?: string } };
-type Classified = { safe: Candidate[]; flagged: Candidate[] };
 
-const READY_STATUSES = new Set(["idle", "done"]);
-const SESSION_ID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
-const SAFE_REASON = "finished and idle, owner session is gone";
-const CLOSE_FAILED_REASON = "closing it failed";
 const CANDIDATE_REASON = "merged into main and clean";
 const NO_COMMITS_REASON = "branch has no commits of its own";
 const BRANCH_PREFIX = "refs/heads/";
@@ -91,92 +69,6 @@ export async function currentWorkspaceId(): Promise<string | undefined> {
 
 async function listWorkspaces(): Promise<Workspace[]> {
 	return (JSON.parse(await herdr(["workspace", "list"])) as { result: { workspaces: Workspace[] } }).result.workspaces;
-}
-
-function readStates(): Map<string, State> | undefined {
-	const root = path.join(getAgentDir(), MAILBOX_DIR);
-	const states = new Map<string, State>();
-	try {
-		for (const name of fs.readdirSync(root)) {
-			const state = JSON.parse(fs.readFileSync(path.join(root, name, "state.json"), "utf8")) as State;
-			if (state.version !== KNOWN_STATE_VERSION) return undefined;
-			states.set(state.paneId, state);
-		}
-	} catch {
-		return undefined;
-	}
-	return states;
-}
-
-function liveSessionIds(panes: Pane[], selfSessionId: string): Set<string> {
-	const ids = new Set([selfSessionId]);
-	for (const pane of panes) for (const id of pane.agent_session?.value?.match(SESSION_ID) ?? []) ids.add(id);
-	return ids;
-}
-
-function ageMs(pane: Pane, now: number): number {
-	const started = Number(pane.tokens?.started);
-	return Number.isFinite(started) ? now - started : Number.POSITIVE_INFINITY;
-}
-
-function unsafeReason(pane: Pane, state: State | undefined): string | undefined {
-	if (!state) return "managed pane has no herdsman state file";
-	if (!READY_STATUSES.has(pane.agent_status ?? "")) return `pane is ${pane.agent_status ?? "in an unknown state"}`;
-	if (state.activeRequestId || !state.completedRequestId) return "task has not finished";
-	if (pane.tokens?.request !== state.completedRequestId) return "pane has a newer request than the finished one";
-	return undefined;
-}
-
-function closeArgsFor(pane: Pane, panes: Pane[]): string[] {
-	const aloneInTab = panes.every((other) => other === pane || other.tab_id !== pane.tab_id);
-	return aloneInTab ? ["tab", "close", pane.tab_id] : ["pane", "close", pane.pane_id];
-}
-
-async function classify(options: SweepOptions): Promise<Classified> {
-	const classified: Classified = { safe: [], flagged: [] };
-	const states = readStates();
-	if (!states) return classified;
-	const panes = await listPanes();
-	const live = liveSessionIds(panes, options.selfSessionId);
-	const graceMs = options.graceSeconds * MS_PER_SECOND;
-	for (const pane of panes) {
-		const state = states.get(pane.pane_id);
-		if (pane.workspace_id !== options.workspaceId || pane.tokens?.managed !== "1" || (state && live.has(state.ownerSessionId)) || ageMs(pane, options.now) < graceMs) continue;
-		const reason = unsafeReason(pane, state);
-		const candidate = {
-			paneId: pane.pane_id,
-			tabId: pane.tab_id,
-			label: pane.display_agent ?? pane.pane_id,
-			reason: reason ?? SAFE_REASON,
-			closeArgs: closeArgsFor(pane, panes),
-		};
-		(reason ? classified.flagged : classified.safe).push(candidate);
-	}
-	return classified;
-}
-
-async function close(candidate: Candidate): Promise<boolean> {
-	try {
-		await herdr(candidate.closeArgs);
-	} catch {
-		return false;
-	}
-	return true;
-}
-
-export async function sweep(options: SweepOptions): Promise<SweepResult> {
-	const { safe, flagged } = await classify(options);
-	const result: SweepResult = { closed: [], asked: flagged };
-	for (const candidate of safe) {
-		if (await close(candidate)) result.closed.push(candidate);
-		else result.asked.push({ ...candidate, reason: CLOSE_FAILED_REASON });
-	}
-	return result;
-}
-
-export async function closeFlagged(options: SweepOptions, paneId: string): Promise<Candidate | undefined> {
-	const candidate = (await classify(options)).flagged.find((flagged) => flagged.paneId === paneId);
-	return candidate && (await close(candidate)) ? candidate : undefined;
 }
 
 function parseCheckouts(porcelain: string): Checkout[] {
@@ -288,7 +180,7 @@ export async function sweepWorktrees(): Promise<WorktreeResult> {
 }
 
 export function isTopLevelLead(env: Record<string, string | undefined>): boolean {
-	return env.HERDR_ENV === "1" && !env.PI_HERDSMAN_MAILBOX && !env.PI_SUBAGENT_CHILD;
+	return env.HERDR_ENV === "1" && !env.PI_SUBAGENT_CHILD;
 }
 
 export type Proc = { pid: number; uid: number; ppid: number; pgid: number; state: string; cpuPercent: number; cpuSeconds: number; started: string; command: string };
@@ -302,7 +194,7 @@ export type OrphanDeps = {
 	marker: (pid: number) => Promise<Marker>;
 	livePaneIds: () => Promise<string[]>;
 };
-export type OrphanResult = { killed: Orphan[]; wouldKill: Orphan[] };
+export type OrphanResult = { killed: Orphan[] };
 
 const PROCESS_LINE = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+([\d.]+)\s+([\d:.]+)\s+(\w{3}\s+\w{3}\s+\d+\s+[\d:]+\s+\d{4})\s+(.*)$/;
 const AGENT_VARIABLE = /(?:^| )PI_CODING_AGENT=(\S*)/g;
@@ -391,22 +283,14 @@ export function orphanOptions(workspaceId: string): OrphanOptions {
 	return { selfPids: [process.pid, process.ppid], uid: process.getuid?.() ?? -1, workspaceId };
 }
 
-export function isDryRun(env: Record<string, string | undefined>): boolean {
-	return !!env[DRY_RUN_VARIABLE] && env[DRY_RUN_VARIABLE] !== "0";
-}
-
-export async function sweepOrphans(options: OrphanOptions, dryRun: boolean, deps: OrphanDeps = realOrphanDeps): Promise<OrphanResult> {
-	const result: OrphanResult = { killed: [], wouldKill: [] };
+export async function sweepOrphans(options: OrphanOptions, deps: OrphanDeps = realOrphanDeps): Promise<OrphanResult> {
+	const result: OrphanResult = { killed: [] };
 	const paneIds = await deps.livePaneIds();
 	if (!paneIds.length) return result;
 	const procs = await deps.list();
 	const markers: Record<number, Marker> = {};
 	await Promise.all(procs.filter((proc) => isOrphanCandidate(proc, options)).map(async (proc) => (markers[proc.pid] = await deps.marker(proc.pid))));
 	for (const orphan of selectOrphans(procs, markers, paneIds, options)) {
-		if (dryRun) {
-			result.wouldKill.push(orphan);
-			continue;
-		}
 		const current = await deps.recheck(orphan.proc.pid);
 		if (current?.started !== orphan.proc.started || current.command !== orphan.proc.command) continue;
 		deps.kill(orphan.proc.pid);
@@ -415,7 +299,7 @@ export async function sweepOrphans(options: OrphanOptions, dryRun: boolean, deps
 	return result;
 }
 
-export type Config = { enabled: boolean; graceSeconds: number; intervalSeconds: number };
+export type Config = { enabled: boolean; intervalSeconds: number };
 
 function readJson(file: string): Record<string, unknown> {
 	try {
@@ -433,17 +317,12 @@ export function readConfig(file: string): Config {
 	const config = readJson(file);
 	return {
 		enabled: config.enabled !== false,
-		graceSeconds: Math.max(0, numberOr(config.graceSeconds, DEFAULT_GRACE_SECONDS)),
 		intervalSeconds: Math.max(MIN_INTERVAL_SECONDS, numberOr(config.intervalSeconds, DEFAULT_INTERVAL_SECONDS)),
 	};
 }
 
 export function writeEnabledSetting(file: string, enabled: boolean): void {
 	fs.writeFileSync(file, `${JSON.stringify({ ...readJson(file), enabled }, null, 2)}\n`);
-}
-
-function describe(candidate: Candidate): string {
-	return `${candidate.paneId} (${candidate.label}): ${candidate.reason}`;
 }
 
 function describeWorktree(worktree: Worktree): string {
@@ -460,10 +339,6 @@ export default function (pi: ExtensionAPI) {
 	let timer: ReturnType<typeof setInterval> | undefined;
 	const told = new Set<string>();
 	let keptSignature = "";
-
-	function optionsFor(config: Config, workspaceId: string): SweepOptions {
-		return { now: Date.now(), graceSeconds: config.graceSeconds, selfSessionId: process.env.PI_SESSION_ID ?? "", workspaceId };
-	}
 
 	function tellOnce(ui: ExtensionContext["ui"], key: string, message: string, level: "info" | "warning"): void {
 		if (told.has(key)) return;
@@ -482,27 +357,20 @@ export default function (pi: ExtensionAPI) {
 		ui.notify(message, "info");
 	}
 
-	async function check(ui: ExtensionContext["ui"], config: Config, listAll = false): Promise<number> {
+	async function check(ui: ExtensionContext["ui"], listAll = false): Promise<number> {
 		const workspaceId = await currentWorkspaceId();
 		if (!workspaceId) return 0;
-		const result = await sweep(optionsFor(config, workspaceId));
-		for (const candidate of result.closed) ui.notify(`pane-reaper closed ${describe(candidate)}`, "info");
-		for (const candidate of result.asked) {
-			const message = `pane-reaper: ${describe(candidate)}. Close it with /pane-reaper close ${candidate.paneId}`;
-			tellOnce(ui, `${candidate.paneId}:${candidate.reason}`, message, "warning");
-		}
-		const orphans = await sweepOrphans(orphanOptions(workspaceId), isDryRun(process.env));
+		const orphans = await sweepOrphans(orphanOptions(workspaceId));
 		for (const orphan of orphans.killed) ui.notify(`pane-reaper killed ${describeOrphan(orphan)}`, "warning");
-		for (const orphan of orphans.wouldKill) tellOnce(ui, `orphan:${orphan.proc.pid}:${orphan.proc.started}`, `pane-reaper (dry run) would kill ${describeOrphan(orphan)}`, "warning");
 		const { candidates, kept } = await sweepWorktrees();
 		for (const worktree of candidates) tellOnce(ui, `worktree:${worktree.path}`, `pane-reaper: worktree ${describeWorktree(worktree)}. Safe to remove`, "info");
 		tellKept(ui, kept, listAll);
-		return result.closed.length + result.asked.length + orphans.killed.length + orphans.wouldKill.length + candidates.length + kept.length;
+		return orphans.killed.length + candidates.length + kept.length;
 	}
 
 	async function tick(ui: ExtensionContext["ui"]): Promise<void> {
 		try {
-			await check(ui, readConfig(configPath));
+			await check(ui);
 		} catch (error) {
 			tellOnce(ui, `error:${String(error)}`, `pane-reaper check failed: ${String(error)}`, "warning");
 		}
@@ -522,32 +390,27 @@ export default function (pi: ExtensionAPI) {
 
 	async function runCommand(args: string, ctx: ExtensionCommandContext): Promise<void> {
 		if (ctx.mode !== "tui") return;
-		const [word, paneId] = args.trim().split(/\s+/);
+		const word = args.trim();
 		if (word === "on" || word === "off") {
 			writeEnabledSetting(configPath, word === "on");
 			if (word === "on" && isTopLevelLead(process.env)) startTimer(ctx.ui);
 			if (word === "off") stopTimer();
 			ctx.ui.notify(`pane-reaper ${word}`, "info");
-		} else if (word === "close" && paneId) {
-			const workspaceId = await currentWorkspaceId();
-			const closed = workspaceId && (await closeFlagged(optionsFor(readConfig(configPath), workspaceId), paneId));
-			ctx.ui.notify(closed ? `pane-reaper closed ${describe(closed)}` : `pane-reaper: ${paneId} is not a flagged orphan`, closed ? "info" : "warning");
 		} else if (word) {
 			ctx.ui.notify(USAGE, "warning");
 		} else {
 			told.clear();
-			if ((await check(ctx.ui, readConfig(configPath), true)) === 0) ctx.ui.notify("pane-reaper: no orphaned panes", "info");
+			if ((await check(ctx.ui, true)) === 0) ctx.ui.notify("pane-reaper: nothing to report", "info");
 		}
 	}
 
 	pi.on("session_start", (_event, ctx) => {
 		if (ctx.mode !== "tui") return;
-		if (process.env.HERDR_ENV !== "1") tellOnce(ctx.ui, "no-herdr", NO_HERDR_WARNING, "warning");
 		if (isTopLevelLead(process.env) && readConfig(configPath).enabled) startTimer(ctx.ui);
 	});
 	pi.on("session_shutdown", () => stopTimer());
 	pi.registerCommand("pane-reaper", {
-		description: "Close finished Herdr agent panes whose lead is gone, kill orphaned processes left behind by dead agent panes (set PANE_REAPER_DRY_RUN=1 to only report them), and report merged clean feature worktrees that are safe to remove. It never removes a worktree or branch. `on|off` toggles the periodic check, `close <pane-id>` closes a reported pane.",
+		description: "Kill orphaned processes left behind by dead Herdr agent panes, and report merged clean feature worktrees that are safe to remove. It never removes a worktree or branch. `on|off` toggles the periodic check.",
 		handler: runCommand,
 	});
 }

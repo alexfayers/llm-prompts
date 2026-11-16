@@ -204,8 +204,6 @@ export interface MemoryFs {
 	mkdir(dir: string, mtimeMs?: number): void;
 	touch(path: string, mtimeMs: number): void;
 	remove(path: string): void;
-	/** Writes <agentDir>/pi-herdsman/runtime/mailboxes-v5/<id>/state.json and returns the mailbox directory. */
-	writeMailboxState(agentDir: string, id: string, state?: unknown): string;
 }
 
 type Entry = { text?: string; mtimeMs: number };
@@ -286,11 +284,6 @@ export function useMemoryFs(): MemoryFs {
 		mkdir,
 		touch: (path, mtimeMs) => void (entries.get(path)!.mtimeMs = mtimeMs),
 		remove,
-		writeMailboxState(agentDir, id, state = {}) {
-			const mailbox = join(agentDir, "pi-herdsman/runtime/mailboxes-v5", id);
-			write(join(mailbox, "state.json"), typeof state === "string" ? state : JSON.stringify(state));
-			return mailbox;
-		},
 	};
 }
 

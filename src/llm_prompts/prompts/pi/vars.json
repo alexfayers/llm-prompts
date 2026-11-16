@@ -3,6 +3,9 @@
   "AGENT": "pi",
   "TOOL_ASK": "ask the user for more information via the `ask_user` tool",
   "TOOL_ASK_QUESTION": "ask_user",
-  "TOOL_WORKFLOW": "SubagentWorkflow",
+  "TOOL_AGENT": "fork",
+  "TOOL_STEER": "fork_steer",
+  "TOOL_AGENT_RESULT": "result_fetch",
+  "TOOL_WORKFLOW": "",
   "RULE_FILES": "AGENTS.md"
 }

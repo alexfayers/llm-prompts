@@ -1,7 +1,6 @@
 """Measures installed-artifact sizes against `size_limits.py`'s thresholds.
 
-pi is always measured as its herdsman render (the larger one), whether or not
-`herdr` is on PATH.
+Rules that need `herdr` are measured as if it is on PATH.
 
 Every measurement replicates the render-vs-linked dispatch `install.py` itself
 uses (`_collect_content_srcs`'s `agent_specific` flag): shared sources are

@@ -4,5 +4,4 @@ overlay.json
 .coverage
 coverage.xml
 htmlcov/
-.pi-herdsman/
 node_modules/

@@ -137,34 +137,6 @@ class TestSharedSourcesResolveToolVariables:
         assert used <= load_vars(target_vars).keys()
 
 
-class TestHerdsmanOverrides:
-    TEMPLATE = (
-        "{{TOOL_AGENT}}|{{TOOL_STEER}}|{{TOOL_AGENT_RESULT}}|[{{TOOL_WORKFLOW}}]\n"
-    )
-    VARIABLES: ClassVar[dict[str, str]] = {
-        "TOOL_AGENT": "Agent",
-        "TOOL_STEER": "steer_subagent",
-        "TOOL_AGENT_RESULT": "get_subagent_result",
-        "TOOL_WORKFLOW": "SubagentWorkflow",
-    }
-
-    @pytest.mark.parametrize(
-        ("agent", "expected"),
-        [
-            ("pi", "delegate_agent|steer_agent|inspect_agent|[]\n"),
-            (
-                "claude-code",
-                "Agent|steer_subagent|get_subagent_result|[SubagentWorkflow]\n",
-            ),
-        ],
-    )
-    def test_overrides_apply_only_to_pi(self, agent: str, expected: str) -> None:
-        assert (
-            substitute_variables(self.TEMPLATE, {**self.VARIABLES, "AGENT": agent})
-            == expected
-        )
-
-
 class TestSourcesUseToolVariables:
     DELEGATION = Path(__file__).parent.parent / (
         "src/llm_prompts/prompts/shared/rules/delegation.md"
@@ -173,7 +145,6 @@ class TestSourcesUseToolVariables:
     @pytest.mark.parametrize(
         ("agent", "present", "absent"),
         [
-            ("pi", "`continue_agent`", "`Agent`"),
             ("claude-code", "`Agent`", "continue_agent"),
         ],
     )
@@ -283,11 +254,6 @@ class TestPlanningRuleLinesAreClaudeCodeOnly:
 
     def test_pi_agent_teams_names_tower_do_patch(self) -> None:
         assert "tower_do_patch" in self._render("rules/agent-teams.md", "pi")
-
-    def test_pi_agent_teams_lets_main_read_a_known_target(self) -> None:
-        assert "MAY read a known target itself" in self._render(
-            "rules/agent-teams.md", "pi"
-        )
 
 
 class TestPendingAsksRestateRuleIsPiCut:

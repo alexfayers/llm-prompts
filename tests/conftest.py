@@ -859,7 +859,6 @@ _BARE_DROPPED = (
     "pi/agents",
     "pi/rules",
     "pi/skills",
-    "pi/herdsman-overlays",
 )
 _KEPT_EXTENSIONS = {
     "pi/extensions": (
@@ -867,11 +866,9 @@ _KEPT_EXTENSIONS = {
         "codemode-sleep.ts",
         "codemode-wait-until.ts",
         "compact-now.ts",
-        "herdsman-guidance-dedupe.ts",
         "mcp-hints.ts",
         "net-guard.ts",
         "prompt-cache-stabilizer.ts",
-        "role-switch.ts",
         "tower-do-patch.ts",
         "tower-do-slim.ts",
         "tower-widget.ts",

@@ -4,7 +4,6 @@
   "cline-hooks",
   "net-guard",
   "prompt-cache-stabilizer",
-  "herdsman-guidance-dedupe",
   "codemode-error-header",
   "mcp-hints",
   "compact-now",

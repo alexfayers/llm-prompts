@@ -10,32 +10,6 @@ const assistant = (total: number, stopReason = "stop") =>
 	line({ type: "message", message: { role: "assistant", provider: "prov", model: "mod", stopReason, usage: usage(total) } });
 const toolResult = (text: string) => line({ type: "message", message: { role: "toolResult", text } });
 
-const spawn = (child: string, request: string, { owner = "owner", toolName = "delegate_agent", isError = false, sessions = "/sessions" } = {}) =>
-	line({
-		type: "message",
-		message: {
-			role: "toolResult",
-			toolName,
-			isError,
-			details: {
-				ok: true,
-				owner_session_id: owner,
-				session_id: child,
-				session_path: `${sessions}/${child}.jsonl`,
-				agent: `label-${child}`,
-				definition: "worker",
-				request_id: request,
-			},
-		},
-	});
-
-const result = (child: string, request: string, tokens: number, owner = "owner") =>
-	line({
-		type: "custom_message",
-		customType: "pi-herdsman-agent-result",
-		details: { ownerSessionId: owner, piSessionId: child, requestId: request, contextUsage: { tokens, contextWindow: 1000, percent: tokens / 10 } },
-	});
-
 const costed = (cost: number, kind = "assistant", stopReason = "stop") => {
 	const used = { input: 10, output: 5, cacheRead: 3, cacheWrite: 2, cost: { total: cost } };
 	return kind === "usage"
@@ -43,11 +17,10 @@ const costed = (cost: number, kind = "assistant", stopReason = "stop") => {
 		: line({ type: "message", message: { role: kind, stopReason, usage: used } });
 };
 
-const node = (label: string, depth: number, state: string, tokens: number | null, contextWindow: number | null, percent: number | null) => ({
+const node = (label: string, state: string, tokens: number | null, contextWindow: number | null, percent: number | null) => ({
 	sessionId: label,
 	label,
 	definition: "worker",
-	depth,
 	state,
 	tokens,
 	contextWindow,
@@ -101,86 +74,23 @@ test("a half-written line waits and a shrunken file restarts", async () => {
 	assert.equal(await tokens(), 200);
 });
 
-test("a spawn runs, its result finishes it, and a continue runs it again", async () => {
-	const stages = [
-		spawn("c1", "r1") + spawn("c2", "r2", { toolName: "agent_delegate" }) + spawn("c3", "r3", { owner: "other" }) + spawn("c4", "r4", { isError: true }),
-		result("c1", "r1", 400) + result("c2", "stale", 50),
-		spawn("c1", "r5", { toolName: "continue_agent" }),
-	];
-	const listed = [];
-	for (const stage of stages) {
-		appendFileSync(session(), stage);
-		await read();
-		listed.push(ext.module.listChildren(scan));
-	}
-	assert.deepEqual(
-		listed.map((children) => Object.fromEntries(children.map((c: any) => [c.sessionId, c.done]))),
-		[{ c1: false, c2: false }, { c1: true, c2: false }, { c1: false, c2: false }],
-	);
-	assert.deepEqual(listed[1][0], {
-		sessionId: "c1",
-		sessionPath: "/sessions/c1.jsonl",
-		label: "label-c1",
-		definition: "worker",
-		requestId: "r1",
-		done: true,
-		usage: { tokens: 400, contextWindow: 1000, percent: 40 },
-	});
-});
-
-describe("sampling the agent tree", () => {
-	const lead = () => join(dir, "lead.jsonl");
-	const spawned = (child: string, request: string, owner = "lead") => spawn(child, request, { owner, sessions: dir });
-	const sample = async (options?: object) => {
-		scan = ext.module.createScan("lead");
-		await read(lead());
-		return ext.module.sampleChildren(scan, new Map(), options);
-	};
-
-	test("nested agents are walked, tolerating cycles and unreadable files", async () => {
-		writeFileSync(lead(), spawned("c1", "r1") + spawned("f1", "r2") + result("f1", "r2", 400, "lead") + spawned("n1", "r3"));
-		writeFileSync(join(dir, "c1.jsonl"), spawned("g1", "r4", "c1") + assistant(2000));
-		writeFileSync(join(dir, "g1.jsonl"), spawned("c1", "r5", "g1") + assistant(300));
-		const { nodes, partial } = await sample({ windowOf: () => 10000 });
-		assert.deepEqual(
-			nodes.map((n: any) => [n.sessionId, n.depth, n.state, n.tokens, n.contextWindow]),
-			[["c1", 0, "live", 2000, 10000], ["g1", 1, "live", 300, 10000], ["f1", 0, "finished", 400, 1000], ["n1", 0, "live", null, undefined]],
-		);
-		assert.equal(partial, false);
-	});
-
-	test("a running agent without a mailbox is lost unless mailboxes are unknown", async () => {
-		writeFileSync(lead(), spawned("c1", "r1") + spawned("c2", "r2"));
-		writeFileSync(join(dir, "c1.jsonl"), assistant(700));
-		writeFileSync(join(dir, "c2.jsonl"), assistant(800));
-		const mailboxes = join(dir, "agent", "pi-herdsman", "runtime", "mailboxes-v5");
-		for (const [name, state] of [["aaa", '{"piSessionId":"c2"}'], ["bbb", "not json"]]) writeFileSync(join(mailboxes, name, "state.json"), state);
-		writeFileSync(join(mailboxes, "ccc", "other"), "");
-		const states = async (mailboxIds?: Set<string>) =>
-			(await sample({ mailboxIds })).nodes.map((n: any) => [n.sessionId, n.state, n.tokens]);
-		const ids = await ext.module.readMailboxIds(join(dir, "agent"));
-		assert.deepEqual([...ids], ["c2"]);
-		assert.equal(await ext.module.readMailboxIds(join(dir, "none")), undefined);
-		assert.deepEqual(await states(ids), [["c1", "lost", 700], ["c2", "live", 800]]);
-		assert.deepEqual(await states(), [["c1", "live", 700], ["c2", "live", 800]]);
-	});
-
-	test("tree usage counts the lead, live, finished and nested agents", async () => {
-		writeFileSync(lead(), costed(1.0) + spawned("c1", "r1") + spawned("f1", "r2") + result("f1", "r2", 400, "lead"));
-		writeFileSync(join(dir, "c1.jsonl"), costed(2.0) + spawned("g1", "r3", "c1"));
-		writeFileSync(join(dir, "g1.jsonl"), assistant(50) + costed(4.0));
-		writeFileSync(join(dir, "f1.jsonl"), costed(0.5) + spawned("h1", "r4", "f1"));
-		writeFileSync(join(dir, "h1.jsonl"), costed(0.25));
-		const { tree, session, nodes } = await sample();
-		assert.deepEqual(tree, { tokens: 4 * 20 + 50, cost: 7.75 });
-		assert.deepEqual(session, { tokens: 20, cost: 1.0 });
-		assert.deepEqual(nodes.map((n: any) => n.sessionId), ["c1", "g1", "f1"]);
-	});
+test("sampling reads live children and counts every child's usage in the tree", async () => {
+	writeFileSync(join(dir, "c1.jsonl"), costed(2.0) + assistant(2000));
+	writeFileSync(join(dir, "f1.jsonl"), costed(0.5));
+	writeFileSync(session(), costed(1.0));
+	await read();
+	const child = (id: string, done: boolean) => ({ sessionId: id, sessionPath: join(dir, `${id}.jsonl`), label: id, definition: "worker", done, usage: done ? { tokens: 400, contextWindow: 1000, percent: 40 } : undefined });
+	scan.children.set("c1", child("c1", false));
+	scan.children.set("f1", child("f1", true));
+	const { tree, session: lead, nodes } = await ext.module.sampleChildren(scan, new Map(), { windowOf: () => 10000 });
+	assert.deepEqual(nodes.map((n: any) => [n.sessionId, n.state, n.tokens, n.contextWindow]), [["c1", "live", 2000, 10000], ["f1", "finished", 400, 1000]]);
+	assert.deepEqual(lead, { tokens: 20, cost: 1.0 });
+	assert.deepEqual(tree, { tokens: 20 + 2000 + 20, cost: 3.5 });
 });
 
 test("the total counts only live sessions and marks unknown and partial", () => {
 	const sample = {
-		nodes: [node("a", 0, "live", 2000, 10000, 20), node("b", 1, "live", null, null, null), node("c", 0, "finished", 400, 1000, 40), node("d", 0, "lost", 700, null, null)],
+		nodes: [node("a", "live", 2000, 10000, 20), node("b", "live", null, null, null), node("c", "finished", 400, 1000, 40)],
 		partial: false,
 		session: { tokens: 5000, cost: 1.2 },
 		tree: { tokens: 9_000_000, cost: 8.4 },
@@ -193,12 +103,10 @@ test("the total counts only live sessions and marks unknown and partial", () => 
 			"Running",
 			"  lead  1k / 10k (10%)",
 			"  a (worker)  2k / 10k (20%)",
-			"    b (worker)  unknown",
+			"  b (worker)  unknown",
 			"Finished (last known)",
 			"  c (worker)  400 / 1k (40%)",
-			"  d (worker)  700 [lost]",
 			"Tree cumulative: 9.0M tokens, $8.40",
-			"Cumulative tokens and cost: /herdsman stats",
 		].join("\n"),
 	);
 	assert.equal(ext.module.formatFooter(sample), "agents 2k+ \u00b7 tree 9.0M $1.20/$8.40");
@@ -232,14 +140,13 @@ describe("publishing the footer", () => {
 
 test("the lead tracker reads only new entries and restarts on a new session or a shorter list", () => {
 	const tracker = ext.module.createLeadTracker();
-	const entry = (owner: string, child: string) => JSON.parse(spawn(child, `r-${child}`, { owner }));
-	const children = (sessionId: string, entries: object[]) =>
-		ext.module.listChildren(ext.module.syncLead(tracker, sessionId, entries)).map((c: any) => c.sessionId);
-	const first = entry("lead", "c1");
-	assert.deepEqual(children("lead", [first]), ["c1"]);
-	assert.deepEqual(children("lead", [first, entry("lead", "c2")]), ["c1", "c2"]);
-	assert.deepEqual(children("other", [entry("other", "c3")]), ["c3"]);
-	assert.deepEqual(children("other", []), []);
+	const entry = (cost: number) => JSON.parse(costed(cost));
+	const cost = (sessionId: string, entries: object[]) => ext.module.scanUsage(ext.module.syncLead(tracker, sessionId, entries)).cost;
+	const first = entry(1);
+	assert.equal(cost("lead", [first]), 1);
+	assert.equal(cost("lead", [first, entry(2)]), 3);
+	assert.equal(cost("other", [entry(4)]), 4);
+	assert.equal(cost("other", []), 0);
 });
 
 test("config clamps the interval and rewrites the footer keeping other keys", () => {

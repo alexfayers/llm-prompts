@@ -1,4 +1,4 @@
-// Hides rarely used LSP and AST tools from the model, and the task board and process tools in non-interactive sessions; lsp_diagnostics stays.
+// Hides rarely used LSP and AST tools from the model, and the task board and process tools in non-interactive sessions; lsp_diagnostics stays. Turns back on core file tools a resumed main session lost.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const HIDDEN = new Set([
@@ -7,10 +7,13 @@ const HIDDEN = new Set([
 ]);
 const HEADLESS_HIDDEN = ["tower_do", "tower_do_status", "tower_do_talk", "tower_do_patch", "process"];
 const ENTRY_TYPE = "hide-tools";
+const CORE = ["read", "bash", "edit", "write"];
 
 export default function (pi: ExtensionAPI) {
 	pi.on("session_start", (_event, ctx) => {
-		const active = pi.getActiveTools();
+		const registered = new Set(pi.getAllTools().map((tool) => tool.name));
+		const lost = process.env.PI_CONTEXT_CHILD ? [] : CORE.filter((name) => registered.has(name) && !pi.getActiveTools().includes(name));
+		const active = [...pi.getActiveTools(), ...lost];
 		const saved = ctx.sessionManager
 			.getBranch()
 			.flatMap((entry) => (entry.type === "custom" && entry.customType === ENTRY_TYPE ? [entry.data as { hidden: string[] }] : []))

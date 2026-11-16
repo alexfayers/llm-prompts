@@ -279,22 +279,6 @@ class TestPiPackages:
         assert packages == _core_packages()
         assert not any("pi-subagents" in package for package in packages)
 
-    def test_missing_herdr_warns_and_still_installs(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
-        home = tmp_path / "home"
-        home.mkdir()
-
-        failed = _install(home, tmp_path / "installed.json", herdr=False)
-
-        assert not failed
-        assert "herdr` not found" in capsys.readouterr().err
-        assert (home / ".pi" / "agent" / "AGENTS.md").is_file()
-
     def test_herdr_on_path_does_not_warn(
         self,
         tmp_path: Path,
@@ -1146,7 +1130,7 @@ class TestPiSeedFiles:
         _install(home, manifest)
         assert "path_write" not in seeded.read_text(encoding="utf-8")
 
-    def test_compact_tools_seed_collapses_every_tool_including_codemode_and_herdsman(
+    def test_compact_tools_seed_collapses_every_tool_including_codemode(
         self, pi_home: Path
     ) -> None:
         config = json.loads(
@@ -1192,7 +1176,7 @@ class TestPiSeedFiles:
         )
         assert config["mode"] == "block"
         assert "pi-web-access" in config["allow"]
-        assert {"pi-herdsman", "pi-compact-tools"}.isdisjoint(config["allow"])
+        assert "pi-compact-tools" not in config["allow"]
 
     def test_seed_files_survive_uninstall_and_reinstall(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1283,14 +1267,11 @@ class TestPiAgents:
         agent_dir = pi_home / ".pi" / "agent"
         agents = agent_dir / "agents"
         variants = json.loads((agent_dir / "agent-role-variants.json").read_text())
-        coordinator = _frontmatter(agents / "coordinator-sonnet-low.md")
         definition = _frontmatter(agents / f"{role}.md")
         assert not list(agents.glob(f"{role}-*.md"))
         assert not {"model", "thinking"} & definition.keys()
         assert f"[spawn as {role}@<model>:<effort> - " in definition["description"]
         assert variants[role]
-        assert role in coordinator["agents"]
-        assert coordinator["extensions"][0].endswith("role-switch.ts")
 
     @pytest.mark.usefixtures("core_tree")
     def test_overlay_models_resolve_tiers_last_overlay_winning(
@@ -1387,21 +1368,6 @@ class TestPiAgents:
 
 
 class TestHerdsmanAgents:
-    @pytest.mark.usefixtures("core_tree")
-    def test_team_flow_has_no_agent_request_relay(self, pi_home: Path) -> None:
-        agents = pi_home / ".pi" / "agent" / "agents"
-        rules = (pi_home / ".pi" / "agent" / "AGENTS.md").read_text(encoding="utf-8")
-
-        assert "continue_agent" in rules
-        for text in (
-            rules,
-            (agents / "coordinator-sonnet-low.md").read_text(encoding="utf-8"),
-            (agents / "worker.md").read_text(encoding="utf-8"),
-            (agents / "surveyor.md").read_text(encoding="utf-8"),
-        ):
-            assert "AGENT REQUEST" not in text
-            assert "killable" not in text
-
     def test_delegation_rule_names_no_unmapped_extra_models(
         self, pi_home: Path
     ) -> None:
@@ -1410,23 +1376,6 @@ class TestHerdsmanAgents:
 
         assert not list(agents.glob("*-sol-*.md"))
         assert not re.search(r"\b(sol|terra|luna)\b", rules)
-
-    def test_builtin_definitions_are_disabled(self, pi_home: Path) -> None:
-        agents = pi_home / ".pi" / "agent" / "agents"
-        for name in ("generalist", "implementer", "researcher", "scout"):
-            assert (agents / f"{name}.md").read_text(encoding="utf-8") == (
-                f"---\nname: {name}\nenabled: false\n---\n"
-            )
-
-    @pytest.mark.usefixtures("core_tree")
-    def test_herdsman_overlays_install_verbatim(self, pi_home: Path) -> None:
-        installed = pi_home / ".pi" / "agent" / "coordinators" / "orchestrator-lead.md"
-        assert installed.read_text(encoding="utf-8") == (
-            "---\nname: orchestrator-lead\n"
-            "tools: [read, bash, codemode, tower_do, "
-            "tower_do_patch, tower_do_status, tower_do_talk, ask_user, process, compact_now, "
-            "change_dir, mcp__*]\n---\n"
-        )
 
     @pytest.mark.usefixtures("core_tree")
     def test_reinstall_removes_role_overlay_from_agents_dir(
@@ -1661,15 +1610,6 @@ class TestHerdsmanAgents:
         )
         assert _install(tmp_path / "home", tmp_path / "installed.json", [overlay])
         assert "nonexistent-skill" in capsys.readouterr().err
-
-    @pytest.mark.usefixtures("core_tree")
-    def test_reviewer_overrides_every_key_of_the_bundled_definition(
-        self, pi_home: Path, tmp_path: Path
-    ) -> None:
-        reviewer = _frontmatter(pi_home / ".pi" / "agent" / "agents" / "reviewer.md")
-        assert reviewer["agents"] == []
-        assert reviewer["noSkills"] is False
-        assert reviewer["tools"] == ["*"]
 
     def test_unmapped_frontmatter_key_fails_install(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

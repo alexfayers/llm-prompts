@@ -4,28 +4,21 @@ import { after, beforeEach, describe, mock, test } from "node:test";
 import { promisify } from "node:util";
 import { loadExtension, restoreMocks, useEnv, useMemoryFs } from "./helpers.ts";
 
-const MINUTE_MS = 60_000;
 const NOW = 2_000_000_000_000;
-const OLD = NOW - 30 * MINUTE_MS;
 const MS_PER_SECOND = 1000;
 const AGED_SECONDS = 1_577_836_800;
-const LIVE_OWNER = "01a00000-0000-7000-8000-00000000000a";
-const DEAD_OWNER = "01a00000-0000-7000-8000-00000000000d";
-const SELF = "01a00000-0000-7000-8000-0000000000e5";
 const WORKSPACE = "w1";
-const REQUEST = "f42f4a53-9d3c-435b-95b4-509250f47ae5";
 const HOUR_MS = 60 * 60 * 1000;
 const GH_LIST = "pr list --state merged --author @me --limit 200 --json headRefName";
 const mergedFor = (...branches: string[]) => JSON.stringify(branches.map((headRefName) => ({ headRefName })));
 
 type Json = Record<string, any>;
 type Worktree = { path: string; branch: string; head: string; dirty: boolean; reflog: number; merged: boolean; tip: number };
-type World = { panes: Json[]; workspaces: Json[]; worktrees: Worktree[]; mainLine: string; remote?: string; gh?: string; failClose: boolean; herdr: string[]; ghCalls: string[] };
+type World = { panes: Json[]; workspaces: Json[]; worktrees: Worktree[]; mainLine: string; remote?: string; gh?: string; herdr: string[]; ghCalls: string[] };
 
 let world: World;
 const memory = useMemoryFs();
 const root = memory.root;
-const mailboxes = join(root, "agent/pi-herdsman/runtime/mailboxes-v5");
 
 function run(command: string, args: string[], cwd?: string): string {
 	const line = args.join(" ");
@@ -34,7 +27,6 @@ function run(command: string, args: string[], cwd?: string): string {
 		if (line === "pane list") return JSON.stringify({ result: { panes: world.panes } });
 		if (line === "pane current --current") return JSON.stringify({ result: { pane: { workspace_id: WORKSPACE } } });
 		if (line === "workspace list") return JSON.stringify({ result: { workspaces: world.workspaces } });
-		if (args[1] === "close" && world.failClose) throw new Error("close failed");
 		return "{}";
 	}
 	if (command === "ps") return "";
@@ -68,24 +60,8 @@ const execFile = Object.assign(() => {}, {
 
 const load = () => loadExtension("pane-reaper", { agentDir: join(root, "agent"), mocks: { "node:child_process": { execFile } } });
 
-function pane(id: string, tab: string, options: { status?: string; managed?: boolean; started?: number; request?: string; session?: string; cwd?: string; workspace?: string } = {}): Json {
-	const { status = "idle", managed = true, started = OLD, request = REQUEST, session, cwd, workspace = "w1" } = options;
-	return {
-		pane_id: id,
-		tab_id: tab,
-		agent_status: status,
-		workspace_id: workspace,
-		tokens: { request, started: String(started), ...(managed && { managed: "1" }) },
-		...(cwd && { cwd }),
-		...(session && { agent_session: { value: `/sessions/2026-10-10T20-11-24-885Z_${session}.jsonl` } }),
-	};
-}
-
-const recent = (options: Parameters<typeof pane>[2] = {}) => ({ started: Date.now() - 30 * MINUTE_MS, ...options });
-
-function addState(paneId: string, { owner = DEAD_OWNER, completed = true, version = 5 } = {}) {
-	const state = { version, ownerSessionId: owner, paneId, ...(completed ? { completedRequestId: REQUEST } : { activeRequestId: REQUEST }) };
-	memory.writeMailboxState(join(root, "agent"), paneId.replace(":", "_"), state);
+function pane(id: string, tab: string, { cwd, workspace = "w1" }: { cwd?: string; workspace?: string } = {}): Json {
+	return { pane_id: id, tab_id: tab, workspace_id: workspace, ...(cwd && { cwd }) };
 }
 
 function addWorktree(name: string, options: Partial<Worktree> & { fresh?: boolean } = {}): Worktree {
@@ -97,7 +73,6 @@ function addWorktree(name: string, options: Partial<Worktree> & { fresh?: boolea
 }
 
 const declareWorkspace = (id: string, worktree: Worktree) => world.workspaces.push({ workspace_id: id, worktree: { checkout_path: worktree.path } });
-const sweep = (ext: Awaited<ReturnType<typeof load>>) => ext.module.sweep({ now: NOW, graceSeconds: 900, selfSessionId: SELF, workspaceId: WORKSPACE });
 const sweepWorktrees = async () => (await load()).module.sweepWorktrees();
 const settle = () => new Promise(setImmediate);
 const notices = (ext: Awaited<ReturnType<typeof load>>) => ext.ctx.notices;
@@ -123,95 +98,11 @@ async function command(ext: Awaited<ReturnType<typeof load>>, ...args: string[])
 	return ctx.notices;
 }
 
-useEnv({ PI_HERDSMAN_MAILBOX: undefined, PI_SUBAGENT_CHILD: undefined, HERDR_ENV: undefined, PI_SESSION_ID: SELF });
+useEnv({ PI_SUBAGENT_CHILD: undefined, HERDR_ENV: undefined });
 beforeEach(() => {
-	memory.mkdir(mailboxes);
-	world = { panes: [], workspaces: [], worktrees: [], mainLine: "branch refs/heads/main", failClose: false, herdr: [], ghCalls: [] };
+	world = { panes: [], workspaces: [], worktrees: [], mainLine: "branch refs/heads/main", herdr: [], ghCalls: [] };
 });
 after(restoreMocks);
-
-describe("sweep closes a finished orphan", () => {
-	test("done managed pane of a dead owner past grace", async () => {
-		world.panes = [pane("w1:p2", "w1:t2", { status: "done" })];
-		addState("w1:p2");
-		const result = await sweep(await load());
-		assert.deepEqual(result.closed.map((c: Json) => c.paneId), ["w1:p2"]);
-		assert.deepEqual(result.asked, []);
-		assert.deepEqual(world.herdr, ["pane list", "tab close w1:t2"]);
-	});
-
-	test("a pane sharing its tab closes alone and a lone pane closes its tab", async () => {
-		world.panes = [pane("w1:p2", "w1:t2"), pane("w1:p3", "w1:t2", { managed: false }), pane("w1:p4", "w1:t4")];
-		addState("w1:p2");
-		addState("w1:p4");
-		await sweep(await load());
-		assert.deepEqual(world.herdr, ["pane list", "pane close w1:p2", "tab close w1:t4"]);
-	});
-
-	test("a failed close is reported and the sweep goes on", async () => {
-		world.failClose = true;
-		world.panes = [pane("w1:p2", "w1:t2"), pane("w1:p4", "w1:t4")];
-		addState("w1:p2");
-		addState("w1:p4");
-		const result = await sweep(await load());
-		assert.deepEqual(result.closed, []);
-		assert.deepEqual(result.asked.map((c: Json) => [c.paneId, c.reason]), [["w1:p2", "closing it failed"], ["w1:p4", "closing it failed"]]);
-	});
-});
-
-describe("sweep ignores panes that are not orphans", () => {
-	const orphan = () => pane("w1:p2", "w1:t2");
-	for (const [label, panes, state] of [
-		["owner pane is live", () => [orphan(), pane("w1:p1", "w1:t1", { managed: false, session: LIVE_OWNER })], { owner: LIVE_OWNER }],
-		["owner is this session", () => [orphan()], { owner: SELF }],
-		["pane is not managed", () => [pane("w1:p2", "w1:t2", { managed: false })], {}],
-		["pane is in another workspace", () => [pane("w2:p2", "w2:t2", { workspace: "w2" })], {}],
-		["pane is inside the grace period", () => [pane("w1:p2", "w1:t2", { started: NOW - 5 * MINUTE_MS })], {}],
-	] as const) {
-		test(label, async () => {
-			world.panes = panes();
-			addState("w1:p2", state);
-			assert.deepEqual(await sweep(await load()), { closed: [], asked: [] });
-			assert.deepEqual(world.herdr, ["pane list"]);
-		});
-	}
-});
-
-describe("sweep only asks about other flagged panes", () => {
-	for (const [label, flagged, state] of [
-		["pane is still working", () => pane("w1:p2", "w1:t2", { status: "working" }), {}],
-		["task has not finished", () => pane("w1:p2", "w1:t2"), { completed: false }],
-		["pane moved on to another request", () => pane("w1:p2", "w1:t2", { request: "another-request" }), {}],
-		["launch time is unknown", () => ({ ...pane("w1:p2", "w1:t2"), tokens: { managed: "1" } }), {}],
-		["pane has no state file", () => pane("w1:p2", "w1:t2"), undefined],
-	] as const) {
-		test(label, async () => {
-			world.panes = [flagged()];
-			if (state) addState("w1:p2", state);
-			const result = await sweep(await load());
-			assert.deepEqual(result.asked.map((c: Json) => [c.paneId, Boolean(c.reason)]), [["w1:p2", true]]);
-			assert.deepEqual(result.closed, []);
-			assert.deepEqual(world.herdr, ["pane list"]);
-		});
-	}
-});
-
-describe("sweep stays silent on unknown herdsman state", () => {
-	for (const [label, break_] of [
-		["unknown version", () => addState("w1:p3", { version: 6 })],
-		["corrupt file", () => memory.write(join(mailboxes, "w1_p3/state.json"), "{not json")],
-		["missing directory", () => memory.remove(mailboxes)],
-	] as const) {
-		test(label, async () => {
-			world.panes = [pane("w1:p2", "w1:t2"), pane("w1:p3", "w1:t3")];
-			addState("w1:p2");
-			addState("w1:p3");
-			break_();
-			assert.deepEqual(await sweep(await load()), { closed: [], asked: [] });
-			assert.deepEqual(world.herdr, []);
-		});
-	}
-});
 
 describe("sweepWorktrees", () => {
 	test("reports a merged clean worktree with a pane-less workspace as a candidate without opening or removing anything", async () => {
@@ -357,19 +248,7 @@ describe("sweepWorktrees confirms squash merges on GitHub only", () => {
 });
 
 describe("session start", () => {
-	test("closes the safe orphan and notifies for it and for the others", async () => {
-		setEnv();
-		world.panes = [pane("w1:p2", "w1:t2", recent()), pane("w1:p3", "w1:t3", recent({ status: "working" }))];
-		addState("w1:p2");
-		addState("w1:p3");
-		const ext = await load();
-		await start(ext);
-		assert.deepEqual(world.herdr, ["pane current --current", "pane list", "tab close w1:t2", "pane list"]);
-		assert.deepEqual(notices(ext).map(([text, level]) => [level, text.includes("w1:p2"), text.includes("w1:p3")]), [["info", true, false], ["warning", false, true]]);
-	});
-
 	for (const [label, env, config] of [
-		["in a delegated agent", { PI_HERDSMAN_MAILBOX: "/mailbox" }, undefined],
 		["in a subagent", { PI_SUBAGENT_CHILD: "1" }, undefined],
 		["outside Herdr", { HERDR_ENV: undefined }, undefined],
 		["when disabled", {}, '{"enabled": false}'],
@@ -377,28 +256,10 @@ describe("session start", () => {
 		test(`does not sweep ${label}`, async () => {
 			setEnv(env);
 			if (config) memory.write(join(root, "agent/pane-reaper.json"), config);
-			world.panes = [pane("w1:p2", "w1:t2", recent())];
-			addState("w1:p2");
 			await start(await load());
 			assert.deepEqual(world.herdr, []);
 		});
 	}
-
-	test("outside Herdr warns once", async () => {
-		setEnv({ HERDR_ENV: undefined });
-		const ext = await load();
-		await start(ext, 2);
-		assert.deepEqual(notices(ext).map(([text, level]) => [level, /herdr/i.test(text)]), [["warning", true]]);
-	});
-
-	test("a flagged pane is mentioned once across sessions", async () => {
-		setEnv();
-		world.panes = [pane("w1:p3", "w1:t3", recent({ status: "working" }))];
-		addState("w1:p3");
-		const ext = await load();
-		await start(ext, 2);
-		assert.equal(notices(ext).length, 1);
-	});
 
 	test("reports a candidate once and the kept worktrees once per change of the kept set", async () => {
 		setEnv();
@@ -418,19 +279,8 @@ describe("session start", () => {
 });
 
 describe("/pane-reaper", () => {
-	test("check now reports flagged panes, says when there are none and closes the safe orphan", async () => {
-		world.panes = [pane("w1:p3", "w1:t3", recent({ status: "working" }))];
-		addState("w1:p3");
-		const ext = await load();
-		const first = await command(ext, "", "");
-		assert.deepEqual(first.map(([, level]) => level), ["warning", "warning"]);
-		assert.match(first[0][0], /\/pane-reaper close w1:p3/);
-		world.panes = [];
-		assert.deepEqual(await command(ext, ""), [["pane-reaper: no orphaned panes", "info"]]);
-		world.panes = [pane("w1:p2", "w1:t2", recent())];
-		addState("w1:p2");
-		assert.deepEqual((await command(ext, "")).map(([, level]) => level), ["info"]);
-		assert.equal(world.herdr.at(-2), "tab close w1:t2");
+	test("check now says when there is nothing to report", async () => {
+		assert.deepEqual(await command(await load(), ""), [["pane-reaper: nothing to report", "info"]]);
 	});
 
 	test("check now reports candidate and kept worktrees", async () => {
@@ -443,31 +293,22 @@ describe("/pane-reaper", () => {
 		assert.match(result[1][0], new RegExp(`${wip.path}.*not merged`));
 	});
 
-	test("close closes a flagged pane and refuses any other", async () => {
-		world.panes = [pane("w1:p3", "w1:t3", recent({ status: "working" })), pane("w1:p4", "w1:t4", recent({ managed: false })), pane("w1:p5", "w1:t5", { status: "working", started: Date.now() - 5 * MINUTE_MS })];
-		addState("w1:p3");
-		addState("w1:p5");
-		const result = await command(await load(), "close w1:p4", "close w1:p5", "close w1:p3", "close", "bogus");
-		assert.deepEqual(result.map(([, level]) => level), ["warning", "warning", "info", "warning", "warning"]);
-		assert.deepEqual(world.herdr.filter((call) => call.includes("close")), ["tab close w1:t3"]);
-	});
-
 	test("on and off rewrite the config keeping other keys", async () => {
 		const file = join(root, "agent/pane-reaper.json");
-		memory.write(file, '{"graceSeconds": 60}');
+		memory.write(file, '{"intervalSeconds": 60}');
 		const ext = await load();
 		await command(ext, "off");
-		assert.deepEqual(JSON.parse(memory.read(file)), { graceSeconds: 60, enabled: false });
+		assert.deepEqual(JSON.parse(memory.read(file)), { intervalSeconds: 60, enabled: false });
 		await command(ext, "on");
-		assert.deepEqual(JSON.parse(memory.read(file)), { graceSeconds: 60, enabled: true });
+		assert.deepEqual(JSON.parse(memory.read(file)), { intervalSeconds: 60, enabled: true });
 	});
 });
 
 test("config interval is clamped", async () => {
 	const { readConfig } = (await load()).module;
 	const file = join(root, "pane-reaper.json");
-	memory.write(file, JSON.stringify({ enabled: false, graceSeconds: 30, intervalSeconds: 1 }));
-	assert.deepEqual(readConfig(file), { enabled: false, graceSeconds: 30, intervalSeconds: 10 });
+	memory.write(file, JSON.stringify({ enabled: false, intervalSeconds: 1 }));
+	assert.deepEqual(readConfig(file), { enabled: false, intervalSeconds: 10 });
 });
 
 test("a marked agent process whose pane is dead in this workspace is killed", async () => {
@@ -479,6 +320,6 @@ test("a marked agent process whose pane is dead in this workspace is killed", as
 		marker: async () => ({ agent: true, paneId: "w1:p1" }),
 		livePaneIds: async () => ["w1:p2"],
 	};
-	const result = await (await load()).module.sweepOrphans({ selfPids: [9000], uid: 501, workspaceId: WORKSPACE }, false, deps);
+	const result = await (await load()).module.sweepOrphans({ selfPids: [9000], uid: 501, workspaceId: WORKSPACE }, deps);
 	assert.deepEqual(result.killed.map((killed: Json) => killed.proc.pid), [445]);
 });

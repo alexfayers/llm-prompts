@@ -8,7 +8,6 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 
 const BYTES_PER_TOKEN = 4;
 const MESSAGE_LINE_START = '{"type":"message"';
-const SPAWN_TOOLS = new Set(["delegate_agent", "continue_agent", "agent_delegate", "agent_continue"]);
 const CONFIG_FILE = "context-total.json";
 const STATUS_KEY = "context-total";
 const VARIABLE_EVENT = "zentui:variable";
@@ -18,24 +17,17 @@ const COST_VARIABLE = "llm-prompts/context-total:cost";
 const DEFAULT_INTERVAL_SECONDS = 5;
 const MIN_INTERVAL_SECONDS = 2;
 const MS_PER_SECOND = 1000;
-const MAILBOX_DIR = ["pi-herdsman", "runtime", "mailboxes-v5"];
-const RESULT_TYPE = "pi-herdsman-agent-result";
-const INTERESTING_LINE = new RegExp(
-	`"usage":|"role":"assistant"|"type":"compaction"|"type":"model_change"|${RESULT_TYPE}|"toolName":"(?:${[...SPAWN_TOOLS].join("|")})"`,
-);
+const INTERESTING_LINE = /"usage":|"role":"assistant"|"type":"compaction"|"type":"model_change"/;
 
 type Usage = { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens?: number; cost?: { total?: number } };
 export type UsageTotals = { tokens: number; cost: number };
 type ContextUsage = { tokens: number | null; contextWindow: number; percent: number | null };
-type Details = Record<string, unknown>;
 type Entry = {
 	type?: string;
 	provider?: string;
 	modelId?: string;
-	customType?: string;
-	details?: Details;
 	usage?: Usage;
-	message?: { role?: string; provider?: string; model?: string; stopReason?: string; usage?: Usage; toolName?: string; isError?: boolean; customType?: string; details?: Details };
+	message?: { role?: string; provider?: string; model?: string; stopReason?: string; usage?: Usage };
 };
 
 export type Child = {
@@ -43,7 +35,6 @@ export type Child = {
 	sessionPath: string;
 	label: string;
 	definition: string;
-	requestId: string;
 	done: boolean;
 	usage?: ContextUsage;
 };
@@ -63,13 +54,12 @@ export type Scan = {
 
 export type LeadTracker = { sessionId?: string; index: number; scan: Scan };
 
-export type NodeState = "live" | "finished" | "lost";
+export type NodeState = "live" | "finished";
 
 export type Node = {
 	sessionId: string;
 	label: string;
 	definition: string;
-	depth: number;
 	state: NodeState;
 	tokens: number | null;
 	contextWindow?: number;
@@ -79,7 +69,6 @@ export type Node = {
 export type Sample = { nodes: Node[]; partial: boolean; session: UsageTotals; tree: UsageTotals };
 
 export type SampleOptions = {
-	mailboxIds?: Set<string>;
 	windowOf?: (provider: string, modelId: string) => number | undefined;
 };
 
@@ -97,26 +86,6 @@ function validUsage(message: NonNullable<Entry["message"]>): number {
 	return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 }
 
-function recordSpawn(scan: Scan, details: Details): void {
-	const sessionId = String(details.session_id);
-	scan.children.set(sessionId, {
-		sessionId,
-		sessionPath: String(details.session_path),
-		label: String(details.agent),
-		definition: String(details.definition),
-		requestId: String(details.request_id),
-		done: false,
-	});
-}
-
-function recordResult(scan: Scan, details: Details): void {
-	const child = scan.children.get(String(details.piSessionId));
-	if (child && child.requestId === details.requestId) {
-		child.done = true;
-		child.usage = details.contextUsage as ContextUsage;
-	}
-}
-
 function addUsage(scan: Scan, usage: Usage | undefined): void {
 	if (!usage) return;
 	scan.usage.cost += usage.cost?.total ?? 0;
@@ -132,9 +101,6 @@ export function feedEntry(scan: Scan, entry: Entry, size: number): void {
 		scan.provider = entry.provider;
 		scan.modelId = entry.modelId;
 	}
-	const customType = (entry.message ?? entry).customType;
-	const details = entry.message?.details ?? entry.details;
-	if (customType === RESULT_TYPE && details?.ownerSessionId === scan.ownerId) recordResult(scan, details);
 	if (entry.type === "compaction") {
 		scan.compacted = true;
 		scan.usageTokens = 0;
@@ -150,10 +116,6 @@ export function feedEntry(scan: Scan, entry: Entry, size: number): void {
 			scan.modelId = entry.message.model ?? scan.modelId;
 		} else {
 			scan.trailingBytes += size;
-		}
-		const { toolName, isError } = entry.message;
-		if (toolName && SPAWN_TOOLS.has(toolName) && !isError && details?.ok === true && details.owner_session_id === scan.ownerId) {
-			recordSpawn(scan, details);
 		}
 	}
 }
@@ -194,26 +156,6 @@ export async function readNew(scan: Scan, file: string): Promise<void> {
 	}
 }
 
-export async function readMailboxIds(agentDir: string): Promise<Set<string> | undefined> {
-	const root = path.join(agentDir, ...MAILBOX_DIR);
-	let names: string[];
-	try {
-		names = await fs.promises.readdir(root);
-	} catch {
-		return undefined;
-	}
-	const ids = new Set<string>();
-	for (const name of names) {
-		try {
-			const state = JSON.parse(await fs.promises.readFile(path.join(root, name, "state.json"), "utf8")) as { piSessionId?: string };
-			if (state.piSessionId) ids.add(state.piSessionId);
-		} catch {
-			// a mailbox being written or removed is skipped
-		}
-	}
-	return ids;
-}
-
 export function createLeadTracker(): LeadTracker {
 	return { index: 0, scan: createScan("") };
 }
@@ -241,13 +183,12 @@ async function readIfPresent(scan: Scan, file: string): Promise<void> {
 	}
 }
 
-function finishedNode(child: Child, depth: number): Node {
+function finishedNode(child: Child): Node {
 	const { usage } = child;
 	return {
 		sessionId: child.sessionId,
 		label: child.label,
 		definition: child.definition,
-		depth,
 		state: "finished",
 		tokens: usage?.tokens ?? null,
 		contextWindow: usage?.contextWindow,
@@ -257,40 +198,20 @@ function finishedNode(child: Child, depth: number): Node {
 
 export async function sampleChildren(root: Scan, scans: Map<string, Scan>, options: SampleOptions = {}): Promise<Sample> {
 	const nodes: Node[] = [];
-	const visited = new Set([root.ownerId]);
 	const touched: Scan[] = [root];
-	const walk = async (scan: Scan, depth: number, listed: boolean): Promise<void> => {
-		for (const child of listChildren(scan)) {
-			if (visited.has(child.sessionId)) continue;
-			visited.add(child.sessionId);
-			let childScan = scans.get(child.sessionId);
-			if (!childScan) scans.set(child.sessionId, (childScan = createScan(child.sessionId)));
-			touched.push(childScan);
-			await readIfPresent(childScan, child.sessionPath);
-			if (child.done) {
-				if (listed) nodes.push(finishedNode(child, depth));
-				await walk(childScan, depth + 1, false);
-				continue;
-			}
-			const tokens = scanTokens(childScan);
-			const contextWindow = childScan.provider && childScan.modelId ? options.windowOf?.(childScan.provider, childScan.modelId) : undefined;
-			const live = !options.mailboxIds || options.mailboxIds.has(child.sessionId);
-			if (listed) {
-				nodes.push({
-					sessionId: child.sessionId,
-					label: child.label,
-					definition: child.definition,
-					depth,
-					state: live ? "live" : "lost",
-					tokens,
-					contextWindow,
-					percent: percentOf(tokens, contextWindow),
-				});
-			}
-			await walk(childScan, depth + 1, listed && live);
+	for (const child of listChildren(root)) {
+		let childScan = scans.get(child.sessionId);
+		if (!childScan) scans.set(child.sessionId, (childScan = createScan(child.sessionId)));
+		touched.push(childScan);
+		await readIfPresent(childScan, child.sessionPath);
+		if (child.done) {
+			nodes.push(finishedNode(child));
+			continue;
 		}
-	};
-	await walk(root, 0, true);
+		const tokens = scanTokens(childScan);
+		const contextWindow = childScan.provider && childScan.modelId ? options.windowOf?.(childScan.provider, childScan.modelId) : undefined;
+		nodes.push({ sessionId: child.sessionId, label: child.label, definition: child.definition, state: "live", tokens, contextWindow, percent: percentOf(tokens, contextWindow) });
+	}
 	const tree = touched.reduce<UsageTotals>(
 		(sum, scan) => ({ tokens: sum.tokens + scan.usage.tokens, cost: sum.cost + scan.usage.cost }),
 		{ tokens: 0, cost: 0 },
@@ -300,7 +221,6 @@ export async function sampleChildren(root: Scan, scans: Map<string, Scan>, optio
 
 const TOKENS_PER_K = 1000;
 const TOKENS_PER_M = 1_000_000;
-const STATS_LINE = "Cumulative tokens and cost: /herdsman stats";
 
 type LeadUsage = Pick<ContextUsage, "tokens" | "contextWindow" | "percent"> | undefined;
 
@@ -373,7 +293,7 @@ export function clearFooter(pi: EventSource, ui: StatusUi): void {
 
 function nodeLine(node: Node, indent: string): string {
 	const usage = formatUsage(node.tokens, node.contextWindow, node.percent);
-	return `${indent}${node.label} (${node.definition})  ${usage}${node.state === "lost" ? " [lost]" : ""}`;
+	return `${indent}${node.label} (${node.definition})  ${usage}`;
 }
 
 export function formatReport(lead: LeadUsage, sample: Sample): string {
@@ -383,10 +303,9 @@ export function formatReport(lead: LeadUsage, sample: Sample): string {
 		`Live context: ${formatTokens(tokens)}${unknown ? "+" : ""} across ${sessions} sessions${sample.partial ? " (partial)" : ""}`,
 		"Running",
 		`  lead  ${lead ? formatUsage(lead.tokens, lead.contextWindow, lead.percent) : "unknown"}`,
-		...sample.nodes.filter((node) => node.state === "live").map((node) => nodeLine(node, "  ".repeat(node.depth + 1))),
+		...sample.nodes.filter((node) => node.state === "live").map((node) => nodeLine(node, "  ")),
 		...(ended.length ? ["Finished (last known)", ...ended.map((node) => nodeLine(node, "  "))] : []),
 		`Tree cumulative: ${formatTokens(sample.tree.tokens)} tokens, ${formatDollars(sample.tree.cost)}`,
-		STATS_LINE,
 	].join("\n");
 }
 
@@ -419,7 +338,6 @@ export default function (pi: ExtensionAPI) {
 	async function sample(ctx: ExtensionContext): Promise<{ lead: LeadUsage; sampled: Sample }> {
 		const root = syncLead(tracker, ctx.sessionManager.getSessionId(), ctx.sessionManager.getEntries() as Entry[]);
 		const sampled = await sampleChildren(root, scans, {
-			mailboxIds: await readMailboxIds(agentDir),
 			windowOf: (provider, modelId) => ctx.modelRegistry.find(provider, modelId)?.contextWindow,
 		});
 		return { lead: ctx.getContextUsage(), sampled };
