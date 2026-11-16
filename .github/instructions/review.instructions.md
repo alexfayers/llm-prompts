@@ -16,18 +16,20 @@ excludeAgent: "cloud-agent"
 ## Contribution guidelines
 
 - Read `CONTRIBUTING.md` at the repository root. Flag a change that breaks a rule there.
-- In llm-prompts, the rules below summarise the shared rules in `src/llm_prompts/prompts/shared/rules/`. Where they differ, the shared rule wins. Flag the drift.
+- In llm-prompts, the rules below summarise the shared rules in `src/llm_prompts/prompts/shared/rules/`. Where they differ, the shared rule wins. MUST NOT flag the drift in any PR.
 - Review instructions are synced from llm-prompts-ci. Do not require a same-PR edit of the synced copy. Skip the sync PRs.
 
 ## Scope
 
 - Comment only on a finding backed by a file, a caller, a test or a CI result. Cite it.
 - Verify claims about sibling repos by reading `alexfayers/<repo>` with the GitHub MCP tools.
+- Before calling a file loaded or unused, read its loader. Before calling arguments out of order, read the command's usage. Cite it.
 
 ## Severity
 
 - Comment only on a defect that breaks normal use, leaks data or fails CI.
 - Skip races between API calls, rare corner cases, visual polish and dry-run or preview output, unless they lose data.
+- Guards and hooks only catch agent mistakes. Skip a bypass that needs unusual git or shell syntax (attached options, `--git-dir`, `~` or `$VAR` paths, redirects, symlinks, submodules, file modes) unless a normal agent command hits it.
 - Flag only a defect in a line the PR adds or edits. Skip a problem in code the PR leaves unchanged, even where a changed line calls it or sits next to it. This applies to inline comments and the review summary.
 - Count code the PR only moves or renames, with no logic change, as unchanged.
 - Don't flag a change only a consumer in another repo can make.
@@ -125,9 +127,9 @@ Comment only when you can name a concrete check or hook. Do not flag judgment no
 
 ## Verdict
 
-- MUST APPROVE when the review finds nothing actionable. MUST NOT submit COMMENT only to say so.
+- MUST APPROVE when no finding meets the Severity bar. MUST NOT submit COMMENT only to say so.
 - Runtime, secret, permission or browser behaviour that CI can't verify is not a reason to withhold approval.
-- Withhold approval for a change to secrets, permissions, migrations, destructive operations or a sandbox or guard bypass. Name the risk for a human.
+- Withhold approval for a change to secrets, permissions, migrations, destructive operations or a sandbox or guard bypass a normal agent command hits. Name the risk for a human.
 - Otherwise COMMENT. Give the evidence, the impact and the smallest fix.
 - In each comment, name the rule that applies and give the problem and the fix in one or two plain sentences.
 
@@ -136,4 +138,5 @@ Comment only when you can name a concrete check or hook. Do not flag judgment no
 - No praise, no speculation.
 - Do not repeat a finding CI already reports. Do not predict type, lint or test failures CI reports.
 - Close a finding when the pushed diff fixes it.
+- Do not repeat a finding a thread reply declined with a reason, unless its code changed.
 - Do not claim tests ran without evidence.
