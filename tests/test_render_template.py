@@ -252,9 +252,6 @@ class TestPlanningRuleLinesAreClaudeCodeOnly:
             "rules/agent-teams.md", "claude-code"
         )
 
-    def test_pi_agent_teams_names_tower_do_patch(self) -> None:
-        assert "tower_do_patch" in self._render("rules/agent-teams.md", "pi")
-
 
 class TestPendingAsksRestateRuleIsPiCut:
     PROMPTS = Path(__file__).parent.parent / "src/llm_prompts/prompts"

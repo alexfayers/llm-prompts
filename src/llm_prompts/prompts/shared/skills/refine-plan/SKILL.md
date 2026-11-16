@@ -45,7 +45,7 @@ The script rejects scores >= 7 without evidence. MUST present the full output to
 
 ## 3. Validate evidence (if {{TOOL_AGENT}} tool available)
 
-MUST launch a validation subagent via `{{TOOL_AGENT}}` with ONLY the evidence strings and scores:
+MUST launch a validation {% if AGENT == "pi" %}cold worker (`fork` with `model`){% else %}subagent via `{{TOOL_AGENT}}`{% endif %} with ONLY the evidence strings and scores:
 
 > For each `existing:` claim, MUST read the cited file/pattern/resource and confirm or dispute. MUST NOT dispute a `proposed:` claim for being absent from the code - judge only whether the design holds. MUST be skeptical - 9+ means near-perfect and is rare.
 >

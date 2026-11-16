@@ -1,4 +1,5 @@
 ---
+audience: main
 targets: claude-code, pi
 ---
 

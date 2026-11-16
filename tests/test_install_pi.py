@@ -191,6 +191,18 @@ class TestPiInstallLayout:
         assert (agent_dir / "rules" / "coding.md").is_file()
 
     @pytest.mark.usefixtures("core_tree")
+    def test_delegate_agents_md_leaves_out_main_session_rules(
+        self, pi_home: Path
+    ) -> None:
+        agent_dir = pi_home / ".pi" / "agent"
+        main = (agent_dir / "AGENTS.md").read_text(encoding="utf-8")
+        delegate = (agent_dir / "AGENTS.delegate.md").read_text(encoding="utf-8")
+
+        assert "# Asking the user" in main
+        assert "# Asking the user" not in delegate
+        assert "# Coding guidelines" in delegate
+
+    @pytest.mark.usefixtures("core_tree")
     def test_skills_materialize_into_pi_skills(self, pi_home: Path) -> None:
         skills = pi_home / ".pi" / "agent" / "skills"
         assert (skills / "tdd" / "SKILL.md").is_file()
