@@ -881,7 +881,14 @@ def read_config() -> dict[str, Any]:
     """Return the parsed config file, or an empty dict when it does not exist."""
     if not config_path().exists():
         return {}
-    config: dict[str, Any] = tomllib.loads(config_path().read_text(encoding="utf-8"))
+    try:
+        config: dict[str, Any] = tomllib.loads(
+            config_path().read_text(encoding="utf-8")
+        )
+    except tomllib.TOMLDecodeError as error:
+        raise ExitReason(
+            "config_invalid", f"{config_path()} is not valid TOML: {error}"
+        ) from None
     return config
 
 
