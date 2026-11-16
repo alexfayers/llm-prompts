@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
-from collections.abc import Iterator
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -184,26 +185,50 @@ def test_real_prompts_test_reads_the_packaged_prompts_tree() -> None:
     assert (tree / "shared" / "rules" / "coding.md").is_file()
 
 
-@pytest.fixture(scope="module")
-def inherited_git_dir(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
-    """Set GIT_DIR before the per-test fixtures run, as `git rebase --exec` does."""
-    outer = tmp_path_factory.mktemp("outer")
-    subprocess.run(["git", "init", "-q", str(outer)], check=True)
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setenv("GIT_DIR", str(outer / ".git"))
-        yield outer
+_INNER_RUN = "LLM_PROMPTS_TEST_INNER_GIT_DIR_RUN"
+
+
+@pytest.fixture(scope="session")
+def session_git_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The git dir a temp repo resolves to while session fixtures are set up."""
+    repo = tmp_path_factory.mktemp("session-repo")
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    return Path(
+        subprocess.run(
+            ["git", "rev-parse", "--absolute-git-dir"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    ).relative_to(repo)
+
+
+@pytest.mark.skipif(_INNER_RUN not in os.environ, reason="run only by the test below")
+def test_inner_session_fixture_resolves_its_own_repo(session_git_dir: Path) -> None:
+    assert session_git_dir == Path(".git")
 
 
 @pytest.mark.real_io
-def test_git_in_a_temp_repo_ignores_an_inherited_git_dir(
-    inherited_git_dir: Path, tmp_path: Path
-) -> None:
+def test_session_fixtures_ignore_an_inherited_git_dir(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    git_dir = subprocess.run(
-        ["git", "rev-parse", "--absolute-git-dir"],
-        cwd=tmp_path,
-        check=True,
+    env = {**os.environ, "GIT_DIR": str(tmp_path / ".git"), _INNER_RUN: "1"}
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-o",
+            "addopts=",
+            f"{__file__}::test_inner_session_fixture_resolves_its_own_repo",
+        ],
+        env=env,
+        cwd=Path(__file__).parent.parent,
+        check=False,
         capture_output=True,
         text=True,
-    ).stdout.strip()
-    assert Path(git_dir) == tmp_path / ".git"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
