@@ -65,7 +65,7 @@
 | src/llm\_prompts/mcp.py                                                       |       85 |        1 |     99% |        91 |
 | src/llm\_prompts/network.py                                                   |       27 |        0 |    100% |           |
 | src/llm\_prompts/overlay\_merge.py                                            |       49 |        2 |     96% |    54, 92 |
-| src/llm\_prompts/plugins.py                                                   |      164 |       16 |     90% |46, 133-134, 138-139, 155-167, 183, 213, 242, 289, 299, 380, 384 |
+| src/llm\_prompts/plugins.py                                                   |      160 |       16 |     90% |42, 129-130, 134-135, 151-163, 179, 209, 238, 285, 295, 376, 380 |
 | src/llm\_prompts/prompts/claude-code/skills/retrospective/extract\_signals.py |      181 |       97 |     46% |44-49, 54-69, 80-124, 186, 197, 200, 209, 254-264, 269-286, 297-332, 336 |
 | src/llm\_prompts/prompts/shared/skills/eagle-vision/focus.py                  |      689 |       10 |     99% |108, 159, 271, 676, 690, 1214-1217, 1311 |
 | src/llm\_prompts/prompts/shared/skills/git-usage/check\_repos.py              |       67 |       12 |     82% |41-42, 44, 63, 73-75, 95-96, 124-125, 159 |
@@ -77,7 +77,7 @@
 | src/llm\_prompts/prompts/shared/skills/todos/find\_todos.py                   |       44 |        7 |     84% |96-98, 103-105, 109 |
 | src/llm\_prompts/removed\_agents\_notice.py                                   |       14 |        0 |    100% |           |
 | src/llm\_prompts/render\_template.py                                          |      171 |       14 |     92% |149, 433-434, 443-459, 471-475, 479 |
-| src/llm\_prompts/setup.py                                                     |      435 |       33 |     92% |289-318, 363, 411, 414, 435-436, 482-483, 842-843, 926-929, 959-960, 963, 1019-1020 |
+| src/llm\_prompts/setup.py                                                     |      438 |       33 |     92% |289-318, 363, 411, 414, 435-436, 482-483, 842-843, 933-936, 966-967, 970, 1026-1027 |
 | src/llm\_prompts/size\_guard.py                                               |      371 |       10 |     97% |247-248, 479-481, 516, 538, 542-544 |
 | src/llm\_prompts/size\_limits.py                                              |       61 |        1 |     98% |       138 |
 | src/llm\_prompts/size\_report.py                                              |      196 |        2 |     99% |  198, 200 |
@@ -158,7 +158,7 @@
 | tests/test\_network.py                                                        |       26 |        0 |    100% |           |
 | tests/test\_overlay\_merge.py                                                 |       19 |        0 |    100% |           |
 | tests/test\_pi\_extension\_factories.py                                       |        8 |        0 |    100% |           |
-| tests/test\_plugins.py                                                        |      262 |        0 |    100% |           |
+| tests/test\_plugins.py                                                        |      270 |        0 |    100% |           |
 | tests/test\_prompt\_checks\_entry\_points.py                                  |       13 |        0 |    100% |           |
 | tests/test\_prompt\_sizes.py                                                  |      664 |        0 |    100% |           |
 | tests/test\_removed\_agents\_notice.py                                        |       29 |        0 |    100% |           |
@@ -180,7 +180,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       31 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **28099** |  **750** | **97%** |           |
+| **TOTAL**                                                                     | **28106** |  **750** | **97%** |           |
 
 
 ## Setup coverage badge
