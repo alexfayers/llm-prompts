@@ -3502,13 +3502,31 @@ def _version_key(version: str) -> tuple[int, ...]:
     return tuple(int(part) for part in re.findall(r"\d+", version))
 
 
+def _running_pi_version() -> str:
+    """Return the version of the pi that ``pi`` on PATH runs, or "" if unknown.
+
+    An npm install resolves to a file inside its package, whose package.json
+    names the version. The managed launcher instead reads ``current-version``.
+    """
+    launcher = shutil.which("pi")
+    if launcher:
+        for parent in Path(launcher).resolve().parents:
+            manifest = parent / "package.json"
+            if manifest.is_file():
+                package = json.loads(_read_text(manifest))
+                if package.get("name") == _PI_PACKAGE:
+                    return str(package.get("version", ""))
+                break
+    version_file = _pi_agent_dir() / "install" / "current-version"
+    return _read_text(version_file).strip() if version_file.exists() else ""
+
+
 def _warn_pi_version_drift(sources: Iterable[str]) -> None:
     """Print a dim note when the installed pi differs from the pinned version.
 
     Args:
         sources: Package sources llm-prompts declares.
     """
-    version_file = _pi_agent_dir() / "install" / "current-version"
     pinned = next(
         (
             version
@@ -3517,9 +3535,9 @@ def _warn_pi_version_drift(sources: Iterable[str]) -> None:
         ),
         "",
     )
-    if not pinned or not version_file.exists():
+    installed = _running_pi_version()
+    if not pinned or not installed:
         return
-    installed = _read_text(version_file).strip()
     if _version_key(installed) == _version_key(pinned):
         return
     if _version_key(installed) < _version_key(pinned):
