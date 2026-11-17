@@ -566,11 +566,13 @@ def _pull_one_local_source(
     Returns:
         Whether the source moved, and message lines describing the pull outcome.
     """
+    from . import worktrees
     from .main_sync import (
         GIT_TIMED_OUT,
         PRE_SYNC_REF,
         UPSTREAM,
         SyncResult,
+        empty_merged_copies,
         point_upstream,
         rebuild_local,
         run_git,
@@ -612,7 +614,24 @@ def _pull_one_local_source(
             moved += _source_test_warnings(name, repo, test)
         return _PullOutcome(name, True, moved)
     if count == 0:
-        return fetch_failure if fetch_failed else unchanged
+        if fetch_failed:
+            return fetch_failure
+        if not (
+            empty := empty_merged_copies(
+                repo, UPSTREAM, worktrees.copied_identities(repo)
+            )
+        ):
+            return unchanged
+        synced = rebuild_local(repo, UPSTREAM, {}, empty, {}, [])
+        if synced.mode == "failed":
+            return _PullOutcome(
+                name,
+                False,
+                [f"[{name}] could not drop empty commits", f"  {synced.detail}"],
+                failed=True,
+            )
+        dropped = f"[{name}] dropped {len(empty)} empty copies of merged commits; undo with: git reset --keep {PRE_SYNC_REF}"
+        return _PullOutcome(name, True, [dropped])
     pull = run_git(repo, "merge", "--ff-only", "--quiet", UPSTREAM)
     if pull.returncode == 0:
         return _PullOutcome(name, True, [f"[{name}] pulled {count} new commit(s)"])

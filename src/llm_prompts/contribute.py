@@ -1743,6 +1743,18 @@ class _RepoSync:
             self.status = 1
             return False
         changed = {squash.tip for squash in [*swaps.values(), *adds]}
+        drops = {
+            *drops,
+            *main_sync.empty_merged_copies(
+                self.repo,
+                self.main_base,
+                {
+                    e.copied
+                    for e in self.entries
+                    if e.copied and e.repo == _repo_key(self.repo)
+                },
+            ),
+        }
         result = None
         if self.apply and (
             swaps

@@ -92,6 +92,19 @@ def load_entries(path: Path) -> list[WorktreeEntry]:
         ) from error
 
 
+def copied_identities(repo: Path) -> set[str]:
+    """Return the ``copied`` identity of each recorded entry of ``repo``, or none when the record is unreadable."""
+    try:
+        entries = load_entries(record_path())
+    except CorruptRecord:
+        return set()
+    return {
+        e.copied
+        for e in entries
+        if e.copied and e.repo == str(repo.expanduser().resolve())
+    }
+
+
 def save_entries(path: Path, entries: list[WorktreeEntry]) -> None:
     """Write ``entries`` to the record."""
     write_json_atomic(
