@@ -28,6 +28,7 @@ Reason = Literal[
     "copy_failed",
     "record_locked",
     "record_corrupt",
+    "update_running",
     "agent_config_missing",
     "invalid_size_declarations",
     "invalid_plugins",
@@ -35,7 +36,7 @@ Reason = Literal[
 ]
 REASONS: tuple[str, ...] = get_args(Reason)
 STOPPED_REASONS: frozenset[str] = frozenset(
-    {"copy_blocked", "copy_failed", "record_locked", "record_corrupt"}
+    {"copy_blocked", "copy_failed", "record_locked", "record_corrupt", "update_running"}
 )
 
 

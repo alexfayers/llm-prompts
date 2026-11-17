@@ -621,6 +621,16 @@ def contribute_remote(fake_subprocess: FakeSubprocess) -> ContributeRemote:
 
 
 @pytest.fixture(autouse=True)
+def isolated_auto_update_state(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep the automatic-update lock, log and failure record out of the user's data dir."""
+    monkeypatch.setattr(
+        "llm_prompts.auto_update.STATE_DIR", tmp_path_factory.mktemp("auto-update")
+    )
+
+
+@pytest.fixture(autouse=True)
 def isolated_config_dir(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
