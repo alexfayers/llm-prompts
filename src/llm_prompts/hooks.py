@@ -31,6 +31,10 @@ _UPDATE_CHECK_INTERVAL = 2 * 60 * 60
 _LOCK_WAIT_SECONDS = 5.0
 _LOCK_POLL_SECONDS = 0.05
 _DEBOUNCED_TASK_START_SOURCES = frozenset({"resume", "compact"})
+_AUTO_UPDATE_STARTED = (
+    "llm-prompts is updating in the background. "
+    "Start a new session once it finishes to use the new version."
+)
 _HEADLESS_ENTRYPOINTS = frozenset({"sdk-cli", "sdk-ts", "sdk-py"})
 
 
@@ -224,6 +228,28 @@ class _ReinstallDebouncer:
         return cache if isinstance(cache, dict) else {}
 
 
+def _started_auto_update(fingerprint: str) -> bool:
+    """Start the automatic update, and return whether it started, logging instead of raising."""
+    from . import auto_update
+
+    try:
+        return auto_update.start(fingerprint)
+    except (Exception, SystemExit):
+        logger.warning("Failed to start the automatic llm-prompts update")
+        return False
+
+
+def _auto_update_failure(fingerprint: str) -> str | None:
+    """Return why the last automatic update failed, logging instead of raising."""
+    from . import auto_update
+
+    try:
+        return auto_update.failure(fingerprint)
+    except (Exception, SystemExit):
+        logger.warning("Failed to read the automatic llm-prompts update result")
+        return None
+
+
 class AutoReinstallPlugin(HooksPlugin):
     """Auto-runs ``llm-prompts update`` when an installed prompt file is edited."""
 
@@ -294,12 +320,19 @@ class AutoReinstallPlugin(HooksPlugin):
                 if not any(isinstance(m, UpdateCheckFailure) for m in messages):
                     self._update_check_debouncer.mark_run()
                     self._update_check_debouncer.store_notice(messages, fingerprint)
+                    if messages and _started_auto_update(fingerprint):
+                        messages = [*messages, _AUTO_UPDATE_STARTED]
             elif source in _DEBOUNCED_TASK_START_SOURCES:
                 return None
             else:
                 run.begin("startup-check", ["--cached"])
                 messages = self._update_check_debouncer.cached_notice()
 
+        if reason := _auto_update_failure(fingerprint):
+            messages = [
+                *messages,
+                f"The automatic update failed: {reason}\nRun `llm-prompts update` to see why.",
+            ]
         if not messages:
             return None
         stripped = "\n\n".join(
@@ -450,6 +483,14 @@ class AutoReinstallPlugin(HooksPlugin):
 
         if completed.returncode != 0:
             stderr = completed.stderr.strip()
+            from .auto_update import UPDATE_RUNNING
+
+            if UPDATE_RUNNING in stderr:
+                return HookResult(
+                    notes=[
+                        "Skipped auto-reinstall: a running llm-prompts update installs the edit"
+                    ]
+                )
             logger.warning("Failed to run llm-prompts update: %s", stderr)
             note = "Failed to auto-reinstall prompt files"
             if stderr:

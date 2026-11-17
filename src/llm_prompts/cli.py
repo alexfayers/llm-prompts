@@ -1064,8 +1064,19 @@ def _get_gh_login() -> str:
 
 def main() -> int | None:
     """Run the llm-prompts CLI, reporting anonymous telemetry when it finishes."""
-    with telemetry.Run(_get_installed_commit) as run:
-        return _run_command(run)
+    with telemetry.Run(_get_installed_commit) as run, contextlib.ExitStack() as stack:
+        return _run_command(run, stack)
+
+
+def _changes_installed_versions(args: argparse.Namespace) -> bool:
+    """Whether the command moves installed versions, and so must not run alongside another that does."""
+    if args.command == "update":
+        return not args.check
+    return args.command in ("install", "setup") or (
+        args.command == "contribute"
+        and args.contribute_command == "sync"
+        and bool(args.apply)
+    )
 
 
 def _flag_names(parser: argparse.ArgumentParser, argv: list[str]) -> list[str]:
@@ -1123,7 +1134,9 @@ def _add_watch_parser(
         )
 
 
-def _run_command(run: telemetry.Run) -> int | None:
+def _run_command(
+    run: telemetry.Run, stack: contextlib.ExitStack[bool | None]
+) -> int | None:
     """Parse the command line and run the chosen command."""
     parser = argparse.ArgumentParser(
         prog="llm-prompts",
@@ -1193,6 +1206,7 @@ def _run_command(run: telemetry.Run) -> int | None:
     update_parser.add_argument(
         "-v", "--verbose", action="store_true", help="Show every file changed."
     )
+    update_parser.add_argument("--auto", action="store_true", help=argparse.SUPPRESS)
     update_parser.add_argument(
         "--only",
         type=Path,
@@ -1450,6 +1464,12 @@ def _run_command(run: telemetry.Run) -> int | None:
             _flag_names(parser, sys.argv[1:]),
             installs=args.command in _INSTALLING_COMMANDS,
         )
+
+    if _changes_installed_versions(args):
+        from .auto_update import UPDATE_RUNNING, lock
+
+        if not stack.enter_context(lock()):
+            raise ExitReason("update_running", UPDATE_RUNNING)
 
     if args.command == "install":
         if args.root:

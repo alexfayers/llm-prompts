@@ -72,6 +72,15 @@ source = "git+https://github.com/alexfayers/llm-prompts.git"
 ref = "main"
 ```
 
+### Automatic updates
+
+At session start, when updates are available, llm-prompts runs `llm-prompts update` in the background and logs its output to `auto-update.log` in the llm-prompts data dir. It skips the run, and keeps showing the update notice, while a session holds a configured local checkout or plugin checkout, or that checkout has commits or edits its release or remote lacks. `update`, `install`, `setup`, `contribute sync --apply` and the automatic update share one lock, so a second one refuses to start. The reinstall after a prompt file edit skips while a full update runs, since that update installs the edit. A failed run may leave some tools updated, and the next session start shows why. It does not retry until the installed versions change. Turn it off with:
+
+```toml
+[update]
+auto = false
+```
+
 ### Plugins
 
 `[[plugins]]` tracks a git repo of Claude Code plugin skills (a `skills/**/SKILL.md` layout) and installs them for every agent:

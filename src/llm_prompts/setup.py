@@ -53,6 +53,9 @@ _DEFAULT_CONFIG = """\
 #
 # The first entry owns the environment; the others are installed alongside it.
 # Each tool's commands are taken from its pyproject.toml scripts.
+#
+# Agent sessions run `llm-prompts update` in the background when updates exist.
+# Add `[update]` with `auto = false` to turn that off.
 
 [[tools]]
 name = "llm-prompts"

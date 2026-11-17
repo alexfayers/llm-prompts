@@ -15,9 +15,11 @@ import pytest
 from cline_hooks.core.plugin import HookResult
 from conftest import FakeSubprocess
 
+from llm_prompts.cli import UpdateCheckFailure
 from llm_prompts.hooks import (
     _ANSI_COLOR,
     _ANSI_RESET,
+    _AUTO_UPDATE_STARTED,
     _BANNER_DIVIDER,
     _BANNER_TITLE,
     _UPDATE_CHECK_INTERVAL,
@@ -229,6 +231,28 @@ class TestAutoReinstallPlugin:
         )
         assert result is not None
         assert result.notes == ["Failed to auto-reinstall prompt files"]
+
+    @patch("llm_prompts.hooks.read_manifest")
+    def test_skips_the_reinstall_while_a_full_update_runs(
+        self,
+        mock_manifest: MagicMock,
+        manifest_data: dict[str, Any],
+        fake_subprocess: FakeSubprocess,
+    ) -> None:
+        from llm_prompts.auto_update import UPDATE_RUNNING
+
+        mock_manifest.return_value = manifest_data
+        fake_subprocess.on(*_UPDATE_COMMAND, returncode=1, stderr=UPDATE_RUNNING)
+        plugin = AutoReinstallPlugin()
+        result = plugin.on_hook(
+            "PostToolUse",
+            tool_name="write_to_file",
+            parameters={"path": manifest_data["kiro"]["files"][0]},
+        )
+        assert result is not None
+        assert result.notes == [
+            "Skipped auto-reinstall: a running llm-prompts update installs the edit"
+        ]
 
     @patch("llm_prompts.hooks.read_manifest")
     def test_failure_note_includes_captured_stderr(
@@ -618,6 +642,70 @@ class TestUpdateCheckOnTaskStart:
         note = result.user_notes[0]
         assert note.user_text == _format_user_text(message)
         assert (tmp_path / "update-stamp").exists()
+
+    def test_task_start_updates_in_the_background(self, tmp_path: Path) -> None:
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        messages = ["[pkg] update available:\n- did a thing", _UPDATE_INSTRUCTION]
+        with (
+            patch("llm_prompts.cli._collect_update_messages", return_value=messages),
+            patch("llm_prompts.auto_update.start", return_value=True) as start,
+        ):
+            result = plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[])
+        start.assert_called_once()
+        assert result is not None
+        assert result.notes[-1] == _AUTO_UPDATE_STARTED
+        assert "updating in the background" in result.user_notes[0].user_text
+
+    def test_task_start_does_not_auto_update_after_a_failed_check(
+        self, tmp_path: Path
+    ) -> None:
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        failure = UpdateCheckFailure("[pkg] update check failed: could not fetch")
+        with (
+            patch("llm_prompts.cli._collect_update_messages", return_value=[failure]),
+            patch("llm_prompts.auto_update.start") as start,
+        ):
+            plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[])
+        start.assert_not_called()
+
+    @pytest.mark.parametrize("target", ["start", "failure"])
+    def test_task_start_survives_a_broken_automatic_update(
+        self, tmp_path: Path, target: str
+    ) -> None:
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        messages = ["[pkg] update available:\n- did a thing", _UPDATE_INSTRUCTION]
+        with (
+            patch("llm_prompts.cli._collect_update_messages", return_value=messages),
+            patch(f"llm_prompts.auto_update.{target}", side_effect=SystemExit(2)),
+        ):
+            result = plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[])
+        assert result is not None
+        assert result.notes[: len(messages)] == messages
+
+    def test_task_start_reports_a_failed_automatic_update(self, tmp_path: Path) -> None:
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        messages = ["[pkg] update available:\n- did a thing", _UPDATE_INSTRUCTION]
+        with (
+            patch("llm_prompts.cli._collect_update_messages", return_value=messages),
+            patch("llm_prompts.auto_update.start", return_value=False),
+            patch("llm_prompts.auto_update.failure", return_value="could not fetch"),
+        ):
+            result = plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[])
+        assert result is not None
+        assert "could not fetch" in result.notes[-1]
+        assert "could not fetch" in result.user_notes[0].user_text
 
     def test_user_text_caps_commits_but_agent_notes_stay_full(
         self, tmp_path: Path

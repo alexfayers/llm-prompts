@@ -445,6 +445,14 @@ def test_the_event_lists_sorted_flag_names_and_never_their_values(
     assert "synthetic" not in json.dumps(_props(telemetry_popen))
 
 
+@pytest.mark.usefixtures("stubbed_cli")
+def test_an_automatic_update_is_marked_in_its_event(telemetry_popen: MagicMock) -> None:
+    with contextlib.suppress(SystemExit):
+        _main("update", "--auto")
+
+    assert _props(telemetry_popen)["flags"] == ["--auto"]
+
+
 def test_a_failed_command_also_sends_an_exception_event_without_paths(
     telemetry_popen: MagicMock,
     stubbed_cli: MagicMock,
