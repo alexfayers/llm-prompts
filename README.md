@@ -65,7 +65,7 @@
 | src/llm\_prompts/hooks.py                                                     |      250 |       18 |     93% |85, 90, 183-184, 278-279, 306-308, 394, 402-403, 445, 460-461, 480-482 |
 | src/llm\_prompts/install.py                                                   |     1899 |      156 |     92% |116, 218, 539, 581-583, 586, 617-620, 653, 663, 667-668, 773-774, 787, 864, 911-913, 965, 968-970, 985, 1011, 1013, 1069-1070, 1216, 1225-1227, 1301, 1313, 1325, 1407-1408, 1490-1492, 1610, 1617-1618, 1700-1701, 1703, 1768, 2005-2006, 2074-2076, 2078, 2122, 2209-2211, 2471, 2575, 2634, 2942-2944, 3013, 3016, 3042, 3099-3114, 3124-3128, 3147-3154, 3192, 3265, 3274, 3343-3344, 3346-3347, 3394, 3398, 3508, 3567, 3606-3607, 3745, 3871-3884, 3889-3893, 3903-3909, 3927-3933, 3939-3948, 3956-3957, 4015-4018, 4126, 4129, 4288, 4348, 4350, 4595, 4718, 4722, 4733 |
 | src/llm\_prompts/jsonfile.py                                                  |       10 |        0 |    100% |           |
-| src/llm\_prompts/main\_sync.py                                                |      348 |       10 |     97% |200-201, 314, 515-516, 546-547, 677, 707, 743 |
+| src/llm\_prompts/main\_sync.py                                                |      364 |       10 |     97% |201-202, 315, 516-517, 552-553, 703, 733, 771 |
 | src/llm\_prompts/manifest.py                                                  |       72 |        3 |     96% | 50-51, 86 |
 | src/llm\_prompts/mcp.py                                                       |       85 |        1 |     99% |        91 |
 | src/llm\_prompts/network.py                                                   |       27 |        0 |    100% |           |
@@ -145,7 +145,7 @@
 | tests/test\_conftest.py                                                       |       94 |        4 |     96% |194-196, 209 |
 | tests/test\_contribute.py                                                     |      338 |        0 |    100% |           |
 | tests/test\_contribute\_worktrees.py                                          |     1618 |        0 |    100% |           |
-| tests/test\_e2e\_git.py                                                       |      185 |        0 |    100% |           |
+| tests/test\_e2e\_git.py                                                       |      240 |        0 |    100% |           |
 | tests/test\_extension\_factories.py                                           |       29 |        0 |    100% |           |
 | tests/test\_filter\_findings\_script.py                                       |       73 |        0 |    100% |           |
 | tests/test\_focus.py                                                          |     1056 |        1 |     99% |        52 |
@@ -159,7 +159,7 @@
 | tests/test\_install\_codex.py                                                 |      269 |        0 |    100% |           |
 | tests/test\_install\_pi.py                                                    |     1441 |        1 |     99% |      2166 |
 | tests/test\_jsonfile.py                                                       |        9 |        0 |    100% |           |
-| tests/test\_main\_sync.py                                                     |      306 |        0 |    100% |           |
+| tests/test\_main\_sync.py                                                     |      309 |        0 |    100% |           |
 | tests/test\_manifest.py                                                       |       73 |        0 |    100% |           |
 | tests/test\_mcp.py                                                            |       27 |        2 |     93% |     43-44 |
 | tests/test\_network.py                                                        |       26 |        0 |    100% |           |
@@ -189,7 +189,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       31 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **29184** |  **784** | **97%** |           |
+| **TOTAL**                                                                     | **29258** |  **784** | **97%** |           |
 
 
 ## Setup coverage badge
