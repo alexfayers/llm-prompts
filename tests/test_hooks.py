@@ -979,8 +979,54 @@ class TestUpdateCheckOnTaskStart:
             started = compact()
             assert compact() is None
         collect.assert_called_once()
-        assert started is not None and started.notes == [_AUTO_UPDATE_STARTED]
+        assert started is not None and started.notes == [
+            *messages,
+            _AUTO_UPDATE_STARTED,
+        ]
         start.assert_called_once()
+
+    def test_compact_shows_a_notice_another_session_cached_once(
+        self, tmp_path: Path
+    ) -> None:
+        stamp = tmp_path / "update-stamp"
+        messages = ["[pkg] update available:\n- did a thing", _UPDATE_INSTRUCTION]
+        debouncer = _ReinstallDebouncer(stamp, interval_seconds=_UPDATE_CHECK_INTERVAL)
+        debouncer.store_notice(messages)
+        debouncer.mark_run()
+
+        def compact(task_id: str = "t1") -> HookResult | None:
+            plugin = AutoReinstallPlugin()
+            plugin._update_check_debouncer = _ReinstallDebouncer(
+                stamp, interval_seconds=_UPDATE_CHECK_INTERVAL
+            )
+            return plugin.on_hook(
+                "TaskStart", task_id=task_id, workspace_roots=[], source="compact"
+            )
+
+        shown = compact()
+        assert shown is not None and shown.notes == messages
+        assert compact() is None
+        assert compact("t2") is not None
+
+    def test_a_held_update_that_does_not_start_says_why(self, tmp_path: Path) -> None:
+        stamp = tmp_path / "update-stamp"
+        messages = ["[pkg] update available:\n- did a thing", _UPDATE_INSTRUCTION]
+        debouncer = _ReinstallDebouncer(stamp, interval_seconds=_UPDATE_CHECK_INTERVAL)
+        debouncer.store_notice(messages)
+        debouncer.mark_run()
+        debouncer.hold(True)
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = debouncer
+        with (
+            patch("llm_prompts.auto_update.blocker", return_value="off"),
+            patch("llm_prompts.auto_update.start", return_value="off"),
+        ):
+            result = plugin.on_hook(
+                "TaskStart", task_id="t1", workspace_roots=[], source="compact"
+            )
+        assert result is not None
+        assert result.notes[:2] == messages
+        assert "did not run: off" in result.notes[-1]
 
     def test_compact_shows_an_auto_update_failure(self, tmp_path: Path) -> None:
         plugin = AutoReinstallPlugin()
