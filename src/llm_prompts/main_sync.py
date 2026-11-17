@@ -268,6 +268,40 @@ def _local_commits(repo: Path, merge_base: str) -> list[LocalCommit]:
     return commits
 
 
+def empty_merged_copies(repo: Path, base: str, copied: Collection[str]) -> set[str]:
+    """The empty local main commits that are recorded worktree copies, by ``copied`` identity, of a pull request squash-merged into ``base``."""
+    if not copied:
+        return set()
+    try:
+        return _empty_merged_copies(repo, base, copied)
+    except _Bail:
+        return set()
+
+
+def _empty_merged_copies(repo: Path, base: str, copied: Collection[str]) -> set[str]:
+    merge_base = _read(repo, "merge-base", "HEAD", base).strip()
+    empty: dict[str, str] = {}
+    for line in _read(
+        repo, "log", "--format=%H %T %P%x09%at%x09%s", f"{merge_base}..HEAD"
+    ).splitlines():
+        ids, _, identity = line.partition("\t")
+        sha, tree, *parents = ids.split()
+        if (
+            identity in copied
+            and len(parents) == 1
+            and tree == _read(repo, "rev-parse", f"{parents[0]}^{{tree}}").strip()
+        ):
+            empty[sha] = identity.partition("\t")[2]
+    if not empty:
+        return set()
+    merged = {
+        _SQUASH_SUFFIX.sub("", subject)
+        for subject in _read(repo, "log", "--format=%s", base).splitlines()
+        if _SQUASH_SUFFIX.search(subject)
+    }
+    return {sha for sha, subject in empty.items() if subject in merged}
+
+
 def _cherry(repo: Path, upstream: str, head: str, mark: str) -> list[str]:
     return [
         line[2:]
