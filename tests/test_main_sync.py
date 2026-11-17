@@ -201,6 +201,17 @@ LOCAL_AUTHOR = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _replays_change_the_tree(fake_subprocess: FakeSubprocess) -> None:
+    """Answer the replay's tip, floor and change trees as distinct, so no replay looks empty."""
+    fake_subprocess.on_match(
+        lambda argv: (
+            "rev-parse" in argv and sum(arg.endswith("^{tree}") for arg in argv) == 3
+        ),
+        stdout="tree-tip\ntree-floor\ntree-change\n",
+    )
+
+
 def _remembered_main_is_saved(fake: FakeSubprocess) -> None:
     """Answer the commit that records the earlier main, apart from the replayed commits."""
     fake.on_match(lambda argv: "commit-tree" in argv and "-m" in argv, stdout="c\n")
@@ -232,7 +243,7 @@ def _route_divergence(fake: FakeSubprocess) -> None:
     )
     fake.on("rev-parse", "l3^{tree}", stdout="tree-l3\n")
     fake.on("log", "-1", "--format=%an%x00%ae%x00%aI%x00%B", stdout=LOCAL_AUTHOR)
-    fake.on("commit-tree", stdout=["tip1\n", "tip2\n"])
+    fake.on("commit-tree", stdout=["tip1\n", "tip2\n", "tip3\n"])
     _remembered_main_is_saved(fake)
     _head_is_saved(fake)
 
