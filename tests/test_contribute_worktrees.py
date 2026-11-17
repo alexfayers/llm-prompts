@@ -2955,6 +2955,38 @@ def test_no_depends_on_removes_the_link_and_the_base_so_the_upper_is_skipped_for
     )
 
 
+def test_depends_on_a_pr_of_an_unmanaged_repo_writes_its_line_and_no_depends_on_removes_it(
+    project: Project,
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+
+    assert project.run(depends_on=("feat/a", "o/ci#23")) == 0
+    project.run(ready="feat/a")
+    assert project.run(apply=True) == 0
+
+    [entry] = project.entries()
+    assert entry.depends_on == (Link("", "", "o/ci#23"),)
+    assert "\nDepends on o/ci#23\n" in pr_body(project, entry.pr or 0)
+    assert project.run(no_depends_on=("feat/a", "o/ci#23")) == 0
+    assert project.entries()[0].depends_on == ()
+
+
+def test_a_pr_reference_link_reaches_a_branch_that_already_has_a_draft_pr(
+    project: Project,
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+    project.run(apply=True)
+
+    assert project.run(depends_on=("feat/a", "o/ci#23")) == 0
+    assert project.run(apply=True) == 0
+
+    [entry] = project.entries()
+    assert "\nDepends on o/ci#23\n" in pr_body(project, entry.pr or 0)
+
+
 def test_no_depends_on_for_a_link_that_is_not_there_fails(
     project: Project, stack: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
