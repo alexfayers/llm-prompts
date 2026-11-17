@@ -15,7 +15,7 @@
     "npm:pi-lsp-extension@1.4.0",
     "npm:@henryqw/pi-herdr-tools@6.1.1",
     "npm:@henryqw/pi-task-models@9.6.0",
-    "npm:@gotgenes/pi-permission-system@42.0.0",
+    "npm:@gotgenes/pi-permission-system@42.0.1",
     "npm:pi-zentui@0.34.0",
     "npm:pi-web-access@0.48.0",
     "npm:pi-compact-tools@0.18.0",
