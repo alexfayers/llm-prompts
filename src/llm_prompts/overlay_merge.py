@@ -1,4 +1,4 @@
-"""How overlay layers combine with core: merged seed JSON and agent definitions."""
+"""How overlay layers combine with core: merged seed JSON, test gates and agent definitions."""
 
 from __future__ import annotations
 
@@ -35,6 +35,23 @@ def merged_seed_text(layers: Sequence[Path]) -> str:
         return _read_text(layers[-1])
     merged = reduce(deep_merge, (json.loads(_read_text(path)) for path in layers))
     return json.dumps(merged, indent=2, ensure_ascii=False) + "\n"
+
+
+TEST_GATES = Path("shared/test-gates.json")
+
+
+def merged_test_gates(roots: Sequence[Path]) -> list[dict[str, object]]:
+    """Return the gates of every root's test-gates.json, in root order.
+
+    Args:
+        roots: Prompt directories, highest priority first.
+    """
+    return [
+        gate
+        for root in roots
+        if (root / TEST_GATES).is_file()
+        for gate in json.loads(_read_text(root / TEST_GATES)).get("gates", [])
+    ]
 
 
 _KEY_LINE = re.compile(r"^([A-Za-z_][\w-]*):")

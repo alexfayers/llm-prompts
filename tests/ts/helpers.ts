@@ -121,15 +121,18 @@ function makePi(state: Partial<FakePi>): FakePi & ExtensionAPI {
 		on: (event: string, handler: Handler) => void (pi.handlers[event] ??= []).push(handler),
 		registerTool: (tool: Tool) => void (pi.tools[tool.name] = tool),
 		registerCommand: (name: string, command: Command) => void (pi.commands[name] = command),
+		registerShortcut: () => {},
 		getActiveTools: () => pi.activeTools,
 		getAllTools: () => pi.allTools,
 		setActiveTools: (names: string[]) => void (pi.activeTools = names),
 		getCommands: () => pi.commandNames.map((name) => ({ name })),
+		getSessionName: () => undefined,
 		getThinkingLevel: () => pi.thinking,
 		setThinkingLevel: (level: string) => void (pi.thinking = level),
 		setModel: async (model: unknown) => ((pi.model = model), true),
 		sendUserMessage: async (...args: unknown[]) => void pi.sent.push(args),
 		appendEntry: (customType: string, data: unknown) => void pi.appended.push([customType, data]),
+		registerEntryRenderer: () => {},
 	};
 	return pi as FakePi & ExtensionAPI;
 }
@@ -202,8 +205,6 @@ export interface MemoryFs {
 	mkdir(dir: string, mtimeMs?: number): void;
 	touch(path: string, mtimeMs: number): void;
 	remove(path: string): void;
-	/** Writes <agentDir>/pi-herdsman/runtime/mailboxes-v5/<id>/state.json and returns the mailbox directory. */
-	writeMailboxState(agentDir: string, id: string, state?: unknown): string;
 }
 
 type Entry = { text?: string; mtimeMs: number };
@@ -284,11 +285,6 @@ export function useMemoryFs(): MemoryFs {
 		mkdir,
 		touch: (path, mtimeMs) => void (entries.get(path)!.mtimeMs = mtimeMs),
 		remove,
-		writeMailboxState(agentDir, id, state = {}) {
-			const mailbox = join(agentDir, "pi-herdsman/runtime/mailboxes-v5", id);
-			write(join(mailbox, "state.json"), typeof state === "string" ? state : JSON.stringify(state));
-			return mailbox;
-		},
 	};
 }
 
@@ -314,4 +310,11 @@ export function makeEvents(): FakeEvents {
 		},
 	};
 	return events;
+}
+
+/** The provider/id model that integration tests run, from PI_CONTEXT_MODEL. */
+export function integrationModel(): string {
+	const model = process.env.PI_CONTEXT_MODEL;
+	if (!model) throw new Error("PI_CONTEXT_MODEL must name the model to run, as provider/id");
+	return model;
 }

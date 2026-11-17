@@ -137,34 +137,6 @@ class TestSharedSourcesResolveToolVariables:
         assert used <= load_vars(target_vars).keys()
 
 
-class TestHerdsmanOverrides:
-    TEMPLATE = (
-        "{{TOOL_AGENT}}|{{TOOL_STEER}}|{{TOOL_AGENT_RESULT}}|[{{TOOL_WORKFLOW}}]\n"
-    )
-    VARIABLES: ClassVar[dict[str, str]] = {
-        "TOOL_AGENT": "Agent",
-        "TOOL_STEER": "steer_subagent",
-        "TOOL_AGENT_RESULT": "get_subagent_result",
-        "TOOL_WORKFLOW": "SubagentWorkflow",
-    }
-
-    @pytest.mark.parametrize(
-        ("agent", "expected"),
-        [
-            ("pi", "delegate_agent|steer_agent|inspect_agent|[]\n"),
-            (
-                "claude-code",
-                "Agent|steer_subagent|get_subagent_result|[SubagentWorkflow]\n",
-            ),
-        ],
-    )
-    def test_overrides_apply_only_to_pi(self, agent: str, expected: str) -> None:
-        assert (
-            substitute_variables(self.TEMPLATE, {**self.VARIABLES, "AGENT": agent})
-            == expected
-        )
-
-
 class TestSourcesUseToolVariables:
     DELEGATION = Path(__file__).parent.parent / (
         "src/llm_prompts/prompts/shared/rules/delegation.md"
@@ -173,7 +145,6 @@ class TestSourcesUseToolVariables:
     @pytest.mark.parametrize(
         ("agent", "present", "absent"),
         [
-            ("pi", "`continue_agent`", "`Agent`"),
             ("claude-code", "`Agent`", "continue_agent"),
         ],
     )
@@ -281,13 +252,35 @@ class TestPlanningRuleLinesAreClaudeCodeOnly:
             "rules/agent-teams.md", "claude-code"
         )
 
-    def test_pi_agent_teams_names_tower_do_patch(self) -> None:
-        assert "tower_do_patch" in self._render("rules/agent-teams.md", "pi")
 
-    def test_pi_agent_teams_lets_main_read_a_known_target(self) -> None:
-        assert "MAY read a known target itself" in self._render(
-            "rules/agent-teams.md", "pi"
+class TestPendingAsksRestateRuleIsPiCut:
+    PROMPTS = Path(__file__).parent.parent / "src/llm_prompts/prompts"
+    PIN = "MUST pin each pending ask"
+
+    def _render(self, agent: str) -> str:
+        variables = {
+            **load_vars(self.PROMPTS / agent / "vars.json"),
+            "AGENT": agent,
+        }
+        return substitute_variables(
+            (self.PROMPTS / "shared/rules/anti-yap.md").read_text(encoding="utf-8"),
+            variables,
         )
+
+    def test_pi_pins_asks_instead_of_restating_them(self) -> None:
+        rendered = self._render("pi")
+        assert self.PIN in rendered
+        assert "restate EVERY" not in rendered
+
+    def test_other_targets_keep_the_restate_rule_the_extension_injects(self) -> None:
+        extension = (self.PROMPTS / "pi/extensions/pending-asks.ts").read_text(
+            encoding="utf-8"
+        )
+        restate = re.search(r"RESTATE_RULE = `(.*)`;", extension)
+        assert restate
+        rendered = self._render("claude-code")
+        assert restate.group(1) in rendered
+        assert self.PIN not in rendered
 
 
 class TestStartUpStepsAreHookDriven:

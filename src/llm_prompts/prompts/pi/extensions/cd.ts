@@ -1,40 +1,22 @@
 // Adds /cd and the change_dir tool, which move the session (history kept) to another working directory.
 // Commands: /cd <dir>
-// Env: PI_HERDSMAN_MAILBOX (set for managed agents, which cannot change directory)
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getAgentDir, SessionManager } from "@earendil-works/pi-coding-agent";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { forkRegistry } from "./pi-context/registry.ts";
 
 const PARAMETERS = Type.Object({
 	path: Type.String({ description: "Directory to move the session to. Relative paths resolve against the current directory." }),
 });
 
 const CONTINUE_MESSAGE = "Directory changed. Continue the task.";
-const MAILBOX_DIR = path.join("pi-herdsman", "runtime", "mailboxes-v5");
-
-function ownedAgentLabels(ownerSessionId: string): string[] {
-	const root = path.join(getAgentDir(), MAILBOX_DIR);
-	const labels: string[] = [];
-	for (const name of fs.existsSync(root) ? fs.readdirSync(root) : []) {
-		const state = JSON.parse(fs.readFileSync(path.join(root, name, "state.json"), "utf8"));
-		if (state.ownerSessionId === ownerSessionId) labels.push(String(state.agentLabel ?? name));
-	}
-	return labels.sort();
-}
-
 // Returns the reason the session cannot move to target, or undefined where it can.
 function checkTarget(ctx: ExtensionContext, target: string): string | undefined {
-	if (process.env.PI_HERDSMAN_MAILBOX) return "A pi-herdsman managed agent cannot change directory.";
-	let labels: string[];
-	try {
-		labels = ownedAgentLabels(ctx.sessionManager.getSessionId());
-	} catch {
-		return "Cannot read pi-herdsman agent state, so the session cannot move.";
-	}
-	if (labels.length > 0) return `Cannot move while this session owns pi-herdsman agents: ${labels.join(", ")}. Close them with close_agent, then retry.`;
+	const forks = (forkRegistry()?.live() ?? []).filter((run) => run.background).map((run) => run.name);
+	if (forks.length > 0) return `Cannot move while background forks ${forks.join(", ")} are still running. Wait for them to finish, or stop them with fork_cancel.`;
 	if (!ctx.sessionManager.getSessionFile()) return "The session is not saved, so it cannot move.";
 	if (target === ctx.cwd) return `Already in ${target}`;
 	if (!fs.statSync(target, { throwIfNoEntry: false })?.isDirectory()) return `Not a directory: ${target}`;

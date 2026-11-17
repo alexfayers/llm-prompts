@@ -15,8 +15,6 @@ from typing import TYPE_CHECKING
 
 from jinja2 import Environment, Template, Undefined
 
-from .herdsman import HERDSMAN_OVERRIDES, is_herdsman
-
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -243,8 +241,6 @@ def substitute_variables(content: str, variables: dict[str, str]) -> str:
     Raises:
         jinja2.TemplateSyntaxError: If ``content`` is not a valid template.
     """
-    if is_herdsman(variables):
-        variables = {**variables, **HERDSMAN_OVERRIDES}
     return _compile_template(content).render(variables)
 
 

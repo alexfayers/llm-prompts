@@ -5,6 +5,9 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+export const loadTowerDo = <T>(file: string): Promise<T> =>
+	import(pathToFileURL(join(getAgentDir(), "npm", "node_modules", "tower-do", file)).href);
+
 export type TaskRow = { key: string; [field: string]: unknown };
 
 function duplicates(keys: string[]): string[] {
@@ -70,15 +73,12 @@ const PARAMETERS = Type.Object({
 type BoardModule = { TowerBoard: new (file: string) => { fold(): Promise<{ revision: number; tasks: { key: string }[] }> } };
 
 export default function (pi: ExtensionAPI) {
-	const loadBoardModule = (): Promise<BoardModule> =>
-		import(pathToFileURL(join(getAgentDir(), "npm", "node_modules", "tower-do", "board.ts")).href);
-
 	const depsFor = (ctx: ExtensionToolContext): PatchDeps => ({
 		async readBoard() {
 			const status = await ctx.executeTool("tower_do_status", { view: "mine" });
 			const file = (status.result.details as { board?: string } | undefined)?.board;
 			if (file === undefined) throw new Error("tower_do_patch: could not find the board file");
-			const { TowerBoard } = await loadBoardModule();
+			const { TowerBoard } = await loadTowerDo<BoardModule>("board.ts");
 			const view = await new TowerBoard(file).fold();
 			return { revision: view.revision, keys: view.tasks.map((task) => task.key) };
 		},

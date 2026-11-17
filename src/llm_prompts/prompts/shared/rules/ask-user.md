@@ -1,4 +1,5 @@
 ---
+audience: main
 roles: lead, coordinator, reasoner
 targets: claude-code, pi
 ---

@@ -4,7 +4,6 @@
   "cline-hooks",
   "net-guard",
   "prompt-cache-stabilizer",
-  "herdsman-guidance-dedupe",
   "codemode-error-header",
   "mcp-hints",
   "compact-now",
@@ -12,5 +11,6 @@
   "codemode-wait-until",
   "tower-do-slim",
   "tower-do-patch",
+  "usage-ledger",
   "@gotgenes/pi-permission-system"
 ]

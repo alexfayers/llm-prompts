@@ -6,7 +6,7 @@ const RELOAD = ["/reload-now", { expandPromptTemplates: true }];
 
 const CONTINUE = "Reload finished. Continue the task. If nothing is open, reply with one emoji.";
 
-useEnv({ PI_HERDSMAN_MAILBOX: "" });
+useEnv({ PI_CONTEXT_CHILD: "" });
 
 type Loaded = Awaited<ReturnType<typeof loadExtension>>;
 
@@ -35,10 +35,10 @@ describe("reload_now", () => {
 		assert.deepEqual(ext.pi.sent, [RELOAD]);
 	});
 
-	test("a managed agent can neither call it nor run the command", async () => {
-		process.env.PI_HERDSMAN_MAILBOX = "m";
+	test("a delegate can neither call it nor run the command", async () => {
+		process.env.PI_CONTEXT_CHILD = "/tmp/handshake.json";
 		const ext = await loadExtension("reload-now");
-		await assert.rejects(ext.callTool("reload_now"), /managed agent/);
+		await assert.rejects(ext.callTool("reload_now"), /delegate/);
 		await ext.fire("agent_settled", { aborted: false });
 		assert.deepEqual(ext.pi.sent, []);
 		const { reloads } = await runCommand(ext, true);

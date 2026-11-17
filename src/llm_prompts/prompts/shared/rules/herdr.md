@@ -1,4 +1,5 @@
 ---
+audience: main
 roles: lead
 requires_command: herdr
 ---
@@ -11,9 +12,7 @@ requires_command: herdr
 - Herdr links a worktree only into a workspace of the same git repo - MUST check its `repo_key` in `herdr workspace list` first.
 - `agent start` returning `agent_not_ready` on a new path usually means a folder-trust prompt - MUST hand it to the user.
 - Every handoff MUST follow the `handoff` skill.
-{% if AGENT == "pi" %}
-- MUST update pi-herdsman or other pi packages only when no agents are running, then restart pi. A mid-session update blocks `delegate_agent` until restart.
-{% endif %}
+{% if AGENT != "pi" %}
 
 ## Feature worktrees
 
@@ -23,3 +22,4 @@ requires_command: herdr
 - A worktree needs its own `uv sync` and `uv run` venv.
 - The pane-reaper extension only reports clean merged worktrees as safe to remove. Main MUST remove them, after merging: run `herdr worktree remove --workspace <id>`, then `git branch -d` the branch. Herdr keeps the branch.
 - For a Herdr-opened worktree, MUST NOT use raw `git worktree remove`. MUST NOT remove any dirty worktree or one with an unmerged commit.
+{% endif %}

@@ -1,9 +1,9 @@
-// Keeps the system prompt unchanged between turns so the prompt cache stays valid, and shrinks the agent roster section.
+// Keeps the system prompt unchanged between turns so the prompt cache stays valid.
 import { getCurrentSystemMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const CWD_SECTION = "cwd";
-const MOVED_SECTIONS = [CWD_SECTION, "pi_herdsman_agent"];
+const MOVED_SECTIONS = [CWD_SECTION];
 const BUILT_IN_SECTIONS = new Set(["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", CWD_SECTION]);
 
 type Message = {
@@ -72,47 +72,6 @@ export function moveCwdToFirstUserMessage(messages: Message[]): Message[] | unde
 	});
 }
 
-const ROSTER_SECTION = "agent_definitions";
-const ROSTER_FIELDS = ["name", "enabled", "description", "model", "thinking", "noTools", "noBuiltinTools", "tools", "excludeTools", "agents"] as const;
-
-type RosterDefinition = Record<string, unknown>;
-
-function compactDefinition(definition: RosterDefinition): RosterDefinition {
-	const excludeTools = Array.isArray(definition.excludeTools) ? definition.excludeTools.filter((tool) => !String(tool).startsWith("mcp__")) : definition.excludeTools;
-	const kept: RosterDefinition = { ...definition, excludeTools: Array.isArray(excludeTools) && excludeTools.length === 0 ? undefined : excludeTools };
-	return Object.fromEntries(ROSTER_FIELDS.flatMap((field) => (kept[field] === undefined ? [] : [[field, kept[field]]])));
-}
-
-export function compactRoster(content: string): string {
-	const split = content.indexOf("\n\n");
-	if (split < 0) return content;
-	let definitions: unknown;
-	try {
-		definitions = JSON.parse(content.slice(0, split));
-	} catch {
-		return content;
-	}
-	if (!Array.isArray(definitions) || !definitions.every((definition) => typeof definition?.name === "string")) return content;
-	const lines = definitions.map((definition) => `  ${JSON.stringify(compactDefinition(definition))}`);
-	return `[\n${lines.join(",\n")}\n]${content.slice(split)}`;
-}
-
-const ROSTER_WRAPPER = /^<agent_definitions>\n([\s\S]*)\n<\/agent_definitions>$/;
-
-export function compactRosterSections(messages: Message[]): Message[] | undefined {
-	let changed = false;
-	const compacted = messages.map((message) => {
-		const section = message.role === "system" ? message.sections?.[ROSTER_SECTION] : undefined;
-		const content = typeof section === "string" ? ROSTER_WRAPPER.exec(section)?.[1] : undefined;
-		if (content === undefined) return message;
-		const roster = `<${ROSTER_SECTION}>\n${compactRoster(content)}\n</${ROSTER_SECTION}>`;
-		if (roster === section) return message;
-		changed = true;
-		return { ...message, sections: { ...message.sections, [ROSTER_SECTION]: roster } };
-	});
-	return changed ? compacted : undefined;
-}
-
 function foldsSystemMessages(model: { api?: string; compat?: object } | undefined): boolean {
 	return (
 		model !== undefined &&
@@ -121,7 +80,18 @@ function foldsSystemMessages(model: { api?: string; compat?: object } | undefine
 	);
 }
 
+type Prefix = { system?: unknown; tools?: unknown; toolConfig?: { tools?: unknown } };
+
+export function changedPrefixParts(previous: Record<string, string>, payload: Prefix): { current: Record<string, string>; changed: string[] } {
+	const parts = { system: payload.system, tools: payload.toolConfig?.tools ?? payload.tools };
+	const current = Object.fromEntries(Object.entries(parts).flatMap(([name, value]) => (value === undefined ? [] : [[name, JSON.stringify(value)]])));
+	const names = Object.keys(previous).length === 0 ? [] : [...new Set([...Object.keys(previous), ...Object.keys(current)])];
+	return { current, changed: names.filter((name) => previous[name] !== current[name]) };
+}
+
 export default function (pi: ExtensionAPI) {
+	let previousPrefix: Record<string, string> = {};
+	let systemEntries = 0;
 	let pendingPrompted = false;
 	let triggered = false;
 	let lastPromptedAt = 0;
@@ -129,6 +99,8 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", (_event, ctx) => {
 		pendingPrompted = false;
 		triggered = false;
+		previousPrefix = {};
+		systemEntries = 0;
 		const lastUser = ctx.sessionManager
 			.getBranch()
 			.flatMap((entry) => (entry.type === "message" && entry.message.role === "user" ? [entry.message.timestamp] : []))
@@ -143,6 +115,14 @@ export default function (pi: ExtensionAPI) {
 		triggered = !pendingPrompted;
 		pendingPrompted = false;
 	});
+	pi.on("before_provider_request", (event, ctx) => {
+		const { current, changed } = changedPrefixParts(previousPrefix, event.payload as Prefix);
+		if (Object.keys(current).length === 0) return;
+		const entries = ctx.sessionManager.getBranch().filter((entry) => entry.type === "message" && entry.message.role === "system").length;
+		if (changed.length > 0 && entries === systemEntries) ctx.ui.notify(`prefix changed: ${changed.join("|")}`, "warning");
+		previousPrefix = current;
+		systemEntries = entries;
+	});
 	pi.on("context_with_system", (event, ctx) => {
 		const eventMessages = event.messages as Message[];
 		let stabilized: Message[] | undefined;
@@ -153,8 +133,7 @@ export default function (pi: ExtensionAPI) {
 				.flatMap((entry) => (entry.type === "message" && entry.message.role === "system" ? [entry.message as Message] : []));
 			stabilized = stabilizeSystemMessages(eventMessages, options) ?? stabilizeMergedHead(eventMessages, branchSystemMessages, options);
 		}
-		const moved = moveCwdToFirstUserMessage(stabilized ?? eventMessages) ?? stabilized;
-		const messages = compactRosterSections(moved ?? eventMessages) ?? moved;
+		const messages = moveCwdToFirstUserMessage(stabilized ?? eventMessages) ?? stabilized;
 		return messages && { messages: messages as typeof event.messages };
 	});
 }

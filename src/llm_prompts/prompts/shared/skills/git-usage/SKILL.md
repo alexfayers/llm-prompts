@@ -24,7 +24,7 @@ These rules MUST override others.
 - Same logical change also covers same-topic-different-angle, not just a bug fix - MUST fold it immediately: `--squash=<target>` when directly correcting (keeps both messages), `--fixup=<target>` for another angle (keeps the better message).
 - Before amending, MUST check `git -P log --oneline @{u}..HEAD`. Empty output means HEAD is already pushed - MUST NOT amend; make a new commit instead.
 - If using a focus chain, the last task MUST be committing the changes.
-- MUST work in a `git worktree` on your own unpushed branch, with your commits. PRs come from that worktree via `llm-prompts contribute`, which squashes them into one commit on local `main`. MUST NOT use a fresh clone.
+- MUST work in a worktree, never the primary checkout or a fresh clone: `git worktree add -b <login>/<slug> ../<repo>-worktrees/<slug> origin/main`. Land: rebase onto `main`, `git merge --ff-only` on main, then drop the worktree and branch. llm-prompts, cline-hooks, mcp-memory: land via `llm-prompts contribute sync`.
 - MUST keep history linear, no merge commits. MUST fold one branch into another via `git rebase` or fast-forward; `git merge` only for an already-pushed/shared branch you can't rewrite. MUST rebase away an accidental unpushed merge commit.
 - MUST resolve conflicts with `git checkout <ref> -- <file>`, MUST NOT `--ours`/`--theirs` - `--ours` = base in `git rebase` but current branch in `git merge`. Name the ref (e.g. `origin/main`) instead.
 
@@ -49,4 +49,4 @@ The co-located `check_repos.py` sweeps every named workspace root for uncommitte
 python3 "<base-dir>/check_repos.py" [--workspace <path>]
 ```
 
-`--workspace` defaults to the current directory. MUST pass it once per additional touched repo root. It auto-adds prompt/skill source repos (via `llm-prompts source <agent>`). Prints JSON with a `repos` list (each `{path, uncommitted, unpushed, no_upstream}`) and a top-level `clean` flag, exiting non-zero when anything is outstanding (`no_upstream` is informational only). MUST commit `uncommitted` entries; MUST surface `unpushed` entries and ask how to submit (push or later). If any repo reports an `error`, MUST investigate before proceeding.
+MUST pass `--workspace` once per extra touched repo root (default: cwd). It auto-adds prompt/skill source repos (via `llm-prompts source <agent>`). Prints JSON (`repos` of `{path, uncommitted, unpushed, no_upstream}`, plus `clean`), exiting non-zero when anything is outstanding (`no_upstream` excepted). MUST commit `uncommitted` entries; MUST surface `unpushed` entries and ask how to submit (push or later). If any repo reports an `error`, MUST investigate before proceeding.
