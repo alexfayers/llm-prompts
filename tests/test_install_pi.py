@@ -1301,6 +1301,32 @@ class TestPiAgents:
         assert variants[role]
 
     @pytest.mark.usefixtures("core_tree")
+    def test_install_writes_resolved_fork_tiers_last_overlay_winning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        overlays = []
+        for name, models in (
+            ("first", {"sonnet": "acme/small", "opus": "acme/first-large"}),
+            ("second", {"opus": "acme/second-large"}),
+        ):
+            overlay = tmp_path / name
+            (overlay / "pi").mkdir(parents=True)
+            (overlay / "pi" / "agent-models.json").write_text(
+                json.dumps(models), encoding="utf-8"
+            )
+            overlays.append(overlay)
+
+        _install(home, tmp_path / "installed.json", overlays)
+
+        tiers_path = home / ".pi/agent/pi-context/models.json"
+        tiers = json.loads(tiers_path.read_text(encoding="utf-8"))
+        assert tiers == {"sonnet": "acme/small", "opus": "acme/second-large"}
+        recorded = json.loads((tmp_path / "installed.json").read_text())
+        assert str(tiers_path) in recorded["agents"]["pi"]["files"]
+
+    @pytest.mark.usefixtures("core_tree")
     def test_overlay_models_resolve_tiers_last_overlay_winning(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2603,12 +2629,19 @@ class TestPiPackageInstallFailure:
         before = agent.read_text("utf-8")
         shutil.rmtree(home / ".pi/agent/npm/node_modules/acme-ext")
         (overlay / "shared/agents/a.md").write_text("---\nname: a\n---\n\nv2\n")
+        tiers = home / ".pi/agent/pi-context/models.json"
+        tiers.write_text('{"old": "acme/old"}\n', "utf-8")
+        (overlay / "pi").mkdir(exist_ok=True)
+        (overlay / "pi/agent-models.json").write_text('{"new": "acme/new"}', "utf-8")
 
         _, _, recorded = self._install(tmp_path, overlay, fail=True)
+
+        assert tiers.read_text("utf-8") == '{"old": "acme/old"}\n'
 
         assert agent.read_text("utf-8") == before
         assert str(agent) in recorded["files"]
         assert str(home / ".pi/agent/agent-role-variants.json") in recorded["files"]
+        assert str(home / ".pi/agent/pi-context/models.json") in recorded["files"]
         assert "Agents not regenerated" in (err := capsys.readouterr().err)
         assert "npm:acme-ext@1.0.0" in err.split("Agents not regenerated")[1]
 
