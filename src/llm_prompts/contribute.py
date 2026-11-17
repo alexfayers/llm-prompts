@@ -26,6 +26,7 @@ from .squash_subject import squash_pr_number
 from .worktrees import Link, WorktreeEntry
 
 _DEPENDS_PREFIX = "Depends on "
+_PR_SPEC = re.compile(r"[\w.-]+/[\w.-]+#\d+")
 _GENERATED_PREFIXES = ("- ", _DEPENDS_PREFIX)
 _OPTIONAL_SECTIONS = ("Dependencies", "Issues")
 _WHAT_HEADING = re.compile(r"^## What\n", re.MULTILINE)
@@ -667,24 +668,22 @@ def _link_branches(
     branch: str,
     spec: str,
 ) -> str:
-    """Record that ``branch`` depends on the ``TOOL:BRANCH`` named by ``spec``."""
-    lower_key, lower_branch = _spec_target(tools, spec)
-    lower = _find(entries, lower_key, lower_branch)
-    if lower is None:
+    """Record that ``branch`` depends on the ``TOOL:BRANCH`` or ``owner/repo#N`` named by ``spec``."""
+    pr_ref = _PR_SPEC.fullmatch(spec) is not None
+    lower_key, lower_branch = ("", "") if pr_ref else _spec_target(tools, spec)
+    if not pr_ref and _find(entries, lower_key, lower_branch) is None:
         raise LookupError(f"{spec}: not recorded")
     dependent = _find(entries, _repo_key(repo), branch)
     if dependent is None:
         raise LookupError(f"{branch}: not recorded")
-    if dependent.pr is not None:
+    if dependent.pr is not None and not pr_ref:
         raise LookupError(
             f"{branch} already has PR #{dependent.pr}; links must be added before sync opens it"
         )
-    if any(
-        (k.repo, k.branch) == (lower_key, lower_branch) for k in dependent.depends_on
-    ):
+    link = Link(lower_key, lower_branch, spec if pr_ref else "")
+    if any(_same_link(k, link) for k in dependent.depends_on):
         raise LookupError(f"{branch} already depends on {spec}")
-    link = Link(lower_key, lower_branch)
-    if _has_cycle(entries, dependent, link):
+    if not pr_ref and _has_cycle(entries, dependent, link):
         raise LookupError(f"{spec}: {branch} would make a cycle")
     base = None
     if lower_key == dependent.repo:
@@ -738,14 +737,18 @@ def _unlink_branches(
     branch: str,
     spec: str,
 ) -> str:
-    """Remove the link from ``branch`` to the ``TOOL:BRANCH`` named by ``spec``."""
-    lower_key, lower_branch = _spec_target(tools, spec)
+    """Remove the link from ``branch`` to the ``TOOL:BRANCH`` or ``owner/repo#N`` named by ``spec``."""
+    wanted = (
+        Link("", "", spec)
+        if _PR_SPEC.fullmatch(spec)
+        else Link(*_spec_target(tools, spec))
+    )
     dependent = _find(entries, _repo_key(repo), branch)
     link = next(
         (
             old
             for old in (dependent.depends_on if dependent else ())
-            if (old.repo, old.branch) == (lower_key, lower_branch)
+            if _same_link(old, wanted)
         ),
         None,
     )
@@ -757,6 +760,13 @@ def _unlink_branches(
         branch,
         lambda e: _without_link(e, link),
         f"no longer depends on {spec}",
+    )
+
+
+def _same_link(a: Link, b: Link) -> bool:
+    """Whether two links name the same branch, or the same PR when they name no branch."""
+    return (a.repo, a.branch) == (b.repo, b.branch) and (
+        bool(a.branch) or a.ref == b.ref
     )
 
 
