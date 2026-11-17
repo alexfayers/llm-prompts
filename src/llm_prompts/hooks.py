@@ -28,6 +28,7 @@ _WRITE_TOOLS = frozenset(
 _GATED_EDIT_TOOLS = frozenset({"Write", "write_to_file", "Edit"})
 _GATED_PARENT_DIRS = frozenset({"rules", "workflows", "skills", "agents"})
 _UPDATE_CHECK_INTERVAL = 2 * 60 * 60
+_SHOWN_SESSIONS_KEPT = 50
 _LOCK_WAIT_SECONDS = 5.0
 _LOCK_POLL_SECONDS = 0.05
 _DEBOUNCED_TASK_START_SOURCES = frozenset({"resume", "compact"})
@@ -170,6 +171,7 @@ class _ReinstallDebouncer:
         self._notice_cache = stamp_path.with_name(stamp_path.name + ".notice")
         self._lock = stamp_path.with_name(stamp_path.name + ".lock")
         self._held = stamp_path.with_name(stamp_path.name + ".held")
+        self._shown = stamp_path.with_name(stamp_path.name + ".shown")
         self._interval_seconds = interval_seconds
 
     def hold(self, held: bool) -> None:
@@ -178,6 +180,28 @@ class _ReinstallDebouncer:
             self._held.touch()
         else:
             self._held.unlink(missing_ok=True)
+
+    def was_shown(self, task_id: str, messages: list[str]) -> bool:
+        """Whether this session was already shown these update messages."""
+        try:
+            shown = json.loads(self._shown.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return isinstance(shown, dict) and shown.get(task_id) == messages
+
+    def record_shown(self, task_id: str, messages: list[str]) -> None:
+        """Record the update messages this session was shown, keeping recent sessions only."""
+        try:
+            shown = json.loads(self._shown.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            shown = {}
+        if not isinstance(shown, dict):
+            shown = {}
+        shown.pop(task_id, None)
+        shown[task_id] = messages
+        recent = dict(list(shown.items())[-_SHOWN_SESSIONS_KEPT:])
+        self._shown.parent.mkdir(parents=True, exist_ok=True)
+        self._shown.write_text(json.dumps(recent), encoding="utf-8")
 
     def is_held(self) -> bool:
         """Whether a running pi fork held the automatic update at the last check."""
@@ -251,15 +275,22 @@ def _started_auto_update(fingerprint: str) -> bool:
         return False
 
 
-def _held_by_fork(fingerprint: str) -> bool:
-    """Whether only a running pi fork holds the automatic update, logging instead of raising."""
+def _update_blocker(fingerprint: str) -> str | None:
+    """Return why the automatic update must not run, logging instead of raising."""
     from . import auto_update
 
     try:
-        return auto_update.blocker(fingerprint) == auto_update.FORK_RUNNING
+        return auto_update.blocker(fingerprint)
     except (Exception, SystemExit):
         logger.warning("Failed to check what holds the automatic llm-prompts update")
-        return False
+        return None
+
+
+def _held_by_fork(fingerprint: str) -> bool:
+    """Whether only a running pi fork holds the automatic update."""
+    from . import auto_update
+
+    return _update_blocker(fingerprint) == auto_update.FORK_RUNNING
 
 
 def _auto_update_failure(fingerprint: str) -> str | None:
@@ -303,16 +334,19 @@ class AutoReinstallPlugin(HooksPlugin):
         return any(resolved.is_relative_to(d) for d in self._get_source_dirs())
 
     # Update prompts/shared/rules/hooks-llm-prompts.md if this note's behavior changes.
-    def _on_task_start(self, source: str, agent_type: str) -> HookResult | None:
+    def _on_task_start(
+        self, source: str, agent_type: str, task_id: str = ""
+    ) -> HookResult | None:
         """Check for llm-prompts source updates and report any as session notes.
 
         Args:
             source: The TaskStart source (e.g. "", "resume", "compact"). Within
                 the check interval a fresh start re-emits the cached notice
-                while resume/compact emit only an auto-update failure.
+                while resume/compact emit a cached notice once per session.
             agent_type: Non-empty when this TaskStart fired inside a subagent
                 rather than the main session; the update check never runs
                 for subagents regardless of source.
+            task_id: The session id that keys which notice it was shown.
         """
         if agent_type or _is_headless():
             return None
@@ -345,6 +379,7 @@ class AutoReinstallPlugin(HooksPlugin):
                     self._update_check_debouncer.mark_run()
                     self._update_check_debouncer.hold(held)
                     self._update_check_debouncer.store_notice(messages, fingerprint)
+                    self._update_check_debouncer.record_shown(task_id, messages)
                     if messages and not held and _started_auto_update(fingerprint):
                         messages = [*messages, _AUTO_UPDATE_STARTED]
             elif source in _DEBOUNCED_TASK_START_SOURCES:
@@ -355,11 +390,25 @@ class AutoReinstallPlugin(HooksPlugin):
                     and not _held_by_fork(fingerprint)
                 ):
                     self._update_check_debouncer.hold(False)
+                    notice = self._update_check_debouncer.cached_notice()
+                    self._update_check_debouncer.record_shown(task_id, notice)
                     if _started_auto_update(fingerprint):
-                        messages = [_AUTO_UPDATE_STARTED]
+                        messages = [*notice, _AUTO_UPDATE_STARTED]
+                    else:
+                        blocked = _update_blocker(fingerprint) or "it did not start"
+                        messages = [
+                            *notice,
+                            f"The automatic update did not run: {blocked}\nRun `llm-prompts update` to update.",
+                        ]
+                elif (
+                    notice := self._update_check_debouncer.cached_notice()
+                ) and not self._update_check_debouncer.was_shown(task_id, notice):
+                    self._update_check_debouncer.record_shown(task_id, notice)
+                    messages = notice
             else:
                 run.begin("startup-check", ["--cached"])
                 messages = self._update_check_debouncer.cached_notice()
+                self._update_check_debouncer.record_shown(task_id, messages)
 
         if reason := _auto_update_failure(fingerprint):
             messages = [
@@ -390,7 +439,9 @@ class AutoReinstallPlugin(HooksPlugin):
         """
         if hook_name == "TaskStart":
             return self._on_task_start(
-                str(kwargs.get("source", "")), str(kwargs.get("agent_type", ""))
+                str(kwargs.get("source", "")),
+                str(kwargs.get("agent_type", "")),
+                str(kwargs.get("task_id", "")),
             )
 
         if hook_name == "PreToolUse":
