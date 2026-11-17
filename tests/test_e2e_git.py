@@ -295,6 +295,93 @@ class TestSquashedWorktreeCopyE2E:
         assert git(clone, "log", "--format=%s", "origin/main..main") == ""
 
 
+class TestMergedCopyE2E:
+    """e2e: a local copy of a PR that squash-merged upstream leaves no commit behind."""
+
+    @staticmethod
+    def _merge_pr_then_change_it(
+        clone: Path, other: Path, local_extra: bool, namesake: bool = False
+    ) -> None:
+        lines = "".join(f"l{n}\n" for n in range(1, 11))
+        commit_file(other, "shared.txt", lines, "chore: lines")
+        git(other, "push", "-q", "origin", "main")
+        git(clone, "pull", "-q", "--ff-only")
+        local = lines.replace("l2\n", "a\n")
+        if local_extra:
+            local = local.replace("l5\n", "extra\n")
+        commit_file(clone, "shared.txt", local, "feat: clash")
+        commit_file(clone, "b.txt", "b\n", "feat: b")
+        commit_file(clone, "keep.txt", "keep\n", "feat: keep")
+        git(clone, "commit", "-q", "--allow-empty", "-m", "chore: marker")
+        merged = lines.replace("l2\n", "a\n").replace("l8\n", "a2\n")
+        if namesake:
+            commit_file(other, "older.txt", "older\n", "feat: clash (#8)")
+        commit_file(other, "shared.txt", merged, "feat: clash (#9)")
+        (other / "b.txt").write_text("b\n")
+        (other / "extra.txt").write_text("extra\n")
+        git(other, "add", "b.txt", "extra.txt")
+        git(other, "commit", "-q", "-m", "feat: b (#10)")
+        commit_file(other, "shared.txt", merged.replace("a\n", "z\n"), "chore: later")
+        git(other, "push", "-q", "origin", "main")
+        git(clone, "fetch", "-q")
+
+    def test_e2e_a_copy_whose_change_is_upstream_leaves_no_empty_commit(
+        self, clone: Path, other: Path
+    ) -> None:
+        self._merge_pr_then_change_it(clone, other, local_extra=False)
+
+        result = main_sync.sync_diverged(clone)
+
+        assert result.mode == "squash-synced", result
+        assert git(clone, "log", "--format=%s", "origin/main..main").splitlines() == [
+            "chore: marker",
+            "feat: keep",
+        ]
+        assert git(clone, "diff", "origin/main", "main", "--", "shared.txt") == ""
+
+    def test_e2e_a_copy_with_an_extra_edit_stops_the_sync(
+        self, clone: Path, other: Path
+    ) -> None:
+        self._merge_pr_then_change_it(clone, other, local_extra=True)
+        head = git(clone, "rev-parse", "HEAD")
+
+        result = main_sync.sync_diverged(clone)
+
+        assert result.mode == "failed", result
+        assert "feat: clash" in result.detail
+        assert git(clone, "rev-parse", "HEAD") == head
+
+    def test_e2e_a_copy_is_dropped_when_an_older_pr_shares_its_subject(
+        self, clone: Path, other: Path
+    ) -> None:
+        self._merge_pr_then_change_it(clone, other, local_extra=False, namesake=True)
+
+        result = main_sync.sync_diverged(clone)
+
+        assert result.mode == "squash-synced", result
+        assert git(clone, "log", "--format=%s", "origin/main..main").splitlines() == [
+            "chore: marker",
+            "feat: keep",
+        ]
+
+    def test_e2e_rebuild_drops_a_commit_that_becomes_empty(
+        self, clone: Path, other: Path
+    ) -> None:
+        commit_file(clone, "b.txt", "b\n", "feat: b")
+        (other / "b.txt").write_text("b\n")
+        (other / "extra.txt").write_text("extra\n")
+        git(other, "add", "b.txt", "extra.txt")
+        git(other, "commit", "-q", "-m", "feat: b (#10)")
+        git(other, "push", "-q", "origin", "main")
+        git(clone, "fetch", "-q")
+
+        result = main_sync.rebuild_local(clone, "origin/main", {}, (), {}, ())
+
+        assert result.mode == "rebuilt", result
+        assert result.replayed == 0
+        assert git(clone, "log", "--format=%s", "origin/main..main") == ""
+
+
 class TestPluginsE2E:
     """e2e: plugin checkouts cloned and refreshed with real git."""
 

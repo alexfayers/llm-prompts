@@ -15,6 +15,7 @@ from typing import Literal, NamedTuple
 
 from .network import run_with_retries
 from .setup import GIT_TIMEOUT, release_version
+from .squash_subject import SQUASH_SUFFIX as _SQUASH_SUFFIX
 from .squash_subject import squash_pr_number
 
 _Identity = tuple[str, str]
@@ -537,6 +538,11 @@ def _replay(
                 f" in {', '.join(conflict.paths)}"
             ) from conflict
         tree = resolved
+    tip_tree, floor_tree, changes_tree = _read(
+        repo, "rev-parse", f"{tip}^{{tree}}", f"{floor}^{{tree}}", f"{changes}^{{tree}}"
+    ).split()
+    if tree == tip_tree and floor_tree != changes_tree:
+        return tip
     return _commit_as(repo, tree, tip, squash.first if squash else commit.sha)
 
 
@@ -553,6 +559,7 @@ def _replay_or_open_pr_version(
     tip: str,
     commit: LocalCommit,
     open_pr_commits: Callable[[], dict[_Identity, list[_OpenPrCommit]]],
+    merged_squashes: Mapping[str, list[str]] | None = None,
 ) -> str:
     try:
         return _replay(repo, tip, commit)
@@ -563,6 +570,11 @@ def _replay_or_open_pr_version(
             if _holds_every_change(repo, commit, pr_commit.head):
                 with suppress(_ReplayConflict):
                     return _replay(repo, tip, commit._replace(sha=pr_commit.sha))
+        if any(
+            _holds_every_change(repo, commit, squash)
+            for squash in (merged_squashes or {}).get(commit.subject, ())
+        ):
+            return tip
         raise
 
 
@@ -615,14 +627,28 @@ def _build_sync(repo: Path, upstream: str) -> SyncResult:
     tip = _read(repo, "rev-parse", upstream).strip()
     open_pr_commits = cache(lambda: _open_pr_commits(repo, remote, upstream))
     local_shas = {commit.sha for commit in local}
+    merged_squashes: dict[str, list[str]] = {}
+    for line in _read(
+        repo, "log", "--format=%H%x09%s", f"{merge_base}..{upstream}"
+    ).splitlines():
+        sha, _, subject = line.partition("\t")
+        if squash_pr_number(subject) is not None:
+            merged_squashes.setdefault(_SQUASH_SUFFIX.sub("", subject), []).append(sha)
+    kept = 0
     for commit in replayed:
-        tip = _replay_or_open_pr_version(
-            repo, tip, commit, open_pr_commits if commit.sha in local_shas else dict
+        new_tip = _replay_or_open_pr_version(
+            repo,
+            tip,
+            commit,
+            open_pr_commits if commit.sha in local_shas else dict,
+            merged_squashes,
         )
+        kept += new_tip != tip
+        tip = new_tip
     reset = run_git(repo, "reset", "--keep", tip)
     if reset.returncode != 0:
         return SyncResult("failed", detail=reset.stderr.strip())
-    return SyncResult("squash-synced", replayed=len(replayed))
+    return SyncResult("squash-synced", replayed=kept)
 
 
 def _squash_sync(repo: Path, upstream: str) -> SyncResult:
@@ -695,7 +721,7 @@ def rebuild_local(
             if dropped:
                 continue
             try:
-                tip = _replay(
+                new_tip = _replay(
                     repo,
                     tip,
                     commit,
@@ -707,11 +733,12 @@ def rebuild_local(
                     raise
                 skipped.append(SkippedCopy(copies[commit.sha], str(conflict)))
                 continue
-            replayed += 1
+            replayed += new_tip != tip
+            tip = new_tip
         for squash in additions:
             subject = _read(repo, "log", "-1", "--format=%s", squash.first).strip()
             try:
-                tip = _replay(
+                new_tip = _replay(
                     repo,
                     tip,
                     LocalCommit(squash.first, "", subject),
@@ -721,7 +748,8 @@ def rebuild_local(
             except _ReplayConflict as conflict:
                 skipped.append(SkippedCopy(squash.first, str(conflict)))
                 continue
-            replayed += 1
+            replayed += new_tip != tip
+            tip = new_tip
         if tip == head:
             return SyncResult("rebuilt", skipped=tuple(skipped))
         saved = run_git(
