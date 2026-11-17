@@ -162,7 +162,10 @@ export async function loadExtension(name: string, options: LoadOptions = {}): Pr
 		makeCtx,
 		async fire(event, payload = {}, using = ctx) {
 			let result: unknown;
-			for (const handler of pi.handlers[event] ?? []) result = (await handler(payload, using)) ?? result;
+			for (const handler of pi.handlers[event] ?? []) {
+				result = (await handler(payload, using)) ?? result;
+				if (event === "before_provider_request" && result) payload = { ...(payload as object), payload: result };
+			}
 			return result;
 		},
 		runCommand: async (command, args = "", using = ctx) => void (await pi.commands[command].handler(args, using)),

@@ -61,6 +61,7 @@ async function replyTo(text) {
 		handshakeMode: statSync(handshake).mode & 0o777,
 		seed: seed && readFileSync(seed, "utf8").trim().split("\n").map((line) => JSON.parse(line)),
 		card: card && readFileSync(card, "utf8"),
+		leadPrefix: existsSync(`${dirname(handshake)}/lead-prefix.json`) ? JSON.parse(readFileSync(`${dirname(handshake)}/lead-prefix.json`, "utf8")) : undefined,
 		prompt: text,
 		env: { role: process.env.PI_CONTEXT_ROLE, runId: process.env.PI_CONTEXT_RUN_ID, worktree: process.env.PI_CONTEXT_WORKTREE },
 	});

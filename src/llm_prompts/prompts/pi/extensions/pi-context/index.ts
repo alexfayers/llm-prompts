@@ -3,7 +3,7 @@
 // Env: PI_CONTEXT_CHILD (path of the handshake JSON `{role, worktree?, bridge?}`; set only in a delegated session)
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Background, registerBackgroundHooks } from "./background.ts";
-import { readBridgeConfig, registerChildBridge, reportPrefixToFile, trackPrefix } from "./bridge.ts";
+import { readBridgeConfig, registerChildBridge, reportPrefixToFile, trackPrefix, useLeadPrefix } from "./bridge.ts";
 import { registerBtw } from "./btw.ts";
 import { registerFork, sweepFinished } from "./fork.ts";
 import { registerGhostCommand } from "./ghost/command.ts";
@@ -19,6 +19,7 @@ export default function (pi: ExtensionAPI) {
 	if (handshake) {
 		pi.on("tool_call", childGuard(handshake));
 		if (!readHandshake(handshake)?.inherited) registerDelegateRules(pi);
+		else useLeadPrefix(pi, handshake);
 		const bridge = readBridgeConfig(handshake);
 		if (bridge) registerChildBridge(pi, bridge);
 		else reportPrefixToFile(pi, handshake);

@@ -5,7 +5,7 @@ import path from "node:path";
 import net from "node:net";
 import { after, describe, mock, test } from "node:test";
 import { loadExtension, useEnv } from "./helpers.ts";
-import { connectBridge, describeMain, prefixHash, reportPrefixToFile, serveBridge } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
+import { connectBridge, describeMain, prefixHash, reportPrefixToFile, serveBridge, trackPrefix, writeLeadPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
 import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-bridge-"));
@@ -94,6 +94,58 @@ describe("reportPrefixToFile", () => {
 		handler({ payload: { system: "later", tools: [] } });
 		assert.equal(fs.readFileSync(path.join(dir, "prefix"), "utf8"), prefixHash({ system: "s", tools: [] }));
 		fs.rmSync(dir, { recursive: true });
+	});
+});
+
+describe("a warm fork's first request", () => {
+	const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-lead-prefix-"));
+	after(() => fs.rmSync(scratch, { recursive: true }));
+	const handshake = path.join(scratch, "handshake.json");
+	useEnv(() => ({ PI_CONTEXT_CHILD: handshake }));
+	const lead = { system: [{ type: "text", text: "rules as main loaded them" }], tools: [{ name: "read", description: "Read a file" }, { name: "bash", description: "Run" }], messages: [1] };
+
+	async function forkRequest(payload: Record<string, unknown>, ...mainLater: Record<string, unknown>[]) {
+		let track: any;
+		trackPrefix({ on: (_event: string, listener: unknown) => (track = listener) } as any);
+		for (const main of [lead, ...mainLater]) track({ payload: main });
+		fs.rmSync(path.join(scratch, "lead-prefix.json"), { force: true });
+		writeLeadPrefix(scratch);
+		fs.writeFileSync(handshake, JSON.stringify({ role: "reader", inherited: "r1" }));
+		return (await loadExtension("pi-context/index")).fire("before_provider_request", { payload });
+	}
+	const reinstalled = { system: [{ type: "text", text: "rules reinstalled since" }], tools: [{ name: "bash", description: "Run a command" }, { name: "read", description: "Read" }], messages: [1, 2] };
+
+	test("sends main's system prompt and tools byte for byte, with its own messages", async () => {
+		const sent = await forkRequest({ system: [{ type: "text", text: "rules reinstalled since" }], tools: [{ name: "bash", description: "Run a command" }, { name: "read", description: "Read" }], messages: [1, 2] });
+		assert.equal(prefixHash(sent), prefixHash(lead));
+		assert.deepEqual(sent.messages, [1, 2]);
+	});
+
+	test("keeps its own prefix when its tools are not main's", async () => {
+		const own = { system: "s", tools: [{ name: "read" }], messages: [] };
+		assert.equal(await forkRequest(own), undefined);
+	});
+
+	test("keeps its own prefix when a tool of the same name takes other parameters", async () => {
+		const own = { ...reinstalled, tools: [{ name: "bash", input_schema: { type: "object", properties: { cmd: {} } } }, { name: "read" }] };
+		assert.equal(await forkRequest(own), undefined);
+	});
+
+	test("ignores main's requests without tools, such as a compaction summary", async () => {
+		const sent = await forkRequest(reinstalled, { system: "Summarize the conversation", messages: [] });
+		assert.equal(prefixHash(sent), prefixHash(lead));
+	});
+
+	test("reports main's prefix hash once it sent main's prefix", async () => {
+		fs.rmSync(path.join(scratch, "prefix"), { force: true });
+		await forkRequest(reinstalled);
+		assert.equal(fs.readFileSync(path.join(scratch, "prefix"), "utf8"), prefixHash(lead));
+	});
+
+	test("without main's prefix file, sends its own payload unchanged", async () => {
+		fs.rmSync(path.join(scratch, "lead-prefix.json"), { force: true });
+		fs.writeFileSync(handshake, JSON.stringify({ role: "reader", inherited: "r1" }));
+		assert.equal(await (await loadExtension("pi-context/index")).fire("before_provider_request", { payload: reinstalled }), undefined);
 	});
 });
 
