@@ -2775,6 +2775,24 @@ def _agent_source_dirs(
     return dirs
 
 
+def _write_pi_fork_tiers(path: Path, root_dir: Path, overlay_dirs: list[Path]) -> None:
+    """Write each pi tier alias resolved to its model for pi-context's fork tool.
+
+    Args:
+        path: Destination ``models.json``.
+        root_dir: This package's own prompts directory.
+        overlay_dirs: Overlay prompts directories in priority order.
+    """
+    models = _pi_agent_models(
+        [root_dir / "pi" / "agent-models.json"]
+        + [d / "pi" / "agent-models.json" for d in overlay_dirs]
+    )
+    catalogue = cache(_pi_model_catalogue)
+    tiers = {t: _resolve_pi_variant_model(t, models, catalogue) for t in models}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_if_changed(path, json.dumps(tiers, indent=2) + "\n", path.name, "agents")
+
+
 def _pi_agent_dialect(
     root_dir: Path, overlay_dirs: Sequence[Path], strict_skills: bool = True
 ) -> _AgentDialect:
@@ -4426,6 +4444,11 @@ def main(
             agents_dest = dirs[agents_target]["agents"]
             agent_dirs = _agent_source_dirs(root_dir, overlay_dirs, agents_target)
             target_skip_set = skip_by_agent.get(agents_target, frozenset())
+            if agents_target == "pi":
+                tiers_path = agents_dest.parent / "pi-context" / "models.json"
+                if not pi_failed_sources:
+                    _write_pi_fork_tiers(tiers_path, root_dir, overlay_dirs)
+                installed_files["pi"].append(str(tiers_path))
             if agents_target == "pi" and (pi_bundle_held or pi_failed_sources):
                 if pi_failed_sources:
                     log(

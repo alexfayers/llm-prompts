@@ -9,7 +9,7 @@ import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/ro
 import { prefixHash, trackPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
 import { registryOf } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 import { Background } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/background.ts";
-import { coldArgs, KEEP_FINISHED_MS, registerFork, seedEntries, sweepFinished } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
+import { coldArgs, coldLabel, KEEP_FINISHED_MS, registerFork, resolveModel, seedEntries, sweepFinished } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
 import { LONG_CACHE_MS } from "../../src/llm_prompts/prompts/pi/extensions/context-fold.ts";
 
 const user = (id: string) => ({ type: "message", id, message: { role: "user", content: id } });
@@ -20,6 +20,27 @@ describe("seedEntries", () => {
 	test("a call nested in another, like one from codemode, cuts before its parent's message", () => {
 		const branch = [user("u1"), assistantCalling("a1", "c1"), result("r1", "c1"), assistantCalling("a2", "c2"), result("r2", "c2")];
 		assert.deepEqual(seedEntries(branch as any, "c2/1").map((entry) => entry.id), ["u1", "a1", "r1"]);
+	});
+});
+
+describe("resolveModel", () => {
+	const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "fork-tiers-"));
+	fs.mkdirSync(path.join(agentDir, "pi-context"));
+	fs.writeFileSync(path.join(agentDir, "pi-context", "models.json"), JSON.stringify({ sol: "acme/sol-2", opus: "acme/opus" }));
+
+	test("a tier resolves to its installed model, and a provider/id stays literal", () => {
+		assert.equal(resolveModel("sol", agentDir), "acme/sol-2");
+		assert.equal(resolveModel("other/sol:high", agentDir), "other/sol:high");
+		assert.equal(resolveModel("sol:high", agentDir), "acme/sol-2:high");
+	});
+
+	test("an unknown tier fails, listing the valid tiers", () => {
+		assert.throws(() => resolveModel("zeta", agentDir), /unknown model tier zeta: use provider\/id or one of opus, sol/);
+	});
+
+	test("the label names the tier and its model and says the worker shares no context", () => {
+		assert.equal(coldLabel("x", "sol", "acme/sol-2"), "cold worker x on sol = acme/sol-2 (no shared context)");
+		assert.equal(coldLabel("x", "acme/m", "acme/m"), "cold worker x on acme/m (no shared context)");
 	});
 });
 
@@ -231,6 +252,17 @@ describe("fork tool", () => {
 			assert.equal(fs.existsSync(path.join(run()!.files!, "finished")), true);
 		});
 
+		test("a tier fork records its resolved model, and fork_resume reuses it", async () => {
+			fs.writeFileSync(path.join(agentDir, "pi-context", "models.json"), JSON.stringify({ cheap: "prov/cheap" }));
+			const { tool, tools, appended, ctx } = await fork({ task: "STUB_REPORT", name: "tier", model: "cheap:low" });
+			assert.match(tool.content[0].text, /\[fork tier: cold worker tier on cheap:low = prov\/cheap:low \(no shared context\), /);
+			assert.equal(registryOf().all().find((run) => run.name === "tier")!.model, "prov/cheap:low");
+			await tools.fork_resume.execute("r", { name: "tier", task: "STUB_INSPECT" }, undefined, undefined, ctx);
+			await eventually(() => appended.length > 2);
+			const seen = JSON.parse((appended.at(-1)![1] as { text: string }).text.replace(/^echo: /, ""));
+			assert.deepEqual(seen.args.slice(4, 6), ["--model", "prov/cheap:low"]);
+		});
+
 		test("fork_resume with a task continues a finished cold worker on its own session and model", async () => {
 			const { tools, sent, appended, ctx } = await fork({ task: "STUB_REPORT", name: "again", model: "prov/cheap" });
 			const continued = await tools.fork_resume.execute("r", { name: "again", task: "STUB_INSPECT" }, undefined, undefined, ctx);
@@ -359,6 +391,12 @@ describe("fork tool", () => {
 			assert.equal(git(other, "log", "-1", "--format=%s", "trunk"), "write");
 			assert.equal(git(repo, "rev-parse", "HEAD"), before);
 			assert.equal(git(repo, "status", "--porcelain"), "");
+		});
+
+		test("a writer with an unknown tier fails before it creates a worktree", async () => {
+			const { tool } = await fork({ task: "STUB_WRITE", role: "writer", name: "badtier", model: "nosuch" }, repo);
+			assert.match(String(tool), /unknown model tier nosuch/);
+			assert.equal(forkDirs().some((dir) => String(dir).includes("badtier")), false);
 		});
 
 		test("a cold writer starts in its worktree and lands through the same queue", async () => {
