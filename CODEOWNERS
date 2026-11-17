@@ -1,6 +1,0 @@
-/src/*/prompts/**/rules/ @alexfayers @codebeetl @unkokaeru
-/src/*/prompts/**/skills/ @alexfayers @codebeetl @unkokaeru
-/src/*/prompts/**/workflows/ @alexfayers @codebeetl @unkokaeru
-/src/*/prompts/**/agents/ @alexfayers @codebeetl @unkokaeru
-/src/*/prompts/**/skills/pi-help/ @alexfayers
-/src/*/prompts/**/rules/hooks*.md @alexfayers
