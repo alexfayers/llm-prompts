@@ -509,8 +509,10 @@ class TestSquashSync:
         fake_subprocess.on("cat-file", stdout=["h1 missing\n", "h9 c\nh8 c\n"])
         fake_subprocess.on_match(
             lambda argv: "refs/heads/*" in argv,
-            stdout="h9\trefs/pull/9/head\nh9\trefs/heads/me/contribute/work\n"
-            "h8\trefs/pull/8/head\nh8\trefs/heads/me/contribute/base\n",
+            stdout="h9\trefs/pull/9/head\nm9\trefs/pull/9/merge\n"
+            "h9\trefs/heads/me/contribute/work\n"
+            "h8\trefs/pull/8/head\nm8\trefs/pull/8/merge\n"
+            "h8\trefs/heads/me/contribute/base\n",
         )
         fake_subprocess.on_match(
             lambda argv: "@{u}..h8" in argv, stdout="o2\t100\tlocal work\n"
@@ -524,6 +526,20 @@ class TestSquashSync:
         assert sync_diverged(REPO) == SyncResult("squash-synced", replayed=1)
 
         assert fake_subprocess.matching("log", "-1")[0][-1] == "o2"
+
+    def test_a_closed_pull_request_whose_branch_remains_is_not_used(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        _route_open_pull_request(fake_subprocess, local_change_tree="tree-h9")
+        fake_subprocess.on_match(
+            lambda argv: "refs/heads/*" in argv,
+            stdout="h9\trefs/pull/9/head\nh9\trefs/heads/me/contribute/work\n",
+        )
+
+        _assert_untouched_bail(
+            fake_subprocess,
+            "local commit l1 (local work) conflicts with upstream in a.txt",
+        )
 
     def test_a_local_change_missing_from_the_pull_request_is_kept_and_sync_stops(
         self, fake_subprocess: FakeSubprocess
@@ -600,8 +616,8 @@ def _route_open_pull_request(fake: FakeSubprocess, local_change_tree: str) -> No
     fake.on("rev-parse", "h9^{tree}", stdout="tree-h9\n")
     fake.on_match(
         lambda argv: "refs/heads/*" in argv,
-        stdout="h9\trefs/pull/9/head\nh9\trefs/heads/me/contribute/work\n"
-        "h8\trefs/pull/8/head\n",
+        stdout="h9\trefs/pull/9/head\nm9\trefs/pull/9/merge\n"
+        "h9\trefs/heads/me/contribute/work\nh8\trefs/pull/8/head\n",
     )
     fake.on_match(lambda argv: "@{u}..h9" in argv, stdout="o1\t100\tlocal work\n")
 

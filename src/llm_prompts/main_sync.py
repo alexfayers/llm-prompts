@@ -373,22 +373,31 @@ def _open_pr_commits(
 ) -> dict[_Identity, list[_OpenPrCommit]]:
     """Map each commit of an open pull request, by identity, to its versions in each head.
 
-    A pull request is open when its head is also the tip of a branch on the remote.
+    A pull request is open when it has a merge ref and its head is also the tip of a
+    branch on the remote. A closed pull request keeps its head ref but loses its merge ref.
     """
     listing = [
         line.split()
         for line in _read(
-            repo, "ls-remote", remote, "refs/pull/*/head", "refs/heads/*"
+            repo,
+            "ls-remote",
+            remote,
+            "refs/pull/*/head",
+            "refs/pull/*/merge",
+            "refs/heads/*",
         ).splitlines()
     ]
     branch_tips = {sha for sha, ref in listing if ref.startswith("refs/heads/")}
+    merge_refs = {ref for _, ref in listing if ref.endswith("/merge")}
     heads = _fetch_missing(
         repo,
         remote,
         {
             ref: sha
             for sha, ref in listing
-            if ref.startswith("refs/pull/") and sha in branch_tips
+            if ref.endswith("/head")
+            and sha in branch_tips
+            and f"{ref.removesuffix('/head')}/merge" in merge_refs
         },
     )
     commits: dict[_Identity, list[_OpenPrCommit]] = {}
