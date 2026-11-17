@@ -274,6 +274,21 @@ describe("fork tool", () => {
 			assert.equal(seen.prompt, "Task: STUB_INSPECT");
 		});
 
+		test("a warm fork gets main's latest prefix, and fork_resume with a task keeps the one it started with", async () => {
+			const track = (payload: unknown) => {
+				let handler: any;
+				trackPrefix({ on: (_event: string, listener: unknown) => (handler = listener) } as any);
+				handler({ payload });
+			};
+			track({ system: "first", tools: [{ name: "read" }] });
+			const { tool, tools, sent, appended, ctx } = await fork({ task: "STUB_INSPECT", name: "kept" });
+			assert.deepEqual(JSON.parse(tool.content[0].text.split("\n")[0].replace(/^echo: /, "")).leadPrefix, { system: "first", tools: [{ name: "read" }] });
+			track({ system: "later", tools: [{ name: "read" }] });
+			await tools.fork_resume.execute("r", { name: "kept", task: "STUB_INSPECT" }, undefined, undefined, ctx);
+			await eventually(() => sent.length > 0);
+			assert.equal(JSON.parse((appended.at(-1)![1] as { text: string }).text.replace(/^echo: /, "")).leadPrefix.system, "first");
+		});
+
 		test("a new fork names a finished fork of the same role and directory whose cache is still warm", async () => {
 			await fork({ task: "STUB_REPORT", name: "warm" });
 			const { tool } = await fork({ task: "STUB_REPORT", name: "next", background: true });

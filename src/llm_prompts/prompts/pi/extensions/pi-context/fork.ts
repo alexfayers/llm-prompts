@@ -8,7 +8,7 @@ import { getAgentDir, type ExtensionAPI, type ExtensionContext, type ExtensionTo
 import { Type } from "typebox";
 import { parseOutcome, projectResult } from "./outcome.ts";
 import { Background } from "./background.ts";
-import { describeMain, lastPrefixHash, PREFIX_FILE, serveBridge, type BridgeOptions } from "./bridge.ts";
+import { describeMain, lastPrefixHash, PREFIX_FILE, serveBridge, writeLeadPrefix, type BridgeOptions } from "./bridge.ts";
 import { createWorktree, dropIfClean, gitOut, land, mainSnapshot, restoreWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
 import { coldCard, expandHome, readHandshake, ROLES, type Role } from "./roles.ts";
 import { tokens } from "./live-view.ts";
@@ -186,7 +186,10 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 		const main = bridge && describeMain(pi, ctx, model ? role : undefined);
 		fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, repo, inherited, bridge: bridge && { ...main, socket: bridge.socket } }), { mode: 0o600 });
 		if (model) fs.writeFileSync(cardFile, coldCard(role), { mode: 0o600 });
-		else if (!resume) fs.writeFileSync(seed, jsonl([{ ...ctx.sessionManager.getHeader(), id: randomUUID(), ...(cwd && { cwd }) }, ...entries]), { mode: 0o600 });
+		else if (!resume) {
+			writeLeadPrefix(files);
+			fs.writeFileSync(seed, jsonl([{ ...ctx.sessionManager.getHeader(), id: randomUUID(), ...(cwd && { cwd }) }, ...entries]), { mode: 0o600 });
+		}
 		const childCwd = (model && worktree) || cwd || ctx.cwd;
 		child = RpcChild.start({
 			command,
