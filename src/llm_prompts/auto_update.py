@@ -24,6 +24,8 @@ from .setup import _expand, _is_local_path, config_path, read_config
 STATE_DIR = Path(user_data_dir("llm-prompts"))
 _CHECKOUT_LOCKS = get_data_dir() / "checkout-locks.json"
 LOCK_FD_ENV = "LLM_PROMPTS_UPDATE_LOCK_FD"
+FORK_IDLE_SECONDS = 60 * 60
+FORK_RUNNING = "a pi fork is running"
 UPDATE_RUNNING = "Another llm-prompts update is running. Rerun once it finishes."
 
 
@@ -67,6 +69,8 @@ def blocker(fingerprint: str) -> str | None:
         return "off"
     if failure(fingerprint) is not None:
         return "failed"
+    if _fork_running():
+        return FORK_RUNNING
     held = _held_git_dirs()
     checkouts = [
         (str(tool.get("name")), _expand(str(tool["source"])), _has_local_changes)
@@ -87,6 +91,30 @@ def blocker(fingerprint: str) -> str | None:
         if has_changes(repo):
             return f"{name} has local changes"
     return None
+
+
+def _fork_running() -> bool:
+    """Whether a pi-context fork run is unfinished and its handshake, seed or cold session changed within ``FORK_IDLE_SECONDS``.
+
+    shortcut: a run killed without its ``finished`` mark counts until it goes idle,
+    upgrade to a pid in the handshake when pi-context records one.
+    """
+    agent_dir = Path(
+        os.environ.get("PI_CODING_AGENT_DIR") or Path.home() / ".pi" / "agent"
+    )
+    cutoff = time.time() - FORK_IDLE_SECONDS
+    for handshake in (agent_dir / "pi-context").glob("*/handshake.json"):
+        run = handshake.parent
+        if (run / "finished").exists():
+            continue
+        mtimes = [
+            f.stat().st_mtime
+            for f in (handshake, run / "seed.jsonl", *(run / "session").glob("*"))
+            if f.exists()
+        ]
+        if mtimes and max(mtimes) > cutoff:
+            return True
+    return False
 
 
 def _held_git_dirs() -> list[Path]:

@@ -7,6 +7,7 @@ import json
 import time
 from collections.abc import Iterator
 from contextlib import ExitStack
+from functools import partial
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -658,6 +659,7 @@ class TestUpdateCheckOnTaskStart:
         assert result is not None
         assert result.notes[-1] == _AUTO_UPDATE_STARTED
         assert "updating in the background" in result.user_notes[0].user_text
+        assert "Reload once it finishes" in _AUTO_UPDATE_STARTED
 
     def test_task_start_does_not_auto_update_after_a_failed_check(
         self, tmp_path: Path
@@ -856,6 +858,56 @@ class TestUpdateCheckOnTaskStart:
             )
         assert result is None
         mock_collect.assert_not_called()
+
+    def test_a_finished_fork_lets_the_next_compaction_update(
+        self, tmp_path: Path
+    ) -> None:
+        from llm_prompts import auto_update
+
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        messages = ["[pkg] update available:\n- did a thing", _UPDATE_INSTRUCTION]
+        blockers = iter([auto_update.FORK_RUNNING, auto_update.FORK_RUNNING, None])
+        with (
+            patch(
+                "llm_prompts.cli._collect_update_messages", return_value=messages
+            ) as collect,
+            patch(
+                "llm_prompts.auto_update.blocker", side_effect=lambda _: next(blockers)
+            ),
+            patch("llm_prompts.auto_update.start", return_value=True) as start,
+        ):
+            compact = partial(
+                plugin.on_hook,
+                "TaskStart",
+                task_id="t1",
+                workspace_roots=[],
+                source="compact",
+            )
+            held = compact()
+            assert held is not None and _AUTO_UPDATE_STARTED not in held.notes
+            assert compact() is None
+            start.assert_not_called()
+            started = compact()
+            assert compact() is None
+        collect.assert_called_once()
+        assert started is not None and started.notes == [_AUTO_UPDATE_STARTED]
+        start.assert_called_once()
+
+    def test_compact_shows_an_auto_update_failure(self, tmp_path: Path) -> None:
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        (tmp_path / "update-stamp").write_text(str(time.time()))
+        with patch("llm_prompts.auto_update.failure", return_value="boom"):
+            result = plugin.on_hook(
+                "TaskStart", task_id="t1", workspace_roots=[], source="compact"
+            )
+        assert result is not None
+        assert "automatic update failed: boom" in result.notes[-1]
 
     def _fresh_start(self, stamp: Path) -> HookResult | None:
         plugin = AutoReinstallPlugin()

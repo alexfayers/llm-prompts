@@ -33,7 +33,7 @@ _LOCK_POLL_SECONDS = 0.05
 _DEBOUNCED_TASK_START_SOURCES = frozenset({"resume", "compact"})
 _AUTO_UPDATE_STARTED = (
     "llm-prompts is updating in the background. "
-    "Start a new session once it finishes to use the new version."
+    "Reload once it finishes to use the new version."
 )
 _HEADLESS_ENTRYPOINTS = frozenset({"sdk-cli", "sdk-ts", "sdk-py"})
 
@@ -169,7 +169,19 @@ class _ReinstallDebouncer:
         self._stamp = stamp_path
         self._notice_cache = stamp_path.with_name(stamp_path.name + ".notice")
         self._lock = stamp_path.with_name(stamp_path.name + ".lock")
+        self._held = stamp_path.with_name(stamp_path.name + ".held")
         self._interval_seconds = interval_seconds
+
+    def hold(self, held: bool) -> None:
+        """Record or clear that a running pi fork holds the automatic update."""
+        if held:
+            self._held.touch()
+        else:
+            self._held.unlink(missing_ok=True)
+
+    def is_held(self) -> bool:
+        """Whether a running pi fork held the automatic update at the last check."""
+        return self._held.exists()
 
     def should_run(self, fingerprint: str = "") -> bool:
         """Return True if enough time has passed since the last run or the installed versions moved."""
@@ -239,6 +251,17 @@ def _started_auto_update(fingerprint: str) -> bool:
         return False
 
 
+def _held_by_fork(fingerprint: str) -> bool:
+    """Whether only a running pi fork holds the automatic update, logging instead of raising."""
+    from . import auto_update
+
+    try:
+        return auto_update.blocker(fingerprint) == auto_update.FORK_RUNNING
+    except (Exception, SystemExit):
+        logger.warning("Failed to check what holds the automatic llm-prompts update")
+        return False
+
+
 def _auto_update_failure(fingerprint: str) -> str | None:
     """Return why the last automatic update failed, logging instead of raising."""
     from . import auto_update
@@ -286,7 +309,7 @@ class AutoReinstallPlugin(HooksPlugin):
         Args:
             source: The TaskStart source (e.g. "", "resume", "compact"). Within
                 the check interval a fresh start re-emits the cached notice
-                while resume/compact emit nothing.
+                while resume/compact emit only an auto-update failure.
             agent_type: Non-empty when this TaskStart fired inside a subagent
                 rather than the main session; the update check never runs
                 for subagents regardless of source.
@@ -318,12 +341,22 @@ class AutoReinstallPlugin(HooksPlugin):
                     logger.warning("Failed to check for llm-prompts updates")
                     return None
                 if not any(isinstance(m, UpdateCheckFailure) for m in messages):
+                    held = bool(messages) and _held_by_fork(fingerprint)
                     self._update_check_debouncer.mark_run()
+                    self._update_check_debouncer.hold(held)
                     self._update_check_debouncer.store_notice(messages, fingerprint)
-                    if messages and _started_auto_update(fingerprint):
+                    if messages and not held and _started_auto_update(fingerprint):
                         messages = [*messages, _AUTO_UPDATE_STARTED]
             elif source in _DEBOUNCED_TASK_START_SOURCES:
-                return None
+                messages = []
+                if (
+                    holds_lock
+                    and self._update_check_debouncer.is_held()
+                    and not _held_by_fork(fingerprint)
+                ):
+                    self._update_check_debouncer.hold(False)
+                    if _started_auto_update(fingerprint):
+                        messages = [_AUTO_UPDATE_STARTED]
             else:
                 run.begin("startup-check", ["--cached"])
                 messages = self._update_check_debouncer.cached_notice()
