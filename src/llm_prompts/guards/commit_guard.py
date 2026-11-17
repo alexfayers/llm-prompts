@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 TEST_COMMAND_ENV = "PI_CONTEXT_TEST_CMD"
 _PROMPTS = Path(__file__).parent.parent / "prompts"
-_UNCHAINED = re.compile(r";|\||\n|(?<!&)&(?!&)")
+_UNCHAINED = re.compile(r";|\||\n|(?<![&<>])&(?![&>])")
 _READ_ONLY_AFTER_TEST = frozenset({"echo", "printf", "true", "pwd", "ls", "cat"})
 _IN_PROGRESS = ("rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD")
 
@@ -241,7 +241,7 @@ class CommitGuard(HooksPlugin):
                 )
             if not ReceiptStore().fresh(repo[0], tree_fingerprint(repo[0])):
                 return HookResult(
-                    block=f"MUST run `{' '.join(test)}` and see it pass on the current files before git {verb}."
+                    block=f"MUST run `{' '.join(test)}` and see it pass on the current files before git {verb}. A run counts with a prefix such as `cd <dir> &&` or `timeout`, or redirected to a file. It doesn't count when piped, or when anything follows it except `&& echo`, `printf`, `true`, `pwd`, `ls` or `cat` writing to no file except /dev/null."
                 )
         return None
 
