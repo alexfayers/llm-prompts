@@ -862,6 +862,7 @@ _BARE_DROPPED = (
 )
 _KEPT_EXTENSIONS = {
     "pi/extensions": (
+        "checkpoint.ts",
         "codemode-error-header.ts",
         "codemode-sleep.ts",
         "codemode-wait-until.ts",
