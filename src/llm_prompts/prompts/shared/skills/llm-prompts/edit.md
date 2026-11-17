@@ -18,7 +18,7 @@ Decision order for touching this repo's own rule/skill/workflow/agent sources.
 ## 3. Rule vs skill
 
 - A rule always applies, everywhere. A skill is one process for one task. Not clear which -> escalate to the user for a decision.
-- New mandatory skill or part also needs a trigger line in `002-skill-usage` - propose both together.
+- A new mandatory skill or part MUST ship its `002-skill-usage` trigger line in the same change.
 
 ## 4. Dedup
 
@@ -39,6 +39,7 @@ Decision order for touching this repo's own rule/skill/workflow/agent sources.
 ## 6. Size
 
 - Just write it. A hook blocks an oversized rule/skill/workflow file.
+- Compressing or rewriting MUST keep every directive and condition. `MUST NOT` stays `MUST NOT`, and no qualifier is dropped.
 - Blocked -> compress that file: cut filler words, redundant reasoning, duplication, and restatements. Never split the file or raise the ceiling. In a multi-edit sequence, apply shrinking edits first.
 
 ## 7. Commit and PR

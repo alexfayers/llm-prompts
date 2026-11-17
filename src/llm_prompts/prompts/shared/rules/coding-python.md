@@ -22,6 +22,8 @@ Unless otherwise specified, these MUST apply:
 - When catching exceptions, the try block MUST contain only the code that could raise.
 - MUST NOT return raw exception text (`str(e)`, stack traces) to an external caller (API response, HTTP body). It can leak internal detail (table names, ARNs, hostnames, file paths). MUST log full detail server-side and return a generic message (e.g. "Internal server error"). Hand-built, input-derived messages (e.g. "Resolver group 'X' already subscribed") are fine.
 - Imports MUST be at the top of the file.
-- SHOULD NOT use the `Any` type - only as a last resort or if explicitly told otherwise.
+- SHOULD NOT use the `Any` type - only as a last resort or if explicitly told otherwise. MUST NOT add `# type: ignore` or `Any` to silence a type error - narrow the type.
+- MUST reject conflicting CLI options instead of silently ignoring one.
+- MUST NOT assume parsed external input (payload, JSON, env) has the expected type. A `None` or wrong type MUST NOT raise where the code is meant to fail open.
 - MUST NOT annotate with `object` - use a precise type, or `Any` where you genuinely cannot.
 - For external tool interactions, SHOULD research and prefer a library (e.g. `gitpython` for git) - MUST use `subprocess` only where no suitable library exists.
