@@ -170,6 +170,32 @@ def test_on_reply_fires_once_at_the_first_assistant_line(
     assert replies == [1]
 
 
+def test_on_tool_fires_at_each_tool_line(
+    popen: FakePopen, cell: tuple[PreparedCell, Scenario]
+) -> None:
+    prepared, scenario = cell
+    popen.lines = ["out\n", TOOL_LINE, TOOL_LINE]
+    tools: list[str] = []
+
+    process.execute(prepared, scenario, "m", None, on_tool=tools.append)
+
+    assert tools == ["Bash", "Bash"]
+
+
+def test_on_tool_fires_for_every_tool_in_one_line(
+    popen: FakePopen, cell: tuple[PreparedCell, Scenario]
+) -> None:
+    prepared, scenario = cell
+    popen.lines = [
+        '{"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read"}, {"type": "tool_use", "name": "Bash"}]}}\n'
+    ]
+    tools: list[str] = []
+
+    process.execute(prepared, scenario, "m", None, on_tool=tools.append)
+
+    assert tools == ["Read", "Bash"]
+
+
 def test_timeout_and_kill_all_stop_the_agent(
     popen: FakePopen, cell: tuple[PreparedCell, Scenario]
 ) -> None:

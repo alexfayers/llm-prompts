@@ -24,6 +24,7 @@ from llm_prompts.benchmark.runner.events import (
     CallLog,
     ContextMeter,
     count,
+    mcp_name,
     parse_line,
 )
 from llm_prompts.benchmark.types import (
@@ -198,6 +199,16 @@ class ClaudeAdapter:
     def replied(self, line: str) -> bool:
         event = parse_line(line)
         return event is not None and event.get("type") == "assistant"
+
+    def tool_started(self, line: str) -> list[str]:
+        event = parse_line(line)
+        if event is None or event.get("type") != "assistant":
+            return []
+        return [
+            mcp_name(str(block.get("name", "")))
+            for block in _blocks(event)
+            if block.get("type") == "tool_use"
+        ]
 
     def parse(self, lines: Iterable[tuple[float, str]], wall_s: float) -> Trace:
         log = CallLog()

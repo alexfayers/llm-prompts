@@ -73,6 +73,7 @@ def execute(
     scenario: Scenario,
     model: str,
     policy: SandboxPolicy | None,
+    on_tool: Callable[[str], None] | None = None,
     on_reply: Callable[[], None] | None = None,
     session: Session | None = None,
 ) -> Trace:
@@ -114,6 +115,9 @@ def execute(
                 if on_reply and not replied and runner.replied(line):
                     replied = True
                     on_reply()
+                if on_tool:
+                    for name in runner.tool_started(line):
+                        on_tool(name)
             returncode = process.wait()
         finally:
             timer.cancel()
