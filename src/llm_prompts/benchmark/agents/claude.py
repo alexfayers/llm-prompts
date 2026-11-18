@@ -195,6 +195,9 @@ class ClaudeAdapter:
             *session_args,
         ]
 
+    def add_delegates(self, trace: Trace, home: Path, since: float) -> Trace:
+        return trace
+
     def replied(self, line: str) -> bool:
         event = parse_line(line)
         return event is not None and event.get("type") == "assistant"

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import subprocess
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from importlib import resources
 from pathlib import Path
 
@@ -39,6 +40,8 @@ HOOK_MESSAGE_TYPE = "cline-hooks"
 DELEGATION_TOOLS = "fork,fork_resume,fork_steer,fork_cancel"
 PERMISSION_CONFIG = Path(".pi/agent/extensions/pi-permission-system/config.json")
 PATH_EDIT_TOOLS = ("edit", "write", "path_write")
+FORK_FILES = Path(".pi/agent/pi-context")
+USAGE_KEYS = ("input", "output", "cacheRead", "cacheWrite")
 
 
 def _text(message: Mapping[str, object]) -> str:
@@ -49,6 +52,32 @@ def _text(message: Mapping[str, object]) -> str:
         for block in blocks
         if isinstance(block, dict) and block.get("type") == "text"
     )
+
+
+def _cost(usage: object) -> float | None:
+    cost = usage.get("cost") if isinstance(usage, dict) else None
+    total = cost.get("total") if isinstance(cost, dict) else None
+    if isinstance(total, int | float) and not isinstance(total, bool):
+        return float(total)
+    return None
+
+
+def _fork_messages(files: Path, since: float) -> Iterator[Mapping[str, object]]:
+    """Yield the messages a fork wrote to its sessions in ``files`` since ``since``, without the lead's entries it was seeded with."""
+    inherited = read_json(files / "handshake.json", strict=False).get("inherited")
+    for session in (*files.glob("seed.jsonl"), *files.glob("session/**/*.jsonl")):
+        entries = [
+            e for line in session.read_text().splitlines() if (e := parse_line(line))
+        ]
+        ids = [entry.get("id") for entry in entries]
+        for entry in entries[ids.index(inherited) + 1 if inherited in ids else 0 :]:
+            message = entry.get("message")
+            if (
+                entry.get("type") == "message"
+                and isinstance(message, dict)
+                and count(message, "timestamp") >= since * 1000
+            ):
+                yield message
 
 
 BEDROCK_PROVIDER = "amazon-bedrock"
@@ -175,6 +204,48 @@ class PiAdapter:
             scenario.prompt,
         ]
 
+    def add_delegates(self, trace: Trace, home: Path, since: float) -> Trace:
+        """Return ``trace`` with the usage and tool calls that forks wrote to their sessions in ``home`` since ``since``."""
+        log = CallLog(BUILTIN_TOOLS)
+        usage = list(dataclasses.astuple(trace.tokens))
+        cost_usd = trace.cost_usd
+        for handshake in sorted((home / FORK_FILES).glob("*/handshake.json")):
+            for message in _fork_messages(handshake.parent, since):
+                match message.get("role"):
+                    case "toolResult":
+                        log.end(
+                            str(message.get("toolCallId")),
+                            message.get("isError"),
+                            message.get("content"),
+                        )
+                    case "assistant":
+                        call_usage = message.get("usage")
+                        for i, key in enumerate(USAGE_KEYS):
+                            usage[i] += count(call_usage, key)
+                        if (total := _cost(call_usage)) is not None:
+                            cost_usd = (cost_usd or 0.0) + total
+                        content = message.get("content")
+                        for block in content if isinstance(content, list) else []:
+                            if (
+                                isinstance(block, dict)
+                                and block.get("type") == "toolCall"
+                            ):
+                                log.start(
+                                    str(block.get("id")),
+                                    str(block.get("name", "")),
+                                    block.get("arguments"),
+                                    count(message, "timestamp") / 1000,
+                                    subagent=True,
+                                )
+        return dataclasses.replace(
+            trace,
+            tool_calls=tuple(
+                sorted((*trace.tool_calls, *log.calls()), key=lambda call: call.at)
+            ),
+            tokens=Tokens(*usage),
+            cost_usd=cost_usd,
+        )
+
     def replied(self, line: str) -> bool:
         event = parse_line(line)
         message = event.get("message") if event else None
@@ -234,9 +305,7 @@ class PiAdapter:
                     message = event["message"]
                     turns += 1
                     call_usage = message.get("usage")
-                    for i, key in enumerate(
-                        ("input", "output", "cacheRead", "cacheWrite")
-                    ):
+                    for i, key in enumerate(USAGE_KEYS):
                         usage[i] += count(call_usage, key)
                     meter.add(
                         sum(
@@ -244,13 +313,7 @@ class PiAdapter:
                             for key in ("input", "cacheRead", "cacheWrite")
                         )
                     )
-                    call_cost = (
-                        call_usage.get("cost") if isinstance(call_usage, dict) else None
-                    )
-                    total = (
-                        call_cost.get("total") if isinstance(call_cost, dict) else None
-                    )
-                    if isinstance(total, int | float) and not isinstance(total, bool):
+                    if (total := _cost(call_usage)) is not None:
                         cost_usd = (cost_usd or 0.0) + total
                     model = str(message.get("model", ""))
                     final_text = _text(message)
