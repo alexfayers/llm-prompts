@@ -60,6 +60,9 @@ class AgentAdapter(Protocol):
     def replied(self, line: str) -> bool:
         """Return whether a streamed output line is an assistant reply."""
 
+    def tool_started(self, line: str) -> list[str]:
+        """Return the names of the tools a streamed output line starts."""
+
     def parse(self, lines: Iterable[tuple[float, str]], wall_s: float) -> Trace:
         """Build a trace from the timestamped output lines."""
 
