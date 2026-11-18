@@ -266,11 +266,12 @@ def pull_plugin_sources() -> None:
             print(line)
 
 
-def plugin_source_messages(plugin: dict[str, Any]) -> list[str]:
+def plugin_source_messages(plugin: dict[str, Any], fetch: bool = True) -> list[str]:
     """Return update-availability messages for a plugin checkout.
 
     Args:
         plugin: A ``[[plugins]]`` entry with ``name``, ``source``, optional ``ref``.
+        fetch: Whether to fetch, or compare against the upstream branch already fetched.
 
     Returns:
         Message lines describing an available update, or an empty list.
@@ -295,18 +296,34 @@ def plugin_source_messages(plugin: dict[str, Any]) -> list[str]:
         return []
     local_sha = local.stdout.strip()
 
-    remote_sha = _remote_head(git_url, plugin.get("ref"))
+    if fetch:
+        remote_sha = _remote_head(git_url, plugin.get("ref"))
+    else:
+        remote_sha = (
+            subprocess.run(
+                ["git", "-C", str(checkout), "rev-parse", "@{u}"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=GIT_TIMEOUT,
+            ).stdout.strip()
+            or None
+        )
     if remote_sha is None or remote_sha == local_sha:
         return []
 
-    run_with_retries(
-        ["git", "-C", str(checkout), "fetch", "--quiet"],
-        check=True,
-        capture_output=True,
-        timeout=GIT_TIMEOUT,
-    )
+    if fetch:
+        run_with_retries(
+            ["git", "-C", str(checkout), "fetch", "--quiet"],
+            check=True,
+            capture_output=True,
+            timeout=GIT_TIMEOUT,
+        )
     subjects = _commit_subjects_between(
-        checkout, local_sha, "FETCH_HEAD", _installed_pathspecs(plugin.get("skills"))
+        checkout,
+        local_sha,
+        "FETCH_HEAD" if fetch else remote_sha,
+        _installed_pathspecs(plugin.get("skills")),
     )
     if subjects == []:
         return []

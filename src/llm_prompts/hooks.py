@@ -17,7 +17,7 @@ from typing import Any
 
 from cline_hooks.core.plugin import HookResult, HooksPlugin, UserFacingNote
 
-from . import telemetry
+from . import telemetry, telemetry_core
 from .manifest import read_manifest
 from .setup import _UPDATE_INSTRUCTION
 
@@ -40,7 +40,7 @@ _AUTO_UPDATE_STARTED = (
 _HEADLESS_ENTRYPOINTS = frozenset({"sdk-cli", "sdk-ts", "sdk-py"})
 _REFRESH = (
     "import sys; from llm_prompts.hooks import refresh_update_check; "
-    "refresh_update_check(sys.argv[1])"
+    "refresh_update_check(*sys.argv[1:])"
 )
 
 
@@ -213,18 +213,20 @@ class _ReinstallDebouncer:
         """Whether a running pi fork held the automatic update at the last check."""
         return self._held.exists()
 
-    def should_run(self, fingerprint: str = "") -> bool:
-        """Return True if enough time has passed since the last run or the installed versions moved."""
-        if (
-            not self._stamp.exists()
-            or self._cache().get("fingerprint", "") != fingerprint
-        ):
+    def should_run(self) -> bool:
+        """Return True if enough time has passed since the last run."""
+        if not self._stamp.exists():
             return True
         try:
             last_run = float(self._stamp.read_text(encoding="utf-8").strip())
         except (ValueError, OSError):
             return True
         return (time.time() - last_run) >= self._interval_seconds
+
+    def moved(self, fingerprint: str) -> bool:
+        """Return True if the installed versions moved since the cached notice."""
+        cached: str = self._cache().get("fingerprint", "")
+        return cached != fingerprint
 
     def mark_run(self) -> None:
         """Record that a run just happened."""
@@ -239,10 +241,16 @@ class _ReinstallDebouncer:
         """Yield True while this process holds the background refresh lock, False if another refresh holds it."""
         return _flock(self._refresh_lock, 0)
 
-    def refresh_in_background(self) -> None:
+    def refresh_in_background(self, fetch: bool) -> None:
         """Start ``refresh_update_check`` for this stamp in a detached process."""
         subprocess.Popen(
-            [sys.executable, "-c", _REFRESH, str(self._stamp)],
+            [
+                sys.executable,
+                "-c",
+                _REFRESH,
+                str(self._stamp),
+                "remote" if fetch else "local",
+            ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -251,18 +259,28 @@ class _ReinstallDebouncer:
 
     def store_notice(self, messages: list[str], fingerprint: str = "") -> None:
         """Cache the update messages with the installed-version fingerprint they were checked at."""
+        from .cli import UpdateCheckFailure
+
+        failures = [m for m in messages if isinstance(m, UpdateCheckFailure)]
         self._notice_cache.write_text(
-            json.dumps({"fingerprint": fingerprint, "messages": messages}),
+            json.dumps(
+                {"fingerprint": fingerprint, "messages": messages, "failures": failures}
+            ),
             encoding="utf-8",
         )
 
     def cached_notice(self, fingerprint: str = "") -> list[str]:
         """Return the update messages cached at these installed versions."""
         cache = self._cache()
+        from .cli import UpdateCheckFailure
+
         if cache.get("fingerprint", "") != fingerprint:
             return []
-        messages: list[str] = cache.get("messages", [])
-        return messages
+        failures = set(cache.get("failures", []))
+        return [
+            UpdateCheckFailure(m) if m in failures else m
+            for m in cache.get("messages", [])
+        ]
 
     def _cache(self) -> dict[str, Any]:
         """Return the cached notice record, or an empty one when absent or unreadable."""
@@ -292,25 +310,45 @@ def _flock(path: Path, wait_seconds: float) -> Iterator[bool]:
                 return
 
 
-def refresh_update_check(stamp: str) -> None:
+def refresh_update_check(stamp: str, refs: str = "remote") -> None:
     """Check for llm-prompts updates, cache the notice and start the automatic update when updates exist.
 
     Args:
         stamp: The update-check stamp path of the session that started this refresh.
+        refs: ``remote`` to fetch, or ``local`` to rebuild the notice from the refs already fetched.
     """
     from .cli import (
         UpdateCheckFailure,
         _collect_update_messages,
+        _get_installed_commit,
         _installed_fingerprint,
     )
 
     debouncer = _ReinstallDebouncer(Path(stamp))
-    with debouncer.refreshing() as alone:
+    with (
+        debouncer.refreshing() as alone,
+        telemetry.Run(_get_installed_commit) as run,
+    ):
         if not alone:
             return
         try:
             fingerprint = _installed_fingerprint()
-            messages = _collect_update_messages()
+            due = (
+                debouncer.should_run()
+                if refs == "remote"
+                else debouncer.moved(fingerprint)
+            )
+            if not due:
+                return
+            if telemetry_core.install_id():
+                run.begin("startup-check", [] if refs == "remote" else ["--local"])
+            if refs == "remote":
+                messages = _collect_update_messages()
+            else:
+                previous = debouncer._cache().get("fingerprint", "")
+                messages = _collect_update_messages(
+                    previous=(previous, debouncer.cached_notice(previous))
+                )
         except (Exception, SystemExit):
             logger.warning("Failed to check for llm-prompts updates")
             return
@@ -319,7 +357,8 @@ def refresh_update_check(stamp: str) -> None:
                 return
             if not any(isinstance(m, UpdateCheckFailure) for m in messages):
                 held = bool(messages) and _held_by_fork(fingerprint)
-                debouncer.mark_run()
+                if refs == "remote":
+                    debouncer.mark_run()
                 debouncer.hold(held)
                 if messages and not held and _started_auto_update(fingerprint):
                     messages = [*messages, _AUTO_UPDATE_STARTED]
@@ -424,9 +463,11 @@ class AutoReinstallPlugin(HooksPlugin):
             telemetry.Run(_get_installed_commit) as run,
             self._update_check_debouncer.single_flight() as holds_lock,
         ):
-            if holds_lock and self._update_check_debouncer.should_run(fingerprint):
-                run.begin("startup-check", [])
-                self._update_check_debouncer.refresh_in_background()
+            fetch = self._update_check_debouncer.should_run()
+            if holds_lock and (
+                fetch or self._update_check_debouncer.moved(fingerprint)
+            ):
+                self._update_check_debouncer.refresh_in_background(fetch)
                 messages = self._update_check_debouncer.cached_notice(fingerprint)
                 self._update_check_debouncer.record_shown(task_id, messages)
             elif source in _DEBOUNCED_TASK_START_SOURCES:

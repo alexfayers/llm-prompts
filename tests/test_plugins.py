@@ -483,6 +483,27 @@ class TestPluginSourceMessages:
         assert len(messages) == 1
         assert messages[0] == ("[p] update available:\n- second commit subject")
 
+    def test_without_fetching_compares_against_the_upstream_branch(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        (plugins._checkout_dir("p") / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-parse", "HEAD", stdout="aaaaaaa\n")
+        fake_subprocess.on("rev-parse", "@{u}", stdout="bbbbbbb\n")
+        fake_subprocess.on(
+            "log",
+            "--pretty=format:%s%n%b%x1e",
+            stdout=fake_subprocess.log_lines("second commit subject"),
+        )
+        plugin = {"name": "p", "source": f"git+file://{tmp_path / 'upstream'}"}
+
+        messages = plugins.plugin_source_messages(plugin, fetch=False)
+
+        assert messages == ["[p] update available:\n- second commit subject"]
+        assert fake_subprocess.matching("ls-remote") == []
+        assert fake_subprocess.matching("fetch") == []
+        (log,) = fake_subprocess.matching("log")
+        assert "aaaaaaa..bbbbbbb" in log
+
     @pytest.fixture
     def outdated_plugin(
         self,

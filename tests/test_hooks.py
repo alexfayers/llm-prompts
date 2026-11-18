@@ -5,6 +5,7 @@ from __future__ import annotations
 import itertools
 import json
 import subprocess
+import sys
 import time
 from collections.abc import Iterator
 from contextlib import ExitStack
@@ -871,6 +872,7 @@ class TestUpdateCheckOnTaskStart:
         self,
         tmp_path: Path,
         telemetry_popen: MagicMock,
+        background: list[list[str]],
         monkeypatch: pytest.MonkeyPatch,
         cached: bool,
         flags: list[str],
@@ -884,9 +886,26 @@ class TestUpdateCheckOnTaskStart:
             (tmp_path / "update-stamp").write_text(str(time.time()))
         with patch("llm_prompts.cli._collect_update_messages", return_value=[]):
             plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[], source="")
+            assert telemetry_popen.called is cached
+            self._finish(background)
+        telemetry_popen.assert_called_once()
         event = json.loads(telemetry_popen.call_args.args[0][3])
         assert event["properties"]["command"] == "startup-check"
         assert event["properties"]["flags"] == flags
+
+    def test_refresh_sends_no_telemetry_before_the_first_run_notice(
+        self,
+        tmp_path: Path,
+        telemetry_popen: MagicMock,
+        isolated_config_dir: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        (isolated_config_dir / "telemetry.json").unlink()
+        with patch("llm_prompts.cli._collect_update_messages", return_value=[]):
+            refresh_update_check(str(tmp_path / "update-stamp"))
+        telemetry_popen.assert_not_called()
+        assert capsys.readouterr().err == ""
+        assert (tmp_path / "update-stamp").exists()
 
     def test_resume_source_still_debounced(self, tmp_path: Path) -> None:
         plugin = AutoReinstallPlugin()
@@ -1091,6 +1110,47 @@ class TestUpdateCheckOnTaskStart:
         assert "[pkg] update check failed" in failed.notes[0]
         mock_collect.assert_called_once()
 
+    def test_rebuilt_failure_does_not_start_the_automatic_update(
+        self, tmp_path: Path, background: list[list[str]]
+    ) -> None:
+        stamp = tmp_path / "update-stamp"
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(stamp)
+        failure = UpdateCheckFailure("[pkg] update check failed: offline")
+        _ReinstallDebouncer(stamp).mark_run()
+        _ReinstallDebouncer(stamp).store_notice([failure, _UPDATE_INSTRUCTION], "c")
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch(
+                "llm_prompts.setup._load_config",
+                return_value=[{"name": "pkg", "source": "git+https://x.invalid/r"}],
+            ),
+            patch("llm_prompts.plugins._load_plugins", return_value=[]),
+            patch("llm_prompts.cli._get_installed_commit", return_value="c"),
+            patch("llm_prompts.cli._installed_fingerprint", return_value="d,c"),
+            patch("llm_prompts.auto_update.blocker", return_value=None),
+            patch("llm_prompts.auto_update.start", return_value=True) as start,
+        ):
+            mock_config.return_value.exists.return_value = True
+            rebuilt = self._check(plugin, background)
+        start.assert_not_called()
+        assert rebuilt is not None
+        assert rebuilt.notes[0] == failure
+
+    def test_running_refresh_skips_a_check_another_refresh_did(
+        self, tmp_path: Path
+    ) -> None:
+        stamp = tmp_path / "update-stamp"
+        _ReinstallDebouncer(stamp).mark_run()
+        _ReinstallDebouncer(stamp).store_notice(["old"], "a")
+        with (
+            patch("llm_prompts.cli._installed_fingerprint", return_value="a"),
+            patch("llm_prompts.cli._collect_update_messages") as mock_collect,
+        ):
+            refresh_update_check(str(stamp), "remote")
+            refresh_update_check(str(stamp), "local")
+        mock_collect.assert_not_called()
+
     def test_installed_update_invalidates_cached_notice(
         self, tmp_path: Path, background: list[list[str]]
     ) -> None:
@@ -1115,7 +1175,9 @@ class TestUpdateCheckOnTaskStart:
             assert self._fresh_start(stamp) is None
             self._finish(background)
             assert self._fresh_start(stamp) is None
-        mock_collect.assert_called_once()
+        mock_collect.assert_called_once_with(
+            previous=("a", ["[pkg] update available (a -> b)"])
+        )
 
     def test_a_running_refresh_is_not_repeated(
         self, tmp_path: Path, background: list[list[str]]
@@ -1203,6 +1265,23 @@ class TestUpdateCheckOnTaskStart:
         assert result is None
         mock_collect.assert_not_called()
         assert not (tmp_path / "update-stamp").exists()
+
+
+@pytest.mark.real_io
+def test_detached_refresh_rebuilds_the_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stamp = tmp_path / "update-stamp"
+    _ReinstallDebouncer(stamp).store_notice(["old"], "moved")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    subprocess.run(
+        [sys.executable, "-c", _REFRESH, str(stamp), "local"],
+        check=True,
+        timeout=60,
+    )
+    assert _ReinstallDebouncer(stamp).cached_notice("") == []
+    assert not _ReinstallDebouncer(stamp).moved("")
 
 
 class TestSourcePathWatching:
