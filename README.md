@@ -48,7 +48,7 @@
 | src/llm\_prompts/benchmark/transient.py                                       |       41 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/types.py                                           |      205 |        0 |    100% |           |
 | src/llm\_prompts/claude\_models.py                                            |       23 |        0 |    100% |           |
-| src/llm\_prompts/cli.py                                                       |      801 |       76 |     91% |105-106, 132-133, 140-153, 259-260, 266-271, 358, 419-420, 588, 591, 610, 633, 671, 702, 834, 906-918, 996-998, 1006-1009, 1078-1087, 1554-1556, 1559-1565, 1568-1570, 1581-1587, 1597, 1602, 1614, 1773-1774, 1779 |
+| src/llm\_prompts/cli.py                                                       |      807 |       76 |     91% |106-107, 133-134, 141-154, 260-261, 276-281, 368, 429-430, 598, 601, 620, 643, 681, 712, 844, 916-928, 1006-1008, 1016-1019, 1088-1097, 1564-1566, 1569-1575, 1578-1580, 1591-1597, 1607, 1612, 1624, 1783-1784, 1789 |
 | src/llm\_prompts/collection\_size.py                                          |      118 |        4 |     97% |249-250, 400, 457 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/contribute.py                                                |     1108 |       57 |     95% |105, 132-133, 174-175, 207-208, 324, 457-458, 491, 621, 624, 677, 799-800, 840, 928-929, 959, 1214, 1391, 1393, 1407-1408, 1416-1417, 1438, 1449-1450, 1557-1558, 1637, 1694-1699, 1703, 1809-1810, 1859-1860, 1929-1951, 2148-2150, 2154, 2176 |
@@ -88,8 +88,8 @@
 | src/llm\_prompts/size\_report.py                                              |      196 |        2 |     99% |  198, 200 |
 | src/llm\_prompts/skill\_injection.py                                          |       37 |        2 |     95% |    33, 36 |
 | src/llm\_prompts/squash\_subject.py                                           |        6 |        0 |    100% |           |
-| src/llm\_prompts/telemetry.py                                                 |       80 |        2 |     98% |   145-146 |
-| src/llm\_prompts/telemetry\_core.py                                           |      216 |        5 |     98% |66-67, 76-77, 398 |
+| src/llm\_prompts/telemetry.py                                                 |       81 |        2 |     98% |   151-152 |
+| src/llm\_prompts/telemetry\_core.py                                           |      224 |        7 |     97% |66-67, 76-77, 185-186, 422 |
 | src/llm\_prompts/watch/\_\_init\_\_.py                                        |        0 |        0 |    100% |           |
 | src/llm\_prompts/watch/core/\_\_init\_\_.py                                   |        0 |        0 |    100% |           |
 | src/llm\_prompts/watch/core/condition.py                                      |       25 |        3 |     88% | 33, 49-50 |
@@ -180,8 +180,8 @@
 | tests/test\_size\_report.py                                                   |      223 |        0 |    100% |           |
 | tests/test\_skill\_injection.py                                               |       36 |        0 |    100% |           |
 | tests/test\_squash\_subject.py                                                |        7 |        0 |    100% |           |
-| tests/test\_telemetry.py                                                      |      368 |        0 |    100% |           |
-| tests/test\_telemetry\_core.py                                                |      153 |        1 |     99% |       126 |
+| tests/test\_telemetry.py                                                      |      378 |        0 |    100% |           |
+| tests/test\_telemetry\_core.py                                                |      164 |        1 |     99% |       126 |
 | tests/test\_todos\_script.py                                                  |       88 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      119 |        0 |    100% |           |
 | tests/test\_worktrees.py                                                      |       38 |        0 |    100% |           |
@@ -189,7 +189,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       31 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **29461** |  **792** | **97%** |           |
+| **TOTAL**                                                                     | **29497** |  **794** | **97%** |           |
 
 
 ## Setup coverage badge
