@@ -1,5 +1,5 @@
 // Adds the fork tool, which runs a delegate on a copy of this session that shares its prompt cache, or a cold worker on a cheaper model. A writer works in a git worktree and lands its commits through the merge queue.
-// Config: llmPrompts.forks in pi settings: mcpProxy (true: a fork uses main's MCP servers), privateNames (regex of names a writer's commits may not land with)
+// Config: llmPrompts.forks in pi settings: mcpProxy (true: a fork uses main's MCP servers), privateNames (regex of names a writer's commits may not land with), readMcp (array of {tool, argsMatch?}: extra MCP tools, as globs, a delegate may call when each argsMatch regex matches the whole of that string argument)
 // Env: PI_CONTEXT_CHILD (set in a delegate, which cannot fork), PI_CONTEXT_ROLE and PI_CONTEXT_RUN_ID (set for a delegate), PI_CONTEXT_WORKTREE (set for a writer: its worktree, for hooks that resolve the session repo)
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -10,7 +10,7 @@ import { parseOutcome, projectResult } from "./outcome.ts";
 import { Background } from "./background.ts";
 import { describeMain, lastPrefixHash, PREFIX_FILE, serveBridge, writeLeadPrefix, type BridgeOptions } from "./bridge.ts";
 import { createWorktree, dropIfClean, gitOut, land, mainSnapshot, restoreWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
-import { coldCard, expandHome, readHandshake, ROLES, type Role } from "./roles.ts";
+import { checkReadMcp, coldCard, expandHome, readHandshake, ROLES, withReadMcp, type ReadMcp, type Role } from "./roles.ts";
 import { tokens } from "./live-view.ts";
 import { cacheLeftMs, FINISHED, isLive, registryOf, type Run, type RunState } from "./registry.ts";
 import { RpcChild, type Turn, type UiAnswer, type UiRequest } from "./runner.ts";
@@ -52,7 +52,14 @@ export function coldArgs(role: Role, { model, sessionDir, cardFile, skillsDir, s
 const FINISHED_MARK = "finished";
 
 /** The `llmPrompts.forks` object of pi's settings. */
-const forkSettings = (pi: ExtensionAPI): { mcpProxy?: boolean; privateNames?: string } => (pi.getSettings?.() as { llmPrompts?: { forks?: object } } | undefined)?.llmPrompts?.forks ?? {};
+function forkSettings(pi: ExtensionAPI, ctx?: ExtensionContext): { mcpProxy?: boolean; privateNames?: string; readMcp: ReadMcp[] } {
+	const forks = ((pi.getSettings?.() as { llmPrompts?: { forks?: object } } | undefined)?.llmPrompts?.forks ?? {}) as { mcpProxy?: boolean; privateNames?: string; readMcp?: unknown };
+	const { valid, dropped } = checkReadMcp(forks.readMcp);
+	const warning = `pi-context: dropped invalid llmPrompts.forks.readMcp entries: ${JSON.stringify(dropped)}`;
+	if (dropped.length && ctx?.hasUI) ctx.ui.notify(warning, "warning");
+	else if (dropped.length) process.stderr.write(`${warning}\n`);
+	return { ...forks, readMcp: valid };
+}
 
 /** The session file a run's delegate wrote: the seed of a warm fork, or the newest session of a cold worker. */
 export function sessionFileOf(files: string, cold: boolean): string | undefined {
@@ -181,10 +188,12 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 		fs.rmSync(path.join(files, FINISHED_MARK), { force: true });
 		let prefix: "match" | "mismatch" | undefined;
 		const onPrefix = model ? undefined : (hash: string) => void (prefix = hash === lastPrefixHash() ? "match" : "mismatch");
-		bridge = mcp && (await serveBridge(files, { role, execute: mcp, onPrefix }));
+		const { readMcp } = forkSettings(pi, ctx);
+		const allowed = withReadMcp(role, readMcp);
+		bridge = mcp && (await serveBridge(files, { role: allowed, execute: mcp, onPrefix }));
 		const inherited = model ? undefined : resume ? readHandshake(handshake)?.inherited : entries.at(-1)?.id;
-		const main = bridge && describeMain(pi, ctx, model ? role : undefined);
-		fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, repo, inherited, bridge: bridge && { ...main, socket: bridge.socket } }), { mode: 0o600 });
+		const main = bridge && describeMain(pi, ctx, model ? allowed : undefined);
+		fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, repo, inherited, readMcp, bridge: bridge && { ...main, socket: bridge.socket } }), { mode: 0o600 });
 		if (model) fs.writeFileSync(cardFile, coldCard(role), { mode: 0o600 });
 		else if (!resume) {
 			writeLeadPrefix(files);
