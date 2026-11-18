@@ -147,7 +147,7 @@ def _alive(lock: dict[str, object]) -> bool:
 
 def _has_local_changes(repo: Path) -> bool:
     """Whether a local checkout holds edits, or commits the release it follows lacks."""
-    if run_git(repo, "status", "--porcelain").stdout.strip():
+    if run_git(repo, "status", "--porcelain", "--untracked-files=no").stdout.strip():
         return True
     ahead = run_git(repo, "rev-list", f"{UPSTREAM}..HEAD")
     return ahead.returncode != 0 or bool(set(ahead.stdout.split()) - unreleased(repo))

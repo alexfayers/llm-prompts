@@ -98,10 +98,14 @@ def test_a_checkout_with_commits_from_an_older_version_blocks(
 
 
 @pytest.mark.real_io
-def test_uncommitted_edits_block(tmp_path: Path, isolated_config_dir: Path) -> None:
+def test_uncommitted_edits_block_but_untracked_files_do_not(
+    tmp_path: Path, isolated_config_dir: Path
+) -> None:
     clone = _checkout(tmp_path)
-    (clone / "edited.txt").write_text("x", encoding="utf-8")
+    (clone / "scratch.txt").write_text("x", encoding="utf-8")
     _config(isolated_config_dir, clone)
+    assert auto_update.blocker("") is None
+    _git(clone, "add", "scratch.txt")
     assert auto_update.blocker("") == "llm-prompts has local changes"
 
 
