@@ -9,7 +9,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from conftest import FakeSubprocess, run_capturing_exit
@@ -178,6 +178,69 @@ def test_an_update_that_stops_partway_is_not_retried_at_its_new_versions(
     fake_subprocess.on_match(_is_update, stdout="Update stopped\n", returncode=1)
     auto_update.run("v1")
     assert auto_update.failure("v2") == "Update stopped"
+
+
+def test_a_run_logs_its_start_before_the_update_runs(
+    unblocked: Path, fake_subprocess: FakeSubprocess
+) -> None:
+    logged: list[str] = []
+    fake_subprocess.on_match(
+        _is_update,
+        stdout="Updated\n",
+        side_effect=lambda argv, kwargs: logged.append(
+            (unblocked / "auto-update.log").read_text()
+        ),
+    )
+    auto_update.run("v1")
+    assert logged[0].startswith("Started at ")
+    log = (unblocked / "auto-update.log").read_text()
+    assert log.startswith(logged[0]) and log.endswith("Updated\n")
+
+
+def _reported(telemetry_popen: MagicMock) -> dict[str, object]:
+    properties: dict[str, object] = json.loads(telemetry_popen.call_args.args[0][3])[
+        "properties"
+    ]
+    return properties
+
+
+def test_a_run_blocked_after_taking_the_lock_reports_what_blocked_it(
+    unblocked: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_subprocess: FakeSubprocess,
+    telemetry_popen: MagicMock,
+) -> None:
+    monkeypatch.setattr(
+        "llm_prompts.cli._get_installed_version", lambda _: (None, None)
+    )
+    monkeypatch.setattr(
+        auto_update,
+        "blocker",
+        lambda fingerprint: "session",
+    )
+    auto_update.run("v1")
+    properties = _reported(telemetry_popen)
+    assert (properties["command"], properties["flags"]) == ("update", ["--auto"])
+    assert (properties["outcome"], properties["auto_update"]) == ("blocked", "session")
+    assert not (unblocked / "auto-update.log").exists()
+
+
+def test_a_run_while_another_holds_the_lock_reports_it_stopped(
+    unblocked: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_subprocess: FakeSubprocess,
+    telemetry_popen: MagicMock,
+) -> None:
+    monkeypatch.setattr(
+        "llm_prompts.cli._get_installed_version", lambda _: (None, None)
+    )
+    with _held_by_another_process():
+        auto_update.run("v1")
+    properties = _reported(telemetry_popen)
+    assert (properties["outcome"], properties["exit_reason"]) == (
+        "stopped",
+        "update_running",
+    )
 
 
 def test_a_successful_run_clears_an_old_failure(

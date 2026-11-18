@@ -11,12 +11,14 @@ import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 from cline_hooks.plugins.checkout_lock import LOCK_TTL_SECONDS
 from cline_hooks.state.paths import get_data_dir
 from platformdirs import user_data_dir
 
+from . import telemetry
 from .main_sync import UPSTREAM, run_git, unreleased
 from .plugins import _checkout_dir
 from .setup import _expand, _is_local_path, config_path, read_config
@@ -208,10 +210,24 @@ def _fingerprint() -> str:
 
 
 def run(fingerprint: str) -> None:
-    """Run ``llm-prompts update --auto`` once, logging its output and recording a failure."""
-    with lock() as held:
-        if not held or blocker(fingerprint) is not None:
+    """Run ``llm-prompts update --auto`` once, logging its output and recording a failure.
+
+    Reports what stopped it when it does not run.
+    """
+    from .cli import _get_installed_version
+
+    with telemetry.Run(_get_installed_version) as report, lock() as held:
+        if not held:
+            report.begin("update", ["--auto"])
+            report.outcome, report.exit_reason = "stopped", "update_running"
             return
+        if (blocked := blocker(fingerprint)) is not None:
+            report.begin("update", ["--auto"])
+            report.outcome, report.auto_update = "blocked", blocked
+            return
+        log = STATE_DIR / "auto-update.log"
+        started = f"Started at {datetime.now(tz=UTC).isoformat()}\n"
+        log.write_text(started, encoding="utf-8")
         result = subprocess.run(
             [_script(), "update", "--auto"],
             pass_fds=(int(os.environ[LOCK_FD_ENV]),),
@@ -221,7 +237,7 @@ def run(fingerprint: str) -> None:
             check=False,
         )
         output = result.stdout + result.stderr
-        (STATE_DIR / "auto-update.log").write_text(output, encoding="utf-8")
+        log.write_text(started + output, encoding="utf-8")
         if result.returncode:
             lines = output.strip().splitlines()
             record_failure(
