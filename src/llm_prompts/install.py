@@ -216,6 +216,10 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
             "rules": home / ".gemini" / "config",
             "skills": home / ".gemini" / "config" / "skills",
         },
+        "opencode": {
+            "rules": home / ".config" / "opencode",
+            "skills": home / ".config" / "opencode" / "skills",
+        },
         "pi": {
             "rules": pi_agent,
             "skills": pi_agent / "skills",
@@ -754,6 +758,12 @@ class _AntigravityAgent(_CodexAgent):
     AGENTS_MD: ClassVar[str] = "AGENTS.md"
 
 
+class _OpencodeAgent(_CodexAgent):
+    """Opencode agent that concatenates all rules into its global AGENTS.md file."""
+
+    AGENTS_MD: ClassVar[str] = "AGENTS.md"
+
+
 class _PiAgent(_CodexAgent):
     """Pi agent that concatenates all rules into its global AGENTS.md file."""
 
@@ -767,6 +777,7 @@ AGENT_CLASSES: dict[str, type[_Agent]] = {
     "claude-code": _Agent,
     "codex": _CodexAgent,
     "antigravity": _AntigravityAgent,
+    "opencode": _OpencodeAgent,
     "pi": _PiAgent,
 }
 
@@ -3922,6 +3933,18 @@ def try_install_memory_antigravity() -> None:
         _run_tool([binary, "setup-service"])
 
 
+def try_install_memory_opencode() -> None:
+    """Add mcp-memory to opencode if available."""
+
+    binary = user_binary("mcp-memory")
+    if not binary:
+        log("debug", "mcp-memory not found on PATH, skipping opencode MCP setup.")
+        return
+    _run_tool([binary, "install", "opencode"])
+    if not _memory_service_exists():
+        _run_tool([binary, "setup-service"])
+
+
 def try_install_memory_pi() -> None:
     """Add mcp-memory to pi's MCP config if available."""
 
@@ -4274,6 +4297,7 @@ def main(
         "claude-code",
         "codex",
         "antigravity",
+        "opencode",
         "pi",
     ):
         if skill_agent not in active_targets:
@@ -4616,7 +4640,7 @@ def get_managed_dirs() -> list[Path]:
     managed.add(_pi_rules_dir())
     for key, value in dirs.items():
         for subdir, subdir_path in value.items():
-            if key in ("codex", "antigravity", "pi") and subdir == "rules":
+            if key in ("codex", "antigravity", "opencode", "pi") and subdir == "rules":
                 continue
             managed.add(subdir_path)
         if key in ("kiro", "claude-code"):

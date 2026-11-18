@@ -1,0 +1,9 @@
+{
+  "agent": "OpenCode",
+  "AGENT": "opencode",
+  "TOOL_ASK": "ask the user for more information via the `question` tool",
+  "TOOL_ASK_QUESTION": "question",
+  "TOOL_AGENT": "task",
+  "TOOL_WORKFLOW": "",
+  "RULE_FILES": "AGENTS.md"
+}

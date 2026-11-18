@@ -404,7 +404,7 @@ def render_template(template_path: str, variables_path: str, target: str) -> str
     Args:
         template_path: Path to the template file.
         variables_path: Path to JSON file with variables.
-        target: Target format (`kiro`, `claude-code`, `codex`, `antigravity`, or `pi`).
+        target: Target format (`kiro`, `claude-code`, `codex`, `antigravity`, `opencode`, or `pi`).
 
     Returns:
         Rendered content.
@@ -424,7 +424,7 @@ def render_template(template_path: str, variables_path: str, target: str) -> str
         return render_for_kiro(body, frontmatter)
     if target == "claude-code":
         return render_for_claude_code(body, frontmatter)
-    if target in ("codex", "antigravity", "pi"):
+    if target in ("codex", "antigravity", "opencode", "pi"):
         return render_for_codex(body)
     msg = f"Unknown target format: {target}"
     raise ValueError(msg)
@@ -448,6 +448,7 @@ def build_parser() -> argparse.ArgumentParser:
             "claude-code",
             "codex",
             "antigravity",
+            "opencode",
             "pi",
         ],
         help="Output target format.",
