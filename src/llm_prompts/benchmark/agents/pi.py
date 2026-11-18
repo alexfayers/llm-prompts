@@ -36,7 +36,7 @@ BUILTIN_TOOLS = {
 }
 FAILED_STOP_REASONS = {"error", "aborted"}
 HOOK_MESSAGE_TYPE = "cline-hooks"
-DELEGATION_TOOLS = "*_agent*"
+DELEGATION_TOOLS = "fork,fork_resume,fork_steer,fork_cancel"
 PERMISSION_CONFIG = Path(".pi/agent/extensions/pi-permission-system/config.json")
 PATH_EDIT_TOOLS = ("edit", "write", "path_write")
 
@@ -72,7 +72,6 @@ def _pi_default_model() -> str:
 class PiAdapter:
     template_name = "pi"
     cumulative_cost = False
-    delegation = False
     shared_dirs: tuple[Path, ...] = (Path(".pi/agent/npm"), Path(".npm"))
     git_packages: Path | None = Path(".pi/agent/git")
 
@@ -172,8 +171,7 @@ class PiAdapter:
             model,
             *session_args,
             "--offline",
-            "--exclude-tools",
-            DELEGATION_TOOLS,
+            *([] if scenario.delegation else ["--exclude-tools", DELEGATION_TOOLS]),
             scenario.prompt,
         ]
 

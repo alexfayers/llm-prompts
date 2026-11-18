@@ -28,7 +28,6 @@ class AgentAdapter(Protocol):
 
     template_name: str
     cumulative_cost: bool
-    delegation: bool
     shared_dirs: tuple[Path, ...]
     git_packages: Path | None
 

@@ -108,7 +108,6 @@ class ClaudeAdapter:
     default_model = "sonnet"
     judge_model = "haiku"
     cumulative_cost = True
-    delegation = True
     shared_dirs: tuple[Path, ...] = ()
     git_packages: Path | None = None
 
