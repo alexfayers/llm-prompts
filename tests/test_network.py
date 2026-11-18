@@ -5,8 +5,10 @@ from __future__ import annotations
 import subprocess
 
 import pytest
+from conftest import FakeSubprocess
 
 from llm_prompts import network
+from llm_prompts.setup import GIT_TIMEOUT
 
 
 @pytest.mark.parametrize(
@@ -57,3 +59,20 @@ def test_with_retries_retries_a_timeout_and_gives_up_after_the_last_attempt() ->
 
     with pytest.raises(subprocess.TimeoutExpired):
         network.with_retries(always_times_out)
+
+
+def test_fail_fast_limits_only_ls_remote_and_fetch(
+    fake_subprocess: FakeSubprocess,
+) -> None:
+    with network.fail_fast():
+        for argv in (
+            ["git", "ls-remote", "u"],
+            ["git", "-C", "r", "fetch"],
+            ["git", "clone", "u", "d"],
+        ):
+            network.run_with_retries(argv, timeout=GIT_TIMEOUT)
+    assert [kwargs["timeout"] for _, kwargs in fake_subprocess.calls] == [
+        network.FAIL_FAST_TIMEOUT,
+        network.FAIL_FAST_TIMEOUT,
+        GIT_TIMEOUT,
+    ]

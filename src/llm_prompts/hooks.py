@@ -17,7 +17,7 @@ from typing import Any
 
 from cline_hooks.core.plugin import HookResult, HooksPlugin, UserFacingNote
 
-from . import telemetry, telemetry_core
+from . import network, telemetry, telemetry_core
 from .manifest import read_manifest
 from .setup import _UPDATE_INSTRUCTION
 
@@ -30,6 +30,7 @@ _GATED_EDIT_TOOLS = frozenset({"Write", "write_to_file", "Edit"})
 _GATED_PARENT_DIRS = frozenset({"rules", "workflows", "skills", "agents"})
 _UPDATE_CHECK_INTERVAL = 2 * 60 * 60
 _SHOWN_SESSIONS_KEPT = 50
+_FAILED_CHECK_RETRY_SECONDS = 10 * 60
 _LOCK_WAIT_SECONDS = 5.0
 _LOCK_POLL_SECONDS = 0.05
 _DEBOUNCED_TASK_START_SOURCES = frozenset({"resume", "compact"})
@@ -228,10 +229,13 @@ class _ReinstallDebouncer:
         cached: str = self._cache().get("fingerprint", "")
         return cached != fingerprint
 
-    def mark_run(self) -> None:
-        """Record that a run just happened."""
+    def mark_run(self, failed: bool = False) -> None:
+        """Record that a run just happened, due again after ``_FAILED_CHECK_RETRY_SECONDS`` when it failed."""
+        retry_offset = (
+            self._interval_seconds - _FAILED_CHECK_RETRY_SECONDS if failed else 0
+        )
         self._stamp.parent.mkdir(parents=True, exist_ok=True)
-        self._stamp.write_text(str(time.time()), encoding="utf-8")
+        self._stamp.write_text(str(time.time() - retry_offset), encoding="utf-8")
 
     def single_flight(self) -> AbstractContextManager[bool]:
         """Yield True once this process holds the cross-process check lock, False if it stays taken."""
@@ -343,7 +347,8 @@ def refresh_update_check(stamp: str, refs: str = "remote") -> None:
             if telemetry_core.install_id():
                 run.begin("startup-check", [] if refs == "remote" else ["--local"])
             if refs == "remote":
-                messages = _collect_update_messages()
+                with network.fail_fast():
+                    messages = _collect_update_messages()
             else:
                 previous = debouncer._cache().get("fingerprint", "")
                 messages = _collect_update_messages(
@@ -351,14 +356,17 @@ def refresh_update_check(stamp: str, refs: str = "remote") -> None:
                 )
         except (Exception, SystemExit):
             logger.warning("Failed to check for llm-prompts updates")
+            if refs == "remote":
+                debouncer.mark_run(failed=True)
             return
         with debouncer.single_flight() as holds_lock:
             if not holds_lock:
                 return
-            if not any(isinstance(m, UpdateCheckFailure) for m in messages):
+            failed = any(isinstance(m, UpdateCheckFailure) for m in messages)
+            if refs == "remote":
+                debouncer.mark_run(failed)
+            if not failed:
                 held = bool(messages) and _held_by_fork(fingerprint)
-                if refs == "remote":
-                    debouncer.mark_run()
                 debouncer.hold(held)
                 if messages and not held and _started_auto_update(fingerprint):
                     messages = [*messages, _AUTO_UPDATE_STARTED]

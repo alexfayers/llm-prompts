@@ -18,6 +18,7 @@ import pytest
 from cline_hooks.core.plugin import HookResult
 from conftest import FakeSubprocess
 
+from llm_prompts import network
 from llm_prompts.cli import UpdateCheckFailure
 from llm_prompts.hooks import (
     _ANSI_COLOR,
@@ -25,6 +26,7 @@ from llm_prompts.hooks import (
     _AUTO_UPDATE_STARTED,
     _BANNER_DIVIDER,
     _BANNER_TITLE,
+    _FAILED_CHECK_RETRY_SECONDS,
     _REFRESH,
     _UPDATE_CHECK_INTERVAL,
     AutoReinstallPlugin,
@@ -815,7 +817,7 @@ class TestUpdateCheckOnTaskStart:
         assert result is None
         mock_collect.assert_not_called()
 
-    def test_task_start_check_failure_does_not_mark(
+    def test_task_start_check_error_is_retried_later(
         self, tmp_path: Path, background: list[list[str]]
     ) -> None:
         plugin = AutoReinstallPlugin()
@@ -828,7 +830,7 @@ class TestUpdateCheckOnTaskStart:
         ):
             result = self._check(plugin, background)
         assert result is None
-        assert not (tmp_path / "update-stamp").exists()
+        assert not plugin._update_check_debouncer.should_run()
 
     def test_task_start_survives_system_exit(
         self, tmp_path: Path, background: list[list[str]]
@@ -843,7 +845,7 @@ class TestUpdateCheckOnTaskStart:
         ):
             result = self._check(plugin, background)
         assert result is None
-        assert not (tmp_path / "update-stamp").exists()
+        assert not plugin._update_check_debouncer.should_run()
 
     def test_fresh_start_emits_cached_notice(self, tmp_path: Path) -> None:
         plugin = AutoReinstallPlugin()
@@ -1076,39 +1078,40 @@ class TestUpdateCheckOnTaskStart:
         assert cached.notes == ["[pkg] update available (a -> b)"]
         assert self._fresh_start(stamp) is None
 
-    def test_failed_check_is_reported_and_retried(
-        self, tmp_path: Path, background: list[list[str]]
+    def test_failed_check_fails_fast_and_is_retried_later(
+        self,
+        tmp_path: Path,
+        background: list[list[str]],
+        fake_subprocess: FakeSubprocess,
     ) -> None:
         stamp = tmp_path / "update-stamp"
+        repo = tmp_path / "pkg"
+        (repo / ".git").mkdir(parents=True)
+        fake_subprocess.on("fetch", returncode=128, stderr="Connection reset by peer")
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
             patch(
                 "llm_prompts.setup._load_config",
-                return_value=[{"name": "pkg", "source": "~/git/pkg"}],
+                return_value=[{"name": "pkg", "source": str(repo)}],
             ),
             patch("llm_prompts.plugins._load_plugins", return_value=[]),
             patch("llm_prompts.cli._installed_fingerprint", return_value="a"),
-            patch(
-                "llm_prompts.cli._local_source_messages",
-                side_effect=OSError("offline"),
-            ),
         ):
             mock_config.return_value.exists.return_value = True
             self._fresh_start(stamp)
             self._finish(background)
-
-        with (
-            patch("llm_prompts.cli._installed_fingerprint", return_value="a"),
-            patch(
-                "llm_prompts.cli._collect_update_messages", return_value=[]
-            ) as mock_collect,
-        ):
             failed = self._fresh_start(stamp)
-            self._finish(background)
-            assert self._fresh_start(stamp) is None
+            assert background == []
+            with patch(
+                "llm_prompts.hooks.time.time",
+                return_value=time.time() + _FAILED_CHECK_RETRY_SECONDS,
+            ):
+                self._fresh_start(stamp)
+        assert len(background) == 1
         assert failed is not None
         assert "[pkg] update check failed" in failed.notes[0]
-        mock_collect.assert_called_once()
+        (fetch,) = [kwargs for argv, kwargs in fake_subprocess.calls if "fetch" in argv]
+        assert fetch["timeout"] == network.FAIL_FAST_TIMEOUT
 
     def test_rebuilt_failure_does_not_start_the_automatic_update(
         self, tmp_path: Path, background: list[list[str]]
