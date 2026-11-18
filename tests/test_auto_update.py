@@ -367,3 +367,25 @@ def test_the_lock_file_survives_a_restart_in_place(
     monkeypatch.setattr(auto_update, "STATE_DIR", tmp_path)
     with auto_update.lock():
         assert os.get_inheritable(int(os.environ[auto_update.LOCK_FD_ENV]))
+
+
+@pytest.mark.real_io
+def test_install_hands_the_lock_to_its_no_update_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(auto_update, "STATE_DIR", tmp_path)
+    child = tmp_path / "llm-prompts"
+    child.write_text(
+        f"#!{sys.executable}\n"
+        + _CHILD_TAKES_LOCK.replace("sys.argv[1]", repr(str(tmp_path)))
+        + "sys.exit(not held)\n"
+    )
+    child.chmod(0o755)
+    monkeypatch.setattr(sys, "argv", [str(child), "install", "pi"])
+    with (
+        patch("llm_prompts.setup.config_path") as config_path,
+        patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
+        patch("llm_prompts.setup.run_setup", return_value=False),
+    ):
+        config_path.return_value.exists.return_value = True
+        assert run_capturing_exit(cli.main) == 0
