@@ -48,7 +48,7 @@
 | src/llm\_prompts/benchmark/transient.py                                       |       41 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/types.py                                           |      205 |        0 |    100% |           |
 | src/llm\_prompts/claude\_models.py                                            |       23 |        0 |    100% |           |
-| src/llm\_prompts/cli.py                                                       |      807 |       76 |     91% |106-107, 133-134, 141-154, 260-261, 276-281, 368, 429-430, 598, 601, 620, 643, 681, 712, 844, 916-928, 1006-1008, 1016-1019, 1088-1097, 1564-1566, 1569-1575, 1578-1580, 1591-1597, 1607, 1612, 1624, 1783-1784, 1789 |
+| src/llm\_prompts/cli.py                                                       |      810 |       76 |     91% |106-107, 133-134, 141-154, 260-261, 276-281, 371, 432-433, 601, 604, 623, 646, 684, 715, 847, 919-931, 1009-1011, 1019-1022, 1091-1100, 1567-1569, 1572-1578, 1581-1583, 1594-1600, 1610, 1615, 1627, 1786-1787, 1792 |
 | src/llm\_prompts/collection\_size.py                                          |      118 |        4 |     97% |249-250, 400, 457 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/contribute.py                                                |     1108 |       57 |     95% |105, 132-133, 174-175, 207-208, 324, 457-458, 491, 621, 624, 677, 799-800, 840, 928-929, 959, 1214, 1391, 1393, 1407-1408, 1416-1417, 1438, 1449-1450, 1557-1558, 1637, 1694-1699, 1703, 1809-1810, 1859-1860, 1929-1951, 2148-2150, 2154, 2176 |
@@ -68,7 +68,7 @@
 | src/llm\_prompts/main\_sync.py                                                |      383 |       12 |     97% |201-202, 277-278, 349, 550-551, 586-587, 737, 767, 805 |
 | src/llm\_prompts/manifest.py                                                  |       72 |        3 |     96% | 50-51, 86 |
 | src/llm\_prompts/mcp.py                                                       |       85 |        1 |     99% |        91 |
-| src/llm\_prompts/network.py                                                   |       27 |        0 |    100% |           |
+| src/llm\_prompts/network.py                                                   |       30 |        0 |    100% |           |
 | src/llm\_prompts/overlay\_merge.py                                            |       52 |        2 |     96% |   71, 109 |
 | src/llm\_prompts/plugins.py                                                   |      160 |       16 |     90% |42, 129-130, 134-135, 151-163, 179, 209, 238, 285, 295, 376, 380 |
 | src/llm\_prompts/prompts/claude-code/skills/retrospective/extract\_signals.py |      181 |       97 |     46% |44-49, 54-69, 80-124, 186, 197, 200, 209, 254-264, 269-286, 297-332, 336 |
@@ -139,7 +139,7 @@
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
 | tests/test\_check\_repos\_script.py                                           |       67 |        0 |    100% |           |
 | tests/test\_claude\_models.py                                                 |       25 |        0 |    100% |           |
-| tests/test\_cli.py                                                            |     1076 |        1 |     99% |      1230 |
+| tests/test\_cli.py                                                            |     1086 |        1 |     99% |      1259 |
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
 | tests/test\_commit\_guard.py                                                  |      182 |        2 |     99% |   235-236 |
 | tests/test\_conftest.py                                                       |       94 |        4 |     96% |194-196, 209 |
@@ -189,7 +189,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       31 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **29497** |  **794** | **97%** |           |
+| **TOTAL**                                                                     | **29513** |  **794** | **97%** |           |
 
 
 ## Setup coverage badge
