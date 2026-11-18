@@ -813,6 +813,9 @@ class TestReleaseNotes:
     def test_empty_when_new_is_not_newer(self) -> None:
         assert setup.release_notes(CHANGELOG, "v0.3.0", "v0.3.0") == []
 
+    def test_empty_without_a_changelog(self) -> None:
+        assert setup.release_notes("", "v0.1.0", "v0.3.0") == []
+
 
 class TestCommitSubjectsBetween:
     def test_lists_subjects_between_shas(
@@ -922,6 +925,31 @@ class TestFormatUpdateMessage:
         assert "- commit 19" in body
         assert "- commit 20" not in body
         assert "... and 5 more" in body
+
+    def test_release_lists_every_section_under_its_changelog_link(self) -> None:
+        sections = [f"## [0.{i}.0]\n* change {i}" for i in range(25)]
+        body = setup._format_update_message(
+            "core",
+            None,
+            release=("v0.0.0", "v0.24.0"),
+            changelog="https://x/CHANGELOG.md",
+            sections=sections,
+        )[0]
+        assert body.startswith(
+            "[core] update available (v0.0.0 -> v0.24.0):\n"
+            "Changelog: https://x/CHANGELOG.md\n"
+            "- ## [0.0.0]\n  * change 0\n"
+        )
+        assert body.endswith("- ## [0.24.0]\n  * change 24")
+
+    def test_release_without_sections_caps_its_commit_subjects(self) -> None:
+        subjects = [f"commit {i}" for i in range(25)]
+        body = setup._format_update_message(
+            "core", subjects, release=("v0.1.0", "v0.2.0"), cap=20
+        )[0]
+        assert "- commit 19" in body
+        assert "- commit 20" not in body
+        assert body.endswith("... and 5 more")
 
     def test_indents_body_lines_under_their_subject(self) -> None:
         result = setup._format_update_message(

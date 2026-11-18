@@ -64,11 +64,15 @@ def _remote_url(repo: Path, remote: str) -> str | None:
     return completed.stdout.strip() if completed.returncode == 0 else None
 
 
+def base_remote_url(repo: Path) -> str:
+    """Return the URL of ``repo``'s upstream remote, else origin, else ""."""
+    return _remote_url(repo, "upstream") or _remote_url(repo, "origin") or ""
+
+
 @cache
 def base_repo(repo: Path) -> tuple[str, str]:
     """Return the (owner, name) of ``repo``'s upstream remote, else origin."""
-    url = _remote_url(repo, "upstream") or _remote_url(repo, "origin") or ""
-    match = _REMOTE_REPO.search(url)
+    match = _REMOTE_REPO.search(base_remote_url(repo))
     if match is None:
         raise ExitReason(
             "no_github_remote",

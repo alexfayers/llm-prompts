@@ -641,7 +641,7 @@ class TestUpdateCheckOnTaskStart:
         assert result.notes == messages
         assert len(result.user_notes) == 1
         note = result.user_notes[0]
-        assert note.user_text == _format_user_text(message)
+        assert note.user_text == _format_user_text("[pkg] update available")
         assert (tmp_path / "update-stamp").exists()
 
     def test_task_start_updates_in_the_background(self, tmp_path: Path) -> None:
@@ -709,15 +709,32 @@ class TestUpdateCheckOnTaskStart:
         assert "could not fetch" in result.notes[-1]
         assert "could not fetch" in result.user_notes[0].user_text
 
-    def test_user_text_caps_commits_but_agent_notes_stay_full(
-        self, tmp_path: Path
+    @pytest.mark.parametrize(
+        ("message", "user_text"),
+        [
+            (
+                (
+                    "[pkg] update available (v0.1.0 -> v0.2.0):\n"
+                    "Changelog: https://github.com/o/r/blob/v0.2.0/CHANGELOG.md\n"
+                    "- ## [0.2.0] (2026-02-01)\n  * two"
+                ),
+                (
+                    "[pkg] update available (v0.1.0 -> v0.2.0)\n"
+                    "Changelog: https://github.com/o/r/blob/v0.2.0/CHANGELOG.md"
+                ),
+            ),
+            (
+                "[pkg] update available:\n- change 1\n  * body 1",
+                "[pkg] update available",
+            ),
+        ],
+    )
+    def test_user_text_keeps_the_header_and_link_but_agent_notes_stay_full(
+        self, tmp_path: Path, message: str, user_text: str
     ) -> None:
         plugin = AutoReinstallPlugin()
         plugin._update_check_debouncer = _ReinstallDebouncer(
             tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
-        )
-        message = "[pkg] update available:\n" + "\n".join(
-            f"- change {i}\n  * body {i}" for i in range(7)
         )
         with patch(
             "llm_prompts.cli._collect_update_messages",
@@ -726,11 +743,7 @@ class TestUpdateCheckOnTaskStart:
             result = plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[])
         assert result is not None
         assert result.notes == [message, _UPDATE_INSTRUCTION]
-        user_text = result.user_notes[0].user_text
-        assert "- change 4" in user_text
-        assert "change 5" not in user_text
-        assert "body" not in user_text
-        assert "... and 2 more" in user_text
+        assert result.user_notes[0].user_text == _format_user_text(user_text)
 
     def test_multiple_messages_produce_single_banner(self, tmp_path: Path) -> None:
         plugin = AutoReinstallPlugin()
@@ -750,7 +763,9 @@ class TestUpdateCheckOnTaskStart:
         assert result.notes == messages
         assert len(result.user_notes) == 1
         note = result.user_notes[0]
-        assert note.user_text == _format_user_text("\n\n".join(messages))
+        assert note.user_text == _format_user_text(
+            "[pkg-a] update available\n\n[pkg-b] not cloned (run `llm-prompts update`)"
+        )
         assert note.user_text.count(_BANNER_TITLE) == 1
 
     def test_task_start_no_updates_marks_stamp(self, tmp_path: Path) -> None:

@@ -61,7 +61,7 @@ source = "git+https://github.com/alexfayers/mcp-memory.git"
 
 `source` is a `git+` URL or a local path (`~/...`). All tools go into one uv environment owned by the first entry, and the commands each tool declares under `[project.scripts]` are exposed from it.
 
-A `git+` source installs its highest stable release tag (`vX.Y.Z`), or the default branch tip if it has none. `update` then reports `update available (v0.32.0 -> v0.33.0)` with the commit subjects in between. A source that already ends in `@<ref>` is left as it is. A local path checkout moves to its highest stable release tag, or its upstream branch if it has none, with its local commits kept on top. `update` then shows the CHANGELOG sections in between.
+A `git+` source installs its highest stable release tag (`vX.Y.Z`), or the default branch tip if it has none. A source that already ends in `@<ref>` is left as it is. A local path checkout moves to its highest stable release tag, or its upstream branch if it has none, with its local commits kept on top. For a new release of either kind, the session-start notice shows the user `update available (v0.32.0 -> v0.33.0)` and, for a GitHub source, a `Changelog:` link. Agents get the CHANGELOG sections in between, or the commit subjects when the CHANGELOG has none.
 
 `ref` is optional. It makes a `git+` entry follow that branch, tag or commit instead of releases, and a local path follow that branch of its remote:
 

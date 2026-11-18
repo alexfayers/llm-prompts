@@ -34,9 +34,10 @@ from .setup import (
     _extract_git_url,
     _format_update_message,
     _latest_release_tag,
-    _remote_commit_subjects,
+    _remote_changes,
     _remote_head,
     _uv_tools_dir,
+    release_notes,
     release_version,
 )
 
@@ -307,14 +308,20 @@ def _remote_source_messages(
     if remote_commit is None or remote_commit == installed_commit:
         return []
 
-    subjects = _remote_commit_subjects(git_url, installed_commit, remote_commit)
+    subjects, changelog = _remote_changes(
+        git_url, installed_commit, remote_commit, read_changelog=bool(release)
+    )
     if subjects == []:
         return []
     if release:
         revision = _get_installed_revision(name)
         installed = revision if revision and _RELEASE_TAG.fullmatch(revision) else None
         return _format_update_message(
-            name, subjects, release=(installed or installed_commit[:8], release[0])
+            name,
+            subjects,
+            release=(installed or installed_commit[:8], release[0]),
+            changelog=_changelog_url(git_url, release[0]),
+            sections=release_notes(changelog, installed or "", release[0]),
         )
     return _format_update_message(
         name, subjects, installed_commit[:8], remote_commit[:8]
@@ -353,7 +360,7 @@ def _local_source_messages(name: str, source: str, ref: str = "") -> list[str]:
         Message lines describing available updates, or an empty list.
     """
     from .main_sync import UPSTREAM, point_upstream, run_git, unreleased
-    from .setup import _expand, release_notes, release_version
+    from .setup import _expand, release_version
 
     repo = _expand(source)
     if not (repo / ".git").is_dir():
@@ -397,7 +404,11 @@ def _local_source_messages(name: str, source: str, ref: str = "") -> list[str]:
         return _format_update_message(name, subjects)
     changelog = run_git(repo, "show", f"{UPSTREAM}:CHANGELOG.md").stdout
     return _format_update_message(
-        name, release_notes(changelog, old, new) or subjects, release=(old, new)
+        name,
+        subjects,
+        release=(old, new),
+        changelog=_changelog_url(github_api.base_remote_url(repo), new),
+        sections=release_notes(changelog, old, new),
     )
 
 
@@ -431,6 +442,14 @@ def _is_github_remote_url(url: str) -> bool:
         return urlparse(url).hostname == "github.com"
     host = url.split("@", 1)[-1].split(":", 1)[0]
     return host == "github.com"
+
+
+def _changelog_url(url: str, tag: str) -> str | None:
+    """Return the GitHub page of a remote's CHANGELOG.md at ``tag``, or None for a non-GitHub remote."""
+    match = github_api._REMOTE_REPO.search(url)
+    if not (match and _is_github_remote_url(url)):
+        return None
+    return f"https://github.com/{match[1]}/{match[2]}/blob/{tag}/CHANGELOG.md"
 
 
 def _has_github_remote(repo: Path) -> bool:
