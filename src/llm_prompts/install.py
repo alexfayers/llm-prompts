@@ -4387,7 +4387,7 @@ def main(
             f for f in previous_pi_bundle if Path(f).parent == _pi_rules_dir()
         )
 
-    pi_packages: list[str] | None = None
+    pi_packages: list[str] | None = previous_manifest.get("pi", {}).get("packages")
     pi_installed_packages: list[str] | None = previous_manifest.get("pi", {}).get(
         "pi_installed_packages"
     )
@@ -4571,8 +4571,10 @@ def main(
 
     from .manifest import write_manifest
 
-    pi_skills: list[str] | None = None
-    pi_mcp_rules: list[str] | None = None
+    pi_skills: list[str] | None = previous_manifest.get("pi", {}).get("skills")
+    pi_mcp_rules: list[str] | None = previous_manifest.get("pi", {}).get(
+        "mcp_permissions"
+    )
     pi_rule_roles: dict[str, list[str]] | None = previous_manifest.get("pi", {}).get(
         "pi_rule_roles"
     )
