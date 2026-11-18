@@ -48,7 +48,7 @@
 | src/llm\_prompts/benchmark/transient.py                                       |       41 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/types.py                                           |      205 |        0 |    100% |           |
 | src/llm\_prompts/claude\_models.py                                            |       23 |        0 |    100% |           |
-| src/llm\_prompts/cli.py                                                       |      799 |       76 |     90% |104-105, 131-132, 139-152, 258-259, 265-270, 356, 417-418, 586, 589, 604, 627, 665, 696, 828, 900-912, 990-992, 1000-1003, 1072-1081, 1548-1550, 1553-1559, 1562-1564, 1575-1581, 1591, 1596, 1608, 1767-1768, 1773 |
+| src/llm\_prompts/cli.py                                                       |      801 |       76 |     91% |105-106, 132-133, 140-153, 259-260, 266-271, 358, 419-420, 588, 591, 610, 633, 671, 702, 834, 906-918, 996-998, 1006-1009, 1078-1087, 1554-1556, 1559-1565, 1568-1570, 1581-1587, 1597, 1602, 1614, 1773-1774, 1779 |
 | src/llm\_prompts/collection\_size.py                                          |      118 |        4 |     97% |249-250, 400, 457 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/contribute.py                                                |     1108 |       57 |     95% |105, 132-133, 174-175, 207-208, 324, 457-458, 491, 621, 624, 677, 799-800, 840, 928-929, 959, 1214, 1391, 1393, 1407-1408, 1416-1417, 1438, 1449-1450, 1557-1558, 1637, 1694-1699, 1703, 1809-1810, 1859-1860, 1929-1951, 2148-2150, 2154, 2176 |
@@ -132,14 +132,14 @@
 | tests/benchmark/test\_bench\_types.py                                         |        5 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_variant.py                                       |      253 |        0 |    100% |           |
 | tests/benchmark/traces.py                                                     |        3 |        0 |    100% |           |
-| tests/conftest.py                                                             |      444 |       23 |     95% |160, 294-295, 298, 301, 304, 309, 364, 443-454, 459-461, 479-480, 494, 566-570, 653, 798, 838 |
+| tests/conftest.py                                                             |      447 |       23 |     95% |160, 294-295, 298, 301, 304, 309, 364, 443-454, 459-461, 479-480, 494, 566-570, 659, 804, 844 |
 | tests/test\_attic.py                                                          |       36 |        0 |    100% |           |
 | tests/test\_auto\_update.py                                                   |      205 |        0 |    100% |           |
 | tests/test\_build\_wave.py                                                    |      282 |        1 |     99% |       112 |
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
 | tests/test\_check\_repos\_script.py                                           |       67 |        0 |    100% |           |
 | tests/test\_claude\_models.py                                                 |       25 |        0 |    100% |           |
-| tests/test\_cli.py                                                            |     1065 |        1 |     99% |      1206 |
+| tests/test\_cli.py                                                            |     1076 |        1 |     99% |      1230 |
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
 | tests/test\_commit\_guard.py                                                  |      182 |        2 |     99% |   235-236 |
 | tests/test\_conftest.py                                                       |       94 |        4 |     96% |194-196, 209 |
@@ -189,7 +189,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       31 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **29445** |  **792** | **97%** |           |
+| **TOTAL**                                                                     | **29461** |  **792** | **97%** |           |
 
 
 ## Setup coverage badge
