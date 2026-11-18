@@ -36,11 +36,14 @@ MUST be minimal, no unrelated reformatting.
    - **Redundancy/verbosity**: needless intermediate variables, redundant conditionals, manual loops -> comprehensions/builtins, repeated literals -> one constant.
    - **Structural collapse**: parallel if/elif arms or dict lookups varying by one value, repeated dict/record construction, boilerplate a small abstraction erases.
 
-   Each agent: read-only, candidates only - file+line ranges, exact grepped count (MUST NOT estimate), lines-removed estimate, invariant vs varying parts, behaviour-preserving confidence. Main thread merges, dedupes, ranks by lines-removed; MAY skip fan-out on a trivial scope. MUST NOT merge blocks that only look alike.
+   Each agent: read-only, candidates only - file+line ranges, exact grepped count (MUST NOT estimate), lines-removed estimate, invariant vs varying parts, behaviour-preserving confidence.
+   Main thread merges, dedupes, ranks by lines-removed; MAY skip fan-out on a trivial scope. MUST NOT merge blocks that only look alike.
 
    MUST apply edits one at a time - one edit -> one test run -> one commit. MUST NOT write in parallel; worktree isolation is no substitute (no `build`/`env` symlinks).
 
-3. **Apply highest-value reductions first, one at a time** - most lines for least complexity. For duplication MUST use the lightest abstraction (parameter > generator > data-driven lookup > constant); confirm a new param is used; reuse an existing abstraction over recreating it. MUST add imports with the code using them; keep edits revertible.
+3. **Apply highest-value reductions first, one at a time** - most lines for least complexity.
+   For duplication MUST use the lightest abstraction (parameter > generator > data-driven lookup > constant); confirm a new param is used; reuse an existing abstraction over recreating it.
+   MUST add imports with the code using them; keep edits revertible.
 
 4. **Prove behaviour is unchanged.**
    - Existing tests MUST pass unmodified - editing a test to pass means behaviour changed; MUST stop and reconsider.
@@ -53,10 +56,12 @@ MUST be minimal, no unrelated reformatting.
    python3 "<base-dir>/check_reduction.py" [range]
    ```
 
-   `range`: optional commit range (e.g. `@{u}..`), default working tree vs `HEAD`. JSON output: `added`, `removed`, `net`, `pass`, `reason`; non-zero exit past the +5-line neutral band. `pass: true` with `net` <= 0 clears outright.
+   `range`: optional commit range (e.g. `@{u}..`), default working tree vs `HEAD`. JSON output: `added`, `removed`, `net`, `pass`, `reason`; non-zero exit past the +5-line neutral band.
+   `pass: true` with `net` <= 0 clears outright.
    - **Neutral-cost exception**: `net` 1-5 clears only with an obvious structural win; else MUST revert.
    - **Hard rejects**: net-positive (>~5 lines), any behaviour change, or an abstraction that doesn't simplify call sites - MUST revert.
-   - Duplication REQUIRES 3+ sites to pay for a helper (verbatim repeats: net-negative at 4+, grepped count). Nothing qualifies -> "left as-is"; MUST report lines removed vs added and, for neutral-cost changes, the specific win.
+   - Duplication REQUIRES 3+ sites to pay for a helper (verbatim repeats: net-negative at 4+, grepped count).
+     Nothing qualifies -> "left as-is"; MUST report lines removed vs added and, for neutral-cost changes, the specific win.
 
 6. **Commit** per repo style and `git-usage`. One coherent reduction = one commit (or amend an unpushed/unapproved commit it belongs to).
 

@@ -9,7 +9,8 @@ Analyse recent Claude Code sessions to surface patterns, corrections, and pain p
 
 ## 1. Extract signals
 
-Analyse exactly the sessions that have elapsed since the last retrospective. The `cline-hook` session counter tracks this - read it and pass it to the script (clamp to a minimum of 1 if the counter is missing or 0, and let an explicit `SESSIONS` override win):
+Analyse exactly the sessions that have elapsed since the last retrospective.
+The `cline-hook` session counter tracks this - read it and pass it to the script (clamp to a minimum of 1 if the counter is missing or 0, and let an explicit `SESSIONS` override win):
 
 ```bash
 count=$(cline-hook retro-count --get 2>/dev/null || echo 0)

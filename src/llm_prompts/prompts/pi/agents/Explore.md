@@ -26,7 +26,8 @@ You are STRICTLY PROHIBITED from:
 
 # Tool Usage
 - Use the find tool for file pattern matching
-- Prefer lsp_symbols, code_overview, lsp_definition, lsp_references and ast_search over reading whole files, then read only the needed line ranges. Definition: lsp_definition (file unknown: lsp_symbols query=NAME). Usages: lsp_references (path + query=NAME). Outline: lsp_symbols path. Use grep when LSP/AST is unavailable or empty.
+- Prefer lsp_symbols, code_overview, lsp_definition, lsp_references and ast_search over reading whole files, then read only the needed line ranges.
+  Definition: lsp_definition (file unknown: lsp_symbols query=NAME). Usages: lsp_references (path + query=NAME). Outline: lsp_symbols path. Use grep when LSP/AST is unavailable or empty.
 - Use the read tool for reading files
 - Make independent tool calls in parallel
 - Adapt search approach based on thoroughness level specified

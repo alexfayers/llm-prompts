@@ -9,7 +9,8 @@ After each change, perform the following steps in order:
 3. If tests fail, go back to step 1. DO NOT CONTINUE UNLESS TESTS PASS.
 4. Suggest updates to any of the aforementioned rules or instructions to include any new information you have gained. Refer to them by their `.md` filename where possible.
 5. Add and commit your changes with a SHORT and meaningful commit message. Don't use a commit body. Extra context is already being stored in your memory.
-6. After the commit, resolve the step's `task/` with any decision (why) or follow-up. Add an outcome line only for what git can't show: where it landed (PR number, merged, deployed), what is unverified, a surprise.
+6. After the commit, resolve the step's `task/` with any decision (why) or follow-up.
+   Add an outcome line only for what git can't show: where it landed (PR number, merged, deployed), what is unverified, a surprise.
 
 _NOTE: If tests do not exist in the current workspace, or if the change is the creation/adjustment of a small script, then tests are NOT required._
 
@@ -17,6 +18,7 @@ After each "atomic change", make a commit. Always ensure that all tests pass _be
 
 If you encounter any other issues as you go, or the user asks you to do something else, add those tasks as TODOs per `todos.md`.
 
-Once all steps in the focus chain have been completed, all tests pass, memory is updated, instruction suggestions have been made, and everything is committed, THEN AND (ONLY THEN!) can you {{TOOL_COMPLETE}}.
+Once all steps in the focus chain have been completed, all tests pass, memory is updated, instruction suggestions have been made, and everything is committed,
+THEN AND (ONLY THEN!) can you {{TOOL_COMPLETE}}.
 
 {{TOOL_WRAP_UP}}

@@ -7,7 +7,8 @@ description: "Review pending changes against the repo's review instructions, and
 
 ## Scope
 
-- MUST run `python3 "<base-dir>/filter_findings.py" --scope`, and review all of its output: uncommitted changes, unpushed commits, the complete diff against the PR base and the default branch, and untracked paths.
+- MUST run `python3 "<base-dir>/filter_findings.py" --scope`, and review all of its output: uncommitted changes, unpushed commits, the complete diff against the PR base and the default branch,
+  and untracked paths.
 - MUST read the contents of each untracked path.
 - MUST also review the PR title and body where given.
 
