@@ -833,7 +833,9 @@ class TestUpdateCheckOnTaskStart:
         cached: bool,
         flags: list[str],
     ) -> None:
-        monkeypatch.setattr("llm_prompts.cli._get_installed_commit", lambda _: None)
+        monkeypatch.setattr(
+            "llm_prompts.cli._get_installed_version", lambda _: (None, None)
+        )
         plugin = AutoReinstallPlugin()
         plugin._update_check_debouncer = _ReinstallDebouncer(
             tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL

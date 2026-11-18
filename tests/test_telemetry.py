@@ -99,8 +99,8 @@ def test_event_carries_only_allowlisted_properties(
     monkeypatch.setattr("llm_prompts.telemetry_core.run", fake_subprocess.run)
     fake_subprocess.on("status", returncode=128)
 
-    monkeypatch.setattr("llm_prompts.cli._get_installed_commit", lambda _: A)
-    with telemetry.Run(lambda _: A) as run:
+    monkeypatch.setattr("llm_prompts.cli._get_installed_version", lambda _: (A, None))
+    with telemetry.Run(lambda _: (A, "v0.4.0")) as run:
         run.begin("update", [], installs=True)
 
     posted = MagicMock()
@@ -119,6 +119,7 @@ def test_event_carries_only_allowlisted_properties(
         "local": True,
         "dirty": None,
         "ahead": None,
+        "release": None,
     }
     assert properties["from"]["llm-prompts"] == {
         "commit": A,
@@ -126,6 +127,7 @@ def test_event_carries_only_allowlisted_properties(
         "local": False,
         "dirty": False,
         "ahead": None,
+        "release": "v0.4.0",
     }
     assert properties["overlay_count"] == 4
     assert properties["overlays"] == {
@@ -135,6 +137,7 @@ def test_event_carries_only_allowlisted_properties(
             "local": False,
             "dirty": False,
             "ahead": None,
+            "release": None,
         }
     }
     assert properties["schema"] == 2
@@ -172,8 +175,11 @@ def test_a_git_checkout_source_reports_its_base_on_origin_main_and_whether_it_is
     )
     _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
     base = _git(repo, "rev-parse", "HEAD")
+    for tag in ("v0.9.0", "v0.10.0", "v1.0.0-rc1"):
+        _git(repo, "tag", tag)
     commit = ("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q")
     _git(repo, *commit, "--allow-empty", "-m", "y")
+    _git(repo, "tag", "v2.0.0")
     head = _git(repo, "rev-parse", "HEAD")
     tools = [
         {"name": "cline-hooks", "source": str(repo)},
@@ -186,7 +192,7 @@ def test_a_git_checkout_source_reports_its_base_on_origin_main_and_whether_it_is
             (repo / "f").write_text("x")
         with (
             patch("llm_prompts.telemetry_core.run", side_effect=AssertionError),
-            telemetry.Run(lambda _: A) as run,
+            telemetry.Run(lambda _: (A, None)) as run,
         ):
             run.begin("update", [])
         posted = MagicMock()
@@ -200,6 +206,7 @@ def test_a_git_checkout_source_reports_its_base_on_origin_main_and_whether_it_is
             "local": True,
             "dirty": dirty,
             "ahead": 1,
+            "release": "v0.10.0",
         }
         assert sent["from"]["cline-hooks"] == expected
         assert sent["to"]["cline-hooks"] == expected
@@ -209,6 +216,7 @@ def test_a_git_checkout_source_reports_its_base_on_origin_main_and_whether_it_is
             "local": True,
             "dirty": None,
             "ahead": None,
+            "release": None,
         }
         assert str(tmp_path) not in posted.call_args.args[0]
         assert head not in posted.call_args.args[0]
@@ -229,6 +237,7 @@ def test_a_checkout_without_origin_main_names_no_commit(tmp_path: Path) -> None:
         "local": True,
         "dirty": True,
         "ahead": None,
+        "release": None,
     }
 
 
@@ -290,7 +299,7 @@ def test_an_unreadable_install_id_is_a_first_run_that_sends_nothing(
     (isolated_config_dir / "telemetry.json").write_text(saved, encoding="utf-8")
 
     for expected_sends in (0, 1):
-        with telemetry.Run(lambda _: A) as run:
+        with telemetry.Run(lambda _: (A, None)) as run:
             run.begin("update", [])
         assert telemetry_popen.call_count == expected_sends
 
@@ -311,11 +320,24 @@ def test_begin_never_starts_a_report_when_opted_out_or_the_resume_state_is_bad(
     if resume:
         monkeypatch.setenv(telemetry.RESUME_ENV, resume)
 
-    with telemetry.Run(lambda _: A) as run:
+    with telemetry.Run(lambda _: (A, None)) as run:
         run.begin("update", [])
 
     telemetry_popen.assert_not_called()
     assert telemetry.RESUME_ENV not in os.environ
+
+
+def test_a_resume_state_without_releases_still_sends_its_from_commits(
+    telemetry_popen: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = {"commits": dict.fromkeys(telemetry_core.TRACKED, A)}
+    monkeypatch.setenv(telemetry.RESUME_ENV, json.dumps(state))
+
+    with telemetry.Run(lambda _: (B, "v9.9.9")) as run:
+        run.begin("update", [], installs=True)
+
+    assert _props(telemetry_popen)["from"]["llm-prompts"]["commit"] == A
+    assert _props(telemetry_popen)["from"]["llm-prompts"]["release"] is None
 
 
 def test_an_install_with_no_agents_sends_nothing_and_leaves_no_trace(
@@ -328,7 +350,7 @@ def test_an_install_with_no_agents_sends_nothing_and_leaves_no_trace(
     state = isolated_config_dir / "telemetry.json"
     state.unlink()
 
-    with pytest.raises(ValueError), telemetry.Run(lambda _: A) as run:
+    with pytest.raises(ValueError), telemetry.Run(lambda _: (A, None)) as run:
         run.begin("update", [])
         raise ValueError
 
@@ -360,7 +382,7 @@ def test_a_failing_report_sends_nothing_and_keeps_the_command_result(
         "llm_prompts.telemetry.read_manifest", MagicMock(side_effect=KeyError)
     )
 
-    with telemetry.Run(lambda _: A) as run:
+    with telemetry.Run(lambda _: (A, None)) as run:
         run.begin("update", [])
 
     telemetry_popen.assert_not_called()
@@ -466,7 +488,7 @@ def test_a_failed_command_also_sends_an_exception_event_without_paths(
         contextlib.suppress(ValueError),
     ):
         _main("update")
-    monkeypatch.setattr("llm_prompts.cli._get_installed_commit", lambda _: A)
+    monkeypatch.setattr("llm_prompts.cli._get_installed_version", lambda _: (A, None))
 
     raised = next(e for e in _events(telemetry_popen) if e["event"] == "$exception")
     (item,) = raised["properties"]["$exception_list"]
@@ -540,7 +562,10 @@ def test_a_command_that_continues_in_a_new_process_reports_once_from_the_last(
 
     stubbed_cli.side_effect = upgrade
     with (
-        patch("llm_prompts.cli._get_installed_commit", lambda _: installed["commit"]),
+        patch(
+            "llm_prompts.cli._get_installed_version",
+            lambda _: (installed["commit"], None),
+        ),
         patch("os.execvp", side_effect=restart),
         patch("subprocess.run", side_effect=restart),
         patch.dict("os.environ"),
@@ -558,12 +583,12 @@ def test_a_command_that_continues_in_a_new_process_reports_once_from_the_last(
 def test_the_parent_never_looks_up_versions_unless_the_command_installs(
     telemetry_popen: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    lookups = MagicMock(return_value=A)
+    lookups = MagicMock(return_value=(A, None))
     with telemetry.Run(lookups) as run:
         run.begin("startup-check", [])
     lookups.assert_not_called()
 
-    monkeypatch.setattr("llm_prompts.cli._get_installed_commit", lambda _: B)
+    monkeypatch.setattr("llm_prompts.cli._get_installed_version", lambda _: (B, None))
     posted = MagicMock()
     monkeypatch.setattr("llm_prompts.telemetry_core.post", posted)
     telemetry_core.deliver(telemetry_popen.call_args.args[0][3])
@@ -576,11 +601,11 @@ def test_an_installing_command_captures_from_before_it_runs(
     telemetry_popen: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     installed = {"commit": A}
-    with telemetry.Run(lambda _: installed["commit"]) as run:
+    with telemetry.Run(lambda _: (installed["commit"], None)) as run:
         run.begin("update", [], installs=True)
         installed["commit"] = B
 
-    monkeypatch.setattr("llm_prompts.cli._get_installed_commit", lambda _: B)
+    monkeypatch.setattr("llm_prompts.cli._get_installed_version", lambda _: (B, None))
     posted = MagicMock()
     monkeypatch.setattr("llm_prompts.telemetry_core.post", posted)
     telemetry_core.deliver(telemetry_popen.call_args.args[0][3])

@@ -320,7 +320,7 @@ class AutoReinstallPlugin(HooksPlugin):
         from .cli import (
             UpdateCheckFailure,
             _collect_update_messages,
-            _get_installed_commit,
+            _get_installed_version,
             _installed_fingerprint,
         )
 
@@ -330,7 +330,7 @@ class AutoReinstallPlugin(HooksPlugin):
             logger.warning("Failed to read installed llm-prompts versions")
             return None
         with (
-            telemetry.Run(_get_installed_commit) as run,
+            telemetry.Run(_get_installed_version) as run,
             self._update_check_debouncer.single_flight() as holds_lock,
         ):
             if holds_lock and self._update_check_debouncer.should_run(fingerprint):
