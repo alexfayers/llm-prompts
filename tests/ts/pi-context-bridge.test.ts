@@ -6,7 +6,7 @@ import net from "node:net";
 import { after, describe, mock, test } from "node:test";
 import { loadExtension, useEnv } from "./helpers.ts";
 import { connectBridge, describeMain, prefixHash, reportPrefixToFile, serveBridge, trackPrefix, writeLeadPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
-import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
+import { ROLES, withReadMcp } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-bridge-"));
 after(() => fs.rmSync(dir, { recursive: true }));
@@ -35,6 +35,17 @@ describe("bridge", () => {
 		client.close();
 		await server.close();
 		assert.equal(ran, 0);
+	});
+
+	test("a readMcp tool runs only with matching arguments", async () => {
+		const calls: unknown[] = [];
+		const server = await serveBridge(dir, { role: withReadMcp(ROLES.reader, [{ tool: "mcp__demo__exec", argsMatch: { command: "read .*" } }]), execute: async (_tool, args) => (calls.push(args), reply("x")) });
+		const client = await connectBridge(server.socket);
+		await client.call("mcp__demo__exec", { command: "read x" });
+		await assert.rejects(client.call("mcp__demo__exec", { command: "write x" }), /llmPrompts\.forks\.readMcp/);
+		client.close();
+		await server.close();
+		assert.deepEqual(calls, [{ command: "read x" }]);
 	});
 
 	test("concurrent calls each get their own reply and a failure reaches only its caller", async () => {

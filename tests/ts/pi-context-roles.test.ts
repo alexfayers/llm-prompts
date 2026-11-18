@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
 import { loadExtension, useEnv } from "./helpers.ts";
-import { ROLES, decide, rewriteForWorktree } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
+import { ROLES, checkReadMcp, decide, rewriteForWorktree, withReadMcp } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
 
 describe("decide", () => {
 	test("a reader reads but may not edit, write or fork", () => {
@@ -18,6 +18,26 @@ describe("decide", () => {
 		assert.equal(decide(ROLES.reader, "mcp__memory__search_nodes", {}), undefined);
 		assert.match(decide(ROLES.writer, "mcp__memory__create_entities", {})?.reason ?? "", /may not use mcp__memory__create_entities/);
 		assert.match(decide(ROLES.reader, "tower_do", {})?.reason ?? "", /may not use tower_do/);
+	});
+
+	test("the readMcp setting adds MCP tools whose argsMatch passes", () => {
+		const role = withReadMcp(ROLES.writer, [{ tool: "mcp__demo__exec", argsMatch: { command: "read .*" } }, { tool: "mcp__demo__list_*" }, { tool: "mcp__memory__search_nodes", argsMatch: { query: "x" } }, { tool: "edit" }]);
+		assert.equal(decide(role, "mcp__demo__exec", { command: "read x" }), undefined);
+		assert.equal(decide(role, "mcp__demo__list_items", { page: 2 }), undefined);
+		assert.equal(decide(role, "mcp__memory__search_nodes", { query: "y" }), undefined);
+		for (const input of [{ command: "write x" }, { command: "unread x" }, { command: "read x\n" }, {}, { command: 1 }]) assert.deepEqual(decide(role, "mcp__demo__exec", input), { block: true, reason: "role writer may call mcp__demo__exec only with arguments the llmPrompts.forks.readMcp setting allows" });
+		assert.match(decide(role, "mcp__demo__write", {})?.reason ?? "", /may not use mcp__demo__write/);
+		assert.match(decide(role, "edit", { path: "/x" })?.reason ?? "", /no worktree/);
+		assert.match(decide(withReadMcp(ROLES.reader, [{ tool: "edit" }]), "edit", {})?.reason ?? "", /may not use edit/);
+		assert.match(decide(ROLES.reader, "mcp__demo__exec", { command: "read x" })?.reason ?? "", /may not use mcp__demo__exec/);
+	});
+
+	test("checkReadMcp keeps the valid readMcp entries and returns the rest as dropped", () => {
+		const good = { tool: "mcp__demo__exec", argsMatch: { command: "read .*" } };
+		const bad = [{ tool: "mcp__demo__a", argsMatch: { command: "(" } }, { tool: 1 }, { tool: "mcp__demo__b", argsMatch: { command: 1 } }, null];
+		assert.deepEqual(checkReadMcp([good, ...bad]), { valid: [good], dropped: bad });
+		assert.deepEqual(checkReadMcp({ tool: "mcp__demo__exec" }), { valid: [], dropped: [{ tool: "mcp__demo__exec" }] });
+		assert.deepEqual(checkReadMcp(undefined), { valid: [], dropped: [] });
 	});
 
 	test("a writer may edit and write only inside its worktree", () => {
@@ -149,6 +169,14 @@ describe("child mode", () => {
 		assert.equal((await call(file, "bash", input)).result, undefined);
 		assert.equal(input.command, "ls /main");
 		assert.match(String(((await call(file, "edit", { path: "x" })).result as any).reason), /may not use edit/);
+	});
+
+	test("a delegate may call an MCP tool its handshake's readMcp allows", async () => {
+		const file = handshake({ role: "reader", readMcp: [{ tool: "mcp__demo__exec", argsMatch: { command: "read .*" } }, { tool: "mcp__demo__bad", argsMatch: { command: "(" } }] });
+		assert.equal((await call(file, "mcp__demo__exec", { command: "read x" })).result, undefined);
+		assert.match(String(((await call(file, "mcp__demo__exec", { command: "write x" })).result as any).reason), /llmPrompts\.forks\.readMcp/);
+		assert.match(String(((await call(file, "mcp__demo__bad", { command: "x" })).result as any).reason), /may not use mcp__demo__bad/);
+		assert.match(String(((await call(handshake({ role: "reader", readMcp: "x" }), "mcp__demo__exec", { command: "read x" })).result as any).reason), /may not use mcp__demo__exec/);
 	});
 
 	test("a writer's process starts only in its worktree", async () => {
