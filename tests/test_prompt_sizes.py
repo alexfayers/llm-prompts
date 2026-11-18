@@ -35,6 +35,9 @@ from llm_prompts.size_limits import (
     COLLECTION_SCHEDULE,
     FINALS,
     FRONTMATTER_VALID,
+    MAX_LINE_CHARS,
+    NO_LAZY_CONTINUATIONS,
+    NO_LONG_LINES,
     NO_UNSUBSTITUTED_PLACEHOLDERS,
     ON_DEMAND_AGENT_BODY_BYTES,
     ON_DEMAND_ROLE_RULE_BYTES,
@@ -358,6 +361,99 @@ class TestIterArtifactsDispatch:
             )
         ]
 
+    @pytest.mark.parametrize(
+        ("line", "expected"),
+        [
+            ("x" * MAX_LINE_CHARS, True),
+            ("x" * (MAX_LINE_CHARS + 1), False),
+            ("```\n" + "x" * (MAX_LINE_CHARS + 1) + "\n```", True),
+            ("| " + "x" * MAX_LINE_CHARS + " |", True),
+        ],
+    )
+    def test_no_long_lines_skips_fenced_and_table_lines(
+        self, tmp_path: Path, line: str, expected: bool
+    ) -> None:
+        _make_prompts_tree(tmp_path)
+        _write(
+            tmp_path / "claude-code" / "rules" / "agent-only.md",
+            f"# Agent-only rule\n\n{line}\n",
+        )
+        _write(tmp_path / "shared" / "skills" / "demo" / "part.md", f"{line}\n")
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            artifacts = list(iter_artifacts([tmp_path], targets=("claude-code",)))
+
+        failed = {v.dest_name for v in evaluate(artifacts) if v.metric == NO_LONG_LINES}
+        assert ("agent-only.md" not in failed) is expected
+        assert ("demo/part.md" not in failed) is expected
+
+    def test_no_long_lines_skips_frontmatter(self, tmp_path: Path) -> None:
+        _make_prompts_tree(tmp_path)
+        _write(
+            tmp_path / "shared" / "skills" / "demo" / "SKILL.md",
+            f"---\nname: demo\ndescription: {'x' * MAX_LINE_CHARS}\n---\n\nBody.\n",
+        )
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            artifacts = list(iter_artifacts([tmp_path], targets=("claude-code",)))
+
+        assert not [v for v in evaluate(artifacts) if v.metric == NO_LONG_LINES]
+
+    def test_no_long_lines_skips_other_packages_roots(self, tmp_path: Path) -> None:
+        own = tmp_path / "own"
+        overlay = tmp_path / "overlay"
+        _make_prompts_tree(own)
+        _write(
+            overlay / "shared" / "rules" / "long.md",
+            "x" * (MAX_LINE_CHARS + 1) + "\n",
+        )
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=own):
+            artifacts = list(iter_artifacts([own, overlay], targets=("claude-code",)))
+
+        dest_names = {a.dest_name for a in artifacts}
+        assert "long.md" in dest_names
+        assert not any(
+            a.metric == NO_LONG_LINES and a.dest_name == "long.md" for a in artifacts
+        )
+
+    def test_check_source_flags_a_long_line(self, tmp_path: Path) -> None:
+        _make_prompts_tree(tmp_path)
+        source = tmp_path / "shared" / "rules" / "shared-rule.md"
+        content = "# Shared rule\n\n" + "x" * (MAX_LINE_CHARS + 1) + "\n"
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check_source(source, content, targets=("claude-code",))
+
+        assert [(v.metric, v.actual, v.line) for v in result.violations] == [
+            (NO_LONG_LINES, MAX_LINE_CHARS + 1, 3)
+        ]
+
+    @pytest.mark.parametrize(
+        ("body", "lazy_line"),
+        [
+            ("- Item\nLazy continuation.\n", 4),
+            ("1. Item\n   - Nested\nLazy continuation.\n", 5),
+            ("- Item\n  Indented continuation.\n", None),
+            ("- Item\n\nParagraph.\n", None),
+            ("- Item\n# Heading\n", None),
+            ("- Item\n```\ncode\n```\n", None),
+        ],
+    )
+    def test_check_source_flags_a_lazy_list_continuation(
+        self, tmp_path: Path, body: str, lazy_line: int | None
+    ) -> None:
+        _make_prompts_tree(tmp_path)
+        source = tmp_path / "shared" / "rules" / "shared-rule.md"
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check_source(
+                source, "# Shared rule\n\n" + body, targets=("claude-code",)
+            )
+
+        expected = [] if lazy_line is None else [(NO_LAZY_CONTINUATIONS, lazy_line)]
+        assert [(v.metric, v.line) for v in result.violations] == expected
+
     def test_workflow_bytes_and_lines_measured(self, tmp_path: Path) -> None:
         _make_prompts_tree(tmp_path, targets=("pi",))
 
@@ -580,6 +676,30 @@ class TestCheck:
         )
         assert "shared-rule.md" in result.report
         assert "compress, don't split" in result.report
+
+    def test_long_line_report_names_its_length_line_and_wrap_fix(
+        self, tmp_path: Path
+    ) -> None:
+        _make_prompts_tree(tmp_path)
+        _write(
+            tmp_path / "shared" / "rules" / "shared-rule.md",
+            "---\nroles: lead\n---\n\n# Shared rule\n\n"
+            + "x" * (MAX_LINE_CHARS + 5)
+            + "\n",
+        )
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check([tmp_path], targets=("claude-code",))
+
+        expected = (
+            f"[{NO_LONG_LINES}] shared-rule.md (claude-code): "
+            f"actual {MAX_LINE_CHARS + 5} > threshold {MAX_LINE_CHARS} "
+            f"{UNITS[NO_LONG_LINES]} at line 7 ("
+        )
+        assert expected in result.report
+        assert UNITS[NO_LONG_LINES] == "chars"
+        assert "wrap the line" in result.report
+        assert "compress" not in result.report
 
     def test_scoping_roots_to_one_overlay_measures_only_its_files(
         self, tmp_path: Path
@@ -1111,7 +1231,7 @@ class TestCheckSource:
         self, tmp_path: Path
     ) -> None:
         _write(tmp_path / "claude-code" / "vars.json", json.dumps({}))
-        content = "# Big\n\n" + ("x " * FINALS[RULE_BYTES])
+        content = "# Big\n\n" + ("x " * 50 + "\n") * (FINALS[RULE_BYTES] // 50)
         expected_bytes = len(content.encode())
         _write(
             tmp_path / ALLOWANCES_FILENAME,
@@ -1386,7 +1506,7 @@ class TestCheckSourceMeasuresDependentPiRoles:
             json.dumps({PI_ROLE_PROMPT_BYTES: {"helper.md": 100}}),
         )
         source = tmp_path / "shared" / "rules" / "b.md"
-        content = "---\nroles: lead\n---\n\n# B\n\n" + "B" * 500 + "\n"
+        content = "---\nroles: lead\n---\n\n# B\n\n" + ("B" * 100 + "\n") * 5
 
         with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
             result = check_source(source, content, targets=("pi",))
@@ -1394,7 +1514,7 @@ class TestCheckSourceMeasuresDependentPiRoles:
         assert [(v.metric, v.dest_name) for v in result.violations] == [
             (PI_ROLE_PROMPT_BYTES, "helper.md")
         ]
-        assert "B" * 500 not in source.read_text(encoding="utf-8")
+        assert ("B" * 100 + "\n") * 5 not in source.read_text(encoding="utf-8")
 
 
 class TestHerdrGatedRulesMeasuredOnPi:

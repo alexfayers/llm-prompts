@@ -9,7 +9,7 @@ This binds a message to another agent as much as one to the user - one line wher
 - {% if AGENT == "pi" %}A delegate's final reply MUST start with `OUTCOME <done|blocked-on-user|failed|found-it>[ notify] ref:<ref>`.
   The `fork` tool shows main only that line,
   so `found-it` MAY add one answer line of 200 characters or fewer and `blocked-on-user` MUST keep every `ASK:` line and every `DENIED: "<verbatim>"` line inline.
-  `result_fetch` returns the full reply.{% else %}A delegate's final reply MUST be a short summary plus its result ref. The summary MUST carry every decision, every ask and the key facts.{% endif %}
+  `result_fetch` returns the full reply.{% else %}A delegate's final reply MUST be a short summary plus its result ref. The summary MUST carry every decision, every ask and the key facts.{% endif +%}
 
 MUST cap every user-facing message at 2 sentences. Reply with a single emoji when nothing is needed from the user; ask a question when something is.
 Pending asks and milestone reports below still carry their required content in full. Drop this cap for the rest of the session if the user wants more detail.

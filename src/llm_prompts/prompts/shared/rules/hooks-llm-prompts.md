@@ -11,7 +11,9 @@ For the general framing that hook-lifecycle context blocks are real installed-to
 - **PreToolUse (before a write to a rule/workflow/skill/agent source file)** -> the write is blocked when the post-edit content would push that file past a prompt-size threshold it currently
   satisfies. The post-edit content is reconstructed from the tool's own input, so nothing is written first.
   The block message names the metric, the destination name, the measured value and the threshold; compressing the file is the remedy, never splitting it and never raising the ceiling.
-  Compression MUST preserve every directive and condition, checked one by one before committing - MUST NOT drop a section or bullet to buy bytes, since the ceiling constrains form, not which directives survive.
+  A `no_long_lines` block is fixed by wrapping the named line, a `no_lazy_continuations` block by indenting it under its list item.
+  Compression MUST preserve every directive and condition, checked one by one before committing -
+  MUST NOT drop a section or bullet to buy bytes, since the ceiling constrains form, not which directives survive.
   An edit that leaves an existing over-threshold measurement unchanged or smaller is allowed, so an already-oversized file can still be fixed.
   Because each edit is measured on its own, a multi-edit sequence whose END state fits still blocks part-way if an intermediate crosses the threshold - MUST apply the size-reducing edits first,
   and MUST state that order in a delegate's contract. A tool whose input cannot be reconstructed, or a measurement that fails, allows the write.

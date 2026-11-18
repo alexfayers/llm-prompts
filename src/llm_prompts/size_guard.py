@@ -16,6 +16,7 @@ import contextlib
 import hashlib
 import io
 import json
+import re
 import shutil
 import tempfile
 from collections.abc import Iterable, Iterator, Sequence
@@ -63,6 +64,8 @@ from .size_limits import (
     COLLECTION_SCHEDULE,
     FINALS,
     FRONTMATTER_VALID,
+    NO_LAZY_CONTINUATIONS,
+    NO_LONG_LINES,
     NO_UNSUBSTITUTED_PLACEHOLDERS,
     PI_ROLE_PROMPT_BYTES,
     RULE_BYTES,
@@ -78,6 +81,13 @@ from .size_limits import (
 
 CHECKED_TARGETS: tuple[str, ...] = tuple(AGENT_CLASSES)
 ALLOWANCES_FILENAME = "size_allowances.json"
+_LINE_METRICS = frozenset({NO_LONG_LINES, NO_LAZY_CONTINUATIONS})
+_LIST_ITEM = re.compile(r"\s*(?:[-*+]|\d+[.)])\s")
+_BLOCK_START = re.compile(r"[#|><]|\{[%#]")
+_FIXES = {
+    NO_LONG_LINES: "wrap the line",
+    NO_LAZY_CONTINUATIONS: "indent the line under its list item",
+}
 
 
 @dataclass(frozen=True)
@@ -93,6 +103,7 @@ class Artifact:
         source: Source file path, for failure reporting.
         allowance: Declared per-artifact ceiling from the owning root's
             `size_allowances.json`, or None if undeclared.
+        line: Line number the value was measured at, or None.
     """
 
     metric: str
@@ -101,6 +112,7 @@ class Artifact:
     value: int | bool
     source: Path
     allowance: int | None = None
+    line: int | None = None
 
 
 @dataclass(frozen=True)
@@ -113,6 +125,7 @@ class Violation:
     actual: int | bool
     threshold: int | bool
     source: Path
+    line: int | None = None
 
 
 @dataclass(frozen=True)
@@ -192,6 +205,90 @@ def _resolve_content_frontmatter(
     return body, (resolved or {}), resolved is not None
 
 
+def _source_line_number(lines: list[str], number: int, source: Path) -> int:
+    """Return where `lines[number - 1]` appears verbatim in `source`, else `number`.
+
+    Args:
+        lines: Content lines as installed.
+        number: 1-based line number in `lines`.
+        source: Source file path.
+    """
+    if source.is_file():
+        source_lines = [
+            line.strip() for line in source.read_text(encoding="utf-8").splitlines()
+        ]
+        wanted = lines[number - 1].strip()
+        if wanted in source_lines:
+            return source_lines.index(wanted) + 1
+    return number
+
+
+def _line_artifacts(
+    content: str, target: str, dest_name: str, source: Path
+) -> Iterator[Artifact]:
+    """Yield content's longest prose line and its first lazy list continuation.
+
+    Frontmatter and lines inside ``` fences are skipped. Table rows (starting
+    with ``|``) are skipped for line length. A lazy continuation is a
+    column-0 prose line directly after a list item's line. Line numbers are
+    the line's position in `source` where it appears there verbatim, else its
+    position in `content`.
+
+    Args:
+        content: Content as installed.
+        target: Target name to record on the yielded artifacts.
+        dest_name: Installed destination name.
+        source: Source file path.
+    """
+    lines = content.splitlines()
+    split = split_frontmatter(content)
+    start = len(split[0]) + 2 if split else 0
+    longest, line_number, lazy_number = 0, None, None
+    in_fence = in_item = False
+    for number, line in enumerate(lines[start:], start + 1):
+        stripped = line.lstrip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            in_item = False
+            continue
+        if in_fence:
+            continue
+        if not stripped.startswith("|") and len(line) > longest:
+            longest, line_number = len(line), number
+        if _LIST_ITEM.match(line):
+            in_item = True
+        elif not stripped or _BLOCK_START.match(line):
+            in_item = False
+        elif in_item and line == stripped and lazy_number is None:
+            lazy_number = number
+    if line_number is not None:
+        line_number = _source_line_number(lines, line_number, source)
+    yield Artifact(NO_LONG_LINES, target, dest_name, longest, source, line=line_number)
+    yield Artifact(
+        NO_LAZY_CONTINUATIONS,
+        target,
+        dest_name,
+        lazy_number is None,
+        source,
+        line=None
+        if lazy_number is None
+        else _source_line_number(lines, lazy_number, source),
+    )
+
+
+def _without_foreign_line_checks(
+    artifacts: Iterable[Artifact], root: Path
+) -> Iterator[Artifact]:
+    """Drop `_line_artifacts` metrics unless `root` is this package's own.
+
+    Args:
+        artifacts: Artifacts measured under `root`.
+        root: Prompts directory the artifacts were measured from.
+    """
+    own = root.resolve() == _own_root_dir().resolve()
+    return (a for a in artifacts if own or a.metric not in _LINE_METRICS)
+
+
 def _common_artifacts(
     content: str, metric_prefix_target: str, dest_name: str, source: Path
 ) -> Iterator[Artifact]:
@@ -207,6 +304,7 @@ def _common_artifacts(
     yield Artifact(
         FRONTMATTER_VALID, metric_prefix_target, dest_name, frontmatter_valid, source
     )
+    yield from _line_artifacts(content, metric_prefix_target, dest_name, source)
     yield Artifact(
         NO_UNSUBSTITUTED_PLACEHOLDERS,
         metric_prefix_target,
@@ -443,6 +541,7 @@ def _iter_part_artifacts(
         not find_unreplaced_variables(content),
         part,
     )
+    yield from _line_artifacts(content, target, dest_name, part)
 
 
 def _iter_agent_artifacts(
@@ -570,23 +669,39 @@ def iter_artifacts(
         One `Artifact` per (metric, target, destination) measurement.
     """
     for root in roots:
-        allowances, _ = _declared_allowances(root)
-        for target in targets:
+        yield from _without_foreign_line_checks(
+            _iter_root_artifacts(root, targets, vars_root), root
+        )
+
+
+def _iter_root_artifacts(
+    root: Path, targets: tuple[str, ...], vars_root: Path | None
+) -> Iterator[Artifact]:
+    """Measure every checked artifact under one root for `targets`.
+
+    Args:
+        root: Prompts directory to scan.
+        targets: Render targets to check.
+        vars_root: Prompts directory to read variables from, instead of this
+            package's own.
+    """
+    allowances, _ = _declared_allowances(root)
+    for target in targets:
+        yield from _iter_rendered_kind_artifacts(
+            root, target, "rules", RULE_BYTES, RULE_LINES, allowances, vars_root
+        )
+        if "workflows" in content_subdirs(target):
             yield from _iter_rendered_kind_artifacts(
-                root, target, "rules", RULE_BYTES, RULE_LINES, allowances, vars_root
+                root,
+                target,
+                "workflows",
+                WORKFLOW_BYTES,
+                WORKFLOW_LINES,
+                allowances,
+                vars_root,
             )
-            if "workflows" in content_subdirs(target):
-                yield from _iter_rendered_kind_artifacts(
-                    root,
-                    target,
-                    "workflows",
-                    WORKFLOW_BYTES,
-                    WORKFLOW_LINES,
-                    allowances,
-                    vars_root,
-                )
-            yield from _iter_skill_artifacts(root, target, allowances, vars_root)
-            yield from _iter_agent_artifacts(root, target, allowances, vars_root)
+        yield from _iter_skill_artifacts(root, target, allowances, vars_root)
+        yield from _iter_agent_artifacts(root, target, allowances, vars_root)
 
 
 def ceiling_for(artifact: Artifact) -> int | None:
@@ -646,6 +761,7 @@ def evaluate(artifacts: Iterable[Artifact]) -> list[Violation]:
                         artifact.value,
                         True,
                         artifact.source,
+                        artifact.line,
                     )
                 )
             continue
@@ -662,6 +778,7 @@ def evaluate(artifacts: Iterable[Artifact]) -> list[Violation]:
                     artifact.value,
                     ceiling,
                     artifact.source,
+                    artifact.line,
                 )
             )
     return violations
@@ -802,9 +919,11 @@ def format_report(violations: list[Violation], errors: list[str] | None = None) 
         lines.append("Prompt-size guard failed:")
         for v in violations:
             unit = UNITS.get(v.metric, "")
+            at_line = f" at line {v.line}" if v.line is not None else ""
+            fix = _FIXES.get(v.metric, "compress, don't split")
             lines.append(
                 f"  [{v.metric}] {v.dest_name} ({v.target}): actual {v.actual} > "
-                f"threshold {v.threshold} {unit} ({v.source}) - compress, don't split."
+                f"threshold {v.threshold} {unit}{at_line} ({v.source}) - {fix}."
             )
     return "\n".join(lines)
 
@@ -1124,8 +1243,11 @@ def check_source(
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             artifacts = list(
-                _iter_source_artifacts(
-                    Path(tmp_dir), rel_parts, content, targets, allowances, source
+                _without_foreign_line_checks(
+                    _iter_source_artifacts(
+                        Path(tmp_dir), rel_parts, content, targets, allowances, source
+                    ),
+                    root,
                 )
             )
         if "pi" in targets and _affects_pi_roles(rel_parts):
