@@ -1404,7 +1404,7 @@ class TestHerdrGatedRulesMeasuredOnPi:
         _make_prompts_tree(tmp_path, targets=("pi",))
         _write(
             tmp_path / "shared" / "rules" / "gated.md",
-            "---\nrequires_command: herdr\n---\n\n# Gated\n",
+            "---\nload_when: tool:herdr\n---\n\n# Gated\n",
         )
 
         with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):

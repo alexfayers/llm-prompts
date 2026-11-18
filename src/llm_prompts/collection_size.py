@@ -25,7 +25,7 @@ from .install import (
     _collect_content_srcs,
     _expand_agent_variants,
     _linked_content,
-    _passes_requires_gate,
+    _passes_gate,
     _pi_agent_dialect,
     _pi_definitions,
     _PiRuleBundle,
@@ -181,7 +181,7 @@ def _skill_bytes(
         skill_md = skill_dir / "SKILL.md"
         if not skill_md.is_file():
             return False
-        if not _passes_requires_gate(skill_md, target):
+        if not _passes_gate(skill_md):
             return False
         return _targets_agent(skill_md, target)
 

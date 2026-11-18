@@ -20,6 +20,7 @@ Each rule is also its own file under `rules/`, and the global `AGENTS.md` holds 
 
 - A rule without `roles` frontmatter, or with `roles: all`, is core and reaches the lead and every agent.
 - `roles` can list any of `lead`, `coordinator`, `reasoner`, `worker`, `surveyor`, `reviewer` to limit a rule to those roles. Only Pi reads it. An invalid value fails the install.
+- `load_when: <condition>` keeps a rule out of the lead and every definition. Only Pi reads it. The install lists such rules by condition in `conditional-rules.json` in the agent dir, and an extension adds each rule's text from `rules/` when its condition holds.
 - Each generated agent definition starts with one `@../rules/<name>.md` line per rule for its role, and sets `inheritGlobalContext: false`.
 - A definition's role is its source's `name`. A source with `rules` gets only those rules, one with `omitClaudeMd: true` gets none, and any other name gets every rule.
 - Roles are fixed when an agent starts, so changes apply to new agents.
