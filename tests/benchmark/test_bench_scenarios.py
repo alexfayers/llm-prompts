@@ -116,15 +116,16 @@ def test_parse_rejects_violation(data_dir: Path, old: str, new: str) -> None:
         scenarios.parse(path)
 
 
-def test_delegation_is_parsed_inherited_by_a_follow_up_and_limited_to_claude(
+def test_delegation_is_parsed_inherited_by_a_follow_up_and_open_to_every_agent(
     data_dir: Path,
 ) -> None:
-    claude_only = REQUIRED.replace('"light"', '"light"\nagents = ["claude"]')
     root = scenarios.parse(
         add(
             data_dir,
             "root",
-            claude_only.replace('"light"', '"light"\ndelegation = true'),
+            REQUIRED.replace(
+                '"light"', '"light"\nagents = ["claude", "pi"]\ndelegation = true'
+            ),
         )
     )
     follow_up = scenarios.parse(add(data_dir, "next", FOLLOW_UP))
@@ -135,16 +136,6 @@ def test_delegation_is_parsed_inherited_by_a_follow_up_and_limited_to_claude(
         True,
         False,
     )
-    for agents in ('["claude", "pi"]', '["pi"]'):
-        path = add(
-            data_dir,
-            "bad",
-            REQUIRED.replace(
-                '"light"', f'"light"\nagents = {agents}\ndelegation = true'
-            ),
-        )
-        with pytest.raises(ScenarioError, match="delegation"):
-            scenarios.parse(path)
 
 
 FOLLOW_UP = """\

@@ -83,7 +83,10 @@ def cell(tmp_path: Path) -> tuple[PreparedCell, Scenario]:
 
 @pytest.mark.parametrize(
     ("runner", "denied"),
-    [(ClaudeAdapter(), "Agent,Task"), (PiAdapter(), "*_agent*")],
+    [
+        (ClaudeAdapter(), "Agent,Task"),
+        (PiAdapter(), "fork,fork_resume,fork_steer,fork_cancel"),
+    ],
 )
 def test_subagent_tools_are_denied(
     cell: tuple[PreparedCell, Scenario], runner: ClaudeAdapter | PiAdapter, denied: str
@@ -93,14 +96,18 @@ def test_subagent_tools_are_denied(
     assert denied in runner.command(prepared, scenario, "m")
 
 
-def test_a_delegation_scenario_allows_claude_subagents(
-    cell: tuple[PreparedCell, Scenario],
+@pytest.mark.parametrize(
+    ("runner", "flag"),
+    [(ClaudeAdapter(), "--disallowedTools"), (PiAdapter(), "--exclude-tools")],
+)
+def test_a_delegation_scenario_allows_subagents(
+    cell: tuple[PreparedCell, Scenario], runner: ClaudeAdapter | PiAdapter, flag: str
 ) -> None:
     prepared, scenario = cell
 
-    argv = ClaudeAdapter().command(prepared, replace(scenario, delegation=True), "m")
+    argv = runner.command(prepared, replace(scenario, delegation=True), "m")
 
-    assert "--disallowedTools" not in argv
+    assert flag not in argv
 
 
 BASE = Session("bench-base")
