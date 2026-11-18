@@ -794,6 +794,25 @@ class TestPullLocalSources:
 
         assert "[core] warning: `just test` failed" in capsys.readouterr().out
 
+    def test_pull_skips_the_fetch_the_update_check_already_ran(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        clone = tmp_path / "clone"
+        (clone / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-list", "--count", stdout="0\n")
+
+        config = [{"name": "core", "source": str(clone)}]
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=config),
+            patch("llm_prompts.plugins._load_plugins", return_value=[]),
+        ):
+            mock_config.return_value.exists.return_value = True
+            _print_update_status()
+            _pull_local_sources()
+
+        assert len(fake_subprocess.matching("fetch")) == 1
+
     def test_failed_sync_reports_detail_and_leaves_source_unchanged(
         self,
         tmp_path: Path,
@@ -1011,6 +1030,10 @@ class TestUpdateCommandPullsPlugins:
             ),
             patch("llm_prompts.setup.config_path") as mock_config,
             patch("llm_prompts.setup._load_config", return_value=config),
+            patch("llm_prompts.plugins._load_plugins", return_value=[{"name": "p"}]),
+            patch(
+                "llm_prompts.plugins._pull_one_plugin_source", return_value=[]
+            ) as mock_plugin_pull,
             patch("llm_prompts.setup.detect_stale_local_tools", return_value=set()),
             patch("llm_prompts.setup._require_uv"),
             patch("llm_prompts.install.main") as mock_install,
@@ -1024,6 +1047,7 @@ class TestUpdateCommandPullsPlugins:
 
         assert exit_info.value.code == 1
         mock_pull.assert_not_called()
+        mock_plugin_pull.assert_not_called()
         mock_install.assert_not_called()
         mock_reconfigure.assert_not_called()
         assert not [argv for argv in fake_subprocess.commands if argv[0] == "uv"]

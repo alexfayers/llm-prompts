@@ -647,6 +647,12 @@ def unrooted_home(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def unfetched_repos(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start every test with no repo marked as fetched."""
+    monkeypatch.setattr("llm_prompts.cli._FETCHED_REPOS", set())
+
+
+@pytest.fixture(autouse=True)
 def no_pi_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Drop every PI_* variable so tests do not depend on the caller running inside pi."""
     for name in [name for name in os.environ if name.startswith("PI_")]:
