@@ -993,6 +993,7 @@ def _reconfigure_agents(
         try_install_memory_antigravity,
         try_install_memory_claude_code,
         try_install_memory_codex,
+        try_install_memory_opencode,
         try_install_memory_pi,
     )
 
@@ -1009,6 +1010,9 @@ def _reconfigure_agents(
         try_install_hooks_antigravity()
         if memory_changed:
             try_install_memory_antigravity()
+
+    if "opencode" in manifest and memory_changed:
+        try_install_memory_opencode()
 
     if "pi" in manifest and memory_changed:
         try_install_memory_pi()
@@ -1576,6 +1580,11 @@ def _run_command(
 
             try_install_hooks_antigravity()
             try_install_memory_antigravity()
+
+        if "opencode" in agent_names and not args.root:
+            from .install import try_install_memory_opencode
+
+            try_install_memory_opencode()
 
         if "pi" in agent_names and not args.root:
             from .install import try_install_memory_pi

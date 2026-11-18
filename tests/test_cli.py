@@ -1535,6 +1535,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
                 return_value={
                     "claude-code": {"files": []},
                     "codex": {"files": []},
+                    "opencode": {"files": []},
                     "pi": {"files": []},
                 },
             ),
@@ -1558,6 +1559,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.install.try_allow_update_claude_code") as allow,
             patch("llm_prompts.install.try_install_memory_codex") as codex,
             patch("llm_prompts.install.try_install_memory_pi") as pi_memory,
+            patch("llm_prompts.install.try_install_memory_opencode") as opencode_memory,
             patch("llm_prompts.cli._auto_migrate_memory_db") as migrate,
         ):
             main()
@@ -1567,6 +1569,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             "allow": allow,
             "codex": codex,
             "pi_memory": pi_memory,
+            "opencode_memory": opencode_memory,
             "migrate": migrate,
         }
 
@@ -1585,6 +1588,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
         mocks["memory"].assert_not_called()
         mocks["codex"].assert_not_called()
         mocks["pi_memory"].assert_not_called()
+        mocks["opencode_memory"].assert_not_called()
         mocks["migrate"].assert_not_called()
 
     def test_a_memory_change_reconfigures_memory_and_migrates_the_db(self) -> None:
@@ -1592,6 +1596,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
         mocks["memory"].assert_called_once_with()
         mocks["codex"].assert_called_once_with()
         mocks["pi_memory"].assert_called_once_with()
+        mocks["opencode_memory"].assert_called_once_with()
         mocks["migrate"].assert_called_once_with()
 
     def test_a_local_memory_checkout_change_reconfigures_memory_and_migrates_the_db(

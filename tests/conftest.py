@@ -599,6 +599,7 @@ def synthetic_prompts_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
                 "claude-code",
                 "codex",
                 "kiro",
+                "opencode",
                 "pi",
             )
         },
