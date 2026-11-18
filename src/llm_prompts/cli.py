@@ -310,6 +310,15 @@ def _remote_source_messages(
     )
 
 
+def _previous_source_messages(
+    name: str, fingerprint: str, messages: list[str]
+) -> list[str]:
+    """Return a remote source's messages from the previous check, or none once its installed version moved."""
+    if _get_installed_commit(name) not in fingerprint.split(","):
+        return []
+    return [message for message in messages if message.startswith(f"[{name}] ")]
+
+
 class UpdateCheckFailure(str):
     """An update-check-failed message."""
 
@@ -327,13 +336,16 @@ def _update_check_or_failure(name: str, check: Callable[[], list[str]]) -> list[
         return [UpdateCheckFailure(f"[{name}] update check failed: {reason}")]
 
 
-def _local_source_messages(name: str, source: str, ref: str = "") -> list[str]:
+def _local_source_messages(
+    name: str, source: str, ref: str = "", fetch: bool = True
+) -> list[str]:
     """Return update-availability messages for a local-path git source.
 
     Args:
         name: The tool name.
         source: The configured source.
         ref: A remote branch to follow instead of the latest release tag.
+        fetch: Whether to fetch before comparing against the remote refs.
 
     Returns:
         Message lines describing available updates, or an empty list.
@@ -345,13 +357,14 @@ def _local_source_messages(name: str, source: str, ref: str = "") -> list[str]:
     if not (repo / ".git").is_dir():
         return []
 
-    run_with_retries(
-        ["git", "-C", str(repo), "fetch", "--quiet", "--tags"],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=GIT_TIMEOUT,
-    )
+    if fetch:
+        run_with_retries(
+            ["git", "-C", str(repo), "fetch", "--quiet", "--tags"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=GIT_TIMEOUT,
+        )
     if not point_upstream(repo, ref):
         return []
     result = subprocess.run(
@@ -849,8 +862,14 @@ def _pull_local_sources(
     return changed
 
 
-def _collect_update_messages() -> list[str]:
+def _collect_update_messages(
+    previous: tuple[str, list[str]] | None = None,
+) -> list[str]:
     """Collect update-availability messages across all configured tool sources.
+
+    Args:
+        previous: The fingerprint and messages of the previous check, to rebuild
+            the messages from the refs already fetched instead of fetching.
 
     Returns:
         Message lines describing available updates, in config order, followed
@@ -870,13 +889,19 @@ def _collect_update_messages() -> list[str]:
         source = str(tool.get("source", ""))
         if _is_local_path(source):
             check = partial(
-                _local_source_messages, name, source, str(tool.get("ref", ""))
+                _local_source_messages,
+                name,
+                source,
+                str(tool.get("ref", "")),
+                previous is None,
             )
+        elif previous is not None:
+            check = partial(_previous_source_messages, name, *previous)
         else:
             check = partial(_remote_source_messages, name, source, tool.get("ref"))
         checks.append(partial(_update_check_or_failure, name, check))
     for plugin in _load_plugins():
-        check = partial(plugin_source_messages, plugin)
+        check = partial(plugin_source_messages, plugin, previous is None)
         checks.append(
             partial(_update_check_or_failure, str(plugin.get("name", "")), check)
         )

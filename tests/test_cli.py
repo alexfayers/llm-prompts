@@ -859,10 +859,49 @@ class TestCollectUpdateMessages:
             "[remote-pkg] update available (aa -> bb)",
             _UPDATE_INSTRUCTION,
         ]
-        mock_local.assert_called_once_with("core", "~/git/llm-prompts", "")
+        mock_local.assert_called_once_with("core", "~/git/llm-prompts", "", True)
         mock_remote.assert_called_once_with(
             "remote-pkg", "git+https://github.com/user/repo.git", "main"
         )
+
+    @pytest.mark.parametrize(
+        ("installed", "expected"),
+        [
+            ("aa", ["[remote-pkg] update available (aa -> bb)", _UPDATE_INSTRUCTION]),
+            ("bb", []),
+        ],
+        ids=["unchanged", "updated"],
+    )
+    def test_previous_check_rebuilds_without_fetching(
+        self,
+        tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
+        installed: str,
+        expected: list[str],
+    ) -> None:
+        (tmp_path / ".git").mkdir()
+        config = [
+            {"name": "core", "source": str(tmp_path)},
+            {"name": "remote-pkg", "source": "git+https://github.com/user/repo.git"},
+        ]
+        fake_subprocess.on("rev-list", "--count", stdout="0\n")
+        previous = [
+            "[remote-pkg] update available (aa -> bb)",
+            "[other] update available",
+            _UPDATE_INSTRUCTION,
+        ]
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=config),
+            patch("llm_prompts.plugins._load_plugins", return_value=[]),
+            patch("llm_prompts.cli._get_installed_commit", return_value=installed),
+        ):
+            mock_config.return_value.exists.return_value = True
+            result = _collect_update_messages(previous=("head,aa", previous))
+
+        assert result == expected
+        assert fake_subprocess.matching("fetch") == []
+        assert fake_subprocess.matching("ls-remote") == []
 
     def test_failed_check_is_reported_without_credentials(
         self, fake_subprocess: FakeSubprocess
@@ -925,8 +964,8 @@ class TestCollectUpdateMessages:
                 patch("llm_prompts.plugins._load_plugins", return_value=[]),
                 patch(
                     "llm_prompts.cli._local_source_messages",
-                    side_effect=lambda name, _source, _ref: _format_update_message(
-                        name, ["Add X"]
+                    side_effect=lambda name, _source, _ref, _fetch: (
+                        _format_update_message(name, ["Add X"])
                     ),
                 ),
             ):
@@ -962,7 +1001,7 @@ class TestCollectUpdateMessages:
             "[p] update available (aa -> bb)",
             _UPDATE_INSTRUCTION,
         ]
-        mock_plugin.assert_called_once_with(plugin)
+        mock_plugin.assert_called_once_with(plugin, True)
 
 
 class TestUpdateCommandPullsPlugins:
