@@ -59,7 +59,7 @@ class _Route:
         predicate: Callable[[list[str]], bool] | None,
         stdout: str | list[str],
         returncode: int | list[int],
-        stderr: str | list[str],
+        stderr: str | bytes | list[str],
         repo: str | Path | None,
         side_effect: SideEffect | None,
     ) -> None:
@@ -104,7 +104,7 @@ class FakeSubprocess:
         *tokens: str,
         stdout: str | list[str] = "",
         returncode: int | list[int] = 0,
-        stderr: str | list[str] = "",
+        stderr: str | bytes | list[str] = "",
         repo: str | Path | None = None,
         side_effect: SideEffect | None = None,
     ) -> None:
@@ -119,7 +119,7 @@ class FakeSubprocess:
         *,
         stdout: str | list[str] = "",
         returncode: int | list[int] = 0,
-        stderr: str | list[str] = "",
+        stderr: str | bytes | list[str] = "",
         repo: str | Path | None = None,
         side_effect: SideEffect | None = None,
     ) -> None:

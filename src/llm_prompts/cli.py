@@ -23,7 +23,7 @@ from .attic.cli import run as run_attic
 from .exit_reason import ExitReason
 from .home import set_root
 from .install import AGENT_CLASSES, REMOVED_AGENTS, log, prompts_dir, user_binary
-from .network import run_with_retries
+from .network import run_with_retries, stderr_text
 from .setup import (
     _RELEASE_TAG,
     _UPDATE_INSTRUCTION,
@@ -334,7 +334,10 @@ def _update_check_or_failure(name: str, check: Callable[[], list[str]]) -> list[
     try:
         return check()
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
-        reason = _URL_CREDENTIALS.sub(r"\1", str(exc))
+        reason = str(exc)
+        if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
+            reason += " " + " ".join(stderr_text(exc).strip().splitlines()[-2:])
+        reason = _URL_CREDENTIALS.sub(r"\1", reason)
         return [UpdateCheckFailure(f"[{name}] update check failed: {reason}")]
 
 
