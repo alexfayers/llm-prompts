@@ -1485,7 +1485,7 @@ def _run_command(
         )
 
     if _changes_installed_versions(args):
-        from .auto_update import UPDATE_RUNNING, lock
+        from .auto_update import LOCK_FD_ENV, UPDATE_RUNNING, lock
 
         if not stack.enter_context(lock()):
             raise ExitReason("update_running", UPDATE_RUNNING)
@@ -1521,6 +1521,7 @@ def _run_command(
                     + ["--no-update"],
                     check=False,
                     env=child_env,
+                    pass_fds=(int(os.environ[LOCK_FD_ENV]),),
                 )
                 sys.exit(result.returncode)
 
