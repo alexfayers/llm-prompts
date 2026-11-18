@@ -240,15 +240,15 @@ class _ReinstallDebouncer:
         return cache if isinstance(cache, dict) else {}
 
 
-def _started_auto_update(fingerprint: str) -> bool:
-    """Start the automatic update, and return whether it started, logging instead of raising."""
+def _start_auto_update(fingerprint: str) -> str:
+    """Start the automatic update, and return ``started`` or what blocked it, logging instead of raising."""
     from . import auto_update
 
     try:
         return auto_update.start(fingerprint)
     except (Exception, SystemExit):
         logger.warning("Failed to start the automatic llm-prompts update")
-        return False
+        return "error"
 
 
 def _held_by_fork(fingerprint: str) -> bool:
@@ -345,7 +345,14 @@ class AutoReinstallPlugin(HooksPlugin):
                     self._update_check_debouncer.mark_run()
                     self._update_check_debouncer.hold(held)
                     self._update_check_debouncer.store_notice(messages, fingerprint)
-                    if messages and not held and _started_auto_update(fingerprint):
+                    run.auto_update = (
+                        "no-update"
+                        if not messages
+                        else "fork"
+                        if held
+                        else _start_auto_update(fingerprint)
+                    )
+                    if run.auto_update == "started":
                         messages = [*messages, _AUTO_UPDATE_STARTED]
             elif source in _DEBOUNCED_TASK_START_SOURCES:
                 messages = []
@@ -355,7 +362,9 @@ class AutoReinstallPlugin(HooksPlugin):
                     and not _held_by_fork(fingerprint)
                 ):
                     self._update_check_debouncer.hold(False)
-                    if _started_auto_update(fingerprint):
+                    run.begin("startup-check", ["--retry"])
+                    run.auto_update = _start_auto_update(fingerprint)
+                    if run.auto_update == "started":
                         messages = [_AUTO_UPDATE_STARTED]
             else:
                 run.begin("startup-check", ["--cached"])

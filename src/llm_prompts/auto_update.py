@@ -25,7 +25,7 @@ STATE_DIR = Path(user_data_dir("llm-prompts"))
 _CHECKOUT_LOCKS = get_data_dir() / "checkout-locks.json"
 LOCK_FD_ENV = "LLM_PROMPTS_UPDATE_LOCK_FD"
 FORK_IDLE_SECONDS = 60 * 60
-FORK_RUNNING = "a pi fork is running"
+FORK_RUNNING = "fork"
 UPDATE_RUNNING = "Another llm-prompts update is running. Rerun once it finishes."
 
 
@@ -51,20 +51,20 @@ def failure(fingerprint: str) -> str | None:
 
 
 def blocker(fingerprint: str) -> str | None:
-    """Return why an automatic update must not run, or None when it may.
+    """Return the kind of what blocks an automatic update, or None when it may run.
 
     Args:
         fingerprint: The installed versions, as ``_installed_fingerprint`` returns them.
     """
     if not config_path().exists():
-        return "no config"
+        return "off"
     config = read_config()
     settings = config.get("update", {})
     if not isinstance(settings, dict):
-        return "config error: [update] must be a table"
+        return "off"
     auto = settings.get("auto", True)
     if not isinstance(auto, bool):
-        return "config error: [update] auto must be true or false"
+        return "off"
     if not auto:
         return "off"
     if failure(fingerprint) is not None:
@@ -87,9 +87,9 @@ def blocker(fingerprint: str) -> str | None:
     for name, repo, has_changes in checkouts:
         git_dir = (repo / ".git").resolve()
         if any(path == git_dir or git_dir in path.parents for path in held):
-            return f"a session is using {name}"
+            return "session"
         if has_changes(repo):
-            return f"{name} has local changes"
+            return "local-changes"
     return None
 
 
@@ -239,10 +239,10 @@ def _script() -> str:
     )
 
 
-def start(fingerprint: str) -> bool:
-    """Start ``run`` in a detached process unless something blocks it, and return whether it started."""
-    if blocker(fingerprint) is not None:
-        return False
+def start(fingerprint: str) -> str:
+    """Start ``run`` in a detached process unless something blocks it, and return ``started`` or the blocker's kind."""
+    if (blocked := blocker(fingerprint)) is not None:
+        return blocked
     subprocess.Popen(
         [
             sys.executable,
@@ -255,4 +255,4 @@ def start(fingerprint: str) -> bool:
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
-    return True
+    return "started"

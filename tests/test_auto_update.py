@@ -57,7 +57,7 @@ def test_a_running_fork_blocks(
     run = tmp_path / "agent" / "pi-context" / "run"
     run.mkdir(parents=True)
     (run / "handshake.json").write_text("{}", encoding="utf-8")
-    assert auto_update.blocker("") == "a pi fork is running"
+    assert auto_update.blocker("") == "fork"
     (run / "finished").write_text("", encoding="utf-8")
     assert auto_update.blocker("") is None
 
@@ -76,7 +76,7 @@ def test_a_stale_fork_run_does_not_block(
     assert auto_update.blocker("") is None
     (run / "session").mkdir()
     (run / "session" / "cold.jsonl").write_text("{}", encoding="utf-8")
-    assert auto_update.blocker("") == "a pi fork is running"
+    assert auto_update.blocker("") == "fork"
 
 
 @pytest.mark.real_io
@@ -94,7 +94,7 @@ def test_a_checkout_with_commits_from_an_older_version_blocks(
     clone = _checkout(tmp_path)
     _git(clone, "commit", "-q", "--allow-empty", "-m", "local change")
     _config(isolated_config_dir, clone)
-    assert auto_update.blocker("") == "llm-prompts has local changes"
+    assert auto_update.blocker("") == "local-changes"
 
 
 @pytest.mark.real_io
@@ -106,7 +106,7 @@ def test_uncommitted_edits_block_but_untracked_files_do_not(
     _config(isolated_config_dir, clone)
     assert auto_update.blocker("") is None
     _git(clone, "add", "scratch.txt")
-    assert auto_update.blocker("") == "llm-prompts has local changes"
+    assert auto_update.blocker("") == "local-changes"
 
 
 def test_turning_it_off_blocks(isolated_config_dir: Path) -> None:
@@ -119,7 +119,7 @@ def test_turning_it_off_blocks(isolated_config_dir: Path) -> None:
 
 
 def test_no_config_blocks() -> None:
-    assert auto_update.blocker("") == "no config"
+    assert auto_update.blocker("") == "off"
 
 
 def test_a_failed_run_blocks_a_rerun_until_the_versions_move(
@@ -142,9 +142,9 @@ def test_start_spawns_a_detached_update_only_when_nothing_blocks(
         subprocess, "Popen", lambda argv, **kwargs: spawned.append(kwargs)
     )
     monkeypatch.setattr(auto_update, "blocker", lambda fingerprint: "off")
-    assert not auto_update.start("v1")
+    assert auto_update.start("v1") == "off"
     monkeypatch.setattr(auto_update, "blocker", lambda fingerprint: None)
-    assert auto_update.start("v1")
+    assert auto_update.start("v1") == "started"
     assert len(spawned) == 1 and spawned[0]["start_new_session"] is True
 
 
@@ -223,16 +223,14 @@ def test_a_non_bool_auto_setting_blocks(isolated_config_dir: Path) -> None:
         Path("git+https://example.invalid/x.git"),
         '[update]\nauto = "no"\n\n',
     )
-    assert (
-        auto_update.blocker("") == "config error: [update] auto must be true or false"
-    )
+    assert auto_update.blocker("") == "off"
 
 
 def test_a_non_table_update_setting_blocks(isolated_config_dir: Path) -> None:
     _config(
         isolated_config_dir, Path("git+https://example.invalid/x.git"), "update = 1\n\n"
     )
-    assert auto_update.blocker("") == "config error: [update] must be a table"
+    assert auto_update.blocker("") == "off"
 
 
 @pytest.mark.real_io
@@ -252,7 +250,7 @@ def test_a_live_session_holding_a_configured_checkout_blocks(
     locks.write_text(json.dumps([{**held, "at": time.time() - 3600}]))
     assert auto_update.blocker("") is None
     locks.write_text(json.dumps([{**held, "at": time.time()}]))
-    assert auto_update.blocker("") == "a session is using llm-prompts"
+    assert auto_update.blocker("") == "session"
 
 
 @pytest.mark.parametrize(
@@ -302,10 +300,10 @@ def test_a_plugin_checkout_with_edits_or_unpushed_commits_blocks(
     checkout = _plugin_checkout(tmp_path, isolated_config_dir)
     assert auto_update.blocker("") is None
     _git(checkout, "commit", "-q", "--allow-empty", "-m", "mine")
-    assert auto_update.blocker("") == "p has local changes"
+    assert auto_update.blocker("") == "local-changes"
     _git(checkout, "reset", "-q", "--hard", "HEAD~1")
     (checkout / "edit.txt").write_text("x")
-    assert auto_update.blocker("") == "p has local changes"
+    assert auto_update.blocker("") == "local-changes"
 
 
 @pytest.mark.real_io
@@ -320,7 +318,7 @@ def test_a_live_session_holding_a_plugin_checkout_blocks(
             [{"git_dir": str(checkout / ".git"), "pid": os.getpid(), "at": time.time()}]
         )
     )
-    assert auto_update.blocker("") == "a session is using p"
+    assert auto_update.blocker("") == "session"
 
 
 def test_the_update_runs_through_a_script_that_can_restart_itself(
