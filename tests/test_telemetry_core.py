@@ -67,7 +67,7 @@ def test_begin_records_the_opt_out_state_and_keeps_the_install_id(
         monkeypatch.setenv(name, value)
     before = time.time()
 
-    telemetry.Run(lambda _: None).begin("update", [])
+    telemetry.Run(lambda _: (None, None)).begin("update", [])
 
     state = _state(isolated_config_dir)
     assert state["install_id"] == "synthetic-id"
@@ -80,7 +80,7 @@ def test_the_first_run_keeps_the_recorded_opt_out_state(
 ) -> None:
     (isolated_config_dir / "telemetry.json").unlink()
 
-    with telemetry.Run(lambda _: None) as run:
+    with telemetry.Run(lambda _: (None, None)) as run:
         run.begin("update", [])
 
     state = _state(isolated_config_dir)
@@ -149,7 +149,9 @@ def test_a_sent_versions_payload_is_resolved_without_paths(
     telemetry_popen: MagicMock, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     config = {"tools": [{"name": "mcp-memory", "source": str(tmp_path)}]}
-    monkeypatch.setattr("llm_prompts.cli._get_installed_commit", lambda _: "a" * 40)
+    monkeypatch.setattr(
+        "llm_prompts.cli._get_installed_version", lambda _: ("a" * 40, None)
+    )
     posted = MagicMock()
     monkeypatch.setattr("llm_prompts.telemetry_core.post", posted)
     monkeypatch.setattr(
@@ -171,6 +173,25 @@ def test_a_sent_versions_payload_is_resolved_without_paths(
     assert str(tmp_path) not in body
 
 
+@pytest.mark.parametrize(
+    ("version", "expected"), [("0.4.0", "v0.4.0"), ("0.5.0.dev1", None)]
+)
+def test_an_installed_source_reports_its_installed_version_as_its_release(
+    isolated_home: Path, version: str, expected: str | None
+) -> None:
+    dist = isolated_home / ".local/share/uv/tools/llm-prompts/lib"
+    direct_url = dist / f"llm_prompts-{version}.dist-info" / "direct_url.json"
+    direct_url.parent.mkdir(parents=True)
+    direct_url.write_text(json.dumps({"vcs_info": {"commit_id": "a" * 40}}))
+    body = json.dumps(telemetry_core.versions({}))
+
+    resolved = json.loads(telemetry_core.resolve_versions(body))
+
+    assert resolved["llm-prompts"]["commit"] == "a" * 40
+    assert resolved["llm-prompts"]["release"] == expected
+    assert resolved["mcp-memory"]["release"] is None
+
+
 def test_the_detached_sender_posts_each_event_once_without_paths(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -181,7 +202,9 @@ def test_the_detached_sender_posts_each_event_once_without_paths(
     monkeypatch.setattr(
         "subprocess.run", MagicMock(side_effect=subprocess.SubprocessError)
     )
-    monkeypatch.setattr("llm_prompts.cli._get_installed_commit", lambda _: None)
+    monkeypatch.setattr(
+        "llm_prompts.cli._get_installed_version", lambda _: (None, None)
+    )
     monkeypatch.setattr(sys, "argv", ["telemetry_core", body])
     monkeypatch.delitem(sys.modules, "llm_prompts.telemetry_core")
 
@@ -246,7 +269,9 @@ def test_resolved_versions_name_every_tracked_tool_once_without_paths(
     git = MagicMock(side_effect=subprocess.SubprocessError)
     monkeypatch.setattr("llm_prompts.telemetry_core.read_config", lambda: config)
     monkeypatch.setattr("llm_prompts.telemetry_core.run", git)
-    monkeypatch.setattr("llm_prompts.cli._get_installed_commit", lambda _: None)
+    monkeypatch.setattr(
+        "llm_prompts.cli._get_installed_version", lambda _: (None, None)
+    )
     telemetry_core.resolved_versions.cache_clear()
 
     first = telemetry_core.resolved_versions()

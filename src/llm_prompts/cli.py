@@ -37,6 +37,7 @@ from .setup import (
     _remote_commit_subjects,
     _remote_head,
     _uv_tools_dir,
+    release_version,
 )
 
 if TYPE_CHECKING:
@@ -259,6 +260,15 @@ def _get_installed_dist(package_name: str) -> tuple[Path, str] | None:
             except (OSError, json.JSONDecodeError):
                 continue
     return None
+
+
+def _get_installed_version(package_name: str) -> tuple[str | None, str | None]:
+    """Get a uv tool env's git-installed commit and its version as a stable vX.Y.Z tag."""
+    installed = _get_installed_dist(package_name)
+    if not installed:
+        return None, None
+    tag = "v" + installed[0].parent.name.removesuffix(".dist-info").rpartition("-")[2]
+    return installed[1], tag if release_version(tag) else None
 
 
 def _get_installed_revision(package_name: str) -> str | None:
@@ -1089,7 +1099,7 @@ def _get_gh_login() -> str:
 
 def main() -> int | None:
     """Run the llm-prompts CLI, reporting anonymous telemetry when it finishes."""
-    with telemetry.Run(_get_installed_commit) as run, contextlib.ExitStack() as stack:
+    with telemetry.Run(_get_installed_version) as run, contextlib.ExitStack() as stack:
         return _run_command(run, stack)
 
 
