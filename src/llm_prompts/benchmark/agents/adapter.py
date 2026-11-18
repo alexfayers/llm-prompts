@@ -56,6 +56,9 @@ class AgentAdapter(Protocol):
     ) -> list[str]:
         """Return the argv that runs the agent on the scenario, in a saved session when given."""
 
+    def add_delegates(self, trace: Trace, home: Path, since: float) -> Trace:
+        """Return ``trace`` with the usage and tool calls of the delegates that the agent in ``home`` ran outside its own output since ``since``."""
+
     def replied(self, line: str) -> bool:
         """Return whether a streamed output line is an assistant reply."""
 
