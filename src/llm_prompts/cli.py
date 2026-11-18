@@ -54,6 +54,7 @@ _RUN_SETUP_TRACKED_TOOLS = (_MEMORY_TOOL, "cline-hooks")
 _UPDATE_RESUME_ENV = "LLM_PROMPTS_UPDATE_RESUME"
 _INSTALLING_COMMANDS = frozenset({"install", "setup", "update"})
 _URL_CREDENTIALS = re.compile(r"(://)[^/@\s]+@")
+_FETCHED_REPOS: set[Path] = set()
 
 
 def _get_root_dir() -> Path:
@@ -352,6 +353,7 @@ def _local_source_messages(name: str, source: str, ref: str = "") -> list[str]:
         text=True,
         timeout=GIT_TIMEOUT,
     )
+    _FETCHED_REPOS.add(repo)
     if not point_upstream(repo, ref):
         return []
     result = subprocess.run(
@@ -587,7 +589,11 @@ def _pull_one_local_source(
     repo = _expand(source)
     if not (repo / ".git").is_dir():
         return unchanged
-    fetch = run_git(repo, "fetch", "--quiet", "--tags")
+    fetch = (
+        subprocess.CompletedProcess([], 0, "", "")
+        if repo in _FETCHED_REPOS
+        else run_git(repo, "fetch", "--quiet", "--tags")
+    )
     fetch_failed = fetch.returncode != 0
     fetch_error = f"[{name}] could not fetch: {fetch.stderr.strip()}"
     fetch_failure = _PullOutcome(name, False, [fetch_error], failed=True)
