@@ -22,7 +22,7 @@ llm-prompts benchmark                          # compare two llm-prompts refs by
 llm-prompts attic build [--tool NAME]... [--dry-run]  # list the unused skills, and the `--tool` tools, the usage ledger shows as unused, in `attic.json` next to the ledger
 llm-prompts check                              # check prompt sizes and pi extension headers
 llm-prompts size-report --base-root DIR        # markdown report of prompt size changes
-llm-prompts watch gh-pr|gh-triage|cmd TARGET... --until COND [--all] [--follow]  # wait for a PR, a repo's ready-PR list or a command to match, then exit (0 match, 124 --timeout, 1 error). Several targets: any match ends it, --all waits for every one, --follow prints each match and keeps watching until --timeout
+llm-prompts watch gh-pr|gh-triage|cmd TARGET... --until COND [--all] [--follow]  # wait for a PR, a repo's ready-PR list or a command to match, then exit (0 match, 124 --timeout, 1 error). Several targets: any match ends it, --all waits for every one, --follow prints each match and keeps watching until --timeout or a terminal state (gh-pr: merged or closed)
 llm-prompts contribute list|sync|update        # keep each worktree branch in sync with local main and its own PR
 ```
 

@@ -70,3 +70,57 @@ def test_watch_follow_prints_each_change_once_and_exits_only_on_timeout(
 
     assert watch([source], [until], interval=0, timeout=0.05, follow=True) == 124
     assert capsys.readouterr().out.splitlines()[:-1] == expected
+
+
+class CrLikeSource:
+    default_interval = 0.0
+    aliases: ClassVar[dict[str, list[str]]] = {
+        "merged": ["merged=true"],
+        "update": ["changed:approvals"],
+    }
+    terminal: ClassVar[list[str]] = ["merged=true"]
+
+    def __init__(self, *states: tuple[str, str]) -> None:
+        self.states, self.state = iter(states), states[0]
+
+    def describe(self) -> str:
+        return "cr"
+
+    def poll(self) -> Fields:
+        self.state = next(self.states, self.state)
+        return dict(zip(("approvals", "merged"), self.state, strict=True))
+
+
+@pytest.mark.parametrize(
+    ("untils", "expected"),
+    [
+        (
+            ["update", "merged"],
+            ["cr: update (approvals=a)", "cr: merged (merged=true)"],
+        ),
+        (["update"], ["cr: update (approvals=a)", "cr: merged=true"]),
+    ],
+)
+def test_watch_follow_exits_after_printing_a_terminal_state(
+    capsys: pytest.CaptureFixture[str], untils: list[str], expected: list[str]
+) -> None:
+    states = [("", "false"), ("a", "false"), ("a", "false"), ("a", "true")]
+    source = CrLikeSource(*states)
+
+    assert watch([source], untils, interval=0, timeout=5, follow=True) == 0
+    assert capsys.readouterr().out.splitlines() == expected
+
+
+def test_watch_follow_keeps_watching_until_every_source_is_terminal(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    done = CrLikeSource(("", "false"), ("a", "true"))
+    open_ = CrLikeSource(("", "false"), ("", "false"), ("", "false"), ("b", "false"))
+
+    assert (
+        watch([done, open_], ["update"], interval=0, timeout=0.05, follow=True) == 124
+    )
+    assert capsys.readouterr().out.splitlines()[:-1] == [
+        "cr: update (approvals=a)",
+        "cr: update (approvals=b)",
+    ]
