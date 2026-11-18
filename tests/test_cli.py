@@ -903,6 +903,35 @@ class TestCollectUpdateMessages:
         assert result[0].startswith("[pkg] update check failed: ")
         assert "secret" not in result[0]
 
+    @pytest.mark.parametrize("as_bytes", [False, True])
+    def test_failed_check_includes_git_stderr_without_credentials(
+        self, fake_subprocess: FakeSubprocess, as_bytes: bool
+    ) -> None:
+        source = "git+https://user:secret@example.invalid/r.git"
+        stderr = f"noise\nfatal: unable to access '{source}': 403\n"
+        fake_subprocess.on(
+            "ls-remote",
+            returncode=128,
+            stderr=stderr.encode() if as_bytes else stderr,
+        )
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch(
+                "llm_prompts.setup._load_config",
+                return_value=[{"name": "pkg", "source": source}],
+            ),
+            patch("llm_prompts.plugins._load_plugins", return_value=[]),
+            patch("llm_prompts.cli._get_installed_commit", return_value="abc123"),
+        ):
+            mock_config.return_value.exists.return_value = True
+            result = _collect_update_messages()
+
+        assert (
+            "fatal: unable to access 'git+https://example.invalid/r.git': 403"
+            in result[0]
+        )
+        assert "secret" not in result[0]
+
     @pytest.mark.real_io
     def test_failed_local_fetch_is_reported(self, tmp_path: Path) -> None:
         clone = tmp_path / "clone"
