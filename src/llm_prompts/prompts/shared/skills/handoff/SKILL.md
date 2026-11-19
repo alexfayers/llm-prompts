@@ -7,21 +7,27 @@ description: Write a handoff doc for a fresh session to resume work. Use when en
 
 If the invocation names a part (a sibling `<part>.md`, e.g. `live`), MUST read `<base-dir>/<part>.md` first.
 
-Write one self-contained, minimal handoff doc a new session can resume from with no prior context. Then stop the work it hands over, unless the doc compacts the context or goes to an explicitly parallel session.
+Write one self-contained, minimal handoff doc a new session can resume from with no prior context.
+Then stop the work it hands over, unless the doc compacts the context or goes to an explicitly parallel session.
 
 ## Where it goes
 
 A live handoff continues the work in a fresh session.
 
 {% if AGENT == "pi" %}
-Unless starting a new session, MUST pass the doc as the `compact_now` `instructions` and omit Step 0. MUST use `change_dir` for a cwd or worktree change only when the tool is available and permits the move. MUST NOT write `HANDOFF.md` or start a new session unless the user asks, the work needs a parallel session, the env or process must change, or the cwd or worktree cannot change in this session. When starting a new session, {% if has_command("herdr") %}MUST follow the next paragraph.{% else %}write `HANDOFF.md`.{% endif %}
+Unless starting a new session, MUST pass the doc as the `compact_now` `instructions` and omit Step 0.
+MUST use `change_dir` for a cwd or worktree change only when the tool is available and permits the move.
+MUST NOT write `HANDOFF.md` or start a new session unless the user asks, the work needs a parallel session, the env or process must change, or the cwd or worktree cannot change in this session.
+When starting a new session, {% if has_command("herdr") %}MUST follow the next paragraph.{% else %}write `HANDOFF.md`.{% endif %}
 
 {% endif %}
 {% if has_command("herdr") %}
-Inside Herdr (`test "${HERDR_ENV:-}" = 1`),{% if AGENT == "pi" %} when starting a new session,{% endif %} MUST send the doc live per `<base-dir>/live.md` and omit Step 0, unless the user asks for a disk handoff or has opted out.{% if AGENT != "pi" %} Otherwise:{% endif %}
+Inside Herdr (`test "${HERDR_ENV:-}" = 1`),{% if AGENT == "pi" %} when starting a new session,{% endif %} MUST send the doc live per `<base-dir>/live.md` and omit Step 0,
+unless the user asks for a disk handoff or has opted out.{% if AGENT != "pi" %} Otherwise:{% endif %}
 
 {% endif %}
-{% if AGENT == "pi" %}Only for a disk handoff{% if has_command("herdr") %} or outside Herdr{% endif %}, write{% else %}Write{% endif %} to `HANDOFF.md` in the workspace root (or the directory the work lives in),
+{% if AGENT == "pi" %}Only for a disk handoff{% if has_command("herdr") %} or outside Herdr{% endif %}, write{% else %}Write{% endif %} to `HANDOFF.md` in the workspace root
+(or the directory the work lives in),
 unless the user names another location. One handoff doc at a time - overwrite a
 stale `HANDOFF.md`.
 

@@ -22,6 +22,9 @@ Runs `ruff check --fix`, `ruff format`, `mypy` (strict), and `pytest` via `uv ru
 
 Files under `src/llm_prompts/prompts/**` (rules, skills, workflows, agents) are subject to enforced size budgets, checked by `tests/test_prompt_sizes.py` and separately live: editing a tracked rule/skill/workflow/agent source file triggers cline-hooks' auto-reinstall, which blocks the write outright if the result would push that file over its threshold. If you hit this, compress the file's wording rather than splitting it into multiple files or asking to raise the ceiling - the fix preserves every existing directive in fewer bytes.
 
+A `no_long_lines` block names a prose line over 200 characters. Fix it by wrapping that line.
+A `no_lazy_continuations` block names a column-0 line directly after a list item. Fix it by indenting that line under the item's text.
+
 ## Commit messages
 
 Single-line, conventional-commit style (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:` ...), no body. Match `git log --oneline -20` for tone.

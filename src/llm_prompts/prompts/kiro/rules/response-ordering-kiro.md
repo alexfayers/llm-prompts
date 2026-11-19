@@ -1,6 +1,7 @@
 # Response ordering - Kiro CLI rendering
 
-In the Kiro CLI, any assistant text emitted *before* a tool call in a turn is rendered as dark grey "thinking" text. Only the text after the final tool call is displayed as the white reply the user actually reads.
+In the Kiro CLI, any assistant text emitted *before* a tool call in a turn is rendered as dark grey "thinking" text.
+Only the text after the final tool call is displayed as the white reply the user actually reads.
 
 Therefore:
 

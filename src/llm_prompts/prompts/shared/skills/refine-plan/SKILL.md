@@ -38,7 +38,8 @@ JSON
 
 The JSON MUST contain:
 - `scores`: category -> integer 1-10
-- `evidence`: category -> concrete citation (REQUIRED for scores >= 7). MUST reference a specific file path, pattern, or verifiable finding. MUST prefix each claim `existing:` (true of the code now) or `proposed:` (true once the plan lands).
+- `evidence`: category -> concrete citation (REQUIRED for scores >= 7). MUST reference a specific file path, pattern, or verifiable finding.
+  MUST prefix each claim `existing:` (true of the code now) or `proposed:` (true once the plan lands).
 - `testability_skipped`: true (optional, if no tests exist)
 
 The script rejects scores >= 7 without evidence. MUST present the full output to the user.
@@ -47,7 +48,8 @@ The script rejects scores >= 7 without evidence. MUST present the full output to
 
 MUST launch a validation {% if AGENT == "pi" %}cold worker (`fork` with `model`){% else %}subagent via `{{TOOL_AGENT}}`{% endif %} with ONLY the evidence strings and scores:
 
-> For each `existing:` claim, MUST read the cited file/pattern/resource and confirm or dispute. MUST NOT dispute a `proposed:` claim for being absent from the code - judge only whether the design holds. MUST be skeptical - 9+ means near-perfect and is rare.
+> For each `existing:` claim, MUST read the cited file/pattern/resource and confirm or dispute.
+> MUST NOT dispute a `proposed:` claim for being absent from the code - judge only whether the design holds. MUST be skeptical - 9+ means near-perfect and is rare.
 >
 > 1. [category]: [score] - "[evidence]"
 > ...

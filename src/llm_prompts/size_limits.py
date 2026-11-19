@@ -50,6 +50,8 @@ WORST_CASE_ON_DEMAND_METRICS = (
 BYTES_PER_TOKEN = 2.8
 FRONTMATTER_VALID = "frontmatter_valid"
 NO_UNSUBSTITUTED_PLACEHOLDERS = "no_unsubstituted_placeholders"
+NO_LONG_LINES = "no_long_lines"
+NO_LAZY_CONTINUATIONS = "no_lazy_continuations"
 TEMPLATE_RENDERS = "template_renders"
 
 UNITS: dict[str, str] = {
@@ -62,6 +64,7 @@ UNITS: dict[str, str] = {
     AGENT_DESCRIPTION_CHARS: "chars, post-expansion",
     COLLECTION_BYTES: "owned bytes per target, worst-case session",
     PI_ROLE_PROMPT_BYTES: "llm-prompts-owned expanded prompt bytes",
+    NO_LONG_LINES: "chars",
 }
 
 FINALS: dict[str, int] = {
@@ -74,7 +77,9 @@ FINALS: dict[str, int] = {
     AGENT_DESCRIPTION_CHARS: 200,
     COLLECTION_BYTES: 50_000,
     PI_ROLE_PROMPT_BYTES: 50_000,
+    NO_LONG_LINES: 200,
 }
+MAX_LINE_CHARS = FINALS[NO_LONG_LINES]
 
 # Metrics whose ceiling is the active collection step rather than a per-file final.
 COLLECTION_CEILING_METRICS = frozenset({COLLECTION_BYTES, PI_ROLE_PROMPT_BYTES})
