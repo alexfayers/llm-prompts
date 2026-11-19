@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import threading
 import urllib.error
+import urllib.request
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from email.message import Message
@@ -18,7 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from llm_prompts import github_api, install, setup
+from llm_prompts import github_api, install, setup, telemetry_core
 from llm_prompts.contribute import Pr
 from llm_prompts.size_guard import CheckResult
 
@@ -845,7 +846,14 @@ def telemetry_guard(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setenv("LLM_PROMPTS_NO_TELEMETRY", "1")
     monkeypatch.setattr("llm_prompts.telemetry_core.Popen", forbidden)
-    monkeypatch.setattr("llm_prompts.telemetry_core.urlopen", forbidden)
+    urlopen = urllib.request.urlopen
+
+    def guarded(request: Any, *args: Any, **kwargs: Any) -> Any:
+        if getattr(request, "full_url", request) == telemetry_core.POSTHOG_URL:
+            forbidden()
+        return urlopen(request, *args, **kwargs)
+
+    monkeypatch.setattr("urllib.request.urlopen", guarded)
 
 
 @pytest.fixture

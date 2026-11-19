@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from conftest import FakeSubprocess, run_capturing_exit
 
+from llm_prompts.console import log
 from llm_prompts.home import config_dir, set_root
 from llm_prompts.install import (
     _GATING_FRONTMATTER_KEYS,
@@ -41,7 +42,6 @@ from llm_prompts.install import (
     _targets_agent,
     _warn_pi_version_drift,
     get_source_for_managed_file,
-    log,
     partial_source,
     prompts_dir,
     try_install_hooks_claude_code,
@@ -2911,9 +2911,9 @@ class TestLogBrokenPipe:
         stderr.fileno.return_value = 99
 
         with (
-            patch("llm_prompts.install.sys.stderr", stderr),
-            patch("llm_prompts.install.print", side_effect=BrokenPipeError),
-            patch("llm_prompts.install.os.dup2") as dup2,
+            patch("llm_prompts.console.sys.stderr", stderr),
+            patch("llm_prompts.console.print", side_effect=BrokenPipeError),
+            patch("llm_prompts.console.os.dup2") as dup2,
         ):
             log("info", "first")
             log("info", "second")

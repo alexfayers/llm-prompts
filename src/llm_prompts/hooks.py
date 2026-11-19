@@ -16,7 +16,6 @@ from typing import Any
 
 from cline_hooks.core.plugin import HookResult, HooksPlugin, UserFacingNote
 
-from . import telemetry
 from .manifest import read_manifest
 from .setup import _CHANGELOG_PREFIX, _UPDATE_INSTRUCTION
 
@@ -309,6 +308,7 @@ class AutoReinstallPlugin(HooksPlugin):
         if agent_type or _is_headless():
             return None
 
+        from . import telemetry
         from .cli import (
             UpdateCheckFailure,
             _collect_update_messages,
