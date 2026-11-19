@@ -327,6 +327,21 @@ def _update_check_or_failure(name: str, check: Callable[[], list[str]]) -> list[
         return [UpdateCheckFailure(f"[{name}] update check failed: {reason}")]
 
 
+def _waiting_conflict_messages(name: str, source: str) -> list[str]:
+    """Return a message when local main waits on an unresolved conflict in its resolve worktree."""
+    from .main_sync import resolve_worktree, run_git
+    from .setup import _expand
+
+    repo = _expand(source)
+    if not (repo / ".git").is_dir() or not (work := resolve_worktree(repo)).exists():
+        return []
+    unmerged = run_git(work, "diff", "--name-only", "--diff-filter=U").stdout.split()
+    if not unmerged:
+        return []
+    files = ", ".join(unmerged)
+    return [f"[{name}] local main is waiting on a conflict in {work}: {files}"]
+
+
 def _local_source_messages(name: str, source: str, ref: str = "") -> list[str]:
     """Return update-availability messages for a local-path git source.
 
@@ -850,6 +865,7 @@ def _collect_update_messages() -> list[str]:
         name = str(tool.get("name", ""))
         source = str(tool.get("source", ""))
         if _is_local_path(source):
+            checks.append(partial(_waiting_conflict_messages, name, source))
             check = partial(
                 _local_source_messages, name, source, str(tool.get("ref", ""))
             )
