@@ -652,7 +652,7 @@ class TestUpdateCheckOnTaskStart:
         messages = ["[pkg] update available:\n- did a thing", _UPDATE_INSTRUCTION]
         with (
             patch("llm_prompts.cli._collect_update_messages", return_value=messages),
-            patch("llm_prompts.auto_update.start", return_value=True) as start,
+            patch("llm_prompts.auto_update.start", return_value="started") as start,
         ):
             result = plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[])
         start.assert_called_once()
@@ -701,7 +701,7 @@ class TestUpdateCheckOnTaskStart:
         messages = ["[pkg] update available:\n- did a thing", _UPDATE_INSTRUCTION]
         with (
             patch("llm_prompts.cli._collect_update_messages", return_value=messages),
-            patch("llm_prompts.auto_update.start", return_value=False),
+            patch("llm_prompts.auto_update.start", return_value="failed"),
             patch("llm_prompts.auto_update.failure", return_value="could not fetch"),
         ):
             result = plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[])
@@ -847,6 +847,73 @@ class TestUpdateCheckOnTaskStart:
         event = json.loads(telemetry_popen.call_args.args[0][3])
         assert event["properties"]["command"] == "startup-check"
         assert event["properties"]["flags"] == flags
+        assert event["properties"]["auto_update"] == (None if cached else "no-update")
+
+    @pytest.mark.parametrize(
+        ("blocker", "spawn_error", "auto_update"),
+        [
+            (None, None, "started"),
+            ("fork", None, "fork"),
+            ("session", None, "session"),
+            (None, OSError, "error"),
+        ],
+    )
+    def test_task_start_reports_whether_the_automatic_update_started(
+        self,
+        tmp_path: Path,
+        telemetry_popen: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        blocker: str | None,
+        spawn_error: type[Exception] | None,
+        auto_update: str,
+    ) -> None:
+        monkeypatch.setattr(
+            "llm_prompts.cli._get_installed_version", lambda _: (None, None)
+        )
+        monkeypatch.setattr("llm_prompts.auto_update.blocker", lambda _: blocker)
+        monkeypatch.setattr(
+            "llm_prompts.auto_update.subprocess.Popen",
+            MagicMock(side_effect=spawn_error),
+        )
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        messages = ["[pkg] update available:\n- did a thing", _UPDATE_INSTRUCTION]
+        with patch("llm_prompts.cli._collect_update_messages", return_value=messages):
+            plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[], source="")
+        event = json.loads(telemetry_popen.call_args.args[0][3])
+        assert event["properties"]["auto_update"] == auto_update
+
+    @pytest.mark.parametrize(
+        ("blocker", "auto_update"), [(None, "started"), ("session", "session")]
+    )
+    def test_a_compaction_reports_its_retry_of_the_automatic_update(
+        self,
+        tmp_path: Path,
+        telemetry_popen: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        blocker: str | None,
+        auto_update: str,
+    ) -> None:
+        monkeypatch.setattr(
+            "llm_prompts.cli._get_installed_version", lambda _: (None, None)
+        )
+        monkeypatch.setattr("llm_prompts.auto_update.blocker", lambda _: blocker)
+        monkeypatch.setattr("llm_prompts.auto_update.subprocess.Popen", MagicMock())
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        (tmp_path / "update-stamp").write_text(str(time.time()))
+        plugin._update_check_debouncer.hold(True)
+        plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[], source="compact")
+        properties = json.loads(telemetry_popen.call_args.args[0][3])["properties"]
+        assert (properties["command"], properties["flags"]) == (
+            "startup-check",
+            ["--retry"],
+        )
+        assert properties["auto_update"] == auto_update
 
     def test_resume_source_still_debounced(self, tmp_path: Path) -> None:
         plugin = AutoReinstallPlugin()
@@ -879,7 +946,7 @@ class TestUpdateCheckOnTaskStart:
             patch(
                 "llm_prompts.auto_update.blocker", side_effect=lambda _: next(blockers)
             ),
-            patch("llm_prompts.auto_update.start", return_value=True) as start,
+            patch("llm_prompts.auto_update.start", return_value="started") as start,
         ):
             compact = partial(
                 plugin.on_hook,

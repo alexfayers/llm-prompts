@@ -68,6 +68,7 @@ class Run(AbstractContextManager["Run"]):
         """Start inactive until `begin` is called."""
         self.outcome = "ok"
         self.exit_reason: str | None = None
+        self.auto_update: str | None = None
         self._installed_version = installed_version
         self._begun: dict[str, Any] | None = None
 
@@ -176,6 +177,7 @@ class Run(AbstractContextManager["Run"]):
             "overlays": telemetry_core.overlay_versions(config),
             "outcome": self.outcome,
             "exit_reason": self.exit_reason,
+            "auto_update": self.auto_update,
             "duration_s": round(time.time() - begun["started_at"], 1),
             **telemetry_core.context(2),
         }
