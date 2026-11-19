@@ -6,6 +6,8 @@ test("a coded reply is reduced to its OUTCOME line", () => {
 	assert.equal(projectResult("preamble\nOUTCOME done ref:r1\nLong report line one.\nLong report line two."), "OUTCOME done ref:r1");
 	assert.equal(projectResult("prose\nOUTCOME done ref:r1 1a2b3c4\nreport"), "OUTCOME done ref:r1 1a2b3c4");
 	assert.equal(projectResult("OUTCOME done ref:r1\t1a2b3c4\nreport"), "OUTCOME done ref:r1\t1a2b3c4");
+	assert.equal(projectResult("OUTCOME done ref:\nreport"), "OUTCOME done ref:");
+	assert.equal(projectResult("OUTCOME done ref: 1a2b3c4\nreport"), "OUTCOME done ref: 1a2b3c4\nreport");
 	assert.equal(projectResult("no code\nhere"), "no code\nhere");
 });
 
@@ -23,7 +25,8 @@ test("parseOutcome reads the code, the notify flag and the ref from the OUTCOME 
 	assert.deepEqual(parseOutcome("body\nOUTCOME blocked-on-user notify ref:rc-fork-x\nASK: q?"), { code: "blocked-on-user", notify: true, ref: "rc-fork-x" });
 	assert.deepEqual(parseOutcome("OUTCOME maybe ref:rc-y"), { code: "maybe", notify: false, ref: "rc-y" });
 	assert.equal(parseOutcome("OUTCOME done"), undefined);
-	assert.equal(parseOutcome("OUTCOME done ref:"), undefined);
+	assert.deepEqual(parseOutcome("OUTCOME done ref:"), { code: "done", notify: false, ref: "" });
+	assert.equal(parseOutcome("OUTCOME done ref: 1a2b3c4"), undefined);
 	assert.equal(parseOutcome("no code here"), undefined);
 	assert.deepEqual(parseOutcome("prose first\nOUTCOME done ref:rc-x 1a2b3c4\nmore"), { code: "done", notify: false, ref: "rc-x" });
 	assert.deepEqual(parseOutcome("OUTCOME found-it ref:rc-x \nthe answer"), { code: "found-it", notify: false, ref: "rc-x" });

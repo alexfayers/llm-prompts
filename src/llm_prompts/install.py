@@ -29,8 +29,10 @@ from urllib.request import url2pathname
 
 from jinja2 import TemplateError
 
+from . import console
 from .claude_models import catalogue
-from .colors import Color, paint
+from .colors import paint
+from .console import LogLevel, log
 from .exit_reason import ExitReason
 from .home import is_rooted, set_root, user_home
 from .mcp import (
@@ -64,8 +66,6 @@ from .setup import _uv_tools_dir
 if TYPE_CHECKING:
     from .manifest import AgentManifest
 
-LogLevel = Literal["debug", "info", "warn", "error", "success"]
-
 _TARGET_GATING_KEYS = {
     "requires_env",
     "requires_command",
@@ -75,51 +75,7 @@ _TARGET_GATING_KEYS = {
     "extra_variants",
 }
 
-_COLORS: dict[LogLevel, Color] = {
-    "debug": "grey",
-    "info": "white",
-    "warn": "yellow",
-    "error": "red",
-    "success": "green",
-}
-_SYMBOLS: dict[LogLevel, str] = {
-    "debug": "[.]",
-    "info": "[>]",
-    "warn": "[!]",
-    "error": "[x]",
-    "success": "[+]",
-}
-_PLAIN_SYMBOLS: dict[LogLevel, str] = {
-    "debug": "[.]",
-    "info": "[*]",
-    "warn": "[-]",
-    "error": "[!]",
-    "success": "[+]",
-}
-
-
 InstallFailure = Literal["size_guard_failed", "pi_package_failed", "install_failed"]
-_verbose = False
-
-
-def log(level: LogLevel, message: str) -> None:
-    """Log a message with appropriate formatting.
-
-    Args:
-        level: Log level.
-        message: Message to print.
-    """
-    if level == "debug" and not _verbose:
-        return
-    try:
-        if sys.stderr.isatty():
-            print(
-                paint(f"{_SYMBOLS[level]} {message}", _COLORS[level]), file=sys.stderr
-            )
-        else:
-            print(f"{_PLAIN_SYMBOLS[level]} {message}", file=sys.stderr)
-    except BrokenPipeError:
-        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stderr.fileno())
 
 
 _MAX_SUMMARY_NAMES = 8
@@ -4159,8 +4115,7 @@ def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) ->
         agent_names: Agents to uninstall. None means all installed agents.
         verbose: Show debug-level output.
     """
-    global _verbose
-    _verbose = verbose
+    console._verbose = verbose
     from .manifest import delete_agent, delete_rendered_rules, read_manifest
 
     manifest = read_manifest()
@@ -4238,8 +4193,7 @@ def main(
     Returns:
         Why the install did not fully succeed, or None when it did.
     """
-    global _verbose
-    _verbose = verbose
+    console._verbose = verbose
     _changes.clear()
     if root is not None:
         set_root(root)
@@ -4428,7 +4382,7 @@ def main(
             f for f in previous_pi_bundle if Path(f).parent == _pi_rules_dir()
         )
 
-    pi_packages: list[str] | None = None
+    pi_packages: list[str] | None = previous_manifest.get("pi", {}).get("packages")
     pi_installed_packages: list[str] | None = previous_manifest.get("pi", {}).get(
         "pi_installed_packages"
     )
@@ -4612,8 +4566,10 @@ def main(
 
     from .manifest import write_manifest
 
-    pi_skills: list[str] | None = None
-    pi_mcp_rules: list[str] | None = None
+    pi_skills: list[str] | None = previous_manifest.get("pi", {}).get("skills")
+    pi_mcp_rules: list[str] | None = previous_manifest.get("pi", {}).get(
+        "mcp_permissions"
+    )
     pi_rule_roles: dict[str, list[str]] | None = previous_manifest.get("pi", {}).get(
         "pi_rule_roles"
     )

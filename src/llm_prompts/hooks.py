@@ -16,9 +16,8 @@ from typing import Any
 
 from cline_hooks.core.plugin import HookResult, HooksPlugin, UserFacingNote
 
-from . import telemetry
 from .manifest import read_manifest
-from .setup import _UPDATE_INSTRUCTION
+from .setup import _CHANGELOG_PREFIX, _UPDATE_INSTRUCTION
 
 logger = logging.getLogger("hooks.llm-prompts")
 
@@ -102,33 +101,25 @@ _BANNER_TITLE = r"""
  |_|_|_| |_| |_|     | .__/|_|  \___/|_| |_| |_| .__/ \__|___/
                      |_|                       |_|
 """.strip("\n")
-_USER_NOTICE_COMMIT_CAP = 5
+_UPDATE_LIST_HEADER = re.compile(r"(\[[^\]]+\] update available(?: \(.+\))?):")
 _ANSI_COLOR = "\033[1;36m"  # bold cyan
 _ANSI_RESET = "\033[0m"
 
 
-def _shorten_for_user(message: str, cap: int = _USER_NOTICE_COMMIT_CAP) -> str:
-    """Keep a message's header and its first ``cap`` commit subjects, dropping bodies.
+def _shorten_for_user(message: str) -> str:
+    """Keep an update message's header and changelog link, dropping its listed changes.
 
     Args:
         message: A single update message as built by ``_format_update_message``.
-        cap: Maximum number of commit subjects to keep.
 
     Returns:
-        The shortened message, ending in "... and N more" when subjects were cut.
+        The header and any changelog link line, or ``message`` unchanged when it lists nothing.
     """
     header, *rest = message.split("\n")
-    subjects = [line for line in rest if line.startswith("- ")]
-    if not subjects:
+    if not (match := _UPDATE_LIST_HEADER.fullmatch(header)):
         return message
-    already_cut = sum(
-        int(n) for n in re.findall(r"^\.\.\. and (\d+) more$", message, re.MULTILINE)
-    )
-    hidden = len(subjects) - cap + already_cut
-    kept = [header, *subjects[:cap]]
-    if hidden > 0:
-        kept.append(f"... and {hidden} more")
-    return "\n".join(kept)
+    links = rest[:1] if rest and rest[0].startswith(_CHANGELOG_PREFIX) else []
+    return "\n".join([match[1], *links])
 
 
 def _format_user_text(stripped_message: str) -> str:
@@ -240,15 +231,15 @@ class _ReinstallDebouncer:
         return cache if isinstance(cache, dict) else {}
 
 
-def _started_auto_update(fingerprint: str) -> bool:
-    """Start the automatic update, and return whether it started, logging instead of raising."""
+def _start_auto_update(fingerprint: str) -> str:
+    """Start the automatic update, and return ``started`` or what blocked it, logging instead of raising."""
     from . import auto_update
 
     try:
         return auto_update.start(fingerprint)
     except (Exception, SystemExit):
         logger.warning("Failed to start the automatic llm-prompts update")
-        return False
+        return "error"
 
 
 def _held_by_fork(fingerprint: str) -> bool:
@@ -317,6 +308,7 @@ class AutoReinstallPlugin(HooksPlugin):
         if agent_type or _is_headless():
             return None
 
+        from . import telemetry
         from .cli import (
             UpdateCheckFailure,
             _collect_update_messages,
@@ -345,7 +337,14 @@ class AutoReinstallPlugin(HooksPlugin):
                     self._update_check_debouncer.mark_run()
                     self._update_check_debouncer.hold(held)
                     self._update_check_debouncer.store_notice(messages, fingerprint)
-                    if messages and not held and _started_auto_update(fingerprint):
+                    run.auto_update = (
+                        "no-update"
+                        if not messages
+                        else "fork"
+                        if held
+                        else _start_auto_update(fingerprint)
+                    )
+                    if run.auto_update == "started":
                         messages = [*messages, _AUTO_UPDATE_STARTED]
             elif source in _DEBOUNCED_TASK_START_SOURCES:
                 messages = []
@@ -355,7 +354,9 @@ class AutoReinstallPlugin(HooksPlugin):
                     and not _held_by_fork(fingerprint)
                 ):
                     self._update_check_debouncer.hold(False)
-                    if _started_auto_update(fingerprint):
+                    run.begin("startup-check", ["--retry"])
+                    run.auto_update = _start_auto_update(fingerprint)
+                    if run.auto_update == "started":
                         messages = [_AUTO_UPDATE_STARTED]
             else:
                 run.begin("startup-check", ["--cached"])

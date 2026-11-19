@@ -91,6 +91,7 @@ _UPDATE_INSTRUCTION = (
     "anything that looks like a breaking change."
 )
 
+_CHANGELOG_PREFIX = "Changelog: "
 
 SHIPPED_PATHS = [
     "src",
@@ -108,6 +109,8 @@ def _format_update_message(
     remote: str | None = None,
     cap: int = 20,
     release: tuple[str, str] | None = None,
+    changelog: str | None = None,
+    sections: list[str] | None = None,
 ) -> list[str]:
     """Build an update-availability message, listing commit messages when known.
 
@@ -120,6 +123,8 @@ def _format_update_message(
         remote: The remote commit label, used only for the bare fallback message.
         cap: Maximum number of commits to list before truncating.
         release: The installed and available versions, shown in the header.
+        changelog: The changelog URL, shown under the header.
+        sections: CHANGELOG sections, all listed in place of ``subjects`` when given.
 
     Returns:
         A single multi-line message listing the commits, body lines indented
@@ -129,13 +134,16 @@ def _format_update_message(
     if release:
         local, remote = release
     versions = f" ({local} -> {remote})" if local and remote else ""
-    if not subjects:
-        return [f"[{name}] update available{versions}"]
+    links = [f"{_CHANGELOG_PREFIX}{changelog}"] if changelog else []
+    entries = sections or subjects
+    if not entries:
+        return ["\n".join([f"[{name}] update available{versions}", *links])]
 
-    lines = [f"[{name}] update available{versions if release else ''}:"]
-    lines.extend("- " + subject.replace("\n", "\n  ") for subject in subjects[:cap])
-    if len(subjects) > cap:
-        lines.append(f"... and {len(subjects) - cap} more")
+    shown = sections or entries[:cap]
+    lines = [f"[{name}] update available{versions if release else ''}:", *links]
+    lines.extend("- " + subject.replace("\n", "\n  ") for subject in shown)
+    if len(entries) > len(shown):
+        lines.append(f"... and {len(entries) - len(shown)} more")
     return ["\n".join(lines)]
 
 
@@ -226,7 +234,7 @@ def release_notes(changelog: str, old: str, new: str) -> list[str]:
         "\n".join(
             line for line in changelog[start.start() : end].splitlines() if line.strip()
         )
-        for start, end in zip(starts, ends, strict=True)
+        for start, end in zip(starts, ends, strict=False)
         if low < tuple(map(int, start.groups())) <= high
     ]
 
@@ -297,10 +305,10 @@ def _commit_subjects_between(
     return [_commit_entry(lines) for lines in messages if lines]
 
 
-def _remote_commit_subjects(
-    git_url: str, from_sha: str, to_sha: str
-) -> list[str] | None:
-    """Get commit subjects between two SHAs by cloning a remote into a temp dir.
+def _remote_changes(
+    git_url: str, from_sha: str, to_sha: str, read_changelog: bool = False
+) -> tuple[list[str] | None, str]:
+    """Get commit subjects between two SHAs, and the CHANGELOG at ``to_sha``, by cloning a remote into a temp dir.
 
     Uses a treeless, no-checkout partial clone to fetch history cheaply. Any
     failure (git missing, clone/log error, timeout) degrades to ``None`` rather
@@ -310,16 +318,18 @@ def _remote_commit_subjects(
         git_url: The remote git URL to clone.
         from_sha: The exclusive lower-bound commit.
         to_sha: The inclusive upper-bound commit.
+        read_changelog: Whether to read CHANGELOG.md at ``to_sha``.
 
     Returns:
-        The subject lines newest-first, or ``None`` on any failure.
+        The subject lines newest-first, or ``None`` on any failure, and the
+        CHANGELOG text, or "" when not read or missing.
     """
     if not shutil.which("git"):
         print(
             f"Warning: git not available; skipping commit subjects for {git_url}",
             file=sys.stderr,
         )
-        return None
+        return None, ""
     try:
         with tempfile.TemporaryDirectory() as tmp:
             result = run_with_retries(
@@ -334,16 +344,28 @@ def _remote_commit_subjects(
                     f"Warning: could not clone {git_url} for commit subjects",
                     file=sys.stderr,
                 )
-                return None
-            return _commit_subjects_between(Path(tmp), from_sha, to_sha, SHIPPED_PATHS)
+                return None, ""
+            subjects = _commit_subjects_between(
+                Path(tmp), from_sha, to_sha, SHIPPED_PATHS
+            )
+            if not read_changelog:
+                return subjects, ""
+            changelog = subprocess.run(
+                ["git", "-C", tmp, "show", f"{to_sha}:CHANGELOG.md"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=GIT_TIMEOUT,
+            )
+            return subjects, changelog.stdout
     except subprocess.TimeoutExpired:
         print(
             f"Warning: timed out cloning {git_url} for commit subjects",
             file=sys.stderr,
         )
-        return None
+        return None, ""
     except Exception:
-        return None
+        return None, ""
 
 
 def _run_parallel_ordered[T](callables: list[Callable[[], T]]) -> list[T]:

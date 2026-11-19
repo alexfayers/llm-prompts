@@ -16,11 +16,13 @@ from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Any, Literal
 
+from cline_hooks.core.user_install import DEV_BIN_DIR_ENV
+
 from llm_prompts import setup
 from llm_prompts.benchmark import paths
 from llm_prompts.benchmark.agents import AGENTS
 from llm_prompts.benchmark.agents.adapter import VariantBuildError
-from llm_prompts.benchmark.cell.audit import audit, cell_paths
+from llm_prompts.benchmark.cell.audit import audit, cell_paths, foreign_hooks
 from llm_prompts.benchmark.cell.env import isolated_env
 from llm_prompts.benchmark.types import WORKTREE, Agent, Variant
 from llm_prompts.install import prompts_dir
@@ -359,9 +361,9 @@ def install_tools(tools: Mapping[str, str]) -> None:
 def template(venv_dir: Path, agent: Agent, template_dir: Path) -> Path:
     """Install the agent prompts and hooks into ``template_dir`` and return it."""
     template_dir.mkdir(parents=True, exist_ok=True)
-    env = isolated_env(template_dir, venv_dir)
-    name = AGENTS[agent].template_name
     bin_dir = venv_dir / "bin"
+    env = {**isolated_env(template_dir, venv_dir), DEV_BIN_DIR_ENV: str(bin_dir)}
+    name = AGENTS[agent].template_name
     _run(
         name,
         [
@@ -459,7 +461,10 @@ def build(
     pins = _pin_summary(config, overlays, ref)
     if not (
         (cache / BUILD_COMPLETE).exists()
-        and all(path.is_dir() and not cell_paths(path) for path in templates.values())
+        and all(
+            path.is_dir() and not cell_paths(path) and not foreign_hooks(path, cache)
+            for path in templates.values()
+        )
     ):
         print(f"benchmark: building {label} {ref}{pins}", file=sys.stderr)
         shutil.rmtree(cache, ignore_errors=True)
@@ -474,6 +479,11 @@ def build(
             if hits := cell_paths(template_dir):
                 raise VariantBuildError(
                     ref, f"cell home path {hits[0].marker} in {hits[0].path}"
+                )
+            if hits := foreign_hooks(template_dir, cache):
+                raise VariantBuildError(
+                    ref,
+                    f"hook binary {hits[0].marker} outside {cache} in {hits[0].path}",
                 )
         (cache / BUILD_COMPLETE).touch()
         print(f"benchmark: built {label} {ref}{pins}", file=sys.stderr)
