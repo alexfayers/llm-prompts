@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
@@ -22,7 +23,7 @@ from cline_hooks.handlers.commands import (
 from cline_hooks.handlers.search_scope import effective_cwd
 
 from .. import home
-from ..overlay_merge import merged_test_gates
+from ..overlay_merge import TEST_GATES, merged_test_gates
 from .gate import guards_active
 from .receipts import ReceiptStore, tree_fingerprint
 
@@ -42,7 +43,8 @@ class _Match(TypedDict):
 
 
 class _Gate(TypedDict):
-    command: str
+    command: NotRequired[str]
+    pattern: NotRequired[str | list[str]]
     all: NotRequired[list[str]]
     any: NotRequired[list[str]]
     match: NotRequired[_Match]
@@ -72,15 +74,60 @@ def _repo(directory: str) -> tuple[Path, Path] | None:
     )
 
 
-def _detected_gate(toplevel: Path) -> str | None:
-    """Return the test command overlay, then core, test-gates.json detects, or None."""
+@dataclass(frozen=True)
+class _TestRun:
+    """What counts as a repo's test run, or the block a broken gate gives."""
+
+    label: str
+    command: list[str] | None = None
+    patterns: tuple[re.Pattern[str], ...] = ()
+    error: str | None = None
+
+    def matches(self, words: list[str]) -> bool:
+        """Report whether the words are the command, or match a pattern in full."""
+        if self.command is not None:
+            return words == self.command
+        return any(regex.fullmatch(shlex.join(words)) for regex in self.patterns)
+
+
+def _from_command(command: str) -> _TestRun:
+    """Return the test run of an exact command."""
+    return _TestRun(f"`{command}`", shlex.split(command))
+
+
+def _from_gate(gate: _Gate, source: Path) -> _TestRun:
+    """Return the test run of a gate from the source file, with an error where a pattern does not compile."""
+    if "command" in gate:
+        return _from_command(gate["command"])
+    pattern = gate.get("pattern", [])
+    regexes = [pattern] if isinstance(pattern, str) else pattern
+    compiled = []
+    for regex in regexes:
+        try:
+            compiled.append(re.compile(regex))
+        except re.error as error:
+            return _TestRun(
+                "",
+                error=f"MUST fix the test gate pattern `{regex}` in {source}: {error}.",
+            )
+    return _TestRun(
+        "a command matching " + " or ".join(f"`{regex}`" for regex in regexes),
+        patterns=tuple(compiled),
+    )
+
+
+def _detected_gate(toplevel: Path) -> _TestRun | None:
+    """Return the test run of the gate overlay, then core, test-gates.json detects, or None."""
     from ..install import _discover_overlay_paths
 
-    gates = cast(
-        "list[_Gate]",
-        merged_test_gates([*_discover_overlay_paths(quiet=True), _PROMPTS]),
-    )
-    for gate in gates:
+    gates = [
+        (cast("_Gate", gate), root / TEST_GATES)
+        for root in [*_discover_overlay_paths(quiet=True), _PROMPTS]
+        for gate in merged_test_gates([root])
+    ]
+    for gate, source in gates:
+        if "command" not in gate and "pattern" not in gate:
+            continue
         every = gate.get("all", [])
         some = gate.get("any")
         match = gate.get("match")
@@ -103,14 +150,14 @@ def _detected_gate(toplevel: Path) -> str | None:
             )
         ):
             continue
-        return gate["command"]
+        return _from_gate(gate, source)
     return None
 
 
-def _test_command(toplevel: Path) -> list[str] | None:
-    """Return the repo's test command: the env setting, else the detected gate, else None."""
-    configured = os.environ.get(TEST_COMMAND_ENV) or _detected_gate(toplevel)
-    return shlex.split(configured) if configured else None
+def _test_gate(toplevel: Path) -> _TestRun | None:
+    """Return the repo's test run: the env setting as a command, else the detected gate's, else None."""
+    configured = os.environ.get(TEST_COMMAND_ENV)
+    return _from_command(configured) if configured else _detected_gate(toplevel)
 
 
 def _gate_words(words: list[str]) -> list[str]:
@@ -215,7 +262,8 @@ class CommitGuard(HooksPlugin):
                     workspace_roots[0] if workspace_roots else os.getcwd(),
                 )
             )
-            if repo and _gate_words([cmd.name, *cmd.words]) == _test_command(repo[0]):
+            gate = repo and _test_gate(repo[0])
+            if repo and gate and gate.matches(_gate_words([cmd.name, *cmd.words])):
                 ReceiptStore().record(repo[0], tree_fingerprint(repo[0]))
                 return
 
@@ -227,10 +275,10 @@ class CommitGuard(HooksPlugin):
             if verb is None or commands is None:
                 continue
             repo = _repo(_git_directory(commands, index, workspace_roots))
-            test = repo and _test_command(repo[0])
+            gate = repo and _test_gate(repo[0])
             if (
                 not repo
-                or not test
+                or not gate
                 or any((repo[1] / marker).exists() for marker in _IN_PROGRESS)
             ):
                 continue
@@ -238,9 +286,11 @@ class CommitGuard(HooksPlugin):
                 return HookResult(
                     block="MUST commit or stash all changes before git push."
                 )
+            if gate.error:
+                return HookResult(block=gate.error)
             if not ReceiptStore().fresh(repo[0], tree_fingerprint(repo[0])):
                 return HookResult(
-                    block=f"MUST run `{' '.join(test)}` and see it pass on the current files before git {verb}."
+                    block=f"MUST run {gate.label} and see it pass on the current files before git {verb}."
                 )
         return None
 
