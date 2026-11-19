@@ -10,7 +10,11 @@ import pytest
 from conftest import FakeSubprocess, run_capturing_exit
 
 from llm_prompts.cli import main
-from llm_prompts.install import get_managed_dirs, try_install_memory_opencode
+from llm_prompts.install import (
+    get_managed_dirs,
+    try_install_hooks_opencode,
+    try_install_memory_opencode,
+)
 from llm_prompts.install import main as install_main
 
 pytestmark = pytest.mark.usefixtures("bare_tree")
@@ -69,6 +73,19 @@ class TestOpencodeToolInstalls:
             [binary, "setup-service"],
         ]
 
+    def test_hooks_install_for_opencode(
+        self,
+        fake_subprocess: FakeSubprocess,
+        venv_and_user_bins: tuple[Path, Path],
+    ) -> None:
+        _, user_bin = venv_and_user_bins
+
+        try_install_hooks_opencode()
+
+        assert fake_subprocess.commands == [
+            [str(user_bin / "cline-hook"), "install", "opencode"]
+        ]
+
     def test_nothing_runs_without_a_user_wide_binary(
         self,
         fake_subprocess: FakeSubprocess,
@@ -78,17 +95,20 @@ class TestOpencodeToolInstalls:
         venv_bin, _ = venv_and_user_bins
         monkeypatch.setenv("PATH", str(venv_bin))
 
+        try_install_hooks_opencode()
         try_install_memory_opencode()
 
         assert fake_subprocess.commands == []
 
-    def test_install_command_sets_up_memory(self) -> None:
+    def test_install_command_sets_up_hooks_and_memory(self) -> None:
         with (
             patch("sys.argv", ["llm-prompts", "install", "opencode", "--no-update"]),
             patch("llm_prompts.install.main", return_value=False),
+            patch("llm_prompts.install.try_install_hooks_opencode") as hooks,
             patch("llm_prompts.install.try_install_memory_opencode") as memory,
         ):
             exit_code = run_capturing_exit(main)
 
         assert exit_code in (0, None)
+        hooks.assert_called_once_with()
         memory.assert_called_once_with()

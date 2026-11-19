@@ -1560,10 +1560,12 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.install.try_install_memory_codex") as codex,
             patch("llm_prompts.install.try_install_memory_pi") as pi_memory,
             patch("llm_prompts.install.try_install_memory_opencode") as opencode_memory,
+            patch("llm_prompts.install.try_install_hooks_opencode") as opencode_hooks,
             patch("llm_prompts.cli._auto_migrate_memory_db") as migrate,
         ):
             main()
         return {
+            "opencode_hooks": opencode_hooks,
             "hooks": hooks,
             "memory": memory,
             "allow": allow,
@@ -1581,6 +1583,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
     def test_a_pulled_source_reconfigures_the_agents(self) -> None:
         mocks = self._run_update({"cline-hooks"})
         mocks["hooks"].assert_called_once_with()
+        mocks["opencode_hooks"].assert_called_once_with()
         mocks["allow"].assert_called_once_with()
 
     def test_memory_config_and_db_wait_for_a_memory_change(self) -> None:
