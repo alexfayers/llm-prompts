@@ -367,7 +367,7 @@ def _local_source_messages(name: str, source: str, ref: str = "") -> list[str]:
         return []
 
     run_with_retries(
-        ["git", "-C", str(repo), "fetch", "--quiet", "--tags"],
+        ["git", "-C", str(repo), "fetch", "--quiet", "--tags", "--force"],
         check=True,
         capture_output=True,
         text=True,
@@ -624,7 +624,7 @@ def _pull_one_local_source(
     fetch = (
         subprocess.CompletedProcess([], 0, "", "")
         if repo in _FETCHED_REPOS
-        else run_git(repo, "fetch", "--quiet", "--tags")
+        else run_git(repo, "fetch", "--quiet", "--tags", "--force")
     )
     fetch_failed = fetch.returncode != 0
     fetch_error = f"[{name}] could not fetch: {fetch.stderr.strip()}"
