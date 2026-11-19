@@ -19,11 +19,13 @@ from llm_prompts.install import (
     _expanded_definition,
     _linked_content,
     _parse_roles,
+    _passes_gate,
     _pi_agent_dir,
     _pi_core_base_extensions,
     _pi_package_dir,
-    _requirements_met,
+    _PiRuleBundle,
     _split_npm_source,
+    _validate_rule_conditions,
     get_managed_dirs,
     prompts_dir,
     uninstall,
@@ -259,19 +261,6 @@ class TestPiManagedDirs:
         agent_dir = home / ".pi" / "agent"
         assert agent_dir / "skills" in managed
         assert agent_dir not in managed
-
-
-class TestRequiresAbsentCommand:
-    @pytest.mark.parametrize(("herdr", "expected"), [(False, True), (True, False)])
-    def test_gate_open_only_when_command_absent(
-        self, herdr: bool, expected: bool
-    ) -> None:
-        found = "/usr/bin/herdr" if herdr else None
-        with patch("llm_prompts.install.shutil.which", return_value=found):
-            assert (
-                _requirements_met({"requires_absent_command": "herdr"}, "pi")
-                is expected
-            )
 
 
 class TestPiPackages:
@@ -2072,6 +2061,57 @@ class TestRoles:
         with pytest.raises(ValueError, match="x.md"):
             _parse_roles(content, "x.md")
 
+    @pytest.mark.parametrize(
+        "value",
+        [
+            '""',
+            "tool:",
+            "env:",
+            "custom\nroles: worker",
+            "a\nload_when: b",
+            "env:A\npaths: x",
+        ],
+    )
+    def test_invalid_load_when_is_rejected(self, value: str) -> None:
+        with pytest.raises(ValueError, match="x.md"):
+            _parse_roles(f"---\nload_when: {value}\n---\n\nbody\n", "x.md")
+
+    def test_deprecated_requires_key_becomes_load_when(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        skill = tmp_path / "shared" / "skills" / "x" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("---\nrequires_command: sometool\n---\n", encoding="utf-8")
+        _validate_rule_conditions(tmp_path, [])
+        assert "use load_when: tool:sometool" in capsys.readouterr().err
+        with patch("llm_prompts.install.shutil.which", return_value=None):
+            assert not _passes_gate(skill)
+        agent = tmp_path / "shared" / "agents" / "a.md"
+        agent.parent.mkdir(parents=True)
+        agent.write_text("---\nrequires_absent_command: x\n---\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="a.md: requires_absent_command"):
+            _validate_rule_conditions(tmp_path, [])
+
+    def test_package_load_when_allows_only_env_and_tool(self, tmp_path: Path) -> None:
+        settings = tmp_path / "pi" / "settings.json"
+        settings.parent.mkdir()
+        entry = {"source": "npm:pkg", "load_when": "custom-kind"}
+        settings.write_text(json.dumps({"packages": [entry]}), encoding="utf-8")
+        with pytest.raises(ValueError, match="only env: and tool:"):
+            _validate_rule_conditions(tmp_path, [])
+
+    def test_audience_with_paths_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="x.md"):
+            _parse_roles("---\naudience: main\npaths: x\n---\n\nbody\n", "x.md")
+
+    def test_conditional_rules_stay_out_of_every_definition(self) -> None:
+        bundle = _PiRuleBundle(
+            {"a.md": "A", "b.md": "B"},
+            {"a.md": frozenset({"core"}), "b.md": frozenset({"when:env:X"})},
+        )
+        assert bundle.select({"name": "custom"}) == ["a.md"]
+        assert bundle.select({"rules": "a, b"}) == ["a.md"]
+
     def test_legacy_pi_roles_key_is_not_read(self) -> None:
         content = "---\npi_roles: lead\n---\n\nbody\n"
         assert _parse_roles(content, "x.md") == frozenset({"core"})
@@ -2158,6 +2198,67 @@ class TestPiRoleRules:
         worker = _frontmatter(herdsman_home / "agents" / "worker.md")
         assert worker["inheritGlobalContext"] is False
         assert worker["inheritProjectContext"] is True
+
+
+class TestPiLoadWhenRules:
+    @pytest.fixture
+    def herdsman_home(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        overlay = _rule_overlay(tmp_path / "overlay", zz_core=("", "CORE-MARKER"))
+        (overlay / "shared" / "rules" / "zz_scoped.md").write_text(
+            "---\nload_when: env:LOAD_WHEN_FLAG\nroles: lead\naudience: main\n---\n\n# zz_scoped\n\nSCOPED-MARKER\n",
+            encoding="utf-8",
+        )
+        (overlay / "shared" / "rules" / "zz_custom.md").write_text(
+            "---\nload_when: custom-kind\n---\n\nCUSTOM\n", encoding="utf-8"
+        )
+        (overlay / "shared" / "rules" / "zz_paths.md").write_text(
+            "---\nroles: lead, worker\npaths: '**/*.toml, docs/**'\n---\n\nPATHS-MARKER\n",
+            encoding="utf-8",
+        )
+        home = tmp_path / "home"
+        _install(home, tmp_path / "installed.json", [overlay])
+        return home / ".pi" / "agent"
+
+    @pytest.mark.usefixtures("core_tree")
+    def test_invalid_load_when_fails_an_install_without_pi(
+        self, tmp_path: Path
+    ) -> None:
+        overlay = _rule_overlay(tmp_path / "overlay", zz_core=("", "CORE-MARKER"))
+        (overlay / "shared" / "rules" / "zz_bad.md").write_text(
+            "---\nload_when: tool:\n---\n\nBAD\n", encoding="utf-8"
+        )
+        with pytest.raises(ValueError, match="zz_bad.md"):
+            _install(
+                tmp_path / "home",
+                tmp_path / "m.json",
+                [overlay],
+                targets=["claude-code"],
+            )
+
+    @pytest.mark.usefixtures("core_tree")
+    def test_rule_with_load_when_is_listed_instead_of_loaded(
+        self, herdsman_home: Path
+    ) -> None:
+        lead = (herdsman_home / "AGENTS.md").read_text(encoding="utf-8")
+        assert "CORE-MARKER" in lead
+        assert "SCOPED-MARKER" not in lead
+        assert "PATHS-MARKER" not in lead
+        rule = (herdsman_home / "rules" / "zz_scoped.md").read_text(encoding="utf-8")
+        assert "SCOPED-MARKER" in rule
+        assert "load_when" not in rule
+        references = _references(herdsman_home / "agents" / "worker.md")
+        assert "zz_core.md" in references
+        assert "zz_scoped.md" not in references
+        assert "zz_paths.md" in references
+        listed = (herdsman_home / "conditional-rules.json").read_text(encoding="utf-8")
+        assert json.loads(listed) == {
+            "env:LOAD_WHEN_FLAG": ["zz_scoped.md"],
+            "audience:main": ["zz_scoped.md"],
+            "custom-kind": ["zz_custom.md"],
+            "paths:**/*.toml": ["zz_paths.md"],
+            "paths:docs/**": ["zz_paths.md"],
+        }
 
 
 class TestPiRoleSizes:
