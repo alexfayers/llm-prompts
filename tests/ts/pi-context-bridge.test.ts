@@ -132,6 +132,22 @@ describe("a warm fork's first request", () => {
 		assert.deepEqual(sent.messages, [1, 2]);
 	});
 
+	test("sends main's prompt cache key in place of its own", async () => {
+		let track: any;
+		trackPrefix({ on: (_event: string, listener: unknown) => (track = listener) } as any);
+		track({ payload: { ...lead, prompt_cache_key: "main-session" } });
+		fs.rmSync(path.join(scratch, "lead-prefix.json"), { force: true });
+		writeLeadPrefix(scratch);
+		fs.writeFileSync(handshake, JSON.stringify({ role: "reader", inherited: "r1" }));
+		const sent = await (await loadExtension("pi-context/index")).fire("before_provider_request", { payload: { ...reinstalled, prompt_cache_key: "fork-session" } });
+		assert.equal(sent.prompt_cache_key, "main-session");
+		assert.deepEqual(sent.messages, [1, 2]);
+	});
+
+	test("adds no prompt cache key to a request without one", async () => {
+		assert.equal("prompt_cache_key" in (await forkRequest(reinstalled)), false);
+	});
+
 	test("keeps its own prefix when its tools are not main's", async () => {
 		const own = { system: "s", tools: [{ name: "read" }], messages: [] };
 		assert.equal(await forkRequest(own), undefined);
