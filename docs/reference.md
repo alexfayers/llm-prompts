@@ -32,7 +32,7 @@ llm-prompts contribute list|sync|update        # keep each worktree branch in sy
 
 ## What gets installed
 
-- Rules are markdown files the agent always reads, such as coding style or commit conventions. Kiro and Claude Code get one file per rule, in `~/.kiro/steering/` and `~/.claude/rules/`. Codex, Antigravity and Pi get one concatenated `AGENTS.md`.
+- Rules are markdown files the agent always reads, such as coding style or commit conventions. Kiro and Claude Code get one file per rule, in `~/.kiro/steering/` and `~/.claude/rules/`. Codex, Antigravity, OpenCode and Pi get one concatenated `AGENTS.md`.
 - Workflows are step-by-step procedures loaded on demand. Only Pi gets them, as prompt templates.
 - Skills are directories with a `SKILL.md` the agent reads before a specific kind of task. They are symlinked, so source edits show up immediately. A skill with `inject_at_start: true` in its `metadata` frontmatter is injected as a `Startup block` by the cline-hooks `SkillStartupBlocks` plugin at the start of a main session.
 - Agents are subagent definitions: markdown files with YAML frontmatter. Files in `shared/agents/` go to Claude Code and Pi, files in `claude-code/agents/` go to Claude Code, with template variables substituted.
@@ -61,7 +61,7 @@ source = "git+https://github.com/alexfayers/mcp-memory.git"
 
 `source` is a `git+` URL or a local path (`~/...`). All tools go into one uv environment owned by the first entry, and the commands each tool declares under `[project.scripts]` are exposed from it.
 
-A `git+` source installs its highest stable release tag (`vX.Y.Z`), or the default branch tip if it has none. `update` then reports `update available (v0.32.0 -> v0.33.0)` with the commit subjects in between. A source that already ends in `@<ref>` is left as it is. A local path checkout moves to its highest stable release tag, or its upstream branch if it has none, with its local commits kept on top. `update` then shows the CHANGELOG sections in between.
+A `git+` source installs its highest stable release tag (`vX.Y.Z`), or the default branch tip if it has none. A source that already ends in `@<ref>` is left as it is. A local path checkout moves to its highest stable release tag, or its upstream branch if it has none, with its local commits kept on top. For a new release of either kind, the session-start notice shows the user `update available (v0.32.0 -> v0.33.0)` and, for a GitHub source, a `Changelog:` link. Agents get the CHANGELOG sections in between, or the commit subjects when the CHANGELOG has none.
 
 `ref` is optional. It makes a `git+` entry follow that branch, tag or commit instead of releases, and a local path follow that branch of its remote:
 
@@ -74,7 +74,7 @@ ref = "main"
 
 ### Automatic updates
 
-At session start, when updates are available, llm-prompts runs `llm-prompts update` in the background and logs its output to `auto-update.log` in the llm-prompts data dir. It skips the run, and keeps showing the update notice, while a session holds a configured local checkout or plugin checkout, or that checkout has commits or edits its release or remote lacks, or while a pi fork runs, and retries at the next reload or compaction. It never reloads the session: reload once it finishes. `update`, `install`, `setup`, `contribute sync --apply` and the automatic update share one lock, so a second one refuses to start. The reinstall after a prompt file edit skips while a full update runs, since that update installs the edit. A failed run may leave some tools updated, and the next session start shows why. It does not retry until the installed versions change. Turn it off with:
+At session start, when updates are available, llm-prompts runs `llm-prompts update` in the background and logs its start time and output to `auto-update.log` in the llm-prompts data dir. It skips the run, and keeps showing the update notice, while a session holds a configured local checkout or plugin checkout, or that checkout has commits its release or remote lacks or edits (untracked files in a local checkout do not count), or while a pi fork runs, and retries at the next reload or compaction. It never reloads the session: reload once it finishes. `update`, `install`, `setup`, `contribute sync --apply` and the automatic update share one lock, so a second one refuses to start. The reinstall after a prompt file edit skips while a full update runs, since that update installs the edit. A failed run may leave some tools updated, and the next session start shows why. It does not retry until the installed versions change. Turn it off with:
 
 ```toml
 [update]

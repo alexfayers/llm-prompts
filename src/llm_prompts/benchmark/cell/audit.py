@@ -27,6 +27,7 @@ CELL_PATH = re.compile(
     rf"(?:{re.escape(paths.SHARED_ROOT_PREFIX)}|{re.escape(paths.CELL_ROOT_PREFIX)})\d+-"
     rf"|{re.escape(paths.CELL_MOUNT_NAME)}".encode()
 )
+HOOK_BINARY = re.compile(rb"(?<![\w.~-])/[^\s\"'`]*/cline-hook(?![\w-])")
 
 
 @dataclass(frozen=True)
@@ -148,19 +149,36 @@ def audit(
     return sorted(hits, key=lambda hit: (hit.path, hit.marker))
 
 
-def cell_paths(root: Path) -> list[AuditHit]:
-    """Return the first reference to a cell root in each file under ``root``, which a template or build must never hold."""
-    hits: list[AuditHit] = []
+def _scanned_files(root: Path) -> Iterator[Path]:
     for path in sorted(root.rglob("*")):
         if (
-            path.is_symlink()
-            or not path.is_file()
-            or not THIRD_PARTY_DIRS.isdisjoint(path.relative_to(root).parts)
+            not path.is_symlink()
+            and path.is_file()
+            and THIRD_PARTY_DIRS.isdisjoint(path.relative_to(root).parts)
         ):
-            continue
-        if found := CELL_PATH.search(path.read_bytes()):
-            hits.append(AuditHit(path, found[0].decode(errors="replace")))
-    return hits
+            yield path
+
+
+def cell_paths(root: Path) -> list[AuditHit]:
+    """Return the first reference to a cell root in each file under ``root``, which a template or build must never hold."""
+    return [
+        AuditHit(path, found[0].decode(errors="replace"))
+        for path in _scanned_files(root)
+        if (found := CELL_PATH.search(path.read_bytes()))
+    ]
+
+
+def foreign_hooks(root: Path, own: Path) -> list[AuditHit]:
+    """Return each hook binary path in the files under ``root`` that lies outside ``own``."""
+    return [
+        AuditHit(path, binary)
+        for path in _scanned_files(root)
+        for binary in dict.fromkeys(
+            found.decode(errors="replace")
+            for found in HOOK_BINARY.findall(path.read_bytes())
+        )
+        if not Path(binary).is_relative_to(own)
+    ]
 
 
 def _real_home_references(text: str) -> list[str]:

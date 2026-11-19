@@ -7,7 +7,6 @@ import json
 import os
 import platform
 import re
-import ssl
 import sys
 import time
 import tomllib
@@ -17,9 +16,6 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from subprocess import DEVNULL, CalledProcessError, Popen, SubprocessError, run
 from typing import Any
-from urllib.request import Request, urlopen
-
-import truststore
 
 from . import home
 
@@ -134,6 +130,11 @@ def may_send(max_age: float = OPT_STATE_MAX_AGE) -> bool:
 
 def post(body: str) -> bool:
     """POST a capture body to PostHog, returning whether it succeeded."""
+    import ssl
+    from urllib.request import Request, urlopen
+
+    import truststore
+
     request = Request(POSTHOG_URL, body.encode(), {"Content-Type": "application/json"})
     try:
         with urlopen(

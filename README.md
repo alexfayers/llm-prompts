@@ -1,6 +1,6 @@
 # llm-prompts
 
-Installs one shared set of rules, skills, workflows and agents into several LLM coding assistants: Kiro, Claude Code, Codex, Antigravity and Pi.
+Installs one shared set of rules, skills, workflows and agents into several LLM coding assistants: Kiro, Claude Code, Codex, Antigravity, OpenCode and Pi.
 
 ## Install
 
