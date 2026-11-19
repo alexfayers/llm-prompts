@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">378 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">378<span class="text"> run</span></button>
+            <span class="text">384 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">384<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_a44f0ac069e85531_test_telemetry_core_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-19 21:23 +0000
+            created at 2026-11-19 21:25 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -327,7 +327,7 @@
     <p class="run run2"><span class="n"><a id="t245" href="#t245">245</a></span><span class="t">    <span class="nam">monkeypatch</span><span class="op">:</span> <span class="nam">pytest</span><span class="op">.</span><span class="nam">MonkeyPatch</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t246" href="#t246">246</a></span><span class="t"><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t247" href="#t247">247</a></span><span class="t">    <span class="nam">urlopen</span> <span class="op">=</span> <span class="nam">MagicMock</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t248" href="#t248">248</a></span><span class="t">    <span class="nam">monkeypatch</span><span class="op">.</span><span class="nam">setattr</span><span class="op">(</span><span class="str">&quot;llm_prompts.telemetry_core.urlopen&quot;</span><span class="op">,</span> <span class="nam">urlopen</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t248" href="#t248">248</a></span><span class="t">    <span class="nam">monkeypatch</span><span class="op">.</span><span class="nam">setattr</span><span class="op">(</span><span class="str">&quot;urllib.request.urlopen&quot;</span><span class="op">,</span> <span class="nam">urlopen</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t249" href="#t249">249</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t250" href="#t250">250</a></span><span class="t">    <span class="key">assert</span> <span class="nam">telemetry_core</span><span class="op">.</span><span class="nam">post</span><span class="op">(</span><span class="str">&quot;{}&quot;</span><span class="op">)</span> <span class="key">is</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t251" href="#t251">251</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -339,7 +339,7 @@
     <p class="run run2"><span class="n"><a id="t257" href="#t257">257</a></span><span class="t"><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t258" href="#t258">258</a></span><span class="t">    <span class="nam">monkeypatch</span><span class="op">.</span><span class="nam">setenv</span><span class="op">(</span><span class="str">&quot;LLM_PROMPTS_TELEMETRY_DEBUG&quot;</span><span class="op">,</span> <span class="str">&quot;1&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t259" href="#t259">259</a></span><span class="t">    <span class="nam">monkeypatch</span><span class="op">.</span><span class="nam">setattr</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t260" href="#t260">260</a></span><span class="t">        <span class="str">&quot;llm_prompts.telemetry_core.urlopen&quot;</span><span class="op">,</span> <span class="nam">MagicMock</span><span class="op">(</span><span class="nam">side_effect</span><span class="op">=</span><span class="nam">URLError</span><span class="op">(</span><span class="str">&quot;no cert&quot;</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t260" href="#t260">260</a></span><span class="t">        <span class="str">&quot;urllib.request.urlopen&quot;</span><span class="op">,</span> <span class="nam">MagicMock</span><span class="op">(</span><span class="nam">side_effect</span><span class="op">=</span><span class="nam">URLError</span><span class="op">(</span><span class="str">&quot;no cert&quot;</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t261" href="#t261">261</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t262" href="#t262">262</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t263" href="#t263">263</a></span><span class="t">    <span class="nam">telemetry_core</span><span class="op">.</span><span class="nam">send</span><span class="op">(</span><span class="nam">EVENT</span><span class="op">,</span> <span class="str">&quot;id-1&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -355,7 +355,7 @@
     <p class="run run2"><span class="n"><a id="t273" href="#t273">273</a></span><span class="t"><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t274" href="#t274">274</a></span><span class="t">    <span class="nam">urlopen</span> <span class="op">=</span> <span class="nam">MagicMock</span><span class="op">(</span><span class="nam">side_effect</span><span class="op">=</span><span class="nam">URLError</span><span class="op">(</span><span class="str">&quot;offline&quot;</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t275" href="#t275">275</a></span><span class="t">    <span class="nam">monkeypatch</span><span class="op">.</span><span class="nam">setenv</span><span class="op">(</span><span class="str">&quot;LLM_PROMPTS_TELEMETRY_DEBUG&quot;</span><span class="op">,</span> <span class="nam">debug</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t276" href="#t276">276</a></span><span class="t">    <span class="nam">monkeypatch</span><span class="op">.</span><span class="nam">setattr</span><span class="op">(</span><span class="str">&quot;llm_prompts.telemetry_core.urlopen&quot;</span><span class="op">,</span> <span class="nam">urlopen</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t276" href="#t276">276</a></span><span class="t">    <span class="nam">monkeypatch</span><span class="op">.</span><span class="nam">setattr</span><span class="op">(</span><span class="str">&quot;urllib.request.urlopen&quot;</span><span class="op">,</span> <span class="nam">urlopen</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t277" href="#t277">277</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t278" href="#t278">278</a></span><span class="t">    <span class="nam">telemetry_core</span><span class="op">.</span><span class="nam">send</span><span class="op">(</span><span class="nam">EVENT</span><span class="op">,</span> <span class="str">&quot;id-1&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t279" href="#t279">279</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -943,6 +943,24 @@
     <p class="run"><span class="n"><a id="t861" href="#t861">861</a></span><span class="t">    <span class="nam">value</span> <span class="op">=</span> <span class="nam">_events</span><span class="op">(</span><span class="nam">telemetry_popen</span><span class="op">)</span><span class="op">[</span><span class="num">1</span><span class="op">]</span><span class="op">[</span><span class="str">&quot;properties&quot;</span><span class="op">]</span><span class="op">[</span><span class="str">&quot;$exception_list&quot;</span><span class="op">]</span><span class="op">[</span><span class="num">0</span><span class="op">]</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">&quot;value&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t862" href="#t862">862</a></span><span class="t">    <span class="key">for</span> <span class="nam">leak</span> <span class="key">in</span> <span class="op">[</span><span class="op">*</span><span class="nam">generic</span><span class="op">.</span><span class="nam">split</span><span class="op">(</span><span class="op">)</span><span class="op">,</span> <span class="op">*</span><span class="nam">known</span><span class="op">.</span><span class="nam">split</span><span class="op">(</span><span class="op">)</span><span class="op">,</span> <span class="nam">home</span><span class="op">]</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t863" href="#t863">863</a></span><span class="t">        <span class="key">assert</span> <span class="nam">leak</span> <span class="key">not</span> <span class="key">in</span> <span class="nam">value</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t864" href="#t864">864</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t865" href="#t865">865</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t866" href="#t866">866</a></span><span class="t"><span class="op">@</span><span class="nam">pytest</span><span class="op">.</span><span class="nam">mark</span><span class="op">.</span><span class="nam">real_io</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t867" href="#t867">867</a></span><span class="t"><span class="key">def</span> <span class="nam">test_an_opted_out_run_skips_the_network_modules</span><span class="op">(</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t868" href="#t868">868</a></span><span class="t">    <span class="nam">check</span> <span class="op">=</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t869" href="#t869">869</a></span><span class="t">        <span class="str">&quot;import sys; from llm_prompts import telemetry\n&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t870" href="#t870">870</a></span><span class="t">        <span class="str">&quot;with telemetry.Run(lambda _: (None, None)) as run: run.begin(&#x27;x&#x27;, [])\n&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t871" href="#t871">871</a></span><span class="t">        <span class="str">&quot;print(sorted({&#x27;ssl&#x27;, &#x27;truststore&#x27;} &amp; set(sys.modules)))&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t872" href="#t872">872</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t873" href="#t873">873</a></span><span class="t">    <span class="nam">env</span> <span class="op">=</span> <span class="op">{</span><span class="op">**</span><span class="nam">os</span><span class="op">.</span><span class="nam">environ</span><span class="op">,</span> <span class="str">&quot;LLM_PROMPTS_NO_TELEMETRY&quot;</span><span class="op">:</span> <span class="str">&quot;1&quot;</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t874" href="#t874">874</a></span><span class="t">    <span class="nam">completed</span> <span class="op">=</span> <span class="nam">subprocess</span><span class="op">.</span><span class="nam">run</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t875" href="#t875">875</a></span><span class="t">        <span class="op">[</span><span class="nam">sys</span><span class="op">.</span><span class="nam">executable</span><span class="op">,</span> <span class="str">&quot;-c&quot;</span><span class="op">,</span> <span class="nam">check</span><span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t876" href="#t876">876</a></span><span class="t">        <span class="nam">capture_output</span><span class="op">=</span><span class="key">True</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t877" href="#t877">877</a></span><span class="t">        <span class="nam">text</span><span class="op">=</span><span class="key">True</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t878" href="#t878">878</a></span><span class="t">        <span class="nam">check</span><span class="op">=</span><span class="key">True</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t879" href="#t879">879</a></span><span class="t">        <span class="nam">env</span><span class="op">=</span><span class="nam">env</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t880" href="#t880">880</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t881" href="#t881">881</a></span><span class="t">    <span class="key">assert</span> <span class="nam">completed</span><span class="op">.</span><span class="nam">stdout</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span> <span class="op">==</span> <span class="str">&quot;[]&quot;</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -952,7 +970,7 @@
             <a class="nav" href="z_a44f0ac069e85531_test_telemetry_core_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-19 21:23 +0000
+            created at 2026-11-19 21:25 +0000
         </p>
     </div>
 </footer>
