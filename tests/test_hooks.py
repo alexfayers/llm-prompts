@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import itertools
 import json
+import subprocess
+import sys
 import time
 from collections.abc import Iterator
 from contextlib import ExitStack
@@ -1179,3 +1181,12 @@ class TestSourcePathWatching:
             )
         assert result is not None
         assert any("Auto-reinstalled" in note for note in result.notes)
+
+
+@pytest.mark.real_io
+def test_import_skips_telemetry_and_templates() -> None:
+    check = "import sys, llm_prompts.hooks; print(sorted({'jinja2', 'ssl'} & set(sys.modules)))"
+    completed = subprocess.run(
+        [sys.executable, "-c", check], capture_output=True, text=True, check=True
+    )
+    assert completed.stdout.strip() == "[]"

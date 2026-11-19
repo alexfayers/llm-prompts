@@ -245,7 +245,7 @@ def test_post_verifies_certificates_with_the_system_trust_store(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     urlopen = MagicMock()
-    monkeypatch.setattr("llm_prompts.telemetry_core.urlopen", urlopen)
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
 
     assert telemetry_core.post("{}") is True
 
@@ -257,7 +257,7 @@ def test_debug_mode_shows_why_a_post_failed(
 ) -> None:
     monkeypatch.setenv("LLM_PROMPTS_TELEMETRY_DEBUG", "1")
     monkeypatch.setattr(
-        "llm_prompts.telemetry_core.urlopen", MagicMock(side_effect=URLError("no cert"))
+        "urllib.request.urlopen", MagicMock(side_effect=URLError("no cert"))
     )
 
     telemetry_core.send(EVENT, "id-1")
@@ -273,7 +273,7 @@ def test_send_spawns_a_detached_sender_unless_debugging(
 ) -> None:
     urlopen = MagicMock(side_effect=URLError("offline"))
     monkeypatch.setenv("LLM_PROMPTS_TELEMETRY_DEBUG", debug)
-    monkeypatch.setattr("llm_prompts.telemetry_core.urlopen", urlopen)
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
 
     telemetry_core.send(EVENT, "id-1")
 
@@ -861,3 +861,21 @@ def test_a_sent_message_never_carries_local_values_or_generic_identifiers(
     value = _events(telemetry_popen)[1]["properties"]["$exception_list"][0].get("value")
     for leak in [*generic.split(), *known.split(), home]:
         assert leak not in value
+
+
+@pytest.mark.real_io
+def test_an_opted_out_run_skips_the_network_modules() -> None:
+    check = (
+        "import sys; from llm_prompts import telemetry\n"
+        "with telemetry.Run(lambda _: (None, None)) as run: run.begin('x', [])\n"
+        "print(sorted({'ssl', 'truststore'} & set(sys.modules)))"
+    )
+    env = {**os.environ, "LLM_PROMPTS_NO_TELEMETRY": "1"}
+    completed = subprocess.run(
+        [sys.executable, "-c", check],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=env,
+    )
+    assert completed.stdout.strip() == "[]"

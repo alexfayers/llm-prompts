@@ -20,9 +20,10 @@ from urllib.parse import urlparse
 from . import github_api, telemetry
 from .attic.cli import add_parser as add_attic_parser
 from .attic.cli import run as run_attic
+from .console import log
 from .exit_reason import ExitReason
 from .home import set_root
-from .install import AGENT_CLASSES, REMOVED_AGENTS, log, prompts_dir, user_binary
+from .install import AGENT_CLASSES, REMOVED_AGENTS, prompts_dir, user_binary
 from .network import run_with_retries, stderr_text
 from .setup import (
     _RELEASE_TAG,
