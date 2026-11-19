@@ -18,7 +18,7 @@ from cline_hooks.core.plugin import HookResult, HooksPlugin, UserFacingNote
 
 from . import telemetry
 from .manifest import read_manifest
-from .setup import _UPDATE_INSTRUCTION
+from .setup import _CHANGELOG_PREFIX, _UPDATE_INSTRUCTION
 
 logger = logging.getLogger("hooks.llm-prompts")
 
@@ -102,33 +102,25 @@ _BANNER_TITLE = r"""
  |_|_|_| |_| |_|     | .__/|_|  \___/|_| |_| |_| .__/ \__|___/
                      |_|                       |_|
 """.strip("\n")
-_USER_NOTICE_COMMIT_CAP = 5
+_UPDATE_LIST_HEADER = re.compile(r"(\[[^\]]+\] update available(?: \(.+\))?):")
 _ANSI_COLOR = "\033[1;36m"  # bold cyan
 _ANSI_RESET = "\033[0m"
 
 
-def _shorten_for_user(message: str, cap: int = _USER_NOTICE_COMMIT_CAP) -> str:
-    """Keep a message's header and its first ``cap`` commit subjects, dropping bodies.
+def _shorten_for_user(message: str) -> str:
+    """Keep an update message's header and changelog link, dropping its listed changes.
 
     Args:
         message: A single update message as built by ``_format_update_message``.
-        cap: Maximum number of commit subjects to keep.
 
     Returns:
-        The shortened message, ending in "... and N more" when subjects were cut.
+        The header and any changelog link line, or ``message`` unchanged when it lists nothing.
     """
     header, *rest = message.split("\n")
-    subjects = [line for line in rest if line.startswith("- ")]
-    if not subjects:
+    if not (match := _UPDATE_LIST_HEADER.fullmatch(header)):
         return message
-    already_cut = sum(
-        int(n) for n in re.findall(r"^\.\.\. and (\d+) more$", message, re.MULTILINE)
-    )
-    hidden = len(subjects) - cap + already_cut
-    kept = [header, *subjects[:cap]]
-    if hidden > 0:
-        kept.append(f"... and {hidden} more")
-    return "\n".join(kept)
+    links = rest[:1] if rest and rest[0].startswith(_CHANGELOG_PREFIX) else []
+    return "\n".join([match[1], *links])
 
 
 def _format_user_text(stripped_message: str) -> str:
