@@ -15,6 +15,7 @@ from llm_prompts.main_sync import (
     _Bail,
     _Conflict,
     _merge_tree,
+    _reuse_resolutions,
     sync_diverged,
 )
 
@@ -233,6 +234,8 @@ def _route_divergence(fake: FakeSubprocess) -> None:
     fake.on("cherry", "@{u}", stdout="+ l1\n+ l2\n+ l3\n")
     fake.on("cherry", "h1", stdout="+ l1\n- l2\n+ l3\n")
     fake.on("rev-parse", "@{u}", stdout="tip0\n")
+    fake.on("cherry-pick", returncode=1)
+    fake.on("ls-files", "--unmerged", stdout="100644 abc 1\ta.txt\n")
     fake.on("merge-tree", stdout="tree-l1\n")
     fake.on(
         "merge-tree",
@@ -723,6 +726,16 @@ class TestMergeTree:
             _merge_tree(REPO, "base", "ours", "theirs")
 
         assert not isinstance(bail.value, _Conflict)
+
+
+class TestReuseResolutions:
+    def test_clean_cherry_pick_returns_the_tree(
+        self, fake_subprocess: FakeSubprocess
+    ) -> None:
+        fake_subprocess.on("commit-tree", stdout="change\n")
+        fake_subprocess.on("write-tree", stdout="tree-x\n")
+
+        assert _reuse_resolutions(REPO, "base", "ours", "theirs") == "tree-x"
 
 
 class TestPullRequestHeads:

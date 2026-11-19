@@ -26,7 +26,7 @@ from .squash_subject import squash_pr_number
 from .worktrees import Link, WorktreeEntry
 
 _DEPENDS_PREFIX = "Depends on "
-_GENERATED_PREFIXES = ("- ", _DEPENDS_PREFIX)
+WHAT_MARK = " [](#sync)"
 _OPTIONAL_SECTIONS = ("Dependencies", "Issues")
 _WHAT_HEADING = re.compile(r"^## What\n", re.MULTILINE)
 _DEPENDENCIES_HEADING = re.compile(r"^## Dependencies\n", re.MULTILINE)
@@ -244,6 +244,11 @@ def push_remote(repo: Path, fork: bool = True) -> tuple[str, bool]:
     return "origin", True
 
 
+def _wanted_title(entry: WorktreeEntry, commits: Sequence[Commit]) -> str:
+    """Return the title ``entry``'s PR calls for: the recorded one, else one made from ``commits``."""
+    return entry.title or pr_title(commits)
+
+
 def pr_title(commits: Sequence[Commit]) -> str:
     """Return the first commit's subject, noting how many further commits the PR carries."""
     extra = len(commits) - 1
@@ -265,7 +270,7 @@ def pr_template(repo: Path, base: str) -> str:
 
 def _what_lines(commits: Sequence[Commit]) -> list[str]:
     """Return the What section's subject bullets, one per commit."""
-    return [f"- {commit.subject}" for commit in commits]
+    return [f"- {commit.subject}{WHAT_MARK}" for commit in commits]
 
 
 def _with_depends(
@@ -362,26 +367,27 @@ def rewrite_what(
     depends_on: Sequence[str] = (),
     dropped: Sequence[str] = (),
 ) -> str:
-    """Return ``body`` with its What section's generated lines and trailing Depends on lines rebuilt, all else kept."""
+    """Return ``body`` with its What section's marked lines and trailing Depends on lines rebuilt, all else kept.
+
+    A non-empty ``body`` without marked lines keeps its text apart from Depends on lines.
+    """
     lines = _what_lines(commits)
     heading = _WHAT_HEADING.search(body)
     if heading is None:
+        if body.strip():
+            return _with_depends(body, depends_on, dropped)
         return _with_depends(
             "## What\n\n" + "\n".join(lines) + f"\n\n{body}", depends_on, dropped
         )
     following = _HEADING.search(body, heading.end())
     end = following.start() if following else len(body)
     section = body[heading.end() : end]
+    if WHAT_MARK not in section:
+        return _with_depends(body, depends_on, dropped)
     old = section.lstrip("\n").split("\n")
-    generated = next(
-        (i for i, line in enumerate(old) if not line.startswith(_GENERATED_PREFIXES)),
-        len(old),
-    )
     stale = {f"{_DEPENDS_PREFIX}{ref}" for ref in (*depends_on, *dropped)}
     prose = "\n".join(
-        line
-        for i, line in enumerate(old)
-        if line not in stale and (i >= generated or line.startswith(_DEPENDS_PREFIX))
+        line for line in old if line not in stale and not line.endswith(WHAT_MARK)
     ).strip("\n")
     trailing = section[len(section.rstrip("\n")) :]
     rebuilt = "\n" + "\n".join(lines) + (f"\n\n{prose}" if prose else "") + trailing
@@ -396,14 +402,15 @@ def refreshed_pr(
     commits: Sequence[Commit],
     depends_on: Sequence[str] = (),
     dropped: Sequence[str] = (),
+    new_title: str | None = None,
     why: str = "",
 ) -> tuple[str, str] | None:
     """Return the PR title and body ``commits`` call for, or None when both are already current.
 
-    ``why`` fills an empty Why section.
+    ``new_title`` replaces the title when given. ``why`` fills an empty Why section.
     """
     refreshed = (
-        pr_title(commits),
+        title if new_title is None else new_title,
         _fill_section(rewrite_what(body, commits, depends_on, dropped), "Why", why),
     )
     return None if refreshed == (title, body) else refreshed
@@ -565,6 +572,7 @@ class SyncOptions(NamedTuple):
     depends_on: tuple[str, str] | None = None
     no_depends_on: tuple[str, str] | None = None
     why: tuple[str, str] | None = None
+    title: tuple[str, str] | None = None
 
     @property
     def record_edits(self) -> int:
@@ -580,6 +588,7 @@ class SyncOptions(NamedTuple):
                     self.depends_on,
                     self.no_depends_on,
                     self.why,
+                    self.title,
                 ),
             )
         )
@@ -669,6 +678,10 @@ def _link_branches(
 ) -> str:
     """Record that ``branch`` depends on the ``TOOL:BRANCH`` named by ``spec``."""
     lower_key, lower_branch = _spec_target(tools, spec)
+    if lower_key == _repo_key(repo):
+        raise LookupError(
+            f"{spec} is in the same repo: put {branch}'s change in {lower_branch}'s worktree"
+        )
     lower = _find(entries, lower_key, lower_branch)
     if lower is None:
         raise LookupError(f"{spec}: not recorded")
@@ -686,39 +699,13 @@ def _link_branches(
     link = Link(lower_key, lower_branch)
     if _has_cycle(entries, dependent, link):
         raise LookupError(f"{spec}: {branch} would make a cycle")
-    base = None
-    if lower_key == dependent.repo:
-        if any(old.repo == dependent.repo for old in dependent.depends_on):
-            raise LookupError(f"{branch} already stacks on another branch of this repo")
-        base = _stack_base(repo, branch, lower_branch)
-        _refuse_small_stack(repo, lower_branch, branch)
     return _entry_edit(
         repo,
         entries,
         branch,
-        lambda e: e._replace(depends_on=(*e.depends_on, link), base=base or e.base),
+        lambda e: e._replace(depends_on=(*e.depends_on, link)),
         f"depends on {spec}",
     )
-
-
-def _refuse_small_stack(repo: Path, lower: str, upper: str) -> None:
-    """Raise when the diff the upper PR would show is small enough for one worktree."""
-    lines, binary = _diff_lines(repo, base_ref(repo), f"refs/heads/{upper}")
-    limit = yappy_limits()["lines"]
-    if not binary and lines <= limit:
-        raise LookupError(
-            f"{lower} and {upper} change {lines} lines together, within the "
-            f"slightly-yappy limit of {limit}. Combine them into one worktree."
-        )
-
-
-def _stack_base(repo: Path, upper: str, lower: str) -> str:
-    """Return the tip of ``lower`` when ``upper`` is on it."""
-    tip = _git("rev-parse", f"refs/heads/{lower}", repo=repo)
-    upper_ref = f"refs/heads/{upper}"
-    if not _contains(repo, tip, upper_ref):
-        raise LookupError(f"{upper} is not on {lower}; rebase it onto {lower} first")
-    return tip
 
 
 def _without_link(entry: WorktreeEntry, link: Link) -> WorktreeEntry:
@@ -726,7 +713,6 @@ def _without_link(entry: WorktreeEntry, link: Link) -> WorktreeEntry:
     written = (link.ref,) if entry.pr is not None and link.ref else ()
     return entry._replace(
         depends_on=tuple(old for old in entry.depends_on if old != link),
-        base=None if link.repo == entry.repo else entry.base,
         dropped_refs=(*entry.dropped_refs, *written),
     )
 
@@ -817,6 +803,11 @@ def edit_record(
         return _entry_edit(
             repo, entries, branch, lambda e: e._replace(why=why), "why recorded"
         )
+    if options.title is not None:
+        branch, title = options.title
+        return _entry_edit(
+            repo, entries, branch, lambda e: e._replace(title=title), "title recorded"
+        )
     if options.branch is not None:
         return _record_branch(tool, repo, entries, options.branch)
     if options.forget is not None:
@@ -850,12 +841,12 @@ class Tip(NamedTuple):
 
 
 def _tips(repo: Path, base: str, entries: Sequence[WorktreeEntry]) -> list[Tip]:
-    """Return each entry's commits on its floor, which is the lower commit for a stacked entry."""
+    """Return each entry's commits on the base."""
     return [
         Tip(
             entry,
-            entry.base or base,
-            _commit_shas(repo, entry.base or base, f"refs/heads/{entry.branch}"),
+            base,
+            _commit_shas(repo, base, f"refs/heads/{entry.branch}"),
             _skip_reason(repo, base, entry, f"refs/heads/{entry.branch}", entries),
         )
         for entry in entries
@@ -1009,6 +1000,29 @@ def _is_copy(repo: Path, sha: str, squash: main_sync.Squash) -> bool:
     } or main_sync.replays_to(repo, f"{sha}^", squash, sha)
 
 
+def _paths(repo: Path, *commits: str) -> set[str]:
+    """Return the files changed by commit ``commits[0]``, or between two commits."""
+    args = (
+        ("diff", "--name-only", *commits)
+        if len(commits) > 1
+        else ("show", "--format=", "--name-only", *commits)
+    )
+    return set(_git(*args, repo=repo).split())
+
+
+def _version_floor(repo: Path, tip: Tip, version: str) -> str:
+    """Return the commit ``version`` of ``tip``'s branch started from: the parent of its copied first commit, else the floor."""
+    rows = _git("log", "--format=%H%x09%at%x09%s", f"{tip.floor}..{version}", repo=repo)
+    return next(
+        (
+            f"{sha}^"
+            for sha, identity in (row.split("\t", 1) for row in rows.splitlines())
+            if identity == tip.entry.copied
+        ),
+        tip.floor,
+    )
+
+
 def _earlier_patches(repo: Path, tip: Tip) -> set[str]:
     """Return the patch ids of every version of ``tip``'s branch and of each version's first commit."""
     patches: set[str] = set()
@@ -1017,9 +1031,10 @@ def _earlier_patches(repo: Path, tip: Tip) -> set[str]:
             "log", "-g", "--format=%H", f"refs/heads/{tip.entry.branch}", repo=repo
         ).split()
     ):
-        if commits := _commit_shas(repo, tip.floor, version):
+        floor = _version_floor(repo, tip, version)
+        if commits := _commit_shas(repo, floor, version):
             patches |= {
-                _squash_patch_id(repo, _squash_of(repo, tip.floor, commits, version)),
+                _squash_patch_id(repo, _squash_of(repo, floor, commits, version)),
                 _patch_id(repo, "show", "-U0", commits[0]),
             }
     return patches - {""}
@@ -1027,19 +1042,22 @@ def _earlier_patches(repo: Path, tip: Tip) -> set[str]:
 
 def _copies_of(
     repo: Path, base: str, tips: Sequence[Tip], squashes: Sequence[main_sync.Squash]
-) -> dict[str, str]:
-    """Map each squash's tip to its copy on main ahead of ``base``.
+) -> tuple[dict[str, str], set[str]]:
+    """Map each squash's tip to its copy on main ahead of ``base``, and return the extra copies to drop.
 
     A copy matches by the identity saved when it was copied, else by its first
     commit's author time and subject.
-    Either way it must hold the changes of the squash, of its first commit, or of an earlier version of the branch.
+    A sole match of the saved identity that touches the squash's files is the copy, since a hand resolution may have changed it.
+    Every other match that touches those files is an extra copy, such as a top-up.
+    Otherwise it must hold the changes of the squash, of its first commit, or of an earlier version of the branch.
     Else it matches by the patch of the squash.
 
     Raises:
-        AmbiguousCopy: Several main commits have a saved identity and none holds changes of the branch.
+        AmbiguousCopy: Several main commits have a saved identity, none holds changes of the branch and one does not touch its files.
     """
     free = _main_rows(repo, base)
     found: dict[str, str] = {}
+    extra: set[str] = set()
     for tip, squash in zip(tips, squashes, strict=True):
         if not (saved := tip.entry.copied):
             continue
@@ -1051,13 +1069,19 @@ def _copies_of(
             if _is_copy(repo, row[0], squash)
             or _patch_id(repo, "show", "-U0", row[0]) in _earlier_patches(repo, tip)
         ]
-        if len(matches) > 1 and not proven:
+        touching = [
+            row
+            for row in matches
+            if _paths(repo, row[0]) & _paths(repo, squash.floor, squash.tip)
+        ]
+        if len(matches) > 1 and not proven and len(touching) < len(matches):
             raise AmbiguousCopy(
                 f"several main commits match {identity[1]!r} and none is its copy"
             )
-        if proven:
-            free.remove(proven[0])
-            found[squash.tip] = proven[0][0]
+        if copy := proven or touching[:1]:
+            free = [row for row in free if row != copy[0] and row not in touching]
+            found[squash.tip] = copy[0][0]
+            extra |= {row[0] for row in touching} - {copy[0][0]}
     for squash in squashes:
         if squash.tip in found:
             continue
@@ -1082,7 +1106,21 @@ def _copies_of(
         ):
             free.remove(match)
             found[squash.tip] = match[0]
-    return found
+    return found, extra
+
+
+def _held_copies(
+    repo: Path, base: str, tips: Sequence[Tip], copies: Collection[str]
+) -> set[str]:
+    """Return the main copy of each skipped tip, found by its saved identity."""
+    rows = [row for row in _main_rows(repo, base) if row[0] not in copies]
+    return {
+        row[0]
+        for tip in tips
+        if tip.skipped is not None and tip.entry.copied
+        for row in rows
+        if "\t".join(row[1:]) == tip.entry.copied
+    }
 
 
 def _main_changes(
@@ -1090,56 +1128,31 @@ def _main_changes(
 ) -> tuple[
     dict[str, main_sync.Squash],
     set[str],
-    dict[str, str],
+    set[str],
     list[main_sync.Squash],
 ]:
-    """Return the main commits to swap for newer squashes, the main commits to drop, the first commit each copy on main stands for and the squashes to replay on top.
+    """Return the main commits to swap for newer squashes, the main commits to drop, the copies on main and the squashes to replay on top.
 
-    A changed squash of a stacked branch replaces its copy in place when the copy is newer than its lower's.
-    Otherwise it replays on top with its old copy dropped, and so do the branches stacked above it.
+    A changed squash replaces its copy in place.
     Main commits copied from earlier versions of a branch's history are dropped, and so are the copies of ``landed`` squashes, given by identity, whatever changes review made since.
     """
     swaps: dict[str, main_sync.Squash] = {}
-    moves: set[str] = set()
-    replayed: set[str] = set()
     adds: list[main_sync.Squash] = []
     squashes = [_squash_of(repo, t.floor, t.commits, t.commits[-1]) for t in tips]
-    found = _copies_of(repo, base, tips, squashes)
-    copies = {found[s.tip]: s.first for s in squashes if s.tip in found}
+    found, extra = _copies_of(repo, base, tips, squashes)
+    copies = {found[s.tip] for s in squashes if s.tip in found}
     rows = _main_rows(repo, base)
-    age = {row[0]: n for n, row in enumerate(rows)}
-    copy_of = {
-        t.entry.branch: found[s.tip]
-        for s, t in zip(squashes, tips, strict=True)
-        if s.tip in found
-    }
-    for squash, tip in zip(squashes, tips, strict=True):
+    for squash in squashes:
         copy = found.get(squash.tip)
-        lower = next(
-            (k.branch for k in tip.entry.depends_on if k.repo == tip.entry.repo), None
-        )
-        follows = lower in replayed
         if copy is None:
             adds.append(squash)
-            replayed.add(tip.entry.branch)
-        elif (
-            follows
-            or _commit_identity(repo, copy) != _commit_identity(repo, squash.first)
-            or (
-                _patch_id(repo, "show", "-U0", copy) != _squash_patch_id(repo, squash)
-                and not main_sync.replays_to(repo, f"{copy}^", squash, copy)
-            )
+        elif _commit_identity(repo, copy) != _commit_identity(repo, squash.first) or (
+            _patch_id(repo, "show", "-U0", copy) != _squash_patch_id(repo, squash)
+            and not main_sync.replays_to(repo, f"{copy}^", squash, copy)
         ):
-            if tip.entry.base is None or (
-                not follows and lower in copy_of and age[copy] < age[copy_of[lower]]
-            ):
-                swaps[copy] = squash
-            else:
-                moves.add(copy)
-                adds.append(squash)
-                replayed.add(tip.entry.branch)
+            swaps[copy] = squash
     later = _later_copies(repo, base, tips, found.values())
-    taken = {*found.values(), *later}
+    taken = {*found.values(), *later, *extra}
     merged: set[str] = set()
     for gone in landed:
         at, subject = gone.identity.split("\t", 1)
@@ -1156,7 +1169,7 @@ def _main_changes(
         merged.update(proven or matches)
     return (
         swaps,
-        moves | later | merged | _rewritten_copies(repo, base, tips, taken),
+        later | merged | extra | _rewritten_copies(repo, base, tips, taken),
         copies,
         adds,
     )
@@ -1173,12 +1186,21 @@ def _commit_of(repo: Path, sha: str) -> Commit:
 def _pr_number_of(repo: Path, branch: str) -> int:
     """Return the number of the open PR whose head is ``branch``, through gh or the GitHub API."""
     if _gh_installed():
-        return int(
-            _gh_json("pr", "view", branch, "--json", "number", repo=repo)["number"]
+        prs = _gh_json(
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--author",
+            "@me",
+            "--state",
+            "open",
+            "--json",
+            "number,headRefName",
+            repo=repo,
         )
-    [pr] = [
-        pr
-        for pr in with_retries(
+    else:
+        prs = with_retries(
             partial(
                 github_api.pr_list,
                 repo,
@@ -1186,9 +1208,16 @@ def _pr_number_of(repo: Path, branch: str) -> int:
                 ["number", "headRefName"],
             )
         )
-        if pr["headRefName"] == branch
-    ]
+    [pr] = [pr for pr in prs if pr["headRefName"] == branch]
     return int(pr["number"])
+
+
+def _open_pr_number(repo: Path, branch: str) -> int | None:
+    """Return the number of the open PR whose head is ``branch``, or None when it has none."""
+    try:
+        return _pr_number_of(repo, branch)
+    except (subprocess.CalledProcessError, ValueError):
+        return None
 
 
 def _open_pr(
@@ -1196,17 +1225,18 @@ def _open_pr(
     base: str,
     branch: str,
     head_owner: str,
+    title: str,
     commits: Sequence[Commit],
     depends_on: Sequence[str] = (),
     why: str = "",
 ) -> tuple[int, bool]:
-    """Open a draft PR for ``branch`` and return its number, or that of the existing one and True."""
+    """Open a draft PR for ``branch`` titled ``title`` and return its number, or that of the existing one and True."""
     try:
         url = open_draft_pr(
             repo,
             base,
             f"{head_owner}{branch}",
-            pr_title(commits),
+            title,
             pr_body(pr_template(repo, base), commits, depends_on, why),
         )
     except subprocess.CalledProcessError as error:
@@ -1283,8 +1313,10 @@ class _RepoSync:
         others: Sequence[WorktreeEntry] = (),
         tool: str = "NAME",
         label: str = "",
+        ready_only: bool = False,
     ) -> None:
         self.tool = tool
+        self.ready_only = ready_only
         self.label = label
         self.repo = repo
         self.others = others
@@ -1353,7 +1385,7 @@ class _RepoSync:
         """Return the entry's own commits on its base, oldest first."""
         return [
             _commit_of(self.repo, sha)
-            for sha in _commit_shas(self.repo, entry.base or self.base, ref)
+            for sha in _commit_shas(self.repo, self.base, ref)
         ]
 
     def observe(self) -> None:
@@ -1421,8 +1453,6 @@ class _RepoSync:
     def blocker(self, entry: WorktreeEntry, tip: str) -> str | None:
         """Return why a merged worktree must stay, or None when it holds nothing the PR lacks."""
         pr = self.prs[entry.pr or 0]
-        if above := self.stacked_on(entry):
-            return f"{above[0].branch} sits on it"
         if tip != pr.head_sha:
             return "the branch has commits the PR lacks"
         if _git("status", "--porcelain", repo=Path(entry.path)):
@@ -1471,134 +1501,12 @@ class _RepoSync:
             self.say(entry, message)
         self.cleanup = []
 
-    def stack_link(self, entry: WorktreeEntry) -> Link | None:
-        return next((k for k in entry.depends_on if k.repo == entry.repo), None)
-
-    def stacked_on(self, lower: WorktreeEntry) -> list[WorktreeEntry]:
-        """Return the unmerged entries stacked directly on ``lower``."""
+    def open_entries(self) -> list[WorktreeEntry]:
+        """Return the unmerged entries whose branches exist."""
         return [
             e
-            for e in self.open_entries()
-            if (link := self.stack_link(e)) and link.branch == lower.branch
-        ]
-
-    def above(self, branch: str) -> list[str]:
-        """Return the branches that sit on ``branch``, directly or not."""
-        found: list[str] = []
-        pending = [branch]
-        while pending:
-            lower = pending.pop()
-            for entry in self.entries:
-                link = self.stack_link(entry)
-                if link and link.branch == lower and entry.branch not in found:
-                    found.append(entry.branch)
-                    pending.append(entry.branch)
-        return found
-
-    def edit_blocker(self, entry: WorktreeEntry) -> str | None:
-        """Return why sync must not rewrite ``entry``'s branch or PR body, or None when it may."""
-        if entry.pr is not None:
-            pr = self.prs.get(entry.pr)
-            if pr is None or not pr.is_draft:
-                return f"PR #{entry.pr} is not a draft"
-        if operation := main_sync._operation_in_progress(Path(entry.path)):
-            return f"a {operation} is in progress"
-        if _git("status", "--porcelain", repo=Path(entry.path)):
-            return "the worktree has uncommitted changes"
-        return None
-
-    def on(self, entry: WorktreeEntry, ref: str) -> bool:
-        """Return whether the entry's branch sits on ``ref``."""
-        return _contains(self.repo, ref, f"refs/heads/{entry.branch}")
-
-    def restack(self) -> None:
-        """Rebase each stacked branch onto its lower's new tip, or onto main once the lower merged or its unpublished branch was deleted, lowest first."""
-        held: set[str] = set()
-        for entry in self.open_entries():
-            link = self.stack_link(entry)
-            lower = self.dependency(link) if link else None
-            if (
-                link is None
-                or lower is None
-                or entry.base is None
-                or not Path(entry.path).exists()
-            ):
-                continue
-            merged = self.merged(lower)
-            abandoned = not merged and not _branch_exists(self.repo, lower.branch)
-            if abandoned and lower.pr is not None:
-                continue
-            released = merged or abandoned
-            if link.branch in held:
-                held.add(entry.branch)
-                continue
-            target = self.base if released else self.tip(lower)
-            if target == entry.base and not released:
-                continue
-            named = (
-                f"main ({lower.branch} {'was deleted' if abandoned else 'merged'})"
-                if released
-                else lower.branch
-            )
-            if self.on(entry, target) and not abandoned:
-                self.update(
-                    entry,
-                    **(
-                        _without_link(entry, link)._asdict()
-                        if released
-                        else {"base": target}
-                    ),
-                )
-                continue
-            reason = self.edit_blocker(entry)
-            if reason is None and not self.on(entry, entry.base):
-                reason = "it is not on its base"
-            if reason is None and not self.apply:
-                self.say(entry, f"would restack onto {named}")
-                continue
-            if reason is None:
-                done = subprocess.run(
-                    ["git", "-C", entry.path, "rebase", "--onto", target, entry.base],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                if done.returncode != 0:
-                    subprocess.run(
-                        ["git", "-C", entry.path, "rebase", "--abort"],
-                        capture_output=True,
-                        check=False,
-                    )
-                    reason = "the rebase does not apply"
-            if reason is not None:
-                held.add(entry.branch)
-                above = self.above(entry.branch)
-                left = f"; {', '.join(above)} left alone too" if above else ""
-                self.say(entry, f"not restacked ({reason}){left}")
-                continue
-            if released:
-                entry = self.update(entry, **_without_link(entry, link)._asdict())
-            else:
-                entry = self.update(entry, base=target)
-            self.say(entry, f"restacked onto {named}")
-
-    def open_entries(self) -> list[WorktreeEntry]:
-        """Return the unmerged entries with each stack lower before the branches above it."""
-        open_ = {
-            e.branch: e
             for e in self.entries
             if not self.merged(e) and _branch_exists(self.repo, e.branch)
-        }
-        graph = {
-            branch: {
-                link.branch
-                for link in entry.depends_on
-                if link.repo == entry.repo and link.branch in open_
-            }
-            for branch, entry in open_.items()
-        }
-        return [
-            open_[branch] for branch in graphlib.TopologicalSorter(graph).static_order()
         ]
 
     def merged(self, entry: WorktreeEntry) -> bool:
@@ -1613,12 +1521,6 @@ class _RepoSync:
                 self.update(entry, path=str(checked_out[entry.branch]))
                 continue
             exists = _branch_exists(self.repo, entry.branch)
-            if (above := self.stacked_on(entry)) and (
-                exists or entry.pr is None or self.merged(entry)
-            ):
-                state = "merged" if self.merged(entry) else "worktree is gone"
-                self.say(entry, f"{state}, but {above[0].branch} sits on it; kept")
-                continue
             if (
                 self.merged(entry)
                 and exists
@@ -1644,9 +1546,11 @@ class _RepoSync:
         self.refresh_upstream()
         if (stale := stale_main_warning(self.repo, self.main_base)) is not None:
             _print_warning(stale)
+        for entry in list(self.entries):
+            if entry.ready and entry.pr is None:
+                self.adopt(entry)
         self.observe()
         self.landed = self.landed_copies()
-        self.restack()
         self.forget_gone()
         self.remove_merged()
         for entry in self.open_entries():
@@ -1655,8 +1559,7 @@ class _RepoSync:
                 and self.relation(entry) == "pull"
             ):
                 self.pull(entry)
-        self.restack()
-        if self.copy_into_main(fail_skipped=True):
+        if self.copy_into_main(fail_stopped=True):
             self.finish_cleanup()
         self.publish()
         return self.status, self.entries
@@ -1666,7 +1569,7 @@ class _RepoSync:
         return [
             Landed(
                 entry.copied,
-                _squash_of(self.repo, floor, commits, self.tip(entry)),
+                _squash_of(self.repo, self.base, commits, self.tip(entry)),
             )
             for entry in self.entries
             if entry.copied
@@ -1675,12 +1578,11 @@ class _RepoSync:
             and _squash_landed(self.repo, self.main_base, entry.pr)
             and _branch_exists(self.repo, entry.branch)
             and self.tip(entry) == self.prs[entry.pr].head_sha
-            and (floor := entry.base or self.base)
-            and (commits := _commit_shas(self.repo, floor, self.tip(entry)))
+            and (commits := _commit_shas(self.repo, self.base, self.tip(entry)))
         ]
 
     def copy_only(self) -> tuple[int, list[WorktreeEntry]]:
-        """Copy the recorded worktrees into main without touching a remote, a PR or a worktree."""
+        """Copy the recorded worktrees, or only the ready ones when ``ready_only``, into main without touching a remote, a PR or a worktree."""
         if self.copyable():
             self.landed = self.landed_copies()
             self.copy_into_main()
@@ -1727,9 +1629,13 @@ class _RepoSync:
         if main_sync.point_upstream(self.repo, ref):
             self.main_base = main_sync.UPSTREAM
 
-    def copy_into_main(self, fail_skipped: bool = False) -> bool:
-        """Return whether main is up to date, so merged entries may go. A skipped copy counts as a failure when ``fail_skipped``."""
-        tips = _tips(self.repo, self.base, self.open_entries())
+    def copy_into_main(self, fail_stopped: bool = False) -> bool:
+        """Return whether main is up to date, so merged entries may go. A conflict waiting for its hand resolution counts as a failure when ``fail_stopped``."""
+        tips = _tips(
+            self.repo,
+            self.base,
+            [e for e in self.open_entries() if e.ready or not self.ready_only],
+        )
         for tip in tips:
             if tip.skipped is not None:
                 self.say(tip.entry, f"skipped: {tip.skipped}")
@@ -1742,6 +1648,7 @@ class _RepoSync:
             print(f"{self.label}main not updated: {ambiguous}")
             self.status = 1
             return False
+        copies |= _held_copies(self.repo, self.base, tips, copies)
         changed = {squash.tip for squash in [*swaps.values(), *adds]}
         drops = {
             *drops,
@@ -1765,25 +1672,19 @@ class _RepoSync:
             result = main_sync.rebuild_local(
                 self.repo, self.main_base, swaps, drops, copies, adds
             )
-            if result.mode == "failed":
+            if result.mode in ("failed", "stopped"):
                 print(f"{self.label}main not updated: {result.detail}")
-                self.status = 1
+                if result.mode == "failed" or fail_stopped:
+                    self.status = 1
                 return False
-        skipped = {copy.first: copy.reason for copy in result.skipped} if result else {}
         for tip in usable:
-            if tip.commits[0] in skipped:
-                report = self.fail if fail_skipped else self.say
-                report(tip.entry, f"not copied into main: {skipped[tip.commits[0]]}")
-            elif tip.commits[-1] in changed:
+            if tip.commits[-1] in changed:
                 verb = "copied" if self.apply else "would copy"
                 self.say(tip.entry, f"{verb} into main")
         if self.apply:
             for tip in usable:
                 self.update(
-                    tip.entry,
-                    copied=None
-                    if tip.commits[0] in skipped
-                    else _commit_identity(self.repo, tip.commits[0]),
+                    tip.entry, copied=_commit_identity(self.repo, tip.commits[0])
                 )
         return True
 
@@ -1839,16 +1740,24 @@ class _RepoSync:
                 entry = self.update(entry, remote_head=tip)
             if number is None:
                 head_owner = f"{self.login}:" if forked else ""
+                commits = self.commits(entry, tip)
+                title = _wanted_title(entry, commits)
                 number, adopted = _open_pr(
                     self.repo,
                     self.base,
                     name,
                     head_owner,
-                    self.commits(entry, tip),
+                    title,
+                    commits,
                     [link.ref for link in entry.depends_on],
                     entry.why,
                 )
-                entry = self.update(entry, pr=number, pr_state="OPEN")
+                entry = self.update(
+                    entry,
+                    pr=number,
+                    pr_state="OPEN",
+                    synced_title="" if adopted else title,
+                )
                 self.say(entry, f"pushed, opened draft PR #{number}")
                 if adopted:
                     pr = pr_states(self.repo, [number]).get(number)
@@ -1858,6 +1767,15 @@ class _RepoSync:
                 self.settle_body(entry, pr, tip)
         except subprocess.CalledProcessError as error:
             self.fail(entry, f"not pushed ({first_stderr_line(error)})")
+
+    def adopt(self, entry: WorktreeEntry) -> WorktreeEntry:
+        """Record the open PR already on ``entry``'s branch, if any."""
+        number = _open_pr_number(self.repo, self.remote_name(entry))
+        if number is None:
+            number = _open_pr_number(self.repo, entry.branch)
+        if number is None:
+            return entry
+        return self.update(entry, pr=number, pr_state="OPEN", synced_title="")
 
     def unfilled(self, entry: WorktreeEntry, commits: Sequence[Commit]) -> bool:
         """Say which required PR sections ``entry``'s PR would leave empty, and return whether any."""
@@ -1883,12 +1801,15 @@ class _RepoSync:
             )
 
     def refresh(self, entry: WorktreeEntry, pr: PrState, tip: str) -> None:
+        retitle = bool(entry.synced_title) and pr.title == entry.synced_title
+        commits = self.commits(entry, tip)
         refreshed = refreshed_pr(
             pr.title,
             pr.body,
-            self.commits(entry, tip),
+            commits,
             [link.ref for link in entry.depends_on],
             entry.dropped_refs,
+            new_title=_wanted_title(entry, commits) if retitle else None,
             why=entry.why,
         )
         missing = unfilled_sections(
@@ -1903,6 +1824,8 @@ class _RepoSync:
         if refreshed is not None:
             edit_pr(self.repo, int(entry.pr or 0), *refreshed)
             self.say(entry, f"updated PR #{entry.pr} title and What")
+            if retitle:
+                entry = self.update(entry, synced_title=refreshed[0])
         self.update(entry, dropped_refs=())
 
 
@@ -1988,12 +1911,12 @@ def _sync_repo(
 def copy_recorded(
     repo: Path, entries: list[WorktreeEntry], others: Sequence[WorktreeEntry], tool: str
 ) -> tuple[int, list[WorktreeEntry]]:
-    """Copy one repo's recorded worktrees into its local main and return the status and the updated entries.
+    """Copy one repo's ready worktrees into its local main and return the status and the updated entries.
 
-    Every line it prints starts with ``[tool]``.
+    Every line it prints starts with ``[tool]``. A conflict waiting for its hand resolution leaves main as it is and the status 0.
     """
     return _RepoSync(
-        repo, entries, True, "", others, tool, label=f"[{tool}] "
+        repo, entries, True, "", others, tool, label=f"[{tool}] ", ready_only=True
     ).copy_only()
 
 
@@ -2096,7 +2019,7 @@ def _held_branch(
     for other in entries:
         if other.branch == entry.branch or not _branch_exists(repo, other.branch):
             continue
-        theirs = _commit_shas(repo, other.base or base, f"refs/heads/{other.branch}")
+        theirs = _commit_shas(repo, base, f"refs/heads/{other.branch}")
         first = _commit_identity(repo, theirs[0]) if theirs else None
         if first in identities and (
             first != identities[0] or len(theirs) < len(commits)
@@ -2113,7 +2036,7 @@ def _skip_reason(
     entries: Sequence[WorktreeEntry],
 ) -> str | None:
     """Return why ``ref`` is not copied or pushed, or None when it has commits of its own on its floor."""
-    commits = _commit_shas(repo, entry.base or base, ref)
+    commits = _commit_shas(repo, base, ref)
     if not commits:
         return "no commits"
     local_main = [sha for sha in commits if _on_main_only(repo, base, entry, sha)]
@@ -2125,7 +2048,7 @@ def _skip_reason(
 def _list_line(
     repo: Path, base: str, entry: WorktreeEntry, entries: Sequence[WorktreeEntry]
 ) -> str:
-    floor, ref = entry.base or base, f"refs/heads/{entry.branch}"
+    floor, ref = base, f"refs/heads/{entry.branch}"
     pr = f"PR #{entry.pr} ({entry.pr_state or 'unknown'})" if entry.pr else "no PR"
     if not _branch_exists(repo, entry.branch):
         detail = "skipped: branch is gone"
@@ -2137,15 +2060,17 @@ def _list_line(
         detail = f"{count} commits, " if count > 1 else ""
         detail += f"{lines} lines"
         if lines > yappy_limits()["lines"]:
-            detail += f" (over the {yappy_limits()['lines']}-line limit)"
+            detail += f" (over the {yappy_limits()['lines']}-line guideline)"
     return f"{entry.branch}  {'ready' if entry.ready else 'local only'}  {pr}  {detail}"
 
 
 def list_targets(targets: Sequence[Target]) -> int:
     """Print every recorded worktree from the record and local git, with no network calls."""
+    path = worktrees.record_path()
     try:
-        entries = worktrees.load_entries(worktrees.record_path())
-    except worktrees.CorruptRecord as error:
+        with worktrees.locked(path):
+            entries = worktrees.load_entries(path)
+    except (worktrees.LockHeld, worktrees.CorruptRecord) as error:
         print(error)
         return 1
     for name, repo, _ in targets:

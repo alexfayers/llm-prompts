@@ -743,7 +743,7 @@ def _copy_blocker(repo: Path) -> str | None:
 def _copy_recorded_into(
     name: str, repo: Path, entries: list[WorktreeEntry], test: str = ""
 ) -> tuple[bool, bool, list[WorktreeEntry]]:
-    """Copy the recorded worktrees of ``repo`` into its main, then run ``test`` when copying moved main.
+    """Copy the ready worktrees of ``repo`` into its main, then run ``test`` when copying moved main.
 
     Returns:
         Whether main moved, whether copying failed, and the updated record entries.
@@ -793,7 +793,7 @@ def _pull_and_copy(
     failed: set[str],
     copy_failed: set[str],
 ) -> tuple[set[str], list[WorktreeEntry]]:
-    """Pull every local source, then copy recorded worktrees into each main that pulled cleanly.
+    """Pull every local source, then copy ready worktrees into each main that pulled cleanly.
 
     Args:
         tools: The configured tool sources.
@@ -847,7 +847,7 @@ def _pull_and_copy(
 def _pull_local_sources(
     failed: set[str] | None = None, copy_failed: set[str] | None = None
 ) -> set[str]:
-    """Pull upstream changes for all local-path tool sources, then copy recorded worktrees into each main.
+    """Pull upstream changes for all local-path tool sources, then copy ready worktrees into each main.
 
     Args:
         failed: Collects the names of the tool sources that could not be pulled or copied.
@@ -1096,6 +1096,7 @@ def _sync_options(args: argparse.Namespace) -> SyncOptions:
         tuple(args.depends_on) if args.depends_on else None,
         tuple(args.no_depends_on) if args.no_depends_on else None,
         tuple(args.why) if args.why else None,
+        tuple(args.title) if args.title else None,
     )
 
 
@@ -1442,7 +1443,7 @@ def _run_command(
         "--depends-on",
         nargs=2,
         metavar=("BRANCH", "TOOL:BRANCH"),
-        help="Make BRANCH depend on TOOL:BRANCH, stacking it when in the same repo.",
+        help="Make BRANCH depend on TOOL:BRANCH in another repo.",
     )
     sync_parser.add_argument(
         "--no-depends-on",
@@ -1455,6 +1456,12 @@ def _run_command(
         nargs=2,
         metavar=("BRANCH", "TEXT"),
         help="Record the text sync puts under Why in BRANCH's PR.",
+    )
+    sync_parser.add_argument(
+        "--title",
+        nargs=2,
+        metavar=("BRANCH", "TEXT"),
+        help="Record the title sync gives BRANCH's PR instead of its first commit's subject.",
     )
     sync_parser.add_argument(
         "--rescan",
@@ -1498,7 +1505,7 @@ def _run_command(
     ):
         sync_parser.error(
             "Pass only one of --branch, --forget, --ready, --local, "
-            "--depends-on, --no-depends-on, --why and --rescan."
+            "--depends-on, --no-depends-on, --why, --title and --rescan."
         )
 
     if (
@@ -1509,7 +1516,7 @@ def _run_command(
     ):
         sync_parser.error(
             "--branch, --forget, --ready, --local, --depends-on, "
-            "--no-depends-on and --why require --tool NAME."
+            "--no-depends-on, --why and --title require --tool NAME."
         )
 
     if args.command == "install" and args.root:

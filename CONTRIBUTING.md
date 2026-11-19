@@ -41,13 +41,15 @@ llm-prompts contribute sync --tool NAME --ready my-change    # let sync push it 
 llm-prompts contribute sync --apply
 ```
 
-- `sync --apply` never pushes or opens a PR for a local-only worktree. Once `--ready`, it pushes the branch, opens a draft PR and keeps its title and What current.
+- `sync --apply` never pushes or opens a PR for a local-only worktree. Once `--ready`, it pushes the branch, opens a draft PR and keeps its What bullets (marked `[](#sync)`) current. A PR body with no marked bullet keeps its text, apart from the `Depends on` lines sync writes and an empty Why it fills from the recorded Why. It sets the title only when it opens the PR or while the title is still the one it last wrote, so a title you edited is kept. A PR sync opened before it marked its bullets keeps its title, and keeps its What until you add `[](#sync)` to its What bullets.
 - Record the text for the PR's Why with `--why B "TEXT"` before `--ready`. `sync` never opens a PR, nor edits a draft PR's body, while a section the PR template check requires (every template section except Dependencies and Issues) is empty. It prints the worktree, the empty section and the `--why` command, skips that PR, still syncs the others and exits nonzero. A Why you wrote in a PR is kept.
-- Stack a branch on another with `--depends-on B TOOL:B2`. `sync` restacks it and writes the `Depends on` line.
+- Record the PR's title with `--title B "TEXT"`. `sync` uses it instead of the first commit's subject.
+- Link a branch to a PR in another repo with `--depends-on B TOOL:B2`. `sync` writes the `Depends on` line.
 - Run `llm-prompts contribute sync --help` for every flag, and `contribute list` for each worktree's state and size.
 - Marking a contribute PR ready for review enables squash auto-merge. It merges once checks pass and a reviewer approves.
 - When main moves, open PRs with auto-merge on are rebased onto it automatically.
 - Never commit to local `main` for a recorded worktree. `sync` replaces its copy.
+- When a copy conflicts with `main`, `sync --apply` and `update` leave `main` as it is and print a worktree path. Resolve the files there, `git add` them, then rerun.
 - Repos merge by squash only and require PRs up to date with `main`. `llm-prompts contribute update --apply` rebases your open PRs behind `main`.
 - `contribute` uses `gh` when installed. Otherwise it calls the GitHub API with `GH_TOKEN`, `GITHUB_TOKEN`, or your git credential helper's github.com token. Without gh and without push access, fork first: rename `origin` to `upstream` and add your fork as `origin`.
 
