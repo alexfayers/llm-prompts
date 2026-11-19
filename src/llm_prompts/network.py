@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import time
@@ -42,6 +43,13 @@ def run_with_retries(
     argv: list[str], *, check: bool = False, **kwargs: Any
 ) -> subprocess.CompletedProcess[str]:
     """Run a network command like ``subprocess.run``, retrying transient failures with backoff."""
+    kwargs["env"] = {
+        "GIT_SSH_COMMAND": "ssh -o BatchMode=yes",
+        **(kwargs.get("env") or os.environ),
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+    if kwargs.get("input") is None:
+        kwargs.setdefault("stdin", subprocess.DEVNULL)
     try:
         return with_retries(lambda: subprocess.run(argv, check=True, **kwargs))
     except subprocess.CalledProcessError as error:

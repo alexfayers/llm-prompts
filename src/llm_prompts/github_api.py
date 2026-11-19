@@ -14,6 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .exit_reason import ExitReason
+from .network import run_with_retries
 
 _CREDENTIAL_QUERY = "protocol=https\nhost=github.com\n\n"
 _REMOTE_REPO = re.compile(r"[/:]([^/:]+)/([^/:]+?)(?:\.git)?/?$")
@@ -35,13 +36,11 @@ def token() -> str:
     for name in ("GH_TOKEN", "GITHUB_TOKEN"):
         if value := os.environ.get(name):
             return value
-    completed = subprocess.run(
+    completed = run_with_retries(
         ["git", "credential", "fill"],
         input=_CREDENTIAL_QUERY,
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
         capture_output=True,
         text=True,
-        check=False,
     )
     for line in completed.stdout.splitlines():
         if line.startswith("password=") and len(line) > len("password="):

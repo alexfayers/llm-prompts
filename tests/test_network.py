@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 
 import pytest
+from conftest import FakeSubprocess
 
 from llm_prompts import network
 
@@ -57,3 +58,14 @@ def test_with_retries_retries_a_timeout_and_gives_up_after_the_last_attempt() ->
 
     with pytest.raises(subprocess.TimeoutExpired):
         network.with_retries(always_times_out)
+
+
+def test_run_with_retries_never_prompts_on_the_terminal(
+    fake_subprocess: FakeSubprocess,
+) -> None:
+    network.run_with_retries(["git", "fetch", "--quiet"])
+
+    _, kwargs = fake_subprocess.calls[0]
+    assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert kwargs["env"]["GIT_SSH_COMMAND"] == "ssh -o BatchMode=yes"
+    assert kwargs["stdin"] == subprocess.DEVNULL
