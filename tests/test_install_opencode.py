@@ -10,10 +10,20 @@ import pytest
 from conftest import FakeSubprocess, run_capturing_exit
 
 from llm_prompts.cli import main
-from llm_prompts.install import get_managed_dirs, try_install_memory_opencode
+from llm_prompts.install import (
+    _opencode_config_dir,
+    get_managed_dirs,
+    try_install_memory_opencode,
+)
 from llm_prompts.install import main as install_main
 
 pytestmark = pytest.mark.usefixtures("bare_tree")
+
+
+@pytest.fixture(autouse=True)
+def _no_config_dir_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENCODE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
 
 
 @pytest.fixture
@@ -49,6 +59,28 @@ class TestOpencodeManagedDirs:
 
         assert home / ".config" / "opencode" / "skills" in managed
         assert home / ".config" / "opencode" not in managed
+
+
+class TestOpencodeConfigDir:
+    @pytest.mark.parametrize(
+        ("env", "expected"),
+        [
+            ({"OPENCODE_CONFIG_DIR": "oc", "XDG_CONFIG_HOME": "xdg"}, "oc"),
+            ({"XDG_CONFIG_HOME": "xdg"}, "xdg/opencode"),
+        ],
+        ids=["opencode-config-dir", "xdg-config-home"],
+    )
+    def test_honours_opencode_config_env(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        env: dict[str, str],
+        expected: str,
+    ) -> None:
+        for name, value in env.items():
+            monkeypatch.setenv(name, str(tmp_path / value))
+
+        assert _opencode_config_dir() == tmp_path / expected
 
 
 class TestOpencodeToolInstalls:

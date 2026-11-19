@@ -192,6 +192,22 @@ def _pi_agent_dir() -> Path:
     )
 
 
+def _opencode_config_dir() -> Path:
+    """Return opencode's global config directory.
+
+    Returns:
+        ``$OPENCODE_CONFIG_DIR``, else ``$XDG_CONFIG_HOME/opencode``, where set
+        and no install root is given, else ``~/.config/opencode`` under the
+        home directory.
+    """
+    if not is_rooted():
+        if override := os.environ.get("OPENCODE_CONFIG_DIR"):
+            return Path(override).expanduser()
+        if xdg := os.environ.get("XDG_CONFIG_HOME"):
+            return Path(xdg).expanduser() / "opencode"
+    return user_home() / ".config" / "opencode"
+
+
 def _get_dirs() -> dict[str, dict[str, Path]]:
     """Build destination directories used during installation.
 
@@ -200,6 +216,7 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
     """
     home = user_home()
     pi_agent = _pi_agent_dir()
+    opencode = _opencode_config_dir()
     return {
         "kiro": {
             "rules": home / ".kiro" / "steering",
@@ -217,8 +234,8 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
             "skills": home / ".gemini" / "config" / "skills",
         },
         "opencode": {
-            "rules": home / ".config" / "opencode",
-            "skills": home / ".config" / "opencode" / "skills",
+            "rules": opencode,
+            "skills": opencode / "skills",
         },
         "pi": {
             "rules": pi_agent,
