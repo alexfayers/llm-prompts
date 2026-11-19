@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_e0ac35ffd7a69d64_collection_size_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-19 21:20 +0000
+            created at 2026-11-19 21:22 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -449,7 +449,7 @@
     <p class="run"><span class="n"><a id="t367" href="#t367">367</a></span><span class="t">        <span class="key">return</span> <span class="op">[</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t368" href="#t368">368</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t369" href="#t369">369</a></span><span class="t">    <span class="nam">run_with_retries</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t370" href="#t370">370</a></span><span class="t">        <span class="op">[</span><span class="str">&quot;git&quot;</span><span class="op">,</span> <span class="str">&quot;-C&quot;</span><span class="op">,</span> <span class="nam">str</span><span class="op">(</span><span class="nam">repo</span><span class="op">)</span><span class="op">,</span> <span class="str">&quot;fetch&quot;</span><span class="op">,</span> <span class="str">&quot;--quiet&quot;</span><span class="op">,</span> <span class="str">&quot;--tags&quot;</span><span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t370" href="#t370">370</a></span><span class="t">        <span class="op">[</span><span class="str">&quot;git&quot;</span><span class="op">,</span> <span class="str">&quot;-C&quot;</span><span class="op">,</span> <span class="nam">str</span><span class="op">(</span><span class="nam">repo</span><span class="op">)</span><span class="op">,</span> <span class="str">&quot;fetch&quot;</span><span class="op">,</span> <span class="str">&quot;--quiet&quot;</span><span class="op">,</span> <span class="str">&quot;--tags&quot;</span><span class="op">,</span> <span class="str">&quot;--force&quot;</span><span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t371" href="#t371">371</a></span><span class="t">        <span class="nam">check</span><span class="op">=</span><span class="key">True</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t372" href="#t372">372</a></span><span class="t">        <span class="nam">capture_output</span><span class="op">=</span><span class="key">True</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t373" href="#t373">373</a></span><span class="t">        <span class="nam">text</span><span class="op">=</span><span class="key">True</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -706,7 +706,7 @@
     <p class="run"><span class="n"><a id="t624" href="#t624">624</a></span><span class="t">    <span class="nam">fetch</span> <span class="op">=</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t625" href="#t625">625</a></span><span class="t">        <span class="nam">subprocess</span><span class="op">.</span><span class="nam">CompletedProcess</span><span class="op">(</span><span class="op">[</span><span class="op">]</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="str">&quot;&quot;</span><span class="op">,</span> <span class="str">&quot;&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t626" href="#t626">626</a></span><span class="t">        <span class="key">if</span> <span class="nam">repo</span> <span class="key">in</span> <span class="nam">_FETCHED_REPOS</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t627" href="#t627">627</a></span><span class="t">        <span class="key">else</span> <span class="nam">run_git</span><span class="op">(</span><span class="nam">repo</span><span class="op">,</span> <span class="str">&quot;fetch&quot;</span><span class="op">,</span> <span class="str">&quot;--quiet&quot;</span><span class="op">,</span> <span class="str">&quot;--tags&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t627" href="#t627">627</a></span><span class="t">        <span class="key">else</span> <span class="nam">run_git</span><span class="op">(</span><span class="nam">repo</span><span class="op">,</span> <span class="str">&quot;fetch&quot;</span><span class="op">,</span> <span class="str">&quot;--quiet&quot;</span><span class="op">,</span> <span class="str">&quot;--tags&quot;</span><span class="op">,</span> <span class="str">&quot;--force&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t628" href="#t628">628</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t629" href="#t629">629</a></span><span class="t">    <span class="nam">fetch_failed</span> <span class="op">=</span> <span class="nam">fetch</span><span class="op">.</span><span class="nam">returncode</span> <span class="op">!=</span> <span class="num">0</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t630" href="#t630">630</a></span><span class="t">    <span class="nam">fetch_error</span> <span class="op">=</span> <span class="fst">f&quot;</span><span class="fst">[</span><span class="op">{</span><span class="nam">name</span><span class="op">}</span><span class="fst">] could not fetch: </span><span class="op">{</span><span class="nam">fetch</span><span class="op">.</span><span class="nam">stderr</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span><span class="op">}</span><span class="fst">&quot;</span>&nbsp;</span><span class="r"></span></p>
@@ -1900,7 +1900,7 @@
             <a class="nav" href="z_e0ac35ffd7a69d64_collection_size_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-19 21:20 +0000
+            created at 2026-11-19 21:22 +0000
         </p>
     </div>
 </footer>
