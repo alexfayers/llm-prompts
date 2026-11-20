@@ -18,6 +18,7 @@ jobs:
       - uses: alexfayers/llm-prompts-ci/.github/actions/setup-just@main
       - run: uv sync --locked
       - run: just lint-check
+      - run: just check
 
   type-check:
     runs-on: ubuntu-latest
