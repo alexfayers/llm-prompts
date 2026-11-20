@@ -60,7 +60,7 @@ Every spawn prompt MUST specify:
 - lint/format/test conventions: package config (e.g. `pyproject.toml`) outranks memory/global preferences - MUST match the file edited;
 - where the prompt pins a shape (signature, return type, format) and says match a sibling, MUST reconcile the two;
 - for code/prose, the output-size limit - minimal diff, no unrequested comments/refactors/reformatting, terse report.
-- for a UI/visual change: coding.md's rendered check, reported as seen - MUST NOT accept "done" from a test pass or "folded into another slice".
+- for a UI/visual change: coding.md's rendered check via a scripted harness or widget/golden test that sets size and text scale, reported as seen - MUST NOT have agents drive a browser by screenshot, nor accept "done" from a test that does not check the rendered result or "folded into another slice".
 - for a shell-restricted delegate: name {% if AGENT == "pi" %}`read`/`grep`/`find`{% else %}Read/Grep/Glob{% endif %} for investigation, and exactly which command it MAY run - never implicit {% if AGENT == "pi" %}`bash`{% else %}Bash{% endif %}.
 - MUST NOT ask a role without write tools to write files - artifacts go to a `{% if AGENT == "pi" %}writer{% else %}worker{% endif %}`. Scratch notes stay in the report unless a file is requested.
 - a delegate asked a question MUST report the answer, not raw output or file text (except failure, error or named value). A drafted edit returns new wording only.

@@ -7,7 +7,8 @@ targets: claude-code
 # Agent teams: coordinate through the team
 
 - `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` gates `SendMessage`/the task list, already installer-checked - MUST NOT re-verify. Model tiers: `delegation.md`.
-- MUST spawn a named `coordinator` FIRST on any incoming task main cannot - from the request alone - both name every file for and state the exact change to. MUST NOT read, search or scope first - a memory search excepted. Within that carve-out only, one-off work goes to an unnamed subagent - name one only with a stated follow-up. Also exempt: building an agreed `eagle-vision` plan skips `coordinator` - the plan is the breakdown; main staffs it per that skill's Build section.
+- A small fix - a few files main can name from the request, memory or one quick look - MUST run inline or with one `worker`, no `coordinator`.
+- Small fixes excepted, MUST spawn a named `coordinator` FIRST on any incoming task main cannot - from the request alone - both name every file for and state the exact change to. MUST NOT read, search or scope first - a memory search or a small fix's quick look excepted. Within that carve-out only, one-off work goes to an unnamed subagent - name one only with a stated follow-up. Also exempt: building an agreed `eagle-vision` plan skips `coordinator` - the plan is the breakdown; main staffs it per that skill's Build section.
 - MUST start one named `coordinator` per independent batch of asks, in parallel - MUST NOT route unrelated asks through one `coordinator`. Follow-ups within a batch MUST go to that batch's `coordinator` via `continue_agent`.
 - Main MUST route chained follow-ups on one problem (e.g. root cause, fix, verify, tidy) to a `coordinator`, not a chain of single leaves.
 - Teammate-side duties (claiming, reporting, handoff, rotation) live in agent definitions.
@@ -20,7 +21,7 @@ targets: claude-code
 
 ## Keep the main thread orchestration-only
 
-- Loading this rule enables teams - delegate from the FIRST unit. Whether the work decomposes, needs a design, or warrants a team is `coordinator`'s call in ITS context. Main's spawn prompt MUST carry the request near-verbatim plus context only main holds, MUST state the teammate's own spawned name ("Your teammate name is `<name>`"), and MUST NOT state, inside a `coordinator`'s prompt, a split, stream or teammate count, tier, single-vs-multi implementer, or parallelism - those travel back FROM `coordinator`, never into it. User-dictated staffing MUST be quoted and attributed; unattributed, it is main's own and forbidden.
+- Loading this rule enables teams - delegate from the FIRST unit, small fixes excepted. Whether the work decomposes, needs a design, or warrants a team is `coordinator`'s call in ITS context. Main's spawn prompt MUST carry the request near-verbatim plus context only main holds, MUST state the teammate's own spawned name ("Your teammate name is `<name>`"), and MUST NOT state, inside a `coordinator`'s prompt, a split, stream or teammate count, tier, single-vs-multi implementer, or parallelism - those travel back FROM `coordinator`, never into it. User-dictated staffing MUST be quoted and attributed; unattributed, it is main's own and forbidden.
 - Main is the sole spawner/killer; a delegate MAY still fan out unnamed one-shot subagents itself. Main spends its own context only on relaying the task, spawning, answering what only it can, approving or rejecting, and reporting to the user - catching itself reading, surveying, scoping or investigating: stop and delegate.
 - MUST NOT arbitrate between teammates - route to `reasoner`.
 
