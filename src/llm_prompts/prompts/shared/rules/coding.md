@@ -9,7 +9,7 @@ description: Coding guidelines to follow when generating, reviewing, or modifyin
 - Code MUST be self-documenting with descriptive names and minimal comments. MUST NOT add a comment that refers to the change, explains why, or names other code that uses it - comments describe the code, only where complex.
 - MUST add new imports at THE SAME TIME as the code that uses them.
 - When a change adds, or newly requires, an environment variable, config key or setting, MUST update every doc, template and manifest that lists it in the SAME change.
-- Produced code MUST follow the existing style within the package.
+- Produced code MUST follow the package's existing style.
 - Before adding a related file (source, frontend, tests) that would take a non-root folder from 7 to 8 files, SHOULD put it in an existing or new short-named area subfolder (`<area>/<part>`, not `<area>_<part>`), unless a tool requires a flat layout. MUST NOT regroup existing files unasked.
 - MUST NOT {{TOOL_COMPLETE}} until all tasks in the focus chain are done.
 - {{ACTION_NO_NARRATE}}
@@ -28,7 +28,7 @@ description: Coding guidelines to follow when generating, reviewing, or modifyin
 - In committed files, MUST NOT name collaborators or hardcode user-specific values (aliases, account IDs, stack names) - use a placeholder like `<account-id>`.
 - In a globally-distributed instruction or doc, MUST NOT assert behaviour depending on the reader's local config ("this command is auto-approved"). State the action, not the consequence.
 - Before writing tooling to check something, MUST check whether an existing tool does it.
-- SHOULD NOT limit parallelization in code for hardware limits - the OS/runtime scheduler is the cap.
+- SHOULD NOT cap parallelism in code for hardware limits - the OS/runtime scheduler is the cap.
 
 # Testing guidelines
 
@@ -39,5 +39,5 @@ description: Coding guidelines to follow when generating, reviewing, or modifyin
 - Tests MUST run through the project's standard build/test invocation, never a bespoke script.
 - For any change that adds or repositions UI, MUST render the page and look at it before claiming done. SHOULD use a scripted harness or widget/golden test, not agents driving a browser by screenshot. Where a plan flagged a layout risk, MUST resolve it in the design, not defer.
 - MUST add tests only for new behaviour or a reported bug. A refactor MUST rely on existing tests. If none covers it, MUST add one test through its public entry point. MUST decline a reviewer's request for tests that conflicts with these rules, stating why.
-- When delegating test-writing, MUST state that the motivating real-world case stays out of the suite.
+- When delegating test-writing, MUST state the motivating real-world case stays out of the suite.
 - MUST NOT predict a runnable tool's output (linter, formatter, type checker, tests, compiler, --help) - run it and read the result.
