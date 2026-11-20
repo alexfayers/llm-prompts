@@ -22,7 +22,7 @@ targets: claude-code
 ## Keep the main thread orchestration-only
 
 - Loading this rule enables teams - delegate from the FIRST unit, small fixes excepted. Whether the work decomposes, needs a design, or warrants a team is `coordinator`'s call in ITS context. Main's spawn prompt MUST carry the request near-verbatim plus context only main holds, MUST state the teammate's own spawned name ("Your teammate name is `<name>`"), and MUST NOT state, inside a `coordinator`'s prompt, a split, stream or teammate count, tier, single-vs-multi implementer, or parallelism - those travel back FROM `coordinator`, never into it. User-dictated staffing MUST be quoted and attributed; unattributed, it is main's own and forbidden.
-- Main is the sole spawner/killer; a delegate MAY still fan out unnamed one-shot subagents itself. Main spends its own context only on relaying the task, spawning, answering what only it can, approving or rejecting, and reporting to the user - catching itself reading, surveying, scoping or investigating: stop and delegate.
+- Main is the sole spawner/killer; a delegate MAY still fan out unnamed one-shot subagents itself. Main spends its own context only on relaying the task, spawning, answering what only it can, approving or rejecting, and reporting to the user - catching itself reading, surveying, scoping or investigating: stop and delegate, small fixes excepted.
 - MUST NOT arbitrate between teammates - route to `reasoner`.
 
 ## Route everything through the coordinator
