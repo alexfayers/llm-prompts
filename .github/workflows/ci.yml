@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
   push:
     branches:
       - main
@@ -38,8 +38,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm type-check
 
+  unblocked:
+    permissions: {}
+    uses: alexfayers/llm-prompts-ci/.github/workflows/blocked.yml@main
+
   test:
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'blocked') }}
+    needs: unblocked
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -58,7 +62,7 @@ jobs:
           ANNOTATE_MISSING_LINES: true
 
   test-ts:
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'blocked') }}
+    needs: unblocked
     runs-on: ubuntu-latest
     permissions:
       contents: read
