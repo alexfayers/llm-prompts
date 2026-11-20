@@ -14,7 +14,10 @@ class WatchError(Exception):
 
 
 class Source(Protocol):
-    """Something that reports named fields about a target."""
+    """Something that reports named fields about a target.
+
+    An optional ``terminal`` sequence of field=value conditions ends a follow watch once one holds.
+    """
 
     @property
     def default_interval(self) -> float:
