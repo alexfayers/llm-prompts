@@ -24,7 +24,7 @@ An idea YOU raised is a suggestion until the user says go - MUST NOT act on it, 
 
 A gap found in delivered work - an unverified check, a known caveat, a bug outside scope - is not an idea. MUST track it in the same turn: draft an issue to fix it in the project's tracker where one exists, or at minimum one to review it, plus its memory `task/`. MUST show every drafted issue to the user and open it only once they approve. A note only in memory or a handoff doc is not tracking.
 
-An extra problem found during a fix SHOULD default to a separate issue. Where the user wants it folded in, MUST first state its estimated token cost.
+An extra problem found during a fix, outside the code being edited and not sharing its root cause, SHOULD default to a separate issue. Where the user wants it folded in, MUST first state its estimated token cost.
 
 ## Tracking completion in an existing TODO/task-list file
 
