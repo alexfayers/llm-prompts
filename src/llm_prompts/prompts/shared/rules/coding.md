@@ -20,7 +20,7 @@ description: Coding guidelines to follow when generating, reviewing, or modifyin
 - SHOULD NOT assign a variable that adds no clarity; a value used once needs no name.
 - SHOULD NOT use magic numbers: where a threshold recurs, derive every occurrence from one named constant.
 - MUST leave code better than you found it - fix an issue you notice in code you are already editing. MUST NOT edit another team's or package's code just because yours sits next to it. Raise the rest separately.
-- When fixing a bug, fix ALL directly related issues in the same code path - MUST NOT dismiss a pre-existing failure that shares its root cause or context.
+- When fixing a bug, fix ALL issues sharing its root cause in the same code path - MUST NOT dismiss a pre-existing failure that shares its root cause or context.
 - Before adding a parameter to a signature, MUST verify the body uses it.
 - Before declaring a value or function dead, MUST search the WHOLE workspace.
 - After fixing an error you wrote, MUST record the mistake and fix in memory - a delegate reports it instead.
@@ -37,7 +37,7 @@ description: Coding guidelines to follow when generating, reviewing, or modifyin
 - When fixing a REPORTED bug, MUST reproduce the symptom with a harness matching how the code is invoked, then confirm the fix makes that reproduction pass. Where you cannot reproduce it, MUST say so and keep investigating - MUST NOT ship a speculative fix and claim it resolved.
 - MUST verify an integration feature against the real target, not just a stub. MUST probe read-only first (--dry-run, stat before and after), then run the real path, and state which parts were stub-tested.
 - Tests MUST run through the project's standard build/test invocation, never a bespoke script outside it.
-- For any change that adds or repositions UI, MUST render the page and look at it before claiming done. Where a plan flagged a layout risk, MUST resolve it in the design rather than defer.
+- For any change that adds or repositions UI, MUST render the page and look at it before claiming done. SHOULD do it with a scripted harness or widget/golden test, not agents driving a browser by screenshot. Where a plan flagged a layout risk, MUST resolve it in the design rather than defer.
 - MUST add tests only for new behaviour or a reported bug. A refactor MUST rely on existing tests. If no test covers the refactored code, MUST add one test through its public entry point. MUST decline a reviewer's request for tests that conflicts with the test rules, stating why.
 - When delegating test-writing, MUST state that the motivating real-world case stays out of the suite.
 - MUST NOT predict a runnable tool's output (linter, formatter, type checker, tests, compiler, --help) - run it and read the result.
