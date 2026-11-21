@@ -43,7 +43,7 @@ llm-prompts contribute sync --apply
 
 - `sync --apply` never pushes or opens a PR for a local-only worktree. Once `--ready`, it pushes the branch, opens a draft PR and keeps its title and What current.
 - Record the text for the PR's Why with `--why B "TEXT"` before `--ready`. `sync` never opens a PR, nor edits a draft PR's body, while a section the PR template check requires (every template section except Dependencies and Issues) is empty. It prints the worktree, the empty section and the `--why` command, skips that PR, still syncs the others and exits nonzero. A Why you wrote in a PR is kept.
-- Stack a branch on another with `--depends-on B TOOL:B2`. `sync` restacks it and writes the `Depends on` line.
+- Stack a branch on another with `--depends-on B TOOL:B2`. `sync` restacks it and writes the `Depends on` line. `--depends-on B owner/repo#N` links a PR in any other repo.
 - Run `llm-prompts contribute sync --help` for every flag, and `contribute list` for each worktree's state and size.
 - Marking a contribute PR ready for review enables squash auto-merge. It merges once checks pass and a reviewer approves.
 - When main moves, open PRs with auto-merge on are rebased onto it automatically.
