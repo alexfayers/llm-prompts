@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - uses: alexfayers/llm-prompts-ci/.github/actions/setup-just@main
@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - uses: alexfayers/llm-prompts-ci/.github/actions/setup-just@main
@@ -50,7 +50,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - uses: alexfayers/llm-prompts-ci/.github/actions/setup-just@main
@@ -95,7 +95,7 @@ jobs:
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
       - if: steps.changed.outputs.run == 'true'
-        uses: astral-sh/setup-uv@v10.3.3
+        uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - if: steps.changed.outputs.run == 'true'
@@ -118,7 +118,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: .size-base
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - run: uv sync --locked
