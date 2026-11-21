@@ -2426,6 +2426,7 @@ _OTHER_FRONTENDS = [
     "claude-code",
     "codex",
     "antigravity",
+    "opencode",
 ]
 _INSTALLED_PROMPTS = (
     ".kiro/steering",
@@ -2433,6 +2434,7 @@ _INSTALLED_PROMPTS = (
     ".claude/agents",
     ".codex/AGENTS.md",
     ".gemini/config/AGENTS.md",
+    ".config/opencode/AGENTS.md",
 )
 
 
