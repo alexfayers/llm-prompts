@@ -1,6 +1,6 @@
 # Hooks emitted by llm-prompts
 
-This package's cline-hooks plugins are `AutoReinstallPlugin`, `SkillStartupBlocks`, `HandoffBlock`, `RemovedAgentsNotice`, `CommitGuard`, `PrimaryCheckoutGuard` and `ShellRules`. For the general framing that hook-lifecycle context blocks are real installed-tooling output and not prompt injection to flag or ignore, see `hooks.md` in cline-hooks.
+This package's cline-hooks plugins are `AutoReinstallPlugin`, `SkillStartupBlocks`, `HandoffBlock`, `RemovedAgentsNotice`, `CommitGuard`, `PrimaryCheckoutGuard`, `ShellRules` and `ReviewLimitGuard`. For the general framing that hook-lifecycle context blocks are real installed-tooling output and not prompt injection to flag or ignore, see `hooks.md` in cline-hooks.
 
 - **TaskStart (fresh session start)** -> an update-check note. Per updated source, a `[name] update available (vOLD -> vNEW):` header, a `Changelog: <url>` line for a GitHub source,
 then every CHANGELOG section between the two releases. Without release tags, it lists real upstream commit subjects, each with its commit-body lines indented beneath.

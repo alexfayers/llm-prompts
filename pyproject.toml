@@ -30,6 +30,7 @@ llm-prompts-removed-agents = "llm_prompts.removed_agents_notice:RemovedAgentsNot
 llm-prompts-commit-guard = "llm_prompts.guards.commit_guard:CommitGuard"
 llm-prompts-primary-checkout-guard = "llm_prompts.guards.commit_guard:PrimaryCheckoutGuard"
 llm-prompts-shell-rules = "llm_prompts.guards.shell_rules:ShellRules"
+llm-prompts-review-limit = "llm_prompts.guards.review_limit:ReviewLimitGuard"
 
 [tool.ruff.lint]
 ignore = [
