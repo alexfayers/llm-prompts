@@ -7,12 +7,13 @@ targets: claude-code, pi
 
 ## When to plan
 
+- A small fix - a few files main can name from the request, memory or one quick look - SHOULD skip plan mode, Explore/Plan agents and `refine-plan`: state the change in one line and do it.
 {% if AGENT == "pi" %}
-- For multi-file changes, architectural decisions, a new feature, or unfamiliar code, MUST save memory, then present a plan to the user.
+- For multi-file changes (small fixes excepted), architectural decisions, a new feature, or unfamiliar code, MUST save memory, then present a plan to the user.
 - SHOULD err on the side of planning.
 - MUST research and design in subagents BEFORE presenting the plan.
 {% else %}
-- MUST use `EnterPlanMode` at least once for multi-file changes, architectural decisions, a new feature, or unfamiliar code.
+- MUST use `EnterPlanMode` at least once for multi-file changes (small fixes excepted), architectural decisions, a new feature, or unfamiliar code.
 - SHOULD err on the side of planning.
 - MUST research and design in subagents BEFORE plan mode - main-session tool calls inside it re-run permission checks.
 - Inside plan mode you MUST only present the finished plan, then call `ExitPlanMode`.
