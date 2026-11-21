@@ -139,7 +139,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: PostHog/resolve-release@v1
+      - uses: PostHog/resolve-release@v2
         continue-on-error: true
         timeout-minutes: 5
         with:
