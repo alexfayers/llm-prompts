@@ -52,6 +52,11 @@ class Persisted:
         """Named conditions the source offers."""
         return self._source.aliases
 
+    @property
+    def terminal(self) -> Sequence[str]:
+        """Conditions that end a follow watch."""
+        return getattr(self._source, "terminal", ())
+
     def describe(self) -> str:
         """Return the short label printed with the result."""
         return self._source.describe()
