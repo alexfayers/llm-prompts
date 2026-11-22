@@ -7,7 +7,7 @@ targets: claude-code
 # Agent teams: coordinate through the team
 
 - `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` gates `SendMessage`/the task list, already installer-checked - MUST NOT re-verify. Model tiers: `delegation.md`.
-- A small fix - a few files main can name from the request, memory or one quick look - MUST run inline or with one `worker`, no `coordinator`.
+- A small fix (per `planning.md`) MUST run inline or with one `worker`, no `coordinator`.
 - Small fixes excepted, MUST spawn a named `coordinator` FIRST on any incoming task main cannot - from the request alone - both name every file for and state the exact change to. MUST NOT read, search or scope first - a memory search or a small fix's quick look excepted. Within that carve-out only, one-off work goes to an unnamed subagent - name one only with a stated follow-up. Also exempt: building an agreed `eagle-vision` plan skips `coordinator` - the plan is the breakdown; main staffs it per that skill's Build section.
 - MUST start one named `coordinator` per independent batch of asks, in parallel - MUST NOT route unrelated asks through one `coordinator`. Follow-ups within a batch MUST go to that batch's `coordinator` via `continue_agent`.
 - Main MUST route chained follow-ups on one problem (e.g. root cause, fix, verify, tidy) to a `coordinator`, not a chain of single leaves.
