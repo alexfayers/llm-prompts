@@ -40,7 +40,7 @@ targets: claude-code, pi
 - A `reader` (default) only reads. A `writer` works only in its own git worktree and its commits land on the current branch - give each branch its own writer.
 - A warm fork inherits the session and its rules. A cold worker (`model` set) starts with an empty session: its `task` MUST carry every binding constraint.
 {% else %}
-- MUST use only named tiers, passing the installed `<tier>-<model>-<effort>` name (e.g. `reasoner-opus-high`), never the bare tier - `reasoner` (Opus, holds `{{TOOL_AGENT}}`), `worker` (mechanical), `surveyor` (read-only), `coordinator` (breakdown, `Explore`-only `{{TOOL_AGENT}}`); never `general-purpose`.
+- MUST use only named tiers, passing the installed `<tier>-<model>-<effort>` name, never the bare tier - `reasoner` (Opus, holds `{{TOOL_AGENT}}`), `worker` (mechanical), `surveyor` (read-only), `coordinator` (breakdown, `Explore`-only `{{TOOL_AGENT}}`); never `general-purpose`.
 - `Explore`/`Plan` inherit no rules: their prompt MUST carry every binding constraint. SHOULD prefer `Explore` to `surveyor` for bounded read-only search.
 - Only main spawns a NAMED teammate; roster is flat. `reasoner` MAY fan out unnamed subagents (may recurse), `coordinator` unnamed `Explore` only; else report to `coordinator` for the AGENT REQUEST.
 {% endif %}
@@ -55,9 +55,9 @@ Every spawn prompt MUST specify:
 - the memory/MCP facts it needs;
 {% endif %}
 - source order - memory, local checkout, internal/official docs, public web last - report back if unanswered, never widen;
-- for a tracked task (memory `task/`, plan slice, ticket): its recorded decisions, and that new ones come back in the report, never to memory;
+- for a tracked task (memory `task/`, plan slice, ticket): its recorded decisions, and that new ones go in the report, not memory;
 - the scope boundary it MUST NOT cross - remote/live systems: read-only, naming disallowed mutations and PR push permission;
-- lint/format/test conventions: package config (e.g. `pyproject.toml`) outranks memory/global preferences - MUST match the file edited;
+- lint/format/test conventions: package config outranks memory/global preferences - MUST match the file edited;
 - where the prompt pins a shape (signature, return type, format) and says match a sibling, MUST reconcile the two;
 - for code/prose, the output-size limit - minimal diff, no unrequested comments/refactors/reformatting, terse report.
 - for a UI/visual change: coding.md's rendered check, reported as seen - MUST NOT accept "done" from a test pass or "folded into another slice".
@@ -88,6 +88,6 @@ Every spawn prompt MUST specify:
 - A delegate whose work outgrows its estimate (more steps/files/phases) MUST stop and escalate up the ownership edge, noting more agents may help - MUST NOT grind alone.
 - MUST NOT idle-wait on a background agent/command, `sleep` or placeholder - completion re-invokes you; work or end turn.{% if AGENT != "pi" %} Exception: while any delegate runs, MUST keep ONE background `sleep 300` armed per session, never one per delegate. When it fires, MUST run one `TaskList` where the team has one, then `SendMessage` for status only each delegate silent since arming whose task shows no progress or is not listed, then re-arm. MUST NOT request status from a delegate that messaged since.{% endif +%}
 {% if AGENT != "pi" %}
-- A mid-turn message is ignored: wait, or re-verify state yourself. Once idle, `SendMessage` resumes a NAMED delegate - ask for a missing/truncated section, not re-derive.
+- A mid-turn message is ignored: wait, or re-verify state. Once idle, `SendMessage` resumes a NAMED delegate - ask for a missing/truncated section, not re-derive.
 - A resend returns a SUMMARY; read its transcript `.jsonl` under `subagents/` - MUST NOT ask again or re-run.
 {% endif %}
