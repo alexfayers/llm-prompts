@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.6.2](https://github.com/alexfayers/llm-prompts/compare/v0.6.1...v0.6.2) (2026-11-22)
+
+
+### Miscellaneous Chores
+
+* **deps:** update all non-major dependencies to v1.6.0 ([#596](https://github.com/alexfayers/llm-prompts/issues/596)) ([1d020d9](https://github.com/alexfayers/llm-prompts/commit/1d020d9003cdec8edbc27f605b31d0cf006a53d2))
+* **deps:** update github actions ([#599](https://github.com/alexfayers/llm-prompts/issues/599)) ([e6891eb](https://github.com/alexfayers/llm-prompts/commit/e6891eb09480fc379c0e3738b6d7ffa8c7add280))
+
+## [0.6.1](https://github.com/alexfayers/llm-prompts/compare/v0.6.0...v0.6.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **session-start:** allow running the checklist on Python 3.9 ([#589](https://github.com/alexfayers/llm-prompts/issues/589)) ([7f590d3](https://github.com/alexfayers/llm-prompts/commit/7f590d3376a5be6344c363650fc9f1fe3fbaafaa))
+* **watch:** end a --follow watch at a source's terminal state ([#547](https://github.com/alexfayers/llm-prompts/issues/547)) ([8805414](https://github.com/alexfayers/llm-prompts/commit/88054141be5191b3c0e4f237523876b9745ae4f0))
+
+
+### Miscellaneous Chores
+
+* sync shared files from llm-prompts-ci ([#592](https://github.com/alexfayers/llm-prompts/issues/592)) ([0822389](https://github.com/alexfayers/llm-prompts/commit/082238976ce198ad4841812bc466ce6253ba915e))
+
 ## [0.6.0](https://github.com/alexfayers/llm-prompts/compare/v0.5.0...v0.6.0) (2026-11-20)
 
 

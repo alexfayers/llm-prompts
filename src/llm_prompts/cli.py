@@ -1192,7 +1192,7 @@ def _add_watch_parser(
         source_parser.add_argument(
             "--follow",
             action="store_true",
-            help="Print each match, then keep watching from the new state until the timeout.",
+            help="Print each match, then keep watching from the new state until the timeout or a terminal state.",
         )
 
 
