@@ -20,7 +20,7 @@ description: Coding guidelines to follow when generating, reviewing, or modifyin
 - SHOULD NOT assign a variable that adds no clarity; a value used once needs no name.
 - SHOULD NOT use magic numbers: where a threshold recurs, derive every occurrence from one named constant.
 - MUST leave code better than you found it - fix an issue you notice in code you are already editing. MUST NOT edit another team's or package's code just because yours sits next to it. Raise the rest separately.
-- When fixing a bug, fix ALL issues sharing its root cause in the same code path - MUST NOT dismiss a pre-existing failure sharing its root cause or context.
+- When fixing a bug, fix ALL directly related issues in the same code path - MUST NOT dismiss a pre-existing failure sharing its root cause or context.
 - Before adding a parameter to a signature, MUST verify the body uses it.
 - Before declaring a value or function dead, MUST search the WHOLE workspace.
 - After fixing an error you wrote, MUST record the mistake and fix in memory - a delegate reports it instead.
