@@ -1,4 +1,5 @@
 // Adds the tower_do_patch tool, which changes single tasks on the board without resending all of them.
+// Env: TOWER_DO_PATCH_TIMEOUT_MS (milliseconds a board call may take, default 60000)
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -39,6 +40,8 @@ export type PatchDeps = {
 };
 
 export const MAX_STALE_RETRIES = 3;
+const DEFAULT_TIMEOUT_MS = 60_000;
+const MAX_TIMER_MS = 2_147_483_647;
 const STALE_REVISION = "stale tower-do revision";
 
 function isStale(outcome: ToolOutcome): boolean {
@@ -71,19 +74,28 @@ const PARAMETERS = Type.Object({
 });
 
 type BoardModule = { TowerBoard: new (file: string) => { fold(): Promise<{ revision: number; tasks: { key: string }[] }> } };
+type PathsModule = { boardFileFor: (cwd: string) => string };
 
 export default function (pi: ExtensionAPI) {
-	const depsFor = (ctx: ExtensionToolContext): PatchDeps => ({
-		async readBoard() {
-			const status = await ctx.executeTool("tower_do_status", { view: "mine" });
-			const file = (status.result.details as { board?: string } | undefined)?.board;
-			if (file === undefined) throw new Error("tower_do_patch: could not find the board file");
-			const { TowerBoard } = await loadTowerDo<BoardModule>("board.ts");
-			const view = await new TowerBoard(file).fold();
-			return { revision: view.revision, keys: view.tasks.map((task) => task.key) };
-		},
-		write: (args) => ctx.executeTool("tower_do", args),
-	});
+	const depsFor = (ctx: ExtensionToolContext, signal: AbortSignal | undefined): PatchDeps => {
+		const configuredMs = Number(process.env.TOWER_DO_PATCH_TIMEOUT_MS);
+		const timeoutMs = Number.isFinite(configuredMs) && configuredMs > 0 && configuredMs <= MAX_TIMER_MS ? configuredMs : DEFAULT_TIMEOUT_MS;
+		return {
+			async readBoard() {
+				const [{ TowerBoard }, { boardFileFor }] = await Promise.all([loadTowerDo<BoardModule>("board.ts"), loadTowerDo<PathsModule>("paths.ts")]);
+				const view = await new TowerBoard(boardFileFor(ctx.cwd)).fold();
+				return { revision: view.revision, keys: view.tasks.map((task) => task.key) };
+			},
+			write(args) {
+				let timer: ReturnType<typeof setTimeout> | undefined;
+				const timeout = new Promise<never>((_, reject) => {
+					timer = setTimeout(() => reject(new Error(`tower_do_patch: tower_do did not return within ${timeoutMs} ms. The write may still apply.`)), timeoutMs);
+				});
+				// shortcut: tower-do checks abort only between steps, so a stuck write can still hold the queue; upgrade when tower-do aborts mid-step
+				return Promise.race([ctx.executeTool("tower_do", args, { signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])]) }), timeout]).finally(() => clearTimeout(timer));
+			},
+		};
+	};
 
 	pi.registerTool({
 		name: "tower_do_patch",
@@ -96,9 +108,8 @@ export default function (pi: ExtensionAPI) {
 			"Use tower_do only for action gc or a full re-plan.",
 		],
 		parameters: PARAMETERS,
-		executionMode: "sequential",
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const outcome = await applyPatch(params, depsFor(ctx));
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const outcome = await applyPatch(params, depsFor(ctx, signal));
 			if (outcome.isError) {
 				throw new Error(outcome.result.content.map((block) => block.text ?? "").join("\n"));
 			}
