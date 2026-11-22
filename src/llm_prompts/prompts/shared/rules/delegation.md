@@ -86,7 +86,7 @@ Every spawn prompt MUST specify:
 
 - A delegate stuck on ambiguity or needing a user preference SHOULD escalate.
 - A delegate whose work outgrows its estimate MUST stop and escalate up the ownership edge, noting more agents may help - MUST NOT grind alone.
-- MUST NOT idle-wait on a background agent/command, `sleep` or placeholder - completion re-invokes you; work or end turn.{% if AGENT != "pi" %} Exception: while any delegate runs, MUST keep ONE background `sleep 300` armed per session, not per delegate. When it fires, MUST ask status of each delegate silent since arming that `TaskList` shows stalled or lacks, then re-arm. MUST NOT request status from a delegate that messaged since.{% endif +%}
+- MUST NOT idle-wait on a background agent/command, `sleep` or placeholder - work or end turn.{% if AGENT != "pi" %} Exception: while any delegate runs, MUST keep ONE background `sleep 300` armed per session, not per delegate. When it fires, MUST ask status of each delegate silent since arming that `TaskList` shows stalled or lacks, then re-arm. MUST NOT request status from a delegate that messaged since.{% endif +%}
 {% if AGENT != "pi" %}
 - A mid-turn message is ignored: wait, or re-verify state. Once idle, `SendMessage` resumes a NAMED delegate - ask for a missing/truncated section, not re-derive.
 - A resend returns a SUMMARY; read its transcript `.jsonl` under `subagents/` - MUST NOT ask again or re-run.
