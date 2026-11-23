@@ -146,7 +146,7 @@ export async function loadExtension(name: string, options: LoadOptions = {}): Pr
 	for (const [specifier, exports] of Object.entries(options.mocks ?? {})) {
 		active.get(specifier)?.restore();
 		const { default: realDefault, ...real } = await import(specifier);
-		active.set(specifier, mock.module(specifier, { namedExports: { ...real, ...exports }, defaultExport: { ...realDefault, ...exports } }));
+		active.set(specifier, mock.module(specifier, { exports: { ...real, ...exports, default: { ...realDefault, ...exports } } }));
 	}
 	const module = await import(`${pathToFileURL(join(EXTENSIONS_DIR, `${name}.ts`))}?load=${loads++}`);
 	const pi = makePi(options.pi ?? {});
