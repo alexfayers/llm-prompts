@@ -35,6 +35,7 @@ from .colors import paint
 from .console import LogLevel, log
 from .exit_reason import ExitReason
 from .home import is_rooted, set_root, user_home
+from .jsonfile import write_text_atomic
 from .mcp import (
     CLAUDE_NAMING,
     PI_NAMING,
@@ -586,15 +587,13 @@ def _write_if_changed(
 
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        _write_text(dest, output)
+        write_text_atomic(dest.resolve(), output)
         log("debug", f"{action} {label}")
         _record_change(
             action, group, dest.parent.name if dest.name == "SKILL.md" else dest.name
         )
     except Exception as e:
         log("error", f"Failed to install {label}: {e}")
-        if dest.exists():
-            dest.unlink()
 
 
 def _linked_content(src: Path) -> str:
