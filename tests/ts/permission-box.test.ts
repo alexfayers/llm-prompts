@@ -15,7 +15,7 @@ const OVERLAY = { overlay: true, overlayOptions: { anchor: "center", width: "92%
 const EXTENSIONS_DIR = join(import.meta.dirname, "../../src/llm_prompts/prompts/pi/extensions");
 
 mock.module("@earendil-works/pi-tui", {
-	namedExports: {
+	exports: {
 		visibleWidth: (text: string) => text.replace(ESC, "").length,
 		truncateToWidth: (text: string, width: number, _ellipsis = "", pad = false) => {
 			const stripped = text.replace(ESC, "");
@@ -27,7 +27,7 @@ mock.module("@earendil-works/pi-tui", {
 	},
 });
 mock.module("@earendil-works/pi-coding-agent", {
-	namedExports: { getAgentDir: () => "/nonexistent-agent-dir", generateDiffString: () => ({ diff: "" }), renderDiff: (text: string) => text },
+	exports: { getAgentDir: () => "/nonexistent-agent-dir", generateDiffString: () => ({ diff: "" }), renderDiff: (text: string) => text },
 });
 
 const theme = {

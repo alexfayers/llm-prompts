@@ -35,6 +35,7 @@ from .colors import paint
 from .console import LogLevel, log
 from .exit_reason import ExitReason
 from .home import is_rooted, set_root, user_home
+from .jsonfile import write_text_atomic
 from .mcp import (
     CLAUDE_NAMING,
     PI_NAMING,
@@ -192,6 +193,22 @@ def _pi_agent_dir() -> Path:
     )
 
 
+def _opencode_config_dir() -> Path:
+    """Return opencode's global config directory.
+
+    Returns:
+        ``$OPENCODE_CONFIG_DIR``, else ``$XDG_CONFIG_HOME/opencode``, where set
+        and no install root is given, else ``~/.config/opencode`` under the
+        home directory.
+    """
+    if not is_rooted():
+        if override := os.environ.get("OPENCODE_CONFIG_DIR"):
+            return Path(override).expanduser()
+        if xdg := os.environ.get("XDG_CONFIG_HOME"):
+            return Path(xdg).expanduser() / "opencode"
+    return user_home() / ".config" / "opencode"
+
+
 def _get_dirs() -> dict[str, dict[str, Path]]:
     """Build destination directories used during installation.
 
@@ -200,6 +217,7 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
     """
     home = user_home()
     pi_agent = _pi_agent_dir()
+    opencode = _opencode_config_dir()
     return {
         "kiro": {
             "rules": home / ".kiro" / "steering",
@@ -215,6 +233,10 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
         "antigravity": {
             "rules": home / ".gemini" / "config",
             "skills": home / ".gemini" / "config" / "skills",
+        },
+        "opencode": {
+            "rules": opencode,
+            "skills": opencode / "skills",
         },
         "pi": {
             "rules": pi_agent,
@@ -565,15 +587,13 @@ def _write_if_changed(
 
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        _write_text(dest, output)
+        write_text_atomic(dest.resolve(), output)
         log("debug", f"{action} {label}")
         _record_change(
             action, group, dest.parent.name if dest.name == "SKILL.md" else dest.name
         )
     except Exception as e:
         log("error", f"Failed to install {label}: {e}")
-        if dest.exists():
-            dest.unlink()
 
 
 def _linked_content(src: Path) -> str:
@@ -754,6 +774,12 @@ class _AntigravityAgent(_CodexAgent):
     AGENTS_MD: ClassVar[str] = "AGENTS.md"
 
 
+class _OpencodeAgent(_CodexAgent):
+    """Opencode agent that concatenates all rules into its global AGENTS.md file."""
+
+    AGENTS_MD: ClassVar[str] = "AGENTS.md"
+
+
 class _PiAgent(_CodexAgent):
     """Pi agent that concatenates all rules into its global AGENTS.md file."""
 
@@ -767,6 +793,7 @@ AGENT_CLASSES: dict[str, type[_Agent]] = {
     "claude-code": _Agent,
     "codex": _CodexAgent,
     "antigravity": _AntigravityAgent,
+    "opencode": _OpencodeAgent,
     "pi": _PiAgent,
 }
 
@@ -3128,6 +3155,16 @@ def try_install_hooks_antigravity() -> None:
     _run_tool([binary, "install", "antigravity"])
 
 
+def try_install_hooks_opencode() -> None:
+    """Write the cline-hooks opencode plugin if available."""
+
+    binary = user_binary("cline-hook")
+    if not binary:
+        log("debug", "cline-hook not found on PATH, skipping opencode hook injection.")
+        return
+    _run_tool([binary, "install", "opencode"])
+
+
 _PI_DEFAULT_KEYS = (
     "defaultProvider",
     "defaultModel",
@@ -3922,6 +3959,18 @@ def try_install_memory_antigravity() -> None:
         _run_tool([binary, "setup-service"])
 
 
+def try_install_memory_opencode() -> None:
+    """Add mcp-memory to opencode if available."""
+
+    binary = user_binary("mcp-memory")
+    if not binary:
+        log("debug", "mcp-memory not found on PATH, skipping opencode MCP setup.")
+        return
+    _run_tool([binary, "install", "opencode"])
+    if not _memory_service_exists():
+        _run_tool([binary, "setup-service"])
+
+
 def try_install_memory_pi() -> None:
     """Add mcp-memory to pi's MCP config if available."""
 
@@ -4274,6 +4323,7 @@ def main(
         "claude-code",
         "codex",
         "antigravity",
+        "opencode",
         "pi",
     ):
         if skill_agent not in active_targets:
@@ -4616,7 +4666,7 @@ def get_managed_dirs() -> list[Path]:
     managed.add(_pi_rules_dir())
     for key, value in dirs.items():
         for subdir, subdir_path in value.items():
-            if key in ("codex", "antigravity", "pi") and subdir == "rules":
+            if key in ("codex", "antigravity", "opencode", "pi") and subdir == "rules":
                 continue
             managed.add(subdir_path)
         if key in ("kiro", "claude-code"):

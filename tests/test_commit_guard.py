@@ -319,7 +319,7 @@ def _record(args: tuple[Path, int]) -> None:
 @pytest.mark.real_io
 def test_receipts_from_parallel_sessions_are_all_kept(tmp_path: Path) -> None:
     path = tmp_path / "receipts.json"
-    with multiprocessing.get_context("fork").Pool(16) as pool:
+    with multiprocessing.get_context("spawn").Pool(16) as pool:
         pool.map(_record, [(path, index) for index in range(64)])
     assert all(ReceiptStore(path).fresh(Path(f"/repo{i}"), str(i)) for i in range(64))
 
