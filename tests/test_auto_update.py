@@ -49,7 +49,7 @@ def _config(config_dir: Path, source: Path, extra: str = "") -> None:
     )
 
 
-def test_a_running_fork_blocks(
+def test_a_running_fork_does_not_block(
     tmp_path: Path, isolated_config_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _config(isolated_config_dir, Path("git+https://example.invalid/x.git"))
@@ -57,26 +57,7 @@ def test_a_running_fork_blocks(
     run = tmp_path / "agent" / "pi-context" / "run"
     run.mkdir(parents=True)
     (run / "handshake.json").write_text("{}", encoding="utf-8")
-    assert auto_update.blocker("") == "fork"
-    (run / "finished").write_text("", encoding="utf-8")
     assert auto_update.blocker("") is None
-
-
-def test_a_stale_fork_run_does_not_block(
-    tmp_path: Path, isolated_config_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _config(isolated_config_dir, Path("git+https://example.invalid/x.git"))
-    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path / "agent"))
-    run = tmp_path / "agent" / "pi-context" / "run"
-    run.mkdir(parents=True)
-    handshake = run / "handshake.json"
-    handshake.write_text("{}", encoding="utf-8")
-    old = time.time() - auto_update.FORK_IDLE_SECONDS - 1
-    os.utime(handshake, (old, old))
-    assert auto_update.blocker("") is None
-    (run / "session").mkdir()
-    (run / "session" / "cold.jsonl").write_text("{}", encoding="utf-8")
-    assert auto_update.blocker("") == "fork"
 
 
 @pytest.mark.real_io

@@ -6,6 +6,7 @@ import json
 import logging
 import multiprocessing
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -423,3 +424,15 @@ class TestPrimaryCheckoutGuard:
             primary(f"git --git-dir {repo}/.git commit -m v", tmp_path / "w")
             is not None
         )
+
+
+@pytest.mark.real_io
+def test_import_skips_the_shell_parser() -> None:
+    check = (
+        "import sys, llm_prompts.guards.commit_guard; "
+        "print(sorted({'bashlex', 'jinja2'} & set(sys.modules)))"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", check], capture_output=True, text=True, check=True
+    )
+    assert completed.stdout.strip() == "[]"

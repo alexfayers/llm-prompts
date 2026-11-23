@@ -1015,6 +1015,45 @@ class TestCollectUpdateMessages:
 
         assert result[0].startswith("[core] update check failed: ")
 
+    @pytest.mark.real_io
+    def test_moved_release_tag_is_not_a_failed_check(self, tmp_path: Path) -> None:
+        def git(repo: Path, *args: str) -> None:
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repo),
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    *args,
+                ],
+                check=True,
+                capture_output=True,
+            )
+
+        upstream = tmp_path / "upstream"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(upstream)], check=True)
+        git(upstream, "commit", "-q", "--allow-empty", "-m", "one")
+        git(upstream, "tag", "v0.1.0")
+        clone = tmp_path / "clone"
+        subprocess.run(["git", "clone", "-q", str(upstream), str(clone)], check=True)
+        git(upstream, "commit", "-q", "--allow-empty", "-m", "two")
+        git(upstream, "tag", "-f", "v0.1.0")
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch(
+                "llm_prompts.setup._load_config",
+                return_value=[{"name": "core", "source": str(clone)}],
+            ),
+            patch("llm_prompts.plugins._load_plugins", return_value=[]),
+        ):
+            mock_config.return_value.exists.return_value = True
+            result = _collect_update_messages()
+
+        assert not any("update check failed" in line for line in result)
+
     def test_update_instruction_appears_once_after_all_packages(self) -> None:
         config = [
             {"name": "pkg-a", "source": "~/git/pkg-a"},

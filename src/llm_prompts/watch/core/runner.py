@@ -6,7 +6,7 @@ import sys
 import time
 from collections.abc import Sequence
 
-from .condition import Condition, expand
+from .condition import Condition, expand, parse
 from .source import Fields, Source, Stateful, WatchError
 from .store import Persisted
 
@@ -38,7 +38,16 @@ def _poll_until_done(
     follow: bool,
 ) -> int:
     sources = [Persisted(s) if isinstance(s, Stateful) else s for s in sources]
-    conditions = [expand(untils, source.aliases) for source in sources]
+    terminals = [
+        [parse(text, text) for text in getattr(source, "terminal", ())]
+        if follow
+        else []
+        for source in sources
+    ]
+    conditions = [
+        expand(untils, source.aliases) + terminal
+        for source, terminal in zip(sources, terminals, strict=True)
+    ]
     start = time.time()
     stop = None if timeout is None else start + timeout
     waiting = list(range(len(sources)))
@@ -63,14 +72,17 @@ def _poll_until_done(
                         f"{sources[index].describe()}: {_describe(condition, current)}",
                         flush=True,
                     )
-                    if follow:
+                    if follow and not any(
+                        terminal.matched(current, current)
+                        for terminal in terminals[index]
+                    ):
                         baselines[index] = reported[index] = current
                     else:
                         waiting.remove(index)
                     break
             else:
                 reported.pop(index, None)
-            if not require_all and index not in waiting:
+            if not require_all and not follow and index not in waiting:
                 return 0
         if not waiting:
             return 0
@@ -97,7 +109,8 @@ def watch(
 ) -> int:
     """Poll until any source, or every source with require_all, matches, and return the exit code.
 
-    With follow, print each match once per change, reset its baseline and keep polling until the timeout.
+    With follow, print each match once per change, reset its baseline and keep polling until the timeout
+    or a state in the source's optional ``terminal`` conditions.
     """
     try:
         return _poll_until_done(sources, untils, interval, timeout, require_all, follow)

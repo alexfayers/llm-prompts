@@ -1722,7 +1722,7 @@ class _RepoSync:
         )
         if source is None and self.main_base != main_sync.UPSTREAM:
             return
-        _git_network("fetch", "--quiet", "--tags", repo=self.repo)
+        _git_network("fetch", "--quiet", "--tags", "--force", repo=self.repo)
         ref = str(source.get("ref", "")) if source else ""
         if main_sync.point_upstream(self.repo, ref):
             self.main_base = main_sync.UPSTREAM

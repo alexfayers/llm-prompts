@@ -13,9 +13,9 @@ from types import TracebackType
 from typing import Any
 
 from . import telemetry_core
+from .console import log
 from .exit_reason import STOPPED_REASONS, ExitReason
 from .home import is_rooted
-from .install import log
 from .manifest import read_manifest
 from .setup import read_config
 

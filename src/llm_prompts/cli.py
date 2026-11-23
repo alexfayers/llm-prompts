@@ -20,9 +20,10 @@ from urllib.parse import urlparse
 from . import github_api, telemetry
 from .attic.cli import add_parser as add_attic_parser
 from .attic.cli import run as run_attic
+from .console import log
 from .exit_reason import ExitReason
 from .home import set_root
-from .install import AGENT_CLASSES, REMOVED_AGENTS, log, prompts_dir, user_binary
+from .install import AGENT_CLASSES, REMOVED_AGENTS, prompts_dir, user_binary
 from .network import run_with_retries, stderr_text
 from .setup import (
     _RELEASE_TAG,
@@ -367,7 +368,7 @@ def _local_source_messages(name: str, source: str, ref: str = "") -> list[str]:
         return []
 
     run_with_retries(
-        ["git", "-C", str(repo), "fetch", "--quiet", "--tags"],
+        ["git", "-C", str(repo), "fetch", "--quiet", "--tags", "--force"],
         check=True,
         capture_output=True,
         text=True,
@@ -624,7 +625,7 @@ def _pull_one_local_source(
     fetch = (
         subprocess.CompletedProcess([], 0, "", "")
         if repo in _FETCHED_REPOS
-        else run_git(repo, "fetch", "--quiet", "--tags")
+        else run_git(repo, "fetch", "--quiet", "--tags", "--force")
     )
     fetch_failed = fetch.returncode != 0
     fetch_error = f"[{name}] could not fetch: {fetch.stderr.strip()}"
@@ -1187,7 +1188,7 @@ def _add_watch_parser(
         source_parser.add_argument(
             "--follow",
             action="store_true",
-            help="Print each match, then keep watching from the new state until the timeout.",
+            help="Print each match, then keep watching from the new state until the timeout or a terminal state.",
         )
 
 

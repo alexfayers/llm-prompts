@@ -10,8 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
-import bashlex  # type: ignore[import-untyped]
-import bashlex.errors  # type: ignore[import-untyped]
 from cline_hooks.core.plugin import HookResult, HooksPlugin
 from cline_hooks.core.vocabulary import CanonicalHook, CanonicalTool, PluginScope
 from cline_hooks.handlers.commands import (
@@ -23,7 +21,6 @@ from cline_hooks.handlers.commands import (
 from cline_hooks.handlers.search_scope import effective_cwd
 
 from .. import home
-from ..overlay_merge import TEST_GATES, merged_test_gates
 from .gate import guards_active
 from .receipts import ReceiptStore, tree_fingerprint
 
@@ -52,6 +49,9 @@ class _Gate(TypedDict):
 
 def _parse(command: str) -> list[ParsedCommand] | None:
     """Return the commands of a shell line, or None where it does not parse."""
+    import bashlex  # type: ignore[import-untyped]
+    import bashlex.errors  # type: ignore[import-untyped]
+
     try:
         return extract_commands(bashlex.parse(command))
     except bashlex.errors.ParsingError:
@@ -119,6 +119,7 @@ def _from_gate(gate: _Gate, source: Path) -> _TestRun:
 def _detected_gate(toplevel: Path) -> _TestRun | None:
     """Return the test run of the gate overlay, then core, test-gates.json detects, or None."""
     from ..install import _discover_overlay_paths
+    from ..overlay_merge import TEST_GATES, merged_test_gates
 
     gates = [
         (cast("_Gate", gate), root / TEST_GATES)

@@ -59,6 +59,7 @@ class GithubPrSource:
         "ci": ["ci=pass", "ci=fail"],
         "update": ["changed:reviews"],
     }
+    terminal: ClassVar[Sequence[str]] = ["merged=true", "state=CLOSED"]
 
     def __init__(self, repo: str, number: int, head: str | None) -> None:
         """Watch pull request number in repo, reporting ``ci=pending`` until head is the PR's head."""
