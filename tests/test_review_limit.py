@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -105,3 +107,14 @@ def test_a_registered_source_blocks_at_its_limit(
     assert result is not None and "team/pkg are open, at the limit of 2" in (
         result.block or ""
     )
+
+
+@pytest.mark.real_io
+def test_import_skips_the_shell_parser() -> None:
+    check = (
+        "import sys, llm_prompts.guards.review_limit; print('bashlex' in sys.modules)"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", check], capture_output=True, text=True, check=True
+    )
+    assert completed.stdout.strip() == "False"

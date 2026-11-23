@@ -8,8 +8,6 @@ import subprocess
 import tomllib
 from typing import TYPE_CHECKING, cast
 
-import bashlex  # type: ignore[import-untyped]
-import bashlex.errors  # type: ignore[import-untyped]
 from cline_hooks.core.plugin import (
     HookResult,
     HooksPlugin,
@@ -89,6 +87,9 @@ class ReviewLimitGuard(HooksPlugin):
         """Return a block for a new review at the limit on PreShell."""
         if not guards_active() or hook_name != PluginScope.PRE_SHELL:
             return None
+        import bashlex  # type: ignore[import-untyped]
+        import bashlex.errors  # type: ignore[import-untyped]
+
         try:
             commands = extract_commands(
                 bashlex.parse(cast("str", kwargs.get("command") or ""))
