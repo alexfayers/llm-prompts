@@ -333,7 +333,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		if (run.background) {
 			const onEnd = async (turn: Awaited<typeof running>) => {
 				const current = registry.get(runId);
-				if (!current || !isLive(current)) return;
+				if (!current || !isLive(current) || runSignal?.aborted) return;
 				const end = { ...endOf(ref, turn, merged.landing), lastRequestAt: turn.lastRequestAt, context: turn.context };
 				const text = turn.error ?? turn.text;
 				const note = merged.landing && tree ? `[merge: ${describeLanding(merged.landing, tree)}]` : tree && (await dropIfClean(tree)) ? "[merge: worktree removed: clean]" : undefined;
@@ -341,7 +341,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 				pi.appendEntry("result-cap", { ref: end.ref, text });
 			};
 			const onFail = async (error: unknown) => {
-				if (registry.get(runId)?.state === "lost") return;
+				if (registry.get(runId)?.state === "lost" || runSignal?.aborted) return;
 				const removed = tree && (await dropIfClean(tree));
 				background.finish(ctx, runId, { state: "failed" }, error instanceof Error ? error.message : String(error), removed ? "[merge: worktree removed: clean]" : undefined);
 			};
