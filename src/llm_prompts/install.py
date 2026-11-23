@@ -3156,6 +3156,16 @@ def try_install_hooks_antigravity() -> None:
     _run_tool([binary, "install", "antigravity"])
 
 
+def try_install_hooks_opencode() -> None:
+    """Write the cline-hooks opencode plugin if available."""
+
+    binary = user_binary("cline-hook")
+    if not binary:
+        log("debug", "cline-hook not found on PATH, skipping opencode hook injection.")
+        return
+    _run_tool([binary, "install", "opencode"])
+
+
 _PI_DEFAULT_KEYS = (
     "defaultProvider",
     "defaultModel",
