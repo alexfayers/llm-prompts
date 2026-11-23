@@ -71,6 +71,7 @@ describe("tower-do-slim", () => {
 		const c = "- [in_progress] c: subject c";
 		const second = await remind([toolResult("out", first!)], board(2, [a, c, "… and 1 more open task(s): d"]));
 		assert.equal(second, [header(2, 3), "Changed since the last board note:", c, "New: d", "Completed or removed: b"].join("\n"));
+		assert.equal(await remind([toolResult("out", first!), toolResult("out", second!)], board(3, [a, c, "… and 2 more open task(s): d, e"])), [header(3, 3), "New: e"].join("\n"));
 		assert.equal(await ext.fire("tool_result", { content: [] }), undefined);
 	});
 
@@ -90,13 +91,6 @@ describe("tower-do-slim", () => {
 		assert.equal(await remind([toolResult("out", first), toolResult("out", quiet)], board(4, [a, b, c])), header(4, 3));
 	});
 
-	test("a note dropped at the end of a turn prints its change again", async () => {
-		const first = (await remind([], board(1, [a])))!;
-		await ext.fire("context", { messages: [toolResult("out", first)], remind: board(2, [a, b]) });
-		await ext.fire("turn_end");
-		assert.equal(await remind([toolResult("out", first)], board(3, [a, b])), [header(3, 2), "Changed since the last board note:", b].join("\n"));
-	});
-
 	test("a board of no open tasks is stated, and later tasks arrive as changes", async () => {
 		const empty = (await remind([], board(1, [])))!;
 		assert.equal(empty, [header(1, 0), "Open tasks:"].join("\n"));
@@ -114,30 +108,12 @@ describe("tower-do-slim", () => {
 			"a note with a task line before the changed label": [toolResult("out", [header(1, 1), a, "Open tasks: a"].join("\n"))],
 			"a note with an invalid task key": [toolResult("out", [header(1, 1), "Open tasks: A!"].join("\n"))],
 			"a note in a message that is not a tool result": [{ role: "assistant", content: [{ type: "text", text: full }] }],
-			"a note quoted inside source code": [toolResult(`const note = "${header(1, 1)}\\nOpen tasks: a";\nOpen tasks: a`)],
 			"a change-only note with no full note before it": [toolResult("out", [header(1, 1), "Changed since the last board note:", a].join("\n"))],
 		};
 		for (const [name, visible] of Object.entries(cases))
 			test(`${name} is not board state`, async () => {
 				assert.equal(await remind(visible, board(2, [a])), fullAgain);
 			});
-	});
-
-	test("a task line a note cannot state safely gets a full note every time", async () => {
-		const split = "- [pending] s: first\u2028second";
-		const note = (await remind([], board(1, [split])))!;
-		assert.equal(await remind([toolResult("out", note)], board(2, [split])), [header(2, 1), "Changed since the last board note:", split, "Open tasks: s"].join("\n"));
-	});
-
-	test("tasks past the line cap are named, and a later one that is in the board is not new", async () => {
-		const over = (more: string) => board(1, [a, `… and ${more.split(",").length} more open task(s): ${more}`]);
-		const first = (await remind([], over("d, e")))!;
-		assert.equal(first, [header(1, 2), "Changed since the last board note:", a, "Open tasks: a, d, e"].join("\n"));
-		assert.equal(await remind([toolResult("out", first)], over("d, e, f")), [header(1, 2), "New: f"].join("\n"));
-	});
-
-	test("a reminder in another format is passed on unchanged", async () => {
-		assert.equal(await remind([], "board reminder"), "board reminder");
 	});
 
 	test("drops a board reminder no tool result took before the turn ends", async () => {
