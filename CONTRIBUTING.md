@@ -18,6 +18,8 @@ just    # lint, type-check, test (see justfile for the individual commands)
 
 Runs `ruff check --fix`, `ruff format`, `mypy` (strict), and `pytest` via `uv run`. Run all of these before opening a PR - CI runs lint, type-check, and test on every push and PR.
 
+`just` runs lint first, then the other checks in parallel. It needs just 1.47.1 or newer.
+
 ## Prompt file size budgets
 
 Files under `src/llm_prompts/prompts/**` (rules, skills, workflows, agents) are subject to enforced size budgets, checked by `tests/test_prompt_sizes.py` and separately live: editing a tracked rule/skill/workflow/agent source file triggers cline-hooks' auto-reinstall, which blocks the write outright if the result would push that file over its threshold. If you hit this, compress the file's wording rather than splitting it into multiple files or asking to raise the ceiling - the fix preserves every existing directive in fewer bytes.

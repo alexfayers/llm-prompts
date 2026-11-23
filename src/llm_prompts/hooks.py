@@ -161,16 +161,8 @@ class _ReinstallDebouncer:
         self._stamp = stamp_path
         self._notice_cache = stamp_path.with_name(stamp_path.name + ".notice")
         self._lock = stamp_path.with_name(stamp_path.name + ".lock")
-        self._held = stamp_path.with_name(stamp_path.name + ".held")
         self._shown = stamp_path.with_name(stamp_path.name + ".shown")
         self._interval_seconds = interval_seconds
-
-    def hold(self, held: bool) -> None:
-        """Record or clear that a running pi fork holds the automatic update."""
-        if held:
-            self._held.touch()
-        else:
-            self._held.unlink(missing_ok=True)
 
     def was_shown(self, task_id: str, messages: list[str]) -> bool:
         """Whether this session was already shown these update messages."""
@@ -193,10 +185,6 @@ class _ReinstallDebouncer:
         recent = dict(list(shown.items())[-_SHOWN_SESSIONS_KEPT:])
         self._shown.parent.mkdir(parents=True, exist_ok=True)
         self._shown.write_text(json.dumps(recent), encoding="utf-8")
-
-    def is_held(self) -> bool:
-        """Whether a running pi fork held the automatic update at the last check."""
-        return self._held.exists()
 
     def should_run(self, fingerprint: str = "") -> bool:
         """Return True if enough time has passed since the last run or the installed versions moved."""
@@ -264,17 +252,6 @@ def _start_auto_update(fingerprint: str) -> str:
     except (Exception, SystemExit):
         logger.warning("Failed to start the automatic llm-prompts update")
         return "error"
-
-
-def _held_by_fork(fingerprint: str) -> bool:
-    """Whether only a running pi fork holds the automatic update, logging instead of raising."""
-    from . import auto_update
-
-    try:
-        return auto_update.blocker(fingerprint) == auto_update.FORK_RUNNING
-    except (Exception, SystemExit):
-        logger.warning("Failed to check what holds the automatic llm-prompts update")
-        return False
 
 
 def _auto_update_failure(fingerprint: str) -> str | None:
@@ -360,40 +337,17 @@ class AutoReinstallPlugin(HooksPlugin):
                     logger.warning("Failed to check for llm-prompts updates")
                     return None
                 if not any(isinstance(m, UpdateCheckFailure) for m in messages):
-                    held = bool(messages) and _held_by_fork(fingerprint)
                     self._update_check_debouncer.mark_run()
-                    self._update_check_debouncer.hold(held)
                     self._update_check_debouncer.store_notice(messages, fingerprint)
                     self._update_check_debouncer.record_shown(task_id, messages)
                     run.auto_update = (
-                        "no-update"
-                        if not messages
-                        else "fork"
-                        if held
-                        else _start_auto_update(fingerprint)
+                        _start_auto_update(fingerprint) if messages else "no-update"
                     )
                     if run.auto_update == "started":
                         messages = [*messages, _AUTO_UPDATE_STARTED]
             elif source in _DEBOUNCED_TASK_START_SOURCES:
                 messages = []
                 if (
-                    holds_lock
-                    and self._update_check_debouncer.is_held()
-                    and not _held_by_fork(fingerprint)
-                ):
-                    self._update_check_debouncer.hold(False)
-                    run.begin("startup-check", ["--retry"])
-                    notice = self._update_check_debouncer.cached_notice()
-                    self._update_check_debouncer.record_shown(task_id, notice)
-                    run.auto_update = _start_auto_update(fingerprint)
-                    if run.auto_update == "started":
-                        messages = [*notice, _AUTO_UPDATE_STARTED]
-                    else:
-                        messages = [
-                            *notice,
-                            f"The automatic update did not run: {run.auto_update}\nRun `llm-prompts update` to update.",
-                        ]
-                elif (
                     notice := self._update_check_debouncer.cached_notice()
                 ) and not self._update_check_debouncer.was_shown(task_id, notice):
                     self._update_check_debouncer.record_shown(task_id, notice)

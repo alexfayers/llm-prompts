@@ -32,7 +32,7 @@ llm-prompts contribute list|sync|update        # keep each worktree branch in sy
 
 ## What gets installed
 
-- Rules are markdown files the agent always reads, such as coding style or commit conventions. Kiro and Claude Code get one file per rule, in `~/.kiro/steering/` and `~/.claude/rules/`. Codex, Antigravity and Pi get one concatenated `AGENTS.md`.
+- Rules are markdown files the agent always reads, such as coding style or commit conventions. Kiro and Claude Code get one file per rule, in `~/.kiro/steering/` and `~/.claude/rules/`. Codex, Antigravity, OpenCode and Pi get one concatenated `AGENTS.md`.
 - Workflows are step-by-step procedures loaded on demand. Only Pi gets them, as prompt templates.
 - Skills are directories with a `SKILL.md` the agent reads before a specific kind of task. They are symlinked, so source edits show up immediately. A skill with `inject_at_start: true` in its `metadata` frontmatter is injected as a `Startup block` by the cline-hooks `SkillStartupBlocks` plugin at the start of a main session.
 - Agents are subagent definitions: markdown files with YAML frontmatter. Files in `shared/agents/` go to Claude Code and Pi, files in `claude-code/agents/` go to Claude Code, with template variables substituted.
@@ -74,7 +74,7 @@ ref = "main"
 
 ### Automatic updates
 
-At session start, when updates are available, llm-prompts runs `llm-prompts update` in the background and logs its start time and output to `auto-update.log` in the llm-prompts data dir. It skips the run, and keeps showing the update notice, while a session holds a configured local checkout or plugin checkout, or that checkout has commits its release or remote lacks or edits (untracked files in a local checkout do not count), or while a pi fork runs, and retries at the next reload or compaction. It never reloads the session: reload once it finishes. `update`, `install`, `setup`, `contribute sync --apply` and the automatic update share one lock, so a second one refuses to start. The reinstall after a prompt file edit skips while a full update runs, since that update installs the edit. A failed run may leave some tools updated, and the next session start shows why. It does not retry until the installed versions change. Turn it off with:
+At session start, when updates are available, llm-prompts runs `llm-prompts update` in the background and logs its start time and output to `auto-update.log` in the llm-prompts data dir. It skips the run, and keeps showing the update notice, while a session holds a configured local checkout or plugin checkout, or that checkout has commits its release or remote lacks or edits (untracked files in a local checkout do not count). It never reloads the session: reload once it finishes. `update`, `install`, `setup`, `contribute sync --apply` and the automatic update share one lock, so a second one refuses to start. The reinstall after a prompt file edit skips while a full update runs, since that update installs the edit. A failed run may leave some tools updated, and the next session start shows why. It does not retry until the installed versions change. Turn it off with:
 
 ```toml
 [update]

@@ -471,8 +471,13 @@ def measure(
         base_prompts,
         *(discovered[1:] if base_overlays is None else base_overlays),
     ]
+    base_targets = tuple(
+        target
+        for target in CHECKED_TARGETS
+        if (base_prompts / target / "vars.json").is_file()
+    )
     head = check(head_roots, vars_root=head_prompts)
-    base = check(base_roots, vars_root=base_prompts)
+    base = check(base_roots, targets=base_targets, vars_root=base_prompts)
     return compare(base.artifacts, head.artifacts, base_roots, head_roots)
 
 
