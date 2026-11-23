@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.3](https://github.com/alexfayers/llm-prompts/compare/v0.6.2...v0.6.3) (2026-11-23)
+
+
+### Bug Fixes
+
+* **pi:** time out a stuck tower_do_patch board call and stop it holding the nested-call queue ([#570](https://github.com/alexfayers/llm-prompts/issues/570)) ([6bbda79](https://github.com/alexfayers/llm-prompts/commit/6bbda79bf8d5ac386e423ce174430b0deabc98d3))
+
+
+### Miscellaneous Chores
+
+* **deps:** lock file maintenance ([#605](https://github.com/alexfayers/llm-prompts/issues/605)) ([55cd399](https://github.com/alexfayers/llm-prompts/commit/55cd399fc1187d018809197f18285aa1ed15dca4))
+
 ## [0.6.2](https://github.com/alexfayers/llm-prompts/compare/v0.6.1...v0.6.2) (2026-11-22)
 
 
