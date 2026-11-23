@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { IDLE_FOLD_EVENT } from "./context-fold.ts";
 
 const REMINDER_TYPE = "pi-tower-do-reminder";
 
@@ -142,22 +143,25 @@ export default async function (pi: ExtensionAPI) {
 		const override = slim[tool.name];
 		pi.registerTool(override ? { ...tool, ...override, parameters: withoutDescriptions(tool.parameters) } : tool);
 	};
-	let pendingReminder: string | undefined;
+	let pendingReminder: { text: string; messages: any[] } | undefined;
 	const detachReminder = (handler: Function) => async (event: any, ctx: any) => {
 		const result = await handler(event, ctx);
 		const messages: any[] | undefined = result?.messages;
 		const last = messages?.at(-1);
 		if (!messages || last?.customType !== REMINDER_TYPE) return result;
-		pendingReminder = compactReminder(textOf(last), messages);
+		pendingReminder = { text: textOf(last), messages };
 		return { ...result, messages: messages.slice(0, -1) };
 	};
 	const on = (event: string, handler: Function) => pi.on(event as never, (event === "context" ? detachReminder(handler) : handler) as never);
+	pi.events.on(IDLE_FOLD_EVENT, (data) => {
+		if (pendingReminder) pendingReminder.messages = (data as { messages: any[] }).messages;
+	});
 	pi.on("turn_end", () => {
 		pendingReminder = undefined;
 	});
 	pi.on("tool_result", (event) => {
 		if (event.parentToolCallId || pendingReminder === undefined) return;
-		const text = pendingReminder;
+		const text = compactReminder(pendingReminder.text, pendingReminder.messages);
 		pendingReminder = undefined;
 		return { content: [...event.content, { type: "text", text }], structuredContent: event.structuredContent };
 	});
