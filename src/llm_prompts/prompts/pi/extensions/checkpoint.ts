@@ -1,5 +1,5 @@
 // Adds the checkpoint tool: mark a point, then rewind to replace the work since a mark or an earlier tool call with a summary or the raw tool results.
-// Also appends a short checkpoint reminder to a tool result each time another threshold of tool-result tokens builds up since the last user message, until the model calls checkpoint.
+// Also appends a short checkpoint reminder to a tool result each time another threshold of tool-result tokens builds up since the last user message, until the model calls checkpoint. Only the first reminder after a reset carries the advice.
 // Config: settings.json llmPrompts.checkpoint.shape (set to "result" to carry the fold in the rewind tool result instead of a separate message)
 // Config: settings.json llmPrompts.checkpoint.nudgeTokens (tool-result tokens per nudge, default 10000)
 // Env: PI_CONTEXT_CHILD (set for delegates, which are never nudged)
@@ -92,8 +92,9 @@ function nudge(pi: ExtensionAPI) {
 		calls++;
 		tokens += textTokens(event.content);
 		if (tokens - nudgedAt < (readSettings(pi)?.nudgeTokens || DEFAULT_NUDGE_TOKENS)) return;
+		const advice = nudgedAt === 0 ? " If a detour is finished, checkpoint rewind to the call before it, or to a mark set before it, with a summary before replying." : "";
 		nudgedAt = tokens;
-		const text = `[checkpoint] ${calls} calls, ~${Math.round(tokens / 1000)}K tokens since the last user message. If a detour is finished, checkpoint rewind to the call before it, or to a mark set before it, with a summary before replying.`;
+		const text = `[checkpoint] ${calls} calls, ~${Math.round(tokens / 1000)}K tokens since the last user message.${advice}`;
 		return { content: [...event.content, { type: "text" as const, text }], structuredContent: event.structuredContent };
 	});
 }

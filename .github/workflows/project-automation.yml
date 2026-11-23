@@ -4,14 +4,16 @@ on:
   push:
     branches: [main]
   pull_request_target:
-    types: [opened, reopened, ready_for_review, converted_to_draft, edited, closed, synchronize, labeled, unlabeled, auto_merge_enabled, review_requested, review_request_removed]
+    types: [opened, reopened, ready_for_review, converted_to_draft, edited, closed, synchronize, labeled, unlabeled, auto_merge_enabled, auto_merge_disabled, review_requested, review_request_removed]
   workflow_run:
-    workflows: [Dependencies, CI, PR template, PR review]
+    workflows: [Dependencies, CI, PR template, PR review, Copilot]
     types: [completed]
+  schedule:
+    - cron: '*/15 * * * *'
 
 concurrency:
-  group: project-automation-${{ github.event_name == 'workflow_run' && format('run-{0}', github.event.workflow_run.head_sha) || github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  group: project-automation-${{ github.event_name == 'workflow_run' && format('run-{0}', github.event.workflow_run.head_sha) || github.event.action == 'review_requested' && format('review-requested-{0}-{1}', github.event.pull_request.number, github.event.requested_reviewer.login || github.event.requested_team.slug) || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' || github.event.action == 'review_requested' }}
 
 jobs:
   automate:

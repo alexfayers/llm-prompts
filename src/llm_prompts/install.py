@@ -29,10 +29,13 @@ from urllib.request import url2pathname
 
 from jinja2 import TemplateError
 
+from . import console
 from .claude_models import catalogue
-from .colors import Color, paint
+from .colors import paint
+from .console import LogLevel, log
 from .exit_reason import ExitReason
 from .home import is_rooted, set_root, user_home
+from .jsonfile import write_text_atomic
 from .mcp import (
     CLAUDE_NAMING,
     PI_NAMING,
@@ -64,8 +67,6 @@ from .setup import _uv_tools_dir
 if TYPE_CHECKING:
     from .manifest import AgentManifest
 
-LogLevel = Literal["debug", "info", "warn", "error", "success"]
-
 _LOAD_WHEN_KINDS = ("env", "tool")
 _REMOVED_GATE = "requires_"
 _DEPRECATED_GATES = {"requires_env": "env", "requires_command": "tool"}
@@ -75,51 +76,7 @@ _TARGET_GATING_KEYS = {
     "extra_variants",
 }
 
-_COLORS: dict[LogLevel, Color] = {
-    "debug": "grey",
-    "info": "white",
-    "warn": "yellow",
-    "error": "red",
-    "success": "green",
-}
-_SYMBOLS: dict[LogLevel, str] = {
-    "debug": "[.]",
-    "info": "[>]",
-    "warn": "[!]",
-    "error": "[x]",
-    "success": "[+]",
-}
-_PLAIN_SYMBOLS: dict[LogLevel, str] = {
-    "debug": "[.]",
-    "info": "[*]",
-    "warn": "[-]",
-    "error": "[!]",
-    "success": "[+]",
-}
-
-
 InstallFailure = Literal["size_guard_failed", "pi_package_failed", "install_failed"]
-_verbose = False
-
-
-def log(level: LogLevel, message: str) -> None:
-    """Log a message with appropriate formatting.
-
-    Args:
-        level: Log level.
-        message: Message to print.
-    """
-    if level == "debug" and not _verbose:
-        return
-    try:
-        if sys.stderr.isatty():
-            print(
-                paint(f"{_SYMBOLS[level]} {message}", _COLORS[level]), file=sys.stderr
-            )
-        else:
-            print(f"{_PLAIN_SYMBOLS[level]} {message}", file=sys.stderr)
-    except BrokenPipeError:
-        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stderr.fileno())
 
 
 _MAX_SUMMARY_NAMES = 8
@@ -236,6 +193,22 @@ def _pi_agent_dir() -> Path:
     )
 
 
+def _opencode_config_dir() -> Path:
+    """Return opencode's global config directory.
+
+    Returns:
+        ``$OPENCODE_CONFIG_DIR``, else ``$XDG_CONFIG_HOME/opencode``, where set
+        and no install root is given, else ``~/.config/opencode`` under the
+        home directory.
+    """
+    if not is_rooted():
+        if override := os.environ.get("OPENCODE_CONFIG_DIR"):
+            return Path(override).expanduser()
+        if xdg := os.environ.get("XDG_CONFIG_HOME"):
+            return Path(xdg).expanduser() / "opencode"
+    return user_home() / ".config" / "opencode"
+
+
 def _get_dirs() -> dict[str, dict[str, Path]]:
     """Build destination directories used during installation.
 
@@ -244,6 +217,7 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
     """
     home = user_home()
     pi_agent = _pi_agent_dir()
+    opencode = _opencode_config_dir()
     return {
         "kiro": {
             "rules": home / ".kiro" / "steering",
@@ -259,6 +233,10 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
         "antigravity": {
             "rules": home / ".gemini" / "config",
             "skills": home / ".gemini" / "config" / "skills",
+        },
+        "opencode": {
+            "rules": opencode,
+            "skills": opencode / "skills",
         },
         "pi": {
             "rules": pi_agent,
@@ -654,15 +632,13 @@ def _write_if_changed(
 
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        _write_text(dest, output)
+        write_text_atomic(dest.resolve(), output)
         log("debug", f"{action} {label}")
         _record_change(
             action, group, dest.parent.name if dest.name == "SKILL.md" else dest.name
         )
     except Exception as e:
         log("error", f"Failed to install {label}: {e}")
-        if dest.exists():
-            dest.unlink()
 
 
 def _linked_content(src: Path) -> str:
@@ -843,6 +819,12 @@ class _AntigravityAgent(_CodexAgent):
     AGENTS_MD: ClassVar[str] = "AGENTS.md"
 
 
+class _OpencodeAgent(_CodexAgent):
+    """Opencode agent that concatenates all rules into its global AGENTS.md file."""
+
+    AGENTS_MD: ClassVar[str] = "AGENTS.md"
+
+
 class _PiAgent(_CodexAgent):
     """Pi agent that concatenates all rules into its global AGENTS.md file."""
 
@@ -856,6 +838,7 @@ AGENT_CLASSES: dict[str, type[_Agent]] = {
     "claude-code": _Agent,
     "codex": _CodexAgent,
     "antigravity": _AntigravityAgent,
+    "opencode": _OpencodeAgent,
     "pi": _PiAgent,
 }
 
@@ -3435,6 +3418,16 @@ def try_install_hooks_antigravity() -> None:
     _run_tool([binary, "install", "antigravity"])
 
 
+def try_install_hooks_opencode() -> None:
+    """Write the cline-hooks opencode plugin if available."""
+
+    binary = user_binary("cline-hook")
+    if not binary:
+        log("debug", "cline-hook not found on PATH, skipping opencode hook injection.")
+        return
+    _run_tool([binary, "install", "opencode"])
+
+
 _PI_DEFAULT_KEYS = (
     "defaultProvider",
     "defaultModel",
@@ -4229,6 +4222,18 @@ def try_install_memory_antigravity() -> None:
         _run_tool([binary, "setup-service"])
 
 
+def try_install_memory_opencode() -> None:
+    """Add mcp-memory to opencode if available."""
+
+    binary = user_binary("mcp-memory")
+    if not binary:
+        log("debug", "mcp-memory not found on PATH, skipping opencode MCP setup.")
+        return
+    _run_tool([binary, "install", "opencode"])
+    if not _memory_service_exists():
+        _run_tool([binary, "setup-service"])
+
+
 def try_install_memory_pi() -> None:
     """Add mcp-memory to pi's MCP config if available."""
 
@@ -4382,8 +4387,7 @@ def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) ->
         agent_names: Agents to uninstall. None means all installed agents.
         verbose: Show debug-level output.
     """
-    global _verbose
-    _verbose = verbose
+    console._verbose = verbose
     from .manifest import delete_agent, delete_rendered_rules, read_manifest
 
     manifest = read_manifest()
@@ -4461,8 +4465,7 @@ def main(
     Returns:
         Why the install did not fully succeed, or None when it did.
     """
-    global _verbose
-    _verbose = verbose
+    console._verbose = verbose
     _changes.clear()
     if root is not None:
         set_root(root)
@@ -4584,6 +4587,7 @@ def main(
         "claude-code",
         "codex",
         "antigravity",
+        "opencode",
         "pi",
     ):
         if skill_agent not in active_targets:
@@ -4651,7 +4655,7 @@ def main(
             f for f in previous_pi_bundle if Path(f).parent == _pi_rules_dir()
         )
 
-    pi_packages: list[str] | None = None
+    pi_packages: list[str] | None = previous_manifest.get("pi", {}).get("packages")
     pi_installed_packages: list[str] | None = previous_manifest.get("pi", {}).get(
         "pi_installed_packages"
     )
@@ -4839,8 +4843,10 @@ def main(
 
     from .manifest import write_manifest
 
-    pi_skills: list[str] | None = None
-    pi_mcp_rules: list[str] | None = None
+    pi_skills: list[str] | None = previous_manifest.get("pi", {}).get("skills")
+    pi_mcp_rules: list[str] | None = previous_manifest.get("pi", {}).get(
+        "mcp_permissions"
+    )
     pi_rule_roles: dict[str, list[str]] | None = previous_manifest.get("pi", {}).get(
         "pi_rule_roles"
     )
@@ -4928,7 +4934,7 @@ def get_managed_dirs() -> list[Path]:
     managed.add(_pi_rules_dir())
     for key, value in dirs.items():
         for subdir, subdir_path in value.items():
-            if key in ("codex", "antigravity", "pi") and subdir == "rules":
+            if key in ("codex", "antigravity", "opencode", "pi") and subdir == "rules":
                 continue
             managed.add(subdir_path)
         if key in ("kiro", "claude-code"):

@@ -150,8 +150,13 @@ export function readBridgeConfig(handshakeFile: string): BridgeConfig | undefine
 	}
 }
 
-type Prefix = { system?: unknown; tools?: unknown; toolConfig?: { tools?: unknown[] } };
-const prefixOf = ({ system, tools, toolConfig }: Prefix): Prefix => ({ system, ...(tools !== undefined && { tools }), ...(toolConfig !== undefined && { toolConfig }) });
+type Prefix = { system?: unknown; tools?: unknown; toolConfig?: { tools?: unknown[] }; prompt_cache_key?: unknown };
+const prefixOf = ({ system, tools, toolConfig, prompt_cache_key }: Prefix): Prefix => ({
+	system,
+	...(tools !== undefined && { tools }),
+	...(toolConfig !== undefined && { toolConfig }),
+	...(prompt_cache_key !== undefined && { prompt_cache_key }),
+});
 type Tool = { name?: string; input_schema?: unknown; toolSpec?: { name?: string; inputSchema?: unknown } };
 const toolsOf = ({ tools, toolConfig }: Prefix): Tool[] => (tools ?? toolConfig?.tools ?? []) as Tool[];
 const toolSignatures = (prefix: Prefix): string =>
@@ -174,7 +179,7 @@ export function writeLeadPrefix(dir: string): void {
 	if (lastPrefix) fs.writeFileSync(path.join(dir, LEAD_PREFIX_FILE), JSON.stringify(lastPrefix), { mode: 0o600 });
 }
 
-/** In a warm fork: sends main's system prompt and tools in place of its own when it declares the same tools, so its requests read main's prompt cache. */
+/** In a warm fork: sends main's system prompt, tools and prompt cache key in place of its own when it declares the same tools, so its requests read main's prompt cache. */
 export function useLeadPrefix(pi: ExtensionAPI, handshakeFile: string): void {
 	let lead: Prefix | undefined;
 	try {
@@ -186,7 +191,8 @@ export function useLeadPrefix(pi: ExtensionAPI, handshakeFile: string): void {
 		const own = payload as Prefix;
 		if (toolSignatures(own) !== toolSignatures(lead)) return undefined;
 		const { system: _system, tools: _tools, toolConfig: _toolConfig, ...rest } = own as Record<string, unknown>;
-		return { ...rest, ...lead };
+		const { prompt_cache_key, ...prefix } = lead;
+		return { ...rest, ...prefix, ...(own.prompt_cache_key !== undefined && prompt_cache_key !== undefined && { prompt_cache_key }) };
 	});
 }
 

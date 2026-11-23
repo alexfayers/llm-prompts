@@ -1,0 +1,25 @@
+id = "write-task-wide-work"
+level = "heavy"
+workspace = "tiny-py"
+project = "demo"
+timeout_s = 600
+headline = true
+prompt = "Add a timeout parameter to fetch() in fetch.py, document it in README.md, and commit the change."
+
+[gate]
+max_pass_drop = 0.34
+
+[[check]]
+kind = "file_regex"
+path = "fetch.py"
+regex = "timeout"
+
+[[check]]
+kind = "file_regex"
+path = "README.md"
+regex = "timeout"
+
+[[check]]
+kind = "memory_written"
+entity_type = "task"
+name_regex = "^task/"

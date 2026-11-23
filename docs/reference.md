@@ -22,7 +22,7 @@ llm-prompts benchmark                          # compare two llm-prompts refs by
 llm-prompts attic build [--tool NAME]... [--dry-run]  # list the unused skills, and the `--tool` tools, the usage ledger shows as unused, in `attic.json` next to the ledger
 llm-prompts check                              # check prompt sizes and pi extension headers
 llm-prompts size-report --base-root DIR        # markdown report of prompt size changes
-llm-prompts watch gh-pr|gh-triage|cmd TARGET... --until COND [--all] [--follow]  # wait for a PR, a repo's ready-PR list or a command to match, then exit (0 match, 124 --timeout, 1 error). Several targets: any match ends it, --all waits for every one, --follow prints each match and keeps watching until --timeout
+llm-prompts watch gh-pr|gh-triage|cmd TARGET... --until COND [--all] [--follow]  # wait for a PR, a repo's ready-PR list or a command to match, then exit (0 match, 124 --timeout, 1 error). Several targets: any match ends it, --all waits for every one, --follow prints each match and keeps watching until --timeout or a terminal state (gh-pr: merged or closed)
 llm-prompts contribute list|sync|update        # keep each worktree branch in sync with local main and its own PR
 ```
 
@@ -32,8 +32,8 @@ llm-prompts contribute list|sync|update        # keep each worktree branch in sy
 
 ## What gets installed
 
-- Rules are markdown files the agent always reads, such as coding style or commit conventions. Kiro and Claude Code get one file per rule, in `~/.kiro/steering/` and `~/.claude/rules/`. Codex, Antigravity and Pi get one concatenated `AGENTS.md`.
-- A rule with `paths: <glob list>` frontmatter loads when the agent reads a matching file. Claude Code and Kiro get it as a scoped rule file. Pi adds it on a matching `read`, `grep`, `find`, `edit` or `write` (see [pi.md](pi.md)). Codex and Antigravity always load it.
+- Rules are markdown files the agent always reads, such as coding style or commit conventions. Kiro and Claude Code get one file per rule, in `~/.kiro/steering/` and `~/.claude/rules/`. Codex, Antigravity, OpenCode and Pi get one concatenated `AGENTS.md`.
+- A rule with `paths: <glob list>` frontmatter loads when the agent reads a matching file. Claude Code and Kiro get it as a scoped rule file. Pi adds it on a matching `read`, `grep`, `find`, `edit` or `write` (see [pi.md](pi.md)). Codex, Antigravity and OpenCode always load it.
 - A rule or skill with `load_when: env:<NAME>` or `load_when: tool:<command>` loads only when the variable is set or the command is on PATH. `load_when` can also list several conditions, as in `load_when: [<kind>, tool:<command>]`, and all of them must hold. Pi checks a rule's conditions in the session, where `tool:` also matches a pi tool, when the rule has no roles or only `roles: lead`. A pi rule with several conditions has its `env:` and `tool:` conditions decided at install time, and the session checks the one condition left. Every other case is decided at install time. Any condition other than `env:` or `tool:` is listed for pi in `conditional-rules.json` under its own name, for another extension to check, and is not checked on the other agents. A `load_when` list allows only one such condition, and only on a rule with no roles or only `roles: lead`. The install also checks agent sources and pi package entries. A `requires_env` or `requires_command` key is deprecated: the install adds it to the `load_when` list as `env:` or `tool:` and logs a warning with the replacement `load_when` line. Any other `requires_*` key fails the install.
 - Workflows are step-by-step procedures loaded on demand. Only Pi gets them, as prompt templates.
 - Skills are directories with a `SKILL.md` the agent reads before a specific kind of task. They are symlinked, so source edits show up immediately. A skill with `inject_at_start: true` in its `metadata` frontmatter is injected as a `Startup block` by the cline-hooks `SkillStartupBlocks` plugin at the start of a main session.
@@ -63,7 +63,7 @@ source = "git+https://github.com/alexfayers/mcp-memory.git"
 
 `source` is a `git+` URL or a local path (`~/...`). All tools go into one uv environment owned by the first entry, and the commands each tool declares under `[project.scripts]` are exposed from it.
 
-A `git+` source installs its highest stable release tag (`vX.Y.Z`), or the default branch tip if it has none. `update` then reports `update available (v0.32.0 -> v0.33.0)` with the commit subjects in between. A source that already ends in `@<ref>` is left as it is. A local path checkout moves to its highest stable release tag, or its upstream branch if it has none, with its local commits kept on top. `update` then shows the CHANGELOG sections in between.
+A `git+` source installs its highest stable release tag (`vX.Y.Z`), or the default branch tip if it has none. A source that already ends in `@<ref>` is left as it is. A local path checkout moves to its highest stable release tag, or its upstream branch if it has none, with its local commits kept on top. For a new release of either kind, the session-start notice shows the user `update available (v0.32.0 -> v0.33.0)` and, for a GitHub source, a `Changelog:` link. Agents get the CHANGELOG sections in between, or the commit subjects when the CHANGELOG has none.
 
 `ref` is optional. It makes a `git+` entry follow that branch, tag or commit instead of releases, and a local path follow that branch of its remote:
 
@@ -76,7 +76,7 @@ ref = "main"
 
 ### Automatic updates
 
-At session start, when updates are available, llm-prompts runs `llm-prompts update` in the background and logs its output to `auto-update.log` in the llm-prompts data dir. It skips the run, and keeps showing the update notice, while a session holds a configured local checkout or plugin checkout, or that checkout has commits or edits its release or remote lacks, or while a pi fork runs, and retries at the next reload or compaction. It never reloads the session: reload once it finishes. `update`, `install`, `setup`, `contribute sync --apply` and the automatic update share one lock, so a second one refuses to start. The reinstall after a prompt file edit skips while a full update runs, since that update installs the edit. A failed run may leave some tools updated, and the next session start shows why. It does not retry until the installed versions change. Turn it off with:
+At session start, when updates are available, llm-prompts runs `llm-prompts update` in the background and logs its start time and output to `auto-update.log` in the llm-prompts data dir. It skips the run, and keeps showing the update notice, while a session holds a configured local checkout or plugin checkout, or that checkout has commits its release or remote lacks or edits (untracked files in a local checkout do not count). It never reloads the session: reload once it finishes. `update`, `install`, `setup`, `contribute sync --apply` and the automatic update share one lock, so a second one refuses to start. The reinstall after a prompt file edit skips while a full update runs, since that update installs the edit. A failed run may leave some tools updated, and the next session start shows why. It does not retry until the installed versions change. Turn it off with:
 
 ```toml
 [update]

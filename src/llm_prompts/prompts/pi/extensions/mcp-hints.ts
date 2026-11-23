@@ -9,7 +9,7 @@ const MCP_NAME = /^mcp__(.+?)__(.+)$/;
 const SHAPE_KEY = /^[A-Za-z_$][\w$]{0,39}$/;
 const DISTINCTIVE_NAME = /_|[a-z][A-Z]/;
 const CODE_FENCE = /```[\s\S]*?(```|$)/g;
-const LIMITS = { bareName: 8, notes: 3, noteChars: 8000, enumValues: 6, shapeKeys: 8, shapeDepth: 3, shapeChars: 300 };
+const LIMITS = { bareName: 8, notes: 3, noteChars: 8000, enumValues: 4, shapeKeys: 8, shapeDepth: 3, shapeChars: 300 };
 
 type Json = Record<string, unknown>;
 type Schema = { name: string; description: string; parameters?: unknown; resultShape?: string };
@@ -73,7 +73,10 @@ function typeOf(schema: unknown): string | undefined {
 
 function toolLabel({ name, parameters }: Schema): string {
 	const { required, properties } = (parameters ?? {}) as { required?: unknown[]; properties?: Json };
-	const args = (Array.isArray(required) ? required : []).filter((arg) => typeof arg === "string").map((arg) => [`${arg}*`, typeOf(properties?.[arg])].filter(Boolean).join(": "));
+	const args = (Array.isArray(required) ? required : []).filter((arg) => typeof arg === "string").map((arg) => {
+		const type = typeOf(properties?.[arg]);
+		return type === undefined || type === "string" ? `${arg}*` : `${arg}*: ${type}`;
+	});
 	return args.length > 0 ? `${bareName(name)}(${args.join(", ")})` : bareName(name);
 }
 
@@ -169,7 +172,7 @@ export default function (pi: ExtensionAPI) {
 		noted.forEach(({ name }) => state.seen.add(name));
 		const servers = new Map<string, string[]>();
 		unlisted.forEach((tool) => servers.set(serverOf(tool.name)!, [...(servers.get(serverOf(tool.name)!) ?? []), toolLabel(tool)]));
-		const names = servers.size > 0 ? [["MCP tools, callable ONLY inside codemode as tools.mcp__<server>__<tool>(args), never as direct tool calls:", ...[...servers].map(([server, labels]) => `${server}: ${labels.join(", ")}`)].join("\n")] : [];
+		const names = servers.size > 0 ? [["MCP tools, callable ONLY in codemode as tools.mcp__<server>__<tool>(args), never directly:", ...[...servers].map(([server, labels]) => `${server}: ${labels.join(", ")}`)].join("\n")] : [];
 		const content = [...names, ...noted.map(({ text }) => text)].join("\n\n");
 		return content === "" ? undefined : { message: { customType: "mcp-hints", content, display: false } };
 	});

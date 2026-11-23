@@ -20,9 +20,10 @@ from urllib.parse import urlparse
 from . import github_api, telemetry
 from .attic.cli import add_parser as add_attic_parser
 from .attic.cli import run as run_attic
+from .console import log
 from .exit_reason import ExitReason
 from .home import set_root
-from .install import AGENT_CLASSES, REMOVED_AGENTS, log, prompts_dir, user_binary
+from .install import AGENT_CLASSES, REMOVED_AGENTS, prompts_dir, user_binary
 from .network import run_with_retries, stderr_text
 from .setup import (
     _RELEASE_TAG,
@@ -34,9 +35,10 @@ from .setup import (
     _extract_git_url,
     _format_update_message,
     _latest_release_tag,
-    _remote_commit_subjects,
+    _remote_changes,
     _remote_head,
     _uv_tools_dir,
+    release_notes,
     release_version,
 )
 
@@ -307,14 +309,20 @@ def _remote_source_messages(
     if remote_commit is None or remote_commit == installed_commit:
         return []
 
-    subjects = _remote_commit_subjects(git_url, installed_commit, remote_commit)
+    subjects, changelog = _remote_changes(
+        git_url, installed_commit, remote_commit, read_changelog=bool(release)
+    )
     if subjects == []:
         return []
     if release:
         revision = _get_installed_revision(name)
         installed = revision if revision and _RELEASE_TAG.fullmatch(revision) else None
         return _format_update_message(
-            name, subjects, release=(installed or installed_commit[:8], release[0])
+            name,
+            subjects,
+            release=(installed or installed_commit[:8], release[0]),
+            changelog=_changelog_url(git_url, release[0]),
+            sections=release_notes(changelog, installed or "", release[0]),
         )
     return _format_update_message(
         name, subjects, installed_commit[:8], remote_commit[:8]
@@ -353,14 +361,14 @@ def _local_source_messages(name: str, source: str, ref: str = "") -> list[str]:
         Message lines describing available updates, or an empty list.
     """
     from .main_sync import UPSTREAM, point_upstream, run_git, unreleased
-    from .setup import _expand, release_notes, release_version
+    from .setup import _expand, release_version
 
     repo = _expand(source)
     if not (repo / ".git").is_dir():
         return []
 
     run_with_retries(
-        ["git", "-C", str(repo), "fetch", "--quiet", "--tags"],
+        ["git", "-C", str(repo), "fetch", "--quiet", "--tags", "--force"],
         check=True,
         capture_output=True,
         text=True,
@@ -397,7 +405,11 @@ def _local_source_messages(name: str, source: str, ref: str = "") -> list[str]:
         return _format_update_message(name, subjects)
     changelog = run_git(repo, "show", f"{UPSTREAM}:CHANGELOG.md").stdout
     return _format_update_message(
-        name, release_notes(changelog, old, new) or subjects, release=(old, new)
+        name,
+        subjects,
+        release=(old, new),
+        changelog=_changelog_url(github_api.base_remote_url(repo), new),
+        sections=release_notes(changelog, old, new),
     )
 
 
@@ -431,6 +443,14 @@ def _is_github_remote_url(url: str) -> bool:
         return urlparse(url).hostname == "github.com"
     host = url.split("@", 1)[-1].split(":", 1)[0]
     return host == "github.com"
+
+
+def _changelog_url(url: str, tag: str) -> str | None:
+    """Return the GitHub page of a remote's CHANGELOG.md at ``tag``, or None for a non-GitHub remote."""
+    match = github_api._REMOTE_REPO.search(url)
+    if not (match and _is_github_remote_url(url)):
+        return None
+    return f"https://github.com/{match[1]}/{match[2]}/blob/{tag}/CHANGELOG.md"
 
 
 def _has_github_remote(repo: Path) -> bool:
@@ -605,7 +625,7 @@ def _pull_one_local_source(
     fetch = (
         subprocess.CompletedProcess([], 0, "", "")
         if repo in _FETCHED_REPOS
-        else run_git(repo, "fetch", "--quiet", "--tags")
+        else run_git(repo, "fetch", "--quiet", "--tags", "--force")
     )
     fetch_failed = fetch.returncode != 0
     fetch_error = f"[{name}] could not fetch: {fetch.stderr.strip()}"
@@ -989,10 +1009,12 @@ def _reconfigure_agents(
         try_install_hooks,
         try_install_hooks_antigravity,
         try_install_hooks_claude_code,
+        try_install_hooks_opencode,
         try_install_memory,
         try_install_memory_antigravity,
         try_install_memory_claude_code,
         try_install_memory_codex,
+        try_install_memory_opencode,
         try_install_memory_pi,
     )
 
@@ -1009,6 +1031,11 @@ def _reconfigure_agents(
         try_install_hooks_antigravity()
         if memory_changed:
             try_install_memory_antigravity()
+
+    if "opencode" in manifest:
+        try_install_hooks_opencode()
+        if memory_changed:
+            try_install_memory_opencode()
 
     if "pi" in manifest and memory_changed:
         try_install_memory_pi()
@@ -1168,7 +1195,7 @@ def _add_watch_parser(
         source_parser.add_argument(
             "--follow",
             action="store_true",
-            help="Print each match, then keep watching from the new state until the timeout.",
+            help="Print each match, then keep watching from the new state until the timeout or a terminal state.",
         )
 
 
@@ -1576,6 +1603,15 @@ def _run_command(
 
             try_install_hooks_antigravity()
             try_install_memory_antigravity()
+
+        if "opencode" in agent_names and not args.root:
+            from .install import (
+                try_install_hooks_opencode,
+                try_install_memory_opencode,
+            )
+
+            try_install_hooks_opencode()
+            try_install_memory_opencode()
 
         if "pi" in agent_names and not args.root:
             from .install import try_install_memory_pi
