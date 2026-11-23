@@ -56,6 +56,15 @@ def test_blocks_a_new_pr_at_the_limit_of_the_repo_it_runs_in(
     assert "repo:acme/widgets" in open_prs.call_args.args[0][4]
 
 
+@pytest.mark.parametrize(
+    "flag", ["--repo other/app", "-R other/app", "--repo=other/app"]
+)
+def test_counts_the_repo_a_new_pr_targets(open_prs: MagicMock, flag: str) -> None:
+    result = _guard(f"gh pr create {flag} --fill")
+    assert result is not None and "other/app are open" in (result.block or "")
+    assert "repo:other/app" in open_prs.call_args.args[0][4]
+
+
 @pytest.mark.parametrize("command", ["gh pr edit 5 --title x", "git push"])
 def test_never_blocks_updates_or_checks_the_count(
     open_prs: MagicMock, command: str

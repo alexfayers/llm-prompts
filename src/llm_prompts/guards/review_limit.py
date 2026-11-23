@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import os
 import subprocess
 import tomllib
@@ -61,14 +62,22 @@ class ReviewLimitGuard(HooksPlugin):
 
     @hookimpl
     def open_reviews(self, command: ParsedCommand, cwd: str) -> tuple[str, int] | None:
-        """Return the cwd's GitHub repo and the user's open PRs in it, for `gh pr create`."""
+        """Return the `--repo` or cwd GitHub repo and the user's open PRs in it, for `gh pr create`."""
         if not (
             command.name == "gh"
             and "pr" in command.args
             and command.args[command.args.index("pr") + 1 :][:1] == ["create"]
         ):
             return None
-        repo = _gh(cwd, "repos/{owner}/{repo}", ".full_name")
+        words = command.words
+        named = [
+            value
+            for word, value in itertools.pairwise(words)
+            if word in {"-R", "--repo"}
+        ] + [
+            word.removeprefix("--repo=") for word in words if word.startswith("--repo=")
+        ]
+        repo = named[0] if named else _gh(cwd, "repos/{owner}/{repo}", ".full_name")
         count = repo and _gh(
             cwd, f"search/issues?q=is:pr+is:open+author:@me+repo:{repo}", ".total_count"
         )
