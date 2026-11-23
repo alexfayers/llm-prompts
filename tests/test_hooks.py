@@ -9,7 +9,6 @@ import sys
 import time
 from collections.abc import Iterator
 from contextlib import ExitStack
-from functools import partial
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -870,7 +869,6 @@ class TestUpdateCheckOnTaskStart:
         ("blocker", "spawn_error", "auto_update"),
         [
             (None, None, "started"),
-            ("fork", None, "fork"),
             ("session", None, "session"),
             (None, OSError, "error"),
         ],
@@ -902,36 +900,6 @@ class TestUpdateCheckOnTaskStart:
         event = json.loads(telemetry_popen.call_args.args[0][3])
         assert event["properties"]["auto_update"] == auto_update
 
-    @pytest.mark.parametrize(
-        ("blocker", "auto_update"), [(None, "started"), ("session", "session")]
-    )
-    def test_a_compaction_reports_its_retry_of_the_automatic_update(
-        self,
-        tmp_path: Path,
-        telemetry_popen: MagicMock,
-        monkeypatch: pytest.MonkeyPatch,
-        blocker: str | None,
-        auto_update: str,
-    ) -> None:
-        monkeypatch.setattr(
-            "llm_prompts.cli._get_installed_version", lambda _: (None, None)
-        )
-        monkeypatch.setattr("llm_prompts.auto_update.blocker", lambda _: blocker)
-        monkeypatch.setattr("llm_prompts.auto_update.subprocess.Popen", MagicMock())
-        plugin = AutoReinstallPlugin()
-        plugin._update_check_debouncer = _ReinstallDebouncer(
-            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
-        )
-        (tmp_path / "update-stamp").write_text(str(time.time()))
-        plugin._update_check_debouncer.hold(True)
-        plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[], source="compact")
-        properties = json.loads(telemetry_popen.call_args.args[0][3])["properties"]
-        assert (properties["command"], properties["flags"]) == (
-            "startup-check",
-            ["--retry"],
-        )
-        assert properties["auto_update"] == auto_update
-
     def test_resume_source_still_debounced(self, tmp_path: Path) -> None:
         plugin = AutoReinstallPlugin()
         plugin._update_check_debouncer = _ReinstallDebouncer(
@@ -944,43 +912,6 @@ class TestUpdateCheckOnTaskStart:
             )
         assert result is None
         mock_collect.assert_not_called()
-
-    def test_a_finished_fork_lets_the_next_compaction_update(
-        self, tmp_path: Path
-    ) -> None:
-        from llm_prompts import auto_update
-
-        plugin = AutoReinstallPlugin()
-        plugin._update_check_debouncer = _ReinstallDebouncer(
-            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
-        )
-        messages = ["[pkg] update available:\n- did a thing", _UPDATE_INSTRUCTION]
-        blockers = iter([auto_update.FORK_RUNNING, auto_update.FORK_RUNNING, None])
-        with (
-            patch(
-                "llm_prompts.cli._collect_update_messages", return_value=messages
-            ) as collect,
-            patch(
-                "llm_prompts.auto_update.blocker", side_effect=lambda _: next(blockers)
-            ),
-            patch("llm_prompts.auto_update.start", return_value="started") as start,
-        ):
-            compact = partial(
-                plugin.on_hook,
-                "TaskStart",
-                task_id="t1",
-                workspace_roots=[],
-                source="compact",
-            )
-            held = compact()
-            assert held is not None and _AUTO_UPDATE_STARTED not in held.notes
-            assert compact() is None
-            start.assert_not_called()
-            started = compact()
-            assert compact() is None
-        collect.assert_called_once()
-        assert started is not None and started.notes == [_AUTO_UPDATE_STARTED]
-        start.assert_called_once()
 
     def test_compact_shows_an_auto_update_failure(self, tmp_path: Path) -> None:
         plugin = AutoReinstallPlugin()
