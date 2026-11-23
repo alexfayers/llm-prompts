@@ -434,6 +434,25 @@ class TestPiPackages:
         _install(home, manifest, [_overlay(overlay, [])])
         assert _settings(home)["packages"] == _core_packages()
 
+    def test_frozen_install_keeps_the_managed_records(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home, manifest = tmp_path / "home", tmp_path / "installed.json"
+        _install(home, manifest)
+        records = {"packages": ["p"], "skills": ["s"], "mcp_permissions": ["m"]}
+        recorded = json.loads(manifest.read_text(encoding="utf-8"))
+        recorded["agents"]["pi"].update(records)
+        manifest.write_text(json.dumps(recorded), encoding="utf-8")
+        with patch(
+            "llm_prompts.size_guard.resolve_skip_set",
+            return_value=({}, frozenset({"pi"})),
+        ):
+            _install(home, manifest)
+
+        kept = json.loads(manifest.read_text(encoding="utf-8"))["agents"]["pi"]
+        assert kept.items() >= records.items()
+
     def test_filtered_package_replaces_the_managed_plain_entry(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2407,6 +2426,7 @@ _OTHER_FRONTENDS = [
     "claude-code",
     "codex",
     "antigravity",
+    "opencode",
 ]
 _INSTALLED_PROMPTS = (
     ".kiro/steering",
@@ -2414,6 +2434,7 @@ _INSTALLED_PROMPTS = (
     ".claude/agents",
     ".codex/AGENTS.md",
     ".gemini/config/AGENTS.md",
+    ".config/opencode/AGENTS.md",
 )
 
 

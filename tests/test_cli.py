@@ -184,7 +184,7 @@ class TestRemoteSourceMessages:
         with (
             patch("llm_prompts.cli._get_installed_commit", return_value="abc123aa"),
             patch("llm_prompts.cli._remote_head", return_value="def456bb") as head,
-            patch("llm_prompts.cli._remote_commit_subjects", return_value=["Add X"]),
+            patch("llm_prompts.cli._remote_changes", return_value=(["Add X"], "")),
         ):
             result = _remote_source_messages("pkg", "git+https://x.io/r.git", "main")
         assert result == ["[pkg] update available:\n- Add X"]
@@ -200,12 +200,46 @@ class TestRemoteSourceMessages:
             patch("llm_prompts.cli._get_installed_commit", return_value="abc123aa"),
             patch("llm_prompts.cli._get_installed_revision", return_value="v0.32.0"),
             patch(
-                "llm_prompts.cli._remote_commit_subjects", return_value=["Add X"]
-            ) as subjects,
+                "llm_prompts.cli._remote_changes", return_value=(["Add X"], "")
+            ) as changes,
         ):
             result = _remote_source_messages("pkg", "git+https://x.io/r.git")
         assert result == ["[pkg] update available (v0.32.0 -> v0.33.0):\n- Add X"]
-        subjects.assert_called_once_with("https://x.io/r.git", "abc123aa", "def456bb")
+        changes.assert_called_once_with(
+            "https://x.io/r.git", "abc123aa", "def456bb", read_changelog=True
+        )
+
+    def test_new_release_lists_its_changelog_sections_under_a_github_link(
+        self, monkeypatch: pytest.MonkeyPatch, fake_subprocess: FakeSubprocess
+    ) -> None:
+        monkeypatch.setattr(
+            "llm_prompts.cli._latest_release_tag", lambda url: ("v0.34.0", "def456bb")
+        )
+        fake_subprocess.on(
+            "log", "--pretty=format:%s%n%b%x1e", stdout=fake_subprocess.log_lines("X")
+        )
+        fake_subprocess.on(
+            "show",
+            stdout=(
+                "# Changelog\n\n## [0.34.0] (2026-02-02)\n\n* two\n\n"
+                "## [0.33.0] (2026-02-01)\n\n* one\n\n## [0.32.0]\n\n* old\n"
+            ),
+        )
+        with (
+            patch("llm_prompts.cli._get_installed_commit", return_value="abc123aa"),
+            patch("llm_prompts.cli._get_installed_revision", return_value="v0.32.0"),
+        ):
+            result = _remote_source_messages("pkg", "git+https://github.com/o/r.git")
+        assert result == [
+            (
+                "[pkg] update available (v0.32.0 -> v0.34.0):\n"
+                "Changelog: https://github.com/o/r/blob/v0.34.0/CHANGELOG.md\n"
+                "- ## [0.34.0] (2026-02-02)\n  * two\n"
+                "- ## [0.33.0] (2026-02-01)\n  * one"
+            )
+        ]
+        assert len(fake_subprocess.matching("clone")) == 1
+        assert fake_subprocess.matching("show")[0][-1] == "def456bb:CHANGELOG.md"
 
     def test_not_a_git_url(self) -> None:
         assert _remote_source_messages("pkg", "some-pypi-package") == []
@@ -232,8 +266,8 @@ class TestRemoteSourceMessages:
             patch("llm_prompts.cli._get_installed_commit", return_value="abc123aa"),
             patch("llm_prompts.cli._remote_head", return_value="def456bb"),
             patch(
-                "llm_prompts.cli._remote_commit_subjects",
-                return_value=["Add X", "Fix Y"],
+                "llm_prompts.cli._remote_changes",
+                return_value=(["Add X", "Fix Y"], ""),
             ),
         ):
             result = _remote_source_messages(
@@ -245,7 +279,7 @@ class TestRemoteSourceMessages:
         with (
             patch("llm_prompts.cli._get_installed_commit", return_value="abc123aa"),
             patch("llm_prompts.cli._remote_head", return_value="def456bb"),
-            patch("llm_prompts.cli._remote_commit_subjects", return_value=None),
+            patch("llm_prompts.cli._remote_changes", return_value=(None, "")),
         ):
             result = _remote_source_messages(
                 "pkg", "git+https://github.com/user/repo.git"
@@ -256,7 +290,7 @@ class TestRemoteSourceMessages:
         with (
             patch("llm_prompts.cli._get_installed_commit", return_value="abc123aa"),
             patch("llm_prompts.cli._remote_head", return_value="def456bb"),
-            patch("llm_prompts.cli._remote_commit_subjects", return_value=[]),
+            patch("llm_prompts.cli._remote_changes", return_value=([], "")),
         ):
             assert _remote_source_messages("pkg", "git+https://x.io/r.git") == []
 
@@ -294,6 +328,26 @@ class TestLocalSourceMessages:
         result = _local_source_messages("core", str(tmp_path))
         assert result == [
             ("[core] update available:\n- Add A\n  * Add A2\n- Fix B\n- Tweak C")
+        ]
+
+    def test_new_release_lists_its_changelog_sections_under_a_github_link(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        (tmp_path / ".git").mkdir()
+        fake_subprocess.on("rev-list", "--count", stdout="1\n")
+        fake_subprocess.on(
+            "log", "--pretty=format:%s%n%b%x1e", stdout=fake_subprocess.log_lines("two")
+        )
+        fake_subprocess.on("symbolic-ref", "--short", stdout="v0.2.0\n")
+        fake_subprocess.on("describe", stdout="v0.1.0\n")
+        fake_subprocess.on("show", stdout="## [0.2.0]\n\n* two\n\n## [0.1.0]\n")
+        fake_subprocess.on("remote", "get-url", stdout="git@github.com:o/r.git\n")
+        assert _local_source_messages("core", str(tmp_path)) == [
+            (
+                "[core] update available (v0.1.0 -> v0.2.0):\n"
+                "Changelog: https://github.com/o/r/blob/v0.2.0/CHANGELOG.md\n"
+                "- ## [0.2.0]\n  * two"
+            )
         ]
 
     def test_no_shipped_changes_gives_no_notice(
@@ -961,6 +1015,45 @@ class TestCollectUpdateMessages:
 
         assert result[0].startswith("[core] update check failed: ")
 
+    @pytest.mark.real_io
+    def test_moved_release_tag_is_not_a_failed_check(self, tmp_path: Path) -> None:
+        def git(repo: Path, *args: str) -> None:
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repo),
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    *args,
+                ],
+                check=True,
+                capture_output=True,
+            )
+
+        upstream = tmp_path / "upstream"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(upstream)], check=True)
+        git(upstream, "commit", "-q", "--allow-empty", "-m", "one")
+        git(upstream, "tag", "v0.1.0")
+        clone = tmp_path / "clone"
+        subprocess.run(["git", "clone", "-q", str(upstream), str(clone)], check=True)
+        git(upstream, "commit", "-q", "--allow-empty", "-m", "two")
+        git(upstream, "tag", "-f", "v0.1.0")
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch(
+                "llm_prompts.setup._load_config",
+                return_value=[{"name": "core", "source": str(clone)}],
+            ),
+            patch("llm_prompts.plugins._load_plugins", return_value=[]),
+        ):
+            mock_config.return_value.exists.return_value = True
+            result = _collect_update_messages()
+
+        assert not any("update check failed" in line for line in result)
+
     def test_update_instruction_appears_once_after_all_packages(self) -> None:
         config = [
             {"name": "pkg-a", "source": "~/git/pkg-a"},
@@ -1535,6 +1628,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
                 return_value={
                     "claude-code": {"files": []},
                     "codex": {"files": []},
+                    "opencode": {"files": []},
                     "pi": {"files": []},
                 },
             ),
@@ -1558,15 +1652,19 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.install.try_allow_update_claude_code") as allow,
             patch("llm_prompts.install.try_install_memory_codex") as codex,
             patch("llm_prompts.install.try_install_memory_pi") as pi_memory,
+            patch("llm_prompts.install.try_install_memory_opencode") as opencode_memory,
+            patch("llm_prompts.install.try_install_hooks_opencode") as opencode_hooks,
             patch("llm_prompts.cli._auto_migrate_memory_db") as migrate,
         ):
             main()
         return {
+            "opencode_hooks": opencode_hooks,
             "hooks": hooks,
             "memory": memory,
             "allow": allow,
             "codex": codex,
             "pi_memory": pi_memory,
+            "opencode_memory": opencode_memory,
             "migrate": migrate,
         }
 
@@ -1578,6 +1676,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
     def test_a_pulled_source_reconfigures_the_agents(self) -> None:
         mocks = self._run_update({"cline-hooks"})
         mocks["hooks"].assert_called_once_with()
+        mocks["opencode_hooks"].assert_called_once_with()
         mocks["allow"].assert_called_once_with()
 
     def test_memory_config_and_db_wait_for_a_memory_change(self) -> None:
@@ -1585,6 +1684,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
         mocks["memory"].assert_not_called()
         mocks["codex"].assert_not_called()
         mocks["pi_memory"].assert_not_called()
+        mocks["opencode_memory"].assert_not_called()
         mocks["migrate"].assert_not_called()
 
     def test_a_memory_change_reconfigures_memory_and_migrates_the_db(self) -> None:
@@ -1592,6 +1692,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
         mocks["memory"].assert_called_once_with()
         mocks["codex"].assert_called_once_with()
         mocks["pi_memory"].assert_called_once_with()
+        mocks["opencode_memory"].assert_called_once_with()
         mocks["migrate"].assert_called_once_with()
 
     def test_a_local_memory_checkout_change_reconfigures_memory_and_migrates_the_db(

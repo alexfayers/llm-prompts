@@ -6,6 +6,7 @@ import json
 import logging
 import multiprocessing
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -239,7 +240,7 @@ def _record(args: tuple[Path, int]) -> None:
 @pytest.mark.real_io
 def test_receipts_from_parallel_sessions_are_all_kept(tmp_path: Path) -> None:
     path = tmp_path / "receipts.json"
-    with multiprocessing.get_context("fork").Pool(16) as pool:
+    with multiprocessing.get_context("spawn").Pool(16) as pool:
         pool.map(_record, [(path, index) for index in range(64)])
     assert all(ReceiptStore(path).fresh(Path(f"/repo{i}"), str(i)) for i in range(64))
 
@@ -344,3 +345,15 @@ class TestPrimaryCheckoutGuard:
             primary(f"git --git-dir {repo}/.git commit -m v", tmp_path / "w")
             is not None
         )
+
+
+@pytest.mark.real_io
+def test_import_skips_the_shell_parser() -> None:
+    check = (
+        "import sys, llm_prompts.guards.commit_guard; "
+        "print(sorted({'bashlex', 'jinja2'} & set(sys.modules)))"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", check], capture_output=True, text=True, check=True
+    )
+    assert completed.stdout.strip() == "[]"

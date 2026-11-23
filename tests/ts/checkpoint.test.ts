@@ -218,7 +218,7 @@ const nudged = (out: any) => out?.content?.some((block: { text?: string }) => bl
 describe("checkpoint nudge", () => {
 	useEnv({ PI_CONTEXT_CHILD: undefined, PI_HERDSMAN_MAILBOX: undefined });
 
-	test("nudges each time another threshold of result tokens builds up since the user message, keeps the result, and resets on a checkpoint call or a new run", async () => {
+	test("nudges each time another threshold of result tokens builds up since the user message, keeps the result, gives the advice only in the first nudge, and resets on a checkpoint call or a new run", async () => {
 		const ext = await loadExtension("checkpoint", { pi: { getSettings: () => ({ llmPrompts: { checkpoint: { nudgeTokens: 1000 } } }) } });
 		await ext.fire("agent_start");
 		const outs = [];
@@ -226,12 +226,13 @@ describe("checkpoint nudge", () => {
 		assert.deepEqual(outs.map(nudged), [false, false, true, false, false, true, false, false]);
 		assert.equal(outs[2].content[0].text.length, 1600);
 		assert.match(outs[2].content[1].text, /3 calls, ~1K tokens since the last user message.*checkpoint rewind to the call before it, or to a mark set before it, with a summary/);
+		assert.equal(outs[5].content[1].text, "[checkpoint] 6 calls, ~2K tokens since the last user message.");
 
 		await ext.fire("tool_result", sized(0, "checkpoint"));
 		assert.equal(nudged(await ext.fire("tool_result", sized(900))), false);
 		await ext.fire("agent_start");
 		assert.equal(nudged(await ext.fire("tool_result", sized(900))), false);
-		assert.equal(nudged(await ext.fire("tool_result", sized(100))), true);
+		assert.match((await ext.fire("tool_result", sized(100))).content[1].text, /checkpoint rewind to the call before it/);
 	});
 });
 
