@@ -1,26 +1,44 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
+import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mock, test } from "node:test";
+import { pathToFileURL } from "node:url";
+import { after, mock, test } from "node:test";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxThinking, fauxToolCall, type FauxResponseStep } from "@earendil-works/pi-ai";
-import { createAgentSession, DefaultResourceLoader, type ExtensionAPI, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader, type ExtensionAPI, type ExtensionFactory, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import contextFold from "../../src/llm_prompts/prompts/pi/extensions/context-fold.ts";
+import towerDoSlim from "../../src/llm_prompts/prompts/pi/extensions/tower-do-slim.ts";
 import { useEnv } from "./helpers.ts";
 
-useEnv({ CONTEXT_FOLD: "run-end", CONTEXT_FOLD_PENDING_TOKENS: "100", CONTEXT_FOLD_KEEP_TOKENS: "1200", PI_CONTEXT_CHILD: undefined, CONTEXT_FOLD_IDLE: undefined, CONTEXT_FOLD_IDLE_MIN_TOKENS: "100", PI_CACHE_RETENTION: undefined });
+const AGENT_DIR = "/agent";
+const BOARD = "TowerDo shared board \u2014 you are main (revision 1; 1 task(s), 1 open, 0 blocked, 0 unread message(s) for you).\n- [pending] a: subject a";
+const towerUrl = (file: string) => pathToFileURL(join(AGENT_DIR, "npm", "node_modules", "tower-do", file)).href;
+const towerSources: Record<string, string> = {
+	[towerUrl("state.ts")]: "export const MAX_TOWER_DO_OPEN_TASKS = 50; export const formatTakeoverWindow = () => '6h'; export const TASK_KEY_PATTERN = /^[a-z0-9][a-z0-9._-]{0,39}$/;",
+	[towerUrl("index.ts")]: `export default function (pi) {
+		pi.on("context", (event) => ({ messages: [...event.messages, { role: "custom", customType: "pi-tower-do-reminder", content: ${JSON.stringify(BOARD)}, display: false, timestamp: Date.now() }] }));
+	}`,
+};
+const hooks = registerHooks({
+	resolve: (specifier, context, next) => (specifier in towerSources ? { url: specifier, format: "module", shortCircuit: true } : next(specifier, context)),
+	load: (url, context, next) => (url in towerSources ? { format: "module", source: towerSources[url], shortCircuit: true } : next(url, context)),
+});
+after(() => hooks.deregister());
+
+useEnv({ PI_CODING_AGENT_DIR: AGENT_DIR, CONTEXT_FOLD: "run-end", CONTEXT_FOLD_PENDING_TOKENS: "100", CONTEXT_FOLD_KEEP_TOKENS: "1200", PI_CONTEXT_CHILD: undefined, CONTEXT_FOLD_IDLE: undefined, CONTEXT_FOLD_IDLE_MIN_TOKENS: "100", PI_CACHE_RETENTION: undefined });
 
 const BIG = "z".repeat(4000);
 
-async function start(...responses: FauxResponseStep[]) {
+async function start(responses: FauxResponseStep[], extensions: ExtensionFactory[] = []) {
 	const dir = mkdtempSync(join(tmpdir(), "context-fold-"));
 	const faux = fauxProvider();
 	const modelRuntime = await ModelRuntime.create({ authPath: join(dir, "auth.json"), modelsPath: null, refreshOnCreate: false });
 	modelRuntime.registerNativeProvider(faux.provider);
 	const big = (pi: ExtensionAPI) =>
 		pi.registerTool({ name: "big", label: "big", description: "Returns a long result", parameters: Type.Object({}), async execute() { return { content: [{ type: "text", text: BIG }], details: {} }; } });
-	const resourceLoader = new DefaultResourceLoader({ cwd: dir, agentDir: dir, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, extensionFactories: [big, contextFold] });
+	const resourceLoader = new DefaultResourceLoader({ cwd: dir, agentDir: dir, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, extensionFactories: [big, ...extensions, contextFold] });
 	await resourceLoader.reload();
 	const sessionManager = SessionManager.inMemory(dir);
 	const { session } = await createAgentSession({ cwd: dir, agentDir: dir, model: faux.getModel(), modelRuntime, resourceLoader, sessionManager, settingsManager: SettingsManager.inMemory({}), tools: ["big"] });
@@ -45,7 +63,7 @@ const TWO_BIG_CALLS = [
 ];
 
 test("pi accepts a run-end fold and the next request holds the stub, no later thinking and every call with its result", async () => {
-	const { session, sessionManager, requests, finish } = await start(...TWO_BIG_CALLS, () => fauxAssistantMessage("again"));
+	const { session, sessionManager, requests, finish } = await start([...TWO_BIG_CALLS, () => fauxAssistantMessage("again")]);
 	await session.prompt("go");
 	await session.prompt("again?");
 	finish();
@@ -62,11 +80,11 @@ test("pi accepts a run-end fold and the next request holds the stub, no later th
 });
 
 test("pi accepts the undo of a fold after a rejected request and the request after it holds the full results again", async () => {
-	const { session, sessionManager, requests, finish } = await start(
+	const { session, sessionManager, requests, finish } = await start([
 		...TWO_BIG_CALLS,
 		() => fauxAssistantMessage("", { stopReason: "error", errorMessage: "400 thinking block rejected" }),
 		() => fauxAssistantMessage("third"),
-	);
+	]);
 	await session.prompt("go");
 	await session.prompt("again?");
 	await session.prompt("once more?");
@@ -81,16 +99,16 @@ test("pi accepts the undo of a fold after a rejected request and the request aft
 
 const CACHE_EXPIRY_MS = 10 * 60_000;
 
-function idleStart(...responses: FauxResponseStep[]) {
+function idleStart(responses: FauxResponseStep[], extensions: ExtensionFactory[] = []) {
 	process.env.CONTEXT_FOLD_PENDING_TOKENS = "1000000";
 	let skew = 0;
 	const now = Date.now;
 	mock.method(Date, "now", () => now() + skew);
-	return start(...TWO_BIG_CALLS, ...responses).then((started) => ({ ...started, expireCache: () => void (skew += CACHE_EXPIRY_MS), finish: () => (mock.restoreAll(), started.finish()) }));
+	return start([...TWO_BIG_CALLS, ...responses], extensions).then((started) => ({ ...started, expireCache: () => void (skew += CACHE_EXPIRY_MS), finish: () => (mock.restoreAll(), started.finish()) }));
 }
 
 test("a rejected idle fold is not saved and folding stops", async () => {
-	const { session, sessionManager, requests, expireCache, finish } = await idleStart(() => fauxAssistantMessage("", { stopReason: "error", errorMessage: "400 thinking block rejected" }), () => fauxAssistantMessage("third"));
+	const { session, sessionManager, requests, expireCache, finish } = await idleStart([() => fauxAssistantMessage("", { stopReason: "error", errorMessage: "400 thinking block rejected" }), () => fauxAssistantMessage("third")]);
 	await session.prompt("go");
 	expireCache();
 	await session.prompt("again?");
@@ -100,4 +118,15 @@ test("a rejected idle fold is not saved and folding stops", async () => {
 
 	assert.equal(sessionManager.getEntries().filter((entry: any) => entry.type === "custom" && entry.customType === "context-fold").length, 0);
 	assert.equal(JSON.stringify(requests.at(-1).messages).split(BIG).length - 1, 2);
+});
+
+test("a board note after an idle fold folds the full note restates the open tasks", async () => {
+	const { session, sessionManager, requests, expireCache, finish } = await idleStart([fauxAssistantMessage(fauxToolCall("big", {})), () => fauxAssistantMessage("third")], [towerDoSlim]);
+	await session.prompt("go");
+	expireCache();
+	await session.prompt("again?");
+	finish();
+
+	assert.deepEqual(sessionManager.getEntries().filter((entry: any) => entry.type === "custom" && entry.customType === "context-fold").map((entry: any) => entry.data.trigger), ["idle"]);
+	assert.ok(JSON.stringify(requests.at(-1).messages).includes("Open tasks: a"));
 });
