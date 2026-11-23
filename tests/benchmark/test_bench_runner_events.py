@@ -54,6 +54,9 @@ def test_failed_memory_calls_are_kept_and_successful_ones_dropped(
     assert [c.name for c in calls] == ["memory.create_entities", "other.lookup"]
     assert calls[0].error == json.dumps({"error": "bad"})
     assert (calls[1].output, calls[1].error) == ("2 passed\nok", "")
+    assert runner.tool_started(lines[0][1]) == ["memory.create_entities"]
+    assert runner.tool_started(lines[1][1]) == []
+    assert runner.tool_started(lines[-1][1]) == []
 
 
 @pytest.mark.parametrize(

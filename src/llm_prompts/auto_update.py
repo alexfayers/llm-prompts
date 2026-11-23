@@ -11,12 +11,14 @@ import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 from cline_hooks.plugins.checkout_lock import LOCK_TTL_SECONDS
 from cline_hooks.state.paths import get_data_dir
 from platformdirs import user_data_dir
 
+from . import telemetry
 from .main_sync import UPSTREAM, run_git, unreleased
 from .plugins import _checkout_dir
 from .setup import _expand, _is_local_path, config_path, read_config
@@ -49,20 +51,20 @@ def failure(fingerprint: str) -> str | None:
 
 
 def blocker(fingerprint: str) -> str | None:
-    """Return why an automatic update must not run, or None when it may.
+    """Return the kind of what blocks an automatic update, or None when it may run.
 
     Args:
         fingerprint: The installed versions, as ``_installed_fingerprint`` returns them.
     """
     if not config_path().exists():
-        return "no config"
+        return "off"
     config = read_config()
     settings = config.get("update", {})
     if not isinstance(settings, dict):
-        return "config error: [update] must be a table"
+        return "off"
     auto = settings.get("auto", True)
     if not isinstance(auto, bool):
-        return "config error: [update] auto must be true or false"
+        return "off"
     if not auto:
         return "off"
     if failure(fingerprint) is not None:
@@ -83,9 +85,9 @@ def blocker(fingerprint: str) -> str | None:
     for name, repo, has_changes in checkouts:
         git_dir = (repo / ".git").resolve()
         if any(path == git_dir or git_dir in path.parents for path in held):
-            return f"a session is using {name}"
+            return "session"
         if has_changes(repo):
-            return f"{name} has local changes"
+            return "local-changes"
     return None
 
 
@@ -119,7 +121,7 @@ def _alive(lock: dict[str, object]) -> bool:
 
 def _has_local_changes(repo: Path) -> bool:
     """Whether a local checkout holds edits, or commits the release it follows lacks."""
-    if run_git(repo, "status", "--porcelain").stdout.strip():
+    if run_git(repo, "status", "--porcelain", "--untracked-files=no").stdout.strip():
         return True
     ahead = run_git(repo, "rev-list", f"{UPSTREAM}..HEAD")
     return ahead.returncode != 0 or bool(set(ahead.stdout.split()) - unreleased(repo))
@@ -180,10 +182,24 @@ def _fingerprint() -> str:
 
 
 def run(fingerprint: str) -> None:
-    """Run ``llm-prompts update --auto`` once, logging its output and recording a failure."""
-    with lock() as held:
-        if not held or blocker(fingerprint) is not None:
+    """Run ``llm-prompts update --auto`` once, logging its output and recording a failure.
+
+    Reports what stopped it when it does not run.
+    """
+    from .cli import _get_installed_version
+
+    with telemetry.Run(_get_installed_version) as report, lock() as held:
+        if not held:
+            report.begin("update", ["--auto"])
+            report.outcome, report.exit_reason = "stopped", "update_running"
             return
+        if (blocked := blocker(fingerprint)) is not None:
+            report.begin("update", ["--auto"])
+            report.outcome, report.auto_update = "blocked", blocked
+            return
+        log = STATE_DIR / "auto-update.log"
+        started = f"Started at {datetime.now(tz=UTC).isoformat()}\n"
+        log.write_text(started, encoding="utf-8")
         result = subprocess.run(
             [_script(), "update", "--auto"],
             pass_fds=(int(os.environ[LOCK_FD_ENV]),),
@@ -193,7 +209,7 @@ def run(fingerprint: str) -> None:
             check=False,
         )
         output = result.stdout + result.stderr
-        (STATE_DIR / "auto-update.log").write_text(output, encoding="utf-8")
+        log.write_text(started + output, encoding="utf-8")
         if result.returncode:
             lines = output.strip().splitlines()
             record_failure(
@@ -211,10 +227,10 @@ def _script() -> str:
     )
 
 
-def start(fingerprint: str) -> bool:
-    """Start ``run`` in a detached process unless something blocks it, and return whether it started."""
-    if blocker(fingerprint) is not None:
-        return False
+def start(fingerprint: str) -> str:
+    """Start ``run`` in a detached process unless something blocks it, and return ``started`` or the blocker's kind."""
+    if (blocked := blocker(fingerprint)) is not None:
+        return blocked
     subprocess.Popen(
         [
             sys.executable,
@@ -227,4 +243,4 @@ def start(fingerprint: str) -> bool:
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
-    return True
+    return "started"

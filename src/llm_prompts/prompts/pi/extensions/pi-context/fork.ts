@@ -1,5 +1,5 @@
 // Adds the fork tool, which runs a delegate on a copy of this session that shares its prompt cache, or a cold worker on a cheaper model. A writer works in a git worktree and lands its commits through the merge queue.
-// Config: llmPrompts.forks in pi settings: mcpProxy (true: a fork uses main's MCP servers), privateNames (regex of names a writer's commits may not land with)
+// Config: llmPrompts.forks in pi settings: mcpProxy (true: a fork uses main's MCP servers), privateNames (regex of names a writer's commits may not land with), readMcp (array of {tool, argsMatch?}: extra MCP tools, as globs, a delegate may call when each argsMatch regex matches the whole of that string argument)
 // Env: PI_CONTEXT_CHILD (set in a delegate, which cannot fork), PI_CONTEXT_ROLE and PI_CONTEXT_RUN_ID (set for a delegate), PI_CONTEXT_WORKTREE (set for a writer: its worktree, for hooks that resolve the session repo)
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -8,9 +8,9 @@ import { getAgentDir, type ExtensionAPI, type ExtensionContext, type ExtensionTo
 import { Type } from "typebox";
 import { parseOutcome, projectResult } from "./outcome.ts";
 import { Background } from "./background.ts";
-import { describeMain, lastPrefixHash, PREFIX_FILE, serveBridge, type BridgeOptions } from "./bridge.ts";
+import { describeMain, lastPrefixHash, PREFIX_FILE, serveBridge, writeLeadPrefix, type BridgeOptions } from "./bridge.ts";
 import { createWorktree, dropIfClean, gitOut, land, mainSnapshot, restoreWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
-import { coldCard, expandHome, readHandshake, ROLES, type Role } from "./roles.ts";
+import { checkReadMcp, coldCard, expandHome, readHandshake, ROLES, withReadMcp, type ReadMcp, type Role } from "./roles.ts";
 import { tokens } from "./live-view.ts";
 import { cacheLeftMs, FINISHED, isLive, registryOf, type Run, type RunState } from "./registry.ts";
 import { RpcChild, type Turn, type UiAnswer, type UiRequest } from "./runner.ts";
@@ -24,6 +24,23 @@ export function seedEntries(branch: SessionEntry[], toolCallId: string): Session
 	return at < 0 ? branch : branch.slice(0, at);
 }
 
+/** The model a fork's `model` names: a provider/id as given, or a tier alias from the installed `pi-context/models.json`. */
+export function resolveModel(model: string, agentDir = getAgentDir()): string {
+	if (model.includes("/")) return model;
+	let tiers: Record<string, string> = {};
+	try {
+		tiers = JSON.parse(fs.readFileSync(path.join(agentDir, "pi-context", "models.json"), "utf8"));
+	} catch {}
+	const [tier, effort] = model.split(":", 2);
+	const resolved = tiers[tier];
+	if (!resolved) throw new Error(`unknown model tier ${tier}: use provider/id or one of ${Object.keys(tiers).sort().join(", ")}`);
+	return effort ? `${resolved}:${effort}` : resolved;
+}
+
+export function coldLabel(name: string, model: string, resolved: string): string {
+	return `cold worker ${name} on ${model === resolved ? model : `${model} = ${resolved}`} (no shared context)`;
+}
+
 export type ColdOptions = { model: string; sessionDir: string; cardFile: string; skillsDir: string; session?: string };
 
 /** The arguments of a cold worker: a fresh session, or `session` to continue, on its own model with only the role's skills, the role card in its system prompt and no MCP servers of its own. */
@@ -35,7 +52,14 @@ export function coldArgs(role: Role, { model, sessionDir, cardFile, skillsDir, s
 const FINISHED_MARK = "finished";
 
 /** The `llmPrompts.forks` object of pi's settings. */
-const forkSettings = (pi: ExtensionAPI): { mcpProxy?: boolean; privateNames?: string } => (pi.getSettings?.() as { llmPrompts?: { forks?: object } } | undefined)?.llmPrompts?.forks ?? {};
+function forkSettings(pi: ExtensionAPI, ctx?: ExtensionContext): { mcpProxy?: boolean; privateNames?: string; readMcp: ReadMcp[] } {
+	const forks = ((pi.getSettings?.() as { llmPrompts?: { forks?: object } } | undefined)?.llmPrompts?.forks ?? {}) as { mcpProxy?: boolean; privateNames?: string; readMcp?: unknown };
+	const { valid, dropped } = checkReadMcp(forks.readMcp);
+	const warning = `pi-context: dropped invalid llmPrompts.forks.readMcp entries: ${JSON.stringify(dropped)}`;
+	if (dropped.length && ctx?.hasUI) ctx.ui.notify(warning, "warning");
+	else if (dropped.length) process.stderr.write(`${warning}\n`);
+	return { ...forks, readMcp: valid };
+}
 
 /** The session file a run's delegate wrote: the seed of a warm fork, or the newest session of a cold worker. */
 export function sessionFileOf(files: string, cold: boolean): string | undefined {
@@ -164,12 +188,17 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 		fs.rmSync(path.join(files, FINISHED_MARK), { force: true });
 		let prefix: "match" | "mismatch" | undefined;
 		const onPrefix = model ? undefined : (hash: string) => void (prefix = hash === lastPrefixHash() ? "match" : "mismatch");
-		bridge = mcp && (await serveBridge(files, { role, execute: mcp, onPrefix }));
+		const { readMcp } = forkSettings(pi, ctx);
+		const allowed = withReadMcp(role, readMcp);
+		bridge = mcp && (await serveBridge(files, { role: allowed, execute: mcp, onPrefix }));
 		const inherited = model ? undefined : resume ? readHandshake(handshake)?.inherited : entries.at(-1)?.id;
-		const main = bridge && describeMain(pi, ctx, model ? role : undefined);
-		fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, repo, inherited, bridge: bridge && { ...main, socket: bridge.socket } }), { mode: 0o600 });
+		const main = bridge && describeMain(pi, ctx, model ? allowed : undefined);
+		fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, repo, inherited, readMcp, bridge: bridge && { ...main, socket: bridge.socket } }), { mode: 0o600 });
 		if (model) fs.writeFileSync(cardFile, coldCard(role), { mode: 0o600 });
-		else if (!resume) fs.writeFileSync(seed, jsonl([{ ...ctx.sessionManager.getHeader(), id: randomUUID(), ...(cwd && { cwd }) }, ...entries]), { mode: 0o600 });
+		else if (!resume) {
+			writeLeadPrefix(files);
+			fs.writeFileSync(seed, jsonl([{ ...ctx.sessionManager.getHeader(), id: randomUUID(), ...(cwd && { cwd }) }, ...entries]), { mode: 0o600 });
+		}
 		const childCwd = (model && worktree) || cwd || ctx.cwd;
 		child = RpcChild.start({
 			command,
@@ -333,7 +362,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			name: Type.Optional(Type.String({ pattern: "^[a-z0-9-]{1,24}$", description: "Short name for the delegate" })),
 			background: Type.Optional(Type.Boolean({ description: "Return at once and receive the result later as a message, so you can keep working" })),
 			target: Type.Optional(Type.String({ description: "Path of another directory, git checkout or worktree to read or land in, instead of this session's" })),
-			model: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9][\\w./:@-]*$", description: "Run as a cold worker on this cheaper model (provider/id, optionally :thinking). It starts with an empty session, so the task must be self-contained" })),
+			model: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9][\\w./:@-]*$", description: "Run as a cold worker on this model: provider/id (optionally :thinking) or a tier name such as sol or opus. Any model starts an empty session with no context and no prompt cache from you, so the task must be self-contained" })),
 		}),
 		async execute(toolCallId, params, signal, _onUpdate, ctx) {
 			if (process.env.PI_CONTEXT_CHILD) throw new Error("Only the top-level session can fork.");
@@ -347,18 +376,20 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			if (role.writes && params.target === undefined && checkout && (await isPrimaryCheckout(checkout))) throw new Error(`${checkout} is a primary checkout: change_dir to a worktree first`);
 			const home = params.target === undefined ? ctx.cwd : role.writes ? (checkout ?? dir) : dir;
 			const target = sameDir(home, ctx.cwd) ? undefined : home;
+			const model = params.model && resolveModel(params.model);
 			const tree = role.writes && checkout ? await createWorktree(home, path.join(getAgentDir(), "pi-context", WORKTREES), name) : undefined;
 			const entries = seedEntries(ctx.sessionManager.getBranch(), toolCallId);
 			const runId = newRunId();
 			const ref = `rc-fork-${name}-${toolCallId}`;
 			const files = path.join(getAgentDir(), "pi-context", randomUUID());
+			const cold = params.model && model ? coldLabel(name, params.model, model) : undefined;
 			const hint = cachedHint(registry.all(), role.name, target ?? ctx.cwd);
 			const withHint = (text: string) => (hint ? `${text}\n${hint}` : text);
-			registry.start({ id: runId, name, role: role.name, background: Boolean(params.background), state: "running", task: params.task, worktree: tree?.path, branch: tree?.branch, tree, target, cwd: ctx.cwd, startedAt: Date.now() });
+			registry.start({ id: runId, name, role: role.name, model, background: Boolean(params.background), state: "running", task: params.task, worktree: tree?.path, branch: tree?.branch, tree, target, cwd: ctx.cwd, startedAt: Date.now() });
 			const message = `${worktreeLine(tree, role.writes ? home : undefined)}Task: ${params.task}`;
-			const { running, merged } = startRun(ctx, { id: runId, name, ref, role, tree, target, model: params.model, files, background: Boolean(params.background), signal }, { entries, message });
+			const { running, merged } = startRun(ctx, { id: runId, name, ref, role, tree, target, model, files, background: Boolean(params.background), signal }, { entries, message });
 			if (params.background) {
-				return { content: [{ type: "text", text: withHint(`started fork ${name} (background)`) }], details: { name, runId, background: true } };
+				return { content: [{ type: "text", text: withHint(`started ${cold ?? `fork ${name}`} (background)`) }], details: { name, runId, background: true } };
 			}
 			let turn: Awaited<typeof running>;
 			try {
@@ -376,7 +407,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			registry.update(runId, { ...end, endedAt: Date.now(), ...request });
 			pi.appendEntry("result-cap", { ref: end.ref, text: turn.text });
 			background.pinForeground(ctx, { id: runId, name }, turn.text);
-			const cache = `${turn.prefix === "mismatch" ? "prefix mismatch, " : ""}${turn.firstUsage ? `cache ${turn.firstUsage.cacheRead}/${turn.firstUsage.cacheWrite}, ` : ""}`;
+			const cache = `${cold ? `${cold}, ` : ""}${turn.prefix === "mismatch" ? "prefix mismatch, " : ""}${turn.firstUsage ? `cache ${turn.firstUsage.cacheRead}/${turn.firstUsage.cacheWrite}, ` : ""}`;
 			return {
 				content: [{ type: "text", text: withHint(`${projectResult(turn.text)}\n[fork ${name}: ${cache}ref ${end.ref}]${merged.landing && tree ? `\n[merge: ${describeLanding(merged.landing, tree)}]` : ""}`) }],
 				details: { name, role: role.name, outcome: end.outcome, usage: turn.usage, firstUsage: turn.firstUsage, prefix: turn.prefix, merge: merged.landing },

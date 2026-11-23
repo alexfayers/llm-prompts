@@ -580,6 +580,20 @@ class TestMeasure:
             "head_extra.md": (None, 31),
         }
 
+    def test_skips_targets_the_base_has_no_variables_for(self, tmp_path: Path) -> None:
+        base = _prompts_tree(tmp_path / "base", "own.md", "x" * 100)
+        head = _prompts_tree(tmp_path / "head", "own.md", "x" * 100)
+        (base / CHECKED_TARGETS[-1] / "vars.json").unlink()
+
+        rows = size_report.measure(base, head, base_overlays=[], head_overlays=[])
+
+        new_target = {
+            (row.base, row.head)
+            for row in rows
+            if row.metric == RULE_BYTES and CHECKED_TARGETS[-1] in row.targets
+        }
+        assert new_target == {(None, 101)}
+
 
 class TestBuildReport:
     def test_missing_base_says_there_is_nothing_to_compare(
@@ -599,7 +613,10 @@ class TestBuildReport:
         calls: list[tuple[list[Path], Path | None]] = []
 
         def fake_check(
-            roots: list[Path], *, vars_root: Path | None = None
+            roots: list[Path],
+            *,
+            targets: tuple[str, ...] = (),
+            vars_root: Path | None = None,
         ) -> CheckResult:
             calls.append((roots, vars_root))
             value = 100 if vars_root else 120

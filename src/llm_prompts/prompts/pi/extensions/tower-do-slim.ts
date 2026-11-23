@@ -41,7 +41,8 @@ export function slimTools({ formatTakeoverWindow, MAX_TOWER_DO_OPEN_TASKS }: Tow
 			description:
 				"Read the shared board: tasks, messages to you, recent activity, the board file path and the revision to pass as baseRevision. Does not acknowledge messages. taskKey returns one task in full. Large output is cut from the head.",
 			promptGuidelines: [
-				"Use tower_do_status before starting work and before finishing it. After a stale-revision rejection, re-read it for the new revision.",
+				"Use tower_do_status before starting work and before finishing it. Pass taskKey to read your own task, and read the full board" +
+					" only to find or plan work. After a stale-revision rejection, re-read it for the new revision.",
 				"Share the board file path with subagents so they read it directly and report back.",
 			],
 		},

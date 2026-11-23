@@ -150,12 +150,50 @@ export function readBridgeConfig(handshakeFile: string): BridgeConfig | undefine
 	}
 }
 
-let lastPrefix: string | undefined;
-export const lastPrefixHash = () => lastPrefix;
+type Prefix = { system?: unknown; tools?: unknown; toolConfig?: { tools?: unknown[] }; prompt_cache_key?: unknown };
+const prefixOf = ({ system, tools, toolConfig, prompt_cache_key }: Prefix): Prefix => ({
+	system,
+	...(tools !== undefined && { tools }),
+	...(toolConfig !== undefined && { toolConfig }),
+	...(prompt_cache_key !== undefined && { prompt_cache_key }),
+});
+type Tool = { name?: string; input_schema?: unknown; toolSpec?: { name?: string; inputSchema?: unknown } };
+const toolsOf = ({ tools, toolConfig }: Prefix): Tool[] => (tools ?? toolConfig?.tools ?? []) as Tool[];
+const toolSignatures = (prefix: Prefix): string =>
+	JSON.stringify(toolsOf(prefix).map((tool) => JSON.stringify([tool.name ?? tool.toolSpec?.name, tool.input_schema ?? tool.toolSpec?.inputSchema])).sort());
 
-/** Remembers the prefix hash of main's latest provider request. */
+let lastPrefix: Prefix | undefined;
+export const lastPrefixHash = () => lastPrefix && prefixHash(lastPrefix);
+
+/** Remembers the system prompt and tools of main's latest provider request that declares tools, which a compaction summary does not. */
 export function trackPrefix(pi: ExtensionAPI): void {
-	pi.on("before_provider_request", ({ payload }) => void (lastPrefix = prefixHash(payload)));
+	pi.on("before_provider_request", ({ payload }) => {
+		if (toolsOf(payload as Prefix).length) lastPrefix = prefixOf(payload as Prefix);
+	});
+}
+
+const LEAD_PREFIX_FILE = "lead-prefix.json";
+
+/** Writes the system prompt and tools of main's latest provider request into a warm fork's run directory. */
+export function writeLeadPrefix(dir: string): void {
+	if (lastPrefix) fs.writeFileSync(path.join(dir, LEAD_PREFIX_FILE), JSON.stringify(lastPrefix), { mode: 0o600 });
+}
+
+/** In a warm fork: sends main's system prompt, tools and prompt cache key in place of its own when it declares the same tools, so its requests read main's prompt cache. */
+export function useLeadPrefix(pi: ExtensionAPI, handshakeFile: string): void {
+	let lead: Prefix | undefined;
+	try {
+		lead = JSON.parse(fs.readFileSync(path.join(path.dirname(handshakeFile), LEAD_PREFIX_FILE), "utf8")) as Prefix;
+	} catch {
+		return;
+	}
+	pi.on("before_provider_request", ({ payload }) => {
+		const own = payload as Prefix;
+		if (toolSignatures(own) !== toolSignatures(lead)) return undefined;
+		const { system: _system, tools: _tools, toolConfig: _toolConfig, ...rest } = own as Record<string, unknown>;
+		const { prompt_cache_key, ...prefix } = lead;
+		return { ...rest, ...prefix, ...(own.prompt_cache_key !== undefined && prompt_cache_key !== undefined && { prompt_cache_key }) };
+	});
 }
 
 export const PREFIX_FILE = "prefix";

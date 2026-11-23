@@ -192,6 +192,7 @@ class FakeAgent:
         scenario: Scenario,
         model: str,
         policy: SandboxPolicy | None,
+        on_tool: Callable[[str], None] | None = None,
         on_reply: Callable[[], None] | None = None,
         session: Session | None = None,
     ) -> Trace:
@@ -211,6 +212,8 @@ class FakeAgent:
         self._memory.entity_lists[prepared.memory].extend(script.entities)
         for name, text in script.files.items():
             (prepared.workspace / name).write_text(text)
+        if on_tool:
+            on_tool("Bash")
         time.sleep(script.reply_delay)
         if on_reply and script.replies:
             on_reply()

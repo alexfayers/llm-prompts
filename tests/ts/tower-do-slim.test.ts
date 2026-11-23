@@ -13,6 +13,7 @@ const sources: Record<string, string> = {
 		pi.on("session_start", () => {});
 		pi.on("context", (event) => ({ messages: [...event.messages, ...(event.remind ? [{ role: "custom", customType: "pi-tower-do-reminder", content: event.remind }] : [])] }));
 		pi.registerTool({ name: "tower_do", description: "long", promptGuidelines: ["long"], parameters: { type: "object", description: "x", properties: { description: { type: "string", description: "long" }, key: { type: "string", pattern: "^a" } } }, execute: () => "do" });
+		pi.registerTool({ name: "tower_do_status", description: "long", promptGuidelines: ["long"], parameters: { type: "object" }, execute: () => "status" });
 		pi.registerTool({ name: "other", description: "kept", parameters: { description: "kept" }, execute: () => "other" });
 	}`,
 };
@@ -30,6 +31,7 @@ describe("tower-do-slim", () => {
 		assert.match(tower_do.description, /idle 6h\+/);
 		assert.match(tower_do.description, /At most 50 /);
 		assert.ok(tower_do.promptGuidelines.every((line: string) => line !== "long"));
+		assert.match(ext.tools.tower_do_status.promptGuidelines[0], /Pass taskKey to read your own task/);
 	});
 
 	test("drops parameter descriptions but keeps constraints and a property named description", () => {

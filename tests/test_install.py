@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from conftest import FakeSubprocess, run_capturing_exit
 
+from llm_prompts.console import log
 from llm_prompts.home import config_dir, set_root
 from llm_prompts.install import (
     _GATING_FRONTMATTER_KEYS,
@@ -41,7 +42,6 @@ from llm_prompts.install import (
     _targets_agent,
     _warn_pi_version_drift,
     get_source_for_managed_file,
-    log,
     partial_source,
     prompts_dir,
     try_install_hooks_claude_code,
@@ -2219,6 +2219,31 @@ class TestRenderedAndLinkedContentEquivalence:
             src, vars_path, "claude-code"
         )
 
+    def test_failed_write_keeps_old_bytes_mode_and_leaves_no_scratch(
+        self, tmp_path: Path
+    ) -> None:
+        src = _make_rule(
+            tmp_path / "src", "rule.md", "---\ndescription: A.\n---\n\nNew.\n"
+        )
+        vars_path = tmp_path / "vars.json"
+        vars_path.write_text("{}", encoding="utf-8")
+        dest = tmp_path / "dest" / "rule.md"
+        dest.parent.mkdir()
+        dest.write_text("old\n", encoding="utf-8")
+        dest.chmod(0o640)
+        real_write_text = Path.write_text
+
+        def write_partial_then_fail(self: Path, data: str, **kwargs: Any) -> int:
+            real_write_text(self, data[:3], **kwargs)
+            raise OSError("disk full")
+
+        with patch.object(Path, "write_text", write_partial_then_fail):
+            _install_rendered(src, dest, vars_path, "claude-code", "rule")
+
+        assert dest.read_text(encoding="utf-8") == "old\n"
+        assert dest.stat().st_mode & 0o777 == 0o640
+        assert [p.name for p in dest.parent.iterdir()] == ["rule.md"]
+
     def test_linked_agent_specific_content_matches_install_output(
         self, tmp_path: Path
     ) -> None:
@@ -2911,9 +2936,9 @@ class TestLogBrokenPipe:
         stderr.fileno.return_value = 99
 
         with (
-            patch("llm_prompts.install.sys.stderr", stderr),
-            patch("llm_prompts.install.print", side_effect=BrokenPipeError),
-            patch("llm_prompts.install.os.dup2") as dup2,
+            patch("llm_prompts.console.sys.stderr", stderr),
+            patch("llm_prompts.console.print", side_effect=BrokenPipeError),
+            patch("llm_prompts.console.os.dup2") as dup2,
         ):
             log("info", "first")
             log("info", "second")

@@ -21,6 +21,7 @@ from llm_prompts.benchmark.runner.events import (
     CallLog,
     ContextMeter,
     count,
+    mcp_name,
     parse_line,
 )
 from llm_prompts.benchmark.types import PreparedCell, Scenario, Session, Tokens, Trace
@@ -185,6 +186,12 @@ class PiAdapter:
             and isinstance(message, dict)
             and message.get("role") == "assistant"
         )
+
+    def tool_started(self, line: str) -> list[str]:
+        event = parse_line(line)
+        if event is None or event.get("type") != "tool_execution_start":
+            return []
+        return [mcp_name(str(event.get("toolName", "")), BUILTIN_TOOLS)]
 
     def parse(self, lines: Iterable[tuple[float, str]], wall_s: float) -> Trace:
         log = CallLog(BUILTIN_TOOLS)

@@ -9,7 +9,7 @@ import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/ro
 import { prefixHash, trackPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
 import { registryOf } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 import { Background } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/background.ts";
-import { coldArgs, KEEP_FINISHED_MS, registerFork, seedEntries, sweepFinished } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
+import { coldArgs, coldLabel, KEEP_FINISHED_MS, registerFork, resolveModel, seedEntries, sweepFinished } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
 import { LONG_CACHE_MS } from "../../src/llm_prompts/prompts/pi/extensions/context-fold.ts";
 
 const user = (id: string) => ({ type: "message", id, message: { role: "user", content: id } });
@@ -20,6 +20,27 @@ describe("seedEntries", () => {
 	test("a call nested in another, like one from codemode, cuts before its parent's message", () => {
 		const branch = [user("u1"), assistantCalling("a1", "c1"), result("r1", "c1"), assistantCalling("a2", "c2"), result("r2", "c2")];
 		assert.deepEqual(seedEntries(branch as any, "c2/1").map((entry) => entry.id), ["u1", "a1", "r1"]);
+	});
+});
+
+describe("resolveModel", () => {
+	const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "fork-tiers-"));
+	fs.mkdirSync(path.join(agentDir, "pi-context"));
+	fs.writeFileSync(path.join(agentDir, "pi-context", "models.json"), JSON.stringify({ sol: "acme/sol-2", opus: "acme/opus" }));
+
+	test("a tier resolves to its installed model, and a provider/id stays literal", () => {
+		assert.equal(resolveModel("sol", agentDir), "acme/sol-2");
+		assert.equal(resolveModel("other/sol:high", agentDir), "other/sol:high");
+		assert.equal(resolveModel("sol:high", agentDir), "acme/sol-2:high");
+	});
+
+	test("an unknown tier fails, listing the valid tiers", () => {
+		assert.throws(() => resolveModel("zeta", agentDir), /unknown model tier zeta: use provider\/id or one of opus, sol/);
+	});
+
+	test("the label names the tier and its model and says the worker shares no context", () => {
+		assert.equal(coldLabel("x", "sol", "acme/sol-2"), "cold worker x on sol = acme/sol-2 (no shared context)");
+		assert.equal(coldLabel("x", "acme/m", "acme/m"), "cold worker x on acme/m (no shared context)");
 	});
 });
 
@@ -76,13 +97,33 @@ async function fork(params: Record<string, unknown>, cwd = process.cwd(), main =
 describe("fork tool", () => {
 	beforeEach(() => void registryOf().restore([]));
 
+	test("writes the valid entries of the readMcp setting into the handshake", async () => {
+		const good = { tool: "mcp__demo__exec", argsMatch: { command: "read .*" } };
+		settings = { llmPrompts: { forks: { readMcp: [good, { tool: "mcp__demo__bad", argsMatch: { command: "(" } }] } } };
+		const { tool } = await fork({ task: "STUB_INSPECT" });
+		assert.deepEqual(JSON.parse(tool.content[0].text.split("\n")[0].replace(/^echo: /, "")).handshake.readMcp, [good]);
+	});
+
+	test("warns on stderr about dropped readMcp entries when there is no UI", async () => {
+		settings = { llmPrompts: { forks: { readMcp: [{ tool: "mcp__demo__bad", argsMatch: { command: "(" } }] } } };
+		const written: string[] = [];
+		const original = process.stderr.write;
+		process.stderr.write = ((chunk: string) => (written.push(String(chunk)), true)) as typeof process.stderr.write;
+		try {
+			await fork({ task: "STUB_INSPECT" });
+		} finally {
+			process.stderr.write = original;
+		}
+		assert.match(written.join(""), /pi-context: dropped invalid llmPrompts\.forks\.readMcp entries: .*mcp__demo__bad/);
+	});
+
 	test("starts a reader child on the seed with main's model, thinking level and directory", async () => {
 		const { tool } = await fork({ task: "STUB_INSPECT" });
 		const seen = JSON.parse(tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
 		assert.deepEqual(seen.args.slice(0, 2), ["--mode", "rpc"]);
 		assert.deepEqual(seen.args.slice(4), ["--model", "prov/mod", "--thinking", "high"]);
 		assert.equal(seen.cwd, process.cwd());
-		assert.deepEqual(seen.handshake, { role: "reader", inherited: "r1" });
+		assert.deepEqual(seen.handshake, { role: "reader", inherited: "r1", readMcp: [] });
 		assert.equal(seen.handshakeMode, 0o600);
 		assert.equal(seen.seed[0].cwd, process.cwd());
 		assert.notEqual(seen.seed[0].id, "main-id");
@@ -231,6 +272,17 @@ describe("fork tool", () => {
 			assert.equal(fs.existsSync(path.join(run()!.files!, "finished")), true);
 		});
 
+		test("a tier fork records its resolved model, and fork_resume reuses it", async () => {
+			fs.writeFileSync(path.join(agentDir, "pi-context", "models.json"), JSON.stringify({ cheap: "prov/cheap" }));
+			const { tool, tools, appended, ctx } = await fork({ task: "STUB_REPORT", name: "tier", model: "cheap:low" });
+			assert.match(tool.content[0].text, /\[fork tier: cold worker tier on cheap:low = prov\/cheap:low \(no shared context\), /);
+			assert.equal(registryOf().all().find((run) => run.name === "tier")!.model, "prov/cheap:low");
+			await tools.fork_resume.execute("r", { name: "tier", task: "STUB_INSPECT" }, undefined, undefined, ctx);
+			await eventually(() => appended.length > 2);
+			const seen = JSON.parse((appended.at(-1)![1] as { text: string }).text.replace(/^echo: /, ""));
+			assert.deepEqual(seen.args.slice(4, 6), ["--model", "prov/cheap:low"]);
+		});
+
 		test("fork_resume with a task continues a finished cold worker on its own session and model", async () => {
 			const { tools, sent, appended, ctx } = await fork({ task: "STUB_REPORT", name: "again", model: "prov/cheap" });
 			const continued = await tools.fork_resume.execute("r", { name: "again", task: "STUB_INSPECT" }, undefined, undefined, ctx);
@@ -240,6 +292,21 @@ describe("fork tool", () => {
 			assert.deepEqual(seen.args.slice(0, 4), ["--mode", "rpc", "--session", path.join(registryOf().all().find((run) => run.name === "again")!.files!, "session", "session.jsonl")]);
 			assert.deepEqual(seen.args.slice(4, 6), ["--model", "prov/cheap"]);
 			assert.equal(seen.prompt, "Task: STUB_INSPECT");
+		});
+
+		test("a warm fork gets main's latest prefix, and fork_resume with a task keeps the one it started with", async () => {
+			const track = (payload: unknown) => {
+				let handler: any;
+				trackPrefix({ on: (_event: string, listener: unknown) => (handler = listener) } as any);
+				handler({ payload });
+			};
+			track({ system: "first", tools: [{ name: "read" }] });
+			const { tool, tools, sent, appended, ctx } = await fork({ task: "STUB_INSPECT", name: "kept" });
+			assert.deepEqual(JSON.parse(tool.content[0].text.split("\n")[0].replace(/^echo: /, "")).leadPrefix, { system: "first", tools: [{ name: "read" }] });
+			track({ system: "later", tools: [{ name: "read" }] });
+			await tools.fork_resume.execute("r", { name: "kept", task: "STUB_INSPECT" }, undefined, undefined, ctx);
+			await eventually(() => sent.length > 0);
+			assert.equal(JSON.parse((appended.at(-1)![1] as { text: string }).text.replace(/^echo: /, "")).leadPrefix.system, "first");
 		});
 
 		test("a new fork names a finished fork of the same role and directory whose cache is still warm", async () => {
@@ -359,6 +426,12 @@ describe("fork tool", () => {
 			assert.equal(git(other, "log", "-1", "--format=%s", "trunk"), "write");
 			assert.equal(git(repo, "rev-parse", "HEAD"), before);
 			assert.equal(git(repo, "status", "--porcelain"), "");
+		});
+
+		test("a writer with an unknown tier fails before it creates a worktree", async () => {
+			const { tool } = await fork({ task: "STUB_WRITE", role: "writer", name: "badtier", model: "nosuch" }, repo);
+			assert.match(String(tool), /unknown model tier nosuch/);
+			assert.equal(forkDirs().some((dir) => String(dir).includes("badtier")), false);
 		});
 
 		test("a cold writer starts in its worktree and lands through the same queue", async () => {

@@ -1,4 +1,7 @@
-@_default: lint type-check type-check-ts test test-ts check
+@_default: lint _checks
+
+[parallel]
+_checks: type-check type-check-ts test test-ts check
 
 @_uv:
     uv -V 2> /dev/null || { echo 'Please install uv: https://docs.astral.sh/uv/getting-started/installation/'; exit 1;}

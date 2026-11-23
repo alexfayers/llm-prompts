@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import threading
 import urllib.error
+import urllib.request
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from email.message import Message
@@ -18,7 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from llm_prompts import github_api, install, setup
+from llm_prompts import github_api, install, setup, telemetry_core
 from llm_prompts.contribute import Pr
 from llm_prompts.size_guard import CheckResult
 
@@ -59,7 +60,7 @@ class _Route:
         predicate: Callable[[list[str]], bool] | None,
         stdout: str | list[str],
         returncode: int | list[int],
-        stderr: str | list[str],
+        stderr: str | bytes | list[str],
         repo: str | Path | None,
         side_effect: SideEffect | None,
     ) -> None:
@@ -104,7 +105,7 @@ class FakeSubprocess:
         *tokens: str,
         stdout: str | list[str] = "",
         returncode: int | list[int] = 0,
-        stderr: str | list[str] = "",
+        stderr: str | bytes | list[str] = "",
         repo: str | Path | None = None,
         side_effect: SideEffect | None = None,
     ) -> None:
@@ -119,7 +120,7 @@ class FakeSubprocess:
         *,
         stdout: str | list[str] = "",
         returncode: int | list[int] = 0,
-        stderr: str | list[str] = "",
+        stderr: str | bytes | list[str] = "",
         repo: str | Path | None = None,
         side_effect: SideEffect | None = None,
     ) -> None:
@@ -599,6 +600,7 @@ def synthetic_prompts_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
                 "claude-code",
                 "codex",
                 "kiro",
+                "opencode",
                 "pi",
             )
         },
@@ -644,6 +646,12 @@ def isolated_config_dir(
 def unrooted_home(monkeypatch: pytest.MonkeyPatch) -> None:
     """Start every test without an install root, restoring it afterwards."""
     monkeypatch.setattr("llm_prompts.home._HOME.root", None)
+
+
+@pytest.fixture(autouse=True)
+def unfetched_repos(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start every test with no repo marked as fetched."""
+    monkeypatch.setattr("llm_prompts.cli._FETCHED_REPOS", set())
 
 
 @pytest.fixture(autouse=True)
@@ -839,7 +847,14 @@ def telemetry_guard(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setenv("LLM_PROMPTS_NO_TELEMETRY", "1")
     monkeypatch.setattr("llm_prompts.telemetry_core.Popen", forbidden)
-    monkeypatch.setattr("llm_prompts.telemetry_core.urlopen", forbidden)
+    urlopen = urllib.request.urlopen
+
+    def guarded(request: Any, *args: Any, **kwargs: Any) -> Any:
+        if getattr(request, "full_url", request) == telemetry_core.POSTHOG_URL:
+            forbidden()
+        return urlopen(request, *args, **kwargs)
+
+    monkeypatch.setattr("urllib.request.urlopen", guarded)
 
 
 @pytest.fixture

@@ -733,6 +733,68 @@ def _land_upstream(project: Project, name: str, pull: bool = True) -> None:
         git(project.repo, "pull", "-q", "--ff-only")
 
 
+def _main_with_empty_commits(project: Project) -> None:
+    """Land ``feat: a (#5)`` and ``feat: b (#6)`` upstream, then put an empty recorded copy of ``feat: a``, a real commit and a deliberate empty ``feat: b`` on local main."""
+    other = project.root / "upstream-clone"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "a.txt", "a\n", "feat: a (#5)")
+    project.commit(other, "b.txt", "b\n", "feat: b (#6)")
+    git(other, "push", "-q", "origin", "main")
+    git(project.repo, "pull", "-q", "--ff-only")
+    for subject in ("feat: a", "feat: b"):
+        project.clock += 60
+        git(
+            project.repo,
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            subject,
+            "--date",
+            f"{project.clock} +0000",
+        )
+        if subject == "feat: a":
+            copy = git(project.repo, "log", "-1", "--format=%at%x09%s")
+            project.commit(project.repo, "keep.txt", "keep\n", "feat: keep")
+    worktrees.save_entries(
+        worktrees.record_path(),
+        [
+            WorktreeEntry(
+                str(project.repo),
+                "feat/a",
+                str(project.root / "gone"),
+                5,
+                "MERGED",
+                None,
+                copied=copy,
+            )
+        ],
+    )
+
+
+def test_update_drops_a_recorded_empty_copy_of_a_merged_pr_and_keeps_a_deliberate_empty_commit(
+    project: Project,
+) -> None:
+    _main_with_empty_commits(project)
+
+    outcome = cli._pull_one_local_source("tool", str(project.repo))
+
+    assert outcome.changed
+    assert project.main_subjects() == ["feat: keep", "feat: b"]
+    assert git(project.repo, "rev-parse", main_sync.PRE_SYNC_REF)
+
+
+def test_sync_keeps_a_deliberate_empty_commit_sharing_a_merged_prs_subject(
+    project: Project,
+) -> None:
+    _main_with_empty_commits(project)
+    worktrees.save_entries(worktrees.record_path(), [])
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a", "feat: keep", "feat: b"]
+
+
 def test_a_worktree_started_before_upstream_moved_keeps_the_upstream_change_in_main(
     project: Project,
 ) -> None:
