@@ -2777,6 +2777,25 @@ class TestUpdateOnly:
         mock_reconfigure.assert_not_called()
         assert exit_code == 0
 
+    def test_refuses_an_unmapped_extension_instead_of_running_a_full_update(
+        self,
+    ) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "update", "--only", "/synthetic/x.ts"]),
+            patch(
+                "llm_prompts.manifest.read_manifest",
+                return_value={"pi": {"files": []}},
+            ),
+            patch("llm_prompts.install.partial_source", return_value=None),
+            patch("llm_prompts.install.main") as mock_install,
+            patch("llm_prompts.cli._pull_local_sources") as mock_pull_local,
+        ):
+            exit_code = run_capturing_exit(main)
+
+        mock_install.assert_not_called()
+        mock_pull_local.assert_not_called()
+        assert "/synthetic/x.ts" in str(exit_code)
+
 
 class TestInstallRoot:
     def test_root_is_passed_on_and_machine_wide_installs_are_skipped(

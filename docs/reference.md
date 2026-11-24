@@ -10,7 +10,7 @@ llm-prompts install kiro --agent-config PATH   # also patch a Kiro agent JSON
 llm-prompts install <agent> --root DIR         # use DIR as the home directory
 llm-prompts update                             # report updates, pull sources, copy ready worktrees into local main, reinstall every installed agent
 llm-prompts update --check                     # list available updates without applying them
-llm-prompts update --only PATH                 # reinstall only the prompt built from this edited file
+llm-prompts update --only PATH                 # reinstall only the prompt or pi extension (.ts) built from this edited file (refused where the installed env cannot be proven to match the configured source)
 llm-prompts update --verbose                    # also list every file changed
 llm-prompts uninstall <agent>                  # remove installed files and config patches
 llm-prompts source <agent>                     # show the source file paths for an agent
