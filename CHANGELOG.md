@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.7.0](https://github.com/alexfayers/llm-prompts/compare/v0.6.3...v0.7.0) (2026-11-24)
+
+
+### Features
+
+* add opencode as an install target ([#548](https://github.com/alexfayers/llm-prompts/issues/548)) ([1e4a8a6](https://github.com/alexfayers/llm-prompts/commit/1e4a8a6bd74885da9ce0d68d8b3d077e7f6b62db))
+* install cline-hooks for opencode ([#549](https://github.com/alexfayers/llm-prompts/issues/549)) ([1fbbd00](https://github.com/alexfayers/llm-prompts/commit/1fbbd00da42b49fe983167bdc3a9504d8c639aad))
+
+
+### Bug Fixes
+
+* keep the old file when a managed file write fails ([#611](https://github.com/alexfayers/llm-prompts/issues/611)) ([278998c](https://github.com/alexfayers/llm-prompts/commit/278998c316ba70f3742a7ce7ed1054c07b07b534))
+* **pi-context:** send main's prompt cache key from a warm fork ([#586](https://github.com/alexfayers/llm-prompts/issues/586)) ([0d20825](https://github.com/alexfayers/llm-prompts/commit/0d2082580358f66a393f6f5db3a2c6d53e19cffd))
+* **pi:** rebuild the board note from visible notes and skip nested tool results ([#610](https://github.com/alexfayers/llm-prompts/issues/610)) ([6f14f9b](https://github.com/alexfayers/llm-prompts/commit/6f14f9bdbedb960d7a67aecbb0b9e627e13e0cb1))
+* **update:** run the automatic update while unrelated forks run ([#585](https://github.com/alexfayers/llm-prompts/issues/585)) ([dac3db8](https://github.com/alexfayers/llm-prompts/commit/dac3db883275a5077d79de97e4869ccac3ad49ea))
+
+
+### Miscellaneous Chores
+
+* **deps:** update all non-major dependencies ([#607](https://github.com/alexfayers/llm-prompts/issues/607)) ([a936ae6](https://github.com/alexfayers/llm-prompts/commit/a936ae6f4cae558278ecbd6b4fca6708b8c381bd))
+* run the just checks in parallel ([#612](https://github.com/alexfayers/llm-prompts/issues/612)) ([73c288c](https://github.com/alexfayers/llm-prompts/commit/73c288c2c5e4ea86c93bace3503d6adce389da6a))
+
 ## [0.6.3](https://github.com/alexfayers/llm-prompts/compare/v0.6.2...v0.6.3) (2026-11-23)
 
 
