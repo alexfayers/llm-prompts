@@ -62,6 +62,7 @@ from .size_limits import (
     COLLECTION_BYTES,
     COLLECTION_CEILING_METRICS,
     COLLECTION_SCHEDULE,
+    DECLARABLE_METRICS,
     FINALS,
     FRONTMATTER_VALID,
     NO_LAZY_CONTINUATIONS,
@@ -337,7 +338,7 @@ def _declared_allowances(root: Path) -> tuple[dict[str, dict[str, int]], list[st
     allowances: dict[str, dict[str, int]] = {}
     errors: list[str] = []
     for metric, entries in raw.items():
-        if metric not in FINALS:
+        if metric not in DECLARABLE_METRICS:
             errors.append(f"{path}: unknown metric '{metric}'")
             continue
         if not isinstance(entries, dict):

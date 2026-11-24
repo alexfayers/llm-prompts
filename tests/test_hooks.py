@@ -913,6 +913,29 @@ class TestUpdateCheckOnTaskStart:
         assert result is None
         mock_collect.assert_not_called()
 
+    def test_compact_shows_a_notice_another_session_cached_once(
+        self, tmp_path: Path
+    ) -> None:
+        stamp = tmp_path / "update-stamp"
+        messages = ["[pkg] update available:\n- did a thing", _UPDATE_INSTRUCTION]
+        debouncer = _ReinstallDebouncer(stamp, interval_seconds=_UPDATE_CHECK_INTERVAL)
+        debouncer.store_notice(messages)
+        debouncer.mark_run()
+
+        def compact(task_id: str = "t1") -> HookResult | None:
+            plugin = AutoReinstallPlugin()
+            plugin._update_check_debouncer = _ReinstallDebouncer(
+                stamp, interval_seconds=_UPDATE_CHECK_INTERVAL
+            )
+            return plugin.on_hook(
+                "TaskStart", task_id=task_id, workspace_roots=[], source="compact"
+            )
+
+        shown = compact()
+        assert shown is not None and shown.notes == messages
+        assert compact() is None
+        assert compact("t2") is not None
+
     def test_compact_shows_an_auto_update_failure(self, tmp_path: Path) -> None:
         plugin = AutoReinstallPlugin()
         plugin._update_check_debouncer = _ReinstallDebouncer(

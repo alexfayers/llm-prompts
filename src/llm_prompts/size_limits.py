@@ -22,6 +22,9 @@ SKILL_DESCRIPTION_CHARS = "skill_description_chars"
 AGENT_DESCRIPTION_CHARS = "agent_description_chars"
 COLLECTION_BYTES = "collection_bytes"
 PI_ROLE_PROMPT_BYTES = "pi_role_prompt_bytes"
+# Declared by an overlay root to credit a target's `collection_bytes` ceiling
+# with the bytes it owns for one skill or workflow. Never a ceiling of its own.
+COLLECTION_SHARE_BYTES = "collection_share_bytes"
 # Report-only parts of `collection_bytes`: what a session loads up front versus
 # what it loads on demand. No ceilings. `start_bytes` is the up-front parts
 # summed. `collection_bytes` is the worst case for one session: start plus
@@ -65,6 +68,7 @@ UNITS: dict[str, str] = {
     COLLECTION_BYTES: "owned bytes per target, worst-case session",
     PI_ROLE_PROMPT_BYTES: "llm-prompts-owned expanded prompt bytes",
     NO_LONG_LINES: "chars",
+    COLLECTION_SHARE_BYTES: "owned bytes credited to collection_bytes",
 }
 
 FINALS: dict[str, int] = {
@@ -80,6 +84,9 @@ FINALS: dict[str, int] = {
     NO_LONG_LINES: 200,
 }
 MAX_LINE_CHARS = FINALS[NO_LONG_LINES]
+
+# Metrics a `size_allowances.json` may declare.
+DECLARABLE_METRICS = frozenset(FINALS) | {COLLECTION_SHARE_BYTES}
 
 # Metrics whose ceiling is the active collection step rather than a per-file final.
 COLLECTION_CEILING_METRICS = frozenset({COLLECTION_BYTES, PI_ROLE_PROMPT_BYTES})

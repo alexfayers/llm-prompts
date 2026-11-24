@@ -15,6 +15,7 @@ from llm_prompts.size_guard import (
     ALLOWANCES_FILENAME,
     CHECKED_TARGETS,
     Artifact,
+    CheckResult,
     Violation,
     _declared_allowances,
     check,
@@ -33,6 +34,7 @@ from llm_prompts.size_limits import (
     ALWAYS_SKILL_FRONTMATTER_BYTES,
     COLLECTION_BYTES,
     COLLECTION_SCHEDULE,
+    COLLECTION_SHARE_BYTES,
     FINALS,
     FRONTMATTER_VALID,
     MAX_LINE_CHARS,
@@ -1008,6 +1010,17 @@ class TestDeclarationErrors:
         assert allowances == {}
         assert any("not_a_metric" in e and str(path) in e for e in errors)
 
+    def test_collection_share_metric_is_accepted(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path / ALLOWANCES_FILENAME,
+            json.dumps({COLLECTION_SHARE_BYTES: {"external-skill": 1_000}}),
+        )
+
+        allowances, errors = _declared_allowances(tmp_path)
+
+        assert allowances == {COLLECTION_SHARE_BYTES: {"external-skill": 1_000}}
+        assert errors == []
+
     @pytest.mark.parametrize("bad_value", ["x", -1, 0, True])
     def test_non_positive_or_non_integer_value_is_rejected(
         self, tmp_path: Path, bad_value: object
@@ -1077,6 +1090,182 @@ class TestStaleAllowances:
             result = check([tmp_path], targets=("claude-code",))
 
         assert result.stale == []
+
+
+class TestCollectionShareCredit:
+    @staticmethod
+    def _check(own: Path, *overlays: Path) -> CheckResult:
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=own):
+            return check([own, *overlays], targets=("pi",))
+
+    def _cap_own_collection(self, own: Path, room: int = 0) -> int:
+        _make_prompts_tree(own, targets=("pi",))
+        (current,) = (
+            a.value for a in self._check(own).artifacts if a.metric == COLLECTION_BYTES
+        )
+        _write(
+            own / ALLOWANCES_FILENAME,
+            json.dumps({COLLECTION_BYTES: {"pi": current + room}}),
+        )
+        return int(current) + room
+
+    def test_declared_workflow_bytes_raise_the_collection_ceiling(
+        self, tmp_path: Path
+    ) -> None:
+        own, overlay = tmp_path / "own", tmp_path / "overlay"
+        cap = self._cap_own_collection(own)
+        workflow = "# External\n\n" + "x" * 1_000 + "\n"
+        _write(overlay / "shared" / "workflows" / "external-workflow.md", workflow)
+        _write(
+            overlay / ALLOWANCES_FILENAME,
+            json.dumps(
+                {
+                    COLLECTION_SHARE_BYTES: {
+                        "workflows/external-workflow.md": len(workflow)
+                    }
+                }
+            ),
+        )
+
+        result = self._check(own, overlay)
+
+        (collection,) = (a for a in result.artifacts if a.metric == COLLECTION_BYTES)
+        assert collection.allowance == cap + len(workflow)
+        assert result.violations == []
+        assert result.stale == []
+
+    def test_an_owned_skill_is_credited_only_with_its_roots_own_files(
+        self, tmp_path: Path
+    ) -> None:
+        own, overlay = tmp_path / "own", tmp_path / "overlay"
+        _make_prompts_tree(own, targets=("pi",))
+        _write(own / "shared" / "skills" / "external-skill" / "base.md", "Base.\n")
+        skill_md = "---\nname: external-skill\ndescription: External.\n---\n\nBody.\n"
+        _write(overlay / "shared" / "skills" / "external-skill" / "SKILL.md", skill_md)
+        _write(overlay / "shared" / "skills" / "external-skill" / "own.md", "Own.\n")
+        _write(
+            overlay / ALLOWANCES_FILENAME,
+            json.dumps({COLLECTION_SHARE_BYTES: {"skills/external-skill": 10_000}}),
+        )
+
+        (credit,) = (
+            a
+            for a in self._check(own, overlay).artifacts
+            if a.metric == COLLECTION_SHARE_BYTES
+        )
+
+        assert credit.value == len(skill_md) + len("Own.\n")
+
+    def test_the_base_package_gets_no_credit_for_its_own_files(
+        self, tmp_path: Path
+    ) -> None:
+        _make_prompts_tree(tmp_path, targets=("pi",))
+        _write(
+            tmp_path / ALLOWANCES_FILENAME,
+            json.dumps({COLLECTION_SHARE_BYTES: {"workflows/flow.md": 1_000}}),
+        )
+
+        result = self._check(tmp_path)
+
+        assert not any(a.metric == COLLECTION_SHARE_BYTES for a in result.artifacts)
+        assert any("flow.md" in line for line in result.stale)
+
+    def test_a_skill_is_credited_apart_from_a_same_named_workflow(
+        self, tmp_path: Path
+    ) -> None:
+        own, overlay = tmp_path / "own", tmp_path / "overlay"
+        _make_prompts_tree(own, targets=("pi",))
+        _write(overlay / "shared" / "workflows" / "foo.md", "# Foo\n")
+        skill_md = "---\nname: foo.md\ndescription: Foo.\n---\n\nBody.\n"
+        _write(overlay / "shared" / "skills" / "foo.md" / "SKILL.md", skill_md)
+        _write(
+            overlay / ALLOWANCES_FILENAME,
+            json.dumps({COLLECTION_SHARE_BYTES: {"skills/foo.md": 10_000}}),
+        )
+
+        (credit,) = (
+            a
+            for a in self._check(own, overlay).artifacts
+            if a.metric == COLLECTION_SHARE_BYTES
+        )
+
+        assert credit.value == len(skill_md)
+
+    @pytest.mark.parametrize(
+        ("growth", "violations"), [(50, []), (150, [COLLECTION_BYTES])]
+    )
+    def test_growth_past_the_declared_bytes_uses_the_remaining_room(
+        self, tmp_path: Path, growth: int, violations: list[str]
+    ) -> None:
+        own, overlay = tmp_path / "own", tmp_path / "overlay"
+        self._cap_own_collection(own, room=100)
+        workflow = "# External\n\n" + "x" * 1_000 + "\n"
+        _write(
+            overlay / "shared" / "workflows" / "external-workflow.md",
+            workflow + "y" * growth,
+        )
+        _write(
+            overlay / ALLOWANCES_FILENAME,
+            json.dumps(
+                {
+                    COLLECTION_SHARE_BYTES: {
+                        "workflows/external-workflow.md": len(workflow)
+                    }
+                }
+            ),
+        )
+
+        result = self._check(own, overlay)
+
+        assert [v.metric for v in result.violations] == violations
+
+    def test_without_declarations_the_collection_has_no_allowance_or_credit(
+        self, tmp_path: Path
+    ) -> None:
+        _make_prompts_tree(tmp_path, targets=("pi",))
+
+        artifacts = self._check(tmp_path).artifacts
+
+        (collection,) = (a for a in artifacts if a.metric == COLLECTION_BYTES)
+        assert collection.allowance is None
+        assert not any(a.metric == COLLECTION_SHARE_BYTES for a in artifacts)
+
+    def test_a_rule_gets_no_credit(self, tmp_path: Path) -> None:
+        own, overlay = tmp_path / "own", tmp_path / "overlay"
+        self._cap_own_collection(own)
+        rule = "# External\n\n" + "x" * 1_000 + "\n"
+        _write(overlay / "shared" / "rules" / "external-rule.md", rule)
+        _write(
+            overlay / ALLOWANCES_FILENAME,
+            json.dumps({COLLECTION_SHARE_BYTES: {"rules/external-rule.md": len(rule)}}),
+        )
+
+        result = self._check(own, overlay)
+
+        assert [v.metric for v in result.violations] == [COLLECTION_BYTES]
+        assert not any(a.metric == COLLECTION_SHARE_BYTES for a in result.artifacts)
+
+    def test_a_shadowed_declaration_gets_no_credit_and_is_stale(
+        self, tmp_path: Path
+    ) -> None:
+        own, winner, shadowed = (tmp_path / n for n in ("own", "winner", "shadowed"))
+        _make_prompts_tree(own, targets=("pi",))
+        for overlay in (winner, shadowed):
+            _write(overlay / "shared" / "workflows" / "external-workflow.md", "# Ext\n")
+        path = _write(
+            shadowed / ALLOWANCES_FILENAME,
+            json.dumps(
+                {COLLECTION_SHARE_BYTES: {"workflows/external-workflow.md": 1_000}}
+            ),
+        )
+
+        result = self._check(own, winner, shadowed)
+
+        assert not any(a.metric == COLLECTION_SHARE_BYTES for a in result.artifacts)
+        assert any(
+            "external-workflow.md" in line and str(path) in line
+            for line in result.stale
+        )
 
 
 class TestParkedStateLines:
