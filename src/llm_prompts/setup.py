@@ -941,8 +941,8 @@ def read_config() -> dict[str, Any]:
     return config
 
 
-def _load_config() -> list[dict[str, Any]]:
-    """Load and return the tools list from config."""
+def _load_config(config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Load and return the tools list from config, or from an already-read config."""
     if not config_path().exists():
         print(
             f"Config not found at {config_path()}\n"
@@ -950,8 +950,7 @@ def _load_config() -> list[dict[str, Any]]:
             file=sys.stderr,
         )
         raise ExitReason("config_missing")
-    config = read_config()
-    tools = config.get("tools", [])
+    tools = (read_config() if config is None else config).get("tools", [])
     if not isinstance(tools, list) or not tools:
         print("Config must contain at least one [[tools]] entry.", file=sys.stderr)
         raise ExitReason("config_no_tools")

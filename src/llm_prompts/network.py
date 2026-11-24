@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import re
 import subprocess
+import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import Any
 
 TRANSIENT_FAILURE = re.compile(
@@ -16,6 +18,19 @@ TRANSIENT_FAILURE = re.compile(
 )
 NETWORK_ATTEMPTS = 3
 RETRY_DELAY_SECONDS = 1.0
+FAIL_FAST_TIMEOUT = 5
+_FAIL_FAST_COMMANDS = frozenset({"ls-remote", "fetch", "clone"})
+_failing_fast = threading.Event()
+
+
+@contextmanager
+def fail_fast() -> Iterator[None]:
+    """Run each ``ls-remote``, ``fetch`` and ``clone`` once, within ``FAIL_FAST_TIMEOUT`` seconds, while the context is open."""
+    _failing_fast.set()
+    try:
+        yield
+    finally:
+        _failing_fast.clear()
 
 
 def stderr_text(error: subprocess.CalledProcessError) -> str:
@@ -42,8 +57,15 @@ def run_with_retries(
     argv: list[str], *, check: bool = False, **kwargs: Any
 ) -> subprocess.CompletedProcess[str]:
     """Run a network command like ``subprocess.run``, retrying transient failures with backoff."""
+    fast = _failing_fast.is_set() and not _FAIL_FAST_COMMANDS.isdisjoint(argv)
+    if fast:
+        kwargs["timeout"] = FAIL_FAST_TIMEOUT
+
+    def call() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(argv, check=True, **kwargs)
+
     try:
-        return with_retries(lambda: subprocess.run(argv, check=True, **kwargs))
+        return call() if fast else with_retries(call)
     except subprocess.CalledProcessError as error:
         if check:
             raise

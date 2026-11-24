@@ -15,6 +15,7 @@ from conftest import FakeSubprocess, run_capturing_exit
 
 from llm_prompts import cli
 from llm_prompts.cli import (
+    UpdateCheckFailure,
     _auto_migrate_memory_db,
     _check_for_updates,
     _collect_sources,
@@ -24,6 +25,7 @@ from llm_prompts.cli import (
     _ContributeTarget,
     _flush_memory_telemetry,
     _get_installed_commit,
+    _installed_fingerprint,
     _local_source_messages,
     _print_parked_state,
     _print_update_status,
@@ -33,9 +35,12 @@ from llm_prompts.cli import (
     _run_extension_factory_check,
     _run_size_check,
     _size_guard_roots,
+    _source_identity,
+    _update_sources,
     main,
 )
 from llm_prompts.contribute import SyncOptions
+from llm_prompts.hooks import _ReinstallDebouncer
 from llm_prompts.main_sync import SyncResult
 from llm_prompts.setup import (
     _UPDATE_INSTRUCTION,
@@ -858,6 +863,7 @@ class TestPullLocalSources:
         config = [{"name": "core", "source": str(clone)}]
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
             patch("llm_prompts.setup._load_config", return_value=config),
             patch("llm_prompts.plugins._load_plugins", return_value=[]),
         ):
@@ -915,6 +921,7 @@ class TestCollectUpdateMessages:
             mock_config.return_value.exists.return_value = True
             with (
                 patch("llm_prompts.setup._load_config", return_value=config),
+                patch("llm_prompts.setup.read_config", return_value={}),
                 patch("llm_prompts.plugins._load_plugins", return_value=[]),
                 patch(
                     "llm_prompts.cli._local_source_messages",
@@ -932,10 +939,157 @@ class TestCollectUpdateMessages:
             "[remote-pkg] update available (aa -> bb)",
             _UPDATE_INSTRUCTION,
         ]
-        mock_local.assert_called_once_with("core", "~/git/llm-prompts", "")
+        mock_local.assert_called_once_with("core", "~/git/llm-prompts", "", True)
         mock_remote.assert_called_once_with(
             "remote-pkg", "git+https://github.com/user/repo.git", "main"
         )
+
+    @pytest.mark.parametrize(
+        ("installed", "expected"),
+        [
+            ("aa", ["[remote-pkg] update available (aa -> bb)", _UPDATE_INSTRUCTION]),
+            ("bb", []),
+        ],
+        ids=["unchanged", "updated"],
+    )
+    def test_previous_check_rebuilds_without_fetching(
+        self,
+        tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
+        installed: str,
+        expected: list[str],
+    ) -> None:
+        (tmp_path / ".git").mkdir()
+        config = [
+            {"name": "core", "source": str(tmp_path)},
+            {"name": "remote-pkg", "source": "git+https://github.com/user/repo.git"},
+        ]
+        fake_subprocess.on("rev-list", "--count", stdout="0\n")
+        previous = [
+            "[remote-pkg] update available (aa -> bb)",
+            "[other] update available",
+            _UPDATE_INSTRUCTION,
+        ]
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
+            patch("llm_prompts.setup._load_config", return_value=config),
+            patch("llm_prompts.plugins._load_plugins", return_value=[]),
+            patch("llm_prompts.cli._get_installed_commit", return_value=installed),
+        ):
+            mock_config.return_value.exists.return_value = True
+            result = _collect_update_messages(
+                previous=(
+                    json.dumps(
+                        [
+                            [*_source_identity(config[0]), "bb"],
+                            [*_source_identity(config[1]), "aa"],
+                        ]
+                    ),
+                    previous,
+                )
+            )
+
+        assert result == expected
+        assert fake_subprocess.matching("fetch") == []
+        assert fake_subprocess.matching("ls-remote") == []
+
+    @pytest.mark.parametrize(
+        ("recorded", "expected"),
+        [([""], ["[pkg] not installed", _UPDATE_INSTRUCTION]), ([], [])],
+        ids=["still-uninstalled", "not-recorded"],
+    )
+    def test_previous_check_of_an_uninstalled_tool(
+        self, recorded: list[str], expected: list[str]
+    ) -> None:
+        tool = {"name": "pkg", "source": "git+https://github.com/user/repo.git"}
+        fingerprint = json.dumps([[*_source_identity(tool), sha] for sha in recorded])
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
+            patch("llm_prompts.setup._load_config", return_value=[tool]),
+            patch("llm_prompts.plugins._load_plugins", return_value=[]),
+            patch("llm_prompts.cli._get_installed_commit", return_value=None),
+        ):
+            mock_config.return_value.exists.return_value = True
+            result = _collect_update_messages(
+                previous=(fingerprint, ["[pkg] not installed", _UPDATE_INSTRUCTION])
+            )
+        assert result == expected
+
+    @pytest.mark.parametrize("retargeted", [False, True])
+    def test_rebuild_keeps_a_failed_fetch_of_the_same_local_tool_or_plugin(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess, retargeted: bool
+    ) -> None:
+        (tmp_path / ".git").mkdir()
+        core = {"name": "core", "source": str(tmp_path)}
+        plug = {"name": "plug", "source": "https://x.invalid/p.git"}
+        checked = [
+            {**entry, "ref": "other"} if retargeted else entry for entry in (core, plug)
+        ]
+        identities = [
+            _source_identity(checked[0]),
+            _source_identity(checked[1], "plugin"),
+        ]
+        failures = [
+            UpdateCheckFailure("[core] update check failed: offline", identities[0]),
+            UpdateCheckFailure("[plug] update check failed: offline", identities[1]),
+        ]
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
+            patch("llm_prompts.setup._load_config", return_value=[core]),
+            patch("llm_prompts.plugins._load_plugins", return_value=[plug]),
+        ):
+            mock_config.return_value.exists.return_value = True
+            result = _collect_update_messages(
+                previous=(
+                    json.dumps([[*identity, "sha"] for identity in identities]),
+                    [*failures, _UPDATE_INSTRUCTION],
+                )
+            )
+
+        kept = [m for m in result if isinstance(m, UpdateCheckFailure)]
+        assert kept == ([] if retargeted else failures)
+        assert fake_subprocess.matching("fetch") == []
+
+    def test_rebuild_keeps_a_failure_only_for_the_source_that_failed(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        (tmp_path / ".git").mkdir()
+        same = {"name": "x", "source": str(tmp_path)}
+        fake_subprocess.on("fetch", returncode=128, stderr="offline")
+        cache = _ReinstallDebouncer(tmp_path / "stamp")
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
+            patch("llm_prompts.setup._load_config", return_value=[same]),
+            patch("llm_prompts.plugins._load_plugins", return_value=[same]),
+        ):
+            mock_config.return_value.exists.return_value = True
+            fingerprint = _installed_fingerprint()
+            checked = _collect_update_messages()
+            cache.store_notice(checked, fingerprint)
+            rebuilt = _collect_update_messages(
+                previous=(fingerprint, cache.cached_notice(fingerprint))
+            )
+
+        assert [isinstance(m, UpdateCheckFailure) for m in checked] == [
+            True,
+            False,
+            False,
+        ]
+        assert rebuilt == checked
+
+    def test_update_sources_come_from_one_config_read(self) -> None:
+        first = {"tools": [{"name": "a"}], "plugins": [{"name": "p"}]}
+        second = {"tools": [{"name": "b"}], "plugins": [{"name": "q"}]}
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", side_effect=[first, second]),
+        ):
+            mock_config.return_value.exists.return_value = True
+            assert _update_sources() == (first["tools"], first["plugins"])
 
     def test_failed_check_is_reported_without_credentials(
         self, fake_subprocess: FakeSubprocess
@@ -944,6 +1098,7 @@ class TestCollectUpdateMessages:
         fake_subprocess.on("ls-remote", returncode=128)
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
             patch(
                 "llm_prompts.setup._load_config",
                 return_value=[{"name": "pkg", "source": source}],
@@ -970,6 +1125,7 @@ class TestCollectUpdateMessages:
         )
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
             patch(
                 "llm_prompts.setup._load_config",
                 return_value=[{"name": "pkg", "source": source}],
@@ -1004,6 +1160,7 @@ class TestCollectUpdateMessages:
         )
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
             patch(
                 "llm_prompts.setup._load_config",
                 return_value=[{"name": "core", "source": str(clone)}],
@@ -1043,6 +1200,7 @@ class TestCollectUpdateMessages:
         git(upstream, "tag", "-f", "v0.1.0")
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
             patch(
                 "llm_prompts.setup._load_config",
                 return_value=[{"name": "core", "source": str(clone)}],
@@ -1063,11 +1221,12 @@ class TestCollectUpdateMessages:
             mock_config.return_value.exists.return_value = True
             with (
                 patch("llm_prompts.setup._load_config", return_value=config),
+                patch("llm_prompts.setup.read_config", return_value={}),
                 patch("llm_prompts.plugins._load_plugins", return_value=[]),
                 patch(
                     "llm_prompts.cli._local_source_messages",
-                    side_effect=lambda name, _source, _ref: _format_update_message(
-                        name, ["Add X"]
+                    side_effect=lambda name, _source, _ref, _fetch: (
+                        _format_update_message(name, ["Add X"])
                     ),
                 ),
             ):
@@ -1086,6 +1245,7 @@ class TestCollectUpdateMessages:
             mock_config.return_value.exists.return_value = True
             with (
                 patch("llm_prompts.setup._load_config", return_value=config),
+                patch("llm_prompts.setup.read_config", return_value={}),
                 patch(
                     "llm_prompts.cli._local_source_messages",
                     return_value=["[core] 1 new commit(s) available"],
@@ -1103,7 +1263,7 @@ class TestCollectUpdateMessages:
             "[p] update available (aa -> bb)",
             _UPDATE_INSTRUCTION,
         ]
-        mock_plugin.assert_called_once_with(plugin)
+        mock_plugin.assert_called_once_with(plugin, True)
 
 
 class TestUpdateCommandPullsPlugins:
