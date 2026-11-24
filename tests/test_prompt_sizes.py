@@ -468,6 +468,7 @@ class TestIterArtifactsDispatch:
             ("- Item\n  Indented continuation.\n", None),
             ("- Item\n\nParagraph.\n", None),
             ("- Item\n# Heading\n", None),
+            ("- Item\n---\nParagraph.\n", None),
             ("- Item\n```\ncode\n```\n", None),
         ],
     )

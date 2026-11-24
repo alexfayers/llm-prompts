@@ -85,7 +85,7 @@ ALLOWANCES_FILENAME = "size_allowances.json"
 _LINE_METRICS = frozenset({NO_LONG_LINES, NO_LAZY_CONTINUATIONS})
 _LIST_ITEM = re.compile(r"\s*(?:[-*+]|\d+[.)])\s")
 _FENCE = re.compile(r"`{3,}|~{3,}")
-_BLOCK_START = re.compile(r"[#|><]|\{[%#]")
+_BLOCK_START = re.compile(r"[#|><]|\{[%#]|([-*_])(?:[ \t]*\1){2,}[ \t]*$")
 _FIXES = {
     NO_LONG_LINES: "wrap the line",
     NO_LAZY_CONTINUATIONS: "indent the line under its list item",
@@ -241,10 +241,10 @@ def _line_artifacts(target: str, dest_name: str, source: Path) -> Iterator[Artif
             continue
         if not stripped.startswith("|") and len(line) > longest:
             longest, line_number = len(line), number
-        if _LIST_ITEM.match(line):
-            in_item = True
-        elif not stripped or _BLOCK_START.match(line):
+        if not stripped or _BLOCK_START.match(line):
             in_item = False
+        elif _LIST_ITEM.match(line):
+            in_item = True
         elif in_item and line == stripped and lazy_number is None:
             lazy_number = number
     yield Artifact(NO_LONG_LINES, target, dest_name, longest, source, line=line_number)
