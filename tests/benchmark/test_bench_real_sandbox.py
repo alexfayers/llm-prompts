@@ -75,6 +75,9 @@ class _StubRunner:
         text = "".join(line for _, line in lines).strip()
         return make_trace(final_text=text, wall_s=wall_s, model="stub")
 
+    def add_delegates(self, trace: Trace, home: Path, since: float) -> Trace:
+        return trace
+
 
 @pytest.fixture
 def prepared(fake_variant: Variant, tmp_path: Path) -> Iterator[PreparedCell]:

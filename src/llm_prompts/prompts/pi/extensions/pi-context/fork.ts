@@ -14,6 +14,7 @@ import { checkReadMcp, coldCard, expandHome, readHandshake, ROLES, withReadMcp, 
 import { tokens } from "./live-view.ts";
 import { cacheLeftMs, FINISHED, isLive, registryOf, type Run, type RunState } from "./registry.ts";
 import { RpcChild, type Turn, type UiAnswer, type UiRequest } from "./runner.ts";
+import { retainSession } from "./usage-sessions.ts";
 
 const holdsCall = (entry: SessionEntry, toolCallId: string) =>
 	entry.type === "message" && entry.message.role === "assistant" && entry.message.content.some((block) => block.type === "toolCall" && block.id === toolCallId);
@@ -70,13 +71,13 @@ export function sessionFileOf(files: string, cold: boolean): string | undefined 
 	return found.sort((a, b) => fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs).at(-1);
 }
 
-/** Copies the run's session to `<agent dir>/sessions/pi-context/<name>-<run id>.jsonl`, which outlives the run's files and which usage tools such as ccusage read. */
-export function keepSession(files: string, cold: boolean, name: string, runId: string, agentDir = getAgentDir()): void {
+/** Archives the full session outside the usage store and retains only the delegate's entries for accounting. */
+export async function keepSession(files: string, cold: boolean, name: string, runId: string, agentDir = getAgentDir()): Promise<void> {
 	const session = sessionFileOf(files, cold);
 	if (!session) return;
-	const kept = path.join(agentDir, "sessions", "pi-context");
-	fs.mkdirSync(kept, { recursive: true, mode: 0o700 });
-	fs.copyFileSync(session, path.join(kept, `${name}-${runId}.jsonl`));
+	const handshake = cold ? undefined : readHandshake(path.join(files, "handshake.json"));
+	if (!cold && handshake?.inherited === undefined) throw new Error("Cannot retain a warm session without its inherited boundary");
+	await retainSession(session, `${name}-${runId}.jsonl`, handshake?.inherited ?? undefined, agentDir);
 }
 
 /** How long a finished fork's files stay, so its session and cost can still be read. */
@@ -180,6 +181,8 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 	const handshake = path.join(files, "handshake.json");
 	const cardFile = path.join(files, "card.md");
 	const sessionDir = path.join(files, "session");
+	const inherited = model ? undefined : resume ? readHandshake(handshake)?.inherited : (entries.at(-1)?.id ?? null);
+	if (!model && inherited === undefined) throw new Error("Cannot resume a warm fork without its inherited boundary");
 	let bridge: Awaited<ReturnType<typeof serveBridge>> | undefined;
 	let child: RpcChild | undefined;
 	let warmed: (() => void) | undefined;
@@ -191,13 +194,12 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 		const { readMcp } = forkSettings(pi, ctx);
 		const allowed = withReadMcp(role, readMcp);
 		bridge = mcp && (await serveBridge(files, { role: allowed, execute: mcp, onPrefix }));
-		const inherited = model ? undefined : resume ? readHandshake(handshake)?.inherited : entries.at(-1)?.id;
 		const main = bridge && describeMain(pi, ctx, model ? allowed : undefined);
 		fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, repo, inherited, readMcp, bridge: bridge && { ...main, socket: bridge.socket } }), { mode: 0o600 });
 		if (model) fs.writeFileSync(cardFile, coldCard(role), { mode: 0o600 });
 		else if (!resume) {
 			writeLeadPrefix(files);
-			fs.writeFileSync(seed, jsonl([{ ...ctx.sessionManager.getHeader(), id: randomUUID(), ...(cwd && { cwd }) }, ...entries]), { mode: 0o600 });
+			fs.writeFileSync(seed, jsonl([{ ...ctx.sessionManager.getHeader(), id: randomUUID(), ...(cwd && { cwd }), piContextFork: { parentSessionId: ctx.sessionManager.getHeader()?.id, inherited } }, ...entries]), { mode: 0o600 });
 		}
 		const childCwd = (model && worktree) || cwd || ctx.cwd;
 		child = RpcChild.start({
@@ -228,10 +230,14 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 		warmed?.();
 		await child?.close();
 		await bridge?.close();
-		if (child) keepSession(files, Boolean(model), name, runId, agentDir);
+		let retained = true;
+		try { if (child) await keepSession(files, Boolean(model), name, runId, agentDir); } catch (error) {
+			retained = false;
+			console.warn(`pi-context: could not retain session in ${files}; keeping the full run for recovery: ${String(error)}`);
+		}
 		const kept = keep?.();
-		if (!kept && continuable && child) fs.writeFileSync(path.join(files, FINISHED_MARK), "");
-		else if (!kept) fs.rmSync(files, { recursive: true, force: true });
+		if (retained && !kept && continuable && child) fs.writeFileSync(path.join(files, FINISHED_MARK), "");
+		else if (retained && !kept) fs.rmSync(files, { recursive: true, force: true });
 	}
 }
 
@@ -333,7 +339,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		if (run.background) {
 			const onEnd = async (turn: Awaited<typeof running>) => {
 				const current = registry.get(runId);
-				if (!current || !isLive(current)) return;
+				if (!current || !isLive(current) || runSignal?.aborted) return;
 				const end = { ...endOf(ref, turn, merged.landing), lastRequestAt: turn.lastRequestAt, context: turn.context };
 				const text = turn.error ?? turn.text;
 				const note = merged.landing && tree ? `[merge: ${describeLanding(merged.landing, tree)}]` : tree && (await dropIfClean(tree)) ? "[merge: worktree removed: clean]" : undefined;
@@ -341,7 +347,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 				pi.appendEntry("result-cap", { ref: end.ref, text });
 			};
 			const onFail = async (error: unknown) => {
-				if (registry.get(runId)?.state === "lost") return;
+				if (registry.get(runId)?.state === "lost" || runSignal?.aborted) return;
 				const removed = tree && (await dropIfClean(tree));
 				background.finish(ctx, runId, { state: "failed" }, error instanceof Error ? error.message : String(error), removed ? "[merge: worktree removed: clean]" : undefined);
 			};

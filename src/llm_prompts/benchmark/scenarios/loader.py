@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import json
 import tomllib
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -182,9 +181,6 @@ def parse(path: Path, parents: tuple[str, ...] = ()) -> Scenario:
     delegation = (
         base.delegation if base else _get(path, data, "delegation", bool, False)
     )
-    delegating = [name for name, agent in AGENTS.items() if agent.delegation]
-    if delegation and not set(agents) <= set(delegating):
-        raise ScenarioError(path, f"delegation needs agents = {json.dumps(delegating)}")
     timeout_s = _get(path, data, "timeout_s", int, DEFAULT_TIMEOUT_S)
     if timeout_s < 1:
         raise ScenarioError(path, f"timeout_s must be at least 1: {timeout_s}")

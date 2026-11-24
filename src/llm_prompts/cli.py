@@ -1276,7 +1276,7 @@ def _run_command(
         "--only",
         type=Path,
         metavar="PATH",
-        help="Reinstall only the prompt built from this edited file.",
+        help="Reinstall only the prompt or pi extension (.ts file) built from this edited file.",
     )
     uninstall_parser = subparsers.add_parser(
         "uninstall",
@@ -1698,6 +1698,11 @@ def _run_command(
                 run.outcome = failure
                 sys.exit(1)
             sys.exit(0)
+        if args.only and args.only.suffix == ".ts":
+            raise ExitReason(
+                "other",
+                f"{args.only} is not a source an extension can be reinstalled from alone.",
+            )
 
         resumed = os.environ.pop(_UPDATE_RESUME_ENV, None)
         if resumed is None:
