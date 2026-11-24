@@ -208,11 +208,12 @@ def _resolve_content_frontmatter(
 
 
 def _line_artifacts(target: str, dest_name: str, source: Path) -> Iterator[Artifact]:
-    """Yield the source's longest prose line and its first lazy list continuation.
+    """Yield the source's longest prose line and its lazy list continuation count.
 
     Frontmatter and lines inside ``` or ~~~ fences are skipped. Table rows (starting
     with ``|``) are skipped for line length. A lazy continuation is a
-    column-0 prose line directly after a list item's line.
+    column-0 prose line directly after a list item's line. The lazy count's
+    line is its first lazy continuation's.
 
     Args:
         target: Target name to record on the yielded artifacts.
@@ -223,7 +224,7 @@ def _line_artifacts(target: str, dest_name: str, source: Path) -> Iterator[Artif
     lines = content.splitlines()
     split = split_frontmatter(content)
     start = len(split[0]) + 2 if split else 0
-    longest, line_number, lazy_number = 0, None, None
+    longest, line_number, lazy_number, lazy_count = 0, None, None, 0
     fence, in_item = "", False
     for number, line in enumerate(lines[start:], start + 1):
         stripped = line.lstrip()
@@ -245,14 +246,15 @@ def _line_artifacts(target: str, dest_name: str, source: Path) -> Iterator[Artif
             in_item = False
         elif _LIST_ITEM.match(line):
             in_item = True
-        elif in_item and line == stripped and lazy_number is None:
-            lazy_number = number
+        elif in_item and line == stripped:
+            lazy_count += 1
+            lazy_number = lazy_number or number
     yield Artifact(NO_LONG_LINES, target, dest_name, longest, source, line=line_number)
     yield Artifact(
         NO_LAZY_CONTINUATIONS,
         target,
         dest_name,
-        lazy_number is None,
+        lazy_count,
         source,
         line=lazy_number,
     )

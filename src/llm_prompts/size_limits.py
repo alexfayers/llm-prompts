@@ -68,6 +68,7 @@ UNITS: dict[str, str] = {
     COLLECTION_BYTES: "owned bytes per target, worst-case session",
     PI_ROLE_PROMPT_BYTES: "llm-prompts-owned expanded prompt bytes",
     NO_LONG_LINES: "chars",
+    NO_LAZY_CONTINUATIONS: "lines",
     COLLECTION_SHARE_BYTES: "owned bytes credited to collection_bytes",
 }
 
@@ -82,6 +83,7 @@ FINALS: dict[str, int] = {
     COLLECTION_BYTES: 50_000,
     PI_ROLE_PROMPT_BYTES: 50_000,
     NO_LONG_LINES: 200,
+    NO_LAZY_CONTINUATIONS: 0,
 }
 MAX_LINE_CHARS = FINALS[NO_LONG_LINES]
 
