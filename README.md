@@ -50,7 +50,7 @@
 | src/llm\_prompts/benchmark/types.py                                           |      205 |        0 |    100% |           |
 | src/llm\_prompts/claude\_models.py                                            |       23 |        0 |    100% |           |
 | src/llm\_prompts/cli.py                                                       |      826 |       74 |     91% |108-109, 135-136, 143-156, 262-263, 278-283, 379, 621, 624, 643, 666, 704, 735, 867, 939-951, 1031-1033, 1046-1049, 1118-1127, 1594-1596, 1599-1605, 1617-1619, 1630-1636, 1646, 1651, 1663, 1827-1828, 1833 |
-| src/llm\_prompts/collection\_size.py                                          |      118 |        4 |     97% |249-250, 400, 457 |
+| src/llm\_prompts/collection\_size.py                                          |      133 |        3 |     98% |291-292, 496 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/console.py                                                   |       18 |        1 |     94% |        48 |
 | src/llm\_prompts/contribute.py                                                |     1108 |       57 |     95% |105, 132-133, 174-175, 207-208, 324, 457-458, 491, 621, 624, 677, 799-800, 840, 928-929, 959, 1214, 1391, 1393, 1407-1408, 1416-1417, 1438, 1449-1450, 1557-1558, 1637, 1694-1699, 1703, 1809-1810, 1859-1860, 1929-1951, 2148-2150, 2154, 2176 |
@@ -85,9 +85,9 @@
 | src/llm\_prompts/removed\_agents\_notice.py                                   |       14 |        0 |    100% |           |
 | src/llm\_prompts/render\_template.py                                          |      168 |       14 |     92% |147, 429-430, 439-456, 468-472, 476 |
 | src/llm\_prompts/setup.py                                                     |      456 |       29 |     94% |230, 328-332, 343-347, 352, 361-368, 413, 461, 464, 485-486, 532-533, 891-892, 982-985, 1015-1016, 1019, 1075-1076 |
-| src/llm\_prompts/size\_guard.py                                               |      371 |       10 |     97% |246-247, 478-480, 515, 537, 541-543 |
-| src/llm\_prompts/size\_limits.py                                              |       61 |        1 |     98% |       138 |
-| src/llm\_prompts/size\_report.py                                              |      197 |        2 |     99% |  198, 200 |
+| src/llm\_prompts/size\_guard.py                                               |      371 |       10 |     97% |247-248, 479-481, 516, 538, 542-544 |
+| src/llm\_prompts/size\_limits.py                                              |       63 |        1 |     98% |       145 |
+| src/llm\_prompts/size\_report.py                                              |      207 |        2 |     99% |  206, 208 |
 | src/llm\_prompts/skill\_injection.py                                          |       37 |        2 |     95% |    33, 36 |
 | src/llm\_prompts/squash\_subject.py                                           |        6 |        0 |    100% |           |
 | src/llm\_prompts/telemetry.py                                                 |       82 |        2 |     98% |   152-153 |
@@ -172,7 +172,7 @@
 | tests/test\_pi\_extension\_factories.py                                       |        8 |        0 |    100% |           |
 | tests/test\_plugins.py                                                        |      270 |        0 |    100% |           |
 | tests/test\_prompt\_checks\_entry\_points.py                                  |       13 |        0 |    100% |           |
-| tests/test\_prompt\_sizes.py                                                  |      664 |        0 |    100% |           |
+| tests/test\_prompt\_sizes.py                                                  |      748 |        0 |    100% |           |
 | tests/test\_removed\_agents\_notice.py                                        |       29 |        0 |    100% |           |
 | tests/test\_render\_template.py                                               |      143 |        0 |    100% |           |
 | tests/test\_retrospective\_extract.py                                         |       90 |        0 |    100% |           |
@@ -181,7 +181,7 @@
 | tests/test\_setup.py                                                          |      415 |        0 |    100% |           |
 | tests/test\_shell\_rules.py                                                   |       19 |        0 |    100% |           |
 | tests/test\_size\_guard.py                                                    |      168 |        0 |    100% |           |
-| tests/test\_size\_report.py                                                   |      230 |        0 |    100% |           |
+| tests/test\_size\_report.py                                                   |      250 |        0 |    100% |           |
 | tests/test\_skill\_injection.py                                               |       36 |        0 |    100% |           |
 | tests/test\_squash\_subject.py                                                |        7 |        0 |    100% |           |
 | tests/test\_telemetry.py                                                      |      384 |        0 |    100% |           |
@@ -193,7 +193,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       53 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **30414** |  **787** | **97%** |           |
+| **TOTAL**                                                                     | **30545** |  **786** | **97%** |           |
 
 
 ## Setup coverage badge
