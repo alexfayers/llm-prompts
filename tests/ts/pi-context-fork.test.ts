@@ -149,12 +149,32 @@ describe("fork tool", () => {
 		assert.equal(fs.existsSync(files), false);
 	});
 
-	test("copies the fork's session into the pi sessions directory, where it outlives the run's files", async () => {
+	test("keeps only child accounting entries in the usage store after the run files expire", async () => {
 		await fork({ task: "STUB_REPORT", name: "kept" });
 		const run = registryOf().all().find((entry) => entry.name === "kept")!;
 		sweepFinished(path.join(agentDir, "pi-context"), Date.now() + KEEP_FINISHED_MS + 1);
 		const copy = path.join(agentDir, "sessions", "pi-context", `kept-${run.id}.jsonl`);
-		assert.deepEqual(fs.readFileSync(copy, "utf8").trim().split("\n").slice(1).map((line) => JSON.parse(line).id), ["u1", "a1", "r1"]);
+		const header = JSON.parse(fs.readFileSync(copy, "utf8").trim());
+		const archive = path.join(agentDir, "pi-context", "kept", `${header.piContextUsage.sourceHash}.jsonl`);
+		assert.deepEqual(fs.readFileSync(archive, "utf8").trim().split("\n").slice(1).map((line) => JSON.parse(line).id), ["u1", "a1", "r1"]);
+	});
+
+	test("retention failure preserves the reply and full run without a sweep marker", async (t) => {
+		const usage = path.join(agentDir, "sessions", "pi-context");
+		const hidden = `${usage}-saved`;
+		fs.renameSync(usage, hidden);
+		fs.writeFileSync(usage, "not a directory");
+		const warning = t.mock.method(console, "warn", () => undefined);
+		try {
+			const { tool } = await fork({ task: "STUB_REPORT", name: "recovery" });
+			assert.match(tool.content[0].text, /OUTCOME done/);
+			const run = registryOf().all().find((entry) => entry.name === "recovery")!;
+			assert.equal(fs.existsSync(path.join(run.files!, "seed.jsonl")), true);
+			assert.equal(fs.existsSync(path.join(run.files!, "finished")), false);
+			sweepFinished(path.join(agentDir, "pi-context"), Date.now() + KEEP_FINISHED_MS + 1);
+			assert.equal(fs.existsSync(run.files!), true);
+			assert.match(String(warning.mock.calls[0].arguments[0]), /keeping the full run for recovery/);
+		} finally { fs.unlinkSync(usage); fs.renameSync(hidden, usage); }
 	});
 
 	test("tells the child its role and run id, and records the run with its outcome in the registry", async () => {
@@ -272,6 +292,21 @@ describe("fork tool", () => {
 			assert.match(JSON.stringify(appended), /echo: Your session stopped before you finished/);
 			await eventually(() => fs.existsSync(path.join(run()!.files!, "finished")));
 			assert.equal(fs.existsSync(path.join(run()!.files!, "finished")), true);
+		});
+
+		test("fork_resume of a warm fork whose handshake lost its boundary fails and keeps the handshake", async () => {
+			const { tools, sent, background, ctx } = await fork({ task: "STUB_STEER", name: "unbound", background: true });
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			background.shutdown();
+			const run = () => registryOf().all().find((candidate) => candidate.name === "unbound");
+			await eventually(() => run()?.state === "lost");
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			const handshake = path.join(run()!.files!, "handshake.json");
+			fs.writeFileSync(handshake, JSON.stringify({ role: "reader", readMcp: [] }));
+			await tools.fork_resume.execute("r", { name: "unbound" }, undefined, undefined, ctx);
+			await eventually(() => sent.length > 0);
+			assert.match(sent[0][0].content, /without its inherited boundary/);
+			assert.deepEqual(JSON.parse(fs.readFileSync(handshake, "utf8")), { role: "reader", readMcp: [] });
 		});
 
 		test("a tier fork records its resolved model, and fork_resume reuses it", async () => {

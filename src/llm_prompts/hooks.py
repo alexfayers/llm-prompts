@@ -9,15 +9,17 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from cline_hooks.core.plugin import HookResult, HooksPlugin, UserFacingNote
 
+from . import network
 from .manifest import read_manifest
 from .setup import _CHANGELOG_PREFIX, _UPDATE_INSTRUCTION
 
@@ -30,6 +32,7 @@ _GATED_EDIT_TOOLS = frozenset({"Write", "write_to_file", "Edit"})
 _GATED_PARENT_DIRS = frozenset({"rules", "workflows", "skills", "agents"})
 _UPDATE_CHECK_INTERVAL = 2 * 60 * 60
 _SHOWN_SESSIONS_KEPT = 50
+_FAILED_CHECK_RETRY_SECONDS = 10 * 60
 _LOCK_WAIT_SECONDS = 5.0
 _LOCK_POLL_SECONDS = 0.05
 _DEBOUNCED_TASK_START_SOURCES = frozenset({"resume", "compact"})
@@ -38,6 +41,10 @@ _AUTO_UPDATE_STARTED = (
     "Reload once it finishes to use the new version."
 )
 _HEADLESS_ENTRYPOINTS = frozenset({"sdk-cli", "sdk-ts", "sdk-py"})
+_REFRESH = (
+    "import sys; from llm_prompts.hooks import refresh_update_check; "
+    "refresh_update_check(*sys.argv[1:])"
+)
 
 
 def _is_headless() -> bool:
@@ -163,6 +170,7 @@ class _ReinstallDebouncer:
         self._stamp = stamp_path
         self._notice_cache = stamp_path.with_name(stamp_path.name + ".notice")
         self._lock = stamp_path.with_name(stamp_path.name + ".lock")
+        self._refresh_lock = stamp_path.with_name(stamp_path.name + ".refresh.lock")
         self._shown = stamp_path.with_name(stamp_path.name + ".shown")
         self._interval_seconds = interval_seconds
 
@@ -188,12 +196,9 @@ class _ReinstallDebouncer:
         self._shown.parent.mkdir(parents=True, exist_ok=True)
         self._shown.write_text(json.dumps(recent), encoding="utf-8")
 
-    def should_run(self, fingerprint: str = "") -> bool:
-        """Return True if enough time has passed since the last run or the installed versions moved."""
-        if (
-            not self._stamp.exists()
-            or self._cache().get("fingerprint", "") != fingerprint
-        ):
+    def should_run(self) -> bool:
+        """Return True if enough time has passed since the last run."""
+        if not self._stamp.exists():
             return True
         try:
             last_run = float(self._stamp.read_text(encoding="utf-8").strip())
@@ -201,40 +206,74 @@ class _ReinstallDebouncer:
             return True
         return (time.time() - last_run) >= self._interval_seconds
 
-    def mark_run(self) -> None:
-        """Record that a run just happened."""
-        self._stamp.parent.mkdir(parents=True, exist_ok=True)
-        self._stamp.write_text(str(time.time()), encoding="utf-8")
+    def moved(self, fingerprint: str) -> bool:
+        """Return True if the installed versions moved since the cached notice."""
+        cached: str = self._cache().get("fingerprint", "")
+        return cached != fingerprint
 
-    @contextmanager
-    def single_flight(self) -> Iterator[bool]:
+    def retargeted(self, fingerprint: str) -> bool:
+        """Return True if a source was added, removed or retargeted since the cached notice."""
+        from .cli import _fingerprint_versions
+
+        cached: str = self._cache().get("fingerprint", "")
+        return _fingerprint_versions(cached).keys() != (
+            _fingerprint_versions(fingerprint).keys()
+        )
+
+    def mark_run(self, failed: bool = False) -> None:
+        """Record that a run just happened, due again after ``_FAILED_CHECK_RETRY_SECONDS`` when it failed."""
+        retry_offset = (
+            self._interval_seconds - _FAILED_CHECK_RETRY_SECONDS if failed else 0
+        )
+        self._stamp.parent.mkdir(parents=True, exist_ok=True)
+        self._stamp.write_text(str(time.time() - retry_offset), encoding="utf-8")
+
+    def single_flight(self) -> AbstractContextManager[bool]:
         """Yield True once this process holds the cross-process check lock, False if it stays taken."""
-        self._lock.parent.mkdir(parents=True, exist_ok=True)
-        with self._lock.open("a") as lock_file:
-            deadline = time.monotonic() + _LOCK_WAIT_SECONDS
-            while True:
-                try:
-                    fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except BlockingIOError:
-                    if time.monotonic() >= deadline:
-                        yield False
-                        return
-                    time.sleep(_LOCK_POLL_SECONDS)
-                else:
-                    yield True
-                    return
+        return _flock(self._lock, _LOCK_WAIT_SECONDS)
+
+    def refreshing(self) -> AbstractContextManager[bool]:
+        """Yield True while this process holds the background refresh lock, False if another refresh holds it."""
+        return _flock(self._refresh_lock, 0)
+
+    def refresh_in_background(self) -> None:
+        """Start ``refresh_update_check`` for this stamp in a detached process."""
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                _REFRESH,
+                str(self._stamp),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
 
     def store_notice(self, messages: list[str], fingerprint: str = "") -> None:
         """Cache the update messages with the installed-version fingerprint they were checked at."""
+        from .cli import UpdateCheckFailure
+
+        entries = [
+            [m, m.source] if isinstance(m, UpdateCheckFailure) else m for m in messages
+        ]
         self._notice_cache.write_text(
-            json.dumps({"fingerprint": fingerprint, "messages": messages}),
+            json.dumps({"fingerprint": fingerprint, "messages": entries}),
             encoding="utf-8",
         )
 
-    def cached_notice(self) -> list[str]:
-        """Return the cached update messages."""
-        messages: list[str] = self._cache().get("messages", [])
-        return messages
+    def cached_notice(self, fingerprint: str = "") -> list[str]:
+        """Return the update messages cached at these installed versions."""
+        cache = self._cache()
+        from .cli import UpdateCheckFailure
+
+        if cache.get("fingerprint", "") != fingerprint:
+            return []
+        return [
+            UpdateCheckFailure(*m) if isinstance(m, list) else m
+            for m in cache.get("messages", [])
+        ]
 
     def _cache(self) -> dict[str, Any]:
         """Return the cached notice record, or an empty one when absent or unreadable."""
@@ -243,6 +282,88 @@ class _ReinstallDebouncer:
         except (OSError, ValueError):
             return {}
         return cache if isinstance(cache, dict) else {}
+
+
+@contextmanager
+def _flock(path: Path, wait_seconds: float) -> Iterator[bool]:
+    """Yield True once this process holds the lock file at ``path``, False if it stays taken for ``wait_seconds``."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as lock_file:
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            try:
+                fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    yield False
+                    return
+                time.sleep(_LOCK_POLL_SECONDS)
+            else:
+                yield True
+                return
+
+
+def refresh_update_check(stamp: str) -> None:
+    """Check for llm-prompts updates, cache the notice and start the automatic update when updates exist.
+
+    Fetches when the check is due or a source changed, and otherwise rebuilds the
+    notice from the refs already fetched when an installed version moved.
+
+    Args:
+        stamp: The update-check stamp path of the session that started this refresh.
+    """
+    from . import telemetry, telemetry_core
+    from .cli import (
+        UpdateCheckFailure,
+        _collect_update_messages,
+        _get_installed_version,
+        _installed_fingerprint,
+        _update_sources,
+    )
+
+    debouncer = _ReinstallDebouncer(Path(stamp))
+    with (
+        debouncer.refreshing() as alone,
+        telemetry.Run(_get_installed_version) as run,
+    ):
+        if not alone:
+            return
+        fetch = debouncer.should_run()
+        try:
+            sources = _update_sources()
+            fingerprint = _installed_fingerprint(sources)
+            fetch = fetch or debouncer.retargeted(fingerprint)
+            if not (fetch or debouncer.moved(fingerprint)):
+                return
+            if telemetry_core.install_id():
+                run.begin("startup-check", [] if fetch else ["--local"])
+            if fetch:
+                with network.fail_fast():
+                    messages = _collect_update_messages(sources=sources)
+            else:
+                previous = debouncer._cache().get("fingerprint", "")
+                messages = _collect_update_messages(
+                    previous=(previous, debouncer.cached_notice(previous)),
+                    sources=sources,
+                )
+        except (Exception, SystemExit):
+            logger.warning("Failed to check for llm-prompts updates")
+            if fetch:
+                debouncer.mark_run(failed=True)
+            return
+        with debouncer.single_flight() as holds_lock:
+            if not holds_lock:
+                return
+            failed = any(isinstance(m, UpdateCheckFailure) for m in messages)
+            if fetch:
+                debouncer.mark_run(failed)
+            if not failed:
+                run.auto_update = (
+                    _start_auto_update(fingerprint) if messages else "no-update"
+                )
+                if run.auto_update == "started":
+                    messages = [*messages, _AUTO_UPDATE_STARTED]
+            debouncer.store_notice(messages, fingerprint)
 
 
 def _start_auto_update(fingerprint: str) -> str:
@@ -303,9 +424,9 @@ class AutoReinstallPlugin(HooksPlugin):
         """Check for llm-prompts source updates and report any as session notes.
 
         Args:
-            source: The TaskStart source (e.g. "", "resume", "compact"). Within
-                the check interval a fresh start re-emits the cached notice
-                while resume/compact emit a cached notice once per session.
+            source: The TaskStart source (e.g. "", "resume", "compact"). A fresh
+                start re-emits the cached notice while resume/compact emit a
+                cached notice once per session.
             agent_type: Non-empty when this TaskStart fired inside a subagent
                 rather than the main session; the update check never runs
                 for subagents regardless of source.
@@ -315,12 +436,7 @@ class AutoReinstallPlugin(HooksPlugin):
             return None
 
         from . import telemetry
-        from .cli import (
-            UpdateCheckFailure,
-            _collect_update_messages,
-            _get_installed_version,
-            _installed_fingerprint,
-        )
+        from .cli import _get_installed_version, _installed_fingerprint
 
         try:
             fingerprint = _installed_fingerprint()
@@ -331,37 +447,27 @@ class AutoReinstallPlugin(HooksPlugin):
             telemetry.Run(_get_installed_version) as run,
             self._update_check_debouncer.single_flight() as holds_lock,
         ):
-            if holds_lock and self._update_check_debouncer.should_run(fingerprint):
-                run.begin("startup-check", [])
+            if holds_lock and (
+                self._update_check_debouncer.should_run()
+                or self._update_check_debouncer.moved(fingerprint)
+            ):
                 try:
-                    messages = _collect_update_messages()
-                except (Exception, SystemExit):
-                    logger.warning("Failed to check for llm-prompts updates")
-                    return None
-                if not any(isinstance(m, UpdateCheckFailure) for m in messages):
-                    self._update_check_debouncer.mark_run()
-                    self._update_check_debouncer.store_notice(messages, fingerprint)
-                    self._update_check_debouncer.record_shown(task_id, messages)
-                    run.auto_update = (
-                        _start_auto_update(fingerprint) if messages else "no-update"
-                    )
-                    if run.auto_update == "started":
-                        messages = [*messages, _AUTO_UPDATE_STARTED]
-            elif source in _DEBOUNCED_TASK_START_SOURCES:
-                messages = []
-                if (
-                    notice := self._update_check_debouncer.cached_notice()
-                ) and not self._update_check_debouncer.was_shown(task_id, notice):
-                    self._update_check_debouncer.record_shown(task_id, notice)
-                    messages = notice
-            else:
+                    self._update_check_debouncer.refresh_in_background()
+                except OSError:
+                    logger.warning("Failed to start the llm-prompts update check")
+            elif source not in _DEBOUNCED_TASK_START_SOURCES:
                 run.begin("startup-check", ["--cached"])
-                messages = self._update_check_debouncer.cached_notice()
+            messages = self._update_check_debouncer.cached_notice(fingerprint)
+            if source in _DEBOUNCED_TASK_START_SOURCES and (
+                self._update_check_debouncer.was_shown(task_id, messages)
+            ):
+                messages = []
+            else:
                 self._update_check_debouncer.record_shown(task_id, messages)
 
         if reason := _auto_update_failure(fingerprint):
             messages = [
-                *messages,
+                *(m for m in messages if m != _AUTO_UPDATE_STARTED),
                 f"The automatic update failed: {reason}\nRun `llm-prompts update` to see why.",
             ]
         if not messages:
