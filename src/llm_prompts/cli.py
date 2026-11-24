@@ -342,6 +342,18 @@ class UpdateCheckFailure(str):
     """An update-check-failed message."""
 
 
+def _previous_failures_or(
+    name: str, previous: tuple[str, list[str]] | None, check: Callable[[], list[str]]
+) -> list[str]:
+    """Return a source's failed checks from the previous check, or run the check when it had none."""
+    failures: list[str] = [
+        message
+        for message in (previous or ("", []))[1]
+        if isinstance(message, UpdateCheckFailure) and message.startswith(f"[{name}] ")
+    ]
+    return failures or check()
+
+
 def _update_check_or_failure(name: str, check: Callable[[], list[str]]) -> list[str]:
     """Run an update check, reporting a failed git call as a message.
 
@@ -928,11 +940,16 @@ def _collect_update_messages(
         source = str(tool.get("source", ""))
         if _is_local_path(source):
             check = partial(
-                _local_source_messages,
+                _previous_failures_or,
                 name,
-                source,
-                str(tool.get("ref", "")),
-                previous is None,
+                previous,
+                partial(
+                    _local_source_messages,
+                    name,
+                    source,
+                    str(tool.get("ref", "")),
+                    previous is None,
+                ),
             )
         elif previous is not None:
             check = partial(_previous_source_messages, name, *previous)
@@ -940,10 +957,14 @@ def _collect_update_messages(
             check = partial(_remote_source_messages, name, source, tool.get("ref"))
         checks.append(partial(_update_check_or_failure, name, check))
     for plugin in _load_plugins():
-        check = partial(plugin_source_messages, plugin, previous is None)
-        checks.append(
-            partial(_update_check_or_failure, str(plugin.get("name", "")), check)
+        name = str(plugin.get("name", ""))
+        check = partial(
+            _previous_failures_or,
+            name,
+            previous,
+            partial(plugin_source_messages, plugin, previous is None),
         )
+        checks.append(partial(_update_check_or_failure, name, check))
 
     messages: list[str] = []
     for result in _run_parallel_ordered(checks):

@@ -15,6 +15,7 @@ from conftest import FakeSubprocess, run_capturing_exit
 
 from llm_prompts import cli
 from llm_prompts.cli import (
+    UpdateCheckFailure,
     _auto_migrate_memory_db,
     _check_for_updates,
     _collect_sources,
@@ -975,6 +976,34 @@ class TestCollectUpdateMessages:
         assert result == expected
         assert fake_subprocess.matching("fetch") == []
         assert fake_subprocess.matching("ls-remote") == []
+
+    def test_rebuild_keeps_a_failed_fetch_of_a_local_tool_or_plugin(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        (tmp_path / ".git").mkdir()
+        failures = [
+            UpdateCheckFailure("[core] update check failed: offline"),
+            UpdateCheckFailure("[plug] update check failed: offline"),
+        ]
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch(
+                "llm_prompts.setup._load_config",
+                return_value=[{"name": "core", "source": str(tmp_path)}],
+            ),
+            patch(
+                "llm_prompts.plugins._load_plugins",
+                return_value=[{"name": "plug", "source": "https://x.invalid/p.git"}],
+            ),
+        ):
+            mock_config.return_value.exists.return_value = True
+            result = _collect_update_messages(
+                previous=("head,plughead", [*failures, _UPDATE_INSTRUCTION])
+            )
+
+        assert result == [*failures, _UPDATE_INSTRUCTION]
+        assert all(isinstance(m, UpdateCheckFailure) for m in result[:2])
+        assert fake_subprocess.matching("fetch") == []
 
     def test_failed_check_is_reported_without_credentials(
         self, fake_subprocess: FakeSubprocess
