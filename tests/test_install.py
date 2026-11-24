@@ -2766,6 +2766,13 @@ class TestPartialSource:
 
         assert partial_source(dest) == rule
 
+    def test_maps_a_pi_extension_file_to_itself(self, root: Path) -> None:
+        extension = root / "pi" / "extensions" / "guard.ts"
+        extension.parent.mkdir(parents=True)
+        extension.write_text("export {}", encoding="utf-8")
+
+        assert partial_source(extension) == extension
+
     def test_returns_none_for_vars_json(self, root: Path) -> None:
         vars_file = root / "claude-code" / "vars.json"
         vars_file.parent.mkdir(parents=True)
