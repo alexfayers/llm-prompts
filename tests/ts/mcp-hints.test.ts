@@ -106,7 +106,7 @@ test("the names list is grouped per server and holds only new, undeclared MCP na
 
 test("the names header says MCP tools are codemode only", async () => {
 	const [result] = await play([ask("hi")], [tool("docs", "GetPage")]);
-	assert.match(parts(result)[0], /^MCP tools, callable ONLY inside codemode as tools\.mcp__<server>__<tool>\(args\), never as direct tool calls:/);
+	assert.match(parts(result)[0], /^MCP tools, callable ONLY in codemode as tools\.mcp__<server>__<tool>\(args\), never directly:/);
 });
 
 const schema = (properties: string[], required: string[]) => ({ type: "object", properties: Object.fromEntries(properties.map((name) => [name, { type: "string" }])), required });
@@ -115,13 +115,13 @@ test("the names list marks required args, taking them from the cache only withou
 	const tools = [tool("docs", "ReadSites", schema(["inputs", "mode"], ["inputs"])), tool("docs", "put_page", schema(["id", "body"], ["id", "body"])), tool("docs", "list_all", schema(["limit"], []))];
 	const connecting = [{ name: tools[0].name, description: "Connecting." }, tool("docs", "get_page", schema(["id"], []))];
 	const [first, second] = (await play([["load", tools], ask("hi"), ["load", connecting], ask("hi")], [])).filter(Boolean);
-	assert.deepEqual(names(first), ["docs: ReadSites(inputs*: string), put_page(id*: string, body*: string), list_all"]);
-	assert.deepEqual(names(second), ["docs: ReadSites(inputs*: string), get_page"]);
+	assert.deepEqual(names(first), ["docs: ReadSites(inputs*), put_page(id*, body*), list_all"]);
+	assert.deepEqual(names(second), ["docs: ReadSites(inputs*), get_page"]);
 });
 
 for (const [label, property, expected] of [
 	["array-of-unknown", { type: "array", items: {} }, "arg*: any[]"],
-	["capped-enum", { enum: ["a", "b", "c", "d", "e", "f", "g", "h"] }, "arg*: a|b|c|d|e|f|..."],
+	["capped-enum", { enum: ["a", "b", "c", "d", "e", "f", "g", "h"] }, "arg*: a|b|c|d|..."],
 	["one-of-skips-null", { oneOf: [{ type: "null" }, { type: "array", items: { type: "string" } }] }, "arg*: string[]"],
 ] as [string, Json | undefined, string][]) {
 	test(`the names list shows the type of a required arg: ${label}`, async () => {

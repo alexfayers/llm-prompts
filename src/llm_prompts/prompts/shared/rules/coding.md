@@ -5,49 +5,52 @@ description: Coding guidelines to follow when generating, reviewing, or modifyin
 
 # Coding guidelines
 
-- MUST keep code concise but readable and changes minimal. MUST treat size limits as ceilings, not targets, make the smallest change that delivers the behaviour and remove redundant code.
-- Code MUST be self-documenting with descriptive names and minimal comments.
-  MUST NOT add a comment that refers to the change, explains why, or names other code that uses it - comments describe the code, only where genuinely complex.
-- MUST add new imports at THE SAME TIME as the code that uses them.
+- MUST keep code concise but readable. MUST treat size limits as ceilings, not targets. MUST make the smallest change that delivers the behaviour, remove redundant code, and fix every caller,
+  test and fixture it breaks.
+- MUST pick the first option in this list that fully works:
+  1. Use what the codebase already has, as nearby code does.
+  2. Use the standard library or platform, unless the project has its own.
+  3. Use an installed dependency. MUST NOT add a new one for a few lines.
+  4. Write it as one readable line of code.
+  5. Write new code.
+- MUST NOT cut trust-boundary validation, data-loss error handling, security or accessibility.
+- Code MUST be self-documenting with descriptive names. Comments MUST describe the code. Add a comment only where the code is genuinely complex,
+  or to mark a known limit as `shortcut: <limit>, <when to upgrade>`. A comment MUST NOT describe the change, its reason, or code that uses it.
+- MUST add new imports in the SAME edit as the code using them.
 - When a change adds, or newly requires, an environment variable, config key or setting, MUST update every doc, template and manifest that lists it in the SAME change.
 - Produced code MUST follow the package's existing style.
-- Before adding a new related file (source, frontend, tests) that would take a non-root folder from 7 to 8 files, SHOULD put it in an existing or new short-named area subfolder (`<area>/<part>`,
+- Before a new related file takes a non-root folder from 7 to 8 files, SHOULD put it in an existing or new short-named area subfolder (`<area>/<part>`,
   not `<area>_<part>`), unless a tool requires a flat layout. MUST NOT regroup existing files unasked.
 - MUST NOT {{TOOL_COMPLETE}} until all tasks in the focus chain are done.
 - {{ACTION_NO_NARRATE}}
-- MUST write for reuse: merge similar functions or create an interface.
-- MUST make a change once, at its source, not at each place that uses it.
-  SHOULD keep one source of truth per value and derive the rest from it at use time - never copy it into state that must be kept in sync.
-- MUST NOT change code the task does not need; leaving code better applies only to code you are already editing.
-- Committed text (docs, CLAUDE.md, PR bodies, design decisions) MUST describe the current state and claim only what the code does - never a failed approach, a removed feature,
-  or "we tried X then switched to Y".
-- SHOULD NOT assign a variable that adds no clarity; a value used once needs no name.
-- SHOULD NOT use magic numbers: where a threshold recurs, derive every occurrence from one named constant.
-- MUST leave code better than you found it - fix an issue you notice in code you are already editing. MUST NOT edit another team's or package's code just because yours sits next to it.
-  Raise the rest separately.
+- MUST write for reuse: merge similar functions or add an interface.
+- MUST make a change once, at its source, not at each place that uses it. SHOULD keep one source of truth per value, deriving the rest at use time, never copying it into state kept in sync.
+- Committed text (docs, CLAUDE.md, PR bodies, design decisions) MUST describe the current state and claim only what the code does,
+  never a failed approach, removed feature, or "we tried X then switched to Y".
+- SHOULD NOT assign a variable that adds no clarity. A value used once needs no name.
+- SHOULD NOT use magic numbers: where a threshold recurs, derive each use from one named constant.
+- MUST NOT change code the task doesn't need. MUST fix issues you notice in code you already edit.
+  MUST NOT edit another team's or package's code just because yours sits next to it. Raise the rest separately.
 - When fixing a bug, fix ALL directly related issues in the same code path - MUST NOT dismiss a pre-existing failure that shares its root cause or context.
 - Before adding a parameter to a signature, MUST verify the body uses it.
 - Before declaring a value or function dead, MUST search the WHOLE workspace.
 - After fixing an error you wrote, MUST record the mistake and fix in memory - a delegate reports it instead.
-- MUST NOT use non-ascii characters (e.g. emdash); use ascii equivalents.
-- In committed files, MUST NOT name collaborators or hardcode user-specific values (aliases, account IDs, stack names) - use a placeholder like `<account-id>`.
-- In a globally-distributed instruction or doc, MUST NOT assert behaviour depending on the reader's local config ("this command is auto-approved"). State the action, not the consequence.
+- MUST NOT use non-ascii characters (e.g. emdash).
+- In committed files, MUST NOT name collaborators or hardcode user-specific values (aliases, account IDs, stack names) - use a placeholder (`<account-id>`).
+- In a globally-distributed instruction or doc, MUST state the action. MUST NOT state behaviour that depends on the reader's local config ("this command is auto-approved").
 - Before writing a checking tool, MUST check whether one exists.
-- SHOULD NOT limit parallelization in code for hardware limits - the OS/runtime scheduler is the cap.
+- SHOULD NOT limit parallelization in code for hardware limits. The OS or runtime scheduler is the cap.
 
 # Testing guidelines
 
-- Before EVERY commit and push, before marking any task complete or submitting a CR, MUST build and confirm all tests pass.
-  An earlier run does NOT carry over - re-run the full suite immediately before the git operation.
-- MUST verify with the project's real configuration, not a stricter one you chose - read the build/CI config for the flags used,
-  and compare against the committed baseline before calling something a regression.
-- When fixing a REPORTED bug, MUST reproduce the symptom with a harness matching how the code is invoked, then confirm the fix makes that reproduction pass.
-  Where you cannot reproduce it, MUST say so and keep investigating - MUST NOT ship a speculative fix and claim it resolved.
-- MUST verify an integration feature against the real target, not just a stub.
-  MUST probe read-only first (--dry-run, stat before and after), then run the real path, and state which parts were stub-tested.
-- Tests MUST run through the project's standard build/test invocation, never a bespoke script outside it.
-- For any change that adds or repositions UI, MUST render the page and look at it before claiming done. Where a plan flagged a layout risk, MUST resolve it in the design rather than defer.
-- MUST add tests only for new behaviour or a reported bug. A refactor MUST rely on existing tests. If no test covers the refactored code, MUST add one test through its public entry point.
-  MUST decline a reviewer's request for tests that conflicts with the test rules, stating why.
-- When delegating test-writing, MUST state that the motivating real-world case stays out of the suite.
+- Before EVERY commit, push, CR or task completion, MUST build and run the full suite to a pass. An earlier run does NOT count.
+- MUST verify through the project's standard build/test command, with its real CI config and flags. MUST NOT use a bespoke script or a stricter config you chose.
+  MUST compare against the committed baseline before calling something a regression.
+- When fixing a REPORTED bug, MUST reproduce the symptom with a harness matching how the code runs, then confirm the fix makes it pass.
+  If you cannot reproduce it, MUST say so and keep investigating. MUST NOT ship a speculative fix and claim it resolved.
+- MUST verify an integration feature against the real target, not just a stub. MUST probe read-only first (--dry-run, stat before and after), run the real path, and name the stub-tested parts.
+- For a change that adds or moves UI, MUST render the page and look at it before claiming done. MUST resolve a plan-flagged layout risk in the design, not defer it.
+- MUST add tests only for new behaviour or a reported bug. A refactor MUST rely on existing tests. If none covers it, MUST add one test through its public entry point.
+  MUST decline a reviewer's test request that conflicts with these rules, and say why.
+- When delegating test-writing, MUST say the motivating real-world case stays out of the suite.
 - MUST NOT predict a runnable tool's output (linter, formatter, type checker, tests, compiler, --help) - run it and read the result.

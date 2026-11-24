@@ -7,7 +7,6 @@ import json
 import os
 import platform
 import re
-import ssl
 import sys
 import time
 import tomllib
@@ -17,9 +16,6 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from subprocess import DEVNULL, CalledProcessError, Popen, SubprocessError, run
 from typing import Any
-from urllib.request import Request, urlopen
-
-import truststore
 
 from . import home
 
@@ -134,6 +130,11 @@ def may_send(max_age: float = OPT_STATE_MAX_AGE) -> bool:
 
 def post(body: str) -> bool:
     """POST a capture body to PostHog, returning whether it succeeded."""
+    import ssl
+    from urllib.request import Request, urlopen
+
+    import truststore
+
     request = Request(POSTHOG_URL, body.encode(), {"Content-Type": "application/json"})
     try:
         with urlopen(
@@ -160,7 +161,10 @@ def _git(repo: str, *args: str) -> str:
 
 
 def _local_state(
-    base: str | None, dirty: bool | None, ahead: int | None
+    base: str | None,
+    dirty: bool | None,
+    ahead: int | None,
+    release: str | None = None,
 ) -> dict[str, Any]:
     """Return a local checkout's entry, which never names a commit missing from origin/main."""
     return {
@@ -169,7 +173,20 @@ def _local_state(
         "local": True,
         "dirty": dirty,
         "ahead": ahead,
+        "release": release,
     }
+
+
+def _release(repo: str, base: str) -> str | None:
+    """Return the highest stable vX.Y.Z tag that `base` contains, or None."""
+    from .setup import release_version
+
+    try:
+        tags = _git(repo, "tag", "--merged", base, "--list", "v*").split()
+    except (OSError, ValueError, SubprocessError):
+        return None
+    releases = {v: t for t in tags if (v := release_version(t))}
+    return releases[max(releases)] if releases else None
 
 
 def _checkout_state(repo: str) -> dict[str, Any]:
@@ -183,10 +200,10 @@ def _checkout_state(repo: str) -> dict[str, Any]:
         ahead = int(_git(repo, "rev-list", "--count", f"{base}..HEAD"))
     except (OSError, ValueError, SubprocessError):
         return _local_state(None, dirty, None)
-    return _local_state(base, dirty, ahead)
+    return _local_state(base, dirty, ahead, _release(repo, base))
 
 
-def _remote(commit: str | None) -> dict[str, Any]:
+def _remote(commit: str | None, release: str | None = None) -> dict[str, Any]:
     """Return the version entry of a source installed from git."""
     return {
         "commit": commit,
@@ -194,6 +211,7 @@ def _remote(commit: str | None) -> dict[str, Any]:
         "local": False,
         "dirty": False,
         "ahead": None,
+        "release": release,
     }
 
 
@@ -221,18 +239,25 @@ def _local_sources(config: dict[str, Any]) -> dict[str, dict[str, str]]:
 
 
 def versions(
-    config: dict[str, Any], found: dict[str, str | None] | None = None
+    config: dict[str, Any],
+    found: dict[str, str | None] | None = None,
+    releases: dict[str, str | None] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Return the version entry of every tracked tool, with placeholders for unresolved ones.
 
     Args:
         config: The llm-prompts config.
         found: Installed commits by tool name, or None to leave installs as placeholders.
+        releases: Installed releases by tool name.
     """
     local = _local_sources(config)
     return {
         n: local.get(n)
-        or (_remote(found.get(n)) if found is not None else _installed(n))
+        or (
+            _remote(found.get(n), (releases or {}).get(n))
+            if found is not None
+            else _installed(n)
+        )
         for n in TRACKED
     }
 
@@ -256,9 +281,9 @@ def resolve_versions(body: str) -> str:
             if _CHECKOUT_KEY in node:
                 return _checkout_state(node[_CHECKOUT_KEY])
             if _INSTALLED_KEY in node:
-                from .cli import _get_installed_commit
+                from .cli import _get_installed_version
 
-                return _remote(_get_installed_commit(node[_INSTALLED_KEY]))
+                return _remote(*_get_installed_version(node[_INSTALLED_KEY]))
             return {k: resolve(v) for k, v in node.items()}
         return node
 

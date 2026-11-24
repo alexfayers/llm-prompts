@@ -97,13 +97,33 @@ async function fork(params: Record<string, unknown>, cwd = process.cwd(), main =
 describe("fork tool", () => {
 	beforeEach(() => void registryOf().restore([]));
 
+	test("writes the valid entries of the readMcp setting into the handshake", async () => {
+		const good = { tool: "mcp__demo__exec", argsMatch: { command: "read .*" } };
+		settings = { llmPrompts: { forks: { readMcp: [good, { tool: "mcp__demo__bad", argsMatch: { command: "(" } }] } } };
+		const { tool } = await fork({ task: "STUB_INSPECT" });
+		assert.deepEqual(JSON.parse(tool.content[0].text.split("\n")[0].replace(/^echo: /, "")).handshake.readMcp, [good]);
+	});
+
+	test("warns on stderr about dropped readMcp entries when there is no UI", async () => {
+		settings = { llmPrompts: { forks: { readMcp: [{ tool: "mcp__demo__bad", argsMatch: { command: "(" } }] } } };
+		const written: string[] = [];
+		const original = process.stderr.write;
+		process.stderr.write = ((chunk: string) => (written.push(String(chunk)), true)) as typeof process.stderr.write;
+		try {
+			await fork({ task: "STUB_INSPECT" });
+		} finally {
+			process.stderr.write = original;
+		}
+		assert.match(written.join(""), /pi-context: dropped invalid llmPrompts\.forks\.readMcp entries: .*mcp__demo__bad/);
+	});
+
 	test("starts a reader child on the seed with main's model, thinking level and directory", async () => {
 		const { tool } = await fork({ task: "STUB_INSPECT" });
 		const seen = JSON.parse(tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
 		assert.deepEqual(seen.args.slice(0, 2), ["--mode", "rpc"]);
 		assert.deepEqual(seen.args.slice(4), ["--model", "prov/mod", "--thinking", "high"]);
 		assert.equal(seen.cwd, process.cwd());
-		assert.deepEqual(seen.handshake, { role: "reader", inherited: "r1" });
+		assert.deepEqual(seen.handshake, { role: "reader", inherited: "r1", readMcp: [] });
 		assert.equal(seen.handshakeMode, 0o600);
 		assert.equal(seen.seed[0].cwd, process.cwd());
 		assert.notEqual(seen.seed[0].id, "main-id");
@@ -211,7 +231,9 @@ describe("fork tool", () => {
 			await eventually(() => forks.every(({ sent }) => sent.length > 0));
 			delete process.env.STUB_LOG;
 			const ids = Object.fromEntries(registryOf().all().map((run) => [run.name, run.id]));
-			assert.deepEqual(fs.readFileSync(log, "utf8").trim().split("\n").slice(0, 3), [`${ids.lead} prompt`, `${ids.lead} message_end`, `${ids.follow} prompt`]);
+			const lines = fs.readFileSync(log, "utf8").trim().split("\n").slice(0, 3);
+			const [first, second] = lines[0]?.startsWith(ids.follow) ? [ids.follow, ids.lead] : [ids.lead, ids.follow];
+			assert.deepEqual(lines, [`${first} prompt`, `${first} message_end`, `${second} prompt`]);
 		});
 
 		test("fork_cancel stops a live run without waking main", async () => {

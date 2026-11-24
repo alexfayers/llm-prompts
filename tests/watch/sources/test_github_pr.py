@@ -150,6 +150,22 @@ def test_gh_pr_a_later_watch_reuses_the_etags_an_earlier_one_stored(
     )
 
 
+@pytest.mark.parametrize("merged", [True, False])
+def test_gh_pr_follow_exits_on_a_merged_or_closed_pr(
+    github: FakeGithub, capsys: pytest.CaptureFixture[str], merged: bool
+) -> None:
+    github.pr()
+    github.bodies["repos/o/r/pulls/7"] = {
+        "state": "closed",
+        "merged": merged,
+        "head": {"sha": "abc123"},
+    }
+    source = GithubPrSource("o/r", 7, None)
+
+    assert watch([source], ["ci"], interval=0, timeout=5, follow=True) == 0
+    assert capsys.readouterr().out.startswith("gh-pr o/r#7: ")
+
+
 def test_gh_pr_watch_goes_on_when_the_cache_cannot_be_written(
     github: FakeGithub, isolated_home: Path
 ) -> None:

@@ -17,6 +17,8 @@ const DEFAULT_KEEP_TOKENS = 40000;
 const DEFAULT_IDLE_MIN_TOKENS = 5000;
 const CACHE_MS = 5 * 60_000;
 export const LONG_CACHE_MS = 60 * 60_000;
+/** pi.events channel that carries `{ messages }`, the request messages after an idle fold. */
+export const IDLE_FOLD_EVENT = "context-fold:idle";
 
 /** How long a prompt cache lives: an hour with PI_CACHE_RETENTION=long, otherwise five minutes. */
 export const cacheLifetimeMs = (): number => (process.env.PI_CACHE_RETENTION === "long" ? LONG_CACHE_MS : CACHE_MS);
@@ -161,7 +163,9 @@ export default function (pi: ExtensionAPI) {
 		const plan = planFold(entries, ctx.sessionManager.getBranch() as unknown as Entry[], { keepTokens: keepTokens() });
 		if (plan.savedTokens < envNumber("CONTEXT_FOLD_IDLE_MIN_TOKENS", DEFAULT_IDLE_MIN_TOKENS)) return;
 		idle = plan;
-		return { messages: applyPlan(event.messages as unknown as Message[], entries, plan) as unknown as typeof event.messages };
+		const messages = applyPlan(event.messages as unknown as Message[], entries, plan) as unknown as typeof event.messages;
+		pi.events.emit(IDLE_FOLD_EVENT, { messages });
+		return { messages };
 	});
 	pi.on("turn_end", (event, ctx) => {
 		const applied = idle;

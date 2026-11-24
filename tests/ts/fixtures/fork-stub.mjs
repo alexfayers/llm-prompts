@@ -1,4 +1,4 @@
-// Stands in for `pi --mode rpc` as a fork child: the task text picks the reply, STUB_STEER waits for a steer command, STUB_INSPECT reports how the child was started, STUB_LOG names a file that logs each prompt and its slow first reply, and a cold worker writes a session file.
+// Stands in for `pi --mode rpc` as a fork child: the task text picks the reply, STUB_STEER waits for a steer command and exits slowly once its input closes, a resumed fork replies slowly, STUB_INSPECT reports how the child was started, STUB_LOG names a file that logs each prompt and its slow first reply, and a cold worker writes a session file.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import net from "node:net";
@@ -16,6 +16,7 @@ if (process.argv.includes("--session-dir")) {
 	writeFileSync(`${flag("--session-dir")}/session.jsonl`, "{}\n");
 }
 let reply = "";
+let exitDelayMs = 0;
 let body = "";
 
 /** Sends the bridge one prefix report and one MCP call, and returns the call's reply text. */
@@ -37,6 +38,7 @@ function callBridge(socketPath) {
 async function replyTo(text) {
 	if (text.includes("STUB_BRIDGE")) return `echo: ${await callBridge(JSON.parse(readFileSync(handshake, "utf8")).bridge.socket)}`;
 	if (text.includes("STUB_CRASH")) process.exit(3);
+	if (text.includes("Your session stopped")) await new Promise((resolve) => setTimeout(resolve, 600));
 	if (text.includes("STUB_HANG")) await new Promise(() => undefined);
 	const gate = /STUB_GATE:(\S+)/.exec(text)?.[1];
 	if (gate) {
@@ -70,8 +72,10 @@ async function replyTo(text) {
 for await (const line of createInterface({ input: process.stdin })) {
 	const command = JSON.parse(line);
 	const respond = (data) => out({ id: command.id, type: "response", command: command.type, success: true, data });
-	if (command.type === "prompt" && command.message.includes("STUB_STEER")) respond({ disposition: "started" });
-	else if (command.type === "steer") {
+	if (command.type === "prompt" && command.message.includes("STUB_STEER")) {
+		exitDelayMs = 300;
+		respond({ disposition: "started" });
+	} else if (command.type === "steer") {
 		respond({ disposition: "queued" });
 		reply = `OUTCOME done ref:rc-fork-s\nsteered: ${command.message}`;
 		out({ type: "message_end", message: { role: "assistant", usage: usage(100) } });
@@ -91,3 +95,4 @@ for await (const line of createInterface({ input: process.stdin })) {
 		out({ type: "agent_settled", aborted: false });
 	} else if (command.type === "get_last_assistant_text") respond({ text: reply });
 }
+await new Promise((resolve) => setTimeout(resolve, exitDelayMs));

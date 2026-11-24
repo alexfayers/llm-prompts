@@ -9,7 +9,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from conftest import FakeSubprocess, run_capturing_exit
@@ -49,7 +49,7 @@ def _config(config_dir: Path, source: Path, extra: str = "") -> None:
     )
 
 
-def test_a_running_fork_blocks(
+def test_a_running_fork_does_not_block(
     tmp_path: Path, isolated_config_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _config(isolated_config_dir, Path("git+https://example.invalid/x.git"))
@@ -57,26 +57,7 @@ def test_a_running_fork_blocks(
     run = tmp_path / "agent" / "pi-context" / "run"
     run.mkdir(parents=True)
     (run / "handshake.json").write_text("{}", encoding="utf-8")
-    assert auto_update.blocker("") == "a pi fork is running"
-    (run / "finished").write_text("", encoding="utf-8")
     assert auto_update.blocker("") is None
-
-
-def test_a_stale_fork_run_does_not_block(
-    tmp_path: Path, isolated_config_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _config(isolated_config_dir, Path("git+https://example.invalid/x.git"))
-    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path / "agent"))
-    run = tmp_path / "agent" / "pi-context" / "run"
-    run.mkdir(parents=True)
-    handshake = run / "handshake.json"
-    handshake.write_text("{}", encoding="utf-8")
-    old = time.time() - auto_update.FORK_IDLE_SECONDS - 1
-    os.utime(handshake, (old, old))
-    assert auto_update.blocker("") is None
-    (run / "session").mkdir()
-    (run / "session" / "cold.jsonl").write_text("{}", encoding="utf-8")
-    assert auto_update.blocker("") == "a pi fork is running"
 
 
 @pytest.mark.real_io
@@ -94,15 +75,19 @@ def test_a_checkout_with_commits_from_an_older_version_blocks(
     clone = _checkout(tmp_path)
     _git(clone, "commit", "-q", "--allow-empty", "-m", "local change")
     _config(isolated_config_dir, clone)
-    assert auto_update.blocker("") == "llm-prompts has local changes"
+    assert auto_update.blocker("") == "local-changes"
 
 
 @pytest.mark.real_io
-def test_uncommitted_edits_block(tmp_path: Path, isolated_config_dir: Path) -> None:
+def test_uncommitted_edits_block_but_untracked_files_do_not(
+    tmp_path: Path, isolated_config_dir: Path
+) -> None:
     clone = _checkout(tmp_path)
-    (clone / "edited.txt").write_text("x", encoding="utf-8")
+    (clone / "scratch.txt").write_text("x", encoding="utf-8")
     _config(isolated_config_dir, clone)
-    assert auto_update.blocker("") == "llm-prompts has local changes"
+    assert auto_update.blocker("") is None
+    _git(clone, "add", "scratch.txt")
+    assert auto_update.blocker("") == "local-changes"
 
 
 def test_turning_it_off_blocks(isolated_config_dir: Path) -> None:
@@ -115,7 +100,7 @@ def test_turning_it_off_blocks(isolated_config_dir: Path) -> None:
 
 
 def test_no_config_blocks() -> None:
-    assert auto_update.blocker("") == "no config"
+    assert auto_update.blocker("") == "off"
 
 
 def test_a_failed_run_blocks_a_rerun_until_the_versions_move(
@@ -138,9 +123,9 @@ def test_start_spawns_a_detached_update_only_when_nothing_blocks(
         subprocess, "Popen", lambda argv, **kwargs: spawned.append(kwargs)
     )
     monkeypatch.setattr(auto_update, "blocker", lambda fingerprint: "off")
-    assert not auto_update.start("v1")
+    assert auto_update.start("v1") == "off"
     monkeypatch.setattr(auto_update, "blocker", lambda fingerprint: None)
-    assert auto_update.start("v1")
+    assert auto_update.start("v1") == "started"
     assert len(spawned) == 1 and spawned[0]["start_new_session"] is True
 
 
@@ -174,6 +159,69 @@ def test_an_update_that_stops_partway_is_not_retried_at_its_new_versions(
     fake_subprocess.on_match(_is_update, stdout="Update stopped\n", returncode=1)
     auto_update.run("v1")
     assert auto_update.failure("v2") == "Update stopped"
+
+
+def test_a_run_logs_its_start_before_the_update_runs(
+    unblocked: Path, fake_subprocess: FakeSubprocess
+) -> None:
+    logged: list[str] = []
+    fake_subprocess.on_match(
+        _is_update,
+        stdout="Updated\n",
+        side_effect=lambda argv, kwargs: logged.append(
+            (unblocked / "auto-update.log").read_text()
+        ),
+    )
+    auto_update.run("v1")
+    assert logged[0].startswith("Started at ")
+    log = (unblocked / "auto-update.log").read_text()
+    assert log.startswith(logged[0]) and log.endswith("Updated\n")
+
+
+def _reported(telemetry_popen: MagicMock) -> dict[str, object]:
+    properties: dict[str, object] = json.loads(telemetry_popen.call_args.args[0][3])[
+        "properties"
+    ]
+    return properties
+
+
+def test_a_run_blocked_after_taking_the_lock_reports_what_blocked_it(
+    unblocked: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_subprocess: FakeSubprocess,
+    telemetry_popen: MagicMock,
+) -> None:
+    monkeypatch.setattr(
+        "llm_prompts.cli._get_installed_version", lambda _: (None, None)
+    )
+    monkeypatch.setattr(
+        auto_update,
+        "blocker",
+        lambda fingerprint: "session",
+    )
+    auto_update.run("v1")
+    properties = _reported(telemetry_popen)
+    assert (properties["command"], properties["flags"]) == ("update", ["--auto"])
+    assert (properties["outcome"], properties["auto_update"]) == ("blocked", "session")
+    assert not (unblocked / "auto-update.log").exists()
+
+
+def test_a_run_while_another_holds_the_lock_reports_it_stopped(
+    unblocked: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_subprocess: FakeSubprocess,
+    telemetry_popen: MagicMock,
+) -> None:
+    monkeypatch.setattr(
+        "llm_prompts.cli._get_installed_version", lambda _: (None, None)
+    )
+    with _held_by_another_process():
+        auto_update.run("v1")
+    properties = _reported(telemetry_popen)
+    assert (properties["outcome"], properties["exit_reason"]) == (
+        "stopped",
+        "update_running",
+    )
 
 
 def test_a_successful_run_clears_an_old_failure(
@@ -219,16 +267,14 @@ def test_a_non_bool_auto_setting_blocks(isolated_config_dir: Path) -> None:
         Path("git+https://example.invalid/x.git"),
         '[update]\nauto = "no"\n\n',
     )
-    assert (
-        auto_update.blocker("") == "config error: [update] auto must be true or false"
-    )
+    assert auto_update.blocker("") == "off"
 
 
 def test_a_non_table_update_setting_blocks(isolated_config_dir: Path) -> None:
     _config(
         isolated_config_dir, Path("git+https://example.invalid/x.git"), "update = 1\n\n"
     )
-    assert auto_update.blocker("") == "config error: [update] must be a table"
+    assert auto_update.blocker("") == "off"
 
 
 @pytest.mark.real_io
@@ -248,7 +294,7 @@ def test_a_live_session_holding_a_configured_checkout_blocks(
     locks.write_text(json.dumps([{**held, "at": time.time() - 3600}]))
     assert auto_update.blocker("") is None
     locks.write_text(json.dumps([{**held, "at": time.time()}]))
-    assert auto_update.blocker("") == "a session is using llm-prompts"
+    assert auto_update.blocker("") == "session"
 
 
 @pytest.mark.parametrize(
@@ -298,10 +344,10 @@ def test_a_plugin_checkout_with_edits_or_unpushed_commits_blocks(
     checkout = _plugin_checkout(tmp_path, isolated_config_dir)
     assert auto_update.blocker("") is None
     _git(checkout, "commit", "-q", "--allow-empty", "-m", "mine")
-    assert auto_update.blocker("") == "p has local changes"
+    assert auto_update.blocker("") == "local-changes"
     _git(checkout, "reset", "-q", "--hard", "HEAD~1")
     (checkout / "edit.txt").write_text("x")
-    assert auto_update.blocker("") == "p has local changes"
+    assert auto_update.blocker("") == "local-changes"
 
 
 @pytest.mark.real_io
@@ -316,7 +362,7 @@ def test_a_live_session_holding_a_plugin_checkout_blocks(
             [{"git_dir": str(checkout / ".git"), "pid": os.getpid(), "at": time.time()}]
         )
     )
-    assert auto_update.blocker("") == "a session is using p"
+    assert auto_update.blocker("") == "session"
 
 
 def test_the_update_runs_through_a_script_that_can_restart_itself(

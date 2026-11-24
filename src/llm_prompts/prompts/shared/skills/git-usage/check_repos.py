@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import TypedDict
 
-AGENTS = ("kiro", "claude-code", "codex", "antigravity", "pi")
+AGENTS = ("kiro", "claude-code", "codex", "antigravity", "opencode", "pi")
 
 
 class RepoStatus(TypedDict, total=False):

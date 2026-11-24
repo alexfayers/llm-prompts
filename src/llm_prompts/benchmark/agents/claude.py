@@ -24,6 +24,7 @@ from llm_prompts.benchmark.runner.events import (
     CallLog,
     ContextMeter,
     count,
+    mcp_name,
     parse_line,
 )
 from llm_prompts.benchmark.types import (
@@ -107,7 +108,6 @@ class ClaudeAdapter:
     default_model = "sonnet"
     judge_model = "haiku"
     cumulative_cost = True
-    delegation = True
     shared_dirs: tuple[Path, ...] = ()
     git_packages: Path | None = None
 
@@ -195,9 +195,22 @@ class ClaudeAdapter:
             *session_args,
         ]
 
+    def add_delegates(self, trace: Trace, home: Path, since: float) -> Trace:
+        return trace
+
     def replied(self, line: str) -> bool:
         event = parse_line(line)
         return event is not None and event.get("type") == "assistant"
+
+    def tool_started(self, line: str) -> list[str]:
+        event = parse_line(line)
+        if event is None or event.get("type") != "assistant":
+            return []
+        return [
+            mcp_name(str(block.get("name", "")))
+            for block in _blocks(event)
+            if block.get("type") == "tool_use"
+        ]
 
     def parse(self, lines: Iterable[tuple[float, str]], wall_s: float) -> Trace:
         log = CallLog()
