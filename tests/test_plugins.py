@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -485,17 +486,16 @@ class TestPluginSourceMessages:
         (log,) = fake_subprocess.matching("log")
         assert "aaaaaaa..bbbbbbb" in log
 
-    def test_without_fetching_compares_against_the_fetched_ref(
+    def test_without_fetching_compares_against_the_resolved_target(
         self, tmp_path: Path, fake_subprocess: FakeSubprocess
     ) -> None:
         (plugins._checkout_dir("p") / ".git").mkdir(parents=True)
         fake_subprocess.on("rev-parse", "HEAD", stdout="aaaaaaa\n")
-        fake_subprocess.on("rev-parse", "@{u}", returncode=128)
         fake_subprocess.on(
             "rev-parse",
             "--verify",
             "--quiet",
-            "origin/HEAD^{commit}",
+            "refs/llm-prompts/upstream^{commit}",
             stdout="bbbbbbb\n",
         )
         fake_subprocess.on(
@@ -513,24 +513,45 @@ class TestPluginSourceMessages:
         (log,) = fake_subprocess.matching("log")
         assert "aaaaaaa..bbbbbbb" in log
 
-    def test_without_fetching_a_plugin_pinned_to_a_tag_compares_against_the_tag(
-        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    @pytest.mark.real_io
+    def test_without_fetching_reuses_the_target_the_remote_check_resolved(
+        self, tmp_path: Path
     ) -> None:
-        (plugins._checkout_dir("p") / ".git").mkdir(parents=True)
-        fake_subprocess.on("rev-parse", "HEAD", stdout="aaaaaaa\n")
-        fake_subprocess.on("rev-parse", "@{u}", stdout="bbbbbbb\n")
-        fake_subprocess.on("rev-parse", "--verify", returncode=1)
-        fake_subprocess.on(
-            "rev-parse", "--verify", "--quiet", "v1^{commit}", stdout="aaaaaaa\n"
-        )
-        fake_subprocess.on(
-            "log",
-            "--pretty=format:%s%n%b%x1e",
-            stdout=fake_subprocess.log_lines("unreleased commit"),
-        )
-        plugin = {"name": "p", "source": f"git+file://{tmp_path}", "ref": "v1"}
+        upstream = tmp_path / "upstream"
 
-        assert plugins.plugin_source_messages(plugin, fetch=False) == []
+        def git(*args: str) -> None:
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(upstream),
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    *args,
+                ],
+                check=True,
+                capture_output=True,
+            )
+
+        upstream.mkdir()
+        git("init", "-q", "-b", "main")
+        git("commit", "-q", "--allow-empty", "-m", "tagged")
+        git("tag", "both")
+        git("switch", "-q", "-c", "both")
+        (upstream / "skills" / "s").mkdir(parents=True)
+        (upstream / "skills" / "s" / "SKILL.md").write_text("s\n")
+        git("add", "skills")
+        git("commit", "-q", "-m", "branched")
+        git("switch", "-q", "main")
+        plugin = {"name": "p", "source": f"git+file://{upstream}", "ref": "both"}
+        assert plugins.ensure_cloned(plugin) is not None
+        git("branch", "-q", "-D", "both")
+
+        fetched = plugins.plugin_source_messages(plugin)
+
+        assert plugins.plugin_source_messages(plugin, fetch=False) == fetched
 
     @pytest.fixture
     def outdated_plugin(
