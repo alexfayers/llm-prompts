@@ -212,7 +212,8 @@ def _line_artifacts(target: str, dest_name: str, source: Path) -> Iterator[Artif
     """Yield the source's longest prose line and its lazy list continuations.
 
     Frontmatter and lines inside ``` or ~~~ fences are skipped. A delimiter
-    indented `_CODE_INDENT` or more past its list item's text is not a fence.
+    indented `_CODE_INDENT` or more past its list item's text is not a fence,
+    and a fence ends where a line dedents out of its list item.
     Table rows (starting with ``|``) are skipped for line length. A lazy
     continuation is a column-0 prose line directly after a list item's line.
 
@@ -232,6 +233,8 @@ def _line_artifacts(target: str, dest_name: str, source: Path) -> Iterator[Artif
     for number, line in enumerate(lines[start:], start + 1):
         stripped = line.lstrip()
         indent = len(line) - len(stripped)
+        if fence and stripped and indent < fence_column:
+            fence = ""
         if stripped and not fence:
             columns = [c for c in columns if c <= indent]
         column = fence_column if fence else (columns[-1] if columns else 0)
