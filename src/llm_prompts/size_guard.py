@@ -65,6 +65,7 @@ from .size_limits import (
     DECLARABLE_METRICS,
     FINALS,
     FRONTMATTER_VALID,
+    LINE_METRICS,
     NO_LAZY_CONTINUATIONS,
     NO_LONG_LINES,
     NO_UNSUBSTITUTED_PLACEHOLDERS,
@@ -82,7 +83,6 @@ from .size_limits import (
 
 CHECKED_TARGETS: tuple[str, ...] = tuple(AGENT_CLASSES)
 ALLOWANCES_FILENAME = "size_allowances.json"
-_LINE_METRICS = frozenset({NO_LONG_LINES, NO_LAZY_CONTINUATIONS})
 _LIST_ITEM = re.compile(r"\s*(?:[-*+]|\d+[.)])\s")
 _FENCE = re.compile(r"`{3,}|~{3,}")
 _BLOCK_START = re.compile(r"[#|><]|\{[%#]|([-*_])(?:[ \t]*\1){2,}[ \t]*$")
@@ -270,7 +270,7 @@ def _without_foreign_line_checks(
         root: Prompts directory the artifacts were measured from.
     """
     own = root.resolve() == _own_root_dir().resolve()
-    return (a for a in artifacts if own or a.metric not in _LINE_METRICS)
+    return (a for a in artifacts if own or a.metric not in LINE_METRICS)
 
 
 def _common_artifacts(

@@ -87,8 +87,11 @@ FINALS: dict[str, int] = {
 }
 MAX_LINE_CHARS = FINALS[NO_LONG_LINES]
 
+# Formatting metrics, measured on this package's own sources only.
+LINE_METRICS = frozenset({NO_LONG_LINES, NO_LAZY_CONTINUATIONS})
+
 # Metrics a `size_allowances.json` may declare.
-DECLARABLE_METRICS = frozenset(FINALS) | {COLLECTION_SHARE_BYTES}
+DECLARABLE_METRICS = (frozenset(FINALS) - LINE_METRICS) | {COLLECTION_SHARE_BYTES}
 
 # Metrics whose ceiling is the active collection step rather than a per-file final.
 COLLECTION_CEILING_METRICS = frozenset({COLLECTION_BYTES, PI_ROLE_PROMPT_BYTES})

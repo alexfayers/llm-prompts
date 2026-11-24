@@ -1030,15 +1030,18 @@ class TestAllowanceScoping:
 
 
 class TestDeclarationErrors:
-    def test_unknown_metric_key_is_reported(self, tmp_path: Path) -> None:
-        path = _write(
-            tmp_path / ALLOWANCES_FILENAME, json.dumps({"not_a_metric": {"a": 1}})
-        )
+    @pytest.mark.parametrize(
+        "metric", ["not_a_metric", NO_LONG_LINES, NO_LAZY_CONTINUATIONS]
+    )
+    def test_undeclarable_metric_key_is_reported(
+        self, tmp_path: Path, metric: str
+    ) -> None:
+        path = _write(tmp_path / ALLOWANCES_FILENAME, json.dumps({metric: {"a": 1}}))
 
         allowances, errors = _declared_allowances(tmp_path)
 
         assert allowances == {}
-        assert any("not_a_metric" in e and str(path) in e for e in errors)
+        assert any(metric in e and str(path) in e for e in errors)
 
     def test_collection_share_metric_is_accepted(self, tmp_path: Path) -> None:
         _write(
