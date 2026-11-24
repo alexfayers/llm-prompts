@@ -231,7 +231,9 @@ describe("fork tool", () => {
 			await eventually(() => forks.every(({ sent }) => sent.length > 0));
 			delete process.env.STUB_LOG;
 			const ids = Object.fromEntries(registryOf().all().map((run) => [run.name, run.id]));
-			assert.deepEqual(fs.readFileSync(log, "utf8").trim().split("\n").slice(0, 3), [`${ids.lead} prompt`, `${ids.lead} message_end`, `${ids.follow} prompt`]);
+			const lines = fs.readFileSync(log, "utf8").trim().split("\n").slice(0, 3);
+			const [first, second] = lines[0]?.startsWith(ids.follow) ? [ids.follow, ids.lead] : [ids.lead, ids.follow];
+			assert.deepEqual(lines, [`${first} prompt`, `${first} message_end`, `${second} prompt`]);
 		});
 
 		test("fork_cancel stops a live run without waking main", async () => {

@@ -108,7 +108,6 @@ class ClaudeAdapter:
     default_model = "sonnet"
     judge_model = "haiku"
     cumulative_cost = True
-    delegation = True
     shared_dirs: tuple[Path, ...] = ()
     git_packages: Path | None = None
 
@@ -195,6 +194,9 @@ class ClaudeAdapter:
             "--dangerously-skip-permissions",
             *session_args,
         ]
+
+    def add_delegates(self, trace: Trace, home: Path, since: float) -> Trace:
+        return trace
 
     def replied(self, line: str) -> bool:
         event = parse_line(line)
