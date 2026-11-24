@@ -13,9 +13,9 @@ from types import TracebackType
 from typing import Any
 
 from . import telemetry_core
+from .console import log
 from .exit_reason import STOPPED_REASONS, ExitReason
 from .home import is_rooted
-from .install import log
 from .manifest import read_manifest
 from .setup import read_config
 
@@ -62,11 +62,14 @@ def _exception_event(
 class Run(AbstractContextManager["Run"]):
     """One CLI command that reports a single event when it finishes."""
 
-    def __init__(self, installed_commit: Callable[[str], str | None]) -> None:
+    def __init__(
+        self, installed_version: Callable[[str], tuple[str | None, str | None]]
+    ) -> None:
         """Start inactive until `begin` is called."""
         self.outcome = "ok"
         self.exit_reason: str | None = None
-        self._installed_commit = installed_commit
+        self.auto_update: str | None = None
+        self._installed_version = installed_version
         self._begun: dict[str, Any] | None = None
 
     @contextmanager
@@ -83,9 +86,13 @@ class Run(AbstractContextManager["Run"]):
                 self.outcome = outcome
             raise
 
-    def _commits(self) -> dict[str, str | None]:
-        """Return the installed commit of every tracked package."""
-        return {name: self._installed_commit(name) for name in telemetry_core.TRACKED}
+    def _installed(self) -> dict[str, dict[str, str | None]]:
+        """Return the installed commits and releases of every tracked package."""
+        found = {name: self._installed_version(name) for name in telemetry_core.TRACKED}
+        return {
+            "commits": {name: commit for name, (commit, _) in found.items()},
+            "releases": {name: release for name, (_, release) in found.items()},
+        }
 
     def begin(self, command: str, flags: list[str], installs: bool = False) -> None:
         """Start tracking `command` unless opted out, rooted or no agents are installed.
@@ -107,7 +114,7 @@ class Run(AbstractContextManager["Run"]):
                     "started_at": time.time(),
                     "run_id": uuid.uuid4().hex[:12],
                 }
-                self._begun["commits"] = self._commits() if installs else None
+                self._begun.update(self._installed() if installs else {"commits": None})
                 self.restore(json.loads(handed_over))
         except Exception as error:
             self._begun = None
@@ -121,7 +128,7 @@ class Run(AbstractContextManager["Run"]):
     def restore(self, state: dict[str, Any] | None) -> None:
         """Take over the start time and commits of the process that handed over."""
         if state and self._begun:
-            self._begun.update(state)
+            self._begun.update({"releases": None, **state})
 
     def __exit__(
         self,
@@ -159,7 +166,9 @@ class Run(AbstractContextManager["Run"]):
             "command": begun["command"],
             "run_id": begun["run_id"],
             "flags": begun["flags"],
-            "from": telemetry_core.versions(config, begun["commits"]),
+            "from": telemetry_core.versions(
+                config, begun["commits"], begun.get("releases")
+            ),
             "to": telemetry_core.versions(config),
             "agents": sorted(read_manifest()),
             "overlay_count": sum(
@@ -168,6 +177,7 @@ class Run(AbstractContextManager["Run"]):
             "overlays": telemetry_core.overlay_versions(config),
             "outcome": self.outcome,
             "exit_reason": self.exit_reason,
+            "auto_update": self.auto_update,
             "duration_s": round(time.time() - begun["started_at"], 1),
             **telemetry_core.context(2),
         }

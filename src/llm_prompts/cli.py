@@ -20,10 +20,11 @@ from urllib.parse import urlparse
 from . import github_api, telemetry
 from .attic.cli import add_parser as add_attic_parser
 from .attic.cli import run as run_attic
+from .console import log
 from .exit_reason import ExitReason
 from .home import set_root
-from .install import AGENT_CLASSES, REMOVED_AGENTS, log, prompts_dir, user_binary
-from .network import run_with_retries
+from .install import AGENT_CLASSES, REMOVED_AGENTS, prompts_dir, user_binary
+from .network import run_with_retries, stderr_text
 from .setup import (
     _RELEASE_TAG,
     _UPDATE_INSTRUCTION,
@@ -34,9 +35,11 @@ from .setup import (
     _extract_git_url,
     _format_update_message,
     _latest_release_tag,
-    _remote_commit_subjects,
+    _remote_changes,
     _remote_head,
     _uv_tools_dir,
+    release_notes,
+    release_version,
 )
 
 if TYPE_CHECKING:
@@ -54,6 +57,7 @@ _RUN_SETUP_TRACKED_TOOLS = (_MEMORY_TOOL, "cline-hooks")
 _UPDATE_RESUME_ENV = "LLM_PROMPTS_UPDATE_RESUME"
 _INSTALLING_COMMANDS = frozenset({"install", "setup", "update"})
 _URL_CREDENTIALS = re.compile(r"(://)[^/@\s]+@")
+_FETCHED_REPOS: set[Path] = set()
 
 
 def _get_root_dir() -> Path:
@@ -260,6 +264,15 @@ def _get_installed_dist(package_name: str) -> tuple[Path, str] | None:
     return None
 
 
+def _get_installed_version(package_name: str) -> tuple[str | None, str | None]:
+    """Get a uv tool env's git-installed commit and its version as a stable vX.Y.Z tag."""
+    installed = _get_installed_dist(package_name)
+    if not installed:
+        return None, None
+    tag = "v" + installed[0].parent.name.removesuffix(".dist-info").rpartition("-")[2]
+    return installed[1], tag if release_version(tag) else None
+
+
 def _get_installed_revision(package_name: str) -> str | None:
     """Get the ref a uv tool env's git install was requested at, if any."""
     installed = _get_installed_dist(package_name)
@@ -296,14 +309,20 @@ def _remote_source_messages(
     if remote_commit is None or remote_commit == installed_commit:
         return []
 
-    subjects = _remote_commit_subjects(git_url, installed_commit, remote_commit)
+    subjects, changelog = _remote_changes(
+        git_url, installed_commit, remote_commit, read_changelog=bool(release)
+    )
     if subjects == []:
         return []
     if release:
         revision = _get_installed_revision(name)
         installed = revision if revision and _RELEASE_TAG.fullmatch(revision) else None
         return _format_update_message(
-            name, subjects, release=(installed or installed_commit[:8], release[0])
+            name,
+            subjects,
+            release=(installed or installed_commit[:8], release[0]),
+            changelog=_changelog_url(git_url, release[0]),
+            sections=release_notes(changelog, installed or "", release[0]),
         )
     return _format_update_message(
         name, subjects, installed_commit[:8], remote_commit[:8]
@@ -332,7 +351,10 @@ def _update_check_or_failure(name: str, check: Callable[[], list[str]]) -> list[
     try:
         return check()
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
-        reason = _URL_CREDENTIALS.sub(r"\1", str(exc))
+        reason = str(exc)
+        if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
+            reason += " " + " ".join(stderr_text(exc).strip().splitlines()[-2:])
+        reason = _URL_CREDENTIALS.sub(r"\1", reason)
         return [UpdateCheckFailure(f"[{name}] update check failed: {reason}")]
 
 
@@ -351,7 +373,7 @@ def _local_source_messages(
         Message lines describing available updates, or an empty list.
     """
     from .main_sync import UPSTREAM, point_upstream, run_git, unreleased
-    from .setup import _expand, release_notes, release_version
+    from .setup import _expand, release_version
 
     repo = _expand(source)
     if not (repo / ".git").is_dir():
@@ -359,12 +381,13 @@ def _local_source_messages(
 
     if fetch:
         run_with_retries(
-            ["git", "-C", str(repo), "fetch", "--quiet", "--tags"],
+            ["git", "-C", str(repo), "fetch", "--quiet", "--tags", "--force"],
             check=True,
             capture_output=True,
             text=True,
             timeout=GIT_TIMEOUT,
         )
+        _FETCHED_REPOS.add(repo)
     if not point_upstream(repo, ref):
         return []
     result = subprocess.run(
@@ -395,7 +418,11 @@ def _local_source_messages(
         return _format_update_message(name, subjects)
     changelog = run_git(repo, "show", f"{UPSTREAM}:CHANGELOG.md").stdout
     return _format_update_message(
-        name, release_notes(changelog, old, new) or subjects, release=(old, new)
+        name,
+        subjects,
+        release=(old, new),
+        changelog=_changelog_url(github_api.base_remote_url(repo), new),
+        sections=release_notes(changelog, old, new),
     )
 
 
@@ -429,6 +456,14 @@ def _is_github_remote_url(url: str) -> bool:
         return urlparse(url).hostname == "github.com"
     host = url.split("@", 1)[-1].split(":", 1)[0]
     return host == "github.com"
+
+
+def _changelog_url(url: str, tag: str) -> str | None:
+    """Return the GitHub page of a remote's CHANGELOG.md at ``tag``, or None for a non-GitHub remote."""
+    match = github_api._REMOTE_REPO.search(url)
+    if not (match and _is_github_remote_url(url)):
+        return None
+    return f"https://github.com/{match[1]}/{match[2]}/blob/{tag}/CHANGELOG.md"
 
 
 def _has_github_remote(repo: Path) -> bool:
@@ -600,7 +635,11 @@ def _pull_one_local_source(
     repo = _expand(source)
     if not (repo / ".git").is_dir():
         return unchanged
-    fetch = run_git(repo, "fetch", "--quiet", "--tags")
+    fetch = (
+        subprocess.CompletedProcess([], 0, "", "")
+        if repo in _FETCHED_REPOS
+        else run_git(repo, "fetch", "--quiet", "--tags", "--force")
+    )
     fetch_failed = fetch.returncode != 0
     fetch_error = f"[{name}] could not fetch: {fetch.stderr.strip()}"
     fetch_failure = _PullOutcome(name, False, [fetch_error], failed=True)
@@ -995,10 +1034,12 @@ def _reconfigure_agents(
         try_install_hooks,
         try_install_hooks_antigravity,
         try_install_hooks_claude_code,
+        try_install_hooks_opencode,
         try_install_memory,
         try_install_memory_antigravity,
         try_install_memory_claude_code,
         try_install_memory_codex,
+        try_install_memory_opencode,
         try_install_memory_pi,
     )
 
@@ -1015,6 +1056,11 @@ def _reconfigure_agents(
         try_install_hooks_antigravity()
         if memory_changed:
             try_install_memory_antigravity()
+
+    if "opencode" in manifest:
+        try_install_hooks_opencode()
+        if memory_changed:
+            try_install_memory_opencode()
 
     if "pi" in manifest and memory_changed:
         try_install_memory_pi()
@@ -1108,7 +1154,7 @@ def _get_gh_login() -> str:
 
 def main() -> int | None:
     """Run the llm-prompts CLI, reporting anonymous telemetry when it finishes."""
-    with telemetry.Run(_get_installed_commit) as run, contextlib.ExitStack() as stack:
+    with telemetry.Run(_get_installed_version) as run, contextlib.ExitStack() as stack:
         return _run_command(run, stack)
 
 
@@ -1174,7 +1220,7 @@ def _add_watch_parser(
         source_parser.add_argument(
             "--follow",
             action="store_true",
-            help="Print each match, then keep watching from the new state until the timeout.",
+            help="Print each match, then keep watching from the new state until the timeout or a terminal state.",
         )
 
 
@@ -1255,7 +1301,7 @@ def _run_command(
         "--only",
         type=Path,
         metavar="PATH",
-        help="Reinstall only the prompt built from this edited file.",
+        help="Reinstall only the prompt or pi extension (.ts file) built from this edited file.",
     )
     uninstall_parser = subparsers.add_parser(
         "uninstall",
@@ -1510,7 +1556,7 @@ def _run_command(
         )
 
     if _changes_installed_versions(args):
-        from .auto_update import UPDATE_RUNNING, lock
+        from .auto_update import LOCK_FD_ENV, UPDATE_RUNNING, lock
 
         if not stack.enter_context(lock()):
             raise ExitReason("update_running", UPDATE_RUNNING)
@@ -1546,6 +1592,7 @@ def _run_command(
                     + ["--no-update"],
                     check=False,
                     env=child_env,
+                    pass_fds=(int(os.environ[LOCK_FD_ENV]),),
                 )
                 sys.exit(result.returncode)
 
@@ -1581,6 +1628,15 @@ def _run_command(
 
             try_install_hooks_antigravity()
             try_install_memory_antigravity()
+
+        if "opencode" in agent_names and not args.root:
+            from .install import (
+                try_install_hooks_opencode,
+                try_install_memory_opencode,
+            )
+
+            try_install_hooks_opencode()
+            try_install_memory_opencode()
 
         if "pi" in agent_names and not args.root:
             from .install import try_install_memory_pi
@@ -1667,6 +1723,11 @@ def _run_command(
                 run.outcome = failure
                 sys.exit(1)
             sys.exit(0)
+        if args.only and args.only.suffix == ".ts":
+            raise ExitReason(
+                "other",
+                f"{args.only} is not a source an extension can be reinstalled from alone.",
+            )
 
         resumed = os.environ.pop(_UPDATE_RESUME_ENV, None)
         if resumed is None:

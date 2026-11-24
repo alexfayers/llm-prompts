@@ -33,6 +33,12 @@ def fail_fast() -> Iterator[None]:
         _failing_fast.clear()
 
 
+def stderr_text(error: subprocess.CalledProcessError) -> str:
+    """Return a failed call's stderr as text, whether captured as str or bytes."""
+    stderr = error.stderr or ""
+    return stderr.decode(errors="replace") if isinstance(stderr, bytes) else stderr
+
+
 def with_retries[T](call: Callable[[], T]) -> T:
     """Run a network call and return its result, retrying timeouts and transient failures with backoff."""
     for attempt in range(1, NETWORK_ATTEMPTS):
@@ -41,7 +47,7 @@ def with_retries[T](call: Callable[[], T]) -> T:
         except subprocess.TimeoutExpired:
             pass
         except subprocess.CalledProcessError as error:
-            if not TRANSIENT_FAILURE.search(error.stderr or ""):
+            if not TRANSIENT_FAILURE.search(stderr_text(error)):
                 raise
         time.sleep(RETRY_DELAY_SECONDS * attempt)
     return call()

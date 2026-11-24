@@ -6,6 +6,7 @@ import json
 import logging
 import multiprocessing
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -67,7 +68,7 @@ class TestCommitGuard:
         self, hook: RunHook, repo: Path
     ) -> None:
         blocked = hook("PreShell", command="git commit -m x")
-        assert blocked is not None and "just" in (blocked.block or "")
+        assert blocked is not None and "redirected to a file" in (blocked.block or "")
 
         ran(hook, "just")
         assert hook("PreShell", command="git commit -m x") is None
@@ -127,6 +128,17 @@ class TestCommitGuard:
         assert hook("PreShell", command="git commit -m x") is not None
 
         ran(hook, f"cd {repo} && timeout 600 just", parent_tool_call_id="outer")
+        assert hook("PreShell", command="git commit -m x") is None
+
+    @pytest.mark.parametrize("command", ["just > /tmp/j.log", "just > j.log 2>&1"])
+    def test_a_redirected_run_counts_only_when_it_passes_alone(
+        self, hook: RunHook, command: str
+    ) -> None:
+        ran(hook, command, success=False)
+        ran(hook, f"{command}; echo rc=$?")
+        assert hook("PreShell", command="git commit -m x") is not None
+
+        ran(hook, f"{command} && echo ok")
         assert hook("PreShell", command="git commit -m x") is None
 
     def test_a_run_chained_before_a_command_that_may_change_files_does_not_count(
@@ -230,6 +242,85 @@ class TestCommitGuard:
         blocked = hook("PreShell", command="git commit -m x")
         assert blocked is not None and "make check" in (blocked.block or "")
 
+    @pytest.mark.parametrize(
+        "run",
+        [
+            "wrap build --jobs 4 --flag -- tool release > /tmp/out.log 2>&1",
+            "cd . && timeout 600 tool test",
+        ],
+    )
+    def test_a_run_matching_the_gate_pattern_counts(
+        self,
+        hook: RunHook,
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        run: str,
+    ) -> None:
+        (repo / "justfile").unlink()
+        (repo / "marker").write_text("", encoding="utf-8")
+        (repo / "package.json").write_text(
+            '{"scripts": {"test": "jest"}}', encoding="utf-8"
+        )
+        gates = tmp_path / "overlay/shared/test-gates.json"
+        gates.parent.mkdir(parents=True)
+        pattern = [
+            r"wrap build( --flag| --jobs \d+)* -- tool (release|test)",
+            "tool test",
+        ]
+        gates.write_text(
+            json.dumps({"gates": [{"all": ["marker"], "pattern": pattern}]}),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "llm_prompts.install._discover_overlay_paths",
+            lambda quiet: [tmp_path / "overlay"],
+        )
+        blocked = hook("PreShell", command="git commit -m x")
+        assert blocked is not None
+        assert all(regex in (blocked.block or "") for regex in pattern)
+
+        ran(hook, "npm test")
+        ran(hook, "wrap build -- tool release | cat")
+        ran(hook, "wrap build -- tool release && touch a.txt")
+        ran(hook, "wrap build --other -- tool release")
+        ran(hook, "wrap build '--flag -- tool' release")
+        assert hook("PreShell", command="git commit -m x") is not None
+        ran(hook, run)
+        assert hook("PreShell", command="git commit -m x") is None
+
+    def test_a_gate_with_a_bad_pattern_blocks_with_its_file(
+        self, hook: RunHook, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        gates = tmp_path / "overlay/shared/test-gates.json"
+        gates.parent.mkdir(parents=True)
+        gates.write_text(
+            json.dumps({"gates": [{"all": ["a.txt"], "pattern": "tool ("}]}),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "llm_prompts.install._discover_overlay_paths",
+            lambda quiet: [tmp_path / "overlay"],
+        )
+        ran(hook, "tool test")
+        blocked = hook("PreShell", command="git commit -m x")
+        assert blocked is not None
+        assert str(gates) in (blocked.block or "")
+        assert "`tool (`" in (blocked.block or "")
+
+    def test_a_gate_without_a_command_or_pattern_is_skipped(
+        self, hook: RunHook, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        gates = tmp_path / "overlay/shared/test-gates.json"
+        gates.parent.mkdir(parents=True)
+        gates.write_text(json.dumps({"gates": [{"all": ["a.txt"]}]}), encoding="utf-8")
+        monkeypatch.setattr(
+            "llm_prompts.install._discover_overlay_paths",
+            lambda quiet: [tmp_path / "overlay"],
+        )
+        blocked = hook("PreShell", command="git commit -m x")
+        assert blocked is not None and "`just`" in (blocked.block or "")
+
 
 def _record(args: tuple[Path, int]) -> None:
     path, index = args
@@ -239,7 +330,7 @@ def _record(args: tuple[Path, int]) -> None:
 @pytest.mark.real_io
 def test_receipts_from_parallel_sessions_are_all_kept(tmp_path: Path) -> None:
     path = tmp_path / "receipts.json"
-    with multiprocessing.get_context("fork").Pool(16) as pool:
+    with multiprocessing.get_context("spawn").Pool(16) as pool:
         pool.map(_record, [(path, index) for index in range(64)])
     assert all(ReceiptStore(path).fresh(Path(f"/repo{i}"), str(i)) for i in range(64))
 
@@ -344,3 +435,15 @@ class TestPrimaryCheckoutGuard:
             primary(f"git --git-dir {repo}/.git commit -m v", tmp_path / "w")
             is not None
         )
+
+
+@pytest.mark.real_io
+def test_import_skips_the_shell_parser() -> None:
+    check = (
+        "import sys, llm_prompts.guards.commit_guard; "
+        "print(sorted({'bashlex', 'jinja2'} & set(sys.modules)))"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", check], capture_output=True, text=True, check=True
+    )
+    assert completed.stdout.strip() == "[]"

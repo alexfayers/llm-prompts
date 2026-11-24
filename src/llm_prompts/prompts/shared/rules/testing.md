@@ -19,3 +19,4 @@ paths: '**/test_*.py, **/conftest.py, **/*_test.*, **/*.test.*, **/*.spec.*, **/
 - MUST NOT write one test per item. Cover a repeated case once, and parametrise only when cases differ.
 - MUST NOT copy a production mapping or config table into a test. Assert one representative case.
 - Tests SHOULD be as few and as small as the behaviour allows.
+- Tests MUST cover the states the code meets in real use, not only a fresh setup.

@@ -1,3 +1,4 @@
+import json
 import signal
 import subprocess
 import threading
@@ -21,6 +22,7 @@ from llm_prompts.benchmark.types import (
     PreparedCell,
     Scenario,
     Session,
+    ToolCall,
     Variant,
 )
 
@@ -83,7 +85,10 @@ def cell(tmp_path: Path) -> tuple[PreparedCell, Scenario]:
 
 @pytest.mark.parametrize(
     ("runner", "denied"),
-    [(ClaudeAdapter(), "Agent,Task"), (PiAdapter(), "*_agent*")],
+    [
+        (ClaudeAdapter(), "Agent,Task"),
+        (PiAdapter(), "fork,fork_resume,fork_steer,fork_cancel"),
+    ],
 )
 def test_subagent_tools_are_denied(
     cell: tuple[PreparedCell, Scenario], runner: ClaudeAdapter | PiAdapter, denied: str
@@ -93,14 +98,18 @@ def test_subagent_tools_are_denied(
     assert denied in runner.command(prepared, scenario, "m")
 
 
-def test_a_delegation_scenario_allows_claude_subagents(
-    cell: tuple[PreparedCell, Scenario],
+@pytest.mark.parametrize(
+    ("runner", "flag"),
+    [(ClaudeAdapter(), "--disallowedTools"), (PiAdapter(), "--exclude-tools")],
+)
+def test_a_delegation_scenario_allows_subagents(
+    cell: tuple[PreparedCell, Scenario], runner: ClaudeAdapter | PiAdapter, flag: str
 ) -> None:
     prepared, scenario = cell
 
-    argv = ClaudeAdapter().command(prepared, replace(scenario, delegation=True), "m")
+    argv = runner.command(prepared, replace(scenario, delegation=True), "m")
 
-    assert "--disallowedTools" not in argv
+    assert flag not in argv
 
 
 BASE = Session("bench-base")
@@ -158,6 +167,87 @@ def test_execute_runs_agent_in_workspace_and_logs_stdout_then_stderr(
     assert (prepared.root / "agent.log").read_text() == f"{TOOL_LINE}out\nerr\n"
 
 
+LATER_MS = 4102444800000
+
+
+def _reply(cost: float, at: int = LATER_MS, call: str = "") -> dict[str, Any]:
+    use = [{"type": "toolCall", "id": call, "name": "bash", "arguments": {}}]
+    usage = {"input": 1, "output": 2, "cost": {"total": cost}}
+    return {
+        "role": "assistant",
+        "timestamp": at,
+        "usage": usage,
+        "content": use if call else [],
+    }
+
+
+def _fork_files(
+    home: Path,
+    inherited: str | None,
+    *entries: dict[str, Any],
+    session: str = "seed.jsonl",
+) -> Path:
+    files = home / ".pi" / "agent" / "pi-context" / str(uuid.uuid4())
+    (files / session).parent.mkdir(parents=True)
+    handshake = {"inherited": inherited} if inherited else {}
+    (files / "handshake.json").write_text(json.dumps(handshake))
+    lines = [{"type": "session", "id": "header"}, *entries]
+    (files / session).write_text("".join(json.dumps(e) + "\n" for e in lines))
+    return files
+
+
+def test_pi_forks_add_their_own_usage_and_calls_to_the_cell(
+    popen: FakePopen, cell: tuple[PreparedCell, Scenario]
+) -> None:
+    prepared, scenario = cell
+    prepared = replace(prepared, cell=replace(prepared.cell, agent="pi"))
+    lead = {"type": "message_end", "message": _reply(0.5)}
+    popen.lines = [json.dumps(e) + "\n" for e in (lead, {"type": "agent_settled"})]
+    result = {"role": "toolResult", "toolCallId": "c1", "timestamp": LATER_MS}
+    _fork_files(
+        prepared.home,
+        "seed",
+        {"type": "message", "id": "seed", "message": _reply(0.5)},
+        {"type": "message", "id": "f1", "message": _reply(0.25, call="c1")},
+        {"type": "message", "id": "f2", "message": {**result, "content": "ok"}},
+    )
+    _fork_files(
+        prepared.home, None, {"type": "message", "id": "old", "message": _reply(1, 0)}
+    )
+    _fork_files(
+        prepared.home,
+        None,
+        {"type": "message", "id": "c1", "message": _reply(0.125)},
+        session="session/--ws--/x.jsonl",
+    )
+
+    trace = process.execute(prepared, scenario, "m", None)
+
+    assert (trace.cost_usd, trace.tokens.input, trace.tokens.output) == (0.875, 3, 6)
+    assert [(c.name, c.ok, c.subagent) for c in trace.tool_calls] == [
+        ("Bash", True, True)
+    ]
+    assert trace.turns == 1
+
+
+def test_fork_calls_are_merged_into_the_lead_calls_by_time(tmp_path: Path) -> None:
+    at = LATER_MS / 1000
+    _fork_files(
+        tmp_path,
+        None,
+        {"type": "message", "id": "f1", "message": _reply(0.25, call="c1")},
+    )
+    lead = (
+        ToolCall("Read", {}, True, at - 1),
+        ToolCall("Edit", {}, True, at),
+        ToolCall("Write", {}, True, at + 1),
+    )
+
+    trace = PiAdapter().add_delegates(make_trace(tool_calls=lead), tmp_path, 0)
+
+    assert [c.name for c in trace.tool_calls] == ["Read", "Edit", "Bash", "Write"]
+
+
 def test_on_reply_fires_once_at_the_first_assistant_line(
     popen: FakePopen, cell: tuple[PreparedCell, Scenario]
 ) -> None:
@@ -168,6 +258,32 @@ def test_on_reply_fires_once_at_the_first_assistant_line(
     process.execute(prepared, scenario, "m", None, on_reply=lambda: replies.append(1))
 
     assert replies == [1]
+
+
+def test_on_tool_fires_at_each_tool_line(
+    popen: FakePopen, cell: tuple[PreparedCell, Scenario]
+) -> None:
+    prepared, scenario = cell
+    popen.lines = ["out\n", TOOL_LINE, TOOL_LINE]
+    tools: list[str] = []
+
+    process.execute(prepared, scenario, "m", None, on_tool=tools.append)
+
+    assert tools == ["Bash", "Bash"]
+
+
+def test_on_tool_fires_for_every_tool_in_one_line(
+    popen: FakePopen, cell: tuple[PreparedCell, Scenario]
+) -> None:
+    prepared, scenario = cell
+    popen.lines = [
+        '{"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read"}, {"type": "tool_use", "name": "Bash"}]}}\n'
+    ]
+    tools: list[str] = []
+
+    process.execute(prepared, scenario, "m", None, on_tool=tools.append)
+
+    assert tools == ["Read", "Bash"]
 
 
 def test_timeout_and_kill_all_stop_the_agent(

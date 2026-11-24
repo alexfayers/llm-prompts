@@ -674,7 +674,7 @@ class TestUpdateCheckOnTaskStart:
         assert result.notes == messages
         assert len(result.user_notes) == 1
         note = result.user_notes[0]
-        assert note.user_text == _format_user_text(message)
+        assert note.user_text == _format_user_text("[pkg] update available")
         assert (tmp_path / "update-stamp").exists()
 
     def test_task_start_updates_in_the_background(
@@ -687,7 +687,7 @@ class TestUpdateCheckOnTaskStart:
         messages = ["[pkg] update available:\n- did a thing", _UPDATE_INSTRUCTION]
         with (
             patch("llm_prompts.cli._collect_update_messages", return_value=messages),
-            patch("llm_prompts.auto_update.start", return_value=True) as start,
+            patch("llm_prompts.auto_update.start", return_value="started") as start,
         ):
             result = self._check(plugin, background)
         start.assert_called_once()
@@ -738,7 +738,7 @@ class TestUpdateCheckOnTaskStart:
         messages = ["[pkg] update available:\n- did a thing", _UPDATE_INSTRUCTION]
         with (
             patch("llm_prompts.cli._collect_update_messages", return_value=messages),
-            patch("llm_prompts.auto_update.start", return_value=False),
+            patch("llm_prompts.auto_update.start", return_value="failed"),
             patch("llm_prompts.auto_update.failure", return_value="could not fetch"),
         ):
             result = self._check(plugin, background)
@@ -746,15 +746,36 @@ class TestUpdateCheckOnTaskStart:
         assert "could not fetch" in result.notes[-1]
         assert "could not fetch" in result.user_notes[0].user_text
 
-    def test_user_text_caps_commits_but_agent_notes_stay_full(
-        self, tmp_path: Path, background: list[list[str]]
+    @pytest.mark.parametrize(
+        ("message", "user_text"),
+        [
+            (
+                (
+                    "[pkg] update available (v0.1.0 -> v0.2.0):\n"
+                    "Changelog: https://github.com/o/r/blob/v0.2.0/CHANGELOG.md\n"
+                    "- ## [0.2.0] (2026-02-01)\n  * two"
+                ),
+                (
+                    "[pkg] update available (v0.1.0 -> v0.2.0)\n"
+                    "Changelog: https://github.com/o/r/blob/v0.2.0/CHANGELOG.md"
+                ),
+            ),
+            (
+                "[pkg] update available:\n- change 1\n  * body 1",
+                "[pkg] update available",
+            ),
+        ],
+    )
+    def test_user_text_keeps_the_header_and_link_but_agent_notes_stay_full(
+        self,
+        tmp_path: Path,
+        background: list[list[str]],
+        message: str,
+        user_text: str,
     ) -> None:
         plugin = AutoReinstallPlugin()
         plugin._update_check_debouncer = _ReinstallDebouncer(
             tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
-        )
-        message = "[pkg] update available:\n" + "\n".join(
-            f"- change {i}\n  * body {i}" for i in range(7)
         )
         with patch(
             "llm_prompts.cli._collect_update_messages",
@@ -763,11 +784,7 @@ class TestUpdateCheckOnTaskStart:
             result = self._check(plugin, background)
         assert result is not None
         assert result.notes == [message, _UPDATE_INSTRUCTION]
-        user_text = result.user_notes[0].user_text
-        assert "- change 4" in user_text
-        assert "change 5" not in user_text
-        assert "body" not in user_text
-        assert "... and 2 more" in user_text
+        assert result.user_notes[0].user_text == _format_user_text(user_text)
 
     def test_multiple_messages_produce_single_banner(
         self, tmp_path: Path, background: list[list[str]]
@@ -789,7 +806,9 @@ class TestUpdateCheckOnTaskStart:
         assert result.notes == messages
         assert len(result.user_notes) == 1
         note = result.user_notes[0]
-        assert note.user_text == _format_user_text("\n\n".join(messages))
+        assert note.user_text == _format_user_text(
+            "[pkg-a] update available\n\n[pkg-b] not cloned (run `llm-prompts update`)"
+        )
         assert note.user_text.count(_BANNER_TITLE) == 1
 
     def test_task_start_no_updates_marks_stamp(
@@ -879,7 +898,9 @@ class TestUpdateCheckOnTaskStart:
         cached: bool,
         flags: list[str],
     ) -> None:
-        monkeypatch.setattr("llm_prompts.cli._get_installed_commit", lambda _: None)
+        monkeypatch.setattr(
+            "llm_prompts.cli._get_installed_version", lambda _: (None, None)
+        )
         plugin = AutoReinstallPlugin()
         plugin._update_check_debouncer = _ReinstallDebouncer(
             tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
@@ -894,6 +915,38 @@ class TestUpdateCheckOnTaskStart:
         event = json.loads(telemetry_popen.call_args.args[0][3])
         assert event["properties"]["command"] == "startup-check"
         assert event["properties"]["flags"] == flags
+        assert event["properties"]["auto_update"] == (None if cached else "no-update")
+
+    @pytest.mark.parametrize(
+        ("blocker", "spawn_error", "auto_update"),
+        [
+            (None, None, "started"),
+            ("session", None, "session"),
+            (None, OSError, "error"),
+        ],
+    )
+    def test_task_start_reports_whether_the_automatic_update_started(
+        self,
+        tmp_path: Path,
+        telemetry_popen: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        blocker: str | None,
+        spawn_error: type[Exception] | None,
+        auto_update: str,
+    ) -> None:
+        monkeypatch.setattr(
+            "llm_prompts.cli._get_installed_version", lambda _: (None, None)
+        )
+        monkeypatch.setattr("llm_prompts.auto_update.blocker", lambda _: blocker)
+        monkeypatch.setattr(
+            "llm_prompts.auto_update.subprocess.Popen",
+            MagicMock(side_effect=spawn_error),
+        )
+        messages = ["[pkg] update available:\n- did a thing", _UPDATE_INSTRUCTION]
+        with patch("llm_prompts.cli._collect_update_messages", return_value=messages):
+            refresh_update_check(str(tmp_path / "update-stamp"))
+        event = json.loads(telemetry_popen.call_args.args[0][3])
+        assert event["properties"]["auto_update"] == auto_update
 
     def test_refresh_sends_no_telemetry_before_the_first_run_notice(
         self,
@@ -921,47 +974,6 @@ class TestUpdateCheckOnTaskStart:
             )
         assert result is None
         mock_collect.assert_not_called()
-
-    def test_a_finished_fork_lets_the_next_compaction_update(
-        self, tmp_path: Path, background: list[list[str]]
-    ) -> None:
-        from llm_prompts import auto_update
-
-        plugin = AutoReinstallPlugin()
-        plugin._update_check_debouncer = _ReinstallDebouncer(
-            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
-        )
-        messages = ["[pkg] update available:\n- did a thing", _UPDATE_INSTRUCTION]
-        blockers = iter([auto_update.FORK_RUNNING, auto_update.FORK_RUNNING, None])
-        with (
-            patch(
-                "llm_prompts.cli._collect_update_messages", return_value=messages
-            ) as collect,
-            patch(
-                "llm_prompts.auto_update.blocker", side_effect=lambda _: next(blockers)
-            ),
-            patch("llm_prompts.auto_update.start", return_value=True) as start,
-        ):
-            compact = partial(
-                plugin.on_hook,
-                "TaskStart",
-                task_id="t1",
-                workspace_roots=[],
-                source="compact",
-            )
-            assert compact() is None
-            self._finish(background)
-            refreshed = compact()
-            assert refreshed is not None and refreshed.notes == messages
-            start.assert_not_called()
-            started = compact()
-            assert compact() is None
-        collect.assert_called_once()
-        assert started is not None and started.notes == [
-            *messages,
-            _AUTO_UPDATE_STARTED,
-        ]
-        start.assert_called_once()
 
     @pytest.mark.parametrize(
         ("refreshed", "shown"), [(["new"], ["new"]), (["old"], None)]
@@ -1009,26 +1021,6 @@ class TestUpdateCheckOnTaskStart:
         assert shown is not None and shown.notes == messages
         assert compact() is None
         assert compact("t2") is not None
-
-    def test_a_held_update_that_does_not_start_says_why(self, tmp_path: Path) -> None:
-        stamp = tmp_path / "update-stamp"
-        messages = ["[pkg] update available:\n- did a thing", _UPDATE_INSTRUCTION]
-        debouncer = _ReinstallDebouncer(stamp, interval_seconds=_UPDATE_CHECK_INTERVAL)
-        debouncer.store_notice(messages)
-        debouncer.mark_run()
-        debouncer.hold(True)
-        plugin = AutoReinstallPlugin()
-        plugin._update_check_debouncer = debouncer
-        with (
-            patch("llm_prompts.auto_update.blocker", return_value="off"),
-            patch("llm_prompts.auto_update.start", return_value=False),
-        ):
-            result = plugin.on_hook(
-                "TaskStart", task_id="t1", workspace_roots=[], source="compact"
-            )
-        assert result is not None
-        assert result.notes[:2] == messages
-        assert "did not run: off" in result.notes[-1]
 
     def test_failed_automatic_update_replaces_the_started_line(
         self, tmp_path: Path
@@ -1344,3 +1336,12 @@ class TestSourcePathWatching:
             )
         assert result is not None
         assert any("Auto-reinstalled" in note for note in result.notes)
+
+
+@pytest.mark.real_io
+def test_import_skips_telemetry_and_templates() -> None:
+    check = "import sys, llm_prompts.hooks; print(sorted({'jinja2', 'ssl'} & set(sys.modules)))"
+    completed = subprocess.run(
+        [sys.executable, "-c", check], capture_output=True, text=True, check=True
+    )
+    assert completed.stdout.strip() == "[]"

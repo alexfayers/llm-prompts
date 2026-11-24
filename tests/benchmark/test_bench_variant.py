@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from cline_hooks.core.user_install import DEV_BIN_DIR_ENV
 from conftest import FakeSubprocess
 
 from llm_prompts import setup
@@ -470,4 +471,33 @@ def test_a_fresh_build_whose_template_names_a_cell_home_fails(
     monkeypatch.setattr(variants, "template", polluting)
 
     with pytest.raises(VariantBuildError, match="cell home"):
+        _build(repo)
+
+
+def test_template_installs_hooks_from_the_variant_venv(
+    repo: Path, fake_subprocess: FakeSubprocess
+) -> None:
+    variant = _build(repo)
+
+    installs = [
+        kwargs["env"][DEV_BIN_DIR_ENV]
+        for argv, kwargs in fake_subprocess.calls
+        if argv[1:2] == ["install"]
+    ]
+    assert installs == [str(variant.venv / "bin")] * 4
+
+
+def test_a_build_whose_hooks_run_a_binary_outside_the_variant_fails(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install = variants.template
+
+    def global_hooks(venv_dir: Path, agent: str, template_dir: Path) -> Path:
+        settings = install(venv_dir, agent, template_dir) / "hooks.json"  # type: ignore[arg-type]
+        settings.write_text('{"command": "/home/u/.local/bin/cline-hook pi"}')
+        return template_dir
+
+    monkeypatch.setattr(variants, "template", global_hooks)
+
+    with pytest.raises(VariantBuildError, match="hook binary /home/u/.local/bin"):
         _build(repo)

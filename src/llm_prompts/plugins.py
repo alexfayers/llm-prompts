@@ -118,7 +118,7 @@ def ensure_cloned(plugin: dict[str, Any]) -> Path | None:
         The checkout path, or ``None`` if git is unavailable or an operation
         failed (non-fatal: a broken plugin must not abort the whole install).
     """
-    from .install import log
+    from .console import log
 
     name = str(plugin["name"])
     dest = _checkout_dir(name)
@@ -362,7 +362,7 @@ def discover_skills(checkout: Path, subset: list[str] | None) -> list[tuple[str,
     Raises:
         ValueError: If a name in ``subset`` matches no discovered skill.
     """
-    from .install import log
+    from .console import log
 
     skills: list[tuple[str, Path]] = []
     seen_names: set[str] = set()

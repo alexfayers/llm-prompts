@@ -32,6 +32,7 @@ from llm_prompts.benchmark.fail_fast import (
     TIMEOUT,
     FailFast,
 )
+from llm_prompts.benchmark.live_view import LiveView
 from llm_prompts.benchmark.paths import cell_mount
 from llm_prompts.benchmark.runner import process
 from llm_prompts.benchmark.runner.process import reset_stop
@@ -237,6 +238,7 @@ def _execute(
     prepared: PreparedCell,
     cell: Cell,
     settings: Settings,
+    on_tool: Callable[[str], None],
     on_reply: Callable[[], None] | None,
     session: Session | None,
     cost_offset: float = 0.0,
@@ -252,6 +254,7 @@ def _execute(
                 cell.scenario,
                 settings.models[cell.agent],
                 settings.policy(prepared),
+                on_tool,
                 on_reply,
                 session,
             )
@@ -310,6 +313,7 @@ def _save(
 def _run_cell(
     cell: Cell,
     settings: Settings,
+    on_tool: Callable[[str], None],
     on_reply: Callable[[], None] | None,
     session: Session | None,
     record: Record,
@@ -320,7 +324,9 @@ def _run_cell(
         with prepare(
             cell, settings.seen, settings.stores, settings.os_sandbox
         ) as prepared:
-            scored, error = _execute(prepared, cell, settings, on_reply, session)
+            scored, error = _execute(
+                prepared, cell, settings, on_tool, on_reply, session
+            )
             if not transient.is_startup_error(error) or retries.exhausted:
                 _save(prepared, cell, settings, scored)
                 ended = time.monotonic()
@@ -365,6 +371,7 @@ def _run_follow_up(
     open_prepared: Callable[[], AbstractContextManager[PreparedCell]],
     cell: Cell,
     settings: Settings,
+    on_tool: Callable[[str], None],
     ended: float,
     cost_offset: float,
     base_trace: Trace | None,
@@ -379,6 +386,7 @@ def _run_follow_up(
                 prepared,
                 cell,
                 settings,
+                on_tool,
                 None,
                 _follow_up_session(cell),
                 cost_offset,
@@ -443,10 +451,12 @@ class ChainRunner:
         self,
         settings: Settings,
         tracker: FailFast,
+        live: LiveView,
         chains: Sequence[tuple[Cell, list[Cell]]],
     ) -> None:
         self.settings = settings
         self.tracker = tracker
+        self.live = live
         self.rows: dict[str, ResultRow] = {}
         self._lock = threading.Lock()
         self._stopped = threading.Event()
@@ -476,6 +486,7 @@ class ChainRunner:
     def _start(self, cell: Cell) -> None:
         if self._stopped.is_set():
             raise CancelledError
+        self.live.start(cell.id, label(cell))
 
     def _record(self, cell: Cell, row: ResultRow) -> None:
         if (reason := self.tracker.aborted) and not row.skipped:
@@ -483,6 +494,10 @@ class ChainRunner:
         self.rows[cell.id] = row
         with self._lock, (self.settings.run_dir / "results.jsonl").open("a") as handle:
             handle.write(json.dumps(row.to_json()) + "\n")
+        if row.skipped:
+            self.live.skip(cell.id, label(cell), row.skipped)
+        else:
+            self.live.finish(cell.id, label(cell), row)
         if self.tracker.observe(cell, row):
             self._abort()
 
@@ -506,6 +521,9 @@ class ChainRunner:
     def _settle_failed(self, cell: Cell, error: str) -> None:
         self._settle(cell, partial(_fork_row, cell, self.settings, error, None))
 
+    def _tool(self, cell: Cell) -> Callable[[str], None]:
+        return lambda name: self.live.tool(cell.id, name)
+
     def _spawn_follow_up(
         self,
         cell: Cell,
@@ -521,6 +539,7 @@ class ChainRunner:
                 open_prepared,
                 cell,
                 self.settings,
+                self._tool(cell),
                 ended,
                 offset,
                 base_trace,
@@ -613,6 +632,7 @@ class ChainRunner:
                 _run_cell(
                     base,
                     self.settings,
+                    self._tool(base),
                     gate.set if leads else None,
                     Session(BASE_SESSION) if follow_ups else None,
                     self._record,
@@ -662,9 +682,10 @@ def run(
     chains = _chains(cells)
     with (
         settings.stores,
+        LiveView([label(cell) for cell in cells]) as live,
         ThreadPoolExecutor(max_workers=jobs) as pool,
     ):
-        runner = ChainRunner(settings, FailFast(fail_fast_after), chains)
+        runner = ChainRunner(settings, FailFast(fail_fast_after), live, chains)
         futures = [pool.submit(runner.run_chain, *chain) for chain in chains]
         try:
             for future in as_completed(futures):

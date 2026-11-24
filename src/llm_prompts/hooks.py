@@ -17,9 +17,9 @@ from typing import Any
 
 from cline_hooks.core.plugin import HookResult, HooksPlugin, UserFacingNote
 
-from . import network, telemetry, telemetry_core
+from . import network
 from .manifest import read_manifest
-from .setup import _UPDATE_INSTRUCTION
+from .setup import _CHANGELOG_PREFIX, _UPDATE_INSTRUCTION
 
 logger = logging.getLogger("hooks.llm-prompts")
 
@@ -109,33 +109,25 @@ _BANNER_TITLE = r"""
  |_|_|_| |_| |_|     | .__/|_|  \___/|_| |_| |_| .__/ \__|___/
                      |_|                       |_|
 """.strip("\n")
-_USER_NOTICE_COMMIT_CAP = 5
+_UPDATE_LIST_HEADER = re.compile(r"(\[[^\]]+\] update available(?: \(.+\))?):")
 _ANSI_COLOR = "\033[1;36m"  # bold cyan
 _ANSI_RESET = "\033[0m"
 
 
-def _shorten_for_user(message: str, cap: int = _USER_NOTICE_COMMIT_CAP) -> str:
-    """Keep a message's header and its first ``cap`` commit subjects, dropping bodies.
+def _shorten_for_user(message: str) -> str:
+    """Keep an update message's header and changelog link, dropping its listed changes.
 
     Args:
         message: A single update message as built by ``_format_update_message``.
-        cap: Maximum number of commit subjects to keep.
 
     Returns:
-        The shortened message, ending in "... and N more" when subjects were cut.
+        The header and any changelog link line, or ``message`` unchanged when it lists nothing.
     """
     header, *rest = message.split("\n")
-    subjects = [line for line in rest if line.startswith("- ")]
-    if not subjects:
+    if not (match := _UPDATE_LIST_HEADER.fullmatch(header)):
         return message
-    already_cut = sum(
-        int(n) for n in re.findall(r"^\.\.\. and (\d+) more$", message, re.MULTILINE)
-    )
-    hidden = len(subjects) - cap + already_cut
-    kept = [header, *subjects[:cap]]
-    if hidden > 0:
-        kept.append(f"... and {hidden} more")
-    return "\n".join(kept)
+    links = rest[:1] if rest and rest[0].startswith(_CHANGELOG_PREFIX) else []
+    return "\n".join([match[1], *links])
 
 
 def _format_user_text(stripped_message: str) -> str:
@@ -177,16 +169,8 @@ class _ReinstallDebouncer:
         self._notice_cache = stamp_path.with_name(stamp_path.name + ".notice")
         self._lock = stamp_path.with_name(stamp_path.name + ".lock")
         self._refresh_lock = stamp_path.with_name(stamp_path.name + ".refresh.lock")
-        self._held = stamp_path.with_name(stamp_path.name + ".held")
         self._shown = stamp_path.with_name(stamp_path.name + ".shown")
         self._interval_seconds = interval_seconds
-
-    def hold(self, held: bool) -> None:
-        """Record or clear that a running pi fork holds the automatic update."""
-        if held:
-            self._held.touch()
-        else:
-            self._held.unlink(missing_ok=True)
 
     def was_shown(self, task_id: str, messages: list[str]) -> bool:
         """Whether this session was already shown these update messages."""
@@ -209,10 +193,6 @@ class _ReinstallDebouncer:
         recent = dict(list(shown.items())[-_SHOWN_SESSIONS_KEPT:])
         self._shown.parent.mkdir(parents=True, exist_ok=True)
         self._shown.write_text(json.dumps(recent), encoding="utf-8")
-
-    def is_held(self) -> bool:
-        """Whether a running pi fork held the automatic update at the last check."""
-        return self._held.exists()
 
     def should_run(self) -> bool:
         """Return True if enough time has passed since the last run."""
@@ -321,17 +301,18 @@ def refresh_update_check(stamp: str, refs: str = "remote") -> None:
         stamp: The update-check stamp path of the session that started this refresh.
         refs: ``remote`` to fetch, or ``local`` to rebuild the notice from the refs already fetched.
     """
+    from . import telemetry, telemetry_core
     from .cli import (
         UpdateCheckFailure,
         _collect_update_messages,
-        _get_installed_commit,
+        _get_installed_version,
         _installed_fingerprint,
     )
 
     debouncer = _ReinstallDebouncer(Path(stamp))
     with (
         debouncer.refreshing() as alone,
-        telemetry.Run(_get_installed_commit) as run,
+        telemetry.Run(_get_installed_version) as run,
     ):
         if not alone:
             return
@@ -366,40 +347,23 @@ def refresh_update_check(stamp: str, refs: str = "remote") -> None:
             if refs == "remote":
                 debouncer.mark_run(failed)
             if not failed:
-                held = bool(messages) and _held_by_fork(fingerprint)
-                debouncer.hold(held)
-                if messages and not held and _started_auto_update(fingerprint):
+                run.auto_update = (
+                    _start_auto_update(fingerprint) if messages else "no-update"
+                )
+                if run.auto_update == "started":
                     messages = [*messages, _AUTO_UPDATE_STARTED]
             debouncer.store_notice(messages, fingerprint)
 
 
-def _started_auto_update(fingerprint: str) -> bool:
-    """Start the automatic update, and return whether it started, logging instead of raising."""
+def _start_auto_update(fingerprint: str) -> str:
+    """Start the automatic update, and return ``started`` or what blocked it, logging instead of raising."""
     from . import auto_update
 
     try:
         return auto_update.start(fingerprint)
     except (Exception, SystemExit):
         logger.warning("Failed to start the automatic llm-prompts update")
-        return False
-
-
-def _update_blocker(fingerprint: str) -> str | None:
-    """Return why the automatic update must not run, logging instead of raising."""
-    from . import auto_update
-
-    try:
-        return auto_update.blocker(fingerprint)
-    except (Exception, SystemExit):
-        logger.warning("Failed to check what holds the automatic llm-prompts update")
-        return None
-
-
-def _held_by_fork(fingerprint: str) -> bool:
-    """Whether only a running pi fork holds the automatic update."""
-    from . import auto_update
-
-    return _update_blocker(fingerprint) == auto_update.FORK_RUNNING
+        return "error"
 
 
 def _auto_update_failure(fingerprint: str) -> str | None:
@@ -460,7 +424,8 @@ class AutoReinstallPlugin(HooksPlugin):
         if agent_type or _is_headless():
             return None
 
-        from .cli import _get_installed_commit, _installed_fingerprint
+        from . import telemetry
+        from .cli import _get_installed_version, _installed_fingerprint
 
         try:
             fingerprint = _installed_fingerprint()
@@ -468,7 +433,7 @@ class AutoReinstallPlugin(HooksPlugin):
             logger.warning("Failed to read installed llm-prompts versions")
             return None
         with (
-            telemetry.Run(_get_installed_commit) as run,
+            telemetry.Run(_get_installed_version) as run,
             self._update_check_debouncer.single_flight() as holds_lock,
         ):
             fetch = self._update_check_debouncer.should_run()
@@ -481,22 +446,6 @@ class AutoReinstallPlugin(HooksPlugin):
             elif source in _DEBOUNCED_TASK_START_SOURCES:
                 messages = []
                 if (
-                    holds_lock
-                    and self._update_check_debouncer.is_held()
-                    and not _held_by_fork(fingerprint)
-                ):
-                    self._update_check_debouncer.hold(False)
-                    notice = self._update_check_debouncer.cached_notice(fingerprint)
-                    self._update_check_debouncer.record_shown(task_id, notice)
-                    if _started_auto_update(fingerprint):
-                        messages = [*notice, _AUTO_UPDATE_STARTED]
-                    else:
-                        blocked = _update_blocker(fingerprint) or "it did not start"
-                        messages = [
-                            *notice,
-                            f"The automatic update did not run: {blocked}\nRun `llm-prompts update` to update.",
-                        ]
-                elif (
                     notice := self._update_check_debouncer.cached_notice(fingerprint)
                 ) and not self._update_check_debouncer.was_shown(task_id, notice):
                     self._update_check_debouncer.record_shown(task_id, notice)

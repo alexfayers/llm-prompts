@@ -11,12 +11,15 @@ export type Role = {
 	tools: string[];
 	/** Allowed MCP tool names (`mcp__<server>__<tool>`), as globs. */
 	mcp: string[];
+	readMcp?: ReadMcp[];
 	skills: string[];
 	/** The role writes in its own worktree. */
 	writes: boolean;
 };
 
 export type Block = { block: true; reason: string };
+
+export type ReadMcp = { tool: string; argsMatch?: Record<string, string> };
 
 const WARM_OPENING = "You are the delegate that the conversation above asked to fork, so do not call fork.";
 const COLD_OPENING = "You are a delegate given one self-contained task, so do not call fork.";
@@ -103,10 +106,36 @@ function namesMainCheckout(command: string, worktree: string, repo: string): boo
 
 /** Returns a block when the role may not make this call. A role with `writes` may write only inside its worktree, and may not name its main checkout `repo` in a shell command. */
 /** Whether `role` may use the tool at all, before any check of its input. */
-export const mayUse = (role: Role, toolName: string): boolean => matches(toolName.startsWith("mcp__") ? role.mcp : role.tools, toolName);
+export const mayUse = (role: Role, toolName: string): boolean => toolName.startsWith("mcp__") ? matches([...role.mcp, ...(role.readMcp ?? []).map(({ tool }) => tool)], toolName) : matches(role.tools, toolName);
+
+export const withReadMcp = (role: Role, readMcp: ReadMcp[] = []): Role => ({ ...role, readMcp });
+
+const anchored = (pattern: string) => new RegExp(`^(?:${pattern})(?![\\s\\S])`);
+const argsMatch = ({ argsMatch = {} }: ReadMcp, input: Record<string, unknown>) => Object.entries(argsMatch).every(([key, pattern]) => typeof input[key] === "string" && anchored(pattern).test(input[key]));
+
+const compiles = (pattern: unknown) => {
+	try {
+		return typeof pattern === "string" && Boolean(anchored(pattern));
+	} catch {
+		return false;
+	}
+};
+const isReadMcp = (entry: unknown): entry is ReadMcp => {
+	const { tool, argsMatch } = (entry ?? {}) as { tool?: unknown; argsMatch?: unknown };
+	return typeof tool === "string" && (argsMatch === undefined || (typeof argsMatch === "object" && argsMatch !== null && !Array.isArray(argsMatch) && Object.values(argsMatch).every(compiles)));
+};
+
+export function checkReadMcp(value: unknown): { valid: ReadMcp[]; dropped: unknown[] } {
+	if (value === undefined) return { valid: [], dropped: [] };
+	if (!Array.isArray(value)) return { valid: [], dropped: [value] };
+	return { valid: value.filter(isReadMcp), dropped: value.filter((entry) => !isReadMcp(entry)) };
+}
 
 export function decide(role: Role, toolName: string, input: Record<string, unknown>, worktree?: string, repo?: string): Block | undefined {
 	if (!mayUse(role, toolName)) return { block: true, reason: `role ${role.name} may not use ${toolName}` };
+	if (toolName.startsWith("mcp__") && !matches(role.mcp, toolName) && !role.readMcp?.some((entry) => globRegExp(entry.tool).test(toolName) && argsMatch(entry, input))) {
+		return { block: true, reason: `role ${role.name} may call ${toolName} only with arguments the llmPrompts.forks.readMcp setting allows` };
+	}
 	if (!role.writes) return undefined;
 	if (worktree && repo && SHELL_TOOLS.includes(toolName) && typeof input.command === "string" && namesMainCheckout(input.command, worktree, repo)) {
 		return { block: true, reason: `role ${role.name} may not name the main checkout ${repo} in a command, even to read it. Use your worktree ${worktree} instead` };
@@ -153,11 +182,11 @@ export function rewriteForWorktree(toolName: string, input: Record<string, unkno
 const optionalString = (value: unknown) => (typeof value === "string" ? value : undefined);
 
 /** Reads a delegate's handshake. `inherited` is the last entry a warm fork copied from main's session. */
-export function readHandshake(file: string): { role: Role; worktree?: string; repo?: string; inherited?: string } | undefined {
+export function readHandshake(file: string): { role: Role; worktree?: string; repo?: string; inherited?: string | null; readMcp: ReadMcp[] } | undefined {
 	try {
-		const { role, worktree, repo, inherited } = JSON.parse(fs.readFileSync(file, "utf8")) as { role?: string; worktree?: unknown; repo?: unknown; inherited?: unknown };
+		const { role, worktree, repo, inherited, readMcp } = JSON.parse(fs.readFileSync(file, "utf8")) as { role?: string; worktree?: unknown; repo?: unknown; inherited?: unknown; readMcp?: unknown };
 		if (role === undefined || !Object.hasOwn(ROLES, role)) return undefined;
-		return { role: ROLES[role as Role["name"]], worktree: optionalString(worktree), repo: optionalString(repo), inherited: optionalString(inherited) };
+		return { role: ROLES[role as Role["name"]], worktree: optionalString(worktree), repo: optionalString(repo), inherited: inherited === null ? null : optionalString(inherited), readMcp: checkReadMcp(readMcp).valid };
 	} catch {
 		return undefined;
 	}
@@ -170,7 +199,7 @@ export function childGuard(handshakeFile: string): (event: ToolCallEvent, ctx: E
 		if (!child) return { block: true, reason: `pi-context handshake ${handshakeFile} is unreadable or names an unknown role` };
 		const worktree = child.role.writes ? child.worktree : undefined;
 		if (worktree) rewriteForWorktree(toolName, input, worktree, cwd);
-		return decide(child.role, toolName, input, worktree, child.repo);
+		return decide(withReadMcp(child.role, child.readMcp), toolName, input, worktree, child.repo);
 	};
 }
 

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 
 mock.timers.enable({ apis: ["setTimeout"] });
-mock.module("typebox", { namedExports: { Type: new Proxy({}, { get: () => () => ({}) }) } });
+mock.module("typebox", { exports: { Type: new Proxy({}, { get: () => () => ({}) }) } });
 const { default: register } = await import("../../src/llm_prompts/prompts/pi/extensions/codemode-sleep.ts");
 
 let tool: any;

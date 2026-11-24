@@ -19,6 +19,7 @@ from .size_limits import (
     ALWAYS_SKILL_FRONTMATTER_BYTES,
     BYTES_PER_TOKEN,
     COLLECTION_BYTES,
+    COLLECTION_SHARE_BYTES,
     ON_DEMAND_AGENT_BODY_BYTES,
     ON_DEMAND_ROLE_RULE_BYTES,
     ON_DEMAND_SKILL_BODY_BYTES,
@@ -41,6 +42,8 @@ class Row:
         base: Base value, or None if the artifact is new.
         head: Head value, or None if the artifact was removed.
         ceiling: Ceiling in force at head (base if removed), or None.
+        old_ceiling: Ceiling in force at base where it differs from
+            ``ceiling``, else None.
     """
 
     metric: str
@@ -50,6 +53,7 @@ class Row:
     base: int | None
     head: int | None
     ceiling: int | None
+    old_ceiling: int | None = None
 
     @property
     def delta(self) -> int:
@@ -74,7 +78,7 @@ class Row:
 
 
 _Key = tuple[str, str, str]
-_Values = tuple[str, str, str, int | None, int | None, int | None]
+_Values = tuple[str, str, str, int | None, int | None, int | None, int | None]
 _SMALLER = "&#x1F7E2;"
 _LARGER = "&#x1F7E1;"
 _NEW = "&#x1F195;"
@@ -181,6 +185,10 @@ def compare(
             None if base_artifact is None else int(base_artifact.value),
             None if head_artifact is None else int(head_artifact.value),
             ceiling_for(artifact),
+            None
+            if base_artifact is None
+            or ceiling_for(base_artifact) == ceiling_for(artifact)
+            else ceiling_for(base_artifact),
         )
         targets_by_values.setdefault(values, []).append(target)
     return [
@@ -280,7 +288,9 @@ def _row_lines(rows: Iterable[Row]) -> list[list[str]]:
                 if row.base is None or row.head is None
                 else [_signed(row.delta), _pct(row)]
             ),
-            _count(row.ceiling),
+            _count(row.ceiling)
+            if row.old_ceiling is None
+            else f"{_count(row.old_ceiling)} -> {_count(row.ceiling)}",
         ]
         for row in rows
     ]
@@ -390,40 +400,73 @@ def render_markdown(rows: Sequence[Row]) -> str:
 
     Returns:
         Markdown with per-target badges, a changed-file headline, one summary
-        table of the targets whose size changed, and a collapsed table of the
-        changed files.
+        table of the targets whose size changed, a collapsed table of the
+        changed files, a collapsed table of the changed limits, and a list of
+        the targets over their collection limit.
     """
     collection = [row for row in rows if row.metric == COLLECTION_BYTES]
     sizes = _sizes_by_target(row for row in rows if row.metric in _COLUMN_OF)
     totals = {target: row for row in collection for target in row.targets}
     changed = sorted(
-        (r for r in rows if r.metric not in _COLUMN_OF and r.delta),
+        (
+            r
+            for r in rows
+            if r.metric not in _COLUMN_OF
+            and r.metric != COLLECTION_SHARE_BYTES
+            and r.delta
+        ),
         key=lambda r: -abs(r.delta),
     )
+    limits = [row for row in rows if row.old_ceiling is not None]
     badges = " ".join(
         _badge(target, _badge_row(row, sizes.get(target, {})))
         for row in collection
         for target in row.targets
     )
     changed_files = {row.file for row in changed}
-    over_files = {row.file for row in changed if row.over}
+    over = {
+        (row.file, target if row.metric == COLLECTION_BYTES else "")
+        for row in [*changed, *limits, *collection]
+        if row.over
+        for target in row.targets
+    }
     headline = (
         f"**Prompt size** "
-        f"{_OVER_LIMIT if over_files else _trend(sum(row.delta for row in changed))} "
+        f"{_OVER_LIMIT if over else _trend(sum(row.delta for row in changed))} "
         f"{len(changed_files)} {'file' if len(changed_files) == 1 else 'files'} "
         f"changed size in this PR, "
-        f"{len(over_files)} over the limit"
+        f"{len(over)} over the limit"
     )
-    if not changed:
-        return f"{badges}\n\n{headline}\n\nThis PR changes no prompt sizes.\n"
-    sections = [
-        badges,
-        headline,
-        "\n".join(_table(_SUMMARY_HEADER, _summary_lines(sizes, totals))),
-        _details("Details", _table(_DETAIL_HEADER, _detail_lines(sizes, totals))),
-        _details("Changed files", _changed_files_tables(changed)),
+    if limits:
+        headline += (
+            f", {len(limits)} {'limit' if len(limits) == 1 else 'limits'} changed"
+        )
+    over_targets = [
+        f"- {target}: {row.head:,} bytes, limit {row.ceiling:,}"
+        for row in collection
+        if row.over and row.head is not None and row.ceiling is not None
+        for target in row.targets
     ]
-    return "\n\n".join(sections) + "\n"
+    over_list = ["\n".join(over_targets)] if over_targets else []
+    if not changed and not limits:
+        return (
+            "\n\n".join(
+                [badges, headline, "This PR changes no prompt sizes.", *over_list]
+            )
+            + "\n"
+        )
+    sections = [badges, headline]
+    if changed:
+        sections += [
+            "\n".join(_table(_SUMMARY_HEADER, _summary_lines(sizes, totals))),
+            _details("Details", _table(_DETAIL_HEADER, _detail_lines(sizes, totals))),
+            _details("Changed files", _changed_files_tables(changed)),
+        ]
+    if limits:
+        sections.append(
+            _details("Changed limits", _table(_ROW_HEADER, _row_lines(limits)))
+        )
+    return "\n\n".join([*sections, *over_list]) + "\n"
 
 
 def missing_note(base_prompts: Path, head_prompts: Path | None) -> str | None:
@@ -471,8 +514,13 @@ def measure(
         base_prompts,
         *(discovered[1:] if base_overlays is None else base_overlays),
     ]
+    base_targets = tuple(
+        target
+        for target in CHECKED_TARGETS
+        if (base_prompts / target / "vars.json").is_file()
+    )
     head = check(head_roots, vars_root=head_prompts)
-    base = check(base_roots, vars_root=base_prompts)
+    base = check(base_roots, targets=base_targets, vars_root=base_prompts)
     return compare(base.artifacts, head.artifacts, base_roots, head_roots)
 
 

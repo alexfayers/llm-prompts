@@ -1,5 +1,149 @@
 # Changelog
 
+## [0.7.0](https://github.com/alexfayers/llm-prompts/compare/v0.6.3...v0.7.0) (2026-11-24)
+
+
+### Features
+
+* add opencode as an install target ([#548](https://github.com/alexfayers/llm-prompts/issues/548)) ([1e4a8a6](https://github.com/alexfayers/llm-prompts/commit/1e4a8a6bd74885da9ce0d68d8b3d077e7f6b62db))
+* install cline-hooks for opencode ([#549](https://github.com/alexfayers/llm-prompts/issues/549)) ([1fbbd00](https://github.com/alexfayers/llm-prompts/commit/1fbbd00da42b49fe983167bdc3a9504d8c639aad))
+
+
+### Bug Fixes
+
+* keep the old file when a managed file write fails ([#611](https://github.com/alexfayers/llm-prompts/issues/611)) ([278998c](https://github.com/alexfayers/llm-prompts/commit/278998c316ba70f3742a7ce7ed1054c07b07b534))
+* **pi-context:** send main's prompt cache key from a warm fork ([#586](https://github.com/alexfayers/llm-prompts/issues/586)) ([0d20825](https://github.com/alexfayers/llm-prompts/commit/0d2082580358f66a393f6f5db3a2c6d53e19cffd))
+* **pi:** rebuild the board note from visible notes and skip nested tool results ([#610](https://github.com/alexfayers/llm-prompts/issues/610)) ([6f14f9b](https://github.com/alexfayers/llm-prompts/commit/6f14f9bdbedb960d7a67aecbb0b9e627e13e0cb1))
+* **update:** run the automatic update while unrelated forks run ([#585](https://github.com/alexfayers/llm-prompts/issues/585)) ([dac3db8](https://github.com/alexfayers/llm-prompts/commit/dac3db883275a5077d79de97e4869ccac3ad49ea))
+
+
+### Miscellaneous Chores
+
+* **deps:** update all non-major dependencies ([#607](https://github.com/alexfayers/llm-prompts/issues/607)) ([a936ae6](https://github.com/alexfayers/llm-prompts/commit/a936ae6f4cae558278ecbd6b4fca6708b8c381bd))
+* run the just checks in parallel ([#612](https://github.com/alexfayers/llm-prompts/issues/612)) ([73c288c](https://github.com/alexfayers/llm-prompts/commit/73c288c2c5e4ea86c93bace3503d6adce389da6a))
+
+## [0.6.3](https://github.com/alexfayers/llm-prompts/compare/v0.6.2...v0.6.3) (2026-11-23)
+
+
+### Bug Fixes
+
+* **pi:** time out a stuck tower_do_patch board call and stop it holding the nested-call queue ([#570](https://github.com/alexfayers/llm-prompts/issues/570)) ([6bbda79](https://github.com/alexfayers/llm-prompts/commit/6bbda79bf8d5ac386e423ce174430b0deabc98d3))
+
+
+### Miscellaneous Chores
+
+* **deps:** lock file maintenance ([#605](https://github.com/alexfayers/llm-prompts/issues/605)) ([55cd399](https://github.com/alexfayers/llm-prompts/commit/55cd399fc1187d018809197f18285aa1ed15dca4))
+
+## [0.6.2](https://github.com/alexfayers/llm-prompts/compare/v0.6.1...v0.6.2) (2026-11-22)
+
+
+### Miscellaneous Chores
+
+* **deps:** update all non-major dependencies to v1.6.0 ([#596](https://github.com/alexfayers/llm-prompts/issues/596)) ([1d020d9](https://github.com/alexfayers/llm-prompts/commit/1d020d9003cdec8edbc27f605b31d0cf006a53d2))
+* **deps:** update github actions ([#599](https://github.com/alexfayers/llm-prompts/issues/599)) ([e6891eb](https://github.com/alexfayers/llm-prompts/commit/e6891eb09480fc379c0e3738b6d7ffa8c7add280))
+
+## [0.6.1](https://github.com/alexfayers/llm-prompts/compare/v0.6.0...v0.6.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **session-start:** allow running the checklist on Python 3.9 ([#589](https://github.com/alexfayers/llm-prompts/issues/589)) ([7f590d3](https://github.com/alexfayers/llm-prompts/commit/7f590d3376a5be6344c363650fc9f1fe3fbaafaa))
+* **watch:** end a --follow watch at a source's terminal state ([#547](https://github.com/alexfayers/llm-prompts/issues/547)) ([8805414](https://github.com/alexfayers/llm-prompts/commit/88054141be5191b3c0e4f237523876b9745ae4f0))
+
+
+### Miscellaneous Chores
+
+* sync shared files from llm-prompts-ci ([#592](https://github.com/alexfayers/llm-prompts/issues/592)) ([0822389](https://github.com/alexfayers/llm-prompts/commit/082238976ce198ad4841812bc466ce6253ba915e))
+
+## [0.6.0](https://github.com/alexfayers/llm-prompts/compare/v0.5.0...v0.6.0) (2026-11-20)
+
+
+### Features
+
+* **mcp-hints:** shorten the MCP tool list ([#564](https://github.com/alexfayers/llm-prompts/issues/564)) ([196ac1e](https://github.com/alexfayers/llm-prompts/commit/196ac1e8637162fbce2263a2f175337d456653ca))
+* **pi:** tell agents to pass taskKey to tower_do_status ([#565](https://github.com/alexfayers/llm-prompts/issues/565)) ([8bfaa3d](https://github.com/alexfayers/llm-prompts/commit/8bfaa3d6b52cc1e67bfefd9d0e1b70520de3e7ba))
+* **prompts:** require the simplest shell command without default-only flags ([#568](https://github.com/alexfayers/llm-prompts/issues/568)) ([23d84f6](https://github.com/alexfayers/llm-prompts/commit/23d84f6f4cc69a6008b22af9132a96976f676a6d))
+* **update:** show users the version and changelog link, give agents the full changelog ([#557](https://github.com/alexfayers/llm-prompts/issues/557)) ([8c93e72](https://github.com/alexfayers/llm-prompts/commit/8c93e72ba20d86303e5ee89817e8821490b40fc8))
+
+
+### Bug Fixes
+
+* **auto-update:** ignore untracked files when checking for local changes (+2 more) ([#558](https://github.com/alexfayers/llm-prompts/issues/558)) ([485eba2](https://github.com/alexfayers/llm-prompts/commit/485eba27f7c2ecc610e6b0ade3aea705644d01f8))
+* **benchmark:** run each variant's hooks from its own build ([#574](https://github.com/alexfayers/llm-prompts/issues/574)) ([16c63e2](https://github.com/alexfayers/llm-prompts/commit/16c63e27930a0a55d684b54624483e28989a454d))
+* **checkpoint:** give the checkpoint advice only in the first nudge after a reset ([#567](https://github.com/alexfayers/llm-prompts/issues/567)) ([cabcd0d](https://github.com/alexfayers/llm-prompts/commit/cabcd0d3ba1ddda232f2289994d102912a4fd4ff))
+* **install:** keep pi's managed manifest records across a frozen install ([#569](https://github.com/alexfayers/llm-prompts/issues/569)) ([984dd8f](https://github.com/alexfayers/llm-prompts/commit/984dd8f1281c5f98d187d2bf04d4c3a50761175e))
+* **pi-context:** accept an empty ref at the end of an outcome line ([#566](https://github.com/alexfayers/llm-prompts/issues/566)) ([ad12c50](https://github.com/alexfayers/llm-prompts/commit/ad12c50772b29aaa9fd666db176a3b3cb854fb3c))
+* **update:** update moved release tags instead of failing the fetch ([#556](https://github.com/alexfayers/llm-prompts/issues/556)) ([cc96d66](https://github.com/alexfayers/llm-prompts/commit/cc96d662938ffddf82828a369b2ad6a17bcc6e20))
+
+
+### Performance Improvements
+
+* **hooks:** load telemetry only when the plugin sends it (+1 more) ([#579](https://github.com/alexfayers/llm-prompts/issues/579)) ([a50c5c3](https://github.com/alexfayers/llm-prompts/commit/a50c5c33b6e5b0c958c32bdec9e4e57ae6513daf))
+
+
+### Miscellaneous Chores
+
+* **deps:** update github actions ([#588](https://github.com/alexfayers/llm-prompts/issues/588)) ([3ab8ad4](https://github.com/alexfayers/llm-prompts/commit/3ab8ad439901ef01e08a5cf2845b6c20ddc4c757))
+* **deps:** update pi extensions ([#572](https://github.com/alexfayers/llm-prompts/issues/572)) ([8b69d84](https://github.com/alexfayers/llm-prompts/commit/8b69d8470b5570451944a971dfa2df43a2408557))
+* **deps:** update pi extensions ([#576](https://github.com/alexfayers/llm-prompts/issues/576)) ([0e8b16f](https://github.com/alexfayers/llm-prompts/commit/0e8b16fe35d680b2dd1eb1debca4d670d88b6d9a))
+* **deps:** update pi extensions ([#584](https://github.com/alexfayers/llm-prompts/issues/584)) ([3aaef29](https://github.com/alexfayers/llm-prompts/commit/3aaef29a80c0ef3144f2fa12c0dfaf52da2a2585))
+
+## [0.5.0](https://github.com/alexfayers/llm-prompts/compare/v0.4.0...v0.5.0) (2026-11-19)
+
+
+### Features
+
+* **benchmark:** show a live view of running cells on a terminal ([#562](https://github.com/alexfayers/llm-prompts/issues/562)) ([dd19498](https://github.com/alexfayers/llm-prompts/commit/dd19498e75bceaeb87f66bc02364964c484cb2e8))
+* **pi-context:** let a setting allow extra MCP tools for delegates ([#555](https://github.com/alexfayers/llm-prompts/issues/555)) ([98a5b63](https://github.com/alexfayers/llm-prompts/commit/98a5b638d24f61dece0be31e07447bb4f9ad98da))
+* **prompts:** test real-use states and check rule compressions ([#528](https://github.com/alexfayers/llm-prompts/issues/528)) ([780f692](https://github.com/alexfayers/llm-prompts/commit/780f6922e756da2afc5874c21d9782e00ffd49a2))
+* **telemetry:** send each source's release tag in versions ([#559](https://github.com/alexfayers/llm-prompts/issues/559)) ([54b60dc](https://github.com/alexfayers/llm-prompts/commit/54b60dc253df94bdb418ed1179ad142255882dcd))
+
+
+### Bug Fixes
+
+* **install:** hand the update lock to the install --no-update child ([#552](https://github.com/alexfayers/llm-prompts/issues/552)) ([c7c08f8](https://github.com/alexfayers/llm-prompts/commit/c7c08f879bf40b9eab448f2f81fddb793b3e645c))
+* **update:** show git's error when an update check fails ([#551](https://github.com/alexfayers/llm-prompts/issues/551)) ([1f80a99](https://github.com/alexfayers/llm-prompts/commit/1f80a9930cbfbdf6f429809057ab5e6657c466ee))
+
+
+### Performance Improvements
+
+* **update:** fetch each checkout once per update ([#560](https://github.com/alexfayers/llm-prompts/issues/560)) ([b7a42f5](https://github.com/alexfayers/llm-prompts/commit/b7a42f57154f734d75a44593bb9d54cd8bd64f9c))
+
+
+### Miscellaneous Chores
+
+* sync shared files from llm-prompts-ci ([#553](https://github.com/alexfayers/llm-prompts/issues/553)) ([5c6c18c](https://github.com/alexfayers/llm-prompts/commit/5c6c18cf39d0f429c845c017eb3ef51bf39a4392))
+
+## [0.4.0](https://github.com/alexfayers/llm-prompts/compare/v0.3.0...v0.4.0) (2026-11-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* **pi:** delegate to cache-sharing forks and cut token use, retiring herdsman ([#513](https://github.com/alexfayers/llm-prompts/issues/513))
+
+### Features
+
+* **pi:** accept a tier name as a fork's model ([#540](https://github.com/alexfayers/llm-prompts/issues/540)) ([16d5d11](https://github.com/alexfayers/llm-prompts/commit/16d5d1165ac17923081a5352b645a3fbe82fd965))
+* **pi:** add checkpoint extension ([#488](https://github.com/alexfayers/llm-prompts/issues/488)) ([dd08350](https://github.com/alexfayers/llm-prompts/commit/dd08350ed907ab38627b295c6d3fcf60e8d75821))
+* **pi:** delegate to cache-sharing forks and cut token use, retiring herdsman ([#513](https://github.com/alexfayers/llm-prompts/issues/513)) ([694f04d](https://github.com/alexfayers/llm-prompts/commit/694f04d07ba9efe5c7c2f9bebf116e652263e25c))
+* **prompts:** tighten author rules to avoid review rework ([#482](https://github.com/alexfayers/llm-prompts/issues/482)) ([51635ac](https://github.com/alexfayers/llm-prompts/commit/51635ac033e8ba9405c68a26de4763e829603765))
+* **update:** hold the background update while a pi fork runs and say to reload ([#542](https://github.com/alexfayers/llm-prompts/issues/542)) ([751f6b4](https://github.com/alexfayers/llm-prompts/commit/751f6b4f6ae0ebc44f31488ebac29d25bc5e5e3c))
+* **update:** update automatically at session start ([#533](https://github.com/alexfayers/llm-prompts/issues/533)) ([42eb4eb](https://github.com/alexfayers/llm-prompts/commit/42eb4eb93c00f1299560c2c55354d46a49421da2))
+
+
+### Bug Fixes
+
+* **pi:** accept an OUTCOME line with text after its ref ([#539](https://github.com/alexfayers/llm-prompts/issues/539)) ([2a7b94a](https://github.com/alexfayers/llm-prompts/commit/2a7b94aa05da25161b86785cd601f53fd7ef73b0))
+* **pi:** send a warm fork main's system prompt and tools so it reads main's prompt cache ([#541](https://github.com/alexfayers/llm-prompts/issues/541)) ([51ac511](https://github.com/alexfayers/llm-prompts/commit/51ac511c6c7c0fc0077c53b4b284aa9e81fdbaf8))
+* **update:** drop empty copies of merged pull requests from a current main ([#537](https://github.com/alexfayers/llm-prompts/issues/537)) ([6403574](https://github.com/alexfayers/llm-prompts/commit/64035741cc4c8300e6a217022eeac82589d1083a))
+* **update:** drop local copies of merged pull requests when syncing main ([#536](https://github.com/alexfayers/llm-prompts/issues/536)) ([2f09b22](https://github.com/alexfayers/llm-prompts/commit/2f09b229aeb4b9a0e337d8efe6e3b5a0ccb894c7))
+* **update:** skip closed pull requests when looking for a commit's open copy ([#534](https://github.com/alexfayers/llm-prompts/issues/534)) ([c24f68c](https://github.com/alexfayers/llm-prompts/commit/c24f68cd6adea2034a17b8f41cf97466c56ca7b4))
+
+
+### Miscellaneous Chores
+
+* **deps:** update pi extensions ([#531](https://github.com/alexfayers/llm-prompts/issues/531)) ([74fe711](https://github.com/alexfayers/llm-prompts/commit/74fe7118d254dc2f316fd32c6fca7d56a07abd34))
+
 ## [0.3.0](https://github.com/alexfayers/llm-prompts/compare/v0.2.0...v0.3.0) (2026-11-17)
 
 

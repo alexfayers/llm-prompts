@@ -19,20 +19,28 @@ from collections.abc import (
 )
 from dataclasses import dataclass, field
 from functools import cache, partial, reduce
-from importlib.metadata import distribution, packages_distributions
+from importlib.metadata import (
+    Distribution,
+    distribution,
+    distributions,
+    packages_distributions,
+)
 from importlib.resources import files
 from itertools import takewhile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse, urlsplit
 from urllib.request import url2pathname
 
 from jinja2 import TemplateError
 
+from . import console
 from .claude_models import catalogue
-from .colors import Color, paint
+from .colors import paint
+from .console import LogLevel, log
 from .exit_reason import ExitReason
 from .home import is_rooted, set_root, user_home
+from .jsonfile import write_text_atomic
 from .mcp import (
     CLAUDE_NAMING,
     PI_NAMING,
@@ -59,12 +67,17 @@ from .render_template import (
     substitute_template,
     substitute_variables,
 )
-from .setup import _uv_tools_dir
+from .setup import (
+    _canonical_name,
+    _extract_git_url,
+    _is_local_path,
+    _load_config,
+    _uv_tools_dir,
+    package_name,
+)
 
 if TYPE_CHECKING:
     from .manifest import AgentManifest
-
-LogLevel = Literal["debug", "info", "warn", "error", "success"]
 
 _TARGET_GATING_KEYS = {
     "requires_env",
@@ -75,51 +88,7 @@ _TARGET_GATING_KEYS = {
     "extra_variants",
 }
 
-_COLORS: dict[LogLevel, Color] = {
-    "debug": "grey",
-    "info": "white",
-    "warn": "yellow",
-    "error": "red",
-    "success": "green",
-}
-_SYMBOLS: dict[LogLevel, str] = {
-    "debug": "[.]",
-    "info": "[>]",
-    "warn": "[!]",
-    "error": "[x]",
-    "success": "[+]",
-}
-_PLAIN_SYMBOLS: dict[LogLevel, str] = {
-    "debug": "[.]",
-    "info": "[*]",
-    "warn": "[-]",
-    "error": "[!]",
-    "success": "[+]",
-}
-
-
 InstallFailure = Literal["size_guard_failed", "pi_package_failed", "install_failed"]
-_verbose = False
-
-
-def log(level: LogLevel, message: str) -> None:
-    """Log a message with appropriate formatting.
-
-    Args:
-        level: Log level.
-        message: Message to print.
-    """
-    if level == "debug" and not _verbose:
-        return
-    try:
-        if sys.stderr.isatty():
-            print(
-                paint(f"{_SYMBOLS[level]} {message}", _COLORS[level]), file=sys.stderr
-            )
-        else:
-            print(f"{_PLAIN_SYMBOLS[level]} {message}", file=sys.stderr)
-    except BrokenPipeError:
-        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stderr.fileno())
 
 
 _MAX_SUMMARY_NAMES = 8
@@ -236,6 +205,22 @@ def _pi_agent_dir() -> Path:
     )
 
 
+def _opencode_config_dir() -> Path:
+    """Return opencode's global config directory.
+
+    Returns:
+        ``$OPENCODE_CONFIG_DIR``, else ``$XDG_CONFIG_HOME/opencode``, where set
+        and no install root is given, else ``~/.config/opencode`` under the
+        home directory.
+    """
+    if not is_rooted():
+        if override := os.environ.get("OPENCODE_CONFIG_DIR"):
+            return Path(override).expanduser()
+        if xdg := os.environ.get("XDG_CONFIG_HOME"):
+            return Path(xdg).expanduser() / "opencode"
+    return user_home() / ".config" / "opencode"
+
+
 def _get_dirs() -> dict[str, dict[str, Path]]:
     """Build destination directories used during installation.
 
@@ -244,6 +229,7 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
     """
     home = user_home()
     pi_agent = _pi_agent_dir()
+    opencode = _opencode_config_dir()
     return {
         "kiro": {
             "rules": home / ".kiro" / "steering",
@@ -259,6 +245,10 @@ def _get_dirs() -> dict[str, dict[str, Path]]:
         "antigravity": {
             "rules": home / ".gemini" / "config",
             "skills": home / ".gemini" / "config" / "skills",
+        },
+        "opencode": {
+            "rules": opencode,
+            "skills": opencode / "skills",
         },
         "pi": {
             "rules": pi_agent,
@@ -484,6 +474,26 @@ def _targets_agent(src: Path, name: str) -> bool:
     )
 
 
+def _dist_prompts_dir(dist: Distribution, module: str) -> Path | None:
+    """Return the prompts directory of the local checkout ``dist`` was installed from, if any."""
+    raw_direct_url = dist.read_text("direct_url.json")
+    direct_url = json.loads(raw_direct_url) if raw_direct_url else {}
+    if "dir_info" not in direct_url:
+        return None
+    root = Path(url2pathname(urlparse(direct_url["url"]).path))
+    return next(
+        (
+            candidate
+            for candidate in (
+                root / "src" / module / "prompts",
+                root / module / "prompts",
+            )
+            if candidate.is_dir()
+        ),
+        None,
+    )
+
+
 @cache
 def prompts_dir(module: str) -> Path:
     """Return a package's prompts directory, from its checkout if installed from one.
@@ -496,14 +506,8 @@ def prompts_dir(module: str) -> Path:
         from, or the one inside the installed package.
     """
     for dist_name in packages_distributions().get(module, []):
-        raw_direct_url = distribution(dist_name).read_text("direct_url.json")
-        direct_url = json.loads(raw_direct_url) if raw_direct_url else {}
-        if "dir_info" not in direct_url:
-            continue
-        root = Path(url2pathname(urlparse(direct_url["url"]).path))
-        for candidate in (root / "src" / module / "prompts", root / module / "prompts"):
-            if candidate.is_dir():
-                return candidate
+        if checkout := _dist_prompts_dir(distribution(dist_name), module):
+            return checkout
     return Path(str(files(module) / "prompts"))
 
 
@@ -609,15 +613,13 @@ def _write_if_changed(
 
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        _write_text(dest, output)
+        write_text_atomic(dest.resolve(), output)
         log("debug", f"{action} {label}")
         _record_change(
             action, group, dest.parent.name if dest.name == "SKILL.md" else dest.name
         )
     except Exception as e:
         log("error", f"Failed to install {label}: {e}")
-        if dest.exists():
-            dest.unlink()
 
 
 def _linked_content(src: Path) -> str:
@@ -798,6 +800,12 @@ class _AntigravityAgent(_CodexAgent):
     AGENTS_MD: ClassVar[str] = "AGENTS.md"
 
 
+class _OpencodeAgent(_CodexAgent):
+    """Opencode agent that concatenates all rules into its global AGENTS.md file."""
+
+    AGENTS_MD: ClassVar[str] = "AGENTS.md"
+
+
 class _PiAgent(_CodexAgent):
     """Pi agent that concatenates all rules into its global AGENTS.md file."""
 
@@ -811,6 +819,7 @@ AGENT_CLASSES: dict[str, type[_Agent]] = {
     "claude-code": _Agent,
     "codex": _CodexAgent,
     "antigravity": _AntigravityAgent,
+    "opencode": _OpencodeAgent,
     "pi": _PiAgent,
 }
 
@@ -3172,6 +3181,16 @@ def try_install_hooks_antigravity() -> None:
     _run_tool([binary, "install", "antigravity"])
 
 
+def try_install_hooks_opencode() -> None:
+    """Write the cline-hooks opencode plugin if available."""
+
+    binary = user_binary("cline-hook")
+    if not binary:
+        log("debug", "cline-hook not found on PATH, skipping opencode hook injection.")
+        return
+    _run_tool([binary, "install", "opencode"])
+
+
 _PI_DEFAULT_KEYS = (
     "defaultProvider",
     "defaultModel",
@@ -3240,6 +3259,21 @@ def _pi_defaults(fragments: list[Path]) -> dict[str, Any]:
     return defaults
 
 
+def _pi_extension_sources(source_dirs: Iterable[Path]) -> dict[str, Path]:
+    """Map each pi extension name to its source in the ``pi/extensions`` directories; a later directory wins."""
+    sources: dict[str, Path] = {}
+    for source_dir in source_dirs:
+        if source_dir.is_dir():
+            sources.update(
+                {
+                    path.name: path
+                    for path in sorted(source_dir.glob("*.ts"))
+                    + sorted(path.parent for path in source_dir.glob("*/index.ts"))
+                }
+            )
+    return sources
+
+
 def _install_pi_extensions(
     source_dirs: list[Path], dest_dir: Path, previous_files: Collection[str]
 ) -> list[str]:
@@ -3257,16 +3291,7 @@ def _install_pi_extensions(
     Returns:
         Installed file paths; a later source wins on a filename collision.
     """
-    sources: dict[str, Path] = {}
-    for source_dir in source_dirs:
-        if source_dir.is_dir():
-            sources.update(
-                {
-                    path.name: path
-                    for path in sorted(source_dir.glob("*.ts"))
-                    + sorted(path.parent for path in source_dir.glob("*/index.ts"))
-                }
-            )
+    sources = _pi_extension_sources(source_dirs)
     if sources:
         dest_dir.mkdir(parents=True, exist_ok=True)
     installed: list[str] = []
@@ -3966,6 +3991,18 @@ def try_install_memory_antigravity() -> None:
         _run_tool([binary, "setup-service"])
 
 
+def try_install_memory_opencode() -> None:
+    """Add mcp-memory to opencode if available."""
+
+    binary = user_binary("mcp-memory")
+    if not binary:
+        log("debug", "mcp-memory not found on PATH, skipping opencode MCP setup.")
+        return
+    _run_tool([binary, "install", "opencode"])
+    if not _memory_service_exists():
+        _run_tool([binary, "setup-service"])
+
+
 def try_install_memory_pi() -> None:
     """Add mcp-memory to pi's MCP config if available."""
 
@@ -4119,8 +4156,7 @@ def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) ->
         agent_names: Agents to uninstall. None means all installed agents.
         verbose: Show debug-level output.
     """
-    global _verbose
-    _verbose = verbose
+    console._verbose = verbose
     from .manifest import delete_agent, delete_rendered_rules, read_manifest
 
     manifest = read_manifest()
@@ -4176,6 +4212,147 @@ def _isolated(
             active_targets.remove(tool)
 
 
+def _receipt_names_source(env: Path, source: str) -> bool:
+    """Return whether the uv receipt of ``env`` records a git install of the configured ``source``.
+
+    Only the receipt forms uv writes for a plain ``git+`` source are accepted:
+    the same scheme, host and repository path, and at most a ``rev``, ``branch``
+    or ``tag`` query. Credentials, subdirectories and LFS cannot be proven, so
+    sources using them are refused.
+    """
+    import tomllib
+
+    expected = urlsplit(_extract_git_url(source) or "")
+    keeps_userinfo = (expected.scheme, expected.username, expected.password) == (
+        "ssh",
+        "git",
+        None,
+    )
+    if (
+        expected.query
+        or expected.fragment
+        or expected.path.count("@") > 1
+        or (expected.password or expected.username)
+        and not keeps_userinfo
+    ):
+        return False
+    try:
+        requirement = tomllib.loads(
+            (env / "uv-receipt.toml").read_text(encoding="utf-8")
+        )["tool"]["requirements"][0]
+        recorded = urlsplit(requirement["git"])
+        query = parse_qsl(recorded.query, keep_blank_values=True, strict_parsing=True)
+        name = _canonical_name(requirement["name"])
+    except (OSError, KeyError, IndexError, TypeError, ValueError):
+        return False
+    return (
+        name == env.name
+        and (recorded.scheme, recorded.netloc, recorded.path)
+        == (
+            expected.scheme,
+            expected.netloc,
+            expected.path.rpartition("@")[0] or expected.path,
+        )
+        and (not query or len(query) == 1 and query[0][0] in {"rev", "branch", "tag"})
+    )
+
+
+def _installed_overlay_paths() -> list[Path] | None:
+    """Return the prompts directory of every overlay in the installed tool env, read from metadata alone.
+
+    Returns:
+        The directories, or None where the env cannot be read reliably: no
+        config, no env, not exactly one site-packages, or broken metadata.
+    """
+    try:
+        owner = _load_config()[0]
+        local = _is_local_path(str(owner["source"]))
+        env = _uv_tools_dir() / (
+            package_name(owner) if local else _canonical_name(owner["name"])
+        )
+        if not local and not _receipt_names_source(env, str(owner["source"])):
+            return None
+        sites = [*env.glob("lib/python*/site-packages"), *env.glob("Lib/site-packages")]
+        if len(sites) != 1:
+            return None
+        paths: list[Path] = []
+        for dist in distributions(path=[str(sites[0])]):
+            for entry in dist.entry_points:
+                if entry.group != "llm_prompts":
+                    continue
+                prompts = _dist_prompts_dir(dist, entry.value) or (
+                    sites[0] / entry.value / "prompts"
+                )
+                if not prompts.is_dir():
+                    return None
+                paths.append(prompts)
+    except (ExitReason, KeyError, IndexError, OSError, ValueError):
+        return None
+    return paths
+
+
+def _running_overlays_resolve() -> bool:
+    """Return whether every overlay the running env declares has an existing prompts directory."""
+    from importlib.metadata import entry_points
+
+    resolved = True
+    for entry in entry_points(group="llm_prompts"):
+        try:
+            if not prompts_dir(entry.value).is_dir():
+                log("error", f"[overlay] '{entry.name}' path does not exist.")
+                resolved = False
+        except Exception as e:
+            log("error", f"[overlay] Failed to load '{entry.name}': {e}")
+            resolved = False
+    return resolved
+
+
+def _install_extension_only(
+    only: Path,
+    targets: Collection[str],
+    previous_manifest: "dict[str, AgentManifest]",
+    root_dir: Path,
+    overlay_dirs: Iterable[Path],
+) -> InstallFailure | None:
+    """Rewrite one managed pi extension, touching nothing else.
+
+    The write happens only where ``only`` is the source an install would use,
+    judged by the running env's overlays and the installed env's, and the
+    destination is a file llm-prompts installed. Anything else is refused.
+    """
+    name = only.name
+
+    def refuse(reason: str) -> InstallFailure:
+        log("error", f"[pi] Cannot reinstall {name} alone: {reason}")
+        return "install_failed"
+
+    if "pi" not in targets:
+        return refuse("pi is not an installed agent.")
+    dest = _pi_agent_dir() / "extensions" / name
+    if not dest.is_file() or str(dest) not in previous_manifest.get("pi", {}).get(
+        "files", []
+    ):
+        return refuse(f"{dest} is not a file installed by llm-prompts.")
+    if not _running_overlays_resolve():
+        return refuse("an overlay of the running llm-prompts could not be resolved.")
+    installed_overlays = _installed_overlay_paths()
+    if installed_overlays is None:
+        return refuse("the installed llm-prompts env could not be read.")
+    winner = _pi_extension_sources(
+        d / "pi" / "extensions"
+        for d in dict.fromkeys([root_dir, *overlay_dirs, *installed_overlays])
+    ).get(name)
+    if winner is None or winner.resolve() != only.resolve():
+        return refuse(
+            f"{winner or 'no source'} is the source an install would use. "
+            "The core checkout the installed tool was set up from is not consulted."
+        )
+    with _target_scope("pi"):
+        _write_if_changed(dest, _read_text(only), f"[pi] extension {name}")
+    _log_changes()
+    return None
+
+
 def main(
     agent_names: list[str] | None = None,
     *,
@@ -4198,8 +4375,7 @@ def main(
     Returns:
         Why the install did not fully succeed, or None when it did.
     """
-    global _verbose
-    _verbose = verbose
+    console._verbose = verbose
     _changes.clear()
     if root is not None:
         set_root(root)
@@ -4228,6 +4404,14 @@ def main(
     )
 
     previous_manifest = read_manifest()
+    if only is not None and only.suffix == ".ts":
+        return _install_extension_only(
+            only,
+            agent_names or list(AGENT_CLASSES),
+            previous_manifest,
+            root_dir,
+            overlay_dirs,
+        )
     all_skipped: frozenset[Path] = frozenset()
     size_failed = False
     pi_failed_sources: list[str] = []
@@ -4320,6 +4504,7 @@ def main(
         "claude-code",
         "codex",
         "antigravity",
+        "opencode",
         "pi",
     ):
         if skill_agent not in active_targets:
@@ -4387,7 +4572,7 @@ def main(
             f for f in previous_pi_bundle if Path(f).parent == _pi_rules_dir()
         )
 
-    pi_packages: list[str] | None = None
+    pi_packages: list[str] | None = previous_manifest.get("pi", {}).get("packages")
     pi_installed_packages: list[str] | None = previous_manifest.get("pi", {}).get(
         "pi_installed_packages"
     )
@@ -4571,8 +4756,10 @@ def main(
 
     from .manifest import write_manifest
 
-    pi_skills: list[str] | None = None
-    pi_mcp_rules: list[str] | None = None
+    pi_skills: list[str] | None = previous_manifest.get("pi", {}).get("skills")
+    pi_mcp_rules: list[str] | None = previous_manifest.get("pi", {}).get(
+        "mcp_permissions"
+    )
     pi_rule_roles: dict[str, list[str]] | None = previous_manifest.get("pi", {}).get(
         "pi_rule_roles"
     )
@@ -4660,7 +4847,7 @@ def get_managed_dirs() -> list[Path]:
     managed.add(_pi_rules_dir())
     for key, value in dirs.items():
         for subdir, subdir_path in value.items():
-            if key in ("codex", "antigravity", "pi") and subdir == "rules":
+            if key in ("codex", "antigravity", "opencode", "pi") and subdir == "rules":
                 continue
             managed.add(subdir_path)
         if key in ("kiro", "claude-code"):
@@ -4745,6 +4932,8 @@ def partial_source(path: Path) -> Path | None:
         return None
     match source.relative_to(root).parts:
         case (_, "rules" | "workflows" | "agents", name) if name.endswith(".md"):
+            return source
+        case ("pi", "extensions", name) if name.endswith(".ts"):
             return source
         case (group, "skills", skill, _, *_):
             skill_md = root / group / "skills" / skill / "SKILL.md"

@@ -28,6 +28,7 @@ excludeAgent: "cloud-agent"
 ## Severity
 
 - Comment only on a defect that breaks normal use, leaks data or fails CI.
+- MUST NOT report low-severity or nit findings.
 - Skip races between API calls, rare corner cases, visual polish and dry-run or preview output, unless they lose data.
 - Guards and hooks only catch agent mistakes. Skip a bypass that needs unusual git or shell syntax (attached options, `--git-dir`, `~` or `$VAR` paths, redirects, symlinks, submodules, file modes) unless a normal agent command hits it.
 - Flag only a defect in a line the PR adds or edits. Skip a problem in code the PR leaves unchanged, even where a changed line calls it or sits next to it. This applies to inline comments and the review summary.

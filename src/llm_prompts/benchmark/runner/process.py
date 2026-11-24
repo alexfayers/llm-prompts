@@ -73,6 +73,7 @@ def execute(
     scenario: Scenario,
     model: str,
     policy: SandboxPolicy | None,
+    on_tool: Callable[[str], None] | None = None,
     on_reply: Callable[[], None] | None = None,
     session: Session | None = None,
 ) -> Trace:
@@ -82,6 +83,7 @@ def execute(
     if policy is not None:
         argv = wrap(argv, policy)
     timed_out = threading.Event()
+    since = time.time()
     started = time.monotonic()
     with tempfile.TemporaryFile("w+") as stderr:
         with _lock:
@@ -114,6 +116,9 @@ def execute(
                 if on_reply and not replied and runner.replied(line):
                     replied = True
                     on_reply()
+                if on_tool:
+                    for name in runner.tool_started(line):
+                        on_tool(name)
             returncode = process.wait()
         finally:
             timer.cancel()
@@ -124,5 +129,5 @@ def execute(
     (prepared.root / "agent.log").write_text(log)
     if timed_out.is_set():
         raise TimeoutError(f"{prepared.cell.id} exceeded {scenario.timeout_s}s")
-    trace = runner.parse(lines, wall_s)
+    trace = runner.add_delegates(runner.parse(lines, wall_s), prepared.home, since)
     return dataclasses.replace(trace, exit_code=returncode or trace.exit_code)
