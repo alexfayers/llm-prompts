@@ -432,6 +432,33 @@ class TestIterArtifactsDispatch:
         ]
 
     @pytest.mark.parametrize(
+        ("body", "expected"),
+        [
+            (
+                "```\n"
+                + "x" * (MAX_LINE_CHARS + 1)
+                + "\n```\n\n"
+                + "x" * (MAX_LINE_CHARS + 1)
+                + "\n",
+                [(NO_LONG_LINES, 7)],
+            ),
+            ("{{AGENT}}" * (MAX_LINE_CHARS // len("{{AGENT}}")) + "\n", []),
+        ],
+    )
+    def test_check_source_measures_source_lines(
+        self, tmp_path: Path, body: str, expected: list[tuple[str, int]]
+    ) -> None:
+        _make_prompts_tree(tmp_path)
+        source = tmp_path / "shared" / "rules" / "shared-rule.md"
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check_source(
+                source, "# Shared rule\n\n" + body, targets=("claude-code",)
+            )
+
+        assert [(v.metric, v.line) for v in result.violations] == expected
+
+    @pytest.mark.parametrize(
         ("body", "lazy_line"),
         [
             ("- Item\nLazy continuation.\n", 4),

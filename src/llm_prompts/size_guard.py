@@ -206,41 +206,19 @@ def _resolve_content_frontmatter(
     return body, (resolved or {}), resolved is not None
 
 
-def _source_line_number(lines: list[str], number: int, source: Path) -> int:
-    """Return where `lines[number - 1]` appears verbatim in `source`, else `number`.
-
-    Args:
-        lines: Content lines as installed.
-        number: 1-based line number in `lines`.
-        source: Source file path.
-    """
-    if source.is_file():
-        source_lines = [
-            line.strip() for line in source.read_text(encoding="utf-8").splitlines()
-        ]
-        wanted = lines[number - 1].strip()
-        if wanted in source_lines:
-            return source_lines.index(wanted) + 1
-    return number
-
-
-def _line_artifacts(
-    content: str, target: str, dest_name: str, source: Path
-) -> Iterator[Artifact]:
-    """Yield content's longest prose line and its first lazy list continuation.
+def _line_artifacts(target: str, dest_name: str, source: Path) -> Iterator[Artifact]:
+    """Yield the source's longest prose line and its first lazy list continuation.
 
     Frontmatter and lines inside ``` fences are skipped. Table rows (starting
     with ``|``) are skipped for line length. A lazy continuation is a
-    column-0 prose line directly after a list item's line. Line numbers are
-    the line's position in `source` where it appears there verbatim, else its
-    position in `content`.
+    column-0 prose line directly after a list item's line.
 
     Args:
-        content: Content as installed.
         target: Target name to record on the yielded artifacts.
         dest_name: Installed destination name.
         source: Source file path.
     """
+    content = _read_text(source)
     lines = content.splitlines()
     split = split_frontmatter(content)
     start = len(split[0]) + 2 if split else 0
@@ -262,8 +240,6 @@ def _line_artifacts(
             in_item = False
         elif in_item and line == stripped and lazy_number is None:
             lazy_number = number
-    if line_number is not None:
-        line_number = _source_line_number(lines, line_number, source)
     yield Artifact(NO_LONG_LINES, target, dest_name, longest, source, line=line_number)
     yield Artifact(
         NO_LAZY_CONTINUATIONS,
@@ -271,9 +247,7 @@ def _line_artifacts(
         dest_name,
         lazy_number is None,
         source,
-        line=None
-        if lazy_number is None
-        else _source_line_number(lines, lazy_number, source),
+        line=lazy_number,
     )
 
 
@@ -305,7 +279,7 @@ def _common_artifacts(
     yield Artifact(
         FRONTMATTER_VALID, metric_prefix_target, dest_name, frontmatter_valid, source
     )
-    yield from _line_artifacts(content, metric_prefix_target, dest_name, source)
+    yield from _line_artifacts(metric_prefix_target, dest_name, source)
     yield Artifact(
         NO_UNSUBSTITUTED_PLACEHOLDERS,
         metric_prefix_target,
@@ -542,7 +516,7 @@ def _iter_part_artifacts(
         not find_unreplaced_variables(content),
         part,
     )
-    yield from _line_artifacts(content, target, dest_name, part)
+    yield from _line_artifacts(target, dest_name, part)
 
 
 def _iter_agent_artifacts(

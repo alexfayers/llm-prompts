@@ -22,7 +22,8 @@ roles: lead, reasoner, worker, surveyor, reviewer
 - MUST NOT run `docker compose down -v` (or any other command that deletes a Docker volume) just to reset state or clean up test data - it destroys the named volume,
   which may hold real pre-existing data the current session didn't create.
   MUST delete only the specific test rows/records, or confirm first that the volume is known-disposable (e.g. verified created fresh earlier in the same session).
-- MUST NOT run a fixed `sleep` or poll in a loop{% if AGENT == "pi" %}, except a short-backoff retry loop of an MCP call inside one codemode script{% else %}, except the one background delegate timer `delegation.md` requires{% endif %}.
+- MUST NOT run a fixed `sleep` or poll in a loop{% if AGENT == "pi" %}, except a short-backoff retry loop of an MCP call inside one codemode
+  script{% else %}, except the one background delegate timer `delegation.md` requires{% endif %}.
   Run long commands in the foreground with an explicit `timeout`.
 - To wait for an external event (PR or command output), MUST run `llm-prompts watch <source> <target> --until <alias|field=value|changed:field>`, not a `sleep` poll.
   The root session runs it {% if AGENT == "pi" %}with `process start`{% elif AGENT == "claude-code" %}with Bash `run_in_background`{% else %}in the foreground with
