@@ -1010,32 +1010,37 @@ class TestCollectUpdateMessages:
             )
         assert result == expected
 
-    def test_rebuild_keeps_a_failed_fetch_of_a_local_tool_or_plugin(
-        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    @pytest.mark.parametrize("retargeted", [False, True])
+    def test_rebuild_keeps_a_failed_fetch_of_the_same_local_tool_or_plugin(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess, retargeted: bool
     ) -> None:
         (tmp_path / ".git").mkdir()
+        core = {"name": "core", "source": str(tmp_path)}
+        plug = {"name": "plug", "source": "https://x.invalid/p.git"}
+        checked = [
+            {**entry, "ref": "other"} if retargeted else entry for entry in (core, plug)
+        ]
         failures = [
             UpdateCheckFailure("[core] update check failed: offline"),
             UpdateCheckFailure("[plug] update check failed: offline"),
         ]
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
-            patch(
-                "llm_prompts.setup._load_config",
-                return_value=[{"name": "core", "source": str(tmp_path)}],
-            ),
-            patch(
-                "llm_prompts.plugins._load_plugins",
-                return_value=[{"name": "plug", "source": "https://x.invalid/p.git"}],
-            ),
+            patch("llm_prompts.setup._load_config", return_value=[core]),
+            patch("llm_prompts.plugins._load_plugins", return_value=[plug]),
         ):
             mock_config.return_value.exists.return_value = True
             result = _collect_update_messages(
-                previous=("head,plughead", [*failures, _UPDATE_INSTRUCTION])
+                previous=(
+                    json.dumps(
+                        [[*_source_identity(entry), "sha"] for entry in checked]
+                    ),
+                    [*failures, _UPDATE_INSTRUCTION],
+                )
             )
 
-        assert result == [*failures, _UPDATE_INSTRUCTION]
-        assert all(isinstance(m, UpdateCheckFailure) for m in result[:2])
+        kept = [m for m in result if isinstance(m, UpdateCheckFailure)]
+        assert kept == ([] if retargeted else failures)
         assert fake_subprocess.matching("fetch") == []
 
     def test_failed_check_is_reported_without_credentials(

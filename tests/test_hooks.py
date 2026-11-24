@@ -1234,6 +1234,27 @@ class TestUpdateCheckOnTaskStart:
             previous=("a", ["[pkg] update available (a -> b)"])
         )
 
+    def test_a_retargeted_source_schedules_a_remote_check(
+        self, tmp_path: Path, background: list[list[str]]
+    ) -> None:
+        stamp = tmp_path / "update-stamp"
+        tool = {"name": "pkg", "source": "git+https://x.invalid/r"}
+        _ReinstallDebouncer(stamp).mark_run()
+        _ReinstallDebouncer(stamp).store_notice(
+            ["old"], json.dumps([[*_source_identity(tool), "c"]])
+        )
+        retargeted = json.dumps([[*_source_identity({**tool, "ref": "next"}), "c"]])
+        with (
+            patch("llm_prompts.cli._installed_fingerprint", return_value=retargeted),
+            patch(
+                "llm_prompts.cli._collect_update_messages", return_value=[]
+            ) as mock_collect,
+        ):
+            self._fresh_start(stamp)
+            assert background[0][-1] == "remote"
+            self._finish(background)
+        mock_collect.assert_called_once_with()
+
     def test_a_running_refresh_is_not_repeated(
         self, tmp_path: Path, background: list[list[str]]
     ) -> None:

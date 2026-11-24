@@ -340,15 +340,20 @@ def _source_identity(entry: dict[str, Any]) -> list[str]:
     ]
 
 
+def _fingerprint_versions(fingerprint: str) -> dict[tuple[str, ...], str]:
+    """Map each source identity in an installed-version fingerprint to its installed commit."""
+    try:
+        return {tuple(entry[:3]): entry[3] for entry in json.loads(fingerprint)}
+    except (ValueError, TypeError):
+        return {}
+
+
 def _previous_source_messages(
     identity: list[str], fingerprint: str, messages: list[str]
 ) -> list[str]:
     """Return a remote source's messages from the previous check, or none once its installed version moved."""
     name = identity[0]
-    try:
-        versions = {tuple(entry[:3]): entry[3] for entry in json.loads(fingerprint)}
-    except (ValueError, TypeError):
-        return []
+    versions = _fingerprint_versions(fingerprint)
     key = tuple(identity)
     if key not in versions or versions[key] != (_get_installed_commit(name) or ""):
         return []
@@ -360,13 +365,18 @@ class UpdateCheckFailure(str):
 
 
 def _previous_failures_or(
-    name: str, previous: tuple[str, list[str]] | None, check: Callable[[], list[str]]
+    identity: list[str],
+    previous: tuple[str, list[str]] | None,
+    check: Callable[[], list[str]],
 ) -> list[str]:
-    """Return a source's failed checks from the previous check, or run the check when it had none."""
+    """Return a source's failed checks from the previous check of the same source, or run the check when it had none."""
+    fingerprint, messages = previous or ("", [])
     failures: list[str] = [
         message
-        for message in (previous or ("", []))[1]
-        if isinstance(message, UpdateCheckFailure) and message.startswith(f"[{name}] ")
+        for message in messages
+        if isinstance(message, UpdateCheckFailure)
+        and message.startswith(f"[{identity[0]}] ")
+        and tuple(identity) in _fingerprint_versions(fingerprint)
     ]
     return failures or check()
 
@@ -958,7 +968,7 @@ def _collect_update_messages(
         if _is_local_path(source):
             check = partial(
                 _previous_failures_or,
-                name,
+                _source_identity(tool),
                 previous,
                 partial(
                     _local_source_messages,
@@ -979,7 +989,7 @@ def _collect_update_messages(
         name = str(plugin.get("name", ""))
         check = partial(
             _previous_failures_or,
-            name,
+            _source_identity(plugin),
             previous,
             partial(plugin_source_messages, plugin, previous is None),
         )

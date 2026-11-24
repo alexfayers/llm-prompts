@@ -209,6 +209,15 @@ class _ReinstallDebouncer:
         cached: str = self._cache().get("fingerprint", "")
         return cached != fingerprint
 
+    def retargeted(self, fingerprint: str) -> bool:
+        """Return True if a source was added, removed or retargeted since the cached notice."""
+        from .cli import _fingerprint_versions
+
+        cached: str = self._cache().get("fingerprint", "")
+        return _fingerprint_versions(cached).keys() != (
+            _fingerprint_versions(fingerprint).keys()
+        )
+
     def mark_run(self, failed: bool = False) -> None:
         """Record that a run just happened, due again after ``_FAILED_CHECK_RETRY_SECONDS`` when it failed."""
         retry_offset = (
@@ -319,7 +328,7 @@ def refresh_update_check(stamp: str, refs: str = "remote") -> None:
         try:
             fingerprint = _installed_fingerprint()
             due = (
-                debouncer.should_run()
+                debouncer.should_run() or debouncer.retargeted(fingerprint)
                 if refs == "remote"
                 else debouncer.moved(fingerprint)
             )
@@ -436,7 +445,9 @@ class AutoReinstallPlugin(HooksPlugin):
             telemetry.Run(_get_installed_version) as run,
             self._update_check_debouncer.single_flight() as holds_lock,
         ):
-            fetch = self._update_check_debouncer.should_run()
+            fetch = self._update_check_debouncer.should_run() or (
+                self._update_check_debouncer.retargeted(fingerprint)
+            )
             if holds_lock and (
                 fetch or self._update_check_debouncer.moved(fingerprint)
             ):
