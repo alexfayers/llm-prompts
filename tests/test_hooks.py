@@ -1058,6 +1058,18 @@ class TestUpdateCheckOnTaskStart:
         plugin._update_check_debouncer = _ReinstallDebouncer(stamp)
         return plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[], source="")
 
+    def test_a_refresh_that_cannot_start_still_shows_the_cached_notice(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stamp = tmp_path / "update-stamp"
+        _ReinstallDebouncer(stamp).store_notice(["old"])
+        monkeypatch.setattr(
+            subprocess, "Popen", MagicMock(side_effect=OSError("no fork"))
+        )
+        result = self._fresh_start(stamp)
+        assert result is not None
+        assert result.notes == ["old"]
+
     def test_empty_check_clears_cached_notice(
         self, tmp_path: Path, background: list[list[str]]
     ) -> None:

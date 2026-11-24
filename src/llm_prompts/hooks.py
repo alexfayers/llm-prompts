@@ -440,7 +440,10 @@ class AutoReinstallPlugin(HooksPlugin):
             if holds_lock and (
                 fetch or self._update_check_debouncer.moved(fingerprint)
             ):
-                self._update_check_debouncer.refresh_in_background(fetch)
+                try:
+                    self._update_check_debouncer.refresh_in_background(fetch)
+                except OSError:
+                    logger.warning("Failed to start the llm-prompts update check")
                 messages = self._update_check_debouncer.cached_notice(fingerprint)
                 self._update_check_debouncer.record_shown(task_id, messages)
             elif source in _DEBOUNCED_TASK_START_SOURCES:
