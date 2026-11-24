@@ -14,6 +14,7 @@ from llm_prompts.size_limits import (
     ALWAYS_SKILL_FRONTMATTER_BYTES,
     BYTES_PER_TOKEN,
     COLLECTION_BYTES,
+    COLLECTION_SHARE_BYTES,
     FINALS,
     FRONTMATTER_VALID,
     ON_DEMAND_AGENT_BODY_BYTES,
@@ -540,6 +541,63 @@ class TestRenderSummary:
         )
 
         assert "1 file changed size in this PR" in report
+
+    def test_collection_credits_are_not_changed_files(self) -> None:
+        credit = Row(
+            COLLECTION_SHARE_BYTES,
+            ("kiro",),
+            "",
+            "overlay:shared/workflows/external-workflow.md",
+            50,
+            60,
+            None,
+        )
+
+        report = render_markdown([credit, _row(1, 2)])
+
+        assert "1 file changed size in this PR" in report
+        assert "external-workflow.md" not in report
+
+    def test_a_lowered_ceiling_is_reported_without_a_size_change(self) -> None:
+        base, head = (
+            _artifact(
+                root,
+                100,
+                metric=COLLECTION_BYTES,
+                target="kiro",
+                name="kiro",
+                allowance=allowance,
+            )
+            for root, allowance in ((BASE_ROOT, 200), (HEAD_ROOT, 50))
+        )
+        rows = compare([base], [head], [BASE_ROOT], [HEAD_ROOT])
+
+        report = render_markdown(rows)
+
+        assert "0 files changed size in this PR, 1 over the limit" in report
+        assert "1 limit changed" in report
+        assert "| 200 -> 50 |" in report
+
+    def test_an_unchanged_over_limit_target_is_named_with_size_and_limit(
+        self,
+    ) -> None:
+        over = Row(COLLECTION_BYTES, ("kiro",), "kiro", "-", 60_000, 60_000, 50_000)
+
+        report = render_markdown([over])
+
+        assert "1 over the limit" in report
+        assert "kiro: 60,000 bytes, limit 50,000" in report
+
+    def test_each_over_limit_target_counts_once(self) -> None:
+        report = render_markdown(
+            [
+                Row(COLLECTION_BYTES, (t,), t, "-", 100, 60_000, 50_000)
+                for t in ("kiro", "codex")
+            ]
+            + [_row(1, 2)]
+        )
+
+        assert "1 file changed size in this PR, 2 over the limit" in report
 
 
 def _prompts_tree(root: Path, rule_name: str, rule_text: str) -> Path:
