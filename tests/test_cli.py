@@ -988,6 +988,28 @@ class TestCollectUpdateMessages:
         assert fake_subprocess.matching("fetch") == []
         assert fake_subprocess.matching("ls-remote") == []
 
+    @pytest.mark.parametrize(
+        ("recorded", "expected"),
+        [([""], ["[pkg] not installed", _UPDATE_INSTRUCTION]), ([], [])],
+        ids=["still-uninstalled", "not-recorded"],
+    )
+    def test_previous_check_of_an_uninstalled_tool(
+        self, recorded: list[str], expected: list[str]
+    ) -> None:
+        tool = {"name": "pkg", "source": "git+https://github.com/user/repo.git"}
+        fingerprint = json.dumps([[*_source_identity(tool), sha] for sha in recorded])
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=[tool]),
+            patch("llm_prompts.plugins._load_plugins", return_value=[]),
+            patch("llm_prompts.cli._get_installed_commit", return_value=None),
+        ):
+            mock_config.return_value.exists.return_value = True
+            result = _collect_update_messages(
+                previous=(fingerprint, ["[pkg] not installed", _UPDATE_INSTRUCTION])
+            )
+        assert result == expected
+
     def test_rebuild_keeps_a_failed_fetch_of_a_local_tool_or_plugin(
         self, tmp_path: Path, fake_subprocess: FakeSubprocess
     ) -> None:

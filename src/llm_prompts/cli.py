@@ -349,7 +349,8 @@ def _previous_source_messages(
         versions = {tuple(entry[:3]): entry[3] for entry in json.loads(fingerprint)}
     except (ValueError, TypeError):
         return []
-    if versions.get(tuple(identity)) != _get_installed_commit(name):
+    key = tuple(identity)
+    if key not in versions or versions[key] != (_get_installed_commit(name) or ""):
         return []
     return [message for message in messages if message.startswith(f"[{name}] ")]
 
