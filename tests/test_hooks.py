@@ -1143,7 +1143,10 @@ class TestUpdateCheckOnTaskStart:
         plugin._update_check_debouncer = _ReinstallDebouncer(stamp)
         failure = UpdateCheckFailure("[pkg] update check failed: offline")
         _ReinstallDebouncer(stamp).mark_run()
-        _ReinstallDebouncer(stamp).store_notice([failure, _UPDATE_INSTRUCTION], "c")
+        pkg = ["pkg", "git+https://x.invalid/r", "", "c"]
+        _ReinstallDebouncer(stamp).store_notice(
+            [failure, _UPDATE_INSTRUCTION], json.dumps([pkg])
+        )
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
             patch(
@@ -1152,7 +1155,10 @@ class TestUpdateCheckOnTaskStart:
             ),
             patch("llm_prompts.plugins._load_plugins", return_value=[]),
             patch("llm_prompts.cli._get_installed_commit", return_value="c"),
-            patch("llm_prompts.cli._installed_fingerprint", return_value="d,c"),
+            patch(
+                "llm_prompts.cli._installed_fingerprint",
+                return_value=json.dumps([["core", "/core", "", "d"], pkg]),
+            ),
             patch("llm_prompts.auto_update.blocker", return_value=None),
             patch("llm_prompts.auto_update.start", return_value=True) as start,
         ):

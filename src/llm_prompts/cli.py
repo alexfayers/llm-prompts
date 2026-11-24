@@ -330,10 +330,14 @@ def _remote_source_messages(
 
 
 def _previous_source_messages(
-    name: str, fingerprint: str, messages: list[str]
+    name: str, source: str, ref: str, fingerprint: str, messages: list[str]
 ) -> list[str]:
     """Return a remote source's messages from the previous check, or none once its installed version moved."""
-    if _get_installed_commit(name) not in fingerprint.split(","):
+    try:
+        versions = {tuple(entry[:3]): entry[3] for entry in json.loads(fingerprint)}
+    except (ValueError, TypeError):
+        return []
+    if versions.get((name, source, ref)) != _get_installed_commit(name):
         return []
     return [message for message in messages if message.startswith(f"[{name}] ")]
 
@@ -952,7 +956,13 @@ def _collect_update_messages(
                 ),
             )
         elif previous is not None:
-            check = partial(_previous_source_messages, name, *previous)
+            check = partial(
+                _previous_source_messages,
+                name,
+                source,
+                str(tool.get("ref", "")),
+                *previous,
+            )
         else:
             check = partial(_remote_source_messages, name, source, tool.get("ref"))
         checks.append(partial(_update_check_or_failure, name, check))
@@ -975,26 +985,29 @@ def _collect_update_messages(
 
 
 def _installed_fingerprint() -> str:
-    """Return a string that changes whenever the installed version of a source changes."""
+    """Return each source's name, source, ref and installed commit, as JSON."""
     from .main_sync import run_git
     from .plugins import _checkout_dir, _load_plugins
     from .setup import _expand, _is_local_path, _load_config, config_path
 
     if not config_path().exists():
         return ""
-    versions: list[str] = []
+    versions: list[list[str]] = []
     for tool in _load_config():
+        name = str(tool.get("name", ""))
         source = str(tool.get("source", ""))
         if _is_local_path(source):
-            versions.append(
-                run_git(_expand(source), "rev-parse", "HEAD").stdout.strip()
-            )
+            sha = run_git(_expand(source), "rev-parse", "HEAD").stdout.strip()
         else:
-            versions.append(_get_installed_commit(str(tool.get("name", ""))) or "")
+            sha = _get_installed_commit(name) or ""
+        versions.append([name, source, str(tool.get("ref", "")), sha])
     for plugin in _load_plugins():
-        checkout = _checkout_dir(str(plugin.get("name", "")))
-        versions.append(run_git(checkout, "rev-parse", "HEAD").stdout.strip())
-    return ",".join(versions)
+        name = str(plugin.get("name", ""))
+        sha = run_git(_checkout_dir(name), "rev-parse", "HEAD").stdout.strip()
+        versions.append(
+            [name, str(plugin.get("source", "")), str(plugin.get("ref", "")), sha]
+        )
+    return json.dumps(versions)
 
 
 def _check_for_updates() -> bool:

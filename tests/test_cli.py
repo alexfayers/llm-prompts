@@ -971,7 +971,17 @@ class TestCollectUpdateMessages:
             patch("llm_prompts.cli._get_installed_commit", return_value=installed),
         ):
             mock_config.return_value.exists.return_value = True
-            result = _collect_update_messages(previous=("head,aa", previous))
+            result = _collect_update_messages(
+                previous=(
+                    json.dumps(
+                        [
+                            ["core", str(tmp_path), "", "bb"],
+                            ["remote-pkg", config[1]["source"], "", "aa"],
+                        ]
+                    ),
+                    previous,
+                )
+            )
 
         assert result == expected
         assert fake_subprocess.matching("fetch") == []
