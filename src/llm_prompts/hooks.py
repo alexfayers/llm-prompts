@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import fcntl
 import json
 import logging
@@ -454,16 +455,26 @@ class AutoReinstallPlugin(HooksPlugin):
         current_violations = {
             (v.metric, v.target, v.dest_name): v for v in current_result.violations
         }
-        current_lines = dict(enumerate(current_content.splitlines(), 1))
-        predicted_lines = dict(enumerate(predicted_content.splitlines(), 1))
+        matcher = difflib.SequenceMatcher(
+            None,
+            current_content.splitlines(),
+            predicted_content.splitlines(),
+            autojunk=False,
+        )
+        current_line_of = {
+            j + k + 1: i + k + 1
+            for i, j, size in matcher.get_matching_blocks()
+            for k in range(size)
+        }
         worsened = []
         for v in predicted_result.violations:
             current = current_violations.get((v.metric, v.target, v.dest_name))
             if current is None:
                 worsened.append(v)
             elif current.actual < v.actual:
-                old = {current_lines.get(n) for n in current.lines}
-                added = tuple(n for n in v.lines if predicted_lines.get(n) not in old)
+                added = tuple(
+                    n for n in v.lines if current_line_of.get(n) not in current.lines
+                )
                 worsened.append(replace(v, lines=added or v.lines))
         if not worsened:
             return None

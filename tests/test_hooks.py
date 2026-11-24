@@ -405,7 +405,7 @@ class TestPromptSizeGate:
                 parameters={
                     "path": str(path),
                     "old_string": "- B\n",
-                    "new_string": "- B\nLazy too.\n",
+                    "new_string": "- B\nLazy.\n",
                 },
             )
 
