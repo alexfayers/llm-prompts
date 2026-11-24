@@ -434,8 +434,8 @@ class TestIterArtifactsDispatch:
         with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
             result = check_source(source, content, targets=("claude-code",))
 
-        assert [(v.metric, v.actual, v.line) for v in result.violations] == [
-            (NO_LONG_LINES, MAX_LINE_CHARS + 1, 3)
+        assert [(v.metric, v.actual, v.lines) for v in result.violations] == [
+            (NO_LONG_LINES, MAX_LINE_CHARS + 1, (3,))
         ]
 
     @pytest.mark.parametrize(
@@ -447,13 +447,13 @@ class TestIterArtifactsDispatch:
                 + "\n```\n\n"
                 + "x" * (MAX_LINE_CHARS + 1)
                 + "\n",
-                [(NO_LONG_LINES, 7)],
+                [(NO_LONG_LINES, (7,))],
             ),
             ("{{AGENT}}" * (MAX_LINE_CHARS // len("{{AGENT}}")) + "\n", []),
         ],
     )
     def test_check_source_measures_source_lines(
-        self, tmp_path: Path, body: str, expected: list[tuple[str, int]]
+        self, tmp_path: Path, body: str, expected: list[tuple[str, tuple[int, ...]]]
     ) -> None:
         _make_prompts_tree(tmp_path)
         source = tmp_path / "shared" / "rules" / "shared-rule.md"
@@ -463,22 +463,23 @@ class TestIterArtifactsDispatch:
                 source, "# Shared rule\n\n" + body, targets=("claude-code",)
             )
 
-        assert [(v.metric, v.line) for v in result.violations] == expected
+        assert [(v.metric, v.lines) for v in result.violations] == expected
 
     @pytest.mark.parametrize(
-        ("body", "lazy_line"),
+        ("body", "lazy_lines"),
         [
-            ("- Item\nLazy continuation.\n", 4),
-            ("1. Item\n   - Nested\nLazy continuation.\n", 5),
-            ("- Item\n  Indented continuation.\n", None),
-            ("- Item\n\nParagraph.\n", None),
-            ("- Item\n# Heading\n", None),
-            ("- Item\n---\nParagraph.\n", None),
-            ("- Item\n```\ncode\n```\n", None),
+            ("- Item\nLazy continuation.\n", (4,)),
+            ("1. Item\n   - Nested\nLazy continuation.\n", (5,)),
+            ("- A\nLazy.\n- B\nLazy too.\n", (4, 6)),
+            ("- Item\n  Indented continuation.\n", ()),
+            ("- Item\n\nParagraph.\n", ()),
+            ("- Item\n# Heading\n", ()),
+            ("- Item\n---\nParagraph.\n", ()),
+            ("- Item\n```\ncode\n```\n", ()),
         ],
     )
     def test_check_source_flags_a_lazy_list_continuation(
-        self, tmp_path: Path, body: str, lazy_line: int | None
+        self, tmp_path: Path, body: str, lazy_lines: tuple[int, ...]
     ) -> None:
         _make_prompts_tree(tmp_path)
         source = tmp_path / "shared" / "rules" / "shared-rule.md"
@@ -488,8 +489,8 @@ class TestIterArtifactsDispatch:
                 source, "# Shared rule\n\n" + body, targets=("claude-code",)
             )
 
-        expected = [] if lazy_line is None else [(NO_LAZY_CONTINUATIONS, lazy_line)]
-        assert [(v.metric, v.line) for v in result.violations] == expected
+        expected = [(NO_LAZY_CONTINUATIONS, lazy_lines)] if lazy_lines else []
+        assert [(v.metric, v.lines) for v in result.violations] == expected
 
     def test_workflow_bytes_and_lines_measured(self, tmp_path: Path) -> None:
         _make_prompts_tree(tmp_path, targets=("pi",))

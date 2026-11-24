@@ -11,6 +11,7 @@ import subprocess
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -450,16 +451,20 @@ class AutoReinstallPlugin(HooksPlugin):
             logger.warning("Failed to measure prompt size for %s", path)
             return None
 
-        current_actuals = {
-            (v.metric, v.target, v.dest_name): v.actual
-            for v in current_result.violations
+        current_violations = {
+            (v.metric, v.target, v.dest_name): v for v in current_result.violations
         }
-        worsened = [
-            v
-            for v in predicted_result.violations
-            if (v.metric, v.target, v.dest_name) not in current_actuals
-            or current_actuals[(v.metric, v.target, v.dest_name)] < v.actual
-        ]
+        current_lines = dict(enumerate(current_content.splitlines(), 1))
+        predicted_lines = dict(enumerate(predicted_content.splitlines(), 1))
+        worsened = []
+        for v in predicted_result.violations:
+            current = current_violations.get((v.metric, v.target, v.dest_name))
+            if current is None:
+                worsened.append(v)
+            elif current.actual < v.actual:
+                old = {current_lines.get(n) for n in current.lines}
+                added = tuple(n for n in v.lines if predicted_lines.get(n) not in old)
+                worsened.append(replace(v, lines=added or v.lines))
         if not worsened:
             return None
 

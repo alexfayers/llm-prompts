@@ -412,6 +412,7 @@ class TestPromptSizeGate:
         assert result is not None
         assert result.block is not None
         assert NO_LAZY_CONTINUATIONS in result.block
+        assert " at line 5 " in result.block
 
     def test_write_within_thresholds_returns_none_and_measures_once(
         self, plugin: AutoReinstallPlugin, tmp_path: Path

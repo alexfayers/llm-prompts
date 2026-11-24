@@ -106,7 +106,7 @@ class Artifact:
         source: Source file path, for failure reporting.
         allowance: Declared per-artifact ceiling from the owning root's
             `size_allowances.json`, or None if undeclared.
-        line: Line number the value was measured at, or None.
+        lines: Line numbers the value was measured at.
     """
 
     metric: str
@@ -115,7 +115,7 @@ class Artifact:
     value: int | bool
     source: Path
     allowance: int | None = None
-    line: int | None = None
+    lines: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -128,7 +128,7 @@ class Violation:
     actual: int | bool
     threshold: int | bool
     source: Path
-    line: int | None = None
+    lines: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -209,13 +209,12 @@ def _resolve_content_frontmatter(
 
 
 def _line_artifacts(target: str, dest_name: str, source: Path) -> Iterator[Artifact]:
-    """Yield the source's longest prose line and its lazy list continuation count.
+    """Yield the source's longest prose line and its lazy list continuations.
 
     Frontmatter and lines inside ``` or ~~~ fences are skipped. A delimiter
     indented `_CODE_INDENT` or more past its list item's text is not a fence.
     Table rows (starting with ``|``) are skipped for line length. A lazy
     continuation is a column-0 prose line directly after a list item's line.
-    The lazy count's line is its first lazy continuation's.
 
     Args:
         target: Target name to record on the yielded artifacts.
@@ -226,7 +225,8 @@ def _line_artifacts(target: str, dest_name: str, source: Path) -> Iterator[Artif
     lines = content.splitlines()
     split = split_frontmatter(content)
     start = len(split[0]) + 2 if split else 0
-    longest, line_number, lazy_number, lazy_count = 0, None, None, 0
+    longest, line_number = 0, None
+    lazy_lines: list[int] = []
     fence, fence_column, in_item = "", 0, False
     columns: list[int] = []
     for number, line in enumerate(lines[start:], start + 1):
@@ -255,16 +255,22 @@ def _line_artifacts(target: str, dest_name: str, source: Path) -> Iterator[Artif
             in_item = True
             columns.append(item.end())
         elif in_item and line == stripped:
-            lazy_count += 1
-            lazy_number = lazy_number or number
-    yield Artifact(NO_LONG_LINES, target, dest_name, longest, source, line=line_number)
+            lazy_lines.append(number)
+    yield Artifact(
+        NO_LONG_LINES,
+        target,
+        dest_name,
+        longest,
+        source,
+        lines=(line_number,) if line_number else (),
+    )
     yield Artifact(
         NO_LAZY_CONTINUATIONS,
         target,
         dest_name,
-        lazy_count,
+        len(lazy_lines),
         source,
-        line=lazy_number,
+        lines=tuple(lazy_lines),
     )
 
 
@@ -753,7 +759,7 @@ def evaluate(artifacts: Iterable[Artifact]) -> list[Violation]:
                         artifact.value,
                         True,
                         artifact.source,
-                        artifact.line,
+                        artifact.lines,
                     )
                 )
             continue
@@ -770,7 +776,7 @@ def evaluate(artifacts: Iterable[Artifact]) -> list[Violation]:
                     artifact.value,
                     ceiling,
                     artifact.source,
-                    artifact.line,
+                    artifact.lines,
                 )
             )
     return violations
@@ -911,7 +917,11 @@ def format_report(violations: list[Violation], errors: list[str] | None = None) 
         lines.append("Prompt-size guard failed:")
         for v in violations:
             unit = UNITS.get(v.metric, "")
-            at_line = f" at line {v.line}" if v.line is not None else ""
+            at_line = (
+                f" at line{'s' * (len(v.lines) > 1)} {', '.join(map(str, v.lines))}"
+                if v.lines
+                else ""
+            )
             fix = _FIXES.get(v.metric, "compress, don't split")
             lines.append(
                 f"  [{v.metric}] {v.dest_name} ({v.target}): actual {v.actual} > "
