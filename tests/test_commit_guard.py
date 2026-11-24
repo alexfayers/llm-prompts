@@ -68,7 +68,7 @@ class TestCommitGuard:
         self, hook: RunHook, repo: Path
     ) -> None:
         blocked = hook("PreShell", command="git commit -m x")
-        assert blocked is not None and "just" in (blocked.block or "")
+        assert blocked is not None and "redirected to a file" in (blocked.block or "")
 
         ran(hook, "just")
         assert hook("PreShell", command="git commit -m x") is None
@@ -128,6 +128,17 @@ class TestCommitGuard:
         assert hook("PreShell", command="git commit -m x") is not None
 
         ran(hook, f"cd {repo} && timeout 600 just", parent_tool_call_id="outer")
+        assert hook("PreShell", command="git commit -m x") is None
+
+    @pytest.mark.parametrize("command", ["just > /tmp/j.log", "just > j.log 2>&1"])
+    def test_a_redirected_run_counts_only_when_it_passes_alone(
+        self, hook: RunHook, command: str
+    ) -> None:
+        ran(hook, command, success=False)
+        ran(hook, f"{command}; echo rc=$?")
+        assert hook("PreShell", command="git commit -m x") is not None
+
+        ran(hook, f"{command} && echo ok")
         assert hook("PreShell", command="git commit -m x") is None
 
     def test_a_run_chained_before_a_command_that_may_change_files_does_not_count(
