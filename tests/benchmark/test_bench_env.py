@@ -70,12 +70,13 @@ def test_host_memory_pi_agent_and_git_vars_dropped_and_other_vars_kept(
     monkeypatch.setenv("HERDR_PANE_ID", "p1")
     monkeypatch.setenv("GIT_DIR", "/live/.git")
     monkeypatch.setenv("PI_SUBAGENT_CHILD", "1")
+    monkeypatch.setenv("PI_CONTEXT_CHILD", "/live/handshake.json")
     monkeypatch.setenv("AWS_PROFILE", "dev")
     monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
 
     env = isolated_env(HOME, VENV)
 
-    dropped = ("HERDR_", "GIT_DIR", "PI_SUBAGENT_")
+    dropped = ("HERDR_", "GIT_DIR", "PI_SUBAGENT_", "PI_CONTEXT_")
     assert not any(name.startswith(dropped) for name in env)
     assert not any(name in env for name in (*MEMORY_VARS, *HOST_PI_VARS))
     assert env["AWS_PROFILE"] == "dev"
