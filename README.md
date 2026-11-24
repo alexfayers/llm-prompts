@@ -144,7 +144,7 @@
 | tests/test\_claude\_models.py                                                 |       25 |        0 |    100% |           |
 | tests/test\_cli.py                                                            |     1129 |        1 |     99% |      1352 |
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
-| tests/test\_commit\_guard.py                                                  |      188 |        2 |     99% |   236-237 |
+| tests/test\_commit\_guard.py                                                  |      195 |        2 |     99% |   247-248 |
 | tests/test\_conftest.py                                                       |       94 |        4 |     96% |194-196, 209 |
 | tests/test\_contribute.py                                                     |      338 |        0 |    100% |           |
 | tests/test\_contribute\_worktrees.py                                          |     1643 |        0 |    100% |           |
@@ -193,7 +193,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       53 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **30222** |  **785** | **97%** |           |
+| **TOTAL**                                                                     | **30229** |  **785** | **97%** |           |
 
 
 ## Setup coverage badge
