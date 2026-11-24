@@ -413,9 +413,9 @@ class AutoReinstallPlugin(HooksPlugin):
         """Check for llm-prompts source updates and report any as session notes.
 
         Args:
-            source: The TaskStart source (e.g. "", "resume", "compact"). Within
-                the check interval a fresh start re-emits the cached notice
-                while resume/compact emit a cached notice once per session.
+            source: The TaskStart source (e.g. "", "resume", "compact"). A fresh
+                start re-emits the cached notice while resume/compact emit a
+                cached notice once per session.
             agent_type: Non-empty when this TaskStart fired inside a subagent
                 rather than the main session; the update check never runs
                 for subagents regardless of source.
@@ -444,18 +444,14 @@ class AutoReinstallPlugin(HooksPlugin):
                     self._update_check_debouncer.refresh_in_background(fetch)
                 except OSError:
                     logger.warning("Failed to start the llm-prompts update check")
-                messages = self._update_check_debouncer.cached_notice(fingerprint)
-                self._update_check_debouncer.record_shown(task_id, messages)
-            elif source in _DEBOUNCED_TASK_START_SOURCES:
-                messages = []
-                if (
-                    notice := self._update_check_debouncer.cached_notice(fingerprint)
-                ) and not self._update_check_debouncer.was_shown(task_id, notice):
-                    self._update_check_debouncer.record_shown(task_id, notice)
-                    messages = notice
-            else:
+            elif source not in _DEBOUNCED_TASK_START_SOURCES:
                 run.begin("startup-check", ["--cached"])
-                messages = self._update_check_debouncer.cached_notice(fingerprint)
+            messages = self._update_check_debouncer.cached_notice(fingerprint)
+            if source in _DEBOUNCED_TASK_START_SOURCES and (
+                self._update_check_debouncer.was_shown(task_id, messages)
+            ):
+                messages = []
+            else:
                 self._update_check_debouncer.record_shown(task_id, messages)
 
         if reason := _auto_update_failure(fingerprint):

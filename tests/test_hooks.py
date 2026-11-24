@@ -999,6 +999,24 @@ class TestUpdateCheckOnTaskStart:
         assert (compact.notes if compact else None) == shown
         assert again is None
 
+    def test_compact_while_a_refresh_is_due_shows_the_cached_notice_once(
+        self, tmp_path: Path
+    ) -> None:
+        stamp = tmp_path / "update-stamp"
+        _ReinstallDebouncer(stamp).store_notice(["old"])
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(stamp)
+        compact = partial(
+            plugin.on_hook,
+            "TaskStart",
+            task_id="t1",
+            workspace_roots=[],
+            source="compact",
+        )
+        shown = compact()
+        assert shown is not None and shown.notes == ["old"]
+        assert compact() is None
+
     def test_compact_shows_a_notice_another_session_cached_once(
         self, tmp_path: Path
     ) -> None:
