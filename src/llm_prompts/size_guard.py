@@ -84,6 +84,7 @@ CHECKED_TARGETS: tuple[str, ...] = tuple(AGENT_CLASSES)
 ALLOWANCES_FILENAME = "size_allowances.json"
 _LINE_METRICS = frozenset({NO_LONG_LINES, NO_LAZY_CONTINUATIONS})
 _LIST_ITEM = re.compile(r"\s*(?:[-*+]|\d+[.)])\s")
+_FENCE = re.compile(r"`{3,}|~{3,}")
 _BLOCK_START = re.compile(r"[#|><]|\{[%#]")
 _FIXES = {
     NO_LONG_LINES: "wrap the line",
@@ -209,7 +210,7 @@ def _resolve_content_frontmatter(
 def _line_artifacts(target: str, dest_name: str, source: Path) -> Iterator[Artifact]:
     """Yield the source's longest prose line and its first lazy list continuation.
 
-    Frontmatter and lines inside ``` fences are skipped. Table rows (starting
+    Frontmatter and lines inside ``` or ~~~ fences are skipped. Table rows (starting
     with ``|``) are skipped for line length. A lazy continuation is a
     column-0 prose line directly after a list item's line.
 
@@ -223,14 +224,20 @@ def _line_artifacts(target: str, dest_name: str, source: Path) -> Iterator[Artif
     split = split_frontmatter(content)
     start = len(split[0]) + 2 if split else 0
     longest, line_number, lazy_number = 0, None, None
-    in_fence = in_item = False
+    fence, in_item = "", False
     for number, line in enumerate(lines[start:], start + 1):
         stripped = line.lstrip()
-        if stripped.startswith("```"):
-            in_fence = not in_fence
-            in_item = False
+        delimiter = _FENCE.match(stripped)
+        if fence:
+            if (
+                delimiter
+                and delimiter[0].startswith(fence)
+                and not stripped[delimiter.end() :].strip()
+            ):
+                fence = ""
             continue
-        if in_fence:
+        if delimiter:
+            fence, in_item = delimiter[0], False
             continue
         if not stripped.startswith("|") and len(line) > longest:
             longest, line_number = len(line), number
