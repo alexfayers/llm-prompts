@@ -1194,6 +1194,17 @@ class TestUpdateCheckOnTaskStart:
         assert rebuilt is not None
         assert rebuilt.notes[0] == failure
 
+    def test_cached_failures_keep_their_own_source(self, tmp_path: Path) -> None:
+        source = {"name": "pkg", "source": "git+https://x.invalid/r"}
+        identities = [_source_identity(source), _source_identity(source, "plugin")]
+        message = "[pkg] update check failed: offline"
+        cache = _ReinstallDebouncer(tmp_path / "update-stamp")
+        cache.store_notice([UpdateCheckFailure(message, i) for i in identities])
+        restored = cache.cached_notice()
+        assert [m.source for m in restored if isinstance(m, UpdateCheckFailure)] == (
+            identities
+        )
+
     def test_running_refresh_skips_a_check_another_refresh_did(
         self, tmp_path: Path
     ) -> None:

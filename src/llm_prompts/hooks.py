@@ -253,13 +253,11 @@ class _ReinstallDebouncer:
         """Cache the update messages with the installed-version fingerprint they were checked at."""
         from .cli import UpdateCheckFailure
 
-        failures = [
-            [m, m.source] for m in messages if isinstance(m, UpdateCheckFailure)
+        entries = [
+            [m, m.source] if isinstance(m, UpdateCheckFailure) else m for m in messages
         ]
         self._notice_cache.write_text(
-            json.dumps(
-                {"fingerprint": fingerprint, "messages": messages, "failures": failures}
-            ),
+            json.dumps({"fingerprint": fingerprint, "messages": entries}),
             encoding="utf-8",
         )
 
@@ -270,11 +268,8 @@ class _ReinstallDebouncer:
 
         if cache.get("fingerprint", "") != fingerprint:
             return []
-        failures: dict[str, list[str]] = {
-            f[0]: f[1] for f in cache.get("failures", []) if isinstance(f, list)
-        }
         return [
-            UpdateCheckFailure(m, failures[m]) if m in failures else m
+            UpdateCheckFailure(*m) if isinstance(m, list) else m
             for m in cache.get("messages", [])
         ]
 
