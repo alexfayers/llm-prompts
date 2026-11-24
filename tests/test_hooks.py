@@ -1112,6 +1112,7 @@ class TestUpdateCheckOnTaskStart:
         fake_subprocess.on("fetch", returncode=128, stderr="Connection reset by peer")
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
             patch(
                 "llm_prompts.setup._load_config",
                 return_value=[{"name": "pkg", "source": str(repo)}],
@@ -1142,6 +1143,7 @@ class TestUpdateCheckOnTaskStart:
         source = "git+https://user:secret@x.invalid/r.git"
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
             patch(
                 "llm_prompts.setup._load_config",
                 return_value=[{"name": "pkg", "source": source}],
@@ -1178,6 +1180,7 @@ class TestUpdateCheckOnTaskStart:
         )
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
             patch("llm_prompts.setup._load_config", return_value=[source]),
             patch("llm_prompts.plugins._load_plugins", return_value=[]),
             patch("llm_prompts.cli._get_installed_commit", return_value="c"),
@@ -1279,6 +1282,7 @@ class TestUpdateCheckOnTaskStart:
         )
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
             patch(
                 "llm_prompts.setup._load_config",
                 return_value=[{**tool, "ref": "next"}],

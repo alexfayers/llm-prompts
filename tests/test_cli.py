@@ -36,6 +36,7 @@ from llm_prompts.cli import (
     _run_size_check,
     _size_guard_roots,
     _source_identity,
+    _update_sources,
     main,
 )
 from llm_prompts.contribute import SyncOptions
@@ -862,6 +863,7 @@ class TestPullLocalSources:
         config = [{"name": "core", "source": str(clone)}]
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
             patch("llm_prompts.setup._load_config", return_value=config),
             patch("llm_prompts.plugins._load_plugins", return_value=[]),
         ):
@@ -919,6 +921,7 @@ class TestCollectUpdateMessages:
             mock_config.return_value.exists.return_value = True
             with (
                 patch("llm_prompts.setup._load_config", return_value=config),
+                patch("llm_prompts.setup.read_config", return_value={}),
                 patch("llm_prompts.plugins._load_plugins", return_value=[]),
                 patch(
                     "llm_prompts.cli._local_source_messages",
@@ -969,6 +972,7 @@ class TestCollectUpdateMessages:
         ]
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
             patch("llm_prompts.setup._load_config", return_value=config),
             patch("llm_prompts.plugins._load_plugins", return_value=[]),
             patch("llm_prompts.cli._get_installed_commit", return_value=installed),
@@ -1002,6 +1006,7 @@ class TestCollectUpdateMessages:
         fingerprint = json.dumps([[*_source_identity(tool), sha] for sha in recorded])
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
             patch("llm_prompts.setup._load_config", return_value=[tool]),
             patch("llm_prompts.plugins._load_plugins", return_value=[]),
             patch("llm_prompts.cli._get_installed_commit", return_value=None),
@@ -1032,6 +1037,7 @@ class TestCollectUpdateMessages:
         ]
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
             patch("llm_prompts.setup._load_config", return_value=[core]),
             patch("llm_prompts.plugins._load_plugins", return_value=[plug]),
         ):
@@ -1056,6 +1062,7 @@ class TestCollectUpdateMessages:
         cache = _ReinstallDebouncer(tmp_path / "stamp")
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
             patch("llm_prompts.setup._load_config", return_value=[same]),
             patch("llm_prompts.plugins._load_plugins", return_value=[same]),
         ):
@@ -1074,6 +1081,16 @@ class TestCollectUpdateMessages:
         ]
         assert rebuilt == checked
 
+    def test_update_sources_come_from_one_config_read(self) -> None:
+        first = {"tools": [{"name": "a"}], "plugins": [{"name": "p"}]}
+        second = {"tools": [{"name": "b"}], "plugins": [{"name": "q"}]}
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", side_effect=[first, second]),
+        ):
+            mock_config.return_value.exists.return_value = True
+            assert _update_sources() == (first["tools"], first["plugins"])
+
     def test_failed_check_is_reported_without_credentials(
         self, fake_subprocess: FakeSubprocess
     ) -> None:
@@ -1081,6 +1098,7 @@ class TestCollectUpdateMessages:
         fake_subprocess.on("ls-remote", returncode=128)
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
             patch(
                 "llm_prompts.setup._load_config",
                 return_value=[{"name": "pkg", "source": source}],
@@ -1107,6 +1125,7 @@ class TestCollectUpdateMessages:
         )
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
             patch(
                 "llm_prompts.setup._load_config",
                 return_value=[{"name": "pkg", "source": source}],
@@ -1141,6 +1160,7 @@ class TestCollectUpdateMessages:
         )
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
             patch(
                 "llm_prompts.setup._load_config",
                 return_value=[{"name": "core", "source": str(clone)}],
@@ -1180,6 +1200,7 @@ class TestCollectUpdateMessages:
         git(upstream, "tag", "-f", "v0.1.0")
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
             patch(
                 "llm_prompts.setup._load_config",
                 return_value=[{"name": "core", "source": str(clone)}],
@@ -1200,6 +1221,7 @@ class TestCollectUpdateMessages:
             mock_config.return_value.exists.return_value = True
             with (
                 patch("llm_prompts.setup._load_config", return_value=config),
+                patch("llm_prompts.setup.read_config", return_value={}),
                 patch("llm_prompts.plugins._load_plugins", return_value=[]),
                 patch(
                     "llm_prompts.cli._local_source_messages",
@@ -1223,6 +1245,7 @@ class TestCollectUpdateMessages:
             mock_config.return_value.exists.return_value = True
             with (
                 patch("llm_prompts.setup._load_config", return_value=config),
+                patch("llm_prompts.setup.read_config", return_value={}),
                 patch(
                     "llm_prompts.cli._local_source_messages",
                     return_value=["[core] 1 new commit(s) available"],

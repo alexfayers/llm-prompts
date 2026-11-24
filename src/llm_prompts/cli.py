@@ -962,11 +962,12 @@ UpdateSources = tuple[list[dict[str, Any]], list[dict[str, Any]]]
 def _update_sources() -> UpdateSources:
     """Return the configured tools and plugins, or none without a config file."""
     from .plugins import _load_plugins
-    from .setup import _load_config, config_path
+    from .setup import _load_config, config_path, read_config
 
     if not config_path().exists():
         return [], []
-    return _load_config(), _load_plugins()
+    config = read_config()
+    return _load_config(config), _load_plugins(config)
 
 
 def _collect_update_messages(

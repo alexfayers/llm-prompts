@@ -505,11 +505,11 @@ class TestPluginSourceMessages:
         config = tmp_path / "config.toml"
         config.touch()
         monkeypatch.setattr(setup, "config_path", lambda: config)
-        monkeypatch.setattr(setup, "_load_config", list)
+        monkeypatch.setattr(setup, "_load_config", lambda _config: [])
         monkeypatch.setattr(
             plugins,
             "_load_plugins",
-            lambda: [{"name": "p", "source": f"git+file://{tmp_path}"}],
+            lambda _config: [{"name": "p", "source": f"git+file://{tmp_path}"}],
         )
 
         checked = cli._collect_update_messages()

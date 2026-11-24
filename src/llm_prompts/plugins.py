@@ -29,8 +29,8 @@ def plugin_dir() -> Path:
     return home.config_dir() / "plugin-sources"
 
 
-def _load_plugins() -> list[dict[str, Any]]:
-    """Load the plugins list from config.
+def _load_plugins(config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Load the plugins list from config, or from an already-read config.
 
     Returns:
         The ``[[plugins]]`` entries, or an empty list if config or the key is
@@ -38,7 +38,7 @@ def _load_plugins() -> list[dict[str, Any]]:
     """
     from .setup import read_config
 
-    plugins = read_config().get("plugins", [])
+    plugins = (read_config() if config is None else config).get("plugins", [])
     if not isinstance(plugins, list):
         return []
     return plugins
