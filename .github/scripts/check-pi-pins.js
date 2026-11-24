@@ -63,6 +63,9 @@ function main() {
     run('npm', ['install', '--prefix', path.join(scratch, 'pi'), `${PI_PACKAGE}@${pins.get(PI_PACKAGE)}`], { env: piEnv });
     run('llm-prompts', ['install', 'pi', '--root', home, '--no-update'], { env: piEnv, stdio: 'inherit' });
     const piVersion = run('pi', ['--version'], { env: piEnv }).trim();
+    fs.writeFileSync(path.join(agentDir, 'models.json'), JSON.stringify({ providers: {
+      'pin-check': { baseUrl: 'http://127.0.0.1:1/v1', api: 'openai-completions', apiKey: 'unused', models: [{ id: 'offline' }] },
+    } }));
     const rpcEnv = {
       ...piEnv,
       PI_CODING_AGENT_DIR: agentDir,
@@ -110,4 +113,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { readPins, findProblems };
+module.exports = { readPins, findProblems, run };
