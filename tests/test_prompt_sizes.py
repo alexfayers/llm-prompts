@@ -372,6 +372,7 @@ class TestIterArtifactsDispatch:
             ("~~~\n" + "x" * (MAX_LINE_CHARS + 1) + "\n~~~", True),
             ("````\n```\n" + "x" * (MAX_LINE_CHARS + 1) + "\n````", True),
             ("    ~~~\n" + "x" * (MAX_LINE_CHARS + 1), False),
+            ("\t~~~\n" + "x" * (MAX_LINE_CHARS + 1), False),
             (
                 "  - Item\n\n      ~~~\n      "
                 + "x" * (MAX_LINE_CHARS + 1)

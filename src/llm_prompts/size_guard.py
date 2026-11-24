@@ -86,6 +86,7 @@ ALLOWANCES_FILENAME = "size_allowances.json"
 _LIST_ITEM = re.compile(r"\s*(?:[-*+]|\d+[.)])\s")
 _FENCE = re.compile(r"`{3,}|~{3,}")
 _CODE_INDENT = 4
+_TAB_STOP = 4
 _BLOCK_START = re.compile(r"[#|><]|\{[%#]|([-*_])(?:[ \t]*\1){2,}[ \t]*$")
 _FIXES = {
     NO_LONG_LINES: "wrap the line",
@@ -213,7 +214,8 @@ def _line_artifacts(target: str, dest_name: str, source: Path) -> Iterator[Artif
 
     Frontmatter and lines inside ``` or ~~~ fences are skipped. A delimiter
     indented `_CODE_INDENT` or more past its list item's text is not a fence,
-    and a fence ends where a line dedents out of its list item.
+    and a fence ends where a line dedents out of its list item. Tabs indent
+    to `_TAB_STOP`-column stops.
     Table rows (starting with ``|``) are skipped for line length. A lazy
     continuation is a column-0 prose line directly after a list item's line.
 
@@ -232,7 +234,7 @@ def _line_artifacts(target: str, dest_name: str, source: Path) -> Iterator[Artif
     columns: list[int] = []
     for number, line in enumerate(lines[start:], start + 1):
         stripped = line.lstrip()
-        indent = len(line) - len(stripped)
+        indent = len(line[: len(line) - len(stripped)].expandtabs(_TAB_STOP))
         if fence and stripped and indent < fence_column:
             fence = ""
         if stripped and not fence:
@@ -256,7 +258,7 @@ def _line_artifacts(target: str, dest_name: str, source: Path) -> Iterator[Artif
             in_item = False
         elif item := _LIST_ITEM.match(line):
             in_item = True
-            columns.append(item.end())
+            columns.append(len(line[: item.end()].expandtabs(_TAB_STOP)))
         elif in_item and line == stripped:
             lazy_lines.append(number)
     yield Artifact(
