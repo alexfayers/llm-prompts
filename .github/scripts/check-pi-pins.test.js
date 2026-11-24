@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { readPins, findProblems } = require('./check-pi-pins.js');
+const { readPins, findProblems, run } = require('./check-pi-pins.js');
 
 const PI_PACKAGE = '@earendil-works/pi-coding-agent';
 
@@ -38,6 +38,10 @@ test('accepts packages that match their pins', () => {
 test('reports a version other than the pin', () => {
   const installed = new Map(healthy.installed).set('pi-one', '2.0.1');
   assert.match(findProblems({ ...healthy, installed })[0], /pi-one is pinned to 2\.0\.0 but 2\.0\.1/);
+});
+
+test('rejects stderr even when the subprocess succeeds', () => {
+  assert.throws(() => run(process.execPath, ['-e', 'console.error("extension failed")'], { silentStderr: true }), /extension failed/);
 });
 
 test('reports a loaded package that is not pinned', () => {
