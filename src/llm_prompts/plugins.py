@@ -271,7 +271,7 @@ def plugin_source_messages(plugin: dict[str, Any], fetch: bool = True) -> list[s
 
     Args:
         plugin: A ``[[plugins]]`` entry with ``name``, ``source``, optional ``ref``.
-        fetch: Whether to fetch, or compare against the upstream branch already fetched.
+        fetch: Whether to fetch, or compare against the configured ref already fetched.
 
     Returns:
         Message lines describing an available update, or an empty list.
@@ -299,16 +299,7 @@ def plugin_source_messages(plugin: dict[str, Any], fetch: bool = True) -> list[s
     if fetch:
         remote_sha = _remote_head(git_url, plugin.get("ref"))
     else:
-        remote_sha = (
-            subprocess.run(
-                ["git", "-C", str(checkout), "rev-parse", "@{u}"],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=GIT_TIMEOUT,
-            ).stdout.strip()
-            or None
-        )
+        remote_sha = _fetched_ref_sha(checkout, plugin.get("ref"))
     if remote_sha is None or remote_sha == local_sha:
         return []
 
@@ -322,12 +313,35 @@ def plugin_source_messages(plugin: dict[str, Any], fetch: bool = True) -> list[s
     subjects = _commit_subjects_between(
         checkout,
         local_sha,
-        "FETCH_HEAD" if fetch else remote_sha,
+        remote_sha,
         _installed_pathspecs(plugin.get("skills")),
     )
     if subjects == []:
         return []
     return _format_update_message(name, subjects, local_sha[:8], remote_sha[:8])
+
+
+def _fetched_ref_sha(checkout: Path, ref: str | None) -> str | None:
+    """Return the commit a plugin's configured ref points at in its fetched refs, or ``None`` if it resolves to nothing."""
+    for candidate in [f"origin/{ref}", str(ref)] if ref else ["origin/HEAD"]:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(checkout),
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                f"{candidate}^{{commit}}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=GIT_TIMEOUT,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    return None
 
 
 def _installed_pathspecs(subset: list[str] | None) -> list[str]:
