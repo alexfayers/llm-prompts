@@ -85,6 +85,7 @@ CHECKED_TARGETS: tuple[str, ...] = tuple(AGENT_CLASSES)
 ALLOWANCES_FILENAME = "size_allowances.json"
 _LIST_ITEM = re.compile(r"\s*(?:[-*+]|\d+[.)])\s")
 _FENCE = re.compile(r"`{3,}|~{3,}")
+_CODE_INDENT = 4
 _BLOCK_START = re.compile(r"[#|><]|\{[%#]|([-*_])(?:[ \t]*\1){2,}[ \t]*$")
 _FIXES = {
     NO_LONG_LINES: "wrap the line",
@@ -210,10 +211,11 @@ def _resolve_content_frontmatter(
 def _line_artifacts(target: str, dest_name: str, source: Path) -> Iterator[Artifact]:
     """Yield the source's longest prose line and its lazy list continuation count.
 
-    Frontmatter and lines inside ``` or ~~~ fences are skipped. Table rows (starting
-    with ``|``) are skipped for line length. A lazy continuation is a
-    column-0 prose line directly after a list item's line. The lazy count's
-    line is its first lazy continuation's.
+    Frontmatter and lines inside ``` or ~~~ fences are skipped. A delimiter
+    indented `_CODE_INDENT` or more past its list item's text is not a fence.
+    Table rows (starting with ``|``) are skipped for line length. A lazy
+    continuation is a column-0 prose line directly after a list item's line.
+    The lazy count's line is its first lazy continuation's.
 
     Args:
         target: Target name to record on the yielded artifacts.
@@ -225,10 +227,15 @@ def _line_artifacts(target: str, dest_name: str, source: Path) -> Iterator[Artif
     split = split_frontmatter(content)
     start = len(split[0]) + 2 if split else 0
     longest, line_number, lazy_number, lazy_count = 0, None, None, 0
-    fence, in_item = "", False
+    fence, fence_column, in_item = "", 0, False
+    columns: list[int] = []
     for number, line in enumerate(lines[start:], start + 1):
         stripped = line.lstrip()
-        delimiter = _FENCE.match(stripped)
+        indent = len(line) - len(stripped)
+        if stripped and not fence:
+            columns = [c for c in columns if c <= indent]
+        column = fence_column if fence else (columns[-1] if columns else 0)
+        delimiter = _FENCE.match(stripped) if indent - column < _CODE_INDENT else None
         if fence:
             if (
                 delimiter
@@ -238,14 +245,15 @@ def _line_artifacts(target: str, dest_name: str, source: Path) -> Iterator[Artif
                 fence = ""
             continue
         if delimiter:
-            fence, in_item = delimiter[0], False
+            fence, fence_column, in_item = delimiter[0], column, False
             continue
         if not stripped.startswith("|") and len(line) > longest:
             longest, line_number = len(line), number
         if not stripped or _BLOCK_START.match(line):
             in_item = False
-        elif _LIST_ITEM.match(line):
+        elif item := _LIST_ITEM.match(line):
             in_item = True
+            columns.append(item.end())
         elif in_item and line == stripped:
             lazy_count += 1
             lazy_number = lazy_number or number
