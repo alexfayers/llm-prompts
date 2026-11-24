@@ -58,7 +58,7 @@
 | src/llm\_prompts/extension\_factories.py                                      |       12 |        0 |    100% |           |
 | src/llm\_prompts/github\_api.py                                               |      100 |        1 |     99% |        77 |
 | src/llm\_prompts/guards/\_\_init\_\_.py                                       |        0 |        0 |    100% |           |
-| src/llm\_prompts/guards/commit\_guard.py                                      |      176 |        8 |     95% |55-56, 106, 138, 229, 283, 315, 334 |
+| src/llm\_prompts/guards/commit\_guard.py                                      |      207 |        8 |     96% |57-58, 153, 185, 277, 333, 365, 384 |
 | src/llm\_prompts/guards/gate.py                                               |        5 |        0 |    100% |           |
 | src/llm\_prompts/guards/receipts.py                                           |       59 |        4 |     93% |48, 56, 74-75 |
 | src/llm\_prompts/guards/shell\_rules.py                                       |       27 |        1 |     96% |        62 |
@@ -144,7 +144,7 @@
 | tests/test\_claude\_models.py                                                 |       25 |        0 |    100% |           |
 | tests/test\_cli.py                                                            |     1129 |        1 |     99% |      1352 |
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
-| tests/test\_commit\_guard.py                                                  |      195 |        2 |     99% |   247-248 |
+| tests/test\_commit\_guard.py                                                  |      233 |        2 |     99% |   326-327 |
 | tests/test\_conftest.py                                                       |       94 |        4 |     96% |194-196, 209 |
 | tests/test\_contribute.py                                                     |      338 |        0 |    100% |           |
 | tests/test\_contribute\_worktrees.py                                          |     1643 |        0 |    100% |           |
@@ -193,7 +193,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       53 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **30306** |  **786** | **97%** |           |
+| **TOTAL**                                                                     | **30375** |  **786** | **97%** |           |
 
 
 ## Setup coverage badge
