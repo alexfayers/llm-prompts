@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from conftest import FakeSubprocess
 
-from llm_prompts import plugins, setup
+from llm_prompts import cli, plugins, setup
 from llm_prompts.exit_reason import ExitReason
 
 
@@ -485,6 +485,40 @@ class TestPluginSourceMessages:
         assert messages[0] == ("[p] update available:\n- second commit subject")
         (log,) = fake_subprocess.matching("log")
         assert "aaaaaaa..bbbbbbb" in log
+
+    def test_a_failed_target_write_fails_the_check(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_subprocess: FakeSubprocess,
+    ) -> None:
+        (plugins._checkout_dir("p") / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-parse", "HEAD", stdout="aaaaaaa\n")
+        fake_subprocess.on("ls-remote", stdout="bbbbbbb\tHEAD\n")
+        fake_subprocess.on("rev-parse", "--verify", stdout="ccccccc\n")
+        fake_subprocess.on("update-ref", returncode=1, stderr="cannot lock ref")
+        fake_subprocess.on(
+            "log",
+            "--pretty=format:%s%n%b%x1e",
+            stdout=fake_subprocess.log_lines("stale"),
+        )
+        config = tmp_path / "config.toml"
+        config.touch()
+        monkeypatch.setattr(setup, "config_path", lambda: config)
+        monkeypatch.setattr(setup, "_load_config", list)
+        monkeypatch.setattr(
+            plugins,
+            "_load_plugins",
+            lambda: [{"name": "p", "source": f"git+file://{tmp_path}"}],
+        )
+
+        checked = cli._collect_update_messages()
+        rebuilt = cli._collect_update_messages(
+            previous=(cli._installed_fingerprint(), checked)
+        )
+
+        assert checked[0].startswith("[p] update check failed")
+        assert rebuilt == checked
 
     def test_without_fetching_compares_against_the_resolved_target(
         self, tmp_path: Path, fake_subprocess: FakeSubprocess

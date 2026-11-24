@@ -324,12 +324,16 @@ def plugin_source_messages(plugin: dict[str, Any], fetch: bool = True) -> list[s
 
 
 def _record_resolved_target(checkout: Path, sha: str | None) -> None:
-    """Record the commit the remote check resolved for a plugin checkout, or clear it when the ref resolved to nothing."""
+    """Record the commit the remote check resolved for a plugin checkout, or clear it when the ref resolved to nothing.
+
+    Raises:
+        subprocess.CalledProcessError: If the record cannot be written or cleared.
+    """
     update = ["-d", UPSTREAM] if sha is None else [UPSTREAM, sha]
     subprocess.run(
         ["git", "-C", str(checkout), "update-ref", *update],
         capture_output=True,
-        check=False,
+        check=True,
         timeout=GIT_TIMEOUT,
     )
 
