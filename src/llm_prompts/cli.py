@@ -15,7 +15,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, Self
 from urllib.parse import urlparse
 
 from . import github_api, telemetry
@@ -330,20 +330,21 @@ def _remote_source_messages(
     )
 
 
-def _source_identity(entry: dict[str, Any]) -> list[str]:
-    """Return a tool or plugin entry's name, source URL digest and ref."""
+def _source_identity(entry: dict[str, Any], kind: str = "tool") -> list[str]:
+    """Return a tool or plugin entry's name, source URL digest, ref and kind."""
     source = str(entry.get("source", ""))
     return [
         str(entry.get("name", "")),
         hashlib.sha256(source.encode()).hexdigest(),
         str(entry.get("ref", "")),
+        kind,
     ]
 
 
 def _fingerprint_versions(fingerprint: str) -> dict[tuple[str, ...], str]:
     """Map each source identity in an installed-version fingerprint to its installed commit."""
     try:
-        return {tuple(entry[:3]): entry[3] for entry in json.loads(fingerprint)}
+        return {tuple(entry[:-1]): entry[-1] for entry in json.loads(fingerprint)}
     except (ValueError, TypeError):
         return {}
 
@@ -357,11 +358,23 @@ def _previous_source_messages(
     key = tuple(identity)
     if key not in versions or versions[key] != (_get_installed_commit(name) or ""):
         return []
-    return [message for message in messages if message.startswith(f"[{name}] ")]
+    return [
+        message
+        for message in messages
+        if message.startswith(f"[{name}] ")
+        and getattr(message, "source", identity) == identity
+    ]
 
 
 class UpdateCheckFailure(str):
-    """An update-check-failed message."""
+    """An update-check-failed message, with the identity of the source whose check failed."""
+
+    source: list[str]
+
+    def __new__(cls, message: str, source: list[str] | None = None) -> Self:
+        failure = super().__new__(cls, message)
+        failure.source = source or []
+        return failure
 
 
 def _previous_failures_or(
@@ -370,18 +383,17 @@ def _previous_failures_or(
     check: Callable[[], list[str]],
 ) -> list[str]:
     """Return a source's failed checks from the previous check of the same source, or run the check when it had none."""
-    fingerprint, messages = previous or ("", [])
     failures: list[str] = [
         message
-        for message in messages
-        if isinstance(message, UpdateCheckFailure)
-        and message.startswith(f"[{identity[0]}] ")
-        and tuple(identity) in _fingerprint_versions(fingerprint)
+        for message in (previous or ("", []))[1]
+        if isinstance(message, UpdateCheckFailure) and message.source == identity
     ]
     return failures or check()
 
 
-def _update_check_or_failure(name: str, check: Callable[[], list[str]]) -> list[str]:
+def _update_check_or_failure(
+    identity: list[str], check: Callable[[], list[str]]
+) -> list[str]:
     """Run an update check, reporting a failed git call as a message.
 
     Returns:
@@ -394,7 +406,11 @@ def _update_check_or_failure(name: str, check: Callable[[], list[str]]) -> list[
         if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
             reason += " " + " ".join(stderr_text(exc).strip().splitlines()[-2:])
         reason = _URL_CREDENTIALS.sub(r"\1", reason)
-        return [UpdateCheckFailure(f"[{name}] update check failed: {reason}")]
+        return [
+            UpdateCheckFailure(
+                f"[{identity[0]}] update check failed: {reason}", identity
+            )
+        ]
 
 
 def _local_source_messages(
@@ -984,16 +1000,18 @@ def _collect_update_messages(
             )
         else:
             check = partial(_remote_source_messages, name, source, tool.get("ref"))
-        checks.append(partial(_update_check_or_failure, name, check))
+        checks.append(partial(_update_check_or_failure, _source_identity(tool), check))
     for plugin in _load_plugins():
         name = str(plugin.get("name", ""))
         check = partial(
             _previous_failures_or,
-            _source_identity(plugin),
+            _source_identity(plugin, "plugin"),
             previous,
             partial(plugin_source_messages, plugin, previous is None),
         )
-        checks.append(partial(_update_check_or_failure, name, check))
+        checks.append(
+            partial(_update_check_or_failure, _source_identity(plugin, "plugin"), check)
+        )
 
     messages: list[str] = []
     for result in _run_parallel_ordered(checks):
@@ -1023,7 +1041,7 @@ def _installed_fingerprint() -> str:
     for plugin in _load_plugins():
         checkout = _checkout_dir(str(plugin.get("name", "")))
         sha = run_git(checkout, "rev-parse", "HEAD").stdout.strip()
-        versions.append([*_source_identity(plugin), sha])
+        versions.append([*_source_identity(plugin, "plugin"), sha])
     return json.dumps(versions)
 
 

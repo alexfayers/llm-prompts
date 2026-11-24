@@ -1166,9 +1166,11 @@ class TestUpdateCheckOnTaskStart:
         stamp = tmp_path / "update-stamp"
         plugin = AutoReinstallPlugin()
         plugin._update_check_debouncer = _ReinstallDebouncer(stamp)
-        failure = UpdateCheckFailure("[pkg] update check failed: offline")
         _ReinstallDebouncer(stamp).mark_run()
         source = {"name": "pkg", "source": "git+https://x.invalid/r"}
+        failure = UpdateCheckFailure(
+            "[pkg] update check failed: offline", _source_identity(source)
+        )
         pkg = [*_source_identity(source), "c"]
         core = _source_identity({"name": "core", "source": "/core"})
         _ReinstallDebouncer(stamp).store_notice(

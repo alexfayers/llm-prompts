@@ -25,6 +25,7 @@ from llm_prompts.cli import (
     _ContributeTarget,
     _flush_memory_telemetry,
     _get_installed_commit,
+    _installed_fingerprint,
     _local_source_messages,
     _print_parked_state,
     _print_update_status,
@@ -38,6 +39,7 @@ from llm_prompts.cli import (
     main,
 )
 from llm_prompts.contribute import SyncOptions
+from llm_prompts.hooks import _ReinstallDebouncer
 from llm_prompts.main_sync import SyncResult
 from llm_prompts.setup import (
     _UPDATE_INSTRUCTION,
@@ -1020,9 +1022,13 @@ class TestCollectUpdateMessages:
         checked = [
             {**entry, "ref": "other"} if retargeted else entry for entry in (core, plug)
         ]
+        identities = [
+            _source_identity(checked[0]),
+            _source_identity(checked[1], "plugin"),
+        ]
         failures = [
-            UpdateCheckFailure("[core] update check failed: offline"),
-            UpdateCheckFailure("[plug] update check failed: offline"),
+            UpdateCheckFailure("[core] update check failed: offline", identities[0]),
+            UpdateCheckFailure("[plug] update check failed: offline", identities[1]),
         ]
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
@@ -1032,9 +1038,7 @@ class TestCollectUpdateMessages:
             mock_config.return_value.exists.return_value = True
             result = _collect_update_messages(
                 previous=(
-                    json.dumps(
-                        [[*_source_identity(entry), "sha"] for entry in checked]
-                    ),
+                    json.dumps([[*identity, "sha"] for identity in identities]),
                     [*failures, _UPDATE_INSTRUCTION],
                 )
             )
@@ -1042,6 +1046,33 @@ class TestCollectUpdateMessages:
         kept = [m for m in result if isinstance(m, UpdateCheckFailure)]
         assert kept == ([] if retargeted else failures)
         assert fake_subprocess.matching("fetch") == []
+
+    def test_rebuild_keeps_a_failure_only_for_the_source_that_failed(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        (tmp_path / ".git").mkdir()
+        same = {"name": "x", "source": str(tmp_path)}
+        fake_subprocess.on("fetch", returncode=128, stderr="offline")
+        cache = _ReinstallDebouncer(tmp_path / "stamp")
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup._load_config", return_value=[same]),
+            patch("llm_prompts.plugins._load_plugins", return_value=[same]),
+        ):
+            mock_config.return_value.exists.return_value = True
+            fingerprint = _installed_fingerprint()
+            checked = _collect_update_messages()
+            cache.store_notice(checked, fingerprint)
+            rebuilt = _collect_update_messages(
+                previous=(fingerprint, cache.cached_notice(fingerprint))
+            )
+
+        assert [isinstance(m, UpdateCheckFailure) for m in checked] == [
+            True,
+            False,
+            False,
+        ]
+        assert rebuilt == checked
 
     def test_failed_check_is_reported_without_credentials(
         self, fake_subprocess: FakeSubprocess
