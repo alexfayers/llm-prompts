@@ -61,7 +61,7 @@ def test_with_retries_retries_a_timeout_and_gives_up_after_the_last_attempt() ->
         network.with_retries(always_times_out)
 
 
-def test_fail_fast_limits_only_ls_remote_and_fetch(
+def test_fail_fast_limits_only_ls_remote_fetch_and_clone(
     fake_subprocess: FakeSubprocess,
 ) -> None:
     with network.fail_fast():
@@ -69,9 +69,11 @@ def test_fail_fast_limits_only_ls_remote_and_fetch(
             ["git", "ls-remote", "u"],
             ["git", "-C", "r", "fetch"],
             ["git", "clone", "u", "d"],
+            ["git", "push", "u"],
         ):
             network.run_with_retries(argv, timeout=GIT_TIMEOUT)
     assert [kwargs["timeout"] for _, kwargs in fake_subprocess.calls] == [
+        network.FAIL_FAST_TIMEOUT,
         network.FAIL_FAST_TIMEOUT,
         network.FAIL_FAST_TIMEOUT,
         GIT_TIMEOUT,

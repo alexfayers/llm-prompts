@@ -19,13 +19,13 @@ TRANSIENT_FAILURE = re.compile(
 NETWORK_ATTEMPTS = 3
 RETRY_DELAY_SECONDS = 1.0
 FAIL_FAST_TIMEOUT = 5
-_FAIL_FAST_COMMANDS = frozenset({"ls-remote", "fetch"})
+_FAIL_FAST_COMMANDS = frozenset({"ls-remote", "fetch", "clone"})
 _failing_fast = threading.Event()
 
 
 @contextmanager
 def fail_fast() -> Iterator[None]:
-    """Run each ``ls-remote`` and ``fetch`` once, within ``FAIL_FAST_TIMEOUT`` seconds, while the context is open."""
+    """Run each ``ls-remote``, ``fetch`` and ``clone`` once, within ``FAIL_FAST_TIMEOUT`` seconds, while the context is open."""
     _failing_fast.set()
     try:
         yield
