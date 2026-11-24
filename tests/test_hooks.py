@@ -19,7 +19,7 @@ from cline_hooks.core.plugin import HookResult
 from conftest import FakeSubprocess
 
 from llm_prompts import network
-from llm_prompts.cli import UpdateCheckFailure
+from llm_prompts.cli import UpdateCheckFailure, _source_identity
 from llm_prompts.hooks import (
     _ANSI_COLOR,
     _ANSI_RESET,
@@ -1135,6 +1135,31 @@ class TestUpdateCheckOnTaskStart:
         (fetch,) = [kwargs for argv, kwargs in fake_subprocess.calls if "fetch" in argv]
         assert fetch["timeout"] == network.FAIL_FAST_TIMEOUT
 
+    def test_source_credentials_reach_neither_the_cache_nor_the_automatic_update(
+        self, tmp_path: Path, background: list[list[str]]
+    ) -> None:
+        stamp = tmp_path / "update-stamp"
+        source = "git+https://user:secret@x.invalid/r.git"
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch(
+                "llm_prompts.setup._load_config",
+                return_value=[{"name": "pkg", "source": source}],
+            ),
+            patch("llm_prompts.plugins._load_plugins", return_value=[]),
+            patch("llm_prompts.cli._get_installed_commit", return_value="c"),
+            patch(
+                "llm_prompts.cli._collect_update_messages",
+                return_value=["[pkg] update available"],
+            ),
+            patch("llm_prompts.auto_update.blocker", return_value=None),
+        ):
+            mock_config.return_value.exists.return_value = True
+            refresh_update_check(str(stamp))
+        (auto_update,) = background
+        assert "secret" not in " ".join(auto_update)
+        assert "secret" not in stamp.with_name(stamp.name + ".notice").read_text()
+
     def test_rebuilt_failure_does_not_start_the_automatic_update(
         self, tmp_path: Path, background: list[list[str]]
     ) -> None:
@@ -1143,21 +1168,20 @@ class TestUpdateCheckOnTaskStart:
         plugin._update_check_debouncer = _ReinstallDebouncer(stamp)
         failure = UpdateCheckFailure("[pkg] update check failed: offline")
         _ReinstallDebouncer(stamp).mark_run()
-        pkg = ["pkg", "git+https://x.invalid/r", "", "c"]
+        source = {"name": "pkg", "source": "git+https://x.invalid/r"}
+        pkg = [*_source_identity(source), "c"]
+        core = _source_identity({"name": "core", "source": "/core"})
         _ReinstallDebouncer(stamp).store_notice(
-            [failure, _UPDATE_INSTRUCTION], json.dumps([pkg])
+            [failure, _UPDATE_INSTRUCTION], json.dumps([[*core, "c"], pkg])
         )
         with (
             patch("llm_prompts.setup.config_path") as mock_config,
-            patch(
-                "llm_prompts.setup._load_config",
-                return_value=[{"name": "pkg", "source": "git+https://x.invalid/r"}],
-            ),
+            patch("llm_prompts.setup._load_config", return_value=[source]),
             patch("llm_prompts.plugins._load_plugins", return_value=[]),
             patch("llm_prompts.cli._get_installed_commit", return_value="c"),
             patch(
                 "llm_prompts.cli._installed_fingerprint",
-                return_value=json.dumps([["core", "/core", "", "d"], pkg]),
+                return_value=json.dumps([[*core, "d"], pkg]),
             ),
             patch("llm_prompts.auto_update.blocker", return_value=None),
             patch("llm_prompts.auto_update.start", return_value=True) as start,

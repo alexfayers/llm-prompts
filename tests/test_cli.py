@@ -34,6 +34,7 @@ from llm_prompts.cli import (
     _run_extension_factory_check,
     _run_size_check,
     _size_guard_roots,
+    _source_identity,
     main,
 )
 from llm_prompts.contribute import SyncOptions
@@ -975,8 +976,8 @@ class TestCollectUpdateMessages:
                 previous=(
                     json.dumps(
                         [
-                            ["core", str(tmp_path), "", "bb"],
-                            ["remote-pkg", config[1]["source"], "", "aa"],
+                            [*_source_identity(config[0]), "bb"],
+                            [*_source_identity(config[1]), "aa"],
                         ]
                     ),
                     previous,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -329,15 +330,26 @@ def _remote_source_messages(
     )
 
 
+def _source_identity(entry: dict[str, Any]) -> list[str]:
+    """Return a tool or plugin entry's name, source URL digest and ref."""
+    source = str(entry.get("source", ""))
+    return [
+        str(entry.get("name", "")),
+        hashlib.sha256(source.encode()).hexdigest(),
+        str(entry.get("ref", "")),
+    ]
+
+
 def _previous_source_messages(
-    name: str, source: str, ref: str, fingerprint: str, messages: list[str]
+    identity: list[str], fingerprint: str, messages: list[str]
 ) -> list[str]:
     """Return a remote source's messages from the previous check, or none once its installed version moved."""
+    name = identity[0]
     try:
         versions = {tuple(entry[:3]): entry[3] for entry in json.loads(fingerprint)}
     except (ValueError, TypeError):
         return []
-    if versions.get((name, source, ref)) != _get_installed_commit(name):
+    if versions.get(tuple(identity)) != _get_installed_commit(name):
         return []
     return [message for message in messages if message.startswith(f"[{name}] ")]
 
@@ -957,11 +969,7 @@ def _collect_update_messages(
             )
         elif previous is not None:
             check = partial(
-                _previous_source_messages,
-                name,
-                source,
-                str(tool.get("ref", "")),
-                *previous,
+                _previous_source_messages, _source_identity(tool), *previous
             )
         else:
             check = partial(_remote_source_messages, name, source, tool.get("ref"))
@@ -985,7 +993,7 @@ def _collect_update_messages(
 
 
 def _installed_fingerprint() -> str:
-    """Return each source's name, source, ref and installed commit, as JSON."""
+    """Return each source's identity and installed commit, as JSON."""
     from .main_sync import run_git
     from .plugins import _checkout_dir, _load_plugins
     from .setup import _expand, _is_local_path, _load_config, config_path
@@ -1000,13 +1008,11 @@ def _installed_fingerprint() -> str:
             sha = run_git(_expand(source), "rev-parse", "HEAD").stdout.strip()
         else:
             sha = _get_installed_commit(name) or ""
-        versions.append([name, source, str(tool.get("ref", "")), sha])
+        versions.append([*_source_identity(tool), sha])
     for plugin in _load_plugins():
-        name = str(plugin.get("name", ""))
-        sha = run_git(_checkout_dir(name), "rev-parse", "HEAD").stdout.strip()
-        versions.append(
-            [name, str(plugin.get("source", "")), str(plugin.get("ref", "")), sha]
-        )
+        checkout = _checkout_dir(str(plugin.get("name", "")))
+        sha = run_git(checkout, "rev-parse", "HEAD").stdout.strip()
+        versions.append([*_source_identity(plugin), sha])
     return json.dumps(versions)
 
 
