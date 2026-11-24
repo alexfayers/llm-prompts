@@ -956,14 +956,29 @@ def _pull_local_sources(
     return changed
 
 
+UpdateSources = tuple[list[dict[str, Any]], list[dict[str, Any]]]
+
+
+def _update_sources() -> UpdateSources:
+    """Return the configured tools and plugins, or none without a config file."""
+    from .plugins import _load_plugins
+    from .setup import _load_config, config_path
+
+    if not config_path().exists():
+        return [], []
+    return _load_config(), _load_plugins()
+
+
 def _collect_update_messages(
     previous: tuple[str, list[str]] | None = None,
+    sources: UpdateSources | None = None,
 ) -> list[str]:
     """Collect update-availability messages across all configured tool sources.
 
     Args:
         previous: The fingerprint and messages of the previous check, to rebuild
             the messages from the refs already fetched instead of fetching.
+        sources: The configured tools and plugins, read from config when omitted.
 
     Returns:
         Message lines describing available updates, in config order, followed
@@ -971,14 +986,12 @@ def _collect_update_messages(
     """
     from functools import partial
 
-    from .plugins import _load_plugins, plugin_source_messages
-    from .setup import _is_local_path, _load_config, _run_parallel_ordered, config_path
+    from .plugins import plugin_source_messages
+    from .setup import _is_local_path, _run_parallel_ordered
 
-    if not config_path().exists():
-        return []
-
+    tools, plugins = sources or _update_sources()
     checks: list[Callable[[], list[str]]] = []
-    for tool in _load_config():
+    for tool in tools:
         name = str(tool.get("name", ""))
         source = str(tool.get("source", ""))
         if _is_local_path(source):
@@ -1001,7 +1014,7 @@ def _collect_update_messages(
         else:
             check = partial(_remote_source_messages, name, source, tool.get("ref"))
         checks.append(partial(_update_check_or_failure, _source_identity(tool), check))
-    for plugin in _load_plugins():
+    for plugin in plugins:
         name = str(plugin.get("name", ""))
         check = partial(
             _previous_failures_or,
@@ -1021,16 +1034,19 @@ def _collect_update_messages(
     return messages
 
 
-def _installed_fingerprint() -> str:
-    """Return each source's identity and installed commit, as JSON."""
-    from .main_sync import run_git
-    from .plugins import _checkout_dir, _load_plugins
-    from .setup import _expand, _is_local_path, _load_config, config_path
+def _installed_fingerprint(sources: UpdateSources | None = None) -> str:
+    """Return each source's identity and installed commit, as JSON, or nothing without sources.
 
-    if not config_path().exists():
-        return ""
+    Args:
+        sources: The configured tools and plugins, read from config when omitted.
+    """
+    from .main_sync import run_git
+    from .plugins import _checkout_dir
+    from .setup import _expand, _is_local_path
+
+    tools, plugins = sources or _update_sources()
     versions: list[list[str]] = []
-    for tool in _load_config():
+    for tool in tools:
         name = str(tool.get("name", ""))
         source = str(tool.get("source", ""))
         if _is_local_path(source):
@@ -1038,11 +1054,11 @@ def _installed_fingerprint() -> str:
         else:
             sha = _get_installed_commit(name) or ""
         versions.append([*_source_identity(tool), sha])
-    for plugin in _load_plugins():
+    for plugin in plugins:
         checkout = _checkout_dir(str(plugin.get("name", "")))
         sha = run_git(checkout, "rev-parse", "HEAD").stdout.strip()
         versions.append([*_source_identity(plugin, "plugin"), sha])
-    return json.dumps(versions)
+    return json.dumps(versions) if versions else ""
 
 
 def _check_for_updates() -> bool:

@@ -1204,8 +1204,7 @@ class TestUpdateCheckOnTaskStart:
             patch("llm_prompts.cli._installed_fingerprint", return_value="a"),
             patch("llm_prompts.cli._collect_update_messages") as mock_collect,
         ):
-            refresh_update_check(str(stamp), "remote")
-            refresh_update_check(str(stamp), "local")
+            refresh_update_check(str(stamp))
         mock_collect.assert_not_called()
 
     def test_installed_update_invalidates_cached_notice(
@@ -1232,8 +1231,10 @@ class TestUpdateCheckOnTaskStart:
             assert self._fresh_start(stamp) is None
             self._finish(background)
             assert self._fresh_start(stamp) is None
-        mock_collect.assert_called_once_with(
-            previous=("a", ["[pkg] update available (a -> b)"])
+        mock_collect.assert_called_once()
+        assert mock_collect.call_args.kwargs["previous"] == (
+            "a",
+            ["[pkg] update available (a -> b)"],
         )
 
     def test_a_retargeted_source_schedules_a_remote_check(
@@ -1253,16 +1254,41 @@ class TestUpdateCheckOnTaskStart:
             ) as mock_collect,
         ):
             self._fresh_start(stamp)
-            assert background[0][-1] == "remote"
             self._finish(background)
-        mock_collect.assert_called_once_with()
+        assert mock_collect.call_args.kwargs.get("previous") is None
+
+    def test_a_local_refresh_fetches_when_a_source_changed_before_it_started(
+        self, tmp_path: Path
+    ) -> None:
+        stamp = tmp_path / "update-stamp"
+        tool = {"name": "pkg", "source": "git+https://x.invalid/r"}
+        _ReinstallDebouncer(stamp).mark_run()
+        _ReinstallDebouncer(stamp).store_notice(
+            ["old"], json.dumps([[*_source_identity(tool), "a"]])
+        )
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch(
+                "llm_prompts.setup._load_config",
+                return_value=[{**tool, "ref": "next"}],
+            ) as load_config,
+            patch("llm_prompts.plugins._load_plugins", return_value=[]),
+            patch("llm_prompts.cli._get_installed_commit", return_value="a"),
+            patch(
+                "llm_prompts.cli._remote_source_messages", return_value=[]
+            ) as remote_check,
+        ):
+            mock_config.return_value.exists.return_value = True
+            refresh_update_check(str(stamp))
+        remote_check.assert_called_once()
+        load_config.assert_called_once()
 
     def test_a_running_refresh_is_not_repeated(
         self, tmp_path: Path, background: list[list[str]]
     ) -> None:
         stamp = tmp_path / "update-stamp"
 
-        def check() -> list[str]:
+        def check(**_: object) -> list[str]:
             assert self._fresh_start(stamp) is None
             self._finish(background)
             return ["new"]
@@ -1354,7 +1380,7 @@ def test_detached_refresh_rebuilds_the_notice(
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     subprocess.run(
-        [sys.executable, "-c", _REFRESH, str(stamp), "local"],
+        [sys.executable, "-c", _REFRESH, str(stamp)],
         check=True,
         timeout=60,
     )

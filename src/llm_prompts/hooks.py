@@ -234,7 +234,7 @@ class _ReinstallDebouncer:
         """Yield True while this process holds the background refresh lock, False if another refresh holds it."""
         return _flock(self._refresh_lock, 0)
 
-    def refresh_in_background(self, fetch: bool) -> None:
+    def refresh_in_background(self) -> None:
         """Start ``refresh_update_check`` for this stamp in a detached process."""
         subprocess.Popen(
             [
@@ -242,7 +242,6 @@ class _ReinstallDebouncer:
                 "-c",
                 _REFRESH,
                 str(self._stamp),
-                "remote" if fetch else "local",
             ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -307,12 +306,14 @@ def _flock(path: Path, wait_seconds: float) -> Iterator[bool]:
                 return
 
 
-def refresh_update_check(stamp: str, refs: str = "remote") -> None:
+def refresh_update_check(stamp: str) -> None:
     """Check for llm-prompts updates, cache the notice and start the automatic update when updates exist.
+
+    Fetches when the check is due or a source changed, and otherwise rebuilds the
+    notice from the refs already fetched when an installed version moved.
 
     Args:
         stamp: The update-check stamp path of the session that started this refresh.
-        refs: ``remote`` to fetch, or ``local`` to rebuild the notice from the refs already fetched.
     """
     from . import telemetry, telemetry_core
     from .cli import (
@@ -320,6 +321,7 @@ def refresh_update_check(stamp: str, refs: str = "remote") -> None:
         _collect_update_messages,
         _get_installed_version,
         _installed_fingerprint,
+        _update_sources,
     )
 
     debouncer = _ReinstallDebouncer(Path(stamp))
@@ -329,35 +331,34 @@ def refresh_update_check(stamp: str, refs: str = "remote") -> None:
     ):
         if not alone:
             return
+        fetch = debouncer.should_run()
         try:
-            fingerprint = _installed_fingerprint()
-            due = (
-                debouncer.should_run() or debouncer.retargeted(fingerprint)
-                if refs == "remote"
-                else debouncer.moved(fingerprint)
-            )
-            if not due:
+            sources = _update_sources()
+            fingerprint = _installed_fingerprint(sources)
+            fetch = fetch or debouncer.retargeted(fingerprint)
+            if not (fetch or debouncer.moved(fingerprint)):
                 return
             if telemetry_core.install_id():
-                run.begin("startup-check", [] if refs == "remote" else ["--local"])
-            if refs == "remote":
+                run.begin("startup-check", [] if fetch else ["--local"])
+            if fetch:
                 with network.fail_fast():
-                    messages = _collect_update_messages()
+                    messages = _collect_update_messages(sources=sources)
             else:
                 previous = debouncer._cache().get("fingerprint", "")
                 messages = _collect_update_messages(
-                    previous=(previous, debouncer.cached_notice(previous))
+                    previous=(previous, debouncer.cached_notice(previous)),
+                    sources=sources,
                 )
         except (Exception, SystemExit):
             logger.warning("Failed to check for llm-prompts updates")
-            if refs == "remote":
+            if fetch:
                 debouncer.mark_run(failed=True)
             return
         with debouncer.single_flight() as holds_lock:
             if not holds_lock:
                 return
             failed = any(isinstance(m, UpdateCheckFailure) for m in messages)
-            if refs == "remote":
+            if fetch:
                 debouncer.mark_run(failed)
             if not failed:
                 run.auto_update = (
@@ -449,14 +450,12 @@ class AutoReinstallPlugin(HooksPlugin):
             telemetry.Run(_get_installed_version) as run,
             self._update_check_debouncer.single_flight() as holds_lock,
         ):
-            fetch = self._update_check_debouncer.should_run() or (
-                self._update_check_debouncer.retargeted(fingerprint)
-            )
             if holds_lock and (
-                fetch or self._update_check_debouncer.moved(fingerprint)
+                self._update_check_debouncer.should_run()
+                or self._update_check_debouncer.moved(fingerprint)
             ):
                 try:
-                    self._update_check_debouncer.refresh_in_background(fetch)
+                    self._update_check_debouncer.refresh_in_background()
                 except OSError:
                     logger.warning("Failed to start the llm-prompts update check")
             elif source not in _DEBOUNCED_TASK_START_SOURCES:
