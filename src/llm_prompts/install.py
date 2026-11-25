@@ -3888,6 +3888,115 @@ def _pi_env() -> dict[str, str]:
     return {**os.environ, "PI_CODING_AGENT_DIR": str(_pi_agent_dir())}
 
 
+def _unlink_file(path: Path) -> None:
+    """Delete the regular file ``path`` and log it, or report why it stays."""
+    if path.is_file() and not path.is_symlink():
+        path.unlink()
+        log("success", f"[pi] Removed {path}.")
+    elif _exists(path):
+        log("warn", f"[pi] Left {path} in place, it is not a regular file.")
+
+
+def _exists(path: Path) -> bool:
+    """Return whether ``path`` exists, counting a dangling symlink."""
+    return path.is_symlink() or path.exists()
+
+
+def _curl_install_marker(agent_dir: Path) -> dict[str, Any] | None:
+    """Return the pi.dev installer's marker when it owns ``bin/pi`` and ``install`` in ``agent_dir``."""
+    try:
+        marker = json.loads(_read_text(agent_dir / "install" / "managed-install.json"))
+        launcher = _read_text(agent_dir / "bin" / "pi")
+    except (OSError, ValueError):
+        return None
+    owned = (
+        isinstance(marker, dict)
+        and marker.get("kind") == "pi-managed-install"
+        and "current-version" in launcher
+    )
+    return marker if owned else None
+
+
+def _pi_node_dir() -> Path:
+    """Return the Node.js directory the pi.dev installer keeps under the data directory."""
+    data_dir = os.environ.get("XDG_DATA_HOME")
+    return (
+        Path(data_dir) if data_dir else user_home() / ".local" / "share"
+    ) / "pi-node"
+
+
+def _probe_env() -> dict[str, str]:
+    """Return ``_pi_env()`` without the Node.js directory the curl launcher puts on PATH."""
+    env = _pi_env()
+    pi_node_bin = _pi_node_dir() / "current" / "bin"
+    env["PATH"] = os.pathsep.join(
+        entry
+        for entry in env.get("PATH", "").split(os.pathsep)
+        if Path(entry) != pi_node_bin
+    )
+    return env
+
+
+def _first_pi_on_path(skipping: Path) -> Path | None:
+    """Return the first ``pi`` on PATH that does not resolve to ``skipping``."""
+    for directory in filter(None, os.environ.get("PATH", "").split(os.pathsep)):
+        candidate = Path(directory) / "pi"
+        if (
+            candidate.is_file()
+            and os.access(candidate, os.X_OK)
+            and candidate.resolve() != skipping.resolve()
+        ):
+            return candidate
+    return None
+
+
+def _migrate_curl_pi() -> None:
+    """Remove the pi.dev curl install once the npm pi that llm-prompts manages takes over PATH."""
+    agent_dir = _pi_agent_dir()
+    npm_pi = agent_dir / "npm" / "node_modules" / ".bin" / "pi"
+    marker = _curl_install_marker(agent_dir)
+    if marker is None or not npm_pi.exists():
+        return
+    curl_pi = agent_dir / "bin" / "pi"
+    if subprocess.run(
+        [str(npm_pi), "--version"], env=_probe_env(), capture_output=True, check=False
+    ).returncode:
+        log("warn", f"[pi] {npm_pi} does not run, keeping the curl install.")
+        return
+    remaining = _first_pi_on_path(curl_pi)
+    if remaining is None or remaining.resolve() != npm_pi.resolve():
+        log(
+            "warn",
+            f"[pi] `pi` would not resolve to {npm_pi} on PATH without the curl install, "
+            "keeping it. Put its directory on PATH first.",
+        )
+        return
+    entrypoint = marker.get("entrypoint")
+    entrypoint_path = entrypoint.get("path") if isinstance(entrypoint, dict) else None
+    if isinstance(entrypoint_path, str):
+        link = Path(entrypoint_path)
+        if link.is_symlink() and link.resolve() == curl_pi.resolve():
+            link.unlink()
+            log("success", f"[pi] Removed {link}.")
+    install_dir = agent_dir / "install"
+    for path in (
+        curl_pi,
+        install_dir / "current-version",
+        install_dir / "managed-install.json",
+    ):
+        _unlink_file(path)
+    for directory in (install_dir, curl_pi.parent):
+        if directory.is_dir() and not any(directory.iterdir()):
+            directory.rmdir()
+            log("success", f"[pi] Removed {directory}.")
+    for leftover in (install_dir / "releases", install_dir / "staging"):
+        if leftover.exists():
+            log("info", f"[pi] Left {leftover} in place. You can remove it.")
+    pi_node = _pi_node_dir()
+    if pi_node.exists():
+        log("info", f"[pi] Left {pi_node} in place. Remove it if nothing else uses it.")
+
+
 def _install_pi_packages(
     sources: list[str], adoptable: set[str]
 ) -> tuple[list[str], set[str]]:
@@ -4897,6 +5006,7 @@ def main(
                 _pi_defaults(pi_fragments),
             )
             pi_failed_sources, newly_owned = _install_pi_packages(pi_packages, added)
+            _migrate_curl_pi()
             _warn_pi_version_drift(pi_packages)
             pi_installed_packages = sorted(
                 (previous_owned & wanted_names) | newly_owned | retained
