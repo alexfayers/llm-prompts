@@ -29,7 +29,8 @@ After you have calculated the score for each subcategory, calculate the category
 
 Only state the overall score at the end of your response, after your calculations.
 
-If the score for any category is less than 10, state how it can be improved using the notes you stated for each subcategory, then take steps to improve the score to a 10. Don't ask the user before doing this.
+If the score for any category is less than 10, state how it can be improved using the notes you stated for each subcategory, then take steps to improve the score to a 10.
+Don't ask the user before doing this.
 
 If, after deep investigation, you are unable to find a high-scoring solution or answer, {{TOOL_ASK}}. However, this should be avoided if possible.
 
@@ -43,4 +44,5 @@ NEVER use markdown tables when outputting.
 
 {{TOOL_WRAP_UP}}
 
-> NOTE: if any of the rules contradict any existing coding styles, best practices, or suggestions within the current project then the rules can be overridden. However, if the rules _are_ overridden, this _must_ be **explicitly** mentioned to the user.
+> NOTE: if any of the rules contradict any existing coding styles, best practices, or suggestions within the current project then the rules can be overridden.
+> However, if the rules _are_ overridden, this _must_ be **explicitly** mentioned to the user.

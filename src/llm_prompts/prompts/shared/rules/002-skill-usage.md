@@ -3,14 +3,16 @@
 ## Session Start
 
 {% if AGENT not in ["claude-code", "pi"] %}
-At the start of every new conversation, you **MUST** use the `session-start` skill before responding to the user's first message. Your first tool call in a new conversation MUST be invoking `session-start`, before any file read, edit, search, or other tool use, even when the request points straight at a specific file or action.
+At the start of every new conversation, you **MUST** use the `session-start` skill before responding to the user's first message.
+Your first tool call in a new conversation MUST be invoking `session-start`, before any file read, edit, search, or other tool use, even when the request points straight at a specific file or action.
 
 {% endif %}
 A subagent (started by another agent) MUST NOT run `session-start`.
 
 ## Planning
 
-Once you have planned an implementation and BEFORE showing it to the user (e.g. when you {{PLAN_MODE_RESPOND_TOOL}}), you **MUST** use the `refine-plan` skill to refine it, and MUST do so every time you present a plan. You MAY call multiple tools in a single response here.
+Once you have planned an implementation and BEFORE showing it to the user (e.g. when you {{PLAN_MODE_RESPOND_TOOL}}), you **MUST** use the `refine-plan` skill to refine it,
+and MUST do so every time you present a plan. You MAY call multiple tools in a single response here.
 
 ## Implementation
 
@@ -22,9 +24,12 @@ Before writing code for new behaviour or a reported bug, you **MUST** load the `
 
 ## Session End
 
-Before you {{TOOL_COMPLETE}} or end a conversation, you **MUST** use the `session-end` skill. This covers ANY response where you indicate work is finished ("all done", "nothing else outstanding", or similar wrap-up language), **and any moment you internally conclude that all work is complete** - even if the user has not asked you to wrap up. MUST load and run the skill BEFORE giving any wrap-up summary.
+Before you {{TOOL_COMPLETE}} or end a conversation, you **MUST** use the `session-end` skill.
+This covers ANY response where you indicate work is finished ("all done", "nothing else outstanding", or similar wrap-up language),
+**and any moment you internally conclude that all work is complete** - even if the user has not asked you to wrap up. MUST load and run the skill BEFORE giving any wrap-up summary.
 
-User signals that trigger session-end: "anything else?", "that's it", "thanks", "we're done", "wrap up", or any question implying the task is finished. On any of these you MUST run the skill FIRST, then respond.
+User signals that trigger session-end: "anything else?", "that's it", "thanks", "we're done", "wrap up", or any question implying the task is finished.
+On any of these you MUST run the skill FIRST, then respond.
 
 A subagent MUST NOT run `session-end` - it reports to its lead instead.
 
@@ -42,11 +47,14 @@ Before each push, PR creation or PR update, you MUST use the `pr-review` skill o
 - Before a live Herdr handoff, MUST use the `handoff` skill and read its `live.md` part.
 {% endif %}
 
-Where a `HANDOFF.md` is present in the workspace at session start, or the user points you at a handoff doc (their own or another agent's), you **MUST** use the `pickup` skill before doing anything else with it - including before reading it in full or deciding it is stale. MUST NOT re-verify claims the handoff or memory already states as fact.
+Where a `HANDOFF.md` is present in the workspace at session start, or the user points you at a handoff doc (their own or another agent's),
+you **MUST** use the `pickup` skill before doing anything else with it - including before reading it in full or deciding it is stale.
+MUST NOT re-verify claims the handoff or memory already states as fact.
 
 ## llm-prompts
 
-You MUST load the `llm-prompts` skill and follow its `edit.md` before creating, editing, or deleting any rule or skill source file in this repo, and its `setup.md` before running `llm-prompts setup`, `update` or `install` or changing its config.
+You MUST load the `llm-prompts` skill and follow its `edit.md` before creating, editing, or deleting any rule or skill source file in this repo, and its `setup.md` before running `llm-prompts setup`,
+`update` or `install` or changing its config.
 
 ## PR triage
 

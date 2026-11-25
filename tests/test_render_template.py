@@ -279,7 +279,7 @@ class TestPendingAsksRestateRuleIsPiCut:
         restate = re.search(r"RESTATE_RULE = `(.*)`;", extension)
         assert restate
         rendered = self._render("claude-code")
-        assert restate.group(1) in rendered
+        assert restate.group(1) in " ".join(rendered.split())
         assert self.PIN not in rendered
 
 
