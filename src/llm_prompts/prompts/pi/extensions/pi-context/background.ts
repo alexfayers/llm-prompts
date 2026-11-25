@@ -20,6 +20,10 @@ export class Background {
 	/** Fork-ask pins announced in the current main run, cleared when it settles unless an `ask_user` went unanswered. */
 	private announced: string[] = [];
 	private askUnanswered = false;
+	/** Whether the latest run ended aborted or in an error. */
+	private runFailed = false;
+	/** The unread line of each run in a digest main has received but not yet settled on. */
+	private delivered = new Map<string, string>();
 	private pi: Pick<ExtensionAPI, "sendMessage" | "appendEntry">;
 	private registry: Registry;
 	/** Shows the run's activity in the UI once its child is attached. */
@@ -77,28 +81,33 @@ export class Background {
 		return this.registry.update(run.id, { state: "cancelled", endedAt: Date.now() });
 	}
 
-	/** The digest lines of the runs that finished since main last read them, with the pins they made, or undefined. */
+	/** The digest lines of the runs that finished since main last received them, with the pins they made, or undefined. A line stays unread until the run that received it settles. */
 	digest(): string | undefined {
-		const unread = this.registry.all().filter((run) => run.unread).sort((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0));
+		const unread = this.registry.all().filter((run) => run.unread && this.delivered.get(run.id) !== run.unread).sort((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0));
 		if (!unread.length) return undefined;
 		const lines = unread.map((run) => run.unread!);
-		for (const run of unread) this.registry.update(run.id, { unread: undefined });
+		for (const run of unread) this.delivered.set(run.id, run.unread!);
 		const pins = this.pinned.splice(0);
 		this.announced.push(...pins);
 		if (pins.length) lines.push(`Pinned: ${pins.join(", ")}. They clear at the end of this turn unless you put them to the user with ask_user.`);
 		return lines.join("\n");
 	}
 
-	/** Notes whether an `ask_user` call of a main run went unanswered. */
-	noteRun(messages: Parameters<typeof askUserUnanswered>[0]): void {
+	/** Notes whether an `ask_user` call of a main run went unanswered, and whether the run ended in an error. */
+	noteRun(messages: (Parameters<typeof askUserUnanswered>[0][number] & { stopReason?: string })[]): void {
 		this.askUnanswered ||= askUserUnanswered(messages);
+		this.runFailed = ["error", "aborted"].includes(messages.filter((message) => message.role === "assistant").at(-1)?.stopReason ?? "");
 	}
 
-	/** Resolves the pins announced in the main run that settled, unless it was aborted or an `ask_user` call went unanswered. */
-	settleAsks(ctx: AskContext, aborted: boolean): void {
+	/** Once the main run settles, marks the results it received as read and resolves the pins announced in it, unless it was aborted or failed, when the next digest announces them again. A pin also stays while an `ask_user` call went unanswered. */
+	settle(ctx: AskContext, aborted: boolean): void {
 		const ids = this.announced.splice(0);
-		const keep = aborted || this.askUnanswered;
+		const failed = aborted || this.runFailed;
+		const keep = failed || this.askUnanswered;
 		this.askUnanswered = false;
+		for (const [id, line] of this.delivered) if (!failed && this.registry.get(id)?.unread === line) this.registry.update(id, { unread: undefined });
+		this.delivered.clear();
+		if (failed) this.pinned.unshift(...ids);
 		if (keep) return;
 		const open = new Set(openAsks(ctx.sessionManager.getBranch() as Parameters<typeof openAsks>[0]).map((ask) => ask.id));
 		for (const id of ids) if (open.has(id)) resolveAsk(this.pi, ctx, id);
@@ -192,7 +201,7 @@ export function registerBackgroundHooks(pi: ExtensionAPI, background: Background
 	pi.on("agent_end", (event) => background.noteRun(event.messages));
 
 	pi.on("agent_settled", (event, ctx) => {
-		background.settleAsks(ctx, event.aborted);
+		background.settle(ctx, event.aborted);
 	});
 
 	pi.on("agent_before_settle", async (event, ctx) => {
