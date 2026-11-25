@@ -1,13 +1,12 @@
 // Decides which fork runs wake the main session, and builds their digest lines.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { projectResult } from "./outcome.ts";
+import { MAX_BODY_CHARS, projectReply } from "./outcome.ts";
 import { openAsks, pinAsk } from "../pending-asks.ts";
 import type { Run } from "./registry.ts";
 
 export type WakeReason = "blocked-on-user" | "failed" | "notify" | "invalid" | "error" | "lost" | "finished";
 
 const VALID_CODES = ["done", "blocked-on-user", "failed", "found-it"];
-const MAX_DIGEST_CHARS = 500;
 
 /** Why main must run now for this run, or undefined while it is live or was cancelled. */
 export function wakeReason(run: Run): WakeReason | undefined {
@@ -48,10 +47,11 @@ export const askUserUnanswered = (messages: { role: string; toolName?: string; i
 
 /** One digest entry: the run, its code, the lines of its reply main keeps, a note and its ref. ASK and DENIED lines are never cut. */
 export function digestLine(run: Run, text: string, note?: string): string {
-	let room = MAX_DIGEST_CHARS;
-	let cut = false;
+	let room = MAX_BODY_CHARS;
+	const projected = projectReply(text);
+	let cut = projected.cut;
 	const kept: string[] = [];
-	for (const line of projectResult(text).split("\n")) {
+	for (const line of projected.text.split("\n")) {
 		if (line.startsWith("OUTCOME ")) continue;
 		if (NEVER_CUT.test(line)) {
 			kept.push(line);
