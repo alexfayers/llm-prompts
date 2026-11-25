@@ -1585,14 +1585,14 @@ def _run_command(
     sync_parser.add_argument(
         "--depends-on",
         nargs=2,
-        metavar=("BRANCH", "TOOL:BRANCH"),
-        help="Make BRANCH depend on TOOL:BRANCH in another repo.",
+        metavar=("BRANCH", "TOOL:BRANCH|OWNER/REPO#N"),
+        help="Make BRANCH depend on TOOL:BRANCH in another repo, or on a PR in any repo.",
     )
     sync_parser.add_argument(
         "--no-depends-on",
         nargs=2,
-        metavar=("BRANCH", "TOOL:BRANCH"),
-        help="Remove the dependency of BRANCH on TOOL:BRANCH.",
+        metavar=("BRANCH", "TOOL:BRANCH|OWNER/REPO#N"),
+        help="Remove the dependency of BRANCH on TOOL:BRANCH or a PR.",
     )
     sync_parser.add_argument(
         "--why",
