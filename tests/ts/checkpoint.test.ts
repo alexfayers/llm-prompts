@@ -77,7 +77,7 @@ describe("folding to the first of two marks", () => {
 		const { ext, ctx } = await fixture();
 		const out = await endTurn(ext, ctx, rewindResult("r5", "c5", "a"), { messageEntryId: "a5", resultIds: ["r5"] });
 		assert.deepEqual(nulled(out), ["a2", "r2", "a3", "r3", "a4", "r4", "a5", "r5"]);
-		assert.match(out.entries.at(-1).content, /to "a"\] The steps since mark "a" were run.*Their outcome:\nS\n\nMarks removed with them: b\.$/s);
+		assert.match(out.entries.at(-1).content, /to "a"\] The steps since mark "a" were run.*Their outcome:\nS\n\nMarks removed with them: b\.\n\nKeep using checkpoints: mark before a detour, rewind after it\.$/s);
 		assert.equal(out.entries.at(-1).type, "custom_message");
 	});
 
@@ -86,7 +86,7 @@ describe("folding to the first of two marks", () => {
 		const out = await endTurn(ext, ctx, rewindResult("r5", "c5", "a"), { messageEntryId: "a5", resultIds: ["r5"] });
 		assert.deepEqual(nulled(out), ["a2", "r2", "a3", "r3", "a4", "r4"]);
 		assert.equal(out.entries.at(-1).targetId, "r5");
-		assert.match(out.entries.at(-1).replacement.content[0].text, /to "a"\] The steps since mark "a" were run.*Marks removed with them: b/s);
+		assert.match(out.entries.at(-1).replacement.content[0].text, /to "a"\] The steps since mark "a" were run.*Marks removed with them: b.*Keep using checkpoints/s);
 	});
 });
 
@@ -95,6 +95,7 @@ test("the fold names no removed marks when there are none", async () => {
 	const { ext, ctx } = await load(entries);
 	const out = await endTurn(ext, ctx, entries[3], { messageEntryId: "a2", resultIds: ["r2"] });
 	assert.doesNotMatch(out.entries.at(-1).content, /Marks removed/);
+	assert.match(out.entries.at(-1).content, /Their outcome:\nS\n\nKeep using checkpoints/);
 });
 
 test("a rewind whose mark turn is missing from the context changes nothing", async () => {
