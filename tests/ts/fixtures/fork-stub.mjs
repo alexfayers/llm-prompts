@@ -67,7 +67,7 @@ async function replyTo(text) {
 		card: card && readFileSync(card, "utf8"),
 		leadPrefix: existsSync(`${dirname(handshake)}/lead-prefix.json`) ? JSON.parse(readFileSync(`${dirname(handshake)}/lead-prefix.json`, "utf8")) : undefined,
 		prompt: text,
-		env: { role: process.env.PI_CONTEXT_ROLE, runId: process.env.PI_CONTEXT_RUN_ID, worktree: process.env.PI_CONTEXT_WORKTREE },
+		env: { role: process.env.PI_CONTEXT_ROLE, runId: process.env.PI_CONTEXT_RUN_ID, worktree: process.env.PI_CONTEXT_WORKTREE, cacheRetention: process.env.PI_CACHE_RETENTION },
 	});
 }
 

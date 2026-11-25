@@ -1,6 +1,6 @@
 // Adds the fork tool, which runs a delegate on a copy of this session that shares its prompt cache, or a cold worker on a cheaper model. A writer works in a git worktree and lands its commits through the merge queue.
 // Config: llmPrompts.forks in pi settings: mcpProxy (true: a fork uses main's MCP servers), privateNames (regex of names a writer's commits may not land with), readMcp (array of {tool, argsMatch?}: extra MCP tools, as globs, a delegate may call when each argsMatch regex matches the whole of that string argument)
-// Env: PI_CONTEXT_CHILD (set in a delegate, which cannot fork), PI_CONTEXT_ROLE and PI_CONTEXT_RUN_ID (set for a delegate), PI_CONTEXT_WORKTREE (set for a writer: its worktree, for hooks that resolve the session repo)
+// Env: PI_CONTEXT_CHILD (set in a delegate, which cannot fork), PI_CONTEXT_ROLE and PI_CONTEXT_RUN_ID (set for a delegate), PI_CONTEXT_WORKTREE (set for a writer: its worktree, for hooks that resolve the session repo), PI_CACHE_RETENTION (set to short for a delegate)
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -208,7 +208,7 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 			args: model
 				? coldArgs(role, { model, sessionDir, cardFile, skillsDir: path.join(agentDir, "skills"), session })
 				: ["--mode", "rpc", "--session", seed, "--model", warm.model, "--thinking", warm.thinking, ...(bridge ? ["--no-mcp"] : [])],
-			env: { ...process.env, PI_CONTEXT_CHILD: handshake, PI_CONTEXT_ROLE: role.name, PI_CONTEXT_RUN_ID: runId, PI_CONTEXT_WORKTREE: worktree },
+			env: { ...process.env, PI_CONTEXT_CHILD: handshake, PI_CONTEXT_ROLE: role.name, PI_CONTEXT_RUN_ID: runId, PI_CONTEXT_WORKTREE: worktree, PI_CACHE_RETENTION: "short" },
 			signal,
 			onUi: relayDialog(name, ctx),
 		});

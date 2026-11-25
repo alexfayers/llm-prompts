@@ -200,6 +200,14 @@ describe("fork tool", () => {
 		} finally { fs.unlinkSync(usage); fs.renameSync(hidden, usage); }
 	});
 
+	test("sets a short prompt-cache lifetime in the child even where the session's is long", async () => {
+		process.env.PI_CACHE_RETENTION = "long";
+		try {
+			const seen = JSON.parse((await fork({ task: "STUB_INSPECT", name: "short-cache" })).tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
+			assert.equal(seen.env.cacheRetention, "short");
+		} finally { delete process.env.PI_CACHE_RETENTION; }
+	});
+
 	test("tells the child its role and run id, and records the run with its outcome in the registry", async () => {
 		const seen = JSON.parse((await fork({ task: "STUB_INSPECT", name: "inspect" })).tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
 		assert.equal(seen.env.role, "reader");
