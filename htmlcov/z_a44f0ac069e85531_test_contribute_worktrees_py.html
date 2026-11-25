@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">2155 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">2155<span class="text"> run</span></button>
+            <span class="text">2170 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">2170<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_a44f0ac069e85531_test_e2e_git_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
-            created at 2026-11-25 22:32 +0000
+            created at 2026-11-25 22:37 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -3805,6 +3805,31 @@
     <p class="run"><span class="n"><a id="t3723" href="#t3723">3723</a></span><span class="t">    <span class="key">assert</span> <span class="nam">project</span><span class="op">.</span><span class="nam">run</span><span class="op">(</span><span class="nam">apply</span><span class="op">=</span><span class="key">True</span><span class="op">)</span> <span class="op">==</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3724" href="#t3724">3724</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t3725" href="#t3725">3725</a></span><span class="t">    <span class="key">assert</span> <span class="nam">git</span><span class="op">(</span><span class="nam">project</span><span class="op">.</span><span class="nam">repo</span><span class="op">,</span> <span class="str">&quot;rev-parse&quot;</span><span class="op">,</span> <span class="str">&quot;main&quot;</span><span class="op">)</span> <span class="op">==</span> <span class="nam">main</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3726" href="#t3726">3726</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3727" href="#t3727">3727</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3728" href="#t3728">3728</a></span><span class="t"><span class="nam">SYNC_GIT_SPAWN_BUDGET</span> <span class="op">=</span> <span class="num">170</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3729" href="#t3729">3729</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3730" href="#t3730">3730</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3731" href="#t3731">3731</a></span><span class="t"><span class="key">def</span> <span class="nam">test_a_sync_pass_over_three_worktrees_stays_within_the_git_spawn_budget</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t3732" href="#t3732">3732</a></span><span class="t">    <span class="nam">project</span><span class="op">:</span> <span class="nam">Project</span><span class="op">,</span> <span class="nam">monkeypatch</span><span class="op">:</span> <span class="nam">pytest</span><span class="op">.</span><span class="nam">MonkeyPatch</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t3733" href="#t3733">3733</a></span><span class="t"><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3734" href="#t3734">3734</a></span><span class="t">    <span class="key">for</span> <span class="nam">name</span> <span class="key">in</span> <span class="op">(</span><span class="str">&quot;feat/a&quot;</span><span class="op">,</span> <span class="str">&quot;feat/b&quot;</span><span class="op">,</span> <span class="str">&quot;feat/c&quot;</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3735" href="#t3735">3735</a></span><span class="t">        <span class="nam">project</span><span class="op">.</span><span class="nam">worktree</span><span class="op">(</span><span class="nam">name</span><span class="op">,</span> <span class="fst">f&quot;</span><span class="fst">feat: </span><span class="op">{</span><span class="nam">name</span><span class="op">}</span><span class="fst">-1</span><span class="fst">&quot;</span><span class="op">,</span> <span class="fst">f&quot;</span><span class="fst">feat: </span><span class="op">{</span><span class="nam">name</span><span class="op">}</span><span class="fst">-2</span><span class="fst">&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3736" href="#t3736">3736</a></span><span class="t">        <span class="nam">project</span><span class="op">.</span><span class="nam">run</span><span class="op">(</span><span class="nam">branch</span><span class="op">=</span><span class="nam">name</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3737" href="#t3737">3737</a></span><span class="t">    <span class="nam">spawned</span><span class="op">:</span> <span class="nam">list</span><span class="op">[</span><span class="nam">str</span><span class="op">]</span> <span class="op">=</span> <span class="op">[</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3738" href="#t3738">3738</a></span><span class="t">    <span class="nam">start</span> <span class="op">=</span> <span class="nam">subprocess</span><span class="op">.</span><span class="nam">Popen</span><span class="op">.</span><span class="nam">__init__</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3739" href="#t3739">3739</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3740" href="#t3740">3740</a></span><span class="t">    <span class="key">def</span> <span class="nam">counting</span><span class="op">(</span><span class="nam">self</span><span class="op">:</span> <span class="nam">subprocess</span><span class="op">.</span><span class="nam">Popen</span><span class="op">[</span><span class="nam">Any</span><span class="op">]</span><span class="op">,</span> <span class="nam">args</span><span class="op">:</span> <span class="nam">Any</span><span class="op">,</span> <span class="op">*</span><span class="nam">rest</span><span class="op">:</span> <span class="nam">Any</span><span class="op">,</span> <span class="op">**</span><span class="nam">kw</span><span class="op">:</span> <span class="nam">Any</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3741" href="#t3741">3741</a></span><span class="t">        <span class="key">if</span> <span class="nam">args</span><span class="op">[</span><span class="num">0</span><span class="op">]</span> <span class="op">==</span> <span class="str">&quot;git&quot;</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3742" href="#t3742">3742</a></span><span class="t">            <span class="nam">spawned</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="str">&quot; &quot;</span><span class="op">.</span><span class="nam">join</span><span class="op">(</span><span class="nam">args</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3743" href="#t3743">3743</a></span><span class="t">        <span class="nam">start</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">args</span><span class="op">,</span> <span class="op">*</span><span class="nam">rest</span><span class="op">,</span> <span class="op">**</span><span class="nam">kw</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3744" href="#t3744">3744</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3745" href="#t3745">3745</a></span><span class="t">    <span class="nam">monkeypatch</span><span class="op">.</span><span class="nam">setattr</span><span class="op">(</span><span class="nam">subprocess</span><span class="op">.</span><span class="nam">Popen</span><span class="op">,</span> <span class="str">&quot;__init__&quot;</span><span class="op">,</span> <span class="nam">counting</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3746" href="#t3746">3746</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3747" href="#t3747">3747</a></span><span class="t">    <span class="key">assert</span> <span class="nam">project</span><span class="op">.</span><span class="nam">run</span><span class="op">(</span><span class="nam">apply</span><span class="op">=</span><span class="key">True</span><span class="op">)</span> <span class="op">==</span> <span class="num">0</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3748" href="#t3748">3748</a></span><span class="t">    <span class="key">assert</span> <span class="nam">project</span><span class="op">.</span><span class="nam">run</span><span class="op">(</span><span class="nam">apply</span><span class="op">=</span><span class="key">True</span><span class="op">)</span> <span class="op">==</span> <span class="num">0</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3749" href="#t3749">3749</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3750" href="#t3750">3750</a></span><span class="t">    <span class="key">assert</span> <span class="nam">len</span><span class="op">(</span><span class="nam">spawned</span><span class="op">)</span> <span class="op">&lt;=</span> <span class="nam">SYNC_GIT_SPAWN_BUDGET</span><span class="op">,</span> <span class="nam">spawned</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -3814,7 +3839,7 @@
             <a class="nav" href="z_a44f0ac069e85531_test_e2e_git_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
-            created at 2026-11-25 22:32 +0000
+            created at 2026-11-25 22:37 +0000
         </p>
     </div>
 </footer>
