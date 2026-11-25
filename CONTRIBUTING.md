@@ -50,6 +50,7 @@ llm-prompts contribute sync --apply
 - Record the text for the PR's Why with `--why B "TEXT"` before `--ready`. `sync` never opens a PR, nor edits a draft PR's body, while a section the PR template check requires (every template section except Dependencies and Issues) is empty. It prints the worktree, the empty section and the `--why` command, skips that PR, still syncs the others and exits nonzero. A Why you wrote in a PR is kept.
 - Record the PR's title with `--title B "TEXT"`. `sync` uses it instead of the first commit's subject.
 - Link a branch to a PR in another repo with `--depends-on B TOOL:B2`, or to a PR in any repo with `--depends-on B owner/repo#N`. `sync` writes the `Depends on` line.
+- Before `gh pr create` or `gh pr edit`, run `llm-prompts contribute check-body FILE` on the body file. It names a leftover `<!--` and each empty required section, as the PR template check does.
 - Run `llm-prompts contribute sync --help` for every flag, and `contribute list` for each worktree's state and size.
 - Marking a contribute PR ready for review enables squash auto-merge. It merges once checks pass and a reviewer approves.
 - `llm-prompts contribute ready --tool NAME NUMBER` marks PR NUMBER ready and enables squash auto-merge. It adds `owner-reviewed` first when the PR changes rules, skills, workflows, agents or Pi files, so the owner review gate never holds it.

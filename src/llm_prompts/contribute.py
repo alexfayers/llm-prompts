@@ -14,6 +14,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -41,6 +42,7 @@ _BLANK_LINES = re.compile(r"\n{3,}")
 _PR_TEMPLATE_PATH = ".github/PULL_REQUEST_TEMPLATE.md"
 _FALLBACK_TEMPLATE = "## What\n\n## Why\n\n## Dependencies\n\n## Issues\n"
 _SLUG_MAX_LEN = 50
+_LEFTOVER_COMMENT = "leftover placeholder comment '<!--'"
 
 
 class Commit(NamedTuple):
@@ -387,6 +389,28 @@ def unfilled_sections(template: str, body: str) -> list[str]:
         for heading in _sections(template)
         if heading not in _OPTIONAL_SECTIONS and not filled.get(heading)
     ]
+
+
+def body_problems(template: str, body: str) -> list[str]:
+    """Return what the PR template check rejects in ``body``: a leftover ``<!--`` and each empty required section."""
+    comment = [_LEFTOVER_COMMENT] if "<!--" in body else []
+    return comment + [
+        f"section {heading} is empty" for heading in unfilled_sections(template, body)
+    ]
+
+
+def check_body(body_file: Path, repo: Path) -> int:
+    """Print each problem in the PR body at ``body_file`` against ``repo``'s template and return 1 when there is one."""
+    template_file = repo / _PR_TEMPLATE_PATH
+    template = (
+        template_file.read_text(encoding="utf-8")
+        if template_file.is_file()
+        else _FALLBACK_TEMPLATE
+    )
+    problems = body_problems(template, body_file.read_text(encoding="utf-8"))
+    for problem in problems:
+        print(f"PR body: {problem}", file=sys.stderr)
+    return int(bool(problems))
 
 
 def empty_sections_message(missing: Sequence[str], tool: str, branch: str) -> str:
@@ -2135,10 +2159,13 @@ class _RepoSync:
     def unfilled(self, entry: WorktreeEntry, commits: Sequence[Commit]) -> bool:
         """Say which required PR sections ``entry``'s PR would leave empty, and return whether any."""
         template = pr_template(self.repo, self.base)
-        missing = unfilled_sections(template, pr_body(template, commits, (), entry.why))
+        body = pr_body(template, commits, (), entry.why)
+        missing = unfilled_sections(template, body)
         if missing:
             self.fail(entry, f"not opened, {self.empty_message(entry, missing)}")
-        return bool(missing)
+        elif _LEFTOVER_COMMENT in body_problems(template, body):
+            self.fail(entry, f"not opened, PR body has a {_LEFTOVER_COMMENT}")
+        return bool(body_problems(template, body))
 
     def empty_message(self, entry: WorktreeEntry, missing: Sequence[str]) -> str:
         return empty_sections_message(missing, self.tool, entry.branch)
@@ -2167,14 +2194,16 @@ class _RepoSync:
             new_title=_wanted_title(entry, commits) if retitle else None,
             why=entry.why,
         )
-        missing = unfilled_sections(
-            pr_template(self.repo, self.base), refreshed[1] if refreshed else pr.body
+        template = pr_template(self.repo, self.base)
+        body = refreshed[1] if refreshed else pr.body
+        missing = unfilled_sections(template, body)
+        problem = (
+            self.empty_message(entry, missing)
+            if missing
+            else f"it has a {_LEFTOVER_COMMENT}"
         )
-        if missing:
-            self.fail(
-                entry,
-                f"PR #{entry.pr} body left as it is, {self.empty_message(entry, missing)}",
-            )
+        if body_problems(template, body):
+            self.fail(entry, f"PR #{entry.pr} body left as it is, {problem}")
             return
         if refreshed is not None:
             edit_pr(self.repo, int(entry.pr or 0), *refreshed)

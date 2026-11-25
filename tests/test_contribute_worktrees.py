@@ -3748,3 +3748,19 @@ def test_a_sync_pass_over_three_worktrees_stays_within_the_git_spawn_budget(
     assert project.run(apply=True) == 0
 
     assert len(spawned) <= SYNC_GIT_SPAWN_BUDGET, spawned
+
+
+def test_an_open_pr_body_with_a_leftover_comment_is_left_alone_and_named(
+    project: Project, pushed: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    body = f"## What\n\n- feat: a\n\n## Why\n\n{WHY}\n\n<!-- left over -->\n"
+    _set_body(project, 100, body)
+    _amend(project, pushed, "fix: a")
+    capsys.readouterr()
+
+    assert project.run(apply=True) == 1
+
+    assert pr_body(project, 100) == body
+    assert "body left as it is, it has a leftover placeholder comment" in (
+        capsys.readouterr().out
+    )

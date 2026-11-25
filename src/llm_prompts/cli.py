@@ -1612,6 +1612,12 @@ def _run_command(
         help="Record your open PRs whose branch is checked out in a worktree.",
     )
 
+    check_body_parser = contribute_sub.add_parser(
+        "check-body",
+        help="Check a PR body file against the PR template, as CI does.",
+    )
+    check_body_parser.add_argument("body_file", type=Path, metavar="FILE")
+
     update_parser = contribute_sub.add_parser(
         "update",
         help="Rebase your open PRs that are behind main onto it (dry run unless --apply).",
@@ -1976,8 +1982,16 @@ def _run_command(
             benchmark_parser.error(str(error))
         return run_benchmark(options)
     elif args.command == "contribute":
-        from .contribute import list_targets, run_ready, sync_targets, update_targets
+        from .contribute import (
+            check_body,
+            list_targets,
+            run_ready,
+            sync_targets,
+            update_targets,
+        )
 
+        if args.contribute_command == "check-body":
+            return check_body(args.body_file, Path.cwd())
         with run.exit_outcome("usage_error"):
             if args.tool is not None:
                 repo, prefix = _contribute_target(args.tool)
