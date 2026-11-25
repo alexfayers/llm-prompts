@@ -15,7 +15,12 @@ from unittest.mock import patch
 import pytest
 
 from llm_prompts import cli, contribute, github_api, main_sync, setup, worktrees
-from llm_prompts.contribute import SyncOptions, empty_sections_message
+from llm_prompts.contribute import (
+    Commit,
+    SyncOptions,
+    empty_sections_message,
+    pr_title,
+)
 from llm_prompts.exit_reason import ExitReason
 from llm_prompts.worktrees import Link, WorktreeEntry, load_entries
 
@@ -1453,6 +1458,51 @@ def test_a_recorded_why_fills_the_pr_body_sync_opens(project: Project) -> None:
     [create] = project.gh_calls("pr", "create")
     body = create[create.index("--body") + 1]
     assert f"## Why\n\n{WHY}\n" in body
+
+
+def test_the_pr_what_leaves_merge_commits_out(project: Project) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    git(path, "checkout", "-q", "-b", "side", "main")
+    project.commit(path, "other.txt", "x\n", "chore: side")
+    git(path, "checkout", "-q", "feat/a")
+    git(path, "merge", "-q", "--no-ff", "-m", "Merge side into feat/a", "side")
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+
+    assert project.run(apply=True) == 0
+
+    [create] = project.gh_calls("pr", "create")
+    body = create[create.index("--body") + 1]
+    assert "- feat: a" in body
+    assert "- chore: side" in body
+    assert "Merge side" not in body
+
+
+def test_a_root_commit_has_its_subject_and_is_no_merge(tmp_path: Path) -> None:
+    git(tmp_path, "init", "-q")
+    git(
+        tmp_path,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "root",
+    )
+
+    commit = contribute._commit_of(tmp_path, "HEAD")
+
+    assert (commit.subject, commit.is_merge) == ("root", False)
+
+
+def test_a_pr_of_only_merge_commits_still_lists_them_in_what() -> None:
+    commits = [Commit("a", "Merge side into feat/a", (), is_merge=True)]
+
+    assert pr_title(commits) == "Merge side into feat/a"
+    assert "- Merge side into feat/a" in contribute.pr_body("## What\n", commits)
 
 
 def test_a_worktree_without_a_why_is_not_opened_and_the_others_still_sync(
