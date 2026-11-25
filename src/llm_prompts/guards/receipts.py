@@ -8,10 +8,13 @@ import json
 import os
 import subprocess
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
 
 from .. import home
 from ..jsonfile import write_json_atomic
+
+PROBE_TIMEOUT_SECONDS = 5
 
 
 def _git(toplevel: Path, *args: str) -> str | None:
@@ -22,11 +25,26 @@ def _git(toplevel: Path, *args: str) -> str | None:
     return ran.stdout.decode() if ran.returncode == 0 else None
 
 
-def tree_fingerprint(toplevel: Path) -> str:
-    """Hash the path, kind, executable bit and content of every tracked and untracked file that is not ignored.
+def _tool_version(tool: str, toplevel: Path) -> bytes | None:
+    """Return the output of `<tool> --version` run in the repo, or None where it fails or takes over the probe timeout."""
+    try:
+        ran = subprocess.run(
+            [tool, "--version"],
+            capture_output=True,
+            check=False,
+            cwd=toplevel,
+            timeout=PROBE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return ran.stdout + ran.stderr if ran.returncode == 0 else None
 
-    A submodule counts by the commit its checkout is on. A failed git call gives a
-    random hash, so no receipt ever matches it.
+
+def tree_fingerprint(toplevel: Path, tools: Iterable[str] = ()) -> str:
+    """Hash the path, kind, executable bit and content of every tracked and untracked file that is not ignored, and the version of each tool.
+
+    A submodule counts by the commit its checkout is on. A failed git call or tool
+    version probe gives a random hash, so no receipt ever matches it.
     """
     staged = _git(toplevel, "ls-files", "-z", "--stage")
     others = _git(toplevel, "ls-files", "-z", "--others", "--exclude-standard")
@@ -40,6 +58,11 @@ def tree_fingerprint(toplevel: Path) -> str:
         if meta.startswith("160000"):
             submodules.add(name)
     digest = hashlib.sha256()
+    for tool in sorted(set(tools)):
+        version = _tool_version(tool, toplevel)
+        if version is None:
+            return uuid.uuid4().hex
+        digest.update(b"tool\0" + tool.encode() + b"\0" + version + b"\0")
     for name in sorted(names):
         path = toplevel / name
         if name in submodules:
@@ -56,6 +79,11 @@ def tree_fingerprint(toplevel: Path) -> str:
             continue
         digest.update(name.encode() + b"\0" + hashlib.sha256(content).digest())
     return digest.hexdigest()
+
+
+def _key(toplevel: Path, command: str) -> str:
+    """Return the receipt key of a repo, or of one command run in it."""
+    return f"{toplevel}\0{command}" if command else str(toplevel)
 
 
 class ReceiptStore:
@@ -75,13 +103,15 @@ class ReceiptStore:
             return {}
         return receipts
 
-    def record(self, toplevel: Path, fingerprint: str) -> None:
-        """Store the fingerprint of a passing test run in the repo, holding a lock so parallel sessions keep each other's receipts."""
+    def record(self, toplevel: Path, fingerprint: str, command: str = "") -> None:
+        """Store the fingerprint of a passing test run in the repo, or of its run of the command, holding a lock so parallel sessions keep each other's receipts."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._path.with_name(f"{self._path.name}.lock").open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            write_json_atomic(self._path, {**self._read(), str(toplevel): fingerprint})
+            write_json_atomic(
+                self._path, {**self._read(), _key(toplevel, command): fingerprint}
+            )
 
-    def fresh(self, toplevel: Path, fingerprint: str) -> bool:
-        """Report whether the repo's last passing test run saw this fingerprint."""
-        return self._read().get(str(toplevel)) == fingerprint
+    def fresh(self, toplevel: Path, fingerprint: str, command: str = "") -> bool:
+        """Report whether the last passing test run in the repo, or of the command, saw this fingerprint."""
+        return self._read().get(_key(toplevel, command)) == fingerprint

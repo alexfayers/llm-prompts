@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import multiprocessing
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -193,6 +194,99 @@ class TestCommitGuard:
             result="[capped: 51291 chars, ref rc-1; result_fetch({ref})]",
         )
         assert hook("PreShell", command="git commit -m x") is None
+
+    def test_a_test_run_on_files_that_already_passed_is_skipped(
+        self, hook: RunHook, repo: Path
+    ) -> None:
+        assert hook("PreShell", command="just") is None
+
+        ran(hook, "just")
+        skipped = hook("PreShell", command="timeout 600 just")
+        assert skipped is not None and skipped.updated_input is not None
+        assert skipped.updated_input["command"].startswith("echo ")
+        assert skipped.fallback_notes
+
+        (repo / "a.txt").write_text("two", encoding="utf-8")
+        assert hook("PreShell", command="just") is None
+
+    def test_only_a_test_run_by_itself_is_skipped(
+        self, hook: RunHook, repo: Path
+    ) -> None:
+        ran(hook, "just")
+        assert hook("PreShell", command="just lint") is None
+        assert hook("PreShell", command="just && git commit -m x") is None
+
+    @pytest.fixture
+    def fake_uv(
+        self, repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> Path:
+        """Put a `uv` on the PATH whose `--version` output is the content of the returned file, and add a uv.lock."""
+        (repo / "uv.lock").write_text("lock", encoding="utf-8")
+        tool = tmp_path / "bin" / "uv"
+        tool.parent.mkdir()
+        version = tool.with_name("uv.version")
+        version.write_text("1", encoding="utf-8")
+        tool.write_text(f'#!/bin/sh\ncat "{version}"\n', encoding="utf-8")
+        tool.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{tool.parent}:{os.environ['PATH']}")
+        return version
+
+    def test_a_new_lockfile_tool_version_needs_a_new_run(
+        self, hook: RunHook, fake_uv: Path
+    ) -> None:
+        ran(hook, "just")
+        assert hook("PreShell", command="just") is not None
+
+        fake_uv.write_text("2", encoding="utf-8")
+        assert hook("PreShell", command="just") is None
+        assert hook("PreShell", command="git commit -m x") is None
+
+    @pytest.mark.parametrize("probe", ["exit 1", "sleep 30"])
+    def test_a_failed_tool_probe_never_skips_a_run_nor_delays_a_commit(
+        self,
+        hook: RunHook,
+        fake_uv: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        probe: str,
+    ) -> None:
+        monkeypatch.setattr("llm_prompts.guards.receipts.PROBE_TIMEOUT_SECONDS", 0.5)
+        ran(hook, "just")
+        fake_uv.with_name("uv").write_text(f"#!/bin/sh\n{probe}\n", encoding="utf-8")
+        assert hook("PreShell", command="just") is None
+        ran(hook, "just")
+        assert hook("PreShell", command="just") is None
+        assert hook("PreShell", command="git commit -m x") is None
+
+    def test_a_run_in_another_directory_is_not_skipped(
+        self, hook: RunHook, repo: Path
+    ) -> None:
+        sub = repo / "sub"
+        sub.mkdir()
+
+        def at(directory: Path, hook_name: str, **kwargs: object) -> HookResult | None:
+            return CommitGuard().on_hook(
+                hook_name, logger=LOGGER, workspace_roots=[str(directory)], **kwargs
+            )
+
+        at(
+            sub,
+            "PostToolUse",
+            tool_name="execute_command",
+            parameters={"command": "just"},
+            success=True,
+        )
+        assert at(sub, "PreShell", command="just") is not None
+        assert at(repo, "PreShell", command="just") is None
+        assert hook("PreShell", command="git commit -m x") is None
+
+    def test_a_run_with_other_arguments_is_not_skipped(
+        self, hook: RunHook, repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("PI_CONTEXT_TEST_CMD", "uv run pytest tests/unit")
+        ran(hook, "uv run pytest tests/unit")
+        assert hook("PreShell", command="uv run pytest tests/unit") is not None
+        monkeypatch.setenv("PI_CONTEXT_TEST_CMD", "uv run pytest tests/integration")
+        assert hook("PreShell", command="uv run pytest tests/integration") is None
 
     def test_push_also_needs_a_clean_tree(self, hook: RunHook, repo: Path) -> None:
         git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t"]
