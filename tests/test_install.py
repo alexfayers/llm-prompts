@@ -568,11 +568,14 @@ class TestInstallPluginSkills:
         assert (agents_dir / "skills" / "gated").exists() is False
         assert "gated" not in managed
 
-    def test_target_load_when_overrides_load_when(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        "gate", ["load_when: tool:sometool", "requires_command: sometool"]
+    )
+    def test_target_load_when_overrides_load_when(
+        self, tmp_path: Path, gate: str
+    ) -> None:
         src = self._make_skill(
-            tmp_path / "checkout",
-            "gated",
-            "---\nload_when: tool:sometool\npi_load_when: []\n---\n",
+            tmp_path / "checkout", "gated", f"---\n{gate}\npi_load_when: []\n---\n"
         )
 
         with patch("llm_prompts.install.shutil.which", return_value=None):

@@ -394,8 +394,9 @@ def _passes_gate(src: Path, *, deferred: bool = False, target: str = "") -> bool
     except OSError:
         return True
     _, frontmatter = parse_frontmatter(content)
-    frontmatter["load_when"] = _gating_value(frontmatter, "load_when", target)
-    return _requirements_met(_migrated(frontmatter), deferred=deferred)
+    declared = _migrated(frontmatter)
+    declared["load_when"] = _gating_value(declared, "load_when", target)
+    return _requirements_met(declared, deferred=deferred)
 
 
 def _requirements_met(declared: dict[str, Any], *, deferred: bool = False) -> bool:
