@@ -142,3 +142,20 @@ describe("RpcChild shutdown", { timeout: 10_000 }, () => {
 		assert.match((await child.exited).reason ?? "", /first/);
 	});
 });
+
+describe("RpcChild scope", { timeout: 10_000 }, () => {
+	test("is stopped when the child exits, before an orphan holding its output lets it close", async () => {
+		const orphanMs = 1500;
+		const orphan = `require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, ${orphanMs})'], { stdio: 'inherit' }).unref()`;
+		const started = Date.now();
+		let releasedAfter = Infinity;
+		const child = start({
+			command: [process.execPath, "-e", orphan],
+			limits: {},
+			cap: (command) => ({ command, release: async () => void (releasedAfter = Date.now() - started) }),
+		});
+		await child.exited;
+		assert.ok(releasedAfter < orphanMs / 2, `released after ${releasedAfter}ms`);
+		assert.ok(Date.now() - started >= orphanMs / 2);
+	});
+});

@@ -5,6 +5,7 @@ import { LiveView, registerLiveView } from "../../src/llm_prompts/prompts/pi/ext
 import { Registry, type Run } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 
 delete process.env.PI_CONTEXT_CHILD;
+delete process.env.PI_CACHE_RETENTION;
 
 const run = (patch: Partial<Run> = {}): Run => ({ id: "r1", name: "scout", role: "reader", background: true, state: "running", task: "t", startedAt: 1_000, ...patch });
 
@@ -109,8 +110,8 @@ test("forks started from the same source show it, and a fork with none shows not
 		"◓ api-scan [cold cheap:low] 1m45s · 0 turns · from stub-ab12",
 		"◓ docs-scan [cold cheap:low] 1m45s · 0 turns · from stub-ab12",
 		"◓ fix-widget [writer] 2m00s · 0 turns · fix-widget",
-		"● tests-scan [cold cheap:low] failed · cache 59m left · from stub-ab12",
-		"● review [reader] done · cache 59m left",
+		"● tests-scan [cold cheap:low] failed · cache 4m left · from stub-ab12",
+		"● review [reader] done · cache 4m left",
 	]);
 });
 
