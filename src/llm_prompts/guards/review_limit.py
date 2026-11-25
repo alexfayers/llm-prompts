@@ -28,10 +28,10 @@ DEFAULT_LIMIT = 5
 
 
 def _gh(cwd: str, endpoint: str, jq: str) -> str | None:
-    """Return the output of a `gh api` GET in the directory, or None when it fails."""
+    """Return the output of a paginated `gh api` GET in the directory, or None when it fails."""
     try:
         ran = subprocess.run(
-            ["gh", "api", "-X", "GET", endpoint, "--jq", jq],
+            ["gh", "api", "-X", "GET", endpoint, "--jq", jq, "--paginate"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -75,10 +75,15 @@ class ReviewLimitGuard(HooksPlugin):
             word.removeprefix("--repo=") for word in words if word.startswith("--repo=")
         ]
         repo = named[0] if named else _gh(cwd, "repos/{owner}/{repo}", ".full_name")
-        count = repo and _gh(
-            cwd, f"search/issues?q=is:pr+is:open+author:@me+repo:{repo}", ".total_count"
+        login = repo and _gh(cwd, "user", ".login")
+        authors = login and _gh(
+            cwd, f"repos/{repo}/pulls?state=open&per_page=100", ".[].user.login"
         )
-        return (repo, int(count)) if repo and count and count.isdigit() else None
+        return (
+            (repo, authors.split().count(login))
+            if repo and login and authors is not None
+            else None
+        )
 
     def on_hook(
         self, hook_name: str, *, logger: logging.Logger, **kwargs: object

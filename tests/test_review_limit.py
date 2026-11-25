@@ -25,12 +25,17 @@ def guard_loaded() -> Iterator[None]:
 
 @pytest.fixture
 def open_prs(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Turn the guards on and report 5 open PRs in acme/widgets to `gh api`."""
+    """Turn the guards on and report 5 of the user's open PRs in acme/widgets to `gh api`."""
     monkeypatch.setenv("CLINE_HOOKS_FRONTEND", "pi")
+    replies = {
+        "user": "me\n",
+        "pulls": "me\nother\n" + "me\n" * 4,
+        "repos": "acme/widgets\n",
+    }
     run = MagicMock(
         side_effect=lambda args, **_: MagicMock(
             returncode=0,
-            stdout="acme/widgets\n" if args[4].startswith("repos/") else "5\n",
+            stdout=next(v for k, v in replies.items() if k in args[4]),
         )
     )
     monkeypatch.setattr("llm_prompts.guards.review_limit.subprocess.run", run)
@@ -63,7 +68,8 @@ def test_blocks_a_new_pr_at_the_limit_of_the_repo_it_targets(
         result.block or ""
     )
     assert open_prs.call_args.kwargs["cwd"] == cwd
-    assert f"repo:{repo}" in open_prs.call_args.args[0][4]
+    assert open_prs.call_args.args[0][4].startswith(f"repos/{repo}/pulls?state=open")
+    assert "--paginate" in open_prs.call_args.args[0]
 
 
 @pytest.mark.parametrize("command", ["gh pr edit 5 --title x", "git push"])
