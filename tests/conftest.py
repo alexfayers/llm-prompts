@@ -680,6 +680,24 @@ def no_git_location_env() -> Iterator[None]:
         yield
 
 
+_FAST_GIT_CONFIG = {
+    "core.fsync": "none",
+    "maintenance.auto": "false",
+    "init.templateDir": "",
+}
+
+
+@pytest.fixture(scope="session", autouse=True)
+def fast_git_config() -> Iterator[None]:
+    """Make every git the tests run skip fsync, background maintenance and the init template copy, which cost a full disk flush or extra processes per command on macOS."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("GIT_CONFIG_COUNT", str(len(_FAST_GIT_CONFIG)))
+        for index, (key, value) in enumerate(_FAST_GIT_CONFIG.items()):
+            patch.setenv(f"GIT_CONFIG_KEY_{index}", key)
+            patch.setenv(f"GIT_CONFIG_VALUE_{index}", value)
+        yield
+
+
 @pytest.fixture(autouse=True)
 def isolated_home(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
