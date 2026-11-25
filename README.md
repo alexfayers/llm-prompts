@@ -85,7 +85,7 @@
 | src/llm\_prompts/prompts/shared/skills/todos/find\_todos.py                   |       44 |        7 |     84% |96-98, 103-105, 109 |
 | src/llm\_prompts/removed\_agents\_notice.py                                   |       14 |        0 |    100% |           |
 | src/llm\_prompts/render\_template.py                                          |      168 |       14 |     92% |147, 429-430, 439-456, 468-472, 476 |
-| src/llm\_prompts/setup.py                                                     |      455 |       29 |     94% |230, 328-332, 343-347, 352, 361-368, 413, 461, 464, 485-486, 532-533, 891-892, 981-984, 1014-1015, 1018, 1074-1075 |
+| src/llm\_prompts/setup.py                                                     |      492 |       30 |     94% |230, 328-332, 343-347, 352, 361-368, 413, 464, 485-486, 532-533, 815-816, 957-958, 1047-1050, 1080-1081, 1084, 1141-1142 |
 | src/llm\_prompts/size\_guard.py                                               |      432 |       10 |     98% |347-348, 586-588, 623, 645, 649-651 |
 | src/llm\_prompts/size\_limits.py                                              |       67 |        1 |     99% |       155 |
 | src/llm\_prompts/size\_report.py                                              |      207 |        2 |     99% |  207, 209 |
@@ -180,7 +180,7 @@
 | tests/test\_review\_limit.py                                                  |       66 |        0 |    100% |           |
 | tests/test\_rewrite\_range\_script.py                                         |       96 |        0 |    100% |           |
 | tests/test\_session\_start\_checklist.py                                      |       38 |        0 |    100% |           |
-| tests/test\_setup.py                                                          |      415 |        0 |    100% |           |
+| tests/test\_setup.py                                                          |      432 |        0 |    100% |           |
 | tests/test\_shell\_rules.py                                                   |       19 |        0 |    100% |           |
 | tests/test\_size\_guard.py                                                    |      168 |        0 |    100% |           |
 | tests/test\_size\_report.py                                                   |      254 |        0 |    100% |           |
@@ -195,7 +195,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       53 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **32192** |  **791** | **98%** |           |
+| **TOTAL**                                                                     | **32246** |  **792** | **98%** |           |
 
 
 ## Setup coverage badge
