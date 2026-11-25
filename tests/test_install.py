@@ -48,6 +48,7 @@ from llm_prompts.install import (
     get_source_for_managed_file,
     partial_source,
     prompts_dir,
+    try_enable_task_tools_claude_code,
     try_install_hooks_claude_code,
     try_install_hooks_pi,
     try_install_memory_claude_code,
@@ -3317,6 +3318,86 @@ class TestLogBrokenPipe:
             log("info", "second")
 
         assert [call.args[1] for call in dup2.call_args_list] == [99, 99]
+
+
+class TestEnableTaskToolsClaudeCode:
+    def _settings_path(self, home: Path) -> Path:
+        return home / ".claude" / "settings.json"
+
+    def test_creates_env_entry_in_missing_settings(self, isolated_home: Path) -> None:
+        try_enable_task_tools_claude_code()
+
+        data = json.loads(self._settings_path(isolated_home).read_text("utf-8"))
+        assert data == {"env": {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}}
+
+    def test_keeps_other_settings(self, isolated_home: Path) -> None:
+        path = self._settings_path(isolated_home)
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps({"env": {"A": "b"}, "permissions": {"allow": ["x"]}}), "utf-8"
+        )
+
+        try_enable_task_tools_claude_code()
+
+        data = json.loads(path.read_text("utf-8"))
+        assert data["env"] == {"A": "b", "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}
+        assert data["permissions"] == {"allow": ["x"]}
+
+    def test_updates_the_target_of_a_symlinked_settings_file(
+        self, isolated_home: Path
+    ) -> None:
+        target = isolated_home / "dotfiles" / "claude-settings.json"
+        target.parent.mkdir()
+        target.write_text(json.dumps({"model": "m"}), "utf-8")
+        path = self._settings_path(isolated_home)
+        path.parent.mkdir(parents=True)
+        path.symlink_to(target)
+
+        try_enable_task_tools_claude_code()
+
+        assert path.is_symlink()
+        assert json.loads(target.read_text("utf-8")) == {
+            "model": "m",
+            "env": {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"},
+        }
+
+    def test_warns_and_carries_on_when_the_settings_cannot_be_written(
+        self, isolated_home: Path
+    ) -> None:
+        target = isolated_home / "dotfiles" / "claude-settings.json"
+        target.parent.mkdir()
+        target.write_text("{}", "utf-8")
+        path = self._settings_path(isolated_home)
+        path.parent.mkdir(parents=True)
+        path.symlink_to(target)
+
+        with (
+            patch(
+                "llm_prompts.install.write_text_atomic",
+                side_effect=PermissionError("read-only"),
+            ),
+            patch("llm_prompts.install.log") as mock_log,
+        ):
+            try_enable_task_tools_claude_code()
+
+        assert path.is_symlink()
+        assert target.read_text("utf-8") == "{}"
+        level, message = mock_log.call_args.args
+        assert level == "warn"
+        assert str(path) in message
+
+    def test_keeps_a_value_the_user_set(self, isolated_home: Path) -> None:
+        path = self._settings_path(isolated_home)
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps({"env": {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "0"}}), "utf-8"
+        )
+
+        try_enable_task_tools_claude_code()
+
+        assert json.loads(path.read_text("utf-8"))["env"] == {
+            "CLAUDE_CODE_ENABLE_TODO_TOOLS": "0"
+        }
 
 
 @pytest.mark.real_io

@@ -1849,6 +1849,9 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
             patch("llm_prompts.install.try_install_hooks_claude_code") as hooks,
             patch("llm_prompts.install.try_install_memory_claude_code") as memory,
             patch("llm_prompts.install.try_allow_update_claude_code") as allow,
+            patch(
+                "llm_prompts.install.try_enable_task_tools_claude_code"
+            ) as task_tools,
             patch("llm_prompts.install.try_install_memory_codex") as codex,
             patch("llm_prompts.install.try_install_memory_pi") as pi_memory,
             patch("llm_prompts.install.try_install_memory_opencode") as opencode_memory,
@@ -1857,6 +1860,7 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
         ):
             main()
         return {
+            "task_tools": task_tools,
             "opencode_hooks": opencode_hooks,
             "hooks": hooks,
             "memory": memory,
@@ -1869,8 +1873,13 @@ class TestUpdateReconfiguresOnlyAfterASuccessfulPull:
 
     def test_nothing_pulled_leaves_every_agent_config_untouched(self) -> None:
         mocks = self._run_update(set())
-        for mock in mocks.values():
-            mock.assert_not_called()
+        for name, mock in mocks.items():
+            if name != "task_tools":
+                mock.assert_not_called()
+
+    def test_every_update_enables_the_claude_code_task_tools(self) -> None:
+        mocks = self._run_update(set())
+        mocks["task_tools"].assert_called_once_with()
 
     def test_a_pulled_source_reconfigures_the_agents(self) -> None:
         mocks = self._run_update({"cline-hooks"})

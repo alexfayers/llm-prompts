@@ -4511,6 +4511,30 @@ def try_allow_update_claude_code() -> None:
         log("success", "Added Bash(llm-prompts update *) to Claude Code permissions.")
 
 
+_TASK_TOOLS_ENV = "CLAUDE_CODE_ENABLE_TODO_TOOLS"
+
+
+def try_enable_task_tools_claude_code() -> None:
+    """Set CLAUDE_CODE_ENABLE_TODO_TOOLS=1 in Claude Code settings unless already set."""
+    settings_path = user_home() / ".claude" / "settings.json"
+    try:
+        settings = (
+            json.loads(_read_text(settings_path)) if settings_path.exists() else {}
+        )
+    except json.JSONDecodeError:
+        log("warn", "Could not parse Claude settings, skipping task tools env.")
+        return
+    env: dict[str, str] = settings.setdefault("env", {})
+    if _TASK_TOOLS_ENV not in env:
+        env[_TASK_TOOLS_ENV] = "1"
+        try:
+            write_text_atomic(settings_path, json.dumps(settings, indent=2) + "\n")
+        except OSError as error:
+            log("warn", f"Could not set {_TASK_TOOLS_ENV} in {settings_path}: {error}")
+            return
+        log("success", f"Set {_TASK_TOOLS_ENV}=1 in Claude Code settings.")
+
+
 def _memory_service_exists() -> bool:
     """Check whether the mcp-memory background service is installed."""
     if sys.platform == "darwin":
