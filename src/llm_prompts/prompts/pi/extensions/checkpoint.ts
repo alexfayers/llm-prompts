@@ -3,9 +3,9 @@
 // Once per run it also names the mark or tool call to rewind to, when the run's tokens cost more to carry than a rewind costs.
 // Config: settings.json llmPrompts.checkpoint.shape (set to "result" to carry the fold in the rewind tool result instead of a separate message)
 // Config: settings.json llmPrompts.checkpoint.nudgeTokens (tool-result tokens per nudge, default 10000)
-// Env: PI_CONTEXT_CHILD (set for delegates, which are never nudged), PI_CACHE_RETENTION (long prices cache writes at the one hour rate)
+// Env: PI_CONTEXT_CHILD (set for delegates, which are never nudged), PI_CACHE_RETENTION (long prices cache writes at the one hour rate), AWS_BEDROCK_FORCE_CACHE (1 gives Bedrock models with no Claude name cache points)
 import { calculateCost, type Api, type Model, type Usage } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 type Block = { type: string; id?: string; name?: string; text?: string; arguments?: unknown };
@@ -96,27 +96,34 @@ const price = (model: Model<Api>, usage: Partial<Usage>) =>
 /** Bedrock models that pi gives cache points, as its own `supportsPromptCaching` decides: Claude 3.5 Haiku, 3.7 Sonnet, 4.x and 5. */
 const BEDROCK_CACHE_POINT_MODEL = /fable-5|opus-5|sonnet-5|haiku-5|-4-|claude-3-7-sonnet|claude-3-5-haiku/;
 
-/** Whether pi asks this model for one hour cache writes under long retention: always on Anthropic unless its compat turns it off, and on Bedrock only for the models that get cache points. */
-function requestsOneHourWrites(model: Model<Api>, longRetention: boolean): boolean {
+/** Whether pi asks this model for one hour cache writes under long retention: always on Anthropic unless its compat turns it off, and on Bedrock only for the models that get cache points, which a model with no Claude name gets when AWS_BEDROCK_FORCE_CACHE is 1, in the provider's env or the process env. */
+function requestsOneHourWrites(model: Model<Api>, longRetention: boolean, forceCache: boolean): boolean {
 	if (!longRetention) return false;
 	if (model.api === "anthropic-messages") return (model.compat as { supportsLongCacheRetention?: boolean } | undefined)?.supportsLongCacheRetention !== false;
 	const names = [model.id, model.name].map((name) => name?.toLowerCase().replace(/[\s_.:]+/g, "-") ?? "");
-	return model.api === "bedrock-converse-stream" && names.some((name) => name.includes("claude")) && names.some((name) => BEDROCK_CACHE_POINT_MODEL.test(name));
+	if (model.api !== "bedrock-converse-stream") return false;
+	return names.some((name) => name.includes("claude")) ? names.some((name) => BEDROCK_CACHE_POINT_MODEL.test(name)) : forceCache;
+}
+
+/** AWS_BEDROCK_FORCE_CACHE as pi's Bedrock provider reads it: the model provider's own env from `auth.json` first, then the process env. */
+async function bedrockForcesCache(ctx: ExtensionContext, model: Model<Api>): Promise<boolean> {
+	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+	return ((auth.ok ? auth.env?.AWS_BEDROCK_FORCE_CACHE : undefined) || process.env.AWS_BEDROCK_FORCE_CACHE) === "1";
 }
 
 /** The usage of the summary request, classified as pi does: a model that prices cache writes writes them, and any other model bills the fresh tokens as input. */
-function summaryUsage(model: Model<Api>, longRetention: boolean): Partial<Usage> {
+function summaryUsage(model: Model<Api>, longRetention: boolean, forceCache: boolean): Partial<Usage> {
 	if (!(model.cost.cacheWrite > 0)) return { input: SUMMARY_TOKENS, output: SUMMARY_TOKENS };
-	return { cacheWrite: SUMMARY_TOKENS, cacheWrite1h: requestsOneHourWrites(model, longRetention) ? SUMMARY_TOKENS : 0, output: SUMMARY_TOKENS };
+	return { cacheWrite: SUMMARY_TOKENS, cacheWrite1h: requestsOneHourWrites(model, longRetention, forceCache) ? SUMMARY_TOKENS : 0, output: SUMMARY_TOKENS };
 }
 
 /** Prices through pi's `calculateCost`, so the context-size tier and the one hour cache-write rate apply. */
-function rewindPays(model: Model<Api>, runTokens: number, contextTokens: number, longRetention: boolean): boolean {
+function rewindPays(model: Model<Api>, runTokens: number, contextTokens: number, longRetention: boolean, forceCache: boolean): boolean {
 	const context = Math.max(contextTokens, runTokens);
 	const carried = Math.max(runTokens - SUMMARY_TOKENS, 0);
 	const carryCost = EXPECTED_REMAINING_REQUESTS * (price(model, { cacheRead: context }) - price(model, { cacheRead: context - carried }));
 	const rest = { cacheRead: context - runTokens };
-	return carryCost > price(model, { ...rest, ...summaryUsage(model, longRetention) }) - price(model, rest);
+	return carryCost > price(model, { ...rest, ...summaryUsage(model, longRetention, forceCache) }) - price(model, rest);
 }
 
 /** The rewind target for the run, found by call id: the mark that opened it, else the call before its first call, else that first call. Results of the target's own batch stay, so they are not counted as removed. */
@@ -142,7 +149,7 @@ function nudge(pi: ExtensionAPI) {
 	const reset = () => void ((calls = tokens = nudgedAt = 0), (markName = undefined), (suggested = false), (results = new Map()));
 	pi.on("agent_start", reset);
 	pi.on("input", reset);
-	pi.on("tool_result", (event, ctx) => {
+	pi.on("tool_result", async (event, ctx) => {
 		if (event.parentToolCallId) return;
 		if (event.toolName === "checkpoint") {
 			reset();
@@ -160,7 +167,9 @@ function nudge(pi: ExtensionAPI) {
 		}
 		const model = ctx.model as Model<Api> | undefined;
 		const plan = !suggested && model && calls >= MIN_RUN_CALLS ? rewindPlan(ctx.sessionManager.buildSessionProjection().entries as unknown as Projected[], markName, results) : undefined;
-		if (model && plan && plan.calls >= MIN_RUN_CALLS && rewindPays(model, plan.tokens, ctx.getContextUsage?.()?.tokens ?? 0, process.env.PI_CACHE_RETENTION === "long")) {
+		const longRetention = process.env.PI_CACHE_RETENTION === "long";
+		const forceCache = model && plan && plan.calls >= MIN_RUN_CALLS && longRetention && model.api === "bedrock-converse-stream" && (await bedrockForcesCache(ctx, model));
+		if (model && plan && plan.calls >= MIN_RUN_CALLS && rewindPays(model, plan.tokens, ctx.getContextUsage?.()?.tokens ?? 0, longRetention, forceCache === true)) {
 			suggested = true;
 			lines.push(`[checkpoint] rewind to ${JSON.stringify(plan.target)}: ${plan.calls} calls, ~${Math.round(plan.tokens / 1000)}K tokens that every later request would carry. checkpoint rewind with a summary costs less.`);
 		}
