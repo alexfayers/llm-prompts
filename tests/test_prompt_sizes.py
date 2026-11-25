@@ -400,6 +400,23 @@ class TestIterArtifactsDispatch:
         assert ("agent-only.md" not in failed) is expected
         assert ("demo/part.md" not in failed) is expected
 
+    def test_pi_agent_source_lines_measured(self, tmp_path: Path) -> None:
+        _make_prompts_tree(tmp_path, targets=("pi",))
+        source = tmp_path / "pi" / "agents" / "PiOnly.md"
+        content = "---\nname: PiOnly\n---\n\n- Item\nLazy continuation.\n"
+        _write(source, content)
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            artifacts = list(iter_artifacts([tmp_path], targets=("pi",)))
+            result = check_source(source, content, targets=("pi",))
+
+        for violations in (evaluate(artifacts), result.violations):
+            assert [
+                (v.metric, v.dest_name, v.lines)
+                for v in violations
+                if v.metric in (NO_LONG_LINES, NO_LAZY_CONTINUATIONS)
+            ] == [(NO_LAZY_CONTINUATIONS, "PiOnly.md", (6,))]
+
     def test_no_long_lines_skips_frontmatter(self, tmp_path: Path) -> None:
         _make_prompts_tree(tmp_path)
         _write(
