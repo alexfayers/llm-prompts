@@ -58,7 +58,9 @@ def _parts(cell: Cell, model: str, os_sandbox: bool) -> list[JsonValue] | None:
     build = cell.variant.build[cell.agent]
     return [
         SCHEMA_VERSION,
-        [build, dict(cell.variant.env)] if cell.variant.env else build,
+        [build, dict(cell.variant.env), dict(cell.variant.features)]
+        if cell.variant.env or cell.variant.features
+        else build,
         cell.agent,
         model,
         os_sandbox,

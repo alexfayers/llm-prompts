@@ -16,6 +16,7 @@ from llm_prompts.attic.pinned import PINNED_RULES
 from llm_prompts.benchmark import paths, reuse
 from llm_prompts.benchmark.agents import AGENTS, DEFAULT_MODELS
 from llm_prompts.benchmark.agents.adapter import VariantBuildError
+from llm_prompts.benchmark.agents.pi import FEATURES
 from llm_prompts.benchmark.cell import memory, variants
 from llm_prompts.benchmark.cell.prepare import IsolationBreach
 from llm_prompts.benchmark.cell.shared import remove_stale_roots
@@ -91,6 +92,14 @@ def _unpinned_rules(names: Sequence[str] | None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(names or ()))
 
 
+def _features(names: Sequence[str] | None) -> tuple[str, ...]:
+    if unknown := set(names or ()) - set(FEATURES):
+        raise ValueError(
+            f"unknown feature: {', '.join(sorted(unknown))} (one of {', '.join(FEATURES)})"
+        )
+    return tuple(dict.fromkeys(names or ()))
+
+
 @dataclass(frozen=True)
 class RunOptions:
     a: str = "origin/main"
@@ -109,6 +118,7 @@ class RunOptions:
     b_tools: Mapping[str, str] = field(default_factory=dict)
     b_env: Mapping[str, str] = field(default_factory=dict)
     b_drop: tuple[str, ...] = ()
+    features: tuple[str, ...] = ()
     reuse: bool = True
     fail_fast: bool = False
     fail_fast_after: int = DEFAULT_FAIL_FAST_AFTER
@@ -128,11 +138,20 @@ class RunOptions:
             if not separator:
                 raise ValueError(f"model must be <agent>=<model id>: {entry}")
             models[_agent(name)] = model
+        features = _features(args.feature)
         chosen = (
             tuple(dict.fromkeys(_agent(name) for name in args.agents.split(",")))
             if args.agents
+            else ("pi",)
+            if features
             else defaults.agents
         )
+        if features and chosen != ("pi",):
+            raise ValueError("--feature measures pi features, use --agents pi")
+        if features and args.b_tool:
+            raise ValueError(
+                "--feature builds both sides from one tool config, use --a-tool"
+            )
         for agent in chosen:
             if agent not in models:
                 models[agent] = defaults.models[agent]
@@ -162,6 +181,7 @@ class RunOptions:
             b_tools=_pairs("tool", args.b_tool),
             b_env=_pairs("env", args.b_env),
             b_drop=_unpinned_rules(args.b_drop),
+            features=features,
             reuse=args.reuse,
             fail_fast=args.fail_fast,
             fail_fast_after=_at_least_one(
@@ -253,8 +273,11 @@ def _build_plan(options: RunOptions) -> _Plan:
     """Build both sides and plan the first cells."""
     scenarios = _scenarios(options)
     built = [
-        variants.build(
-            "a", options.a, options.agents, options.overlays, options.a_tools
+        replace(
+            variants.build(
+                "a", options.a, options.agents, options.overlays, options.a_tools
+            ),
+            features=dict.fromkeys(options.features, False),
         )
     ]
     a_cells = plan(built, options.agents, scenarios, range(options.repeats or 1))
@@ -264,10 +287,13 @@ def _build_plan(options: RunOptions) -> _Plan:
         options.b,
         options.agents,
         options.overlays,
-        options.b_tools,
+        options.a_tools if options.features else options.b_tools,
         drop=options.b_drop,
+        origin_tools=bool(options.features) or None,
     )
-    built.append(replace(b, env=options.b_env))
+    built.append(
+        replace(b, env=options.b_env, features=dict.fromkeys(options.features, True))
+    )
     cells = plan(built, options.agents, scenarios, range(options.repeats or 1))
     b_cells = [cell for cell in cells if cell.variant.label == "b"]
     return _Plan(
@@ -378,6 +404,7 @@ def _build_report(
         judge_reasons(rows),
         options.b_env,
         options.b_drop,
+        options.features,
         ablation_verdict(
             rows,
             deltas,

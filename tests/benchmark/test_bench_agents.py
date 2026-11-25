@@ -41,6 +41,22 @@ def test_pi_template_permits_edits_to_prompt_files_and_keeps_the_other_asks(
         assert permission[tool] == {"*": "allow"}
 
 
+def test_pi_hides_every_unpinned_skill_behind_the_attic_only_when_the_feature_is_on(
+    tmp_path: Path,
+) -> None:
+    skills = tmp_path / ".pi/agent/skills"
+    for name in ("git-usage", "idle"):
+        (skills / name).mkdir(parents=True)
+        (skills / name / "SKILL.md").write_text(f"---\ndescription: d {name}\n---\n")
+    manifest = tmp_path / ".pi/agent/attic.json"
+
+    AGENTS["pi"].install_features(tmp_path, {"attic": False})
+    assert not manifest.exists()
+
+    AGENTS["pi"].install_features(tmp_path, {"attic": True})
+    assert [i["name"] for i in json.loads(manifest.read_text())["items"]] == ["idle"]
+
+
 def test_pi_models_come_from_the_pi_settings() -> None:
     assert AGENTS["pi"].default_model == "test-model"
     assert AGENTS["pi"].judge_model == "test-model"

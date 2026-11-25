@@ -596,6 +596,74 @@ def test_b_env_reaches_only_the_b_cells_environment_and_names_ref_b_in_the_repor
     } == {"a": None, "b": "0"}
 
 
+def test_a_feature_runs_without_it_in_a_and_with_it_in_b_and_names_it_in_the_report(
+    bench_dirs: BenchDirs, builds: Builds, add: Any, fake_agent: FakeAgent
+) -> None:
+    fake_agent.script("s1", trace=trace(tool_calls=OK))
+
+    run(features=("consult",))
+
+    (run_dir,) = (bench_dirs.state / "runs").iterdir()
+    report = json.loads((run_dir / "report.json").read_text())
+    assert report["features"] == ["consult"]
+    assert {
+        p.cell.variant.label: dict(p.cell.variant.features) for p in fake_agent.executed
+    } == {"a": {"consult": False}, "b": {"consult": True}}
+
+
+def test_a_cell_is_not_reused_after_the_measured_features_change(
+    builds: Builds, add: Any, fake_agent: FakeAgent, run_ids: None
+) -> None:
+    fake_agent.script("s1", trace=trace(tool_calls=OK))
+    assert run(features=("consult",)) == 0
+    fake_agent.executed.clear()
+
+    assert run(features=("consult",)) == 0
+    assert fake_agent.executed == []
+
+    assert run(features=("ghost",)) == 0
+    assert [p.cell.variant.label for p in fake_agent.executed] == ["a", "b"]
+
+
+def test_a_feature_run_builds_both_sides_from_the_same_tool_pins(
+    builds: Builds, add: Any, fake_agent: FakeAgent
+) -> None:
+    fake_agent.script("s1", trace=trace(tool_calls=OK))
+
+    run(features=("consult",), a_tools={"mcp-memory": "/m/a"})
+
+    assert builds.args["b"][-1] == builds.args["a"][-1] == {"mcp-memory": "/m/a"}
+    assert builds.kwargs["b"]["origin_tools"] is True
+    assert "origin_tools" not in builds.kwargs["a"]
+
+
+def test_a_run_without_features_leaves_the_b_tool_pins_to_the_b_side(
+    builds: Builds, add: Any, fake_agent: FakeAgent
+) -> None:
+    fake_agent.script("s1", trace=trace(tool_calls=OK))
+
+    run(b_tools={"mcp-memory": "/m/b"})
+
+    assert builds.args["b"][-1] == {"mcp-memory": "/m/b"}
+    assert builds.kwargs["b"]["origin_tools"] is None
+
+
+def test_a_feature_run_measures_pi_only() -> None:
+    assert cli("--feature", "consult")[1][0].agents == ("pi",)
+    assert cli("--feature", "consult", "--agents", "pi")[1][0].agents == ("pi",)
+    assert cli("--feature", "consult", "--agents", "claude,pi") == (2, [])
+    assert cli("--feature", "consult", "--agents", "claude") == (2, [])
+
+
+def test_a_feature_run_refuses_tool_pins_for_b_alone() -> None:
+    assert cli("--feature", "consult", "--b-tool", "mcp-memory=/m/b") == (2, [])
+
+
+def test_an_unknown_feature_is_a_usage_error() -> None:
+    assert cli("--feature", "nope") == (2, [])
+    assert cli("--feature", "fork") == (2, [])
+
+
 def test_b_drop_removes_rules_from_the_b_build_only_and_names_them_in_the_report(
     bench_dirs: BenchDirs, builds: Builds, add: Any, fake_agent: FakeAgent
 ) -> None:
@@ -609,7 +677,10 @@ def test_b_drop_removes_rules_from_the_b_build_only_and_names_them_in_the_report
     assert (report["b_drop"], report["ablation"]) == (["coding-python"], "need-runs")
     assert "Ablation: need-runs" in (run_dir / "report.md").read_text()
     assert "-coding-python" in (run_dir / "report.md").read_text().splitlines()[0]
-    assert builds.kwargs == {"a": {}, "b": {"drop": ("coding-python",)}}
+    assert builds.kwargs == {
+        "a": {},
+        "b": {"drop": ("coding-python",), "origin_tools": None},
+    }
 
 
 def test_a_finished_run_prunes_cached_builds_that_are_not_the_newest_of_a_ref(

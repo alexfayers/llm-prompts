@@ -178,6 +178,7 @@ class Report:
     judge_reasons: tuple[JudgeReason, ...] = ()
     b_env: Mapping[str, str] = field(default_factory=dict)
     b_drop: tuple[str, ...] = ()
+    features: tuple[str, ...] = ()
     ablation: AblationVerdict | None = None
 
 
@@ -188,6 +189,7 @@ def b_label(report: Report) -> str:
             report.b,
             *(f"{k}={v}" for k, v in report.b_env.items()),
             *(f"-{rule}" for rule in report.b_drop),
+            *(f"+{feature}" for feature in report.features),
         ]
     )
 

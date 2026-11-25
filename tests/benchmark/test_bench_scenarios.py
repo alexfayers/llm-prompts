@@ -1,4 +1,7 @@
+import json
+import os
 import shutil
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -340,6 +343,44 @@ def test_an_agent_that_does_nothing_passes_no_shipped_scenario(
     )
     for scenario in scenarios.load("heavy", ("claude", "pi")):
         assert not check_shipped(scenario.id, tmp_path / scenario.id)
+
+
+@pytest.mark.real_io
+def test_the_ghost_scenario_saves_the_ghost_it_asks_the_agent_to_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (scenario,) = (
+        s for s in scenarios.load("heavy", ("pi",)) if s.id == "feature-ghost"
+    )
+    shutil.copytree(scenario.workspace, tmp_path / "w")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setitem(os.environ, "PATH", f"{tmp_path / 'bin'}:{os.environ['PATH']}")
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "pi").write_text("#!/bin/sh\necho 1.6.0\n")
+    (tmp_path / "bin" / "pi").chmod(0o755)
+    for argv in (
+        ["git", "init", "-q"],
+        ["git", "add", "-A"],
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-qm",
+            "x",
+        ],
+    ):
+        subprocess.run(argv, cwd=tmp_path / "w", check=True)
+
+    for command in scenario.setup:
+        subprocess.run(["sh", "-c", command], cwd=tmp_path / "w", check=True)
+
+    (file,) = (tmp_path / ".pi/agent/ghosts").glob("*/add-fetch-all.json")
+    ghost = json.loads(file.read_text())
+    assert [step["tool"] for step in ghost["steps"]] == ["bash"] * 3
+    assert (ghost["piVersion"], len(ghost["approvedHash"])) == ("1.6.0", 64)
 
 
 def test_shipped_scenarios_cover_only_unpinned_shared_rules() -> None:

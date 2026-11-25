@@ -227,6 +227,21 @@ def test_a_builds_local_tools_from_their_origin_sha_and_b_from_the_checkout(
     assert len({a.venv, b.venv, pinned.venv}) == 3
 
 
+def test_b_builds_local_tools_from_their_origin_sha_when_asked_to(
+    tmp_path: Path, repo: Path, fake_subprocess: FakeSubprocess,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    _local_tools(tmp_path, monkeypatch)
+    fake_subprocess.on("remote", "get-url", stdout="git@example.invalid:me/hooks.git\n")
+
+    a = variants.build("a", "main", ("pi",), (), None, repo=repo)
+    b = variants.build("b", "main", ("pi",), (), None, repo=repo, origin_tools=True)
+
+    installs = fake_subprocess.matching("uv", "pip", "install")
+    assert len(installs) == 1
+    assert a.venv == b.venv
+
+
 def test_a_ignores_uv_sources_for_a_local_tool_by_its_package_name(
     tmp_path: Path, repo: Path, fake_subprocess: FakeSubprocess,
     monkeypatch: pytest.MonkeyPatch,

@@ -1,0 +1,15 @@
+id = "feature-fork"
+level = "heavy"
+agents = ["pi"]
+workspace = "tiny-py"
+project = "demo"
+delegation = true
+prompt = "review fetch.py and test_fetch.py in parallel, one delegate for each, then tell me in two bullets what fetch() does that no test covers. dont change any files"
+
+[[check]]
+kind = "files_unchanged"
+path = "."
+
+[[check]]
+kind = "judge"
+rubric = "The evidence is the agent's final answer. PASS only if it gives two bullets, and they say that the tests cover only the happy path: fetch() has no test for an empty url, a url that is not a string, or any error. FAIL if it gives no bullets, says the tests cover everything, or invents behaviour that fetch() does not have, such as retries, a network call or error handling."

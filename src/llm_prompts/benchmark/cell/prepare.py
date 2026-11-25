@@ -129,6 +129,7 @@ def prepare(
         ) as handle:
             agent = AGENTS[cell.agent]
             agent.point_memory(home, handle.url)
+            agent.install_features(home, cell.variant.features)
             agent.copy_logins(home)
             if agent.git_packages:
                 stores.link_live(home, live_home(), agent.git_packages)

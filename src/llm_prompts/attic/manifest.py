@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from ..render_template import parse_frontmatter
 from .pinned import PINNED_SKILLS, PINNED_TOOLS
 
 MS_PER_DAY = 86_400_000
@@ -52,6 +53,16 @@ class Manifest:
             "window_days": self.window_days,
             "items": [vars(item) for item in self.items],
         }
+
+
+def skill_stubs(skills: Path) -> dict[str, str]:
+    """Return the description of each skill folder in ``skills``, by skill name."""
+    return {
+        skill.parent.name: parse_frontmatter(skill.read_text("utf-8"))[1].get(
+            "description", ""
+        )
+        for skill in sorted(skills.glob("*/SKILL.md"))
+    }
 
 
 def read_ledger(path: Path) -> tuple[list[LedgerRow], int]:

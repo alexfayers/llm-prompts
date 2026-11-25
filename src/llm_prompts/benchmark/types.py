@@ -93,6 +93,7 @@ class Variant:
     templates: Mapping[Agent, Path]
     build: Mapping[Agent, str] | None = None
     env: Mapping[str, str] = MappingProxyType({})
+    features: Mapping[str, bool] = MappingProxyType({})
 
 
 @dataclass(frozen=True)

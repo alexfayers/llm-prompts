@@ -123,6 +123,9 @@ class ClaudeAdapter:
         write_json(config_path, config)
         write_json(settings_path, settings)
 
+    def install_features(self, home: Path, features: Mapping[str, bool]) -> None:
+        """Do nothing: the measured features are pi extensions."""
+
     def install_guard(self, template_dir: Path) -> None:
         settings_path = template_dir / ".claude" / "settings.json"
         try:

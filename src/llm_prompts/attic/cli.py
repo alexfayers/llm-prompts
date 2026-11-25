@@ -9,8 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ..install import _pi_agent_dir
-from ..render_template import parse_frontmatter
-from .manifest import AtticError, build_manifest, read_ledger
+from .manifest import AtticError, build_manifest, read_ledger, skill_stubs
 
 LEDGER_NAME = "usage-ledger.jsonl"
 MANIFEST_NAME = "attic.json"
@@ -56,12 +55,7 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
 
 
 def _skill_stubs() -> dict[str, str]:
-    return {
-        skill.parent.name: parse_frontmatter(skill.read_text("utf-8"))[1].get(
-            "description", ""
-        )
-        for skill in sorted((_pi_agent_dir() / "skills").glob("*/SKILL.md"))
-    }
+    return skill_stubs(_pi_agent_dir() / "skills")
 
 
 def run(args: argparse.Namespace) -> int:

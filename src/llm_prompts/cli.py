@@ -1470,6 +1470,12 @@ def _run_command(
         help="Leave this shared rule out of ref B's build. Repeatable.",
     )
     add(
+        "--feature",
+        action="append",
+        metavar="NAME",
+        help="Measure a pi feature (attic, consult or ghost): A runs without it and B with it. Repeatable.",
+    )
+    add(
         "--no-reuse",
         dest="reuse",
         action="store_false",

@@ -59,6 +59,32 @@ def test_failed_memory_calls_are_kept_and_successful_ones_dropped(
     assert runner.tool_started(lines[-1][1]) == []
 
 
+def test_pi_adds_the_expert_call_of_a_consult_to_tokens_and_cost() -> None:
+    usage = {"input": 1, "output": 2, "cacheRead": 3, "cacheWrite": 4}
+    consult = _pi("1", "consult")
+    consult[1]["result"] = {"details": {"usage": {**usage, "cost": {"total": 0.5}}}}
+    reply = {
+        "type": "message_end",
+        "message": {"role": "assistant", "usage": {**usage, "cost": {"total": 0.25}}},
+    }
+
+    trace = PiAdapter().parse(_lines([*consult, reply]), wall_s=0.0)
+
+    assert (trace.tokens.input, trace.tokens.output) == (2, 4)
+    assert (trace.tokens.cache_read, trace.tokens.cache_write) == (6, 8)
+    assert trace.cost_usd == 0.75
+
+
+def test_pi_counts_the_expert_call_of_a_consult_that_failed() -> None:
+    consult = _pi("1", "consult")
+    consult[1]["isError"] = True
+    consult[1]["result"] = {"details": {"usage": {"output": 7, "cost": {"total": 0.5}}}}
+
+    trace = PiAdapter().parse(_lines(consult), wall_s=0.0)
+
+    assert (trace.tokens.output, trace.cost_usd) == (7, 0.5)
+
+
 @pytest.mark.parametrize(
     ("runner", "reply", "other"),
     [

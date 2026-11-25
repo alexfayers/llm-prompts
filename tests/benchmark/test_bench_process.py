@@ -112,6 +112,25 @@ def test_a_delegation_scenario_allows_subagents(
     assert flag not in argv
 
 
+def test_pi_leaves_out_the_tools_of_a_feature_that_is_off_and_keeps_the_rest(
+    cell: tuple[PreparedCell, Scenario],
+) -> None:
+    prepared, scenario = cell
+    off = replace(
+        prepared,
+        cell=replace(
+            prepared.cell,
+            variant=replace(
+                prepared.cell.variant, features={"consult": False, "ghost": True}
+            ),
+        ),
+    )
+
+    argv = PiAdapter().command(off, replace(scenario, delegation=True), "m")
+
+    assert argv[argv.index("--exclude-tools") + 1] == "consult"
+
+
 BASE = Session("bench-base")
 FORK = Session("bench-next", "bench-base")
 
