@@ -919,16 +919,6 @@ def _frontmatter_values(content: str, label: str = "") -> dict[str, list[str]]:
     return _migrated(values, label)
 
 
-def _rule_condition(content: str, label: str) -> None:
-    """Validate a source's ``audience``, ``paths`` and ``load_when`` frontmatter.
-
-    Args:
-        content: Rule content, frontmatter intact.
-        label: Rule name for error messages.
-    """
-    _declared_condition(_frontmatter_values(content), label)
-
-
 def _declared_condition(declared: dict[str, list[str]], label: str) -> None:
     """Validate the ``audience``, ``paths`` and ``load_when`` keys of a source.
 
@@ -1047,10 +1037,10 @@ def _parse_roles(content: str, label: str) -> frozenset[str]:
     Raises:
         ValueError: ``roles`` is empty, malformed, or names an unknown role
             (``core`` is the default and cannot be declared), or
-            ``_rule_condition`` rejects the rule.
+            ``_declared_condition`` rejects the rule.
     """
-    _rule_condition(content, label)
     declared = _frontmatter_values(content)
+    _declared_condition(declared, label)
     audience = declared.get("audience", [])
     extra = frozenset({_MAIN_AUDIENCE} if audience else ())
     _, condition = _split_conditions(declared, deferred=True)
