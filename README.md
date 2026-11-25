@@ -53,9 +53,10 @@
 | src/llm\_prompts/collection\_size.py                                          |      133 |        3 |     98% |291-292, 496 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/console.py                                                   |       18 |        1 |     94% |        48 |
-| src/llm\_prompts/contribute.py                                                |     1134 |       59 |     95% |131, 158-159, 200-201, 233-234, 356, 495-496, 529, 661, 664, 721, 732, 842-843, 888, 1015-1016, 1046, 1426-1429, 1608, 1610, 1624-1625, 1634-1635, 1654, 1665-1666, 1737, 1793-1798, 1802, 1917, 1944-1945, 1997, 2002-2003, 2073-2095, 2197, 2303, 2325 |
+| src/llm\_prompts/contribute.py                                                |     1179 |       60 |     95% |105, 172, 199-200, 241-242, 274-275, 397, 541-542, 575, 707, 710, 767, 778, 888-889, 934, 1080-1081, 1118, 1506-1509, 1687, 1689, 1703-1704, 1713-1714, 1733, 1744-1745, 1816, 1872-1877, 1881, 1997, 2024-2025, 2077, 2082-2083, 2153-2175, 2277, 2393, 2416 |
 | src/llm\_prompts/exit\_reason.py                                              |        9 |        0 |    100% |           |
 | src/llm\_prompts/extension\_factories.py                                      |       12 |        0 |    100% |           |
+| src/llm\_prompts/git\_snapshot.py                                             |      102 |        5 |     95% |114, 134, 147, 151, 165 |
 | src/llm\_prompts/github\_api.py                                               |      100 |        1 |     99% |        77 |
 | src/llm\_prompts/guards/\_\_init\_\_.py                                       |        0 |        0 |    100% |           |
 | src/llm\_prompts/guards/commit\_guard.py                                      |      232 |        6 |     97% |66-67, 162, 396, 428, 447 |
@@ -153,6 +154,7 @@
 | tests/test\_extension\_factories.py                                           |       29 |        0 |    100% |           |
 | tests/test\_filter\_findings\_script.py                                       |       73 |        0 |    100% |           |
 | tests/test\_focus.py                                                          |     1056 |        1 |     99% |        52 |
+| tests/test\_git\_snapshot.py                                                  |      127 |        0 |    100% |           |
 | tests/test\_github\_api.py                                                    |      128 |        0 |    100% |           |
 | tests/test\_handoff\_block.py                                                 |       14 |        0 |    100% |           |
 | tests/test\_hooks.py                                                          |      705 |        0 |    100% |           |
@@ -195,7 +197,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       61 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **32756** |  **796** | **98%** |           |
+| **TOTAL**                                                                     | **33030** |  **802** | **98%** |           |
 
 
 ## Setup coverage badge
