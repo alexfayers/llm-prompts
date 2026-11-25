@@ -90,11 +90,12 @@ Every spawn prompt MUST specify:
 ## Escalation and waiting
 
 - A delegate stuck on ambiguity or needing a user preference SHOULD escalate.
-- A delegate whose work outgrows its estimate (more steps/files/phases) MUST stop and escalate up the ownership edge, noting more agents may help - MUST NOT grind alone.
+- MUST stop a review loop per `pr-review`'s `review-loop.md`.
+- A delegate whose work outgrows its estimate (steps/files/phases) MUST stop and escalate to its owner, noting more agents may help - MUST NOT grind alone.
 - MUST NOT idle-wait on a background agent/command, `sleep` or placeholder - completion re-invokes you; work or end turn.{% if AGENT != "pi" %} Exception: while any delegate runs,
-  MUST keep ONE background `sleep 300` armed per session, never one per delegate. When it fires, MUST `SendMessage` each delegate silent since arming for status, then re-arm.
+  MUST keep ONE background `sleep 300` armed per session, not per delegate. When it fires, MUST `SendMessage` each delegate silent since arming for status, then re-arm.
   MUST NOT request status from a delegate that messaged since.{% endif +%}
 {% if AGENT != "pi" %}
-- A mid-turn message is ignored: wait, or re-verify state yourself. Once idle, `SendMessage` resumes a NAMED delegate - ask for a missing/truncated section, not re-derive.
-- A resend returns a SUMMARY; read its transcript `.jsonl` under `subagents/` - MUST NOT ask again or re-run.
+- A mid-turn message is ignored: wait or re-verify. Once idle, `SendMessage` resumes a NAMED delegate - ask for a missing/truncated section, not re-derive.
+- A resend returns a SUMMARY; read its transcript `.jsonl` under `subagents/` - MUST NOT re-ask/re-run.
 {% endif %}
