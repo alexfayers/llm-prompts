@@ -172,13 +172,17 @@ export function trackPrefix(pi: ExtensionAPI): void {
 	});
 }
 
-const LEAD_PREFIX_FILE = "lead-prefix.json";
+export const LEAD_PREFIX_FILE = "lead-prefix.json";
 
 /** Writes the system prompt and tools of main's latest provider request into a warm fork's run directory. */
 export function writeLeadPrefix(dir: string): void {
 	if (lastPrefix) fs.writeFileSync(path.join(dir, LEAD_PREFIX_FILE), JSON.stringify(lastPrefix), { mode: 0o600 });
 }
 
+/** Sends `cacheKey` as the prompt cache key of each request that has one, so a cold worker continuing a copied session reuses its source's cache. */
+export function useCacheKey(pi: ExtensionAPI, cacheKey: string): void {
+	pi.on("before_provider_request", ({ payload }) => ((payload as Prefix).prompt_cache_key === undefined ? undefined : { ...(payload as object), prompt_cache_key: cacheKey }));
+}
 /** In a warm fork: sends main's system prompt, tools and prompt cache key in place of its own when it declares the same tools, so its requests read main's prompt cache. */
 export function useLeadPrefix(pi: ExtensionAPI, handshakeFile: string): void {
 	let lead: Prefix | undefined;

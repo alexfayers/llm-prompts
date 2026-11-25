@@ -108,6 +108,33 @@ describe("reportPrefixToFile", () => {
 	});
 });
 
+describe("a cold worker continuing a copied session", () => {
+	const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-cold-copy-"));
+	after(() => fs.rmSync(scratch, { recursive: true }));
+	const handshake = path.join(scratch, "handshake.json");
+	useEnv(() => ({ PI_CONTEXT_CHILD: handshake, PI_CODING_AGENT_DIR: scratch }));
+	const request = async (payload: Record<string, unknown>) => {
+		fs.writeFileSync(handshake, JSON.stringify({ role: "reader", billedFrom: "e9", cacheKey: "source-session" }));
+		return (await loadExtension("pi-context/index")).fire("before_provider_request", { payload });
+	};
+
+	test("sends its source's prompt cache key in place of its own", async () => {
+		assert.equal((await request({ messages: [], prompt_cache_key: "copy-session" })).prompt_cache_key, "source-session");
+	});
+
+	test("adds no prompt cache key to a request without one", async () => {
+		assert.equal("prompt_cache_key" in ((await request({ messages: [] })) ?? {}), false);
+	});
+
+	test("loads the delegate rules, like any cold worker", async () => {
+		fs.writeFileSync(handshake, JSON.stringify({ role: "reader", billedFrom: "e9", cacheKey: "source-session" }));
+		fs.writeFileSync(path.join(scratch, "AGENTS.delegate.md"), "delegate rules");
+		const file = { path: path.join(scratch, "AGENTS.md"), content: "main rules" };
+		await (await loadExtension("pi-context/index")).fire("before_agent_start", { systemPromptOptions: { contextFiles: [file] } });
+		assert.equal(file.content, "delegate rules");
+	});
+});
+
 describe("a warm fork's first request", () => {
 	const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-lead-prefix-"));
 	after(() => fs.rmSync(scratch, { recursive: true }));
