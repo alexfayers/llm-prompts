@@ -1,7 +1,7 @@
 ---
 name: ask-codex
 description: Get an independent or adversarial second opinion on a diff, plan, or work from codex, a separate CLI agent.
-requires_command: codex
+load_when: tool:codex
 exclude_targets: codex
 ---
 

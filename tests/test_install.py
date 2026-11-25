@@ -35,7 +35,8 @@ from llm_prompts.install import (
     _linked_content,
     _materialize_builtin_skill,
     _materialize_override_skill,
-    _passes_requires_gate,
+    _parse_roles,
+    _passes_gate,
     _pi_definitions,
     _rendered_content,
     _running_as_installed_tool,
@@ -106,69 +107,82 @@ class TestEnvVarSet:
             assert _env_var_set("MY_FLAG") is False
 
 
-class TestPassesRequiresGate:
+class TestPassesGate:
     def test_true_when_no_frontmatter(self, tmp_path: Path) -> None:
         rule = _make_rule(tmp_path, "rule.md", "# Rule\n\nbody\n")
-        assert _passes_requires_gate(rule) is True
+        assert _passes_gate(rule) is True
 
     def test_true_when_required_env_is_set(self, tmp_path: Path) -> None:
         rule = _make_rule(
             tmp_path,
             "rule.md",
-            "---\nrequires_env: MY_FLAG\n---\n\n# Rule\n",
+            "---\nload_when: env:MY_FLAG\n---\n\n# Rule\n",
         )
         with patch.dict("os.environ", {"MY_FLAG": "1"}):
-            assert _passes_requires_gate(rule) is True
+            assert _passes_gate(rule) is True
 
     def test_false_when_required_env_is_unset(self, tmp_path: Path) -> None:
         rule = _make_rule(
             tmp_path,
             "rule.md",
-            "---\nrequires_env: MY_FLAG\n---\n\n# Rule\n",
+            "---\nload_when: env:MY_FLAG\n---\n\n# Rule\n",
         )
         with (
             patch.dict("os.environ", {}, clear=True),
             patch("llm_prompts.install.Path.home", return_value=tmp_path),
         ):
-            assert _passes_requires_gate(rule) is False
+            assert _passes_gate(rule) is False
+
+    def test_deferred_load_when_passes(self, tmp_path: Path) -> None:
+        rule = _make_rule(tmp_path, "rule.md", "---\nload_when: env:MY_FLAG\n---\n")
+        with patch.dict("os.environ", {}, clear=True):
+            assert _passes_gate(rule, deferred=True) is True
+
+    @pytest.mark.parametrize(
+        ("key", "roles"),
+        [
+            ("roles: worker", {"worker"}),
+            ("load_when: custom-kind", {"when:custom-kind"}),
+        ],
+    )
+    def test_deprecated_gate_is_decided_at_install(
+        self, tmp_path: Path, key: str, roles: set[str]
+    ) -> None:
+        content = f"---\n{key}\nrequires_command: sometool\n---\n"
+        rule = _make_rule(tmp_path, "rule.md", content)
+        with patch("llm_prompts.install.shutil.which", return_value=None):
+            assert _passes_gate(rule, deferred=True) is False
+        assert _parse_roles(content, "rule.md") == frozenset(roles)
+
+    def test_blank_deprecated_gate_passes(self, tmp_path: Path) -> None:
+        content = "---\nrequires_env:\n---\n"
+        assert _passes_gate(_make_rule(tmp_path, "rule.md", content)) is True
+        assert _parse_roles(content, "rule.md") == frozenset({"core"})
+
+    def test_unknown_load_when_kind_passes(self, tmp_path: Path) -> None:
+        rule = _make_rule(tmp_path, "rule.md", "---\nload_when: custom-kind\n---\n")
+        assert _passes_gate(rule) is True
 
     def test_true_when_required_command_present(self, tmp_path: Path) -> None:
         rule = _make_rule(
             tmp_path,
             "rule.md",
-            "---\nrequires_command: mytool\n---\n\n# Rule\n",
+            "---\nload_when: tool:mytool\n---\n\n# Rule\n",
         )
         with patch("llm_prompts.install.shutil.which", return_value="/usr/bin/mytool"):
-            assert _passes_requires_gate(rule) is True
+            assert _passes_gate(rule) is True
 
     def test_false_when_required_command_absent(self, tmp_path: Path) -> None:
         rule = _make_rule(
             tmp_path,
             "rule.md",
-            "---\nrequires_command: mytool\n---\n\n# Rule\n",
+            "---\nload_when: tool:mytool\n---\n\n# Rule\n",
         )
         with patch("llm_prompts.install.shutil.which", return_value=None):
-            assert _passes_requires_gate(rule) is False
-
-    def test_both_gates_present_requires_both(self, tmp_path: Path) -> None:
-        rule = _make_rule(
-            tmp_path,
-            "rule.md",
-            "---\nrequires_env: MY_FLAG\nrequires_command: mytool\n---\n\n# Rule\n",
-        )
-        with (
-            patch.dict("os.environ", {"MY_FLAG": "1"}),
-            patch("llm_prompts.install.shutil.which", return_value="/usr/bin/mytool"),
-        ):
-            assert _passes_requires_gate(rule) is True
-        with (
-            patch.dict("os.environ", {"MY_FLAG": "1"}),
-            patch("llm_prompts.install.shutil.which", return_value=None),
-        ):
-            assert _passes_requires_gate(rule) is False
+            assert _passes_gate(rule) is False
 
     def test_true_when_source_is_unreadable(self, tmp_path: Path) -> None:
-        assert _passes_requires_gate(tmp_path / "missing.md") is True
+        assert _passes_gate(tmp_path / "missing.md") is True
 
 
 class TestCollectContentSrcsEnvGate:
@@ -179,7 +193,7 @@ class TestCollectContentSrcsEnvGate:
         _make_rule(
             shared,
             "agent-teams.md",
-            "---\nrequires_env: MY_FLAG\n---\n\n# Agent teams\n",
+            "---\nload_when: env:MY_FLAG\n---\n\n# Agent teams\n",
         )
         agent = _Agent(
             name="claude-code",
@@ -209,7 +223,7 @@ class TestCollectContentSrcsEnvGate:
         _make_rule(
             shared,
             "agent-teams.md",
-            "---\nrequires_env: MY_FLAG\n---\n\n# Agent teams\n",
+            "---\nload_when: env:MY_FLAG\n---\n\n# Agent teams\n",
         )
         agent = _Agent(
             name="claude-code",
@@ -228,41 +242,6 @@ class TestCollectContentSrcsEnvGate:
 
         names = [name for name, _, _ in collected]
         assert names == ["agent-teams.md", "coding.md"]
-
-    @pytest.mark.parametrize(
-        ("target", "expected"),
-        [("pi", ["agent-teams.md", "coding.md"]), ("claude-code", ["coding.md"])],
-    )
-    def test_target_override_replaces_gate_for_that_target_only(
-        self, tmp_path: Path, target: str, expected: list[str]
-    ) -> None:
-        root = tmp_path / "prompts"
-        shared = root / "shared" / "rules"
-        _make_rule(shared, "coding.md", "# coding\n")
-        _make_rule(
-            shared,
-            "agent-teams.md",
-            '---\nrequires_env: MY_FLAG\npi_requires_env: ""\n---\n\n# Agent teams\n',
-        )
-        agent = _Agent(
-            name=target,
-            root_dir=root,
-            dirs={target: {"rules": tmp_path / "dest"}},
-        )
-
-        with (
-            patch.dict("os.environ", {}, clear=True),
-            patch("llm_prompts.install.Path.home", return_value=tmp_path / "home"),
-        ):
-            collected = _collect_content_srcs(
-                agent=agent,
-                subdir="rules",
-                shared_src=shared,
-                overlay_srcs=[],
-                overlay_agent_srcs=[],
-            )
-
-        assert sorted(name for name, _, _ in collected) == expected
 
     def test_exclude_targets_skips_named_agent_only(self, tmp_path: Path) -> None:
         root = tmp_path / "prompts"
@@ -357,12 +336,12 @@ class TestInstallSkillsGating:
         skill_dir.mkdir(parents=True, exist_ok=True)
         (skill_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
 
-    def test_requires_command_unsatisfied_skill_not_materialized(
+    def test_load_when_tool_unsatisfied_skill_not_materialized(
         self, tmp_path: Path
     ) -> None:
         skills_src = tmp_path / "skills_src"
         self._make_skill(skills_src, "plain", "# Plain\n")
-        self._make_skill(skills_src, "gated", "---\nrequires_command: sometool\n---\n")
+        self._make_skill(skills_src, "gated", "---\nload_when: tool:sometool\n---\n")
         agents_dir = tmp_path / "agents"
         vars_path = tmp_path / "vars.json"
 
@@ -382,7 +361,7 @@ class TestInstallSkillsGating:
         self._make_skill(
             skills_src,
             "ask-codex",
-            "---\nrequires_command: sometool\nexclude_targets: codex\n---\n",
+            "---\nload_when: tool:sometool\nexclude_targets: codex\n---\n",
         )
         vars_path = tmp_path / "vars.json"
 
@@ -408,7 +387,7 @@ class TestInstallSkillsGating:
         ask_codex = cc_agents / "skills" / "ask-codex"
         assert ask_codex.is_dir() and not ask_codex.is_symlink()
         assert "ask-codex" in cc_managed
-        assert "requires_command" not in (ask_codex / "SKILL.md").read_text()
+        assert "load_when" not in (ask_codex / "SKILL.md").read_text()
 
     def test_overlay_skill_overrides_base_on_name_collision(
         self, tmp_path: Path
@@ -575,9 +554,9 @@ class TestInstallPluginSkills:
         assert (existing / "SKILL.md").read_text(encoding="utf-8") == "# BUILTIN\n"
         assert "tdd" not in managed
 
-    def test_requires_gate_skips_skill(self, tmp_path: Path) -> None:
+    def test_load_when_gate_skips_skill(self, tmp_path: Path) -> None:
         src = self._make_skill(
-            tmp_path / "checkout", "gated", "---\nrequires_command: sometool\n---\n"
+            tmp_path / "checkout", "gated", "---\nload_when: tool:sometool\n---\n"
         )
         agents_dir = tmp_path / "agents"
 
@@ -588,6 +567,43 @@ class TestInstallPluginSkills:
 
         assert (agents_dir / "skills" / "gated").exists() is False
         assert "gated" not in managed
+
+    @pytest.mark.parametrize(
+        "gate", ["load_when: tool:sometool", "requires_command: sometool"]
+    )
+    def test_target_load_when_overrides_load_when(
+        self, tmp_path: Path, gate: str
+    ) -> None:
+        src = self._make_skill(
+            tmp_path / "checkout", "gated", f"---\n{gate}\npi_load_when: []\n---\n"
+        )
+
+        with patch("llm_prompts.install.shutil.which", return_value=None):
+            installed = {
+                agent: _install_plugin_skills(
+                    [("gated", src, {})], tmp_path / agent, agent, set()
+                )
+                for agent in ("pi", "claude-code")
+            }
+
+        assert installed == {"pi": {"gated"}, "claude-code": set()}
+
+    def test_invalid_condition_skips_skill(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        src = self._make_skill(
+            tmp_path / "checkout", "old", "---\nrequires_absent_command: x\n---\n"
+        )
+        agents_dir = tmp_path / "agents"
+
+        managed = _install_plugin_skills(
+            [("old", src, {})], agents_dir, "claude-code", set()
+        )
+
+        assert "old" not in managed
+        assert (
+            "requires_absent_command is no longer supported" in capsys.readouterr().err
+        )
 
     def test_duplicate_plugin_name_first_wins(self, tmp_path: Path) -> None:
         first = self._make_skill(tmp_path / "a", "dup", "# FIRST\n")
@@ -2073,7 +2089,7 @@ class TestSplitFrontmatter:
 
 class TestStripGatingKeys:
     def test_only_gating_keys_removes_block(self) -> None:
-        content = "---\nrequires_env: MY_FLAG\n---\n\n# Body\n"
+        content = "---\nload_when: env:MY_FLAG\n---\n\n# Body\n"
         assert strip_gating_keys(content, _GATING_FRONTMATTER_KEYS) == "\n# Body\n"
 
     def test_only_non_gating_keys_unchanged(self) -> None:
@@ -2085,9 +2101,9 @@ class TestStripGatingKeys:
     def test_mixed_keys_keeps_only_non_gating(self) -> None:
         content = (
             "---\n"
-            "requires_env: MY_FLAG\n"
+            "load_when: env:MY_FLAG\n"
             "description: A thing\n"
-            "requires_command: sometool\n"
+            "roles: lead\n"
             'category: "Cline Core"\n'
             "exclude_targets: codex\n"
             "---\n"
@@ -2102,7 +2118,7 @@ class TestStripGatingKeys:
         assert strip_gating_keys(content, _GATING_FRONTMATTER_KEYS) == content
 
     def test_idempotent(self) -> None:
-        content = "---\nrequires_env: MY_FLAG\ndescription: A thing\n---\n\n# Body\n"
+        content = "---\nload_when: env:MY_FLAG\ndescription: A thing\n---\n\n# Body\n"
         once = strip_gating_keys(content, _GATING_FRONTMATTER_KEYS)
         twice = strip_gating_keys(once, _GATING_FRONTMATTER_KEYS)
         assert once == twice
@@ -2111,7 +2127,7 @@ class TestStripGatingKeys:
 class TestInstallLinked:
     def test_only_gating_keys_stripped_from_dest(self, tmp_path: Path) -> None:
         src = _make_rule(
-            tmp_path / "src", "rule.md", "---\nrequires_env: MY_FLAG\n---\n\n# Body\n"
+            tmp_path / "src", "rule.md", "---\nload_when: env:MY_FLAG\n---\n\n# Body\n"
         )
         dest = tmp_path / "dest" / "rule.md"
         _install_linked(src, dest, "rule")
@@ -2128,7 +2144,7 @@ class TestInstallLinked:
     def test_mixed_frontmatter_keeps_only_non_gating(self, tmp_path: Path) -> None:
         body = (
             "---\n"
-            "requires_env: MY_FLAG\n"
+            "load_when: env:MY_FLAG\n"
             "description: A thing\n"
             'category: "Cline Core"\n'
             "---\n"
@@ -2139,7 +2155,7 @@ class TestInstallLinked:
         dest = tmp_path / "dest" / "rule.md"
         _install_linked(src, dest, "rule")
         installed = dest.read_text(encoding="utf-8")
-        assert "requires_env" not in installed
+        assert "load_when" not in installed
         assert "description: A thing" in installed
         assert 'category: "Cline Core"' in installed
 
@@ -2250,7 +2266,7 @@ class TestRenderedAndLinkedContentEquivalence:
         src = _make_rule(
             tmp_path / "src",
             "shell.md",
-            "---\nrequires_env: MY_FLAG\ndescription: Agent-specific.\n---\n\nBody.\n",
+            "---\nload_when: env:MY_FLAG\ndescription: Agent-specific.\n---\n\nBody.\n",
         )
         dest = tmp_path / "dest" / "shell.md"
 

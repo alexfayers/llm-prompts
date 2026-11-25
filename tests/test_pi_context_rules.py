@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from llm_prompts.install import _requirements_met
+from llm_prompts.install import _targets_agent
 from llm_prompts.render_template import (
     load_vars,
     parse_frontmatter,
@@ -24,11 +24,7 @@ def render_for_pi(source: str) -> str:
 
 
 def test_agent_teams_rule_is_not_installed_for_pi() -> None:
-    _, declared = parse_frontmatter(
-        (PROMPTS / "shared/rules/agent-teams.md").read_text(encoding="utf-8")
-    )
-
-    assert not _requirements_met(declared, "pi")
+    assert not _targets_agent(PROMPTS / "shared/rules/agent-teams.md", "pi")
 
 
 @pytest.mark.parametrize(

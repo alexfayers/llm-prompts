@@ -1,6 +1,6 @@
 ---
 roles: lead
-requires_env: CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
+load_when: env:CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
 targets: claude-code
 ---
 

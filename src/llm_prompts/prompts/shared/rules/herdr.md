@@ -1,7 +1,7 @@
 ---
 audience: main
 roles: lead
-requires_command: herdr
+load_when: tool:herdr
 ---
 
 # Herdr
