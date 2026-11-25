@@ -148,10 +148,10 @@ async function removeProvided(dir: string): Promise<Ran> {
 	}
 }
 
-/** Removes the landed worktree and branch without force, and says what stayed. */
-async function cleanup(tree: Worktree): Promise<string | undefined> {
+/** Removes the landed worktree and branch, and says what stayed. The branch is deleted without a merge check when `pushed`, as a remote branch holds its commits. */
+async function cleanup(tree: Worktree, pushed = false): Promise<string | undefined> {
 	const removed = tree.provided ? await removeProvided(tree.path) : await git(tree.repo, "worktree", "remove", tree.path);
-	const deleted = (await hasBranch(tree)) ? await git(tree.repo, "branch", "-d", tree.branch) : { code: 0, out: "" };
+	const deleted = (await hasBranch(tree)) ? await git(tree.repo, "branch", pushed ? "-D" : "-d", tree.branch) : { code: 0, out: "" };
 	const failed = [removed, deleted].filter(({ code }) => code).map(({ out }) => out.trim());
 	return failed.length ? `cleanup left files: ${failed.join("; ")}` : undefined;
 }
@@ -190,10 +190,23 @@ export interface LandOptions {
 	privateNames?: string;
 }
 
+const PUSH_REMOTE = "origin";
+
+/** The remote branch other than the base that holds the fork branch's tip, when the worktree is on that branch, clean, and has commits past the base. Only refs of `PUSH_REMOTE` count, and a failed fetch trusts none. */
+async function pushedTo(tree: Worktree): Promise<string | undefined> {
+	const checkout = checkoutOf(tree);
+	if ((await offBranch(tree)) || (await gitOut(checkout, "status", "--porcelain")) !== "" || (await gitOut(checkout, "rev-list", "--count", `${tree.base}..${tree.branch}`)) === "0") return undefined;
+	if ((await git(checkout, "fetch", "-q", "--prune", PUSH_REMOTE)).code) return undefined;
+	const contains = await git(checkout, "branch", "-r", "--list", `${PUSH_REMOTE}/*`, "--contains", `refs/heads/${tree.branch}`, "--format=%(refname:short)");
+	return contains.out.split("\n").find((name) => name && !name.endsWith("/HEAD") && !name.endsWith(`/${tree.base}`));
+}
+
 async function landNow({ tree, first, privateNames: extraNames }: LandOptions): Promise<Landing> {
 	const escalate = async (reason: string): Promise<Landing> => ({ state: "escalated", reason, removed: await dropIfClean(tree) });
 	if (first.type === "fork-failed") return escalate(`fork failed: ${first.reason}`);
 	if (first.type === "fork-blocked") return escalate(`fork is blocked: ${first.reason}`);
+	const pushed = await pushedTo(tree);
+	if (pushed) return { state: "landed", sha: await gitOut(checkoutOf(tree), "rev-parse", tree.branch), note: [`landed on ${pushed} by push`, await cleanup(tree, true)].filter(Boolean).join("; ") };
 	const reason = await refusal(tree, extraNames);
 	if (reason) return escalate(reason);
 	const checkout = checkoutOf(tree);
