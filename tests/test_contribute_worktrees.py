@@ -1478,6 +1478,26 @@ def test_the_pr_what_leaves_merge_commits_out(project: Project) -> None:
     assert "Merge side" not in body
 
 
+def test_a_root_commit_has_its_subject_and_is_no_merge(tmp_path: Path) -> None:
+    git(tmp_path, "init", "-q")
+    git(
+        tmp_path,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "root",
+    )
+
+    commit = contribute._commit_of(tmp_path, "HEAD")
+
+    assert (commit.subject, commit.is_merge) == ("root", False)
+
+
 def test_a_pr_of_only_merge_commits_still_lists_them_in_what() -> None:
     commits = [Commit("a", "Merge side into feat/a", (), is_merge=True)]
 

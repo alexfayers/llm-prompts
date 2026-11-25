@@ -1271,9 +1271,9 @@ _PR_URL_NUMBER = re.compile(r"/pull/(\d+)")
 
 
 def _commit_of(repo: Path, sha: str) -> Commit:
-    subject, parents = _git("log", "-1", "--format=%s%x09%P", sha, repo=repo).rsplit(
-        "\t", 1
-    )
+    parents, _, subject = _git(
+        "log", "-1", "--format=:%P%x09%s", sha, repo=repo
+    ).partition("\t")
     return Commit(sha, subject, (), is_merge=len(parents.split()) > 1)
 
 
