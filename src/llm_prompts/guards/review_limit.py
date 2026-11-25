@@ -134,6 +134,7 @@ class ReviewLimitGuard(HooksPlugin):
                             " MUST NOT open a new review until some merge or close. Updating an open review is allowed."
                             " Only the user raises the limit, with `max_in_flight` under"
                             f' `[reviews]`, or `"{scope}"` under `[reviews.repos]`, in llm-prompts\' config.toml.'
+                            " The limit is best effort, so parallel creates can go over it by a few."
                         )
                     )
         return None
