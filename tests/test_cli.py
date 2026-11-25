@@ -2887,6 +2887,32 @@ class TestContributeSubcommand:
             assert main() == 0
         assert mock.call_args.args[1:] == (False, [3, 4])
 
+    def test_ready_without_tool_errors(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "contribute", "ready", "3"]),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            main()
+        assert exc_info.value.code == 2
+        assert "ready requires --tool NAME." in capsys.readouterr().err
+
+    def test_ready_reaches_run_ready(self, tmp_path: Path) -> None:
+        with (
+            patch(
+                "sys.argv",
+                ["llm-prompts", "contribute", "ready", "3", "--tool", "tool-a"],
+            ),
+            patch(
+                "llm_prompts.cli._contribute_target",
+                return_value=(tmp_path, "src/pkg/prompts/"),
+            ),
+            patch("llm_prompts.contribute.run_ready", return_value=0) as mock,
+        ):
+            assert main() == 0
+        mock.assert_called_once_with(tmp_path, 3)
+
 
 class TestGetGhLoginWithoutGh:
     def test_delegates_to_the_github_api(self) -> None:

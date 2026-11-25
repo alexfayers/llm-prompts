@@ -52,6 +52,7 @@ llm-prompts contribute sync --apply
 - Link a branch to a PR in another repo with `--depends-on B TOOL:B2`, or to a PR in any repo with `--depends-on B owner/repo#N`. `sync` writes the `Depends on` line.
 - Run `llm-prompts contribute sync --help` for every flag, and `contribute list` for each worktree's state and size.
 - Marking a contribute PR ready for review enables squash auto-merge. It merges once checks pass and a reviewer approves.
+- `llm-prompts contribute ready --tool NAME NUMBER` marks PR NUMBER ready and enables squash auto-merge. It adds `owner-reviewed` first when the PR changes rules, skills, workflows, agents or Pi files, so the owner review gate never holds it.
 - When main moves, open PRs with auto-merge on are rebased onto it automatically.
 - Never commit to local `main` for a recorded worktree. `sync` replaces its copy.
 - When a copy conflicts with `main`, `sync --apply` and `update` leave `main` as it is. For an ordinary copy they print a worktree path. Resolve the files there, `git add` them, then rerun. For the copy of a merged PR they fail with the conflict and keep no worktree.
