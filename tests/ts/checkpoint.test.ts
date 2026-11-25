@@ -223,17 +223,119 @@ describe("checkpoint nudge", () => {
 		const ext = await loadExtension("checkpoint", { pi: { getSettings: () => ({ llmPrompts: { checkpoint: { nudgeTokens: 1000 } } }) } });
 		await ext.fire("agent_start");
 		const outs = [];
-		for (let i = 0; i < 8; i++) outs.push(await ext.fire("tool_result", sized(400)));
-		assert.deepEqual(outs.map(nudged), [false, false, true, false, false, true, false, false]);
-		assert.equal(outs[2].content[0].text.length, 1600);
-		assert.match(outs[2].content[1].text, /3 calls, ~1K tokens since the last user message.*checkpoint rewind to the call before it, or to a mark set before it, with a summary/);
-		assert.equal(outs[5].content[1].text, "[checkpoint] 6 calls, ~2K tokens since the last user message.");
+		for (let i = 0; i < 8; i++) outs.push(await ext.fire("tool_result", sized(300)));
+		assert.deepEqual(outs.map(nudged), [false, false, false, true, false, false, false, true]);
+		assert.equal(outs[3].content[0].text.length, 1200);
+		assert.match(outs[3].content[1].text, /4 calls, ~1K tokens since the last user message.*checkpoint rewind to the call before it, or to a mark set before it, with a summary/);
+		assert.equal(outs[7].content[1].text, "[checkpoint] 8 calls, ~2K tokens since the last user message.");
 
 		await ext.fire("tool_result", sized(0, "checkpoint"));
 		assert.equal(nudged(await ext.fire("tool_result", sized(900))), false);
 		await ext.fire("agent_start");
 		assert.equal(nudged(await ext.fire("tool_result", sized(900))), false);
 		assert.match((await ext.fire("tool_result", sized(100))).content[1].text, /checkpoint rewind to the call before it/);
+	});
+});
+
+describe("checkpoint rewind nudge", () => {
+	useEnv({ PI_CONTEXT_CHILD: undefined, PI_HERDSMAN_MAILBOX: undefined, PI_CACHE_RETENTION: undefined });
+
+	/** Per-million-token prices: carrying 1000 tokens through 20 requests costs 6 cents more than reading them once, so a 1000-token summary needs a run of about 4125 tokens. */
+	const model = { api: "anthropic-messages", cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } };
+	/** A provider with no cache-write price bills the summary as fresh input: a 1000-token summary needs a run of about 3500 tokens, with or without long retention. */
+	const openai = { api: "openai-responses", cost: { input: 2.5, output: 10, cacheRead: 0.25, cacheWrite: 0 } };
+	const markResult = { ...sized(0, "checkpoint"), details: { action: "mark", name: "m1" } };
+
+	/** A session where each batch is one assistant message with that many parallel bash calls, whose results fire one by one as `sized(tokens)`. */
+	async function run(batches: number[], tokens: number, opening: "mark" | "call" | "none" = "mark", activeModel: object = model) {
+		const entries = [entry("u0", { role: "user", content: "go" })];
+		if (opening === "mark") entries.push(call("a0", ["c0", "checkpoint", { action: "mark" }]), mark("r0", "c0", "m1"));
+		if (opening === "call") entries.push(call("a0", ["c0", "read", {}]), result("r0", "c0", "read", "out"));
+		const fired: [number, string][] = [];
+		for (const size of batches) {
+			const ids = Array.from({ length: size }, (_, i) => `c${fired.length + i + 1}`);
+			entries.push(call(`a${fired.length + 1}`, ...ids.map((id): [string, string, object] => [id, "bash", {}])));
+			for (const id of ids) {
+				entries.push(result(`r${id}`, id, "bash", "out"));
+				fired.push([entries.length, id]);
+			}
+		}
+		let visibleEntries = entries;
+		const ext = await loadExtension("checkpoint", { pi: { getSettings: () => ({}) } });
+		const ctx = ext.makeCtx({
+			model: activeModel as any,
+			sessionManager: { getBranch: () => visibleEntries, buildSessionProjection: () => ({ entries: visibleEntries.map((e) => ({ sourceEntry: e, messages: [e.message] })) }) } as any,
+		});
+		await ext.fire("agent_start");
+		if (opening === "mark") await ext.fire("tool_result", markResult, ctx);
+		const outs = [];
+		for (const [length, id] of fired) {
+			visibleEntries = entries.slice(0, length);
+			outs.push(await ext.fire("tool_result", { ...sized(tokens), toolCallId: id }, ctx));
+		}
+		return { ext, ctx, outs };
+	}
+	const rewindLines = (outs: any[]) => outs.map((out) => out?.content?.map((block: { text: string }) => block.text).find((text: string) => text.startsWith("[checkpoint] rewind")));
+	const fired = (outs: any[]) => rewindLines(outs).filter(Boolean);
+
+	test("suggests the latest mark once a run's tokens cost more to carry than to fold, summary reads included", async () => {
+		const lines = rewindLines((await run([1, 1, 1, 1, 1, 1], 1000)).outs);
+		assert.deepEqual(lines.map(Boolean), [false, false, false, false, true, false]);
+		assert.match(lines[4], /^\[checkpoint\] rewind to "m1": 5 calls, ~5K tokens/);
+	});
+
+	test("stays quiet when the run costs less to carry than to fold, or is short", async () => {
+		assert.deepEqual(fired((await run([1, 1, 1, 1, 1], 700)).outs), []);
+		assert.deepEqual(fired((await run([1, 1, 1, 1], 5000)).outs), []);
+	});
+
+	test("stays quiet without the model's prices", async () => {
+		const { ext, ctx } = await run([1], 10);
+		await ext.fire("agent_start");
+		for (let i = 0; i < 6; i++) assert.deepEqual(fired([await ext.fire("tool_result", { ...sized(5000), toolCallId: `x${i}` }, { ...ctx, model: undefined })]), []);
+	});
+
+	test("names the call before the run when no mark opened it", async () => {
+		assert.match(fired((await run([1, 1, 1, 1, 1], 1000, "call")).outs)[0], /^\[checkpoint\] rewind to "-6": 5 calls/);
+	});
+
+	test("prices only the calls after the rewind boundary, not the first batch that a rewind to its call keeps", async () => {
+		assert.deepEqual(fired((await run([3, 1, 1, 1], 1000, "none")).outs), []);
+		assert.match(fired((await run([3, 1, 1, 1, 1, 1], 1000, "none")).outs)[0], /^\[checkpoint\] rewind to "-8": 5 calls/);
+	});
+
+	test("resolves the target by call id when the nudge fires in the middle of a parallel batch", async () => {
+		assert.match(fired((await run([1, 1, 1, 3, 1], 1000, "call")).outs)[0], /^\[checkpoint\] rewind to "-7": 5 calls/);
+	});
+
+	test("prices cache writes at the one hour rate when that retention is in use", async () => {
+		process.env.PI_CACHE_RETENTION = "long";
+		assert.deepEqual(fired((await run([1, 1, 1, 1, 1], 860)).outs), []);
+		delete process.env.PI_CACHE_RETENTION;
+		assert.equal(fired((await run([1, 1, 1, 1, 1], 860)).outs).length, 1);
+	});
+
+	test("bills a provider without a cache-write price as fresh input, whatever the retention", async () => {
+		assert.deepEqual(fired((await run([1, 1, 1, 1, 1], 650, "mark", openai)).outs), []);
+		process.env.PI_CACHE_RETENTION = "long";
+		assert.equal(fired((await run([1, 1, 1, 1, 1], 750, "mark", openai)).outs).length, 1);
+	});
+
+	test("uses the one hour write rate on Bedrock only for the models pi gives cache points", async () => {
+		process.env.PI_CACHE_RETENTION = "long";
+		const bedrock = (id: string) => ({ ...model, api: "bedrock-converse-stream", id, name: id });
+		assert.equal(fired((await run([1, 1, 1, 1, 1], 860, "mark", bedrock("amazon.nova-pro-v1:0"))).outs).length, 1);
+		assert.deepEqual(fired((await run([1, 1, 1, 1, 1], 860, "mark", bedrock("anthropic.claude-sonnet-4-5-20250929-v1:0"))).outs), []);
+	});
+
+	test("fires once per run and again after a new user message", async () => {
+		const { ext, ctx, outs } = await run([1, 1, 1, 1, 1, 1, 1], 1000);
+		assert.equal(fired(outs).length, 1);
+		await ext.fire("input");
+		await ext.fire("tool_result", markResult, ctx);
+		const again = [];
+		for (let i = 0; i < 6; i++) again.push(await ext.fire("tool_result", { ...sized(1000), toolCallId: `n${i}` }, ctx));
+		assert.equal(fired(again).length, 1);
 	});
 });
 
