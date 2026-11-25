@@ -722,6 +722,10 @@ def _pull_one_local_source(
     if not fetch_failed and (drops := unreleased(repo)):
         release = run_git(repo, "symbolic-ref", "--short", UPSTREAM).stdout.strip()
         synced = rebuild_local(repo, UPSTREAM, {}, drops, {}, [])
+        if synced.mode == "stopped":
+            return _PullOutcome(
+                name, False, [f"[{name}] main not updated: {synced.detail}"]
+            )
         if synced.mode == "failed":
             return _PullOutcome(
                 name,
@@ -745,6 +749,10 @@ def _pull_one_local_source(
         ):
             return unchanged
         synced = rebuild_local(repo, UPSTREAM, {}, empty, {}, [])
+        if synced.mode == "stopped":
+            return _PullOutcome(
+                name, False, [f"[{name}] main not updated: {synced.detail}"]
+            )
         if synced.mode == "failed":
             return _PullOutcome(
                 name,

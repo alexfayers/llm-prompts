@@ -791,6 +791,36 @@ def test_update_drops_a_recorded_empty_copy_of_a_merged_pr_and_keeps_a_deliberat
     assert git(project.repo, "rev-parse", main_sync.PRE_SYNC_REF)
 
 
+def _main_ahead_of_a_release(project: Project) -> None:
+    _publish_release(project)
+    git(project.repo, "pull", "-q", "--ff-only")
+    project.commit(project.repo, "local.txt", "local\n", "feat: local")
+
+
+@pytest.mark.parametrize("setup", [_main_ahead_of_a_release, _main_with_empty_commits])
+def test_update_reports_a_waiting_conflict_and_leaves_main(
+    project: Project, setup: Any
+) -> None:
+    setup(project)
+    work = main_sync.resolve_worktree(project.repo)
+    git(project.repo, "worktree", "add", "-q", "--detach", str(work), "HEAD")
+    one = project.commit(work, "base.txt", "one\n", "feat: one")
+    git(work, "checkout", "-q", "HEAD~1")
+    project.commit(work, "base.txt", "two\n", "feat: two")
+    with pytest.raises(subprocess.CalledProcessError):
+        git(work, "cherry-pick", "--no-commit", one)
+    main = git(project.repo, "rev-parse", "main")
+
+    outcome = cli._pull_one_local_source("tool", str(project.repo))
+
+    assert not outcome.changed
+    assert (
+        "[tool] main not updated: main left untouched: conflicts in"
+        in (outcome.messages[0])
+    )
+    assert git(project.repo, "rev-parse", "main") == main
+
+
 def test_sync_keeps_a_deliberate_empty_commit_sharing_a_merged_prs_subject(
     project: Project,
 ) -> None:
