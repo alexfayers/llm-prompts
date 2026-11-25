@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { forkRegistry, isLive, type Run } from "./pi-context/registry.ts";
+import { forkRegistry, isLive, sessionFileOf, type Run } from "./pi-context/registry.ts";
 
 const BYTES_PER_TOKEN = 4;
 const MESSAGE_LINE_START = '{"type":"message"';
@@ -224,12 +224,25 @@ export async function sampleChildren(root: Scan, scans: Map<string, Scan>, optio
 	return { nodes, partial: touched.some((scan) => scan.partial), session: scanUsage(root), tree };
 }
 
+const coldSessions = new Map<string, { mtimeMs: number; file: string }>();
+
+/** The newest session of a cold worker, looked up again only when its session directory changed. */
+function coldSessionFile(files: string): string | undefined {
+	let mtimeMs: number;
+	try {
+		mtimeMs = fs.statSync(path.join(files, "session")).mtimeMs;
+	} catch {
+		return undefined;
+	}
+	const cached = coldSessions.get(files);
+	if (cached?.mtimeMs === mtimeMs) return cached.file;
+	const file = sessionFileOf(files, true);
+	if (file) coldSessions.set(files, { mtimeMs, file });
+	return file;
+}
+
 function forkSessionFile({ files = "", model }: Run): string {
-	const seed = path.join(files, "seed.jsonl");
-	if (!model) return seed;
-	const sessions = path.join(files, "sessions");
-	const name = fs.existsSync(sessions) ? fs.readdirSync(sessions).find((file) => file.endsWith(".jsonl")) : undefined;
-	return name ? path.join(sessions, name) : seed;
+	return (model && coldSessionFile(files)) || path.join(files, "seed.jsonl");
 }
 
 /** Records each fork run as a child of the root, a finished one with its last sampled context. */
@@ -283,8 +296,9 @@ function liveTotal(lead: LeadUsage, sample: Sample): { tokens: number; sessions:
 }
 
 export function formatContext(sample: Sample): string {
-	const { tokens, unknown } = sumTokens(liveNodeTokens(sample));
-	return `agents ${formatTokens(tokens)}${unknown ? "+" : ""} \u00b7 tree ${formatTokens(sample.tree.tokens)}`;
+	const live = liveNodeTokens(sample);
+	const agents = live.length ? `agents ${live.length} \u00b7 ${formatTokens(sumTokens(live).tokens)}` : "agents 0";
+	return `${agents} \u00b7 tree ${formatTokens(sample.tree.tokens)}`;
 }
 
 export function formatCost(sample: Sample): string {
