@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">2170 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">2170<span class="text"> run</span></button>
+            <span class="text">2178 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">2178<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_a44f0ac069e85531_test_e2e_git_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
-            created at 2026-11-25 23:09 +0000
+            created at 2026-11-25 23:10 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -3830,6 +3830,22 @@
     <p class="run"><span class="n"><a id="t3748" href="#t3748">3748</a></span><span class="t">    <span class="key">assert</span> <span class="nam">project</span><span class="op">.</span><span class="nam">run</span><span class="op">(</span><span class="nam">apply</span><span class="op">=</span><span class="key">True</span><span class="op">)</span> <span class="op">==</span> <span class="num">0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3749" href="#t3749">3749</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t3750" href="#t3750">3750</a></span><span class="t">    <span class="key">assert</span> <span class="nam">len</span><span class="op">(</span><span class="nam">spawned</span><span class="op">)</span> <span class="op">&lt;=</span> <span class="nam">SYNC_GIT_SPAWN_BUDGET</span><span class="op">,</span> <span class="nam">spawned</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3751" href="#t3751">3751</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3752" href="#t3752">3752</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3753" href="#t3753">3753</a></span><span class="t"><span class="key">def</span> <span class="nam">test_an_open_pr_body_with_a_leftover_comment_is_left_alone_and_named</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t3754" href="#t3754">3754</a></span><span class="t">    <span class="nam">project</span><span class="op">:</span> <span class="nam">Project</span><span class="op">,</span> <span class="nam">pushed</span><span class="op">:</span> <span class="nam">Path</span><span class="op">,</span> <span class="nam">capsys</span><span class="op">:</span> <span class="nam">pytest</span><span class="op">.</span><span class="nam">CaptureFixture</span><span class="op">[</span><span class="nam">str</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t3755" href="#t3755">3755</a></span><span class="t"><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3756" href="#t3756">3756</a></span><span class="t">    <span class="nam">body</span> <span class="op">=</span> <span class="fst">f&quot;</span><span class="fst">## What\n\n- feat: a\n\n## Why\n\n</span><span class="op">{</span><span class="nam">WHY</span><span class="op">}</span><span class="fst">\n\n&lt;!-- left over --&gt;\n</span><span class="fst">&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3757" href="#t3757">3757</a></span><span class="t">    <span class="nam">_set_body</span><span class="op">(</span><span class="nam">project</span><span class="op">,</span> <span class="num">100</span><span class="op">,</span> <span class="nam">body</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3758" href="#t3758">3758</a></span><span class="t">    <span class="nam">_amend</span><span class="op">(</span><span class="nam">project</span><span class="op">,</span> <span class="nam">pushed</span><span class="op">,</span> <span class="str">&quot;fix: a&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3759" href="#t3759">3759</a></span><span class="t">    <span class="nam">capsys</span><span class="op">.</span><span class="nam">readouterr</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3760" href="#t3760">3760</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3761" href="#t3761">3761</a></span><span class="t">    <span class="key">assert</span> <span class="nam">project</span><span class="op">.</span><span class="nam">run</span><span class="op">(</span><span class="nam">apply</span><span class="op">=</span><span class="key">True</span><span class="op">)</span> <span class="op">==</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3762" href="#t3762">3762</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3763" href="#t3763">3763</a></span><span class="t">    <span class="key">assert</span> <span class="nam">pr_body</span><span class="op">(</span><span class="nam">project</span><span class="op">,</span> <span class="num">100</span><span class="op">)</span> <span class="op">==</span> <span class="nam">body</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t3764" href="#t3764">3764</a></span><span class="t">    <span class="key">assert</span> <span class="str">&quot;body left as it is, it has a leftover placeholder comment&quot;</span> <span class="key">in</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t3765" href="#t3765">3765</a></span><span class="t">        <span class="nam">capsys</span><span class="op">.</span><span class="nam">readouterr</span><span class="op">(</span><span class="op">)</span><span class="op">.</span><span class="nam">out</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t3766" href="#t3766">3766</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -3839,7 +3855,7 @@
             <a class="nav" href="z_a44f0ac069e85531_test_e2e_git_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
-            created at 2026-11-25 23:09 +0000
+            created at 2026-11-25 23:10 +0000
         </p>
     </div>
 </footer>

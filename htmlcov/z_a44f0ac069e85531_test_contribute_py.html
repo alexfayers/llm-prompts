@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">390 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">390<span class="text"> run</span></button>
+            <span class="text">401 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">401<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_a44f0ac069e85531_test_contribute_worktrees_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
-            created at 2026-11-25 23:09 +0000
+            created at 2026-11-25 23:10 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -1028,6 +1028,30 @@
     <p class="run"><span class="n"><a id="t946" href="#t946">946</a></span><span class="t">    <span class="nam">error</span> <span class="op">=</span> <span class="nam">subprocess</span><span class="op">.</span><span class="nam">CalledProcessError</span><span class="op">(</span><span class="num">1</span><span class="op">,</span> <span class="op">[</span><span class="str">&quot;git&quot;</span><span class="op">]</span><span class="op">,</span> <span class="nam">stderr</span><span class="op">=</span><span class="nam">stderr</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t947" href="#t947">947</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t948" href="#t948">948</a></span><span class="t">    <span class="key">assert</span> <span class="nam">contribute</span><span class="op">.</span><span class="nam">first_stderr_line</span><span class="op">(</span><span class="nam">error</span><span class="op">)</span> <span class="op">==</span> <span class="str">&quot;fatal: bad&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t949" href="#t949">949</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t950" href="#t950">950</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t951" href="#t951">951</a></span><span class="t"><span class="nam">TEMPLATE</span> <span class="op">=</span> <span class="str">&quot;## What\n\n&lt;!-- a --&gt;\n\n## Why\n\n## Issues\n\n&lt;!-- Optional --&gt;\n&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t952" href="#t952">952</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t953" href="#t953">953</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t954" href="#t954">954</a></span><span class="t"><span class="key">def</span> <span class="nam">test_body_problems_names_a_leftover_comment_and_each_empty_section</span><span class="op">(</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t955" href="#t955">955</a></span><span class="t">    <span class="nam">body</span> <span class="op">=</span> <span class="str">&quot;## What\n\n- x\n\n&lt;!-- Why it changed. --&gt;\n\n## Why\n&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t956" href="#t956">956</a></span><span class="t">    <span class="key">assert</span> <span class="nam">contribute</span><span class="op">.</span><span class="nam">body_problems</span><span class="op">(</span><span class="nam">TEMPLATE</span><span class="op">,</span> <span class="nam">body</span><span class="op">)</span> <span class="op">==</span> <span class="op">[</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t957" href="#t957">957</a></span><span class="t">        <span class="str">&quot;leftover placeholder comment &#x27;&lt;!--&#x27;&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t958" href="#t958">958</a></span><span class="t">        <span class="str">&quot;section Why is empty&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t959" href="#t959">959</a></span><span class="t">    <span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t960" href="#t960">960</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t961" href="#t961">961</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t962" href="#t962">962</a></span><span class="t"><span class="key">def</span> <span class="nam">test_body_problems_accepts_a_filled_body</span><span class="op">(</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t963" href="#t963">963</a></span><span class="t">    <span class="key">assert</span> <span class="nam">contribute</span><span class="op">.</span><span class="nam">body_problems</span><span class="op">(</span><span class="nam">TEMPLATE</span><span class="op">,</span> <span class="str">&quot;## What\n\n- x\n\n## Why\n\n- y\n&quot;</span><span class="op">)</span> <span class="op">==</span> <span class="op">[</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t964" href="#t964">964</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t965" href="#t965">965</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t966" href="#t966">966</a></span><span class="t"><span class="key">def</span> <span class="nam">test_check_body_command_rejects_a_bad_body_file</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t967" href="#t967">967</a></span><span class="t">    <span class="nam">tmp_path</span><span class="op">:</span> <span class="nam">Path</span><span class="op">,</span> <span class="nam">capsys</span><span class="op">:</span> <span class="nam">pytest</span><span class="op">.</span><span class="nam">CaptureFixture</span><span class="op">[</span><span class="nam">str</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t968" href="#t968">968</a></span><span class="t"><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t969" href="#t969">969</a></span><span class="t">    <span class="nam">body</span> <span class="op">=</span> <span class="nam">tmp_path</span> <span class="op">/</span> <span class="str">&quot;body.md&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t970" href="#t970">970</a></span><span class="t">    <span class="nam">body</span><span class="op">.</span><span class="nam">write_text</span><span class="op">(</span><span class="str">&quot;## What\n\n&lt;!-- x --&gt;\n&quot;</span><span class="op">,</span> <span class="nam">encoding</span><span class="op">=</span><span class="str">&quot;utf-8&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t971" href="#t971">971</a></span><span class="t">    <span class="key">assert</span> <span class="nam">contribute</span><span class="op">.</span><span class="nam">check_body</span><span class="op">(</span><span class="nam">body</span><span class="op">,</span> <span class="nam">tmp_path</span><span class="op">)</span> <span class="op">==</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t972" href="#t972">972</a></span><span class="t">    <span class="key">assert</span> <span class="str">&quot;leftover placeholder comment&quot;</span> <span class="key">in</span> <span class="nam">capsys</span><span class="op">.</span><span class="nam">readouterr</span><span class="op">(</span><span class="op">)</span><span class="op">.</span><span class="nam">err</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -1037,7 +1061,7 @@
             <a class="nav" href="z_a44f0ac069e85531_test_contribute_worktrees_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
-            created at 2026-11-25 23:09 +0000
+            created at 2026-11-25 23:10 +0000
         </p>
     </div>
 </footer>
