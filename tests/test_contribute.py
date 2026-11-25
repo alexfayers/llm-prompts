@@ -946,3 +946,27 @@ def test_first_stderr_line_reads_text_or_bytes(stderr: str | bytes) -> None:
     error = subprocess.CalledProcessError(1, ["git"], stderr=stderr)
 
     assert contribute.first_stderr_line(error) == "fatal: bad"
+
+
+TEMPLATE = "## What\n\n<!-- a -->\n\n## Why\n\n## Issues\n\n<!-- Optional -->\n"
+
+
+def test_body_problems_names_a_leftover_comment_and_each_empty_section() -> None:
+    body = "## What\n\n- x\n\n<!-- Why it changed. -->\n\n## Why\n"
+    assert contribute.body_problems(TEMPLATE, body) == [
+        "leftover placeholder comment '<!--'",
+        "section Why is empty",
+    ]
+
+
+def test_body_problems_accepts_a_filled_body() -> None:
+    assert contribute.body_problems(TEMPLATE, "## What\n\n- x\n\n## Why\n\n- y\n") == []
+
+
+def test_check_body_command_rejects_a_bad_body_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    body = tmp_path / "body.md"
+    body.write_text("## What\n\n<!-- x -->\n", encoding="utf-8")
+    assert contribute.check_body(body, tmp_path) == 1
+    assert "leftover placeholder comment" in capsys.readouterr().err
