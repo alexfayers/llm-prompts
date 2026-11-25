@@ -73,7 +73,12 @@ export class Background {
 
 	/** Stops a live background run by name. */
 	cancel(name: string): Run | undefined {
-		const run = this.registry.live().find((live) => live.background && live.name === name);
+		return this.cancelRun(this.registry.live().find((live) => live.background && live.name === name)?.id);
+	}
+
+	/** Stops a live background run by id. */
+	cancelRun(runId: string | undefined): Run | undefined {
+		const run = runId && this.registry.live().find((live) => live.background && live.id === runId);
 		if (!run) return undefined;
 		this.controllers.get(run.id)?.abort();
 		this.controllers.delete(run.id);

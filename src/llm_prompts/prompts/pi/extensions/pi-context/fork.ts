@@ -4,7 +4,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { defineTool, getAgentDir, type AgentToolResult, type ExtensionAPI, type ExtensionContext, type ExtensionToolContext, type SessionEntry } from "@earendil-works/pi-coding-agent";
+import { buildSessionContext, defineTool, generateSummary, getAgentDir, type AgentToolResult, type ExtensionAPI, type ExtensionContext, type ExtensionToolContext, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { parseOutcome, projectResult } from "./outcome.ts";
 import { Background } from "./background.ts";
@@ -48,6 +48,20 @@ export function resolveModel(model: string, agentDir = getAgentDir()): string {
 	if (!resolved) throw new Error(`unknown model tier ${tier}: use provider/id or one of ${Object.keys(tiers).sort().join(", ")}`);
 	return effort ? `${resolved}:${effort}` : resolved;
 }
+
+/** A warm fork copies the session, so one over this many tokens of context starts cold with a summary instead. */
+export const WARM_FORK_MAX_TOKENS = 150_000;
+
+export type Summarize = (ctx: ExtensionContext, entries: SessionEntry[]) => Promise<string>;
+
+/** Summarises the session entries with main's model. */
+export const summarizeSession: Summarize = async (ctx, entries) => {
+	const { model } = ctx;
+	if (!model) throw new Error("Cannot summarize without a model.");
+	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+	if (!auth.ok) throw new Error(auth.error);
+	return generateSummary(buildSessionContext(entries).messages, model, undefined, auth.apiKey, Object.fromEntries(Object.entries(auth.headers ?? {}).filter((header): header is [string, string] => header[1] !== null)), undefined, undefined, undefined, undefined, undefined, auth.env);
+};
 
 export function coldLabel(name: string, model: string, resolved: string): string {
 	return `cold worker ${name} on ${model === resolved ? model : `${model} = ${resolved}`} (no shared context)`;
@@ -388,8 +402,17 @@ function report(ctx: ExtensionContext, error: unknown) {
 	}
 }
 
-export function registerFork(pi: ExtensionAPI, command?: string[], background = new Background(pi)) {
+export function registerFork(pi: ExtensionAPI, command?: string[], background = new Background(pi), summarize: Summarize = summarizeSession) {
 	const registry = registryOf();
+	const summaries = new Map<string, Promise<string>>();
+
+	/** The summary of the session up to `entries`. Forks of the same snapshot share the call that is running. Shortcut: the call has no abort signal, so a cancelled fork lets it finish, upgrade when a call can be shared by refcount. */
+	function summaryOf(ctx: ExtensionContext, entries: SessionEntry[]): Promise<string> {
+		const key = `${ctx.sessionManager.getHeader()?.id}:${entries.at(-1)?.id}`;
+		const running = summaries.get(key) ?? summarize(ctx, entries).finally(() => summaries.delete(key));
+		summaries.set(key, running);
+		return running;
+	}
 
 	/** Starts the delegate of a registered run in the background, which reports its end to `background`. */
 	function startRun(ctx: ExtensionToolContext, run: { id: string; name: string; ref: string; role: Role; tree?: Worktree; target?: string; model?: string; files: string }, delegate: Pick<DelegateOptions, "entries" | "message" | "resume">) {
@@ -429,7 +452,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		name: "fork",
 		label: "Fork",
 		description:
-			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It returns at once and the result arrives as a message when the delegate replies with an OUTCOME line and the work has landed. from runs on a copy of a finished fork's session instead. shared with tasks and model runs one cold stub that reads shared, then starts one child per task from that stub when it finishes, so they share its prompt cache.",
+			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It returns at once and the result arrives as a message when the delegate replies with an OUTCOME line and the work has landed. from runs on a copy of a finished fork's session instead. A session over 150000 tokens of context starts the fork cold on the same model with a summary instead of a copy. shared with tasks and model runs one cold stub that reads shared, then starts one child per task from that stub when it finishes, so they share its prompt cache.",
 		promptSnippet: "Run a read-only or worktree-writing delegate on a copy of this session in the background",
 		parameters: Type.Object({
 			task: Type.Optional(Type.String({ description: "What the delegate should find out or check" })),
@@ -490,22 +513,41 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			if (role.writes && params.target === undefined && checkout && (await isPrimaryCheckout(checkout))) throw new Error(`${checkout} is a primary checkout: change_dir to a worktree first`);
 			const home = targetPath === undefined ? ctx.cwd : role.writes ? (checkout ?? dir) : dir;
 			const target = sameDir(home, ctx.cwd) ? undefined : home;
-			const model = source ? source.model : params.model && resolveModel(params.model);
-			const files = path.join(getAgentDir(), "pi-context", randomUUID());
-			if (source) copySession(source.files, files, Boolean(source.model));
-			const tree = role.writes && checkout ? await createWorktree(home, path.join(getAgentDir(), "pi-context", WORKTREES), name).catch((error: unknown) => {
-				fs.rmSync(files, { recursive: true, force: true });
-				throw error;
-			}) : undefined;
 			const entries = seedEntries(ctx.sessionManager.getBranch(), toolCallId);
+			const tooLarge = !source && !params.model && (ctx.getContextUsage()?.tokens ?? 0) > WARM_FORK_MAX_TOKENS;
+			const model = source ? source.model : tooLarge ? `${ctx.model.provider}/${ctx.model.id}:${pi.getThinkingLevel()}` : params.model && resolveModel(params.model);
 			const runId = newRunId();
 			const ref = `rc-fork-${name}-${toolCallId}`;
-			const cold = params.model && model ? coldLabel(name, params.model, model) : undefined;
+			const cold = tooLarge ? `fork ${name} cold on ${model} with a summary: context over ${WARM_FORK_MAX_TOKENS} tokens` : params.model && model ? coldLabel(name, params.model, model) : undefined;
 			const hint = source ? undefined : cachedHint(registry.all(), role.name, target ?? ctx.cwd, (run) => savedPrice(ctx, run), freshStartCost(ctx, role, params.task, model));
 			const withHint = (text: string) => (hint ? `${text}\n${hint}` : text);
-			registry.start({ id: runId, name, role: role.name, ...(source && { from: source.from ?? source.name, cacheKey: cacheKeyOf(files) }), model, background: true, state: "running", task: params.task, worktree: tree?.path, branch: tree?.branch, tree, target, cwd: ctx.cwd, startedAt: Date.now() });
-			const message = `${worktreeLine(tree, role.writes ? home : undefined)}Task: ${params.task}`;
-			startRun(ctx, { id: runId, name, ref, role, tree, target, model, files }, { entries, message, resume: Boolean(source) });
+			const launch = async (summary?: string, cancelled?: AbortSignal) => {
+				if (cancelled?.aborted) return;
+				const files = path.join(getAgentDir(), "pi-context", randomUUID());
+				if (source) copySession(source.files, files, Boolean(source.model));
+				const tree = role.writes && checkout ? await createWorktree(home, path.join(getAgentDir(), "pi-context", WORKTREES), name).catch((error: unknown) => {
+					fs.rmSync(files, { recursive: true, force: true });
+					throw error;
+				}) : undefined;
+				if (cancelled?.aborted) {
+					if (tree) await dropIfClean(tree);
+					return;
+				}
+				const placed = { worktree: tree?.path, branch: tree?.branch, tree };
+				if (tooLarge) registry.update(runId, placed);
+				else registry.start({ id: runId, name, role: role.name, ...(source && { from: source.from ?? source.name, cacheKey: cacheKeyOf(files) }), model, background: true, state: "running", task: params.task!, ...placed, target, cwd: ctx.cwd, startedAt: Date.now() });
+				const message = `${worktreeLine(tree, role.writes ? home : undefined)}${summary ? `Summary of the session you fork from:\n${summary}\n\n` : ""}Task: ${params.task}`;
+				startRun(ctx, { id: runId, name, ref, role, tree, target, model, files }, { entries, message, resume: Boolean(source) });
+			};
+			if (tooLarge) {
+				signal?.throwIfAborted();
+				registry.start({ id: runId, name, role: role.name, model, background: true, state: "running", task: params.task, target, cwd: ctx.cwd, startedAt: Date.now() });
+				const cancelled = background.track(runId);
+				const cancelOnAbort = () => void background.cancelRun(runId);
+				signal?.addEventListener("abort", cancelOnAbort, { once: true });
+				const onFail = (error: unknown) => !cancelled.aborted && background.finish(ctx, runId, { state: "failed" }, error instanceof Error ? error.message : String(error));
+				void summaryOf(ctx, entries).then((summary) => launch(summary, cancelled)).catch(onFail).finally(() => signal?.removeEventListener("abort", cancelOnAbort));
+			} else await launch();
 			return { content: [{ type: "text", text: withHint(`started ${cold ?? `fork ${name}`} (background)`) }], details: { name, runId, background: true } };
 		},
 	});

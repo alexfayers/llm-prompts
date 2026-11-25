@@ -10,7 +10,7 @@ import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/ro
 import { trackPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
 import { isLive, registryOf } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 import { Background } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/background.ts";
-import { coldArgs, coldLabel, KEEP_FINISHED_MS, registerFork, resolveModel, seedEntries, sweepFinished } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
+import { coldArgs, coldLabel, KEEP_FINISHED_MS, registerFork, WARM_FORK_MAX_TOKENS, resolveModel, seedEntries, sweepFinished } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
 import { LONG_CACHE_MS } from "../../src/llm_prompts/prompts/pi/extensions/context-fold.ts";
 
 const user = (id: string) => ({ type: "message", id, message: { role: "user", content: id } });
@@ -121,7 +121,7 @@ async function settle(started: any, appended: unknown[][], sent: any[][]): Promi
 	return { content: [{ type: "text", text }], details: { ...started.details, ...run, digest } };
 }
 
-async function start(params: Record<string, unknown>, cwd = process.cwd(), main = { activeTools: ["read", "codemode"], allTools: MAIN_TOOLS }, appendEntry?: () => void) {
+async function start(params: Record<string, unknown>, cwd = process.cwd(), main = { activeTools: ["read", "codemode"], allTools: MAIN_TOOLS }, appendEntry?: () => void, contextTokens?: number, summarize: () => Promise<string> = async () => "SUMMARY OF MAIN", signal?: AbortSignal) {
 	const tools: Record<string, any> = {};
 	const appended: unknown[][] = [];
 	const sent: any[][] = [];
@@ -135,7 +135,7 @@ async function start(params: Record<string, unknown>, cwd = process.cwd(), main 
 		getAllTools: () => main.allTools,
 	} as any;
 	const background = new Background(pi);
-	registerFork(pi, [process.execPath, STUB], background);
+	registerFork(pi, [process.execPath, STUB], background, summarize);
 	const ctx = {
 		cwd,
 		isIdle: () => true,
@@ -143,12 +143,12 @@ async function start(params: Record<string, unknown>, cwd = process.cwd(), main 
 		executeTool: async (name: string, args: unknown) => ({ result: { content: [{ type: "text", text: `ran ${name} ${JSON.stringify(args)}` }], details: {} }, isError: false }),
 		model: { provider: "prov", id: leadModel, cost: MODEL_COSTS[leadModel] },
 		modelRegistry: { find: (_provider: string, id: string) => ({ contextWindow: 200_000, cost: MODEL_COSTS[id] }) },
-		getContextUsage: () => ({ tokens: mainContext, contextWindow: 200_000, percent: 0 }),
+		getContextUsage: () => ({ tokens: contextTokens ?? mainContext, contextWindow: 200_000, percent: 0 }),
 		sessionManager: { getBranch: () => branch, getHeader: () => ({ type: "session", version: 3, id: "main-id", timestamp: "t", cwd }) },
 	};
 	const execute = tools.fork.execute;
 	tools.fork = { ...tools.fork, execute: async (...args: unknown[]) => settle(await execute(...args), appended, sent) };
-	return { tool: await execute("call-id", params, undefined, undefined, ctx).catch((error: Error) => error), appended, sent, tools, background, ctx };
+	return { tool: await execute("call-id", params, signal, undefined, ctx).catch((error: Error) => error), appended, sent, tools, background, ctx };
 }
 
 async function fork(...args: Parameters<typeof start>) {
@@ -191,6 +191,56 @@ describe("fork tool", () => {
 		assert.notEqual(seen.seed[0].id, "main-id");
 		assert.deepEqual(seen.seed.slice(1).map((entry: any) => entry.id), ["u1", "a1", "r1"]);
 		assert.match(seen.prompt, /do not call fork\. You are read-only[\s\S]*STUB_INSPECT$/);
+	});
+
+	test("a warm fork over the token limit starts cold on main's model with a summary of the session", async () => {
+		const { tool } = await fork({ task: "STUB_INSPECT" }, process.cwd(), undefined, undefined, WARM_FORK_MAX_TOKENS + 1);
+		const seen = JSON.parse(tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
+		assert.equal(seen.args[seen.args.indexOf("--model") + 1], "prov/mod:high");
+		assert.equal(seen.seed, undefined);
+		assert.match(seen.prompt, /SUMMARY OF MAIN[\s\S]*STUB_INSPECT$/);
+		assert.match(tool.details.model, /prov\/mod:high/);
+	});
+
+	test("a large fork returns before its summary is written, and forks of one snapshot share the summary call", async () => {
+		let calls = 0;
+		let written!: (summary: string) => void;
+		const pending = new Promise<string>((resolve) => (written = resolve));
+		const summarize = () => (calls++, pending);
+		const { tool, tools, ctx, appended, sent } = await start({ task: "STUB_INSPECT", name: "big1" }, process.cwd(), undefined, undefined, WARM_FORK_MAX_TOKENS + 1, summarize);
+		assert.equal(tool.details.background, true);
+		assert.equal(registryOf().all().find((run) => run.name === "big1")?.state, "running");
+		const second = tools.fork.execute("call-id", { task: "STUB_INSPECT", name: "big2" }, undefined, undefined, ctx);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		written("SHARED SUMMARY");
+		const [first, other] = await Promise.all([settle(tool, appended, sent), second]);
+		assert.equal(calls, 1);
+		for (const reply of [first, other]) assert.match(JSON.parse(reply.content[0].text.split("\n")[0].replace(/^echo: /, "")).prompt, /SHARED SUMMARY/);
+	});
+
+	test("a large fork keeps running when its tool call aborts after it launched", async () => {
+		const controller = new AbortController();
+		const { tools, ctx } = await start({ task: "STUB_HANG", name: "biglate" }, process.cwd(), undefined, undefined, WARM_FORK_MAX_TOKENS + 1, undefined, controller.signal);
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		controller.abort();
+		assert.equal(registryOf().all().find((run) => run.name === "biglate")?.state, "running");
+		await tools.fork_cancel.execute("c", { name: "biglate" }, undefined, undefined, ctx);
+	});
+
+	test("a large fork cancelled while its summary is written starts no child", async () => {
+		let written!: (summary: string) => void;
+		const { tools, ctx, sent } = await start({ task: "STUB_INSPECT", name: "bigcancel" }, process.cwd(), undefined, undefined, WARM_FORK_MAX_TOKENS + 1, () => new Promise<string>((resolve) => (written = resolve)));
+		await tools.fork_cancel.execute("c", { name: "bigcancel" }, undefined, undefined, ctx);
+		written("LATE");
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		assert.equal(registryOf().all().find((run) => run.name === "bigcancel")?.state, "cancelled");
+		assert.deepEqual(sent, []);
+	});
+
+	test("a warm fork at the token limit stays warm", async () => {
+		const { tool } = await fork({ task: "STUB_INSPECT" }, process.cwd(), undefined, undefined, WARM_FORK_MAX_TOKENS);
+		const seen = JSON.parse(tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
+		assert.deepEqual(seen.seed.slice(1).map((entry: any) => entry.id), ["u1", "a1", "r1"]);
 	});
 
 	test("keeps the full reply by ref and records its outcome", async () => {
@@ -622,6 +672,33 @@ describe("fork tool", () => {
 			const { tool } = await fork({ task: "STUB_WRITE", role: "writer", name: "pkid", from: "psrc" }, repo);
 			assert.ok(tool instanceof Error);
 			assert.match(tool.message, /change_dir to a worktree first/);
+		});
+
+		test("a large writer cancelled while its summary is written makes no worktree", async () => {
+			let written!: (summary: string) => void;
+			const { tools, ctx } = await start({ task: "STUB_WRITE", role: "writer", name: "bigw" }, repo, undefined, undefined, WARM_FORK_MAX_TOKENS + 1, () => new Promise<string>((resolve) => (written = resolve)));
+			await tools.fork_cancel.execute("c", { name: "bigw" }, undefined, undefined, ctx);
+			written("LATE");
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			assert.equal(git(repo, "branch", "--list", "fork/bigw"), "");
+		});
+
+		test("a large writer whose tool call is aborted while its summary is written makes no worktree and starts no run", async () => {
+			let written!: (summary: string) => void;
+			const controller = new AbortController();
+			const { sent } = await start({ task: "STUB_WRITE", role: "writer", name: "bigesc" }, repo, undefined, undefined, WARM_FORK_MAX_TOKENS + 1, () => new Promise<string>((resolve) => (written = resolve)), controller.signal);
+			controller.abort();
+			assert.equal(registryOf().all().find((run) => run.name === "bigesc")?.state, "cancelled");
+			written("LATE");
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			assert.equal(git(repo, "branch", "--list", "fork/bigesc"), "");
+			assert.deepEqual(sent, []);
+		});
+
+		test("a large writer whose tool call is already aborted registers no run", async () => {
+			const { tool } = await start({ task: "STUB_WRITE", role: "writer", name: "bigpre" }, repo, undefined, undefined, WARM_FORK_MAX_TOKENS + 1, undefined, AbortSignal.abort());
+			assert.ok(tool instanceof Error);
+			assert.equal(registryOf().all().some((run) => run.name === "bigpre"), false);
 		});
 
 		test("a from fork whose worktree cannot be made leaves no copied session behind", async () => {
