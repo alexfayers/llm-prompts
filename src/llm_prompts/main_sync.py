@@ -906,7 +906,7 @@ def rebuild_local(
         earlier: Local commit sha of a copy that only one worktree branch claims to the squash of that branch it was copied from.
 
     ``landed`` and ``exact`` commits, and the squashes that replace them, replay without recorded hand resolutions, and a conflict of one fails the rebuild.
-    Every change of an unpublished commit left out or replaced must be on the new main, unless it is not a ``landed`` or ``exact`` commit and clashes with a change in a file its replacement changes, or it is in a file its ``earlier`` squash, replayed on the commit's parent, changes to the content the commit holds, or the main being rebuilt already lacks it without a clash, or main is left untouched.
+    Every change of an unpublished commit left out or replaced must be on the new main, unless it is not a ``landed`` or ``exact`` commit and clashes with a change in a file its replacement changes, or it is in a file its ``earlier`` squash, replayed on the commit's parent, changes to the content the commit holds, or the main being rebuilt already lacks it without a clash, or, for a commit with an ``earlier`` squash, a commit of its replacement held it, or main is left untouched.
 
     Returns:
         ``rebuilt`` with the count of replayed commits and the first commit of each squash replayed into a new commit, ``stopped`` at a conflict waiting for its hand resolution, or a failed result. Neither of the last two changes main.
@@ -998,7 +998,7 @@ def rebuild_local(
                     repo, head, sha, _changed_paths(repo, f"{sha}^", sha)
                 )
                 lost = [path for path in lost if path not in lacked]
-            if prior := (earlier or {}).get(sha):
+            if lost and (prior := (earlier or {}).get(sha)):
                 try:
                     replay = _merge_tree(repo, prior.floor, f"{sha}^", prior.tip)
                 except _Conflict:
@@ -1009,6 +1009,18 @@ def rebuild_local(
                     if replay
                     else set()
                 )
+                if replacement:
+                    own |= {
+                        path
+                        for commit in _read(
+                            repo,
+                            "rev-list",
+                            f"{replacement.floor}..{replacement.tip}",
+                            "--",
+                            *lost,
+                        ).split()
+                        for path in set(lost) - set(_lost_paths(repo, commit, sha, ()))
+                    }
                 lost = [path for path in lost if path not in own]
             if lost:
                 raise _Bail(

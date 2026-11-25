@@ -3510,3 +3510,36 @@ def test_a_branch_that_merged_main_replaces_its_hand_resolved_copy_below_a_local
     assert project.main_subjects() == ["feat: a", "chore: drop a"]
     assert (project.repo / "b.txt").read_text(encoding="utf-8") == "b\n"
     assert not (project.repo / "a.txt").exists()
+
+
+def test_a_changed_branch_replaces_its_hand_resolved_copy_with_a_change_its_history_reverts(
+    project: Project,
+) -> None:
+    body = "".join(f"line {n}\n" for n in range(9))
+    project.commit(project.repo, "s.txt", body, "chore: add s")
+    project.commit(project.repo, "r.txt", body, "chore: add r")
+    git(project.repo, "push", "-q", "origin", "main")
+    project.commit(
+        project.repo, "s.txt", body.replace("line 1", "local"), "chore: local"
+    )
+    path = project.worktree("feat/a", start="origin/main")
+    (path / "s.txt").write_text(body.replace("line 1", "a"), encoding="utf-8")
+    git(path, "add", "s.txt")
+    wrapped = body.replace("line 1", "a").replace("line 7", "a")
+    project.commit(path, "r.txt", wrapped, "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    resolved = body.replace("line 1", "local a")
+    work = main_sync.resolve_worktree(project.repo)
+    (work / "s.txt").write_text(resolved, encoding="utf-8")
+    git(work, "add", "s.txt")
+    assert project.run(apply=True) == 0
+    project.commit(path, "r.txt", body.replace("line 1", "a"), "fix: a")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["chore: local", "feat: a"]
+    assert (project.repo / "r.txt").read_text(encoding="utf-8") == body.replace(
+        "line 1", "a"
+    )
+    assert (project.repo / "s.txt").read_text(encoding="utf-8") == resolved
