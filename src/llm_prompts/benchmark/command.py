@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import cast, get_args
 
 from llm_prompts import setup, size_report
-from llm_prompts.attic.pinned import PINNED_RULES
 from llm_prompts.benchmark import paths, reuse
 from llm_prompts.benchmark.agents import AGENTS, DEFAULT_MODELS
 from llm_prompts.benchmark.agents.adapter import VariantBuildError
@@ -54,6 +53,7 @@ from llm_prompts.benchmark.types import (
 DEFAULT_JOBS = 4
 EXIT_CODES = {"ok": 0, "regressed": 1, "all errored": 2, "incomplete": 2, "aborted": 2}
 EXIT_STOPPED = 2
+PINNED_RULES = frozenset({"stop-on-fail"})
 WRITERS = {
     "report.md": render,
     "report.json": to_json,

@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from benchmark.conftest import UNSCRIPTED_TRACE
-from llm_prompts.attic.pinned import PINNED_RULES
+from llm_prompts.benchmark.command import PINNED_RULES
 from llm_prompts.benchmark.scenarios import loader as scenarios
 from llm_prompts.benchmark.scenarios.checks import CHECKS, evaluate
 from llm_prompts.benchmark.scenarios.checks.context import CheckContext
