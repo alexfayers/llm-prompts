@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -14,7 +15,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, Self
 from urllib.parse import urlparse
 
 from . import github_api, telemetry
@@ -329,11 +330,70 @@ def _remote_source_messages(
     )
 
 
+def _source_identity(entry: dict[str, Any], kind: str = "tool") -> list[str]:
+    """Return a tool or plugin entry's name, source URL digest, ref and kind."""
+    source = str(entry.get("source", ""))
+    return [
+        str(entry.get("name", "")),
+        hashlib.sha256(source.encode()).hexdigest(),
+        str(entry.get("ref", "")),
+        kind,
+    ]
+
+
+def _fingerprint_versions(fingerprint: str) -> dict[tuple[str, ...], str]:
+    """Map each source identity in an installed-version fingerprint to its installed commit."""
+    try:
+        return {tuple(entry[:-1]): entry[-1] for entry in json.loads(fingerprint)}
+    except (ValueError, TypeError):
+        return {}
+
+
+def _previous_source_messages(
+    identity: list[str], fingerprint: str, messages: list[str]
+) -> list[str]:
+    """Return a remote source's messages from the previous check, or none once its installed version moved."""
+    name = identity[0]
+    versions = _fingerprint_versions(fingerprint)
+    key = tuple(identity)
+    if key not in versions or versions[key] != (_get_installed_commit(name) or ""):
+        return []
+    return [
+        message
+        for message in messages
+        if message.startswith(f"[{name}] ")
+        and getattr(message, "source", identity) == identity
+    ]
+
+
 class UpdateCheckFailure(str):
-    """An update-check-failed message."""
+    """An update-check-failed message, with the identity of the source whose check failed."""
+
+    source: list[str]
+
+    def __new__(cls, message: str, source: list[str] | None = None) -> Self:
+        failure = super().__new__(cls, message)
+        failure.source = source or []
+        return failure
 
 
-def _update_check_or_failure(name: str, check: Callable[[], list[str]]) -> list[str]:
+def _previous_failures_or(
+    identity: list[str],
+    previous: tuple[str, list[str]] | None,
+    check: Callable[[], list[str]],
+) -> list[str]:
+    """Return a source's failed checks from the previous check of the same source, or run the check when it had none."""
+    failures: list[str] = [
+        message
+        for message in (previous or ("", []))[1]
+        if isinstance(message, UpdateCheckFailure) and message.source == identity
+    ]
+    return failures or check()
+
+
+def _update_check_or_failure(
+    identity: list[str], check: Callable[[], list[str]]
+) -> list[str]:
     """Run an update check, reporting a failed git call as a message.
 
     Returns:
@@ -346,16 +406,23 @@ def _update_check_or_failure(name: str, check: Callable[[], list[str]]) -> list[
         if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
             reason += " " + " ".join(stderr_text(exc).strip().splitlines()[-2:])
         reason = _URL_CREDENTIALS.sub(r"\1", reason)
-        return [UpdateCheckFailure(f"[{name}] update check failed: {reason}")]
+        return [
+            UpdateCheckFailure(
+                f"[{identity[0]}] update check failed: {reason}", identity
+            )
+        ]
 
 
-def _local_source_messages(name: str, source: str, ref: str = "") -> list[str]:
+def _local_source_messages(
+    name: str, source: str, ref: str = "", fetch: bool = True
+) -> list[str]:
     """Return update-availability messages for a local-path git source.
 
     Args:
         name: The tool name.
         source: The configured source.
         ref: A remote branch to follow instead of the latest release tag.
+        fetch: Whether to fetch before comparing against the remote refs.
 
     Returns:
         Message lines describing available updates, or an empty list.
@@ -367,14 +434,15 @@ def _local_source_messages(name: str, source: str, ref: str = "") -> list[str]:
     if not (repo / ".git").is_dir():
         return []
 
-    run_with_retries(
-        ["git", "-C", str(repo), "fetch", "--quiet", "--tags", "--force"],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=GIT_TIMEOUT,
-    )
-    _FETCHED_REPOS.add(repo)
+    if fetch:
+        run_with_retries(
+            ["git", "-C", str(repo), "fetch", "--quiet", "--tags", "--force"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=GIT_TIMEOUT,
+        )
+        _FETCHED_REPOS.add(repo)
     if not point_upstream(repo, ref):
         return []
     result = subprocess.run(
@@ -888,8 +956,30 @@ def _pull_local_sources(
     return changed
 
 
-def _collect_update_messages() -> list[str]:
+UpdateSources = tuple[list[dict[str, Any]], list[dict[str, Any]]]
+
+
+def _update_sources() -> UpdateSources:
+    """Return the configured tools and plugins, or none without a config file."""
+    from .plugins import _load_plugins
+    from .setup import _load_config, config_path, read_config
+
+    if not config_path().exists():
+        return [], []
+    config = read_config()
+    return _load_config(config), _load_plugins(config)
+
+
+def _collect_update_messages(
+    previous: tuple[str, list[str]] | None = None,
+    sources: UpdateSources | None = None,
+) -> list[str]:
     """Collect update-availability messages across all configured tool sources.
+
+    Args:
+        previous: The fingerprint and messages of the previous check, to rebuild
+            the messages from the refs already fetched instead of fetching.
+        sources: The configured tools and plugins, read from config when omitted.
 
     Returns:
         Message lines describing available updates, in config order, followed
@@ -897,27 +987,44 @@ def _collect_update_messages() -> list[str]:
     """
     from functools import partial
 
-    from .plugins import _load_plugins, plugin_source_messages
-    from .setup import _is_local_path, _load_config, _run_parallel_ordered, config_path
+    from .plugins import plugin_source_messages
+    from .setup import _is_local_path, _run_parallel_ordered
 
-    if not config_path().exists():
-        return []
-
+    tools, plugins = sources or _update_sources()
     checks: list[Callable[[], list[str]]] = []
-    for tool in _load_config():
+    for tool in tools:
         name = str(tool.get("name", ""))
         source = str(tool.get("source", ""))
         if _is_local_path(source):
             check = partial(
-                _local_source_messages, name, source, str(tool.get("ref", ""))
+                _previous_failures_or,
+                _source_identity(tool),
+                previous,
+                partial(
+                    _local_source_messages,
+                    name,
+                    source,
+                    str(tool.get("ref", "")),
+                    previous is None,
+                ),
+            )
+        elif previous is not None:
+            check = partial(
+                _previous_source_messages, _source_identity(tool), *previous
             )
         else:
             check = partial(_remote_source_messages, name, source, tool.get("ref"))
-        checks.append(partial(_update_check_or_failure, name, check))
-    for plugin in _load_plugins():
-        check = partial(plugin_source_messages, plugin)
+        checks.append(partial(_update_check_or_failure, _source_identity(tool), check))
+    for plugin in plugins:
+        name = str(plugin.get("name", ""))
+        check = partial(
+            _previous_failures_or,
+            _source_identity(plugin, "plugin"),
+            previous,
+            partial(plugin_source_messages, plugin, previous is None),
+        )
         checks.append(
-            partial(_update_check_or_failure, str(plugin.get("name", "")), check)
+            partial(_update_check_or_failure, _source_identity(plugin, "plugin"), check)
         )
 
     messages: list[str] = []
@@ -928,27 +1035,31 @@ def _collect_update_messages() -> list[str]:
     return messages
 
 
-def _installed_fingerprint() -> str:
-    """Return a string that changes whenever the installed version of a source changes."""
-    from .main_sync import run_git
-    from .plugins import _checkout_dir, _load_plugins
-    from .setup import _expand, _is_local_path, _load_config, config_path
+def _installed_fingerprint(sources: UpdateSources | None = None) -> str:
+    """Return each source's identity and installed commit, as JSON, or nothing without sources.
 
-    if not config_path().exists():
-        return ""
-    versions: list[str] = []
-    for tool in _load_config():
+    Args:
+        sources: The configured tools and plugins, read from config when omitted.
+    """
+    from .main_sync import run_git
+    from .plugins import _checkout_dir
+    from .setup import _expand, _is_local_path
+
+    tools, plugins = sources or _update_sources()
+    versions: list[list[str]] = []
+    for tool in tools:
+        name = str(tool.get("name", ""))
         source = str(tool.get("source", ""))
         if _is_local_path(source):
-            versions.append(
-                run_git(_expand(source), "rev-parse", "HEAD").stdout.strip()
-            )
+            sha = run_git(_expand(source), "rev-parse", "HEAD").stdout.strip()
         else:
-            versions.append(_get_installed_commit(str(tool.get("name", ""))) or "")
-    for plugin in _load_plugins():
+            sha = _get_installed_commit(name) or ""
+        versions.append([*_source_identity(tool), sha])
+    for plugin in plugins:
         checkout = _checkout_dir(str(plugin.get("name", "")))
-        versions.append(run_git(checkout, "rev-parse", "HEAD").stdout.strip())
-    return ",".join(versions)
+        sha = run_git(checkout, "rev-parse", "HEAD").stdout.strip()
+        versions.append([*_source_identity(plugin, "plugin"), sha])
+    return json.dumps(versions) if versions else ""
 
 
 def _check_for_updates() -> bool:
@@ -1276,7 +1387,7 @@ def _run_command(
         "--only",
         type=Path,
         metavar="PATH",
-        help="Reinstall only the prompt built from this edited file.",
+        help="Reinstall only the prompt or pi extension (.ts file) built from this edited file.",
     )
     uninstall_parser = subparsers.add_parser(
         "uninstall",
@@ -1449,14 +1560,14 @@ def _run_command(
     sync_parser.add_argument(
         "--depends-on",
         nargs=2,
-        metavar=("BRANCH", "TOOL:BRANCH"),
-        help="Make BRANCH depend on TOOL:BRANCH, stacking it when in the same repo.",
+        metavar=("BRANCH", "TOOL:BRANCH|OWNER/REPO#N"),
+        help="Make BRANCH depend on TOOL:BRANCH, stacking it when in the same repo, or on a PR in any repo.",
     )
     sync_parser.add_argument(
         "--no-depends-on",
         nargs=2,
-        metavar=("BRANCH", "TOOL:BRANCH"),
-        help="Remove the dependency of BRANCH on TOOL:BRANCH.",
+        metavar=("BRANCH", "TOOL:BRANCH|OWNER/REPO#N"),
+        help="Remove the dependency of BRANCH on TOOL:BRANCH or a PR.",
     )
     sync_parser.add_argument(
         "--why",
@@ -1698,6 +1809,11 @@ def _run_command(
                 run.outcome = failure
                 sys.exit(1)
             sys.exit(0)
+        if args.only and args.only.suffix == ".ts":
+            raise ExitReason(
+                "other",
+                f"{args.only} is not a source an extension can be reinstalled from alone.",
+            )
 
         resumed = os.environ.pop(_UPDATE_RESUME_ENV, None)
         if resumed is None:

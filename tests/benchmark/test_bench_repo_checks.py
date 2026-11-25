@@ -192,3 +192,17 @@ def test_saved_workspace_keeps_the_repo_so_git_checks_can_run_again(
     saved.write(cell_dir, repo, make_trace(), (), ())
 
     assert run("git_state", GIT_STATE, ws=saved.load(cell_dir).workspace).passed
+
+
+def test_saved_workspace_skips_git_lock_files(
+    repo: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    cell_dir = tmp_path_factory.mktemp("cell")
+    (repo / ".git" / "objects" / "maintenance.lock").touch()
+    (repo / "uv.lock").touch()
+
+    saved.write(cell_dir, repo, make_trace(), (), ())
+
+    workspace = saved.load(cell_dir).workspace
+    assert not (workspace / ".git" / "objects" / "maintenance.lock").exists()
+    assert (workspace / "uv.lock").exists()

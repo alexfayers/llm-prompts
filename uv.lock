@@ -380,7 +380,7 @@ wheels = [
 
 [[package]]
 name = "llm-prompts"
-version = "0.6.3"
+version = "0.8.0"
 source = { editable = "." }
 dependencies = [
     { name = "cline-hooks" },

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import shutil
 from dataclasses import asdict, dataclass
@@ -16,6 +17,14 @@ WORKSPACE = "workspace"
 SKIPPED_WORKSPACE = shutil.ignore_patterns(
     "__pycache__", "node_modules", ".venv", ".pytest_cache"
 )
+
+
+def _skipped(directory: str, names: list[str]) -> set[str]:
+    """Return the ``names`` in ``directory`` to leave out of a saved workspace, with git's lock files."""
+    git_locks = (
+        fnmatch.filter(names, "*.lock") if ".git" in Path(directory).parts else []
+    )
+    return {*SKIPPED_WORKSPACE(directory, names), *git_locks}
 
 
 @dataclass(frozen=True)
@@ -65,7 +74,7 @@ def write(
         workspace,
         cell_dir / WORKSPACE,
         symlinks=True,
-        ignore=SKIPPED_WORKSPACE,
+        ignore=_skipped,
         dirs_exist_ok=True,
     )
 

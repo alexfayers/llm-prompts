@@ -6,6 +6,8 @@ import json
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
+from importlib.metadata import EntryPoint
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -15,6 +17,7 @@ import yaml
 from conftest import fake_mcp_server
 
 from llm_prompts import manifest as manifest_module
+from llm_prompts.exit_reason import ExitReason
 from llm_prompts.install import (
     _expanded_definition,
     _linked_content,
@@ -2920,3 +2923,302 @@ def test_permission_system_is_optional_until_its_package_is_on_disk() -> None:
     assert f"{package}?" in _pi_core_base_extensions(root_dir)
     _pi_package_dir(package).mkdir(parents=True)
     assert package in _pi_core_base_extensions(root_dir)
+
+
+def _receipt(git: str, name: str = "core") -> str:
+    """Return a uv tool receipt whose first requirement is a git install."""
+    return f'[tool]\nrequirements = [{{ name = "{name}", git = "{git}" }}]\n'
+
+
+_CORE_RECEIPT = _receipt("https://example.invalid/core.git?rev=v1#" + "a" * 40)
+
+
+class TestOnlyExtension:
+    """`install.main(only=<extension.ts>)` rewrites just that extension."""
+
+    def _checkout(self, root: Path, name: str = "acme") -> Path:
+        """Build an editable checkout shipping `acme-guard.ts`, returning its prompts dir."""
+        prompts = root / "src" / f"{name}_prompts" / "prompts"
+        extension = prompts / "pi" / "extensions" / "acme-guard.ts"
+        extension.parent.mkdir(parents=True)
+        extension.write_text("old\n", encoding="utf-8")
+        return prompts
+
+    def _env(self, tmp_path: Path, checkouts: list[Path], sites: int = 1) -> Path:
+        """Build the uv tool env of a tool named `core`, installing the given checkouts editable."""
+        env = tmp_path / "tools" / "core"
+        for index in range(sites):
+            site = env / "lib" / f"python3.{index + 12}" / "site-packages"
+            site.mkdir(parents=True)
+        for checkout in checkouts:
+            name = checkout.parts[-2]
+            info = site / f"{name}-1.0.dist-info"
+            info.mkdir()
+            (info / "METADATA").write_text(
+                f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n",
+                encoding="utf-8",
+            )
+            (info / "entry_points.txt").write_text(
+                f"[llm_prompts]\n{name} = {name}\n", encoding="utf-8"
+            )
+            (info / "direct_url.json").write_text(
+                json.dumps(
+                    {
+                        "url": checkout.parents[2].as_uri(),
+                        "dir_info": {"editable": True},
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return env
+
+    def _only(
+        self,
+        tmp_path: Path,
+        running: list[Path],
+        source: Path,
+        installed: list[Path] | None = None,
+        damage: Callable[[Path], None] = lambda env: None,
+        targets: list[str] | None = None,
+        config_source: str | None = None,
+        tool: str = "core",
+        receipt: str | None = None,
+    ) -> str | None:
+        home, manifest = tmp_path / "home", tmp_path / "installed.json"
+        env = self._env(tmp_path, running if installed is None else installed)
+        if receipt is not None:
+            (env / "uv-receipt.toml").write_text(receipt, encoding="utf-8")
+        damage(env)
+        with (
+            patch("llm_prompts.install._uv_tools_dir", return_value=tmp_path / "tools"),
+            patch(
+                "llm_prompts.install._load_config",
+                return_value=[
+                    {"name": tool, "source": config_source or str(tmp_path / "none")}
+                ],
+            ),
+        ):
+            return _install(home, manifest, running, only=source, targets=targets)
+
+    def test_rewrites_only_the_edited_extension(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        prompts = self._checkout(tmp_path / "acme")
+        sibling = prompts / "pi" / "extensions" / "other.ts"
+        sibling.write_text("old other\n", encoding="utf-8")
+        installed = tmp_path / "home" / ".pi" / "agent" / "extensions"
+        _install(tmp_path / "home", tmp_path / "installed.json", [prompts])
+        agent_dir = tmp_path / "home" / ".pi" / "agent"
+
+        def snapshot() -> list[bytes | None]:
+            return [
+                path.read_bytes() if path.exists() else None
+                for path in (
+                    tmp_path / "installed.json",
+                    agent_dir / "settings.json",
+                    agent_dir / "mcp.json",
+                )
+            ]
+
+        before = snapshot()
+        source = prompts / "pi" / "extensions" / "acme-guard.ts"
+        source.write_text("new\n", encoding="utf-8")
+        sibling.write_text("new other\n", encoding="utf-8")
+
+        with (
+            patch("llm_prompts.install._sync_pi_packages") as sync_packages,
+            patch("llm_prompts.install._install_pi_packages") as install_packages,
+            patch("llm_prompts.install.try_install_hooks_pi") as hooks,
+            patch("llm_prompts.install._sync_pi_mcp_servers") as sync_mcp,
+        ):
+            assert self._only(tmp_path, [prompts], source) is None
+
+        for broad in (sync_packages, install_packages, hooks, sync_mcp):
+            broad.assert_not_called()
+
+        assert (installed / "acme-guard.ts").read_text(encoding="utf-8") == "new\n"
+        assert (installed / "other.ts").read_text(encoding="utf-8") == "old other\n"
+        assert snapshot() == before
+
+    def _installed_ext(self, tmp_path: Path) -> tuple[Path, Path, Path]:
+        """Install `acme-guard.ts` fully, then edit its source, returning the source, its installed copy and the prompts dir."""
+        prompts = self._checkout(tmp_path / "acme")
+        _install(tmp_path / "home", tmp_path / "installed.json", [prompts])
+        source = prompts / "pi" / "extensions" / "acme-guard.ts"
+        source.write_text("new\n", encoding="utf-8")
+        copy = tmp_path / "home" / ".pi" / "agent" / "extensions" / "acme-guard.ts"
+        return source, copy, prompts
+
+    @pytest.mark.parametrize("where", ["running", "installed"])
+    def test_refuses_where_another_overlay_ships_the_same_extension(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, where: str
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        source, copy, prompts = self._installed_ext(tmp_path)
+        winner = self._checkout(tmp_path / "zeta", "zeta")
+        both = [prompts, winner]
+        running, installed = (
+            (both, [prompts]) if where == "running" else ([prompts], both)
+        )
+
+        assert self._only(tmp_path, running, source, installed) == "install_failed"
+        assert copy.read_text(encoding="utf-8") == "old\n"
+
+    @pytest.mark.parametrize(
+        "damage",
+        [
+            lambda env: shutil.rmtree(env / "lib"),
+            lambda env: (env / "lib" / "python3.9" / "site-packages").mkdir(
+                parents=True
+            ),
+            lambda env: next(env.rglob("direct_url.json")).write_text(
+                "{", encoding="utf-8"
+            ),
+            lambda env: shutil.rmtree(env.parent.parent / "zeta" / "src"),
+        ],
+        ids=[
+            "no-site-packages",
+            "two-site-packages",
+            "bad-metadata",
+            "missing-prompts",
+        ],
+    )
+    def test_refuses_where_the_installed_env_is_unreadable(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        damage: Callable[[Path], None],
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        source, copy, prompts = self._installed_ext(tmp_path)
+        zeta = self._checkout(tmp_path / "zeta", "zeta")
+
+        assert (
+            self._only(tmp_path, [prompts], source, [prompts, zeta], damage)
+            == "install_failed"
+        )
+        assert copy.read_text(encoding="utf-8") == "old\n"
+
+    def test_refuses_where_the_installed_copy_is_not_managed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        source, copy, prompts = self._installed_ext(tmp_path)
+        (tmp_path / "installed.json").unlink()
+
+        assert self._only(tmp_path, [prompts], source) == "install_failed"
+        assert copy.read_text(encoding="utf-8") == "old\n"
+
+    def test_refuses_without_the_pi_target(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        source, copy, prompts = self._installed_ext(tmp_path)
+
+        assert (
+            self._only(tmp_path, [prompts], source, targets=["claude-code"])
+            == "install_failed"
+        )
+        assert copy.read_text(encoding="utf-8") == "old\n"
+
+    def test_refuses_where_the_config_is_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        source, copy, prompts = self._installed_ext(tmp_path)
+
+        with patch(
+            "llm_prompts.install._load_config", side_effect=ExitReason("config_missing")
+        ):
+            result = _install(
+                tmp_path / "home", tmp_path / "installed.json", [prompts], only=source
+            )
+
+        assert result == "install_failed"
+        assert copy.read_text(encoding="utf-8") == "old\n"
+
+    @pytest.mark.parametrize(
+        ("tool", "source", "receipt", "written"),
+        [
+            ("core", "git+https://example.invalid/core.git", _CORE_RECEIPT, True),
+            ("other", "git+https://example.invalid/core.git", _CORE_RECEIPT, False),
+            ("core", "git+https://example.invalid/acme.git", _CORE_RECEIPT, False),
+            ("core", "git+https://example.invalid/core.git", None, False),
+            ("core", "git+https://example.invalid/core.git", "[tool", False),
+            ("core", "git+https://example.invalid/core.git#acme", _CORE_RECEIPT, False),
+            (
+                "core",
+                "git+https://token@example.invalid/core.git",
+                _CORE_RECEIPT,
+                False,
+            ),
+            (
+                "core",
+                "git+https://example.invalid/core.git",
+                _receipt("https://example.invalid/core.git?subdirectory=pkg#abc"),
+                False,
+            ),
+            (
+                "core",
+                "git+https://example.invalid/core.git",
+                _receipt("https://example.invalid/core.git?rev=v1#abc", "acme"),
+                False,
+            ),
+            (
+                "core",
+                "git+ssh://git@example.invalid/core.git",
+                _receipt("ssh://git@example.invalid/core.git#abc"),
+                True,
+            ),
+        ],
+        ids=[
+            "matching",
+            "no-env",
+            "other-repo",
+            "no-receipt",
+            "malformed-receipt",
+            "configured-fragment",
+            "configured-credentials",
+            "receipt-subdirectory",
+            "receipt-other-package",
+            "ssh-git-user",
+        ],
+    )
+    def test_trusts_a_remote_owner_env_only_where_its_receipt_names_the_source(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tool: str,
+        source: str,
+        receipt: str | None,
+        written: bool,
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        edited, copy, prompts = self._installed_ext(tmp_path)
+
+        with patch("llm_prompts.setup._read_pyproject", side_effect=AssertionError):
+            result = self._only(
+                tmp_path,
+                [prompts],
+                edited,
+                config_source=source,
+                tool=tool,
+                receipt=receipt,
+            )
+
+        assert (result is None) is written
+        assert copy.read_text(encoding="utf-8") == ("new\n" if written else "old\n")
+
+    def test_refuses_where_a_running_overlay_cannot_be_resolved(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        source, copy, prompts = self._installed_ext(tmp_path)
+        broken = EntryPoint("broken", "no_such_overlay_package", "llm_prompts")
+
+        with patch("importlib.metadata.entry_points", return_value=[broken]):
+            result = self._only(tmp_path, [prompts], source)
+
+        assert result == "install_failed"
+        assert copy.read_text(encoding="utf-8") == "old\n"
