@@ -13,7 +13,7 @@ const card = process.argv.includes("--append-system-prompt") ? flag("--append-sy
 const handshake = process.env.PI_CONTEXT_CHILD;
 if (process.argv.includes("--session-dir")) {
 	mkdirSync(flag("--session-dir"), { recursive: true });
-	writeFileSync(`${flag("--session-dir")}/session.jsonl`, "{}\n");
+	writeFileSync(`${flag("--session-dir")}/session.jsonl`, `${JSON.stringify({ type: "session", version: 3, id: process.env.PI_CONTEXT_RUN_ID })}\n`);
 }
 let reply = "";
 let exitDelayMs = 0;

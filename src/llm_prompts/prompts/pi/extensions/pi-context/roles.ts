@@ -182,11 +182,11 @@ export function rewriteForWorktree(toolName: string, input: Record<string, unkno
 const optionalString = (value: unknown) => (typeof value === "string" ? value : undefined);
 
 /** Reads a delegate's handshake. `inherited` is the last entry a warm fork copied from main's session. */
-export function readHandshake(file: string): { role: Role; worktree?: string; repo?: string; inherited?: string; readMcp: ReadMcp[] } | undefined {
+export function readHandshake(file: string): { role: Role; worktree?: string; repo?: string; inherited?: string | null; readMcp: ReadMcp[] } | undefined {
 	try {
 		const { role, worktree, repo, inherited, readMcp } = JSON.parse(fs.readFileSync(file, "utf8")) as { role?: string; worktree?: unknown; repo?: unknown; inherited?: unknown; readMcp?: unknown };
 		if (role === undefined || !Object.hasOwn(ROLES, role)) return undefined;
-		return { role: ROLES[role as Role["name"]], worktree: optionalString(worktree), repo: optionalString(repo), inherited: optionalString(inherited), readMcp: checkReadMcp(readMcp).valid };
+		return { role: ROLES[role as Role["name"]], worktree: optionalString(worktree), repo: optionalString(repo), inherited: inherited === null ? null : optionalString(inherited), readMcp: checkReadMcp(readMcp).valid };
 	} catch {
 		return undefined;
 	}
