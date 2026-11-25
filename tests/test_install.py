@@ -138,21 +138,21 @@ class TestPassesGate:
         with patch.dict("os.environ", {}, clear=True):
             assert _passes_gate(rule, deferred=True) is True
 
-    def test_deprecated_gate_on_agent_roles_stays_at_install(
-        self, tmp_path: Path
+    @pytest.mark.parametrize(
+        ("key", "roles"),
+        [
+            ("roles: worker", {"worker"}),
+            ("load_when: custom-kind", {"when:custom-kind"}),
+        ],
+    )
+    def test_deprecated_gate_is_decided_at_install(
+        self, tmp_path: Path, key: str, roles: set[str]
     ) -> None:
-        content = "---\nroles: worker\nrequires_command: sometool\n---\n"
+        content = f"---\n{key}\nrequires_command: sometool\n---\n"
         rule = _make_rule(tmp_path, "rule.md", content)
         with patch("llm_prompts.install.shutil.which", return_value=None):
             assert _passes_gate(rule, deferred=True) is False
-        assert _parse_roles(content, "rule.md") == frozenset({"worker"})
-
-    def test_second_condition_is_decided_at_install_on_pi(self, tmp_path: Path) -> None:
-        content = "---\nload_when: custom-kind\nrequires_command: sometool\n---\n"
-        rule = _make_rule(tmp_path, "rule.md", content)
-        with patch("llm_prompts.install.shutil.which", return_value=None):
-            assert _passes_gate(rule, deferred=True) is False
-        assert _parse_roles(content, "rule.md") == frozenset({"when:custom-kind"})
+        assert _parse_roles(content, "rule.md") == frozenset(roles)
 
     def test_unknown_load_when_kind_passes(self, tmp_path: Path) -> None:
         rule = _make_rule(tmp_path, "rule.md", "---\nload_when: custom-kind\n---\n")

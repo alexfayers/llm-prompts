@@ -2081,19 +2081,20 @@ class TestRoles:
             _parse_roles(content, "x.md")
 
     @pytest.mark.parametrize(
-        "value",
+        "frontmatter",
         [
-            '""',
-            "tool:",
-            "env:",
-            "custom\nroles: worker",
-            "a\nload_when: b",
-            "env:A\npaths: x",
+            'load_when: ""',
+            "load_when: tool:",
+            "load_when: env:",
+            "load_when: custom\nroles: worker",
+            "load_when: a\nload_when: b",
+            "load_when: env:A\npaths: x",
+            "audience: main\npaths: x",
         ],
     )
-    def test_invalid_load_when_is_rejected(self, value: str) -> None:
+    def test_invalid_condition_is_rejected(self, frontmatter: str) -> None:
         with pytest.raises(ValueError, match="x.md"):
-            _parse_roles(f"---\nload_when: {value}\n---\n\nbody\n", "x.md")
+            _parse_roles(f"---\n{frontmatter}\n---\n\nbody\n", "x.md")
 
     def test_deprecated_requires_key_becomes_load_when(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -2118,10 +2119,6 @@ class TestRoles:
         settings.write_text(json.dumps({"packages": [entry]}), encoding="utf-8")
         with pytest.raises(ValueError, match="only env: and tool:"):
             _validate_rule_conditions(tmp_path, [])
-
-    def test_audience_with_paths_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="x.md"):
-            _parse_roles("---\naudience: main\npaths: x\n---\n\nbody\n", "x.md")
 
     def test_conditional_rules_stay_out_of_every_definition(self) -> None:
         bundle = _PiRuleBundle(
