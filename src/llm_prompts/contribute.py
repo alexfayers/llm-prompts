@@ -1056,27 +1056,13 @@ def _paths(repo: Path, *commits: str) -> set[str]:
     return set(_git(*args, repo=repo).split())
 
 
-def _version_floor(repo: Path, tip: Tip, version: str) -> str:
-    """Return the commit ``version`` of ``tip``'s branch started from: the parent of its copied first commit, else the floor."""
-    rows = _git("log", "--format=%H%x09%at%x09%s", f"{tip.floor}..{version}", repo=repo)
-    return next(
-        (
-            f"{sha}^"
-            for sha, identity in (row.split("\t", 1) for row in rows.splitlines())
-            if identity == tip.entry.copied
-        ),
-        tip.floor,
-    )
-
-
 def _earlier_patches(repo: Path, tip: Tip) -> set[str]:
     """Return the patch ids of every version of ``tip``'s branch and of each version's first commit."""
     patches: set[str] = set()
     for version in _versions(repo, tip):
-        floor = _version_floor(repo, tip, version)
-        if commits := _commit_shas(repo, floor, version):
+        if commits := _commit_shas(repo, tip.floor, version):
             patches |= {
-                _squash_patch_id(repo, _squash_of(repo, floor, commits, version)),
+                _squash_patch_id(repo, _squash_of(repo, tip.floor, commits, version)),
                 _patch_id(repo, "show", "-U0", commits[0]),
             }
     return patches - {""}
