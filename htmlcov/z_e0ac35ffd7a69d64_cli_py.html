@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_e0ac35ffd7a69d64_collection_size_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-25 14:42 +0000
+            created at 2026-11-25 14:57 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -1642,14 +1642,14 @@
     <p class="run"><span class="n"><a id="t1560" href="#t1560">1560</a></span><span class="t">    <span class="nam">sync_parser</span><span class="op">.</span><span class="nam">add_argument</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t1561" href="#t1561">1561</a></span><span class="t">        <span class="str">&quot;--depends-on&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t1562" href="#t1562">1562</a></span><span class="t">        <span class="nam">nargs</span><span class="op">=</span><span class="num">2</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1563" href="#t1563">1563</a></span><span class="t">        <span class="nam">metavar</span><span class="op">=</span><span class="op">(</span><span class="str">&quot;BRANCH&quot;</span><span class="op">,</span> <span class="str">&quot;TOOL:BRANCH&quot;</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1564" href="#t1564">1564</a></span><span class="t">        <span class="nam">help</span><span class="op">=</span><span class="str">&quot;Make BRANCH depend on TOOL:BRANCH, stacking it when in the same repo.&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1563" href="#t1563">1563</a></span><span class="t">        <span class="nam">metavar</span><span class="op">=</span><span class="op">(</span><span class="str">&quot;BRANCH&quot;</span><span class="op">,</span> <span class="str">&quot;TOOL:BRANCH|OWNER/REPO#N&quot;</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1564" href="#t1564">1564</a></span><span class="t">        <span class="nam">help</span><span class="op">=</span><span class="str">&quot;Make BRANCH depend on TOOL:BRANCH, stacking it when in the same repo, or on a PR in any repo.&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t1565" href="#t1565">1565</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1566" href="#t1566">1566</a></span><span class="t">    <span class="nam">sync_parser</span><span class="op">.</span><span class="nam">add_argument</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t1567" href="#t1567">1567</a></span><span class="t">        <span class="str">&quot;--no-depends-on&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t1568" href="#t1568">1568</a></span><span class="t">        <span class="nam">nargs</span><span class="op">=</span><span class="num">2</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1569" href="#t1569">1569</a></span><span class="t">        <span class="nam">metavar</span><span class="op">=</span><span class="op">(</span><span class="str">&quot;BRANCH&quot;</span><span class="op">,</span> <span class="str">&quot;TOOL:BRANCH&quot;</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1570" href="#t1570">1570</a></span><span class="t">        <span class="nam">help</span><span class="op">=</span><span class="str">&quot;Remove the dependency of BRANCH on TOOL:BRANCH.&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1569" href="#t1569">1569</a></span><span class="t">        <span class="nam">metavar</span><span class="op">=</span><span class="op">(</span><span class="str">&quot;BRANCH&quot;</span><span class="op">,</span> <span class="str">&quot;TOOL:BRANCH|OWNER/REPO#N&quot;</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1570" href="#t1570">1570</a></span><span class="t">        <span class="nam">help</span><span class="op">=</span><span class="str">&quot;Remove the dependency of BRANCH on TOOL:BRANCH or a PR.&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t1571" href="#t1571">1571</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1572" href="#t1572">1572</a></span><span class="t">    <span class="nam">sync_parser</span><span class="op">.</span><span class="nam">add_argument</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t1573" href="#t1573">1573</a></span><span class="t">        <span class="str">&quot;--why&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -2033,7 +2033,7 @@
             <a class="nav" href="z_e0ac35ffd7a69d64_collection_size_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-25 14:42 +0000
+            created at 2026-11-25 14:57 +0000
         </p>
     </div>
 </footer>
