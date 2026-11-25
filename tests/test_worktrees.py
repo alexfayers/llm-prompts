@@ -104,16 +104,20 @@ def test_a_field_named_extra_survives_a_save(tmp_path: Path) -> None:
     assert saved["extra"] == {"note": "kept"}
 
 
-def test_a_link_with_unknown_fields_loads(tmp_path: Path) -> None:
+def test_unknown_link_fields_load_and_survive_a_save(tmp_path: Path) -> None:
     path = tmp_path / "record.json"
     save_entries(path, [_entry(depends_on=(Link("/r", "feat/b", "o/r#7"),))])
     data = json.loads(path.read_text(encoding="utf-8"))
-    data["entries"][0]["depends_on"][0]["future"] = "ignored"
+    data["entries"][0]["depends_on"][0]["future"] = "kept"
     path.write_text(json.dumps(data), encoding="utf-8")
 
     [loaded] = load_entries(path)
+    save_entries(path, [loaded])
 
-    assert loaded.depends_on == (Link("/r", "feat/b", "o/r#7"),)
+    [saved] = json.loads(path.read_text(encoding="utf-8"))["entries"]
+    assert saved["depends_on"] == [
+        {"repo": "/r", "branch": "feat/b", "ref": "o/r#7", "future": "kept"}
+    ]
 
 
 def test_unreadable_entry_is_skipped_with_a_warning_and_backed_up(

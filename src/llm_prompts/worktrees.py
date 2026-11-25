@@ -29,6 +29,7 @@ class Link(NamedTuple):
     repo: str
     branch: str
     ref: str = ""
+    extra: tuple[tuple[str, Any], ...] = ()
 
 
 class WorktreeEntry(NamedTuple):
@@ -70,14 +71,28 @@ def record_path() -> Path:
     )
 
 
+def _fields_from_json(fields: tuple[str, ...], data: dict[str, Any]) -> dict[str, Any]:
+    """Split ``data`` into the known ``fields`` and the ``extra`` keys."""
+    known = set(fields) - {"extra"}
+    return {
+        **{key: data[key] for key in data if key in known},
+        "extra": tuple((k, v) for k, v in data.items() if k not in known),
+    }
+
+
+def _as_json(record: Link | WorktreeEntry) -> dict[str, Any]:
+    return {
+        **dict(record.extra),
+        **{k: v for k, v in record._asdict().items() if k != "extra"},
+    }
+
+
 def _entry_from_json(data: dict[str, Any]) -> WorktreeEntry:
-    known = set(WorktreeEntry._fields) - {"extra"}
     return WorktreeEntry(
         **{
-            **{key: data[key] for key in data if key in known},
-            "extra": tuple((k, v) for k, v in data.items() if k not in known),
+            **_fields_from_json(WorktreeEntry._fields, data),
             "depends_on": tuple(
-                Link(**{k: v for k, v in link.items() if k in Link._fields})
+                Link(**_fields_from_json(Link._fields, link))
                 for link in data.get("depends_on", ())
             ),
             "dropped_refs": tuple(data.get("dropped_refs", ())),
@@ -148,9 +163,8 @@ def save_entries(path: Path, entries: list[WorktreeEntry]) -> None:
         {
             "entries": [
                 {
-                    **dict(entry.extra),
-                    **{k: v for k, v in entry._asdict().items() if k != "extra"},
-                    "depends_on": [l._asdict() for l in entry.depends_on],
+                    **_as_json(entry),
+                    "depends_on": [_as_json(link) for link in entry.depends_on],
                 }
                 for entry in entries
             ]
