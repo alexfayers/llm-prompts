@@ -61,6 +61,7 @@
 | src/llm\_prompts/guards/commit\_guard.py                                      |      207 |        8 |     96% |57-58, 153, 185, 277, 333, 365, 384 |
 | src/llm\_prompts/guards/gate.py                                               |        5 |        0 |    100% |           |
 | src/llm\_prompts/guards/receipts.py                                           |       59 |        4 |     93% |48, 56, 74-75 |
+| src/llm\_prompts/guards/review\_limit.py                                      |       57 |        8 |     86% |42-43, 53, 100, 108-109, 128-129 |
 | src/llm\_prompts/guards/shell\_rules.py                                       |       27 |        1 |     96% |        62 |
 | src/llm\_prompts/handoff\_block.py                                            |       13 |        1 |     92% |        20 |
 | src/llm\_prompts/home.py                                                      |       20 |        0 |    100% |           |
@@ -91,7 +92,7 @@
 | src/llm\_prompts/skill\_injection.py                                          |       37 |        2 |     95% |    33, 36 |
 | src/llm\_prompts/squash\_subject.py                                           |        6 |        0 |    100% |           |
 | src/llm\_prompts/telemetry.py                                                 |       82 |        2 |     98% |   152-153 |
-| src/llm\_prompts/telemetry\_core.py                                           |      224 |        7 |     97% |62-63, 72-73, 186-187, 423 |
+| src/llm\_prompts/telemetry\_core.py                                           |      224 |        5 |     98% |72-73, 186-187, 423 |
 | src/llm\_prompts/watch/\_\_init\_\_.py                                        |        0 |        0 |    100% |           |
 | src/llm\_prompts/watch/core/\_\_init\_\_.py                                   |        0 |        0 |    100% |           |
 | src/llm\_prompts/watch/core/condition.py                                      |       25 |        3 |     88% | 33, 49-50 |
@@ -176,6 +177,7 @@
 | tests/test\_removed\_agents\_notice.py                                        |       29 |        0 |    100% |           |
 | tests/test\_render\_template.py                                               |      143 |        0 |    100% |           |
 | tests/test\_retrospective\_extract.py                                         |       90 |        0 |    100% |           |
+| tests/test\_review\_limit.py                                                  |       66 |        0 |    100% |           |
 | tests/test\_rewrite\_range\_script.py                                         |       96 |        0 |    100% |           |
 | tests/test\_session\_start\_checklist.py                                      |       38 |        0 |    100% |           |
 | tests/test\_setup.py                                                          |      415 |        0 |    100% |           |
@@ -193,7 +195,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       53 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **31847** |  **777** | **98%** |           |
+| **TOTAL**                                                                     | **31970** |  **783** | **98%** |           |
 
 
 ## Setup coverage badge
