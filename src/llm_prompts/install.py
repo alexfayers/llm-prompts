@@ -71,6 +71,7 @@ _LOAD_WHEN_KINDS = ("env", "tool")
 _REMOVED_GATE = "requires_"
 _DEPRECATED_GATES = {"requires_env": "env", "requires_command": "tool"}
 _TARGET_GATING_KEYS = {
+    "load_when",
     "targets",
     "exclude_targets",
     "extra_variants",
@@ -376,12 +377,14 @@ def _command_on_path(command: str) -> bool:
     return command in _ASSUMED_COMMANDS or shutil.which(command) is not None
 
 
-def _passes_gate(src: Path, *, deferred: bool = False) -> bool:
+def _passes_gate(src: Path, *, deferred: bool = False, target: str = "") -> bool:
     """Check a source file's ``load_when`` and ``source_file`` gates, if present.
 
     Args:
         src: Source file path.
         deferred: The source is a pi rule, whose session can check a condition.
+        target: Target agent name whose ``<target>_load_when`` overrides
+            ``load_when``.
 
     Returns:
         False if the file should be skipped.
@@ -391,6 +394,7 @@ def _passes_gate(src: Path, *, deferred: bool = False) -> bool:
     except OSError:
         return True
     _, frontmatter = parse_frontmatter(content)
+    frontmatter["load_when"] = _gating_value(frontmatter, "load_when", target)
     return _requirements_met(_migrated(frontmatter), deferred=deferred)
 
 
@@ -1719,7 +1723,7 @@ def _install_skills(
         skill_md = skill_path / "SKILL.md"
         if not skill_md.is_file():
             return False
-        if not _passes_gate(skill_md):
+        if not _passes_gate(skill_md, target=agent_name):
             log(
                 "debug",
                 f"Skipping skill '{skill_path.name}': requires gate not satisfied.",
@@ -1804,7 +1808,7 @@ def _install_plugin_skills(
         except ValueError as e:
             log("warn", f"Skipping plugin skill '{name}': {e}")
             continue
-        if not _passes_gate(skill_md):
+        if not _passes_gate(skill_md, target=agent_name):
             log(
                 "debug", f"Skipping plugin skill '{name}': requires gate not satisfied."
             )

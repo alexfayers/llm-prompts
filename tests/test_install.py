@@ -568,6 +568,23 @@ class TestInstallPluginSkills:
         assert (agents_dir / "skills" / "gated").exists() is False
         assert "gated" not in managed
 
+    def test_target_load_when_overrides_load_when(self, tmp_path: Path) -> None:
+        src = self._make_skill(
+            tmp_path / "checkout",
+            "gated",
+            "---\nload_when: tool:sometool\npi_load_when: []\n---\n",
+        )
+
+        with patch("llm_prompts.install.shutil.which", return_value=None):
+            installed = {
+                agent: _install_plugin_skills(
+                    [("gated", src, {})], tmp_path / agent, agent, set()
+                )
+                for agent in ("pi", "claude-code")
+            }
+
+        assert installed == {"pi": {"gated"}, "claude-code": set()}
+
     def test_invalid_condition_skips_skill(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
