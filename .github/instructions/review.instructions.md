@@ -33,6 +33,7 @@ excludeAgent: "cloud-agent"
 - Guards and hooks only catch agent mistakes. Skip a bypass that needs unusual git or shell syntax (attached options, `--git-dir`, `~` or `$VAR` paths, redirects, symlinks, submodules, file modes) unless a normal agent command hits it.
 - Flag only a defect in a line the PR adds or edits. Skip a problem in code the PR leaves unchanged, even where a changed line calls it or sits next to it. This applies to inline comments and the review summary.
 - Count code the PR only moves or renames, with no logic change, as unchanged.
+- When several defects share one cause, report the cause and the invariant it breaks once, not each instance.
 - Don't flag a change only a consumer in another repo can make.
 - When nothing meets this bar, leave no comments.
 
