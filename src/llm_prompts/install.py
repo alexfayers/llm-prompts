@@ -3654,9 +3654,13 @@ _PI_DEFAULT_KEYS = (
     "followUpMode",
     "cacheWarming",
     "enableInstallTelemetry",
-    "showCacheMissNotices",
+    "notices",
     "markdown",
 )
+
+
+_LEGACY_CACHE_MISS_KEY = "showCacheMissNotices"
+_NOTICES_MIN_PI_VERSION = "1.6.1"
 
 
 def _package_source(entry: str | dict[str, Any]) -> str:
@@ -3941,7 +3945,10 @@ def _sync_pi_packages(
     Packages the user added themselves are left alone; a package llm-prompts
     managed before but no longer declares is removed, as is another version
     of a declared npm package or any version of a retired one. Each default the user's
-    settings lack is filled in; one already set is kept.
+    settings lack is filled in; one already set is kept. A legacy
+    ``showCacheMissNotices`` stays, with ``notices`` unset, while the running pi is
+    older than ``_NOTICES_MIN_PI_VERSION``. Otherwise it becomes ``notices.cacheMisses``
+    unless that is set, and is removed.
 
     Args:
         wanted: The ``packages`` entry of each source llm-prompts now declares. A
@@ -3975,8 +3982,24 @@ def _sync_pi_packages(
     added = [source for source in wanted if source not in present]
     packages.extend(wanted[source] for source in added)
     added_names = _npm_names(added) - _npm_names(map(_package_source, current))
-    missing_defaults = {k: v for k, v in (defaults or {}).items() if k not in settings}
-    if packages == current and not missing_defaults:
+    legacy_notice = settings.get(_LEGACY_CACHE_MISS_KEY)
+    running = _running_pi_version()
+    reads_legacy = bool(running) and _version_key(running) < _version_key(
+        _NOTICES_MIN_PI_VERSION
+    )
+    migrate_legacy = legacy_notice is not None and not reads_legacy
+    if migrate_legacy:
+        settings["notices"] = {
+            **(defaults or {}).get("notices", {}),
+            "cacheMisses": settings.pop(_LEGACY_CACHE_MISS_KEY),
+            **settings.get("notices", {}),
+        }
+    missing_defaults = {
+        k: v
+        for k, v in (defaults or {}).items()
+        if k not in settings and not (k == "notices" and legacy_notice is not None)
+    }
+    if packages == current and not missing_defaults and not migrate_legacy:
         return added_names
     settings["packages"] = packages
     settings.update(missing_defaults)
@@ -4016,6 +4039,14 @@ def _path_pi_version(launcher: Path) -> str:
         _pi_agent_dir().resolve()
     ) and not resolved.is_relative_to(_pi_package_dir(_PI_PACKAGE).resolve())
     return _read_text(version_file).strip() if managed and version_file.exists() else ""
+
+
+def _running_pi_version() -> str:
+    """Return the version of the npm or managed pi install sessions run, or "" if unknown."""
+    version_file = _pi_agent_dir() / "install" / "current-version"
+    return _pi_package_version(_pi_package_dir(_PI_PACKAGE) / "package.json") or (
+        _read_text(version_file).strip() if version_file.exists() else ""
+    )
 
 
 def _warn_pi_version_drift(sources: Iterable[str]) -> None:

@@ -350,6 +350,9 @@ class TestPiPackages:
         assert fresh_settings["followUpMode"] == "all"
         assert fresh_settings["cacheWarming"] == "idle"
         assert fresh_settings["enableInstallTelemetry"] is False
+        assert fresh_settings["notices"] == dict.fromkeys(
+            ("cacheMisses", "cacheWarming", "compactionCosts", "reasoningDrops"), True
+        )
         failing: subprocess.CompletedProcess[str] = subprocess.CompletedProcess([], 1)
         with patch("llm_prompts.install.subprocess.run", return_value=failing):
             assert _install(tmp_path / "bare", tmp_path / "bare.json", pi="/usr/bin/pi")
@@ -364,7 +367,7 @@ class TestPiPackages:
                     "followUpMode": "one-at-a-time",
                     "cacheWarming": "streaming",
                     "enableInstallTelemetry": True,
-                    "showCacheMissNotices": False,
+                    "notices": {"cacheMisses": False},
                     "markdown": {"mermaid": "off"},
                 }
             ),
@@ -376,8 +379,61 @@ class TestPiPackages:
         assert settings["followUpMode"] == "one-at-a-time"
         assert settings["cacheWarming"] == "streaming"
         assert settings["enableInstallTelemetry"] is True
-        assert settings["showCacheMissNotices"] is False
+        assert settings["notices"] == {"cacheMisses": False}
         assert settings["markdown"] == {"mermaid": "off"}
+
+    @pytest.mark.parametrize(
+        ("user_notices", "expected_cache_misses"),
+        [(None, False), ({"cacheMisses": True}, True)],
+    )
+    def test_legacy_cache_miss_setting_moves_to_notices(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        user_notices: dict[str, bool] | None,
+        expected_cache_misses: bool,
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        settings_path = home / ".pi" / "agent" / "settings.json"
+        settings_path.parent.mkdir(parents=True)
+        user_settings: dict[str, Any] = {"showCacheMissNotices": False}
+        if user_notices:
+            user_settings["notices"] = user_notices
+        settings_path.write_text(json.dumps(user_settings), encoding="utf-8")
+        _install(home, tmp_path / "installed.json")
+        settings = _settings(home)
+        assert "showCacheMissNotices" not in settings
+        assert settings["notices"]["cacheMisses"] is expected_cache_misses
+        assert settings["notices"].get("cacheWarming", True) is True
+
+    def test_legacy_cache_miss_setting_stays_until_pi_reads_notices(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        agent_dir = home / ".pi" / "agent"
+        (agent_dir / "install").mkdir(parents=True)
+        settings_path = agent_dir / "settings.json"
+        settings_path.write_text(
+            json.dumps({"showCacheMissNotices": False}), encoding="utf-8"
+        )
+        version_file = agent_dir / "install" / "current-version"
+        version_file.write_text("1.6.0", encoding="utf-8")
+        _install(home, tmp_path / "installed.json")
+        settings = _settings(home)
+        assert settings["showCacheMissNotices"] is False
+        assert "notices" not in settings
+        settings_path.write_text(
+            json.dumps({**settings, "showCacheMissNotices": True}), encoding="utf-8"
+        )
+        _install(home, tmp_path / "installed.json")
+        assert "notices" not in _settings(home)
+        version_file.write_text("1.6.1", encoding="utf-8")
+        _install(home, tmp_path / "installed.json")
+        settings = _settings(home)
+        assert "showCacheMissNotices" not in settings
+        assert settings["notices"]["cacheMisses"] is True
 
     def test_user_settings_and_packages_are_preserved(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

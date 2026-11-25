@@ -4,7 +4,12 @@
   "followUpMode": "all",
   "cacheWarming": "idle",
   "enableInstallTelemetry": false,
-  "showCacheMissNotices": true,
+  "notices": {
+    "cacheMisses": true,
+    "cacheWarming": true,
+    "compactionCosts": true,
+    "reasoningDrops": true
+  },
   "markdown": { "mermaid": "streaming" },
   "packages": [
     "npm:@earendil-works/pi-coding-agent@1.6.1",
