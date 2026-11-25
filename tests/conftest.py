@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from llm_prompts import github_api, install, setup, telemetry_core
+from llm_prompts import clones, github_api, install, setup, telemetry_core
 from llm_prompts.contribute import Pr
 from llm_prompts.size_guard import CheckResult
 
@@ -724,6 +724,30 @@ def real_uv_tools_dir_query(monkeypatch: pytest.MonkeyPatch) -> None:
 def no_uv_tools_dir_query(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make `_uv_tools_dir` use the environment-derived default without spawning uv."""
     monkeypatch.setattr(setup, "_query_uv_tools_dir", lambda: None)
+
+
+_REAL_MIGRATE_CLONES = clones.migrate
+_REAL_BLOCK_ON_INSTALLED_EDITS = clones.block_on_installed_edits
+
+
+@pytest.fixture(autouse=True)
+def no_clone_migration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep `run_setup` from cloning tool sources into the home dir or reading installed copies."""
+    monkeypatch.setattr(clones, "migrate", lambda tools, *, dry_run=False: False)
+    monkeypatch.setattr(
+        clones, "block_on_installed_edits", lambda tools, *, dry_run=False: None
+    )
+
+
+@pytest.fixture
+def real_clone_migration(
+    no_clone_migration: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Restore the real clone migration so a test can run it."""
+    monkeypatch.setattr(clones, "migrate", _REAL_MIGRATE_CLONES)
+    monkeypatch.setattr(
+        clones, "block_on_installed_edits", _REAL_BLOCK_ON_INSTALLED_EDITS
+    )
 
 
 @pytest.fixture(autouse=True)
