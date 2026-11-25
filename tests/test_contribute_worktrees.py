@@ -1364,6 +1364,34 @@ def test_a_staged_hand_resolution_reaches_main_or_stays_when_the_branch_merges_c
     assert work.exists() != applied
 
 
+def test_a_hand_resolution_that_keeps_main_in_one_file_stays_when_main_changes_it(
+    project: Project,
+) -> None:
+    repo = project.repo
+    base = git(repo, "rev-parse", "HEAD")
+    git(repo, "checkout", "-qb", "feat")
+    project.commit(repo, "a.txt", "feature\n", "feat: feature a")
+    tip = project.commit(repo, "b.txt", "feature\n", "feat: feature b")
+    git(repo, "checkout", "-q", "main")
+    project.commit(repo, "a.txt", "main\n", "feat: main a")
+    project.commit(repo, "b.txt", "main\n", "feat: main b")
+    squash = main_sync.Squash(tip=tip, floor=base, first=tip)
+    assert main_sync.rebuild_local(repo, base, {}, (), {}, [squash]).mode == "stopped"
+    work = main_sync.resolve_worktree(repo)
+    (work / "a.txt").write_text("main\n", encoding="utf-8")
+    (work / "b.txt").write_text("resolved\n", encoding="utf-8")
+    git(work, "add", "a.txt", "b.txt")
+    assert main_sync.rebuild_local(repo, base, {}, (), {}, [squash]).mode == "rebuilt"
+    project.commit(repo, "a.txt", "moved\n", "feat: main moves a")
+    main = git(repo, "rev-parse", "main")
+
+    rebuilt = main_sync.rebuild_local(repo, base, {}, (), {}, [squash])
+
+    assert rebuilt.mode == "stopped"
+    assert git(repo, "rev-parse", "main") == main
+    assert work.exists()
+
+
 def test_a_staged_hand_resolution_replays_onto_an_unrelated_main_change(
     project: Project, hand_staged: main_sync.Squash
 ) -> None:
