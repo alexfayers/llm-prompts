@@ -8,6 +8,13 @@ Pass this to the reviewer with the content to review.
 - MUST NOT report style nits.
 - A reviewer delegate MUST load the repo's `.github/instructions/review.instructions.md`, where present, and hold to its Severity bar.
 
+## Re-review rounds
+
+- A re-reviewer MUST check that each earlier finding is fixed, and look for regressions in the lines the fix touched.
+- A re-reviewer MUST report a new finding in untouched code only when it is high.
+- A medium finding in untouched code MUST NOT block `CLEAN`. The reviewer MUST list it on the `DEFERRED:` line.
+  The caller MUST file each as a follow-up issue.
+
 ## Loading the diff
 
 - MUST load the diff with `gh pr diff <n>` or `git diff <range>`, never a web fetch.
@@ -16,7 +23,9 @@ Pass this to the reviewer with the content to review.
 
 - MUST return numbered findings, each with `file:line`, a severity (high, medium, low) and a one-line fix.
 - A reviewer following `SKILL.md` MUST render `filter_findings.py`'s output: `[]` as `CLEAN`, each other item as one numbered finding.
-- With no findings, the report body MUST be only `CLEAN`. A caller that needs its own reply format (e.g. an OUTCOME line) MUST wrap that body, not replace it.
+- With no findings, the report body MUST be only `CLEAN`, plus any `DEFERRED:` line.
+- A report MAY end with one `DEFERRED:` line listing deferred findings, after `CLEAN` or after the numbered findings.
+- A caller that needs its own reply format (e.g. an OUTCOME line) MUST wrap that body, not replace it.
 
 ## Stop rule
 
