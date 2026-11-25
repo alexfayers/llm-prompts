@@ -24,7 +24,14 @@ from typing import Any, NamedTuple, TextIO
 
 from . import github_api, main_sync, worktrees
 from .exit_reason import ExitReason
-from .git_snapshot import Snapshot, read_refs, resolve_ref
+from .git_snapshot import (
+    Diff,
+    Snapshot,
+    read_diffs,
+    read_reflogs,
+    read_refs,
+    resolve_ref,
+)
 from .network import run_with_retries, with_retries
 from .squash_subject import squash_pr_number
 from .worktrees import Link, WorktreeEntry
@@ -103,19 +110,40 @@ def _refs(repo: Path) -> dict[str, str]:
 
 @cache
 def _snapshot(repo: Path, floor: str) -> Snapshot | None:
-    """Return what the tracked branches hold above ``floor`` when it names a ref, kept until ``_refs_moved``."""
-    if resolve_ref(_refs(repo), floor) is None:
+    """Return what the tracked branches, their earlier versions and ``refs/llm-prompts`` hold above ``floor`` when it names a ref, kept until ``_refs_moved``."""
+    refs = _refs(repo)
+    if resolve_ref(refs, floor) is None:
         return None
-    return Snapshot(repo, _refs(repo), floor, ["main", *_branches.get(repo, ())])
+    entries = _tracked.get(repo, ())
+    own = [
+        ref
+        for ref in ["main", *(f"refs/heads/{e.branch}" for e in entries)]
+        if resolve_ref(refs, ref) is not None
+    ]
+    _prime_reflogs(repo, own)
+    return Snapshot(
+        repo,
+        refs,
+        floor,
+        [
+            *own,
+            *(sha for ref in own for sha in _reflogs[repo, ref]),
+            *(sha for name, sha in refs.items() if name.startswith(_LLM_PROMPTS_REFS)),
+        ],
+        [sha for e in entries for sha in (e.remote_head, e.copied_tip) if sha],
+    )
 
 
-_branches: dict[Path, Collection[str]] = {}
+_LLM_PROMPTS_REFS = "refs/llm-prompts/"
+_tracked: dict[Path, Collection[WorktreeEntry]] = {}
 _floors: dict[Path, Sequence[str]] = {}
 
 
-def _track(repo: Path, branches: Collection[str], floors: Sequence[str]) -> None:
-    """Have the snapshots of ``repo`` hold ``branches`` above each of ``floors``."""
-    _branches[repo] = branches
+def _track(
+    repo: Path, entries: Collection[WorktreeEntry], floors: Sequence[str]
+) -> None:
+    """Have the snapshots of ``repo`` hold the branches and recorded heads of ``entries`` above each of ``floors``."""
+    _tracked[repo] = entries
     _floors[repo] = tuple(dict.fromkeys(floors))
     _snapshot.cache_clear()
 
@@ -132,8 +160,25 @@ def _ask[Answer](
     return None
 
 
+_reflogs: dict[tuple[Path, str], list[str]] = {}
+
+
+def _prime_reflogs(repo: Path, refs: Collection[str]) -> None:
+    """Read the reflogs of the refs that are not yet known, in one pass."""
+    missing = [ref for ref in dict.fromkeys(refs) if (repo, ref) not in _reflogs]
+    for ref, commits in read_reflogs(repo, missing).items():
+        _reflogs[repo, ref] = commits
+
+
+def _reflog(repo: Path, ref: str) -> list[str]:
+    """Return the commits of ``ref``'s reflog, newest first, kept until ``_refs_moved``."""
+    _prime_reflogs(repo, [ref])
+    return _reflogs[repo, ref]
+
+
 def _refs_moved() -> None:
     """Forget the git reads that depend on where refs point. Call it after anything moves a ref."""
+    _reflogs.clear()
     _git_cached.cache_clear()
     _git_contains.cache_clear()
     _refs.cache_clear()
@@ -1041,24 +1086,29 @@ def _tips(repo: Path, base: str, entries: Sequence[WorktreeEntry]) -> list[Tip]:
     return tips
 
 
-@cache
-def _patch_id(repo: Path, *diff_args: str) -> str:
-    """Return the stable patch id of a ``show`` or ``diff`` that names its commits by sha."""
-    shown = subprocess.run(
-        ["git", "-C", str(repo), *diff_args], capture_output=True, check=True
-    ).stdout.strip()
-    done = subprocess.run(
-        ["git", "patch-id", "--stable"],
-        cwd=repo,
-        input=shown,
-        capture_output=True,
-        check=True,
-    )
-    return done.stdout.decode().split()[0] if done.stdout else ""
+_diffs: dict[tuple[Path, str, str], Diff] = {}
+
+
+def _prime_diffs(repo: Path, requests: Collection[tuple[str, str]]) -> None:
+    """Read the diffs of ``(floor, sha)`` pairs that are not yet known, in one pass."""
+    missing = {request for request in requests if (repo, *request) not in _diffs}
+    for request, diff in read_diffs(repo, missing).items():
+        _diffs[repo, *request] = diff
+
+
+def _diff_of(repo: Path, sha: str, floor: str = "") -> Diff:
+    """Return the diff of commit ``sha``, or from ``floor`` to ``sha``."""
+    _prime_diffs(repo, [(floor, sha)])
+    return _diffs[repo, floor, sha]
+
+
+def _patch_id(repo: Path, sha: str) -> str:
+    """Return the stable patch id of commit ``sha``."""
+    return _diff_of(repo, sha).patch_id
 
 
 def _squash_patch_id(repo: Path, squash: main_sync.Squash) -> str:
-    return _patch_id(repo, "diff", "-U0", squash.floor, squash.tip)
+    return _diff_of(repo, squash.tip, squash.floor).patch_id
 
 
 def _squash_of(
@@ -1132,19 +1182,52 @@ def _later_copies(
     found: set[str] = set()
     for sha in (sha for tip in tips for sha in tip.commits[1:]):
         at, subject = _commit_identity(repo, sha).split("\t", 1)
-        patch = _patch_id(repo, "show", "-U0", sha)
+        patch = _patch_id(repo, sha)
         if match := next(
             (
                 row
                 for row in free
-                if row[1:] == [at, subject]
-                and _patch_id(repo, "show", "-U0", row[0]) == patch
+                if row[1:] == [at, subject] and _patch_id(repo, row[0]) == patch
             ),
             None,
         ):
             free.remove(match)
             found.add(match[0])
     return found
+
+
+def _held_by_earlier_versions(
+    repo: Path, base: str, tips: Sequence[Tip]
+) -> dict[str, set[str]]:
+    """Map each tip's branch to the commits an earlier version of it held that neither the branch, any earlier main nor main holds.
+
+    A branch whose current commits the snapshot lacks maps to nothing, so no copy of it is dropped.
+    """
+    snapshot = _snapshot(repo, base)
+    if snapshot is None:
+        return {}
+    unheld = snapshot.reachable(
+        "main", *_reflog(repo, "main"), main_sync.EARLIER_MAINS_REF
+    )
+    return {
+        tip.entry.branch: snapshot.reachable(*_versions(repo, tip))
+        - snapshot.reachable(tip.commits[-1])
+        - unheld
+        for tip in tips
+        if tip.commits and tip.commits[-1] in snapshot.commits
+    }
+
+
+def _earlier_diffs(repo: Path, base: str, tips: Sequence[Tip]) -> list[tuple[str, str]]:
+    """Return the ``(floor, sha)`` diffs the tips' earlier versions and last copies are compared by."""
+    requests: list[tuple[str, str]] = []
+    held_by = _held_by_earlier_versions(repo, base, tips)
+    for tip in tips:
+        requests += [("", sha) for sha in held_by.get(tip.entry.branch, ())]
+        for version in (*_versions(repo, tip), tip.entry.copied_tip):
+            if squash := _squash_at(repo, tip.floor, version):
+                requests += [("", squash.first), (squash.floor, squash.tip)]
+    return requests
 
 
 def _rewritten_copies(
@@ -1157,47 +1240,17 @@ def _rewritten_copies(
     """
     free = [row for row in _main_rows(repo, base) if row[0] not in taken]
     found: set[str] = set()
-    earlier_mains = dict.fromkeys(
-        [
-            *_git(
-                "log", "--no-show-signature", "-g", "--format=%H", "main", repo=repo
-            ).split(),
-            *_git(
-                "for-each-ref",
-                "--format=%(refname)",
-                main_sync.EARLIER_MAINS_REF,
-                repo=repo,
-            ).split(),
-        ]
-    )
+    held_by = _held_by_earlier_versions(repo, base, tips)
     for tip in tips:
-        past = _git(
-            "log",
-            "--no-show-signature",
-            "-g",
-            "--format=%H",
-            f"refs/heads/{tip.entry.branch}",
-            repo=repo,
-        ).split()
-        if not past:
+        if not (held := held_by.get(tip.entry.branch)):
             continue
-        held = _git(
-            "log",
-            "--no-show-signature",
-            "--format=%H",
-            *dict.fromkeys(past),
-            f"^{tip.floor}",
-            f"^{tip.commits[-1]}",
-            "^main",
-            *(f"^{sha}" for sha in earlier_mains),
-            repo=repo,
-        ).split()
+        past = _versions(repo, tip)
         proofs: dict[str, set[str]] = {}
         for sha in held:
             proofs.setdefault(_commit_identity(repo, sha), set()).add(
-                _patch_id(repo, "show", "-U0", sha)
+                _patch_id(repo, sha)
             )
-        for earlier in dict.fromkeys(past):
+        for earlier in past:
             commits = _commit_shas(repo, tip.floor, earlier)
             if commits and commits[0] in held:
                 proofs[_commit_identity(repo, commits[0])].add(
@@ -1209,7 +1262,7 @@ def _rewritten_copies(
             sha
             for sha, at, subject in free
             if (patches := proofs.get(f"{at}\t{subject}"))
-            and _patch_id(repo, "show", "-U0", sha) in patches - {""}
+            and _patch_id(repo, sha) in patches - {""}
         }
     return found
 
@@ -1225,12 +1278,12 @@ def _is_copy(
 
     When ``whole``, it also counts where the tip of ``squash`` holds every change of ``sha``.
     """
-    patch = _patch_id(repo, "show", "-U0", sha)
+    patch = _patch_id(repo, sha)
     return (
         patch
         in {
             _squash_patch_id(repo, squash),
-            *(() if whole else (_patch_id(repo, "show", "-U0", squash.first),)),
+            *(() if whole else (_patch_id(repo, squash.first),)),
         }
         or main_sync.replays_to(repo, f"{sha}^", squash, sha, not whole)
         or (whole and main_sync.holds_changes(repo, squash.tip, sha))
@@ -1239,18 +1292,7 @@ def _is_copy(
 
 def _versions(repo: Path, tip: Tip) -> list[str]:
     """Return every version of ``tip``'s branch in its reflog, newest first."""
-    return list(
-        dict.fromkeys(
-            _git(
-                "log",
-                "--no-show-signature",
-                "-g",
-                "--format=%H",
-                f"refs/heads/{tip.entry.branch}",
-                repo=repo,
-            ).split()
-        )
-    )
+    return list(dict.fromkeys(_reflog(repo, f"refs/heads/{tip.entry.branch}")))
 
 
 def _copied_squash(repo: Path, tip: Tip, copy: str) -> main_sync.Squash | None:
@@ -1266,14 +1308,9 @@ def _copied_squash(repo: Path, tip: Tip, copy: str) -> main_sync.Squash | None:
     return next(iter(squashes.values())) if len(squashes) == 1 else None
 
 
-def _paths(repo: Path, *commits: str) -> set[str]:
-    """Return the files changed by commit ``commits[0]``, or between two commits."""
-    args = (
-        ("diff", "--name-only", *commits)
-        if len(commits) > 1
-        else ("show", "--format=", "--name-only", *commits)
-    )
-    return set(_git(*args, repo=repo).split())
+def _paths(repo: Path, sha: str, floor: str = "") -> frozenset[str]:
+    """Return the files changed by commit ``sha``, or between ``floor`` and ``sha``."""
+    return _diff_of(repo, sha, floor).paths
 
 
 def _earlier_patches(repo: Path, tip: Tip) -> set[str]:
@@ -1283,7 +1320,7 @@ def _earlier_patches(repo: Path, tip: Tip) -> set[str]:
         if commits := _commit_shas(repo, tip.floor, version):
             patches |= {
                 _squash_patch_id(repo, _squash_of(repo, tip.floor, commits, version)),
-                _patch_id(repo, "show", "-U0", commits[0]),
+                _patch_id(repo, commits[0]),
             }
     return patches - {""}
 
@@ -1329,8 +1366,7 @@ def _copies_of(
                 not whole
                 and (
                     (last and _is_copy(repo, row[0], last))
-                    or _patch_id(repo, "show", "-U0", row[0])
-                    in _earlier_patches(repo, tip)
+                    or _patch_id(repo, row[0]) in _earlier_patches(repo, tip)
                 )
             )
         ]
@@ -1340,15 +1376,14 @@ def _copies_of(
             else [
                 row
                 for row in matches
-                if _paths(repo, row[0]) & _paths(repo, squash.floor, squash.tip)
+                if _paths(repo, row[0]) & _paths(repo, squash.tip, squash.floor)
             ]
         )
         if whole and not proven and last and len(matches) > 1:
             full = [
                 row
                 for row in matches
-                if _patch_id(repo, "show", "-U0", row[0])
-                == _squash_patch_id(repo, last)
+                if _patch_id(repo, row[0]) == _squash_patch_id(repo, last)
                 or main_sync.replays_to(repo, f"{row[0]}^", last, row[0], False)
             ]
             if len(full) == 1 and all(
@@ -1375,8 +1410,7 @@ def _copies_of(
                 if row != copy[0]
                 and (
                     _is_copy(repo, row[0], squash, True)
-                    or _patch_id(repo, "show", "-U0", row[0])
-                    in _earlier_patches(repo, tip)
+                    or _patch_id(repo, row[0]) in _earlier_patches(repo, tip)
                 )
             }
     for squash in squashes:
@@ -1400,7 +1434,7 @@ def _copies_of(
             continue
         patch = _squash_patch_id(repo, squash)
         if match := next(
-            (row for row in free if _patch_id(repo, "show", "-U0", row[0]) == patch),
+            (row for row in free if _patch_id(repo, row[0]) == patch),
             None,
         ):
             free.remove(match)
@@ -1447,6 +1481,15 @@ def _main_changes(
     swaps: dict[str, main_sync.Squash] = {}
     adds: list[main_sync.Squash] = []
     squashes = [_squash_of(repo, t.floor, t.commits, t.commits[-1]) for t in tips]
+    _prime_diffs(
+        repo,
+        [
+            *(("", row[0]) for row in _main_rows(repo, base)),
+            *(("", sha) for tip in tips for sha in tip.commits),
+            *((squash.floor, squash.tip) for squash in squashes),
+            *_earlier_diffs(repo, base, tips),
+        ],
+    )
     found, extra = _copies_of(repo, base, tips, squashes, reserved)
     copies = {found[s.tip]: s.first for s in squashes if s.tip in found}
     rows = _main_rows(repo, base)
@@ -1455,7 +1498,7 @@ def _main_changes(
         if copy is None:
             adds.append(squash)
         elif _commit_identity(repo, copy) != _commit_identity(repo, squash.first) or (
-            _patch_id(repo, "show", "-U0", copy) != _squash_patch_id(repo, squash)
+            _patch_id(repo, copy) != _squash_patch_id(repo, squash)
             and not main_sync.replays_to(repo, f"{copy}^", squash, copy)
         ):
             swaps[copy] = squash
@@ -1666,7 +1709,7 @@ class _RepoSync:
         self.cleanup: list[tuple[WorktreeEntry, str, Callable[[], None]]] = []
 
     def track(self) -> None:
-        _track(self.repo, [e.branch for e in self.entries], (self.base, self.main_base))
+        _track(self.repo, self.entries, (self.base, self.main_base))
 
     def remote(self) -> tuple[str, bool]:
         if self._remote is None:
@@ -2463,7 +2506,7 @@ def list_targets(targets: Sequence[Target]) -> int:
             print(f"[{name}]")
         base = base_ref(repo)
         mine = [e for e in entries if e.repo == key]
-        _track(repo, [e.branch for e in mine], (base,))
+        _track(repo, mine, (base,))
         unmerged = [e for e in mine if e.pr_state != "MERGED"]
         for entry in mine:
             print(_list_line(repo, base, entry, unmerged))
