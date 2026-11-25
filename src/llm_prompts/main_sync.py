@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import suppress
+from difflib import SequenceMatcher
 from functools import cache
 from itertools import takewhile
 from pathlib import Path
@@ -22,6 +23,7 @@ _Identity = tuple[str, str]
 GIT_TIMED_OUT = 124
 PRE_SYNC_REF = "refs/llm-prompts/pre-sync"
 EARLIER_MAINS_REF = "refs/llm-prompts/earlier-mains"
+_MERGE_FILE_MAX_CONFLICTS = 127
 RESOLVE_WORKTREE = "llm-prompts-resolve"
 _RESOLUTIONS_REF = "refs/llm-prompts/resolutions"
 _RESOLUTION_FILE = "llm-prompts-resolution"
@@ -879,6 +881,54 @@ def _lost_paths(repo: Path, tip: str, sha: str, kept: Collection[str]) -> list[s
     )
 
 
+def _blob(repo: Path, rev: str, path: str) -> str | None:
+    result = run_git(repo, "show", f"{rev}:{path}")
+    return result.stdout if result.returncode == 0 else None
+
+
+def _merge_file(repo: Path, ours: str, base: str, theirs: str) -> tuple[bool, str]:
+    """Return whether merging ``theirs`` into ``ours`` from ``base`` is clean, and the merged text."""
+    with tempfile.TemporaryDirectory() as parent:
+        files = [Path(parent) / name for name in ("ours", "base", "theirs")]
+        for file, text in zip(files, (ours, base, theirs), strict=True):
+            file.write_text(text, encoding="utf-8")
+        result = run_git(repo, "merge-file", "-p", *map(str, files))
+    if result.returncode > _MERGE_FILE_MAX_CONFLICTS:
+        raise _Bail(result.stderr.strip() or "git merge-file failed")
+    return result.returncode == 0, result.stdout
+
+
+def _blocks_lacked(
+    repo: Path, sha: str, path: str, head: str, tip: str, kept: bool
+) -> bool:
+    """Return whether ``head`` lacks, without a clash, each block of changed lines of commit ``sha`` in ``path`` that ``tip`` lacks.
+
+    A clash with ``tip`` counts as held when ``kept``. An added, deleted or binary file is one block.
+    """
+    numstat = _read(
+        repo, "diff", "--numstat", "--no-renames", f"{sha}^", sha, "--", path
+    )
+    if numstat.startswith("-\t"):
+        return True
+    old, new = _blob(repo, f"{sha}^", path), _blob(repo, sha, path)
+    if old is None or new is None:
+        return True
+    head_text, tip_text = _blob(repo, head, path) or "", _blob(repo, tip, path) or ""
+    before, after = old.splitlines(keepends=True), new.splitlines(keepends=True)
+    matcher = SequenceMatcher(None, before, after, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        block = "".join([*before[:i1], *after[j1:j2], *before[i2:]])
+        clean, merged = _merge_file(repo, tip_text, old, block)
+        if merged == tip_text if clean else kept:
+            continue
+        clean, merged = _merge_file(repo, head_text, old, block)
+        if not clean or merged == head_text:
+            return False
+    return True
+
+
 def rebuild_local(
     repo: Path,
     base: str,
@@ -906,7 +956,7 @@ def rebuild_local(
         earlier: Local commit sha of a copy that only one worktree branch claims to the squash of that branch it was copied from.
 
     ``landed`` and ``exact`` commits, and the squashes that replace them, replay without recorded hand resolutions, and a conflict of one fails the rebuild.
-    Every change of an unpublished commit left out or replaced must be on the new main, unless it is not a ``landed`` or ``exact`` commit and clashes with a change in a file its replacement changes, or it is in a file its ``earlier`` squash, replayed on the commit's parent, changes to the content the commit holds, or the main being rebuilt already lacks it without a clash, or, for a commit with an ``earlier`` squash, a commit of its replacement held it, or main is left untouched.
+    Every change of an unpublished commit left out or replaced must be on the new main, unless it is not a ``landed`` or ``exact`` commit and clashes with a change in a file its replacement changes, or it is in a file its ``earlier`` squash, replayed on the commit's parent, changes to the content the commit holds, or the main being rebuilt already lacks that block of changed lines without a clash, or, for a commit with an ``earlier`` squash, a commit of its replacement held it, or main is left untouched.
 
     Returns:
         ``rebuilt`` with the count of replayed commits and the first commit of each squash replayed into a new commit, ``stopped`` at a conflict waiting for its hand resolution, or a failed result. Neither of the last two changes main.
@@ -997,7 +1047,12 @@ def rebuild_local(
                 lacked = _lost_paths(
                     repo, head, sha, _changed_paths(repo, f"{sha}^", sha)
                 )
-                lost = [path for path in lost if path not in lacked]
+                lost = [
+                    path
+                    for path in lost
+                    if path not in lacked
+                    or not _blocks_lacked(repo, sha, path, head, tip, path in kept)
+                ]
             if lost and (prior := (earlier or {}).get(sha)):
                 try:
                     replay = _merge_tree(repo, prior.floor, f"{sha}^", prior.tip)
