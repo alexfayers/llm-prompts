@@ -11,6 +11,7 @@ from __future__ import annotations
 import graphlib
 import json
 import re
+import shlex
 import shutil
 import subprocess
 from collections import Counter
@@ -621,6 +622,46 @@ def run_update(repo: Path, apply: bool, numbers: Collection[int] = ()) -> int:
         lines = list(pool.map(update_one, behind))
     print("\n".join(lines))
     return int(any("not updated" in line for line in lines))
+
+
+_OWNER_REVIEWED_LABEL = "owner-reviewed"
+_OWNER_GATED_PATH = re.compile(
+    r"src/[^/]+/prompts/(?:pi/|(?:.*/)?(?:rules|skills|workflows|agents)/)"
+)
+
+
+def run_ready(repo: Path, number: int) -> int:
+    """Mark PR ``number`` of ``repo``'s base repository ready with squash auto-merge on, labelling it owner-reviewed first when it changes owner-gated prompt files."""
+    owner, name = github_api.base_repo(repo)
+
+    def pr_command(verb: str, *flags: str) -> list[str]:
+        return ["gh", "pr", verb, str(number), "--repo", f"{owner}/{name}", *flags]
+
+    try:
+        paths = _run_with_retries(
+            ["gh", "api", "--paginate", f"repos/{owner}/{name}/pulls/{number}/files"]
+            + ["--jq", ".[] | .filename, .previous_filename // empty"],
+            repo,
+        ).splitlines()
+        if any(_OWNER_GATED_PATH.match(path) for path in paths):
+            _run_with_retries(
+                pr_command("edit", "--add-label", _OWNER_REVIEWED_LABEL), repo
+            )
+        _run_with_retries(pr_command("ready"), repo)
+    except subprocess.CalledProcessError as error:
+        print(f"#{number}: not marked ready ({first_stderr_line(error)})")
+        return 1
+    merge = pr_command("merge", "--auto", "--squash")
+    try:
+        _run_with_retries(merge, repo)
+    except subprocess.CalledProcessError as error:
+        print(
+            f"#{number}: ready, auto-merge not enabled ({first_stderr_line(error)}). "
+            f"Retry: {shlex.join(merge)}"
+        )
+        return 1
+    print(f"#{number}: ready, auto-merge on")
+    return 0
 
 
 def update_targets(

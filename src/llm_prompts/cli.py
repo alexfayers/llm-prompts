@@ -1631,7 +1631,21 @@ def _run_command(
         help="Only update this PR; repeatable.",
     )
 
+    ready_parser = contribute_sub.add_parser(
+        "ready",
+        help="Mark a PR ready, labelling it owner-reviewed first when it needs the owner, and enable squash auto-merge.",
+        parents=[tool_parser],
+    )
+    ready_parser.add_argument("number", type=int, help="The PR number.")
+
     args = parser.parse_args()
+
+    if (
+        args.command == "contribute"
+        and args.contribute_command == "ready"
+        and args.tool is None
+    ):
+        ready_parser.error("ready requires --tool NAME.")
 
     if (
         args.command == "contribute"
@@ -1950,7 +1964,7 @@ def _run_command(
             benchmark_parser.error(str(error))
         return run_benchmark(options)
     elif args.command == "contribute":
-        from .contribute import list_targets, sync_targets, update_targets
+        from .contribute import list_targets, run_ready, sync_targets, update_targets
 
         with run.exit_outcome("usage_error"):
             if args.tool is not None:
@@ -1960,6 +1974,8 @@ def _run_command(
                 targets = _contribute_targets()
         if args.contribute_command == "list":
             return list_targets(targets)
+        if args.contribute_command == "ready":
+            return run_ready(targets[0].repo, args.number)
         if args.contribute_command == "update":
             return update_targets(targets, args.apply, args.numbers or ())
         sync_options = _sync_options(args)

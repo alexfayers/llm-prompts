@@ -217,6 +217,94 @@ class TestBehindPrs:
             )
 
 
+class TestRunReady:
+    def _run(self, fake_subprocess: FakeSubprocess, tmp_path: Path, *paths: str) -> int:
+        fake_subprocess.on("remote", "get-url", "upstream", returncode=2)
+        fake_subprocess.on(
+            "remote", "get-url", "origin", stdout="git@github.com:octo/widgets.git\n"
+        )
+        fake_subprocess.on("gh", "api", stdout="\n".join(paths))
+        return contribute.run_ready(tmp_path, 7)
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            f"{PROMPTS_PREFIX}shared/rules/coding.md",
+            f"{PROMPTS_PREFIX}shared/skills/foo/SKILL.md",
+            f"{PROMPTS_PREFIX}shared/workflows/plan.md",
+            f"{PROMPTS_PREFIX}shared/agents/judge.md",
+            f"{PROMPTS_PREFIX}pi/seed/config.json",
+        ],
+    )
+    def test_gated_path_labels_before_ready_then_enables_auto_merge(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path, path: str
+    ) -> None:
+        assert self._run(fake_subprocess, tmp_path, "src/llm_prompts/cli.py", path) == 0
+
+        assert fake_subprocess.verbs[-3:] == [
+            "gh pr edit 7 --repo octo/widgets --add-label owner-reviewed",
+            "gh pr ready 7 --repo octo/widgets",
+            "gh pr merge 7 --repo octo/widgets --auto --squash",
+        ]
+        assert (
+            "repos/octo/widgets/pulls/7/files"
+            in fake_subprocess.matching("gh", "api")[0]
+        )
+
+    def test_ungated_paths_skip_the_label(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        status = self._run(
+            fake_subprocess, tmp_path, "src/llm_prompts/cli.py", "docs/notes.md"
+        )
+
+        assert status == 0
+        assert fake_subprocess.verbs[-2:] == [
+            "gh pr ready 7 --repo octo/widgets",
+            "gh pr merge 7 --repo octo/widgets --auto --squash",
+        ]
+
+    def test_renamed_out_of_a_gated_path_still_labels(
+        self, fake_subprocess: FakeSubprocess, tmp_path: Path
+    ) -> None:
+        self._run(fake_subprocess, tmp_path, "docs/notes.md", _IN_SCOPE)
+
+        files_call = fake_subprocess.matching("gh", "api")[0]
+        assert "previous_filename" in files_call[-1]
+        assert fake_subprocess.matching("gh", "pr", "edit") != []
+
+    def test_failed_auto_merge_reports_ready_and_the_retry_command(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        fake_subprocess.on("gh", "pr", "merge", returncode=1, stderr="not allowed\n")
+
+        status = self._run(fake_subprocess, tmp_path, "docs/notes.md")
+
+        assert status == 1
+        assert (
+            "#7: ready, auto-merge not enabled (not allowed). "
+            "Retry: gh pr merge 7 --repo octo/widgets --auto --squash"
+            in capsys.readouterr().out
+        )
+
+    def test_failed_label_stops_before_ready(
+        self,
+        fake_subprocess: FakeSubprocess,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        fake_subprocess.on("gh", "pr", "edit", returncode=1, stderr="no label\n")
+
+        status = self._run(fake_subprocess, tmp_path, _IN_SCOPE)
+
+        assert status == 1
+        assert fake_subprocess.matching("gh", "pr", "ready") == []
+        assert "#7: not marked ready (no label)" in capsys.readouterr().out
+
+
 class TestRunUpdate:
     def _behind(
         self, contribute_remote: ContributeRemote, *numbers: int, current: int = 0
