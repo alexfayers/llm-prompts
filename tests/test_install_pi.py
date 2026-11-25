@@ -2787,8 +2787,11 @@ class TestToolInstallIsolation:
 
         recorded = json.loads(manifest.read_text("utf-8"))["agents"]
         assert failed == "install_failed"
-        assert (home / ".claude/rules/r.md").is_file()
-        assert str(home / ".claude/rules/r.md") in recorded["claude-code"]["files"]
+        assert (home / ".claude/rules/llm-prompts.md").is_file()
+        assert (
+            str(home / ".claude/rules/llm-prompts.md")
+            in recorded["claude-code"]["files"]
+        )
         assert "pi" not in recorded
         assert "[pi] Install failed" in capsys.readouterr().err
 
