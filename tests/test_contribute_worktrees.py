@@ -1166,11 +1166,25 @@ def test_a_recorded_hand_resolution_settles_the_next_rebuild(
     assert project.main_subjects() == ["feat: main", "feat: feature"]
 
 
-@pytest.mark.parametrize("name", ["base.txt", "note.txt"])
+@pytest.mark.parametrize(
+    ("name", "hidden"),
+    [
+        ("base.txt", ""),
+        ("note.txt", ""),
+        ("note.txt", "ignored"),
+        ("note.txt", "status.showUntrackedFiles"),
+    ],
+)
 def test_a_hand_resolution_with_unstaged_work_stays_in_its_worktree(
-    project: Project, hand_staged: main_sync.Squash, name: str
+    project: Project, hand_staged: main_sync.Squash, name: str, hidden: str
 ) -> None:
     work = main_sync.resolve_worktree(project.repo)
+    if hidden == "ignored":
+        exclude = Path(git(work, "rev-parse", "--git-path", "info/exclude"))
+        exclude.parent.mkdir(exist_ok=True)
+        exclude.write_text(f"{name}\n", encoding="utf-8")
+    elif hidden:
+        git(project.repo, "config", hidden, "no")
     (work / name).write_text("unstaged\n", encoding="utf-8")
     main = git(project.repo, "rev-parse", "main")
 

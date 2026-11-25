@@ -614,7 +614,10 @@ def _record_resolution(repo: Path) -> None:
             f" {drop}"
         )
     if any(
-        line[1] != " " for line in _read(work, "status", "--porcelain").splitlines()
+        line[1] != " "
+        for line in _read(
+            work, "status", "--porcelain", "--ignored", "--untracked-files=all"
+        ).splitlines()
     ):
         raise _Stopped(f"{work} has changes that are not staged; {_RESOLVE_STEPS}")
     if not (named := _resolution_file(work)).exists():
