@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import tomllib
 from pathlib import Path
@@ -612,6 +613,51 @@ class TestRunSetup:
         monkeypatch.setattr(
             "llm_prompts.cli._get_installed_revision", lambda name: installed
         )
+
+        setup.run_setup()
+
+        assert len(fake_subprocess.matching("uv", "tool", "install")) == installs
+
+    @staticmethod
+    def write_origin(tools_dir: Path, url: str, revision: str | None = None) -> None:
+        dist_info = tools_dir / "core" / "lib" / "site-packages" / "core-0.1.dist-info"
+        dist_info.mkdir(parents=True)
+        vcs_info = {"vcs_info": {"requested_revision": revision}} if revision else {}
+        (dist_info / "direct_url.json").write_text(json.dumps({"url": url, **vcs_info}))
+
+    @pytest.mark.parametrize(
+        ("installed_from", "configured", "installs", "revision"),
+        [
+            ("file:///elsewhere", "{core}", 1, None),
+            ("file://{core}", "{core}", 0, None),
+            ("https://github.com/o/other", "git+https://github.com/o/r.git", 1, None),
+            ("https://github.com/o/r", "git+https://github.com/o/r.git", 0, None),
+            ("ssh://git@github.com/o/r.git", "git+ssh://github.com/o/r@v1", 0, None),
+            ("https://github.com/o/r", "git+https://github.com/o/r@v2", 1, "v1"),
+            ("https://github.com/o/r", "git+https://github.com/o/r@v2", 0, "v2"),
+            ("https://github.com/o/r", "git+https://github.com/o/r.git", 1, "v1"),
+        ],
+    )
+    def test_installed_source_differing_from_the_configured_one_forces_an_install(
+        self,
+        tmp_path: Path,
+        tools_dir: Path,
+        fake_subprocess: FakeSubprocess,
+        monkeypatch: pytest.MonkeyPatch,
+        installed_from: str,
+        configured: str,
+        installs: int,
+        revision: str | None,
+    ) -> None:
+        core = str(tmp_path / "core")
+        tools = [
+            {"name": "core", "source": configured.format(core=core)},
+            {"name": "cli", "source": str(tmp_path / "cli")},
+        ]
+        monkeypatch.setattr(setup, "_load_config", lambda: tools)
+        monkeypatch.setattr(setup, "_install_pins", lambda tools: {})
+        monkeypatch.setattr(setup, "_read_pyproject", lambda tool: None)
+        self.write_origin(tools_dir, installed_from.format(core=core), revision)
 
         setup.run_setup()
 

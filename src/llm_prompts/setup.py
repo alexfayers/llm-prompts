@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from importlib import metadata
 from pathlib import Path
 from typing import Any, NamedTuple
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from . import home
 from .exit_reason import ExitReason
@@ -788,6 +788,72 @@ def _pins_drifted(pins: Mapping[str, str]) -> bool:
     return any(_get_installed_revision(name) != ref for name, ref in pins.items())
 
 
+def _normalize_origin(source: str) -> str:
+    """Return a source or installed url in a form that equal origins share."""
+    if source.startswith("file://"):
+        return str(Path(unquote(urlparse(source).path)).resolve())
+    if _is_local_path(source):
+        return str(_expand(source))
+    parsed = urlparse(source.removeprefix("git+"))
+    host = parsed.netloc.rpartition("@")[2]
+    path = parsed.path.partition("@")[0].rstrip("/").removesuffix(".git")
+    return f"{parsed.scheme}://{host}{path}"
+
+
+def _installed_direct_url(env_name: str, package: str) -> dict[str, Any] | None:
+    """Return the parsed direct_url.json a package of a uv tool env was installed with, or None if unreadable."""
+    for dist_info in (_uv_tools_dir() / env_name).rglob("*.dist-info"):
+        if (
+            _canonical_name(
+                dist_info.name.removesuffix(".dist-info").rpartition("-")[0]
+            )
+            != package
+        ):
+            continue
+        try:
+            data = json.loads((dist_info / "direct_url.json").read_text("utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict) and isinstance(data.get("url"), str):
+            return data
+    return None
+
+
+def _inline_ref(source: str) -> str | None:
+    """Return the ref a git source names after its ``@``, if any."""
+    if _extract_git_url(source) is None:
+        return None
+    return urlparse(source.removeprefix("git+")).path.partition("@")[2] or None
+
+
+def _sources_drifted(
+    env_name: str, tools: list[dict[str, Any]], pins: Mapping[str, str]
+) -> bool:
+    """Check if any tool is installed from a different source or ref than configured.
+
+    Args:
+        env_name: The shared uv tool env.
+        tools: The configured tools.
+        pins: Tool names mapped to the ref their install source is pinned to.
+
+    Returns:
+        True if an installed origin or requested ref differs from the configured one,
+        where a tool without a configured ref is expected at the remote's HEAD.
+    """
+    for tool in tools:
+        source = str(tool["source"])
+        installed = _installed_direct_url(env_name, package_name(tool))
+        if installed is None:
+            continue
+        if _normalize_origin(installed["url"]) != _normalize_origin(source):
+            return True
+        vcs_info = installed.get("vcs_info")
+        ref = _inline_ref(source) or pins.get(str(tool["name"]))
+        if vcs_info is not None and vcs_info.get("requested_revision") != ref:
+            return True
+    return False
+
+
 def _git_dependencies(tools: list[dict[str, Any]]) -> list[str]:
     """Return the canonical names of the git-sourced dependencies the tools declare."""
     return sorted(
@@ -1067,6 +1133,7 @@ def run_setup(
         name in force_reinstall
         or any(member in force_reinstall for member in env.members)
         or _pins_drifted(pins)
+        or _sources_drifted(name, tools, pins)
     )
     if not needs_install:
         print(f"\n[{name}] {' '.join(env.upgrade_cmd)}")
