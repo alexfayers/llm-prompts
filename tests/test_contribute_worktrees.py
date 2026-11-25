@@ -1148,6 +1148,36 @@ def test_a_rewritten_worktree_replaces_main_copies_of_its_earlier_commits(
     assert (project.repo / "feat-a-8.txt").read_text(encoding="utf-8") == "rewritten\n"
 
 
+def test_update_copies_the_recorded_remote_head_that_merged_a_newer_main_over_a_stale_local_branch(
+    project: Project,
+) -> None:
+    path = project.worktree("feat/a")
+    project.commit(path, "base.txt", "branch\n", "feat: a")
+    stale = git(path, "rev-parse", "HEAD")
+    project.run(branch="feat/a")
+    worktrees.save_entries(
+        project.record, [e._replace(ready=True) for e in project.entries()]
+    )
+    other = project.root / "other"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "base.txt", "main\n", "feat: upstream")
+    git(other, "push", "-q", "origin", "main")
+    git(project.repo, "fetch", "-q", "origin")
+    git(path, "merge", "-q", "-s", "ours", "--no-edit", "origin/main")
+    project.commit(path, "base.txt", "both\n", "fix: a")
+    head = git(path, "rev-parse", "HEAD")
+    git(path, "reset", "-q", "--hard", stale)
+    worktrees.save_entries(
+        project.record, [e._replace(remote_head=head) for e in project.entries()]
+    )
+
+    assert copy_recorded(project) == 0
+
+    assert not main_sync.resolve_worktree(project.repo).exists()
+    assert project.main_subjects() == ["feat: a"]
+    assert (project.repo / "base.txt").read_text(encoding="utf-8") == "both\n"
+
+
 def test_an_unrelated_main_commit_titled_like_a_later_worktree_commit_is_kept(
     project: Project,
 ) -> None:
