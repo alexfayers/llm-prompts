@@ -77,6 +77,27 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: just test-ts
 
+  test-macos:
+    needs: unblocked
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.4.0
+        with:
+          enable-cache: true
+      - uses: alexfayers/llm-prompts-ci/.github/actions/setup-just@main
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: uv sync --locked
+      - run: pnpm install --frozen-lockfile
+      - run: just test
+      - run: just test-ts
+
   pi-pins:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
