@@ -19,7 +19,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from llm_prompts import clones, github_api, install, setup, telemetry_core
+from llm_prompts import (
+    clones,
+    github_api,
+    install,
+    setup,
+    telemetry_core,
+    tool_paths,
+)
 from llm_prompts.contribute import Pr
 from llm_prompts.size_guard import CheckResult
 
@@ -708,6 +715,7 @@ def isolated_home(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("UV_TOOL_DIR", raising=False)
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.delenv(tool_paths.ROOT_ENV, raising=False)
     return home
 
 
