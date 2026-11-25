@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import threading
 import urllib.error
 import urllib.request
@@ -18,6 +19,13 @@ from typing import Any, Self, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+from worker_share import (
+    SharedScheduling,
+    available_cores,
+    register_run,
+    release_run,
+    start_workers,
+)
 
 from llm_prompts import (
     clones,
@@ -1053,3 +1061,27 @@ def fake_mcp_server(tools: list[dict[str, Any]]) -> Any:
         return response
 
     return patch("llm_prompts.mcp.urlopen", urlopen)
+
+
+_RUN_DIR = Path(tempfile.gettempdir()) / f"llm-prompts-pytest-runs-{os.getuid()}"
+
+
+def pytest_xdist_auto_num_workers(config: pytest.Config) -> int:
+    """Start this run's share of the cores as workers for ``-n auto``."""
+    return start_workers(_RUN_DIR, available_cores())
+
+
+def pytest_xdist_make_scheduler(
+    config: pytest.Config, log: Any
+) -> SharedScheduling | None:
+    """Split the cores between pytest runs active at once."""
+    if config.getvalue("dist") != "worksteal":
+        return None
+    register_run(_RUN_DIR, os.getpid())
+    scheduler = SharedScheduling(config, log)
+    scheduler.run_dir, scheduler.cores = _RUN_DIR, available_cores()
+    return scheduler
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    release_run(_RUN_DIR, os.getpid())
