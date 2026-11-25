@@ -37,7 +37,7 @@ from llm_prompts.hooks import (
 )
 from llm_prompts.setup import _UPDATE_INSTRUCTION
 from llm_prompts.size_guard import CHECKED_TARGETS, CheckResult, Violation
-from llm_prompts.size_limits import FINALS, RULE_BYTES
+from llm_prompts.size_limits import FINALS, NO_LAZY_CONTINUATIONS, RULE_BYTES
 
 _UPDATE_COMMAND = ("llm-prompts", "update")
 _UPDATE_VERB = " ".join(_UPDATE_COMMAND)
@@ -394,6 +394,30 @@ class TestPromptSizeGate:
         assert RULE_BYTES in result.block
         assert "big.md" in result.block
         assert str(FINALS[RULE_BYTES]) in result.block
+
+    def test_edit_adding_a_second_lazy_continuation_is_denied(
+        self, plugin: AutoReinstallPlugin, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "size-root"
+        for target in CHECKED_TARGETS:
+            _write(root / target / "vars.json", "{}")
+        path = _write(root / "shared" / "rules" / "lazy.md", "- A\nLazy.\n\n- B\n")
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=root):
+            result = plugin.on_hook(
+                "PreToolUse",
+                tool_name="Edit",
+                parameters={
+                    "path": str(path),
+                    "old_string": "- B\n",
+                    "new_string": "- B\nLazy.\n",
+                },
+            )
+
+        assert result is not None
+        assert result.block is not None
+        assert NO_LAZY_CONTINUATIONS in result.block
+        assert " at line 5 " in result.block
 
     def test_write_within_thresholds_returns_none_and_measures_once(
         self, plugin: AutoReinstallPlugin, tmp_path: Path

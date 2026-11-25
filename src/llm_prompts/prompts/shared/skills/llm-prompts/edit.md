@@ -11,7 +11,8 @@ Decision order for touching this repo's own rule/skill/workflow/agent sources.
 ## 2. Scope
 
 - Generic across every project and person -> rule/skill. Specific to one person/repo/task -> memory, not here.
-- A hook enforces with certainty; a rule/skill only requests compliance. Anything that genuinely must not happen, or any behaviour checkable at a tool call or lifecycle event, belongs in a hook, not a MUST/NEVER rule.
+- A hook enforces with certainty; a rule/skill only requests compliance.
+  Anything that genuinely must not happen, or any behaviour checkable at a tool call or lifecycle event, belongs in a hook, not a MUST/NEVER rule.
 - A behaviour a hook can only partly catch deterministically MUST stay a SHOULD rule, with the hook as a note.
 - Where the event reached for fires only after the change has landed, MUST check whether an earlier event can predict the outcome from the tool's own input, not conclude enforcement is impossible.
 
@@ -34,7 +35,8 @@ Decision order for touching this repo's own rule/skill/workflow/agent sources.
 - RFC 2119 bullets only; no filler, justification or restatement. MUST/MUST NOT for absolute requirements; SHOULD/SHOULD NOT for defaults overridable with good reason; MAY for free choices.
 - A skill is a directory: SKILL.md plus optional scripts. Prefer a script or hook over prose wherever the step is checkable or computable exactly.
 - New skill: `src/llm_prompts/prompts/shared/skills/<name>/SKILL.md`, `name` = directory, `description` states what + when. Directory scan registers it.
-- A task that fits an existing skill's group SHOULD be a part of it: a sibling `<part>.md` listed in that skill's index, never named `SKILL.md`. A skill a hook or `pi_skills` names MUST keep its own `SKILL.md`.
+- A task that fits an existing skill's group SHOULD be a part of it: a sibling `<part>.md` listed in that skill's index, never named `SKILL.md`.
+  A skill a hook or `pi_skills` names MUST keep its own `SKILL.md`.
 
 ## 6. Size
 

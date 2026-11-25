@@ -213,7 +213,7 @@ class TestSkillParts:
         return tmp_path / "root"
 
     def test_part_over_the_body_cap_is_flagged(self, tmp_path: Path) -> None:
-        root = self._skill_root(tmp_path, "x" * (FINALS[SKILL_BODY_BYTES] + 1))
+        root = self._skill_root(tmp_path, "x\n" * FINALS[SKILL_BODY_BYTES])
 
         result = check([root], ("claude-code",))
 
@@ -222,7 +222,7 @@ class TestSkillParts:
         ]
 
     def test_part_is_measured_as_rendered(self, tmp_path: Path) -> None:
-        big = "x" * (FINALS[SKILL_BODY_BYTES] + 1)
+        big = "x\n" * FINALS[SKILL_BODY_BYTES]
         root = self._skill_root(tmp_path, f"{{% if SHOW %}}{big}{{% endif %}}\n")
         vars_dir = tmp_path / "vars" / "claude-code"
         vars_dir.mkdir(parents=True)
@@ -261,9 +261,9 @@ class TestSkillParts:
         ]
 
     def test_part_allowance_is_honoured(self, tmp_path: Path) -> None:
-        size = FINALS[SKILL_BODY_BYTES] + 1
-        root = self._skill_root(tmp_path, "x" * size)
-        allowances = {SKILL_BODY_BYTES: {"grp/part.md": size}}
+        content = "x\n" * FINALS[SKILL_BODY_BYTES]
+        root = self._skill_root(tmp_path, content)
+        allowances = {SKILL_BODY_BYTES: {"grp/part.md": len(content)}}
         (root / "size_allowances.json").write_text(json.dumps(allowances))
 
         result = check([root], ("claude-code",))
@@ -277,9 +277,7 @@ class TestSkillParts:
         monkeypatch.setattr("llm_prompts.size_guard._own_root_dir", lambda: root)
         part = root / "shared/skills/grp/part.md"
 
-        result = check_source(
-            part, "x" * (FINALS[SKILL_BODY_BYTES] + 1), ("claude-code",)
-        )
+        result = check_source(part, "x\n" * FINALS[SKILL_BODY_BYTES], ("claude-code",))
 
         assert [(v.metric, v.dest_name) for v in result.violations] == [
             (SKILL_BODY_BYTES, "grp/part.md")
@@ -288,7 +286,7 @@ class TestSkillParts:
     def test_skill_md_edit_flags_an_oversized_sibling_part(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        root = self._skill_root(tmp_path, "x" * (FINALS[SKILL_BODY_BYTES] + 1))
+        root = self._skill_root(tmp_path, "x\n" * FINALS[SKILL_BODY_BYTES])
         monkeypatch.setattr("llm_prompts.size_guard._own_root_dir", lambda: root)
         skill_md = root / "shared/skills/grp/SKILL.md"
 
@@ -305,7 +303,7 @@ class TestSkillParts:
         shadowed = root / "claude-code" / "skills" / "grp"
         shadowed.mkdir(parents=True)
         (shadowed / "SKILL.md").write_text("---\nname: grp\ndescription: d\n---\n")
-        (shadowed / "big.md").write_text("x" * (FINALS[SKILL_BODY_BYTES] + 1))
+        (shadowed / "big.md").write_text("x\n" * FINALS[SKILL_BODY_BYTES])
 
         result = check([root], ("claude-code",))
 
@@ -318,7 +316,7 @@ class TestSkillParts:
     ) -> None:
         skill = tmp_path / "overlay" / "shared" / "skills" / "grp"
         skill.mkdir(parents=True)
-        (skill / "part.md").write_text("x" * (FINALS[SKILL_BODY_BYTES] + 1))
+        (skill / "part.md").write_text("x\n" * FINALS[SKILL_BODY_BYTES])
 
         result = check([tmp_path / "overlay"], ("claude-code",))
 
@@ -339,9 +337,7 @@ class TestSkillParts:
             "llm_prompts.size_guard._discover_overlay_paths", lambda: [overlay]
         )
 
-        result = check_source(
-            part, "x" * (FINALS[SKILL_BODY_BYTES] + 1), ("claude-code",)
-        )
+        result = check_source(part, "x\n" * FINALS[SKILL_BODY_BYTES], ("claude-code",))
 
         assert [(v.metric, v.dest_name) for v in result.violations] == [
             (SKILL_BODY_BYTES, "grp/part.md")

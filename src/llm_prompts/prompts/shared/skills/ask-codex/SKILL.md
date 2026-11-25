@@ -9,7 +9,8 @@ exclude_targets: codex
 # Ask codex
 
 Delegate a task to an agent on a different model engine for an independent perspective.
-The headline use is an adversarial second opinion on a diff, plan, or piece of work: a different engine catches what another pass on the same engine would miss.
+The headline use is an adversarial second opinion on a diff, plan, or piece of work:
+a different engine catches what another pass on the same engine would miss.
 
 ## When to use
 

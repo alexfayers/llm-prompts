@@ -20,6 +20,7 @@ from .size_limits import (
     BYTES_PER_TOKEN,
     COLLECTION_BYTES,
     COLLECTION_SHARE_BYTES,
+    LINE_METRICS,
     ON_DEMAND_AGENT_BODY_BYTES,
     ON_DEMAND_ROLE_RULE_BYTES,
     ON_DEMAND_SKILL_BODY_BYTES,
@@ -137,7 +138,7 @@ def _numeric(artifacts: Iterable[Artifact]) -> dict[_Key, Artifact]:
     return {
         (a.metric, a.target, a.dest_name): a
         for a in artifacts
-        if not isinstance(a.value, bool)
+        if not isinstance(a.value, bool) and a.metric not in LINE_METRICS
     }
 
 

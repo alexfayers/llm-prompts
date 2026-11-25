@@ -20,13 +20,16 @@ targets: claude-code, pi
 
 ## How to plan effectively
 
-Before planning, in order: Explore agents, one per independent dimension, for existing patterns and reusable utilities; a named Plan agent for a concrete design; `refine-plan` to score it; then {% if AGENT == "pi" %}present the plan{% else %}`EnterPlanMode`{% endif %}. No exploration or iteration after that.
+Before planning, in order: Explore agents, one per independent dimension, for existing patterns and reusable utilities; a named Plan agent for a concrete design; `refine-plan` to score it;
+then {% if AGENT == "pi" %}present the plan{% else %}`EnterPlanMode`{% endif %}. No exploration or iteration after that.
 
 {% if AGENT == "claude-code" %}
 - MUST NOT skip the agent phase and plan in your head.
 {% endif %}
-- Resuming a plan already made and approved (passed `refine-plan`, already approved - per a handoff doc, memory task-chain, or the plan file's own status) - MUST go straight to execution, not `refine-plan` or {% if AGENT == "pi" %}presenting the plan{% else %}`EnterPlanMode`{% endif %} again, unless the record flags a part still needing research.
-- Where the user declines a design question - a constraint, or a rejection - MUST treat it as the decision and settle the rest yourself. MUST NOT re-ask reformulated options; state the call in one line.
+- Resuming a plan already made and approved (passed `refine-plan`, already approved - per a handoff doc, memory task-chain, or the plan file's own status) - MUST go straight to execution,
+  not `refine-plan` or {% if AGENT == "pi" %}presenting the plan{% else %}`EnterPlanMode`{% endif %} again, unless the record flags a part still needing research.
+- Where the user declines a design question - a constraint, or a rejection - MUST treat it as the decision and settle the rest yourself.
+  MUST NOT re-ask reformulated options; state the call in one line.
 
 ## Subagent usage during implementation
 
@@ -51,18 +54,23 @@ Before planning, in order: Explore agents, one per independent dimension, for ex
 - SHOULD distinguish "can this do X" from "can it do a related-but-different Y"; favour the user's instinct over the plan.
 - Before rejecting a mechanism, SHOULD check whether you narrowed the goal it was judged against, and re-read the user's literal words on pushback.
 - SHOULD NOT build a fix for an unmeasured problem - confirm the gap is real, or measure it cheaply first.
-- Where research rejects EVERY option, treat that as a framing signal, not a finding. MUST NOT ship the leftover scope as if it satisfied the ask: say the goal is unmet, then re-ask or return it to the user.
-- Where a plan rests on a numeric claim you can cheaply observe, MUST measure it rather than compute it, run the codebase's own harness when one gives the real number, and label any computed value an estimate until measured.
+- Where research rejects EVERY option, treat that as a framing signal, not a finding.
+  MUST NOT ship the leftover scope as if it satisfied the ask: say the goal is unmet, then re-ask or return it to the user.
+- Where a plan rests on a numeric claim you can cheaply observe, MUST measure it rather than compute it, run the codebase's own harness when one gives the real number,
+  and label any computed value an estimate until measured.
 
 ## Session scope discipline
 
 - Keep a session to one coherent change.
 - Once unrelated changes have accumulated, SHOULD commit what is done, record the rest as TODOs, and {% if AGENT == "pi" %}compact with `compact_now`{% else %}suggest a new session{% endif %}.
 - MUST NOT start a new large task late in a long or high-context session. Park it; proceed only on the user's explicit override, not a one-line aside.
-- This gates {% if AGENT == "pi" %}presenting a plan{% else %}calling `EnterPlanMode`{% endif %} however trivial, before any research or plan-writing spend. A context-usage notice stays live until {% if AGENT == "pi" %}compaction{% else %}a new session{% endif %}.
-- Once the user approves continuing past a context-usage notice, that approval stands for the session - MUST NOT re-ask, except on a new signal: a worse notice tier not yet seen, or a task the approval wouldn't cover.
+- This gates {% if AGENT == "pi" %}presenting a plan{% else %}calling `EnterPlanMode`{% endif %} however trivial, before any research or plan-writing spend.
+  A context-usage notice stays live until {% if AGENT == "pi" %}compaction{% else %}a new session{% endif %}.
+- Once the user approves continuing past a context-usage notice, that approval stands for the session - MUST NOT re-ask, except on a new signal: a worse notice tier not yet seen,
+  or a task the approval wouldn't cover.
 {% if AGENT == "pi" %}
-- Past the context threshold, MUST first `checkpoint rewind` finished detours, then compact with `compact_now` and an `instructions` summary naming the open tasks, asks and decisions, only if that isn't enough.
+- Past the context threshold, MUST first `checkpoint rewind` finished detours, then compact with `compact_now` and an `instructions` summary naming the open tasks, asks and decisions,
+  only if that isn't enough.
 - At a clean point - work small, committed, verified, nothing mid-flight - SHOULD run `compact_now` or persist the plan and TODOs as memory `task/` entities rather than asking the user to pick.
 {% else %}
 - At a clean handoff point - work small, committed, verified, nothing mid-flight - SHOULD run `handoff` or persist the plan and TODOs as memory `task/` entities rather than asking the user to pick.
@@ -74,4 +82,5 @@ Before planning, in order: Explore agents, one per independent dimension, for ex
 - SHOULD spin up a fresh lead session per phase.
 - The plan's persisted state (plan-file status markers, its memory `task/` entities) MUST be what a fresh lead re-reads to resume, never state held only in the outgoing lead's conversation.
 - Before ending a lead session at a phase boundary, MUST confirm the finished phase's implementer reported back and its status is marked done, then stop.
-- In an unattended run, MUST persist memory, and write a fresh `HANDOFF.md` at each phase boundary and before any multi-agent loop (e.g. repeated `refine-plan` passes) - long running sessions may end without warning.
+- In an unattended run, MUST persist memory, and write a fresh `HANDOFF.md` at each phase boundary and before any multi-agent loop (e.g. repeated `refine-plan` passes) -
+  long running sessions may end without warning.

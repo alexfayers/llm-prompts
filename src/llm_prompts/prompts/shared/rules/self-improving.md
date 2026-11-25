@@ -9,11 +9,15 @@ roles: lead
 
 **Trigger:** Before you {{TOOL_COMPLETE}} for any task that involved user feedback at any point during the conversation, or involved multiple non-trivial steps.
 
-**Immediate Corrections:** When the user corrects a mistake mid-conversation, do NOT wait until task completion. Immediately persist the correction to memory per `memory.md` - this needs no permission. Where it is a repeatable behaviour affecting every user, follow the `llm-prompts` skill's `edit.md` to propose a {{RULE_FILES}}/skill edit.
+**Immediate Corrections:** When the user corrects a mistake mid-conversation, do NOT wait until task completion.
+Immediately persist the correction to memory per `memory.md` - this needs no permission.
+Where it is a repeatable behaviour affecting every user, follow the `llm-prompts` skill's `edit.md` to propose a {{RULE_FILES}}/skill edit.
 
-**Self-Resolved Mistakes:** When you make a mistake and fix it yourself, persist the learning to memory immediately. If it reveals a missing process step that should be enforced for every user, follow the `llm-prompts` skill's `edit.md` to propose one.
+**Self-Resolved Mistakes:** When you make a mistake and fix it yourself, persist the learning to memory immediately.
+If it reveals a missing process step that should be enforced for every user, follow the `llm-prompts` skill's `edit.md` to propose one.
 
-**Heuristic:** Changes how you work AND applies to every user -> a {{RULE_FILES}}/skill edit via the `llm-prompts` skill's `edit.md`. User-specific details, or information about the world -> memory only.
+**Heuristic:** Changes how you work AND applies to every user -> a {{RULE_FILES}}/skill edit via the `llm-prompts` skill's `edit.md`.
+User-specific details, or information about the world -> memory only.
 
 **Process:**
 1. **Always Reflect:** Before you {{TOOL_COMPLETE}}, synthesize all feedback from the conversation against the active {{RULE_FILES}}.

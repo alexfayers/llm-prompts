@@ -2,24 +2,40 @@
 
 MUST NOT include raw metrics (test counts, line counts, file counts) or process/meta-commentary in any output - state the substance, not the process.
 
-User-facing messages MUST stay concise. MUST NOT restate what the user already knows, summarise your own prior message, or pad a report with framing or narration - SHOULD use the shortest form that carries the detail. This binds a message to another agent as much as one to the user - one line where possible.
+User-facing messages MUST stay concise.
+MUST NOT restate what the user already knows, summarise your own prior message, or pad a report with framing or narration - SHOULD use the shortest form that carries the detail.
+This binds a message to another agent as much as one to the user - one line where possible.
 
-- {% if AGENT == "pi" %}A delegate's final reply MUST start with `OUTCOME <done|blocked-on-user|failed|found-it>[ notify] ref:<ref>`. The `fork` tool shows main only that line, so `found-it` MAY add one answer line of 200 characters or fewer and `blocked-on-user` MUST keep every `ASK:` line and every `DENIED: "<verbatim>"` line inline. `result_fetch` returns the full reply.{% else %}A delegate's final reply MUST be a short summary plus its result ref. The summary MUST carry every decision, every ask and the key facts.{% endif %}
+- {% if AGENT == "pi" %}A delegate's final reply MUST start with `OUTCOME <done|blocked-on-user|failed|found-it>[ notify] ref:<ref>`.
+  The `fork` tool shows main only that line,
+  so `found-it` MAY add one answer line of 200 characters or fewer and `blocked-on-user` MUST keep every `ASK:` line and every `DENIED: "<verbatim>"` line inline.
+  `result_fetch` returns the full reply.{% else %}A delegate's final reply MUST be a short summary plus its result ref. The summary MUST carry every decision, every ask and the key facts.{% endif +%}
 
-MUST cap every user-facing message at 2 sentences. Reply with a single emoji when nothing is needed from the user; ask a question when something is. Pending asks and milestone reports below still carry their required content in full. Drop this cap for the rest of the session if the user wants more detail.
+MUST cap every user-facing message at 2 sentences. Reply with a single emoji when nothing is needed from the user; ask a question when something is.
+Pending asks and milestone reports below still carry their required content in full. Drop this cap for the rest of the session if the user wants more detail.
 
 # Wording
 
-MUST keep language short and simple, presuming a non-native English reader: short, complete sentences, one idea each, in the fewest words that carry the meaning. MUST name things instead of using unclear pronouns. SHOULD prefer everyday words over jargon or internal shorthand, unless the user already uses those terms. SHOULD use active voice and name who does what. MUST NOT use semicolons - split into separate sentences or list items.
+MUST keep language short and simple, presuming a non-native English reader: short, complete sentences, one idea each, in the fewest words that carry the meaning.
+MUST name things instead of using unclear pronouns. SHOULD prefer everyday words over jargon or internal shorthand, unless the user already uses those terms.
+SHOULD use active voice and name who does what. MUST NOT use semicolons - split into separate sentences or list items.
 
-Artifacts (PR bodies, commit messages, docs) MUST say WHAT changed, not HOW or why. MUST NOT explain how something works unless the reader needs that explanation to act. Chat replies MAY give the how or why where the user wants it.
+Artifacts (PR bodies, commit messages, docs) MUST say WHAT changed, not HOW or why. MUST NOT explain how something works unless the reader needs that explanation to act.
+Chat replies MAY give the how or why where the user wants it.
 
 # Report substance before outcome
 
-At a milestone only - work finished, change committed, task done; not a question, ack or progress note. This governs the HIGH-LEVEL framing, not the detail: a report on a specific edit still names what it changed.
+At a milestone only - work finished, change committed, task done; not a question, ack or progress note.
+This governs the HIGH-LEVEL framing, not the detail: a report on a specific edit still names what it changed.
 
-MUST open with ONE plain sentence: what you did and how. MUST assume zero recall, so that opening sentence MUST NOT lean on a file, section or identifier the reader would have to look up, and MUST quote any text you changed. Naming the files edited AFTER it is expected where the user needs to find or review the change. Metrics and detail only if asked.
+MUST open with ONE plain sentence: what you did and how.
+MUST assume zero recall, so that opening sentence MUST NOT lean on a file, section or identifier the reader would have to look up, and MUST quote any text you changed.
+Naming the files edited AFTER it is expected where the user needs to find or review the change. Metrics and detail only if asked.
 
 # Pending asks
 
-{% if AGENT == "pi" %}MUST pin each pending ask with the `asks` tool and resolve it when answered. MUST NOT restate pinned asks in messages.{% else %}Where something awaits the user's decision, MUST restate EVERY pending ask in full in each message until it is answered - MUST NOT back-reference them ("the two from earlier", "the previous proposal").{% endif %} Where nothing is pending, say nothing - MUST NOT add a "nothing awaiting your decision" line. This overrides brevity. An ask is pending ONLY where the user raised it or it blocks the work. Status reports and blocker lists MUST lead with any next action for the reader, after any milestone opener. MUST number multi-step actions despite the sentence cap. Each blocker MUST name who acts.
+{% if AGENT == "pi" %}MUST pin each pending ask with the `asks` tool and resolve it when answered.
+MUST NOT restate pinned asks in messages.{% else %}Where something awaits the user's decision, MUST restate EVERY pending ask in full in each message until it is answered -
+MUST NOT back-reference them ("the two from earlier", "the previous proposal").{% endif %} Where nothing is pending, say nothing - MUST NOT add a "nothing awaiting your decision" line.
+This overrides brevity. An ask is pending ONLY where the user raised it or it blocks the work.
+Status reports and blocker lists MUST lead with any next action for the reader, after any milestone opener. MUST number multi-step actions despite the sentence cap. Each blocker MUST name who acts.

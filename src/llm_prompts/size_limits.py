@@ -53,6 +53,8 @@ WORST_CASE_ON_DEMAND_METRICS = (
 BYTES_PER_TOKEN = 2.8
 FRONTMATTER_VALID = "frontmatter_valid"
 NO_UNSUBSTITUTED_PLACEHOLDERS = "no_unsubstituted_placeholders"
+NO_LONG_LINES = "no_long_lines"
+NO_LAZY_CONTINUATIONS = "no_lazy_continuations"
 TEMPLATE_RENDERS = "template_renders"
 
 UNITS: dict[str, str] = {
@@ -65,6 +67,8 @@ UNITS: dict[str, str] = {
     AGENT_DESCRIPTION_CHARS: "chars, post-expansion",
     COLLECTION_BYTES: "owned bytes per target, worst-case session",
     PI_ROLE_PROMPT_BYTES: "llm-prompts-owned expanded prompt bytes",
+    NO_LONG_LINES: "chars",
+    NO_LAZY_CONTINUATIONS: "lines",
     COLLECTION_SHARE_BYTES: "owned bytes credited to collection_bytes",
 }
 
@@ -78,10 +82,16 @@ FINALS: dict[str, int] = {
     AGENT_DESCRIPTION_CHARS: 200,
     COLLECTION_BYTES: 50_000,
     PI_ROLE_PROMPT_BYTES: 50_000,
+    NO_LONG_LINES: 200,
+    NO_LAZY_CONTINUATIONS: 0,
 }
+MAX_LINE_CHARS = FINALS[NO_LONG_LINES]
+
+# Formatting metrics, measured on this package's own sources only.
+LINE_METRICS = frozenset({NO_LONG_LINES, NO_LAZY_CONTINUATIONS})
 
 # Metrics a `size_allowances.json` may declare.
-DECLARABLE_METRICS = frozenset(FINALS) | {COLLECTION_SHARE_BYTES}
+DECLARABLE_METRICS = (frozenset(FINALS) - LINE_METRICS) | {COLLECTION_SHARE_BYTES}
 
 # Metrics whose ceiling is the active collection step rather than a per-file final.
 COLLECTION_CEILING_METRICS = frozenset({COLLECTION_BYTES, PI_ROLE_PROMPT_BYTES})
