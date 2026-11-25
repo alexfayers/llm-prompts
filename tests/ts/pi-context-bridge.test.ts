@@ -5,7 +5,7 @@ import path from "node:path";
 import net from "node:net";
 import { after, describe, mock, test } from "node:test";
 import { loadExtension, useEnv } from "./helpers.ts";
-import { connectBridge, describeMain, prefixHash, reportPrefixToFile, serveBridge, trackPrefix, writeLeadPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
+import { makeSocketDir, connectBridge, describeMain, prefixHash, reportPrefixToFile, serveBridge, trackPrefix, writeLeadPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
 import { ROLES, withReadMcp } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-bridge-"));
@@ -14,9 +14,28 @@ after(() => fs.rmSync(dir, { recursive: true }));
 const reply = (text: string) => ({ content: [{ type: "text", text }], details: { text }, isError: false });
 
 describe("bridge", () => {
+	test("the socket path stays under 104 bytes", async () => {
+		const long = path.join(dir, "x".repeat(300));
+		const tmp = mock.method(os, "tmpdir", () => long);
+		const socketDir = makeSocketDir();
+		tmp.mock.restore();
+		assert.ok(Buffer.byteLength(path.join(socketDir, "b.sock")) < 104);
+		fs.rmSync(socketDir, { recursive: true });
+	});
+
+	test("closing a second listener leaves the first reachable", async () => {
+		const first = await serveBridge({ role: ROLES.reader, execute: async () => reply("x") });
+		const second = await serveBridge({ role: ROLES.reader, execute: async () => reply("x") });
+		await second.close();
+		const client = await connectBridge(first.socket);
+		assert.equal((await client.call("mcp__semble__search", {})).content[0].text, "x");
+		client.close();
+		await first.close();
+	});
+
 	test("a call in the child runs the tool in main and returns its result", async () => {
 		const calls: unknown[][] = [];
-		const server = await serveBridge(dir, { role: ROLES.reader, execute: async (tool, args) => (calls.push([tool, args]), reply("found")) });
+		const server = await serveBridge({ role: ROLES.reader, execute: async (tool, args) => (calls.push([tool, args]), reply("found")) });
 		const client = await connectBridge(server.socket);
 		const result = await client.call("mcp__semble__search", { query: "q" });
 		client.close();
@@ -28,7 +47,7 @@ describe("bridge", () => {
 
 	test("a tool the role may not use is refused without running", async () => {
 		let ran = 0;
-		const server = await serveBridge(dir, { role: ROLES.reader, execute: async () => (ran++, reply("x")) });
+		const server = await serveBridge({ role: ROLES.reader, execute: async () => (ran++, reply("x")) });
 		const client = await connectBridge(server.socket);
 		await assert.rejects(client.call("mcp__memory__create_entities", {}), /role reader may not use mcp__memory__create_entities/);
 		await assert.rejects(client.call("bash", { command: "true" }), /bash is not an MCP tool/);
@@ -39,7 +58,7 @@ describe("bridge", () => {
 
 	test("a readMcp tool runs only with matching arguments", async () => {
 		const calls: unknown[] = [];
-		const server = await serveBridge(dir, { role: withReadMcp(ROLES.reader, [{ tool: "mcp__demo__exec", argsMatch: { command: "read .*" } }]), execute: async (_tool, args) => (calls.push(args), reply("x")) });
+		const server = await serveBridge({ role: withReadMcp(ROLES.reader, [{ tool: "mcp__demo__exec", argsMatch: { command: "read .*" } }]), execute: async (_tool, args) => (calls.push(args), reply("x")) });
 		const client = await connectBridge(server.socket);
 		await client.call("mcp__demo__exec", { command: "read x" });
 		await assert.rejects(client.call("mcp__demo__exec", { command: "write x" }), /llmPrompts\.forks\.readMcp/);
@@ -49,7 +68,7 @@ describe("bridge", () => {
 	});
 
 	test("concurrent calls each get their own reply and a failure reaches only its caller", async () => {
-		const server = await serveBridge(dir, {
+		const server = await serveBridge({
 			role: ROLES.reader,
 			execute: async (tool, args) => {
 				const { n } = args as { n: number };
@@ -67,7 +86,7 @@ describe("bridge", () => {
 
 	test("the child reports its prefix hash to main", async () => {
 		const seen: string[] = [];
-		const server = await serveBridge(dir, { role: ROLES.reader, execute: async () => reply("x"), onPrefix: (hash) => seen.push(hash) });
+		const server = await serveBridge({ role: ROLES.reader, execute: async () => reply("x"), onPrefix: (hash) => seen.push(hash) });
 		const client = await connectBridge(server.socket);
 		client.report("abc");
 		await client.call("mcp__semble__search", {});
@@ -78,7 +97,7 @@ describe("bridge", () => {
 
 	test("a server error after listening does not crash the process", async () => {
 		const created = mock.method(net, "createServer");
-		const server = await serveBridge(dir, { role: ROLES.reader, execute: async () => reply("x") });
+		const server = await serveBridge({ role: ROLES.reader, execute: async () => reply("x") });
 		const listening = created.mock.calls[0].result as net.Server;
 		created.mock.restore();
 		assert.doesNotThrow(() => listening.emit("error", new Error("EMFILE")));
@@ -240,7 +259,7 @@ describe("a delegate started with the bridge", () => {
 		const prefixes: string[] = [];
 		let reportReceived = () => {};
 		const reported = new Promise<void>((resolve) => (reportReceived = resolve));
-		const server = await serveBridge(scratch, { role: ROLES.reader, execute, onPrefix: (hash) => (prefixes.push(hash), reportReceived()) });
+		const server = await serveBridge({ role: ROLES.reader, execute, onPrefix: (hash) => (prefixes.push(hash), reportReceived()) });
 		const tool = { name: "mcp__semble__search", description: "Search code", parameters: { type: "object" }, exposure: "codemode", namespace: { name: "mcp__semble" }, annotations: { readOnlyHint: true } };
 		const bridge = { socket: server.socket, activeTools: ["read", "codemode"], tools: [tool], section: "MCP servers: semble" };
 		fs.writeFileSync(handshake, JSON.stringify({ role: "reader", bridge }));
