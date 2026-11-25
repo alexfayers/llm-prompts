@@ -3474,3 +3474,39 @@ def test_a_same_identity_main_commit_whose_changes_the_branch_lacks_is_kept(
     assert project.run(apply=True) == 1
 
     assert git(project.repo, "rev-parse", "main") == main
+
+
+def test_a_branch_that_merged_main_replaces_its_hand_resolved_copy_below_a_local_commit_that_removes_part_of_it(
+    project: Project,
+) -> None:
+    body = "".join(f"line {n}\n" for n in range(9))
+    project.commit(project.repo, "s.txt", body, "chore: add s")
+    git(project.repo, "push", "-q", "origin", "main")
+    path = project.worktree("feat/a", start="origin/main")
+    (path / "a.txt").write_text("a\n", encoding="utf-8")
+    git(path, "add", "a.txt")
+    project.commit(path, "s.txt", body.replace("line 1", "a"), "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    other = project.root / "other"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "s.txt", body.replace("line 1", "up"), "chore: up")
+    git(other, "push", "-q", "origin", "main")
+    project.run(apply=True)
+    resolved = body.replace("line 1", "up a")
+    work = main_sync.resolve_worktree(project.repo)
+    (work / "s.txt").write_text(resolved, encoding="utf-8")
+    git(work, "add", "s.txt")
+    assert project.run(apply=True) == 0
+    git(project.repo, "rm", "-q", "a.txt")
+    git(project.repo, "commit", "-qm", "chore: drop a")
+    subprocess.run(["git", "-C", str(path), "merge", "-q", "origin/main"], check=False)
+    (path / "s.txt").write_text(resolved, encoding="utf-8")
+    git(path, "commit", "-qam", "Merge origin/main into feat/a")
+    project.commit(path, "b.txt", "b\n", "feat: b")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a", "chore: drop a"]
+    assert (project.repo / "b.txt").read_text(encoding="utf-8") == "b\n"
+    assert not (project.repo / "a.txt").exists()
