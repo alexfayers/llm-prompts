@@ -520,13 +520,21 @@ def _resolution_ref(repo: Path, base: str, ours: str, theirs: str) -> str:
 
 
 def _staged_tree(repo: Path, base: str, ours: str, theirs: str) -> str | None:
-    """Return the newest tree staged by hand for merging ``theirs`` from ``base`` that replays cleanly from the main it was staged on onto ``ours``."""
+    """Return the newest tree staged by hand for merging ``theirs`` from ``base`` that replays cleanly from the main it was staged on onto ``ours``.
+
+    A tree that keeps the main it was staged on replays only while ``ours`` leaves the files ``theirs`` changes as they were.
+    """
     merge = _resolution_ref(repo, base, ours, theirs).rpartition("/")[0]
     for ref in _read(
         repo, "for-each-ref", "--sort=-creatordate", "--format=%(refname)", f"{merge}/"
     ).split():
+        staged_on = ref.rpartition("/")[2]
+        if _read(repo, "rev-parse", f"{ref}^{{tree}}").strip() == staged_on and set(
+            _changed_paths(repo, staged_on, ours)
+        ) & set(_changed_paths(repo, base, theirs)):
+            continue
         with suppress(_Conflict):
-            return _merge_tree(repo, ref.rpartition("/")[2], ours, ref)
+            return _merge_tree(repo, staged_on, ours, ref)
     return None
 
 

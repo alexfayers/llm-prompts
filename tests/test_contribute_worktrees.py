@@ -1293,6 +1293,23 @@ def test_a_hand_resolution_that_keeps_main_replays_onto_an_unrelated_main_change
     assert project.main_subjects() == ["feat: main", "feat: main other"]
 
 
+def test_a_hand_resolution_that_keeps_main_stays_when_main_changes_its_conflict(
+    project: Project,
+) -> None:
+    squash = stopped_copy(project)
+    work = main_sync.resolve_worktree(project.repo)
+    (work / "base.txt").write_text("main\n", encoding="utf-8")
+    git(work, "add", "base.txt")
+    project.commit(project.repo, "base.txt", "moved\n", "feat: main moves")
+    main = git(project.repo, "rev-parse", "main")
+
+    rebuilt = main_sync.rebuild_local(project.repo, squash.floor, {}, (), {}, [squash])
+
+    assert rebuilt.mode == "stopped"
+    assert git(project.repo, "rev-parse", "main") == main
+    assert work.exists()
+
+
 def test_a_staged_hand_resolution_replays_onto_an_unrelated_main_change(
     project: Project, hand_staged: main_sync.Squash
 ) -> None:
