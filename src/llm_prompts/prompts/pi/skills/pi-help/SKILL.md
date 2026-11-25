@@ -14,7 +14,8 @@ Guided tour of this pi setup. Plain words.
 - MUST read line 1 and the following `//` header lines of each listed extension. MUST open the extension source before naming a config key, command or env var that the header does not give.
 - MUST read `description` in `package.json` of each package in `settings.json` `packages`, under `npm/node_modules/<package>` in the pi agent dir or the source dir of a git or local package.
 - MUST read the `description` frontmatter of each listed agent.
-- MUST read the installed copy of each listed seed file, at the same relative path in the pi agent dir. MUST NOT report seed defaults as the user's settings, since a seed never overwrites an existing file.
+- MUST read the installed copy of each listed seed file, at the same relative path in the pi agent dir.
+  MUST NOT report seed defaults as the user's settings, since a seed never overwrites an existing file.
 - MUST build topics from what you found plus the facts below. MUST NOT list what is not installed.
 - MUST name a command only after finding it in `/help`, a header or a source file.
 
@@ -28,8 +29,10 @@ Guided tour of this pi setup. Plain words.
 
 - MUST NOT state model names from memory. Agent names are `<kind>-<model>-<effort>`. MUST check `/agents` or the installed definitions.
 - MUST describe your session as the lead that hands work to background agents.
-- An agent definition MAY set `extensions: [a, b]` to load only those, plus `pi/agent-extensions.json` and extensions calling `registerProvider(`. Names: `builtin:x`, files or packages. `?` marks optional. Omitting `extensions` loads all extensions.
-- MUST call `reload_now` after editing extensions, packages, settings, agents or `AGENTS.md`. It reloads after the turn, then continues. Where it is missing, MUST tell the user to run `/reload`. A delegate MUST report the change to its lead instead.
+- An agent definition MAY set `extensions: [a, b]` to load only those, plus `pi/agent-extensions.json` and extensions calling `registerProvider(`. Names: `builtin:x`, files or packages.
+  `?` marks optional. Omitting `extensions` loads all extensions.
+- MUST call `reload_now` after editing extensions, packages, settings, agents or `AGENTS.md`. It reloads after the turn, then continues. Where it is missing, MUST tell the user to run `/reload`.
+  A delegate MUST report the change to its lead instead.
 - `pi/agent-models.json` `{tier: provider/model}` maps a tier to a model. An exact ID stays pinned. A `*` for the version, as in `provider/name-*-tier`, picks the newest listed match.
 - `pi/mcp-stdio-wrapper.json` `["cmd", "arg", ...]` runs each synced stdio MCP server as `cmd arg ... <command>` when `cmd` is on PATH.
 - `pi/agent-additions.json` `{agent: {key: [t]}}` adds `pi_skills`, `extensions`, variants to an agent.

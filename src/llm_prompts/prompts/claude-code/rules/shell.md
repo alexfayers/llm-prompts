@@ -1,10 +1,23 @@
 # Shell
 
-- MUST NOT pad a command with `&& echo <marker>` (e.g. `echo CLEAN`, `echo DONE`) when the command's own exit code and/or output already unambiguously answers the question. Only add an explicit echo/marker when the preceding command's exit code or empty output is genuinely ambiguous between two different real outcomes (e.g. `grep` exiting non-zero for both "no matches" and "grep errored") - not as a reflexive habit after every command.
+- MUST NOT pad a command with `&& echo <marker>` (e.g. `echo CLEAN`, `echo DONE`) when the command's own exit code and/or output already unambiguously answers the question.
+  Only add an explicit echo/marker when the preceding command's exit code or empty output is genuinely ambiguous between two different real outcomes (e.g. `grep` exiting non-zero for both "no matches"
+  and "grep errored") - not as a reflexive habit after every command.
 - MUST NOT echo a command's exit status (`; echo "EXIT_CODE=$?"`, `echo $?`) - the tool result already reports it.
-- MUST NOT pre-check that a command, file, or directory exists before using it (`which <tool> && <tool>`, `ls <path>` before reading it, `test -f`). Run the real command; a missing target returns an error that says so. Handle that error per `stop-on-fail.md` instead of spending a call to predict it.
-- The Bash tool's working directory PERSISTS across separate command invocations. A relative path in a later command can silently resolve against a directory an earlier `cd` left you in, producing a false result that looks like a real bug (a "file not found", or a diff/compare that reports spurious differences or false matches). For any cross-tree comparison, verification, or file check, use absolute paths or `cd` to a known root within the same command - never assume you are at the repo root.
-- SHOULD prefer a built-in over an external tool where either does the job, rather than reaching for an external one from general familiarity. This is a choice made when writing the command, NOT licence to probe for the tool first - see the no-pre-check rule above.
-- `cd` persists across separate Bash tool invocations (see above), but only within the project directory or a path added via `additionalDirectories`/`--add-dir`. Do not pre-check that setting or test the directory's existence before `cd`ing - just run the `cd`. If the target is outside that scope, the command does not error: Claude Code resets the shell back to the project directory and appends `Shell cwd was reset to <dir>` to the tool result, so check the result/`pwd` rather than assuming the `cd` failed or landed where requested.
-- Where a command's result depends on the working directory, MUST make that directory explicit: `cd <abs-path> && <command>` in one call, absolute paths, or a `cd` whose landing spot you have confirmed (see below). MUST NOT use a path flag like `git -C <abs-path>` - permission allowlists do not match it, so it prompts every time. A wrong-cwd command usually SUCCEEDS with plausible output rather than failing. MUST state this in any delegate's contract for git or filesystem work.
-- A standalone `cd` persists across calls, so `cd <abs-path>` followed by `pwd` in the next call establishes where you are, and later commands can rely on it. If `pwd` is not where you expected - a `cd` outside the allowed directories is silently reset instead of failing - chain the `cd` into each command with `&&` from then on.
+- MUST NOT pre-check that a command, file, or directory exists before using it (`which <tool> && <tool>`, `ls <path>` before reading it, `test -f`).
+  Run the real command; a missing target returns an error that says so. Handle that error per `stop-on-fail.md` instead of spending a call to predict it.
+- The Bash tool's working directory PERSISTS across separate command invocations.
+  A relative path in a later command can silently resolve against a directory an earlier `cd` left you in, producing a false result that looks like a real bug (a "file not found",
+  or a diff/compare that reports spurious differences or false matches).
+  For any cross-tree comparison, verification, or file check, use absolute paths or `cd` to a known root within the same command - never assume you are at the repo root.
+- SHOULD prefer a built-in over an external tool where either does the job, rather than reaching for an external one from general familiarity.
+  This is a choice made when writing the command, NOT licence to probe for the tool first - see the no-pre-check rule above.
+- `cd` persists across separate Bash tool invocations (see above), but only within the project directory or a path added via `additionalDirectories`/`--add-dir`.
+  Do not pre-check that setting or test the directory's existence before `cd`ing - just run the `cd`.
+  If the target is outside that scope, the command does not error: Claude Code resets the shell back to the project directory and appends `Shell cwd was reset to <dir>` to the tool result,
+  so check the result/`pwd` rather than assuming the `cd` failed or landed where requested.
+- Where a command's result depends on the working directory, MUST make that directory explicit: `cd <abs-path> && <command>` in one call, absolute paths,
+  or a `cd` whose landing spot you have confirmed (see below). MUST NOT use a path flag like `git -C <abs-path>` - permission allowlists do not match it, so it prompts every time.
+  A wrong-cwd command usually SUCCEEDS with plausible output rather than failing. MUST state this in any delegate's contract for git or filesystem work.
+- A standalone `cd` persists across calls, so `cd <abs-path>` followed by `pwd` in the next call establishes where you are, and later commands can rely on it.
+  If `pwd` is not where you expected - a `cd` outside the allowed directories is silently reset instead of failing - chain the `cd` into each command with `&&` from then on.

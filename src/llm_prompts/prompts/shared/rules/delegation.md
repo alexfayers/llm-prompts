@@ -40,14 +40,17 @@ targets: claude-code, pi
 - A `reader` (default) only reads. A `writer` works only in its own git worktree and its commits land on the current branch - give each branch its own writer.
 - A warm fork inherits the session and its rules. A cold worker (`model` set) starts with an empty session: its `task` MUST carry every binding constraint.
 {% else %}
-- MUST use only named tiers, passing the installed `<tier>-<model>-<effort>` name (e.g. `reasoner-opus-high`), never the bare tier - `reasoner` (Opus, holds `{{TOOL_AGENT}}`), `worker` (mechanical), `surveyor` (read-only), `coordinator` (breakdown, `Explore`-only `{{TOOL_AGENT}}`); never `general-purpose`.
+- MUST use only named tiers, passing the installed `<tier>-<model>-<effort>` name (e.g. `reasoner-opus-high`), never the bare tier - `reasoner` (Opus, holds `{{TOOL_AGENT}}`), `worker` (mechanical),
+  `surveyor` (read-only), `coordinator` (breakdown, `Explore`-only `{{TOOL_AGENT}}`); never `general-purpose`.
 - `Explore`/`Plan` inherit no rules: their prompt MUST carry every binding constraint. SHOULD prefer `Explore` to `surveyor` for bounded read-only search.
 - Only main spawns a NAMED teammate; roster is flat. `reasoner` MAY fan out unnamed subagents (may recurse), `coordinator` unnamed `Explore` only; else report to `coordinator` for the AGENT REQUEST.
 {% endif %}
 
 ## Spawn prompt contract
 
-State the change concisely. State derivable mechanics only if risky or ambiguous.{% if AGENT != "pi" %} {% if AGENT == "pi" %}`{{TOOL_STEER}}` and `tower_do_talk` follow{% else %}`SendMessage` follows{% endif %} this plus `anti-yap.md`: ask/answer only.{% endif +%}
+State the change concisely.
+State derivable mechanics only if risky or ambiguous.{% if AGENT != "pi" %} {% if AGENT == "pi" %}`{{TOOL_STEER}}` and `tower_do_talk` follow{% else %}`SendMessage` follows{% endif %} this plus
+`anti-yap.md`: ask/answer only.{% endif +%}
 
 Every spawn prompt MUST specify:
 
@@ -61,7 +64,8 @@ Every spawn prompt MUST specify:
 - where the prompt pins a shape (signature, return type, format) and says match a sibling, MUST reconcile the two;
 - for code/prose, the output-size limit - minimal diff, no unrequested comments/refactors/reformatting, terse report.
 - for a UI/visual change: coding.md's rendered check, reported as seen - MUST NOT accept "done" from a test pass or "folded into another slice".
-- for a shell-restricted delegate: name {% if AGENT == "pi" %}`read`/`grep`/`find`{% else %}Read/Grep/Glob{% endif %} for investigation, and exactly which command it MAY run - never implicit {% if AGENT == "pi" %}`bash`{% else %}Bash{% endif %}.
+- for a shell-restricted delegate: name {% if AGENT == "pi" %}`read`/`grep`/`find`{% else %}Read/Grep/Glob{% endif %} for investigation, and exactly which command it MAY run -
+  never implicit {% if AGENT == "pi" %}`bash`{% else %}Bash{% endif %}.
 - MUST NOT ask a role without write tools to write files - artifacts go to a `{% if AGENT == "pi" %}writer{% else %}worker{% endif %}`. Scratch notes stay in the report unless a file is requested.
 - a delegate asked a question MUST report the answer, not raw output or file text (except failure, error or named value). A drafted edit returns new wording only.
 - For a code comment, state policy/convention, not draft prose.
@@ -79,14 +83,17 @@ Every spawn prompt MUST specify:
 {% if AGENT == "pi" %}
 - A warm fork runs at main's model and effort. A cold worker runs at its `model`'s `:<effort>` suffix.
 {% else %}
-- {% if AGENT != "pi" %}`{{TOOL_AGENT}}` has no `effort` param - a{% else %}A{% endif %} delegate runs at its `subagent_type`'s pin{% if TOOL_WORKFLOW %}; `{{TOOL_WORKFLOW}}`'s `agent()` takes `opts.effort`{% if AGENT == "pi" %} (minimal/low/medium/high/xhigh/max){% endif %}{% endif %}.
+- {% if AGENT != "pi" %}`{{TOOL_AGENT}}` has no `effort` param - a{% else %}A{% endif %} delegate runs at its `subagent_type`'s pin{% if TOOL_WORKFLOW %};
+  `{{TOOL_WORKFLOW}}`'s `agent()` takes `opts.effort`{% if AGENT == "pi" %} (minimal/low/medium/high/xhigh/max){% endif %}{% endif %}.
 {% endif %}
 
 ## Escalation and waiting
 
 - A delegate stuck on ambiguity or needing a user preference SHOULD escalate.
 - A delegate whose work outgrows its estimate (more steps/files/phases) MUST stop and escalate up the ownership edge, noting more agents may help - MUST NOT grind alone.
-- MUST NOT idle-wait on a background agent/command, `sleep` or placeholder - completion re-invokes you; work or end turn.{% if AGENT != "pi" %} Exception: while any delegate runs, MUST keep ONE background `sleep 300` armed per session, never one per delegate. When it fires, MUST `SendMessage` each delegate silent since arming for status, then re-arm. MUST NOT request status from a delegate that messaged since.{% endif +%}
+- MUST NOT idle-wait on a background agent/command, `sleep` or placeholder - completion re-invokes you; work or end turn.{% if AGENT != "pi" %} Exception: while any delegate runs,
+  MUST keep ONE background `sleep 300` armed per session, never one per delegate. When it fires, MUST `SendMessage` each delegate silent since arming for status, then re-arm.
+  MUST NOT request status from a delegate that messaged since.{% endif +%}
 {% if AGENT != "pi" %}
 - A mid-turn message is ignored: wait, or re-verify state yourself. Once idle, `SendMessage` resumes a NAMED delegate - ask for a missing/truncated section, not re-derive.
 - A resend returns a SUMMARY; read its transcript `.jsonl` under `subagents/` - MUST NOT ask again or re-run.

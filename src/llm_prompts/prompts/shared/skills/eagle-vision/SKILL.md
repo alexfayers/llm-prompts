@@ -21,7 +21,8 @@ The current layer is the first empty `PLAN.md` section.
 1. Goal
 2. Approach
 3. Components
-4. Interfaces - only what crosses a component boundary (entry functions, shared data shapes, helpers, test fixtures) with formats and usage, not internal helpers, field lists, per-case mechanics or code
+4. Interfaces - only what crosses a component boundary (entry functions, shared data shapes, helpers, test fixtures) with formats and usage, not internal helpers, field lists,
+   per-case mechanics or code
 5. Graph - nodes, dependencies, inputs, outputs and deletes (Interfaces items or existing symbols), scope (`/`-separated paths: files, DB objects, doc sections)
 6. Nodes - acceptance criteria, one node at a time
 
@@ -69,7 +70,8 @@ A node's only tests - write no others. Each criterion:
 - `set-test` with the criteria.
 - After Graph, MUST run `join` until clean, and fix or accept each warning.
 - Only `check` marks a node done.
-- `PLAN.md` holds Constraints (build rules, verified facts, target branch, conventions e.g. commit rules), Checks (one `- <cmd>` per full gate command: tests, lint, format, types), Collect (one `- <cmd>` with `{test}`, failing on zero tests) and Later.
+- `PLAN.md` holds Constraints (build rules, verified facts, target branch, conventions e.g. commit rules), Checks (one `- <cmd>` per full gate command: tests, lint, format, types),
+  Collect (one `- <cmd>` with `{test}`, failing on zero tests) and Later.
 - Fill sections by editing, never generated ones (Graph, Scope, Nodes) or frontmatter.
 - Trust `focus.py` output - don't re-read.
 - Each node MUST be self-contained for a fresh session, no reasoning or history.
@@ -80,13 +82,15 @@ A node's only tests - write no others. Each criterion:
 - MUST run one cold-worker `fork` per node (`model` set), given only its brief file (`focus.py briefs <dir> --out <folder>`).
 {% else %}
 - MUST give each node a fresh `eagle-vision-checker-haiku-low` with only its brief file (`focus.py briefs <dir> --out <folder>`).
-- {% if TOOL_WORKFLOW %}With {{TOOL_WORKFLOW}}, MUST run `autonomy-check.js` as {% if AGENT == "pi" %}`scriptPath`{% else %}`script`{% endif %}, paths as `args`, else {% endif %}one {{TOOL_AGENT}} call per node.
+- {% if TOOL_WORKFLOW %}With {{TOOL_WORKFLOW}}, MUST run `autonomy-check.js` as {% if AGENT == "pi" %}`scriptPath`{% else %}`script`{% endif %}, paths as `args`,
+  else {% endif %}one {{TOOL_AGENT}} call per node.
 {% endif %}
 - MUST NOT dismiss a NO: fix it (asking the user what only they decide) or re-run the changed nodes, until none say NO.
 
 ## Build
 
-- Per wave, MUST run `build-wave.js` {% if TOOL_WORKFLOW %}with {{TOOL_WORKFLOW}} as {% if AGENT == "pi" %}`scriptPath`{% else %}`script`{% endif %}, args{% else %}by hand, one {{TOOL_AGENT}} per `agent()` call{% if AGENT == "pi" %} as a cold `writer` (`model` set){% endif %}, with{% endif %} `{plan: <dir>, skill: <base-dir>, wave, stamp}` (`probeOnly` before wave 1).
+- Per wave, MUST run `build-wave.js` {% if TOOL_WORKFLOW %}with {{TOOL_WORKFLOW}} as {% if AGENT == "pi" %}`scriptPath`{% else %}`script`{% endif %}, args{% else %}by hand,
+  one {{TOOL_AGENT}} per `agent()` call{% if AGENT == "pi" %} as a cold `writer` (`model` set){% endif %}, with{% endif %} `{plan: <dir>, skill: <base-dir>, wave, stamp}` (`probeOnly` before wave 1).
 - Build steps go in `<dir>/build.sh`, overriding the script's `HOOKS`.
 - MUST fix each escalation (asking the user what only they decide), then `resume: true`.
 - MUST check running waves every 5 min and hand off to a new lead every 3-4 waves or before 300k context.

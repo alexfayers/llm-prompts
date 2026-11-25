@@ -17,6 +17,8 @@ from llm_prompts.size_limits import (
     COLLECTION_SHARE_BYTES,
     FINALS,
     FRONTMATTER_VALID,
+    NO_LAZY_CONTINUATIONS,
+    NO_LONG_LINES,
     ON_DEMAND_AGENT_BODY_BYTES,
     ON_DEMAND_ROLE_RULE_BYTES,
     ON_DEMAND_SKILL_BODY_BYTES,
@@ -94,6 +96,11 @@ class TestCompare:
 
     def test_bool_metrics_are_dropped(self) -> None:
         artifact = _artifact(HEAD_ROOT, True, metric=FRONTMATTER_VALID)
+        assert compare([], [artifact], [BASE_ROOT], [HEAD_ROOT]) == []
+
+    @pytest.mark.parametrize("metric", [NO_LONG_LINES, NO_LAZY_CONTINUATIONS])
+    def test_line_metrics_are_dropped(self, metric: str) -> None:
+        artifact = _artifact(HEAD_ROOT, 1, metric=metric)
         assert compare([], [artifact], [BASE_ROOT], [HEAD_ROOT]) == []
 
     def test_targets_with_identical_values_collapse_into_one_row(self) -> None:

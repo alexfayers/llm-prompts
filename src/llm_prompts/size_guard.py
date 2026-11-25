@@ -16,6 +16,7 @@ import contextlib
 import hashlib
 import io
 import json
+import re
 import shutil
 import tempfile
 from collections.abc import Iterable, Iterator, Sequence
@@ -64,6 +65,9 @@ from .size_limits import (
     DECLARABLE_METRICS,
     FINALS,
     FRONTMATTER_VALID,
+    LINE_METRICS,
+    NO_LAZY_CONTINUATIONS,
+    NO_LONG_LINES,
     NO_UNSUBSTITUTED_PLACEHOLDERS,
     PI_ROLE_PROMPT_BYTES,
     RULE_BYTES,
@@ -79,6 +83,15 @@ from .size_limits import (
 
 CHECKED_TARGETS: tuple[str, ...] = tuple(AGENT_CLASSES)
 ALLOWANCES_FILENAME = "size_allowances.json"
+_LIST_ITEM = re.compile(r"\s*(?:[-*+]|\d+[.)])\s")
+_FENCE = re.compile(r"`{3,}|~{3,}")
+_CODE_INDENT = 4
+_TAB_STOP = 4
+_BLOCK_START = re.compile(r"[#|><]|\{[%#]|([-*_])(?:[ \t]*\1){2,}[ \t]*$")
+_FIXES = {
+    NO_LONG_LINES: "wrap the line",
+    NO_LAZY_CONTINUATIONS: "indent the line under its list item",
+}
 
 
 @dataclass(frozen=True)
@@ -94,6 +107,7 @@ class Artifact:
         source: Source file path, for failure reporting.
         allowance: Declared per-artifact ceiling from the owning root's
             `size_allowances.json`, or None if undeclared.
+        lines: Line numbers the value was measured at.
     """
 
     metric: str
@@ -102,6 +116,7 @@ class Artifact:
     value: int | bool
     source: Path
     allowance: int | None = None
+    lines: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -114,6 +129,7 @@ class Violation:
     actual: int | bool
     threshold: int | bool
     source: Path
+    lines: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -193,6 +209,89 @@ def _resolve_content_frontmatter(
     return body, (resolved or {}), resolved is not None
 
 
+def _line_artifacts(target: str, dest_name: str, source: Path) -> Iterator[Artifact]:
+    """Yield the source's longest prose line and its lazy list continuations.
+
+    Frontmatter and lines inside ``` or ~~~ fences are skipped. A delimiter
+    indented `_CODE_INDENT` or more past its list item's text is not a fence,
+    and a fence ends where a line dedents out of its list item. Tabs indent
+    to `_TAB_STOP`-column stops.
+    Table rows (starting with ``|``) are skipped for line length. A lazy
+    continuation is a column-0 prose line directly after a list item's line.
+
+    Args:
+        target: Target name to record on the yielded artifacts.
+        dest_name: Installed destination name.
+        source: Source file path.
+    """
+    content = _read_text(source)
+    lines = content.splitlines()
+    split = split_frontmatter(content)
+    start = len(split[0]) + 2 if split else 0
+    longest, line_number = 0, None
+    lazy_lines: list[int] = []
+    fence, fence_column, in_item = "", 0, False
+    columns: list[int] = []
+    for number, line in enumerate(lines[start:], start + 1):
+        stripped = line.lstrip()
+        indent = len(line[: len(line) - len(stripped)].expandtabs(_TAB_STOP))
+        if fence and stripped and indent < fence_column:
+            fence = ""
+        if stripped and not fence:
+            columns = [c for c in columns if c <= indent]
+        column = fence_column if fence else (columns[-1] if columns else 0)
+        delimiter = _FENCE.match(stripped) if indent - column < _CODE_INDENT else None
+        if fence:
+            if (
+                delimiter
+                and delimiter[0].startswith(fence)
+                and not stripped[delimiter.end() :].strip()
+            ):
+                fence = ""
+            continue
+        if delimiter:
+            fence, fence_column, in_item = delimiter[0], column, False
+            continue
+        if not stripped.startswith("|") and len(line) > longest:
+            longest, line_number = len(line), number
+        if not stripped or _BLOCK_START.match(line):
+            in_item = False
+        elif item := _LIST_ITEM.match(line):
+            in_item = True
+            columns.append(len(line[: item.end()].expandtabs(_TAB_STOP)))
+        elif in_item and line == stripped:
+            lazy_lines.append(number)
+    yield Artifact(
+        NO_LONG_LINES,
+        target,
+        dest_name,
+        longest,
+        source,
+        lines=(line_number,) if line_number else (),
+    )
+    yield Artifact(
+        NO_LAZY_CONTINUATIONS,
+        target,
+        dest_name,
+        len(lazy_lines),
+        source,
+        lines=tuple(lazy_lines),
+    )
+
+
+def _without_foreign_line_checks(
+    artifacts: Iterable[Artifact], root: Path
+) -> Iterator[Artifact]:
+    """Drop `_line_artifacts` metrics unless `root` is this package's own.
+
+    Args:
+        artifacts: Artifacts measured under `root`.
+        root: Prompts directory the artifacts were measured from.
+    """
+    own = root.resolve() == _own_root_dir().resolve()
+    return (a for a in artifacts if own or a.metric not in LINE_METRICS)
+
+
 def _common_artifacts(
     content: str, metric_prefix_target: str, dest_name: str, source: Path
 ) -> Iterator[Artifact]:
@@ -208,6 +307,7 @@ def _common_artifacts(
     yield Artifact(
         FRONTMATTER_VALID, metric_prefix_target, dest_name, frontmatter_valid, source
     )
+    yield from _line_artifacts(metric_prefix_target, dest_name, source)
     yield Artifact(
         NO_UNSUBSTITUTED_PLACEHOLDERS,
         metric_prefix_target,
@@ -444,6 +544,7 @@ def _iter_part_artifacts(
         not find_unreplaced_variables(content),
         part,
     )
+    yield from _line_artifacts(target, dest_name, part)
 
 
 def _iter_agent_artifacts(
@@ -454,17 +555,23 @@ def _iter_agent_artifacts(
 ) -> Iterator[Artifact]:
     """Yield post-expansion description/validity artifacts for claude-code agents.
 
+    For pi, yields only the line checks of each agent source pi installs.
+
     Each source is substituted with the target's variables, matching
     `_install_agents`. A `generate_variants` source is measured once per
     generated variant, since that is what actually gets installed.
 
     Args:
         root: Prompts directory being scanned.
-        target: Render target - agents are claude-code only.
+        target: Render target.
         allowances: This root's declared per-artifact ceilings.
         vars_root: Prompts directory to read variables from, instead of this
             package's own.
     """
+    if target == "pi":
+        for agents_dir in _agent_source_dirs(root, [], target):
+            for src in sorted(agents_dir.glob("*.md")):
+                yield from _line_artifacts(target, src.name, src)
     if target != "claude-code":
         return
     sources = [
@@ -571,23 +678,39 @@ def iter_artifacts(
         One `Artifact` per (metric, target, destination) measurement.
     """
     for root in roots:
-        allowances, _ = _declared_allowances(root)
-        for target in targets:
+        yield from _without_foreign_line_checks(
+            _iter_root_artifacts(root, targets, vars_root), root
+        )
+
+
+def _iter_root_artifacts(
+    root: Path, targets: tuple[str, ...], vars_root: Path | None
+) -> Iterator[Artifact]:
+    """Measure every checked artifact under one root for `targets`.
+
+    Args:
+        root: Prompts directory to scan.
+        targets: Render targets to check.
+        vars_root: Prompts directory to read variables from, instead of this
+            package's own.
+    """
+    allowances, _ = _declared_allowances(root)
+    for target in targets:
+        yield from _iter_rendered_kind_artifacts(
+            root, target, "rules", RULE_BYTES, RULE_LINES, allowances, vars_root
+        )
+        if "workflows" in content_subdirs(target):
             yield from _iter_rendered_kind_artifacts(
-                root, target, "rules", RULE_BYTES, RULE_LINES, allowances, vars_root
+                root,
+                target,
+                "workflows",
+                WORKFLOW_BYTES,
+                WORKFLOW_LINES,
+                allowances,
+                vars_root,
             )
-            if "workflows" in content_subdirs(target):
-                yield from _iter_rendered_kind_artifacts(
-                    root,
-                    target,
-                    "workflows",
-                    WORKFLOW_BYTES,
-                    WORKFLOW_LINES,
-                    allowances,
-                    vars_root,
-                )
-            yield from _iter_skill_artifacts(root, target, allowances, vars_root)
-            yield from _iter_agent_artifacts(root, target, allowances, vars_root)
+        yield from _iter_skill_artifacts(root, target, allowances, vars_root)
+        yield from _iter_agent_artifacts(root, target, allowances, vars_root)
 
 
 def ceiling_for(artifact: Artifact) -> int | None:
@@ -647,6 +770,7 @@ def evaluate(artifacts: Iterable[Artifact]) -> list[Violation]:
                         artifact.value,
                         True,
                         artifact.source,
+                        artifact.lines,
                     )
                 )
             continue
@@ -663,6 +787,7 @@ def evaluate(artifacts: Iterable[Artifact]) -> list[Violation]:
                     artifact.value,
                     ceiling,
                     artifact.source,
+                    artifact.lines,
                 )
             )
     return violations
@@ -803,9 +928,15 @@ def format_report(violations: list[Violation], errors: list[str] | None = None) 
         lines.append("Prompt-size guard failed:")
         for v in violations:
             unit = UNITS.get(v.metric, "")
+            at_line = (
+                f" at line{'s' * (len(v.lines) > 1)} {', '.join(map(str, v.lines))}"
+                if v.lines
+                else ""
+            )
+            fix = _FIXES.get(v.metric, "compress, don't split")
             lines.append(
                 f"  [{v.metric}] {v.dest_name} ({v.target}): actual {v.actual} > "
-                f"threshold {v.threshold} {unit} ({v.source}) - compress, don't split."
+                f"threshold {v.threshold} {unit}{at_line} ({v.source}) - {fix}."
             )
     return "\n".join(lines)
 
@@ -1083,7 +1214,10 @@ def _iter_source_artifacts(
                     yield artifact
     elif rel_parts[1:2] == ("agents",) and len(rel_parts) == 3:
         _mirror(tmp, rel_parts, content)
-        for target in _scoped_targets(rel_parts[0], targets):
+        scoped = _scoped_targets(rel_parts[0], targets)
+        if rel_parts[0] == "claude-code" and "pi" in targets:
+            scoped += ("pi",)
+        for target in scoped:
             yield from _iter_agent_artifacts(tmp, target, allowances)
 
 
@@ -1125,8 +1259,11 @@ def check_source(
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             artifacts = list(
-                _iter_source_artifacts(
-                    Path(tmp_dir), rel_parts, content, targets, allowances, source
+                _without_foreign_line_checks(
+                    _iter_source_artifacts(
+                        Path(tmp_dir), rel_parts, content, targets, allowances, source
+                    ),
+                    root,
                 )
             )
         if "pi" in targets and _affects_pi_roles(rel_parts):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import fcntl
 import json
 import logging
@@ -12,6 +13,7 @@ import sys
 import time
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -556,16 +558,30 @@ class AutoReinstallPlugin(HooksPlugin):
             logger.warning("Failed to measure prompt size for %s", path)
             return None
 
-        current_actuals = {
-            (v.metric, v.target, v.dest_name): v.actual
-            for v in current_result.violations
+        current_violations = {
+            (v.metric, v.target, v.dest_name): v for v in current_result.violations
         }
-        worsened = [
-            v
-            for v in predicted_result.violations
-            if (v.metric, v.target, v.dest_name) not in current_actuals
-            or current_actuals[(v.metric, v.target, v.dest_name)] < v.actual
-        ]
+        matcher = difflib.SequenceMatcher(
+            None,
+            current_content.splitlines(),
+            predicted_content.splitlines(),
+            autojunk=False,
+        )
+        current_line_of = {
+            j + k + 1: i + k + 1
+            for i, j, size in matcher.get_matching_blocks()
+            for k in range(size)
+        }
+        worsened = []
+        for v in predicted_result.violations:
+            current = current_violations.get((v.metric, v.target, v.dest_name))
+            if current is None:
+                worsened.append(v)
+            elif current.actual < v.actual:
+                added = tuple(
+                    n for n in v.lines if current_line_of.get(n) not in current.lines
+                )
+                worsened.append(replace(v, lines=added or v.lines))
         if not worsened:
             return None
 
