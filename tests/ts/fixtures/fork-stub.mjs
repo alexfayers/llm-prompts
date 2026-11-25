@@ -20,11 +20,10 @@ let reply = "";
 let exitDelayMs = 0;
 let body = "";
 
-/** Sends the bridge one prefix report and one MCP call, and returns the call's reply text. */
+/** Sends the bridge one MCP call, and returns the call's reply text. */
 function callBridge(socketPath) {
 	return new Promise((resolve, reject) => {
 		const socket = net.connect(socketPath, () => {
-			socket.write(`${JSON.stringify({ prefix: process.env.STUB_PREFIX })}\n`);
 			socket.write(`${JSON.stringify({ id: 1, tool: "mcp__semble__search", args: { query: "q" } })}\n`);
 		});
 		socket.setEncoding("utf8");
@@ -46,7 +45,7 @@ async function replyTo(text) {
 		while (!existsSync(gate)) await new Promise((resolve) => setTimeout(resolve, 20));
 		return `OUTCOME done ref:rc-fork-${gate.split("/").pop()}`;
 	}
-	const quoted = text.includes("STUB_COMPLY") && /reply "([^"]+)"/.exec(text)?.[1];
+	const quoted = text.includes("STUB_COMPLY") && /reply(?: only)? "([^"]+)"/.exec(text)?.[1];
 	if (quoted) return quoted;
 	if (text.includes("STUB_REPORT")) return "OUTCOME done ref:rc-fork-x\nbody line";
 	if (text.includes("STUB_WRITE")) {
@@ -84,8 +83,6 @@ for await (const line of createInterface({ input: process.stdin })) {
 		out({ type: "message_end", message: { role: "assistant", usage: usage(100) } });
 		out({ type: "agent_settled", aborted: false });
 	} else if (command.type === "prompt") {
-		const bridged = JSON.parse(readFileSync(handshake, "utf8")).bridge;
-		if (process.env.STUB_PREFIX && !bridged) writeFileSync(`${dirname(handshake)}/prefix`, process.env.STUB_PREFIX);
 		reply = await replyTo(command.message);
 		const turnFile = coldSession || (command.message.includes("STUB_TURN") && seed);
 		if (turnFile) appendFileSync(turnFile, `${JSON.stringify({ type: "message", id: `a-${process.env.PI_CONTEXT_RUN_ID}`, message: { role: "assistant", usage: usage(100) } })}\n`);

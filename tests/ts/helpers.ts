@@ -321,3 +321,14 @@ export function integrationModel(): string {
 	if (!model) throw new Error("PI_CONTEXT_MODEL must name the model to run, as provider/id");
 	return model;
 }
+
+/** Polls `read` until an entry matches, so an integration test can wait for a background fork to end. */
+export async function waitForEntry(read: () => any[], match: (entry: any) => boolean, timeoutMs = 300_000): Promise<any> {
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		const found = read().find(match);
+		if (found) return found;
+		if (Date.now() > deadline) throw new Error("timed out waiting for the fork's completion message");
+		await new Promise((resolve) => setTimeout(resolve, 1000));
+	}
+}

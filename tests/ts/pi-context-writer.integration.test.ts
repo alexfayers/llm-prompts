@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { integrationModel } from "./helpers.ts";
+import { integrationModel, waitForEntry } from "./helpers.ts";
 import { RpcChild } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/runner.ts";
 
 const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" }).trim();
@@ -37,16 +37,18 @@ test("a writer fork resolves a rebase conflict and its commits land on the main 
 		const task = "Create target.txt with the single line `fork side` and commit it. If you are told about a rebase conflict, keep both lines in target.txt, finish the rebase and reply again.";
 		const turn = await main.prompt(`Call the fork tool once with role writer, name conflict and this task: ${task} Then reply with the word finished.`);
 		assert.equal(turn.error, undefined);
+		await waitForEntry(() => entriesOf(path.join(work, "sessions")), (entry) => entry.customType === "pi-context-results");
 	} finally {
 		await main.close();
 	}
 	const entries = entriesOf(path.join(work, "sessions"));
 	const forkResult = entries.find((entry) => entry.message?.toolName === "fork");
 	assert.ok(forkResult, "main called the fork tool");
-	t.diagnostic(`fork result: ${JSON.stringify(forkResult.message.content)} merge: ${JSON.stringify(forkResult.message.details?.merge)}`);
+	t.diagnostic(`fork result: ${JSON.stringify(forkResult.message.content)}`);
+	const completion = entries.find((entry) => entry.customType === "pi-context-results");
 	t.diagnostic(`main assistant turns: ${entries.filter((entry) => entry.message?.role === "assistant").length}`);
 	t.diagnostic(`history: ${git(repo, "log", "--oneline", "main")}`);
-	assert.equal(forkResult.message.details.merge.state, "landed");
+	assert.match(String(completion.content), /\[merge: landed [0-9a-f]+\]/);
 	assert.equal(git(repo, "rev-list", "--count", "main"), "3");
 	assert.equal(git(repo, "rev-list", "--merges", "--count", "main"), "0");
 	const target = fs.readFileSync(path.join(repo, "target.txt"), "utf8");

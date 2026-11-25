@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { integrationModel } from "./helpers.ts";
+import { integrationModel, waitForEntry } from "./helpers.ts";
 import { RpcChild } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/runner.ts";
 
 const MIN_RATIO = Number(process.env.PI_CONTEXT_MIN_CACHE_RATIO ?? 0.9);
@@ -29,6 +29,7 @@ test("a fork's first request reads the parent's cached prefix", { skip: !process
 		assert.equal((await main.prompt("Reply with the single word ready.")).error, undefined);
 		const turn = await main.prompt(`Call the fork tool once with the task: ${FORK_TASK} Then reply with the word finished.`);
 		assert.equal(turn.error, undefined);
+		await waitForEntry(() => entriesOf(path.join(work, "sessions")), (entry) => entry.customType === "pi-context-results");
 	} finally {
 		await main.close();
 	}
@@ -36,13 +37,14 @@ test("a fork's first request reads the parent's cached prefix", { skip: !process
 	const forkResult = mainEntries.find((entry) => entry.message?.toolName === "fork");
 	assert.ok(forkResult, "main called the fork tool");
 	const parent = mainEntries.filter((entry) => entry.message?.role === "assistant").map((entry) => entry.message.usage);
-	const first = forkResult.message.details.firstUsage;
-	const ratio = first.cacheRead / requestTokens(first);
-	t.diagnostic(`parent requests: ${JSON.stringify(parent)}`);
-	t.diagnostic(`fork first request: ${JSON.stringify(first)} cache read ratio ${ratio.toFixed(4)}`);
 	const seedFile = fs.readdirSync(path.join(agentDir, "pi-context"), { recursive: true, encoding: "utf8" }).find((file) => file.endsWith("seed.jsonl"));
 	const forkEntries = fs.readFileSync(path.join(agentDir, "pi-context", seedFile!), "utf8").trim().split("\n").map((line) => JSON.parse(line));
 	const own = forkEntries.filter((entry) => !mainEntries.some((other) => other.id === entry.id));
+	const first = own.find((entry) => entry.message?.role === "assistant")?.message.usage;
+	assert.ok(first, "the fork's session holds its first reply");
+	const ratio = first.cacheRead / requestTokens(first);
+	t.diagnostic(`parent requests: ${JSON.stringify(parent)}`);
+	t.diagnostic(`fork first request: ${JSON.stringify(first)} cache read ratio ${ratio.toFixed(4)}`);
 	t.diagnostic(`entries added by the fork: ${own.map((entry) => `${entry.type}:${entry.customType ?? entry.message?.role ?? ""}`).join(" ")}`);
 	assert.ok(ratio >= MIN_RATIO, `first request cache read ratio ${ratio}`);
 });

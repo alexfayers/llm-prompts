@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { waitForEntry } from "./helpers.ts";
 import { RpcChild } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/runner.ts";
 
 const MODEL = process.env.PI_CONTEXT_MODEL ?? "haiku";
@@ -31,14 +32,15 @@ async function runFork(agentDir: string, proxy: boolean) {
 	try {
 		assert.equal((await main.prompt("Reply with the single word ready.")).error, undefined);
 		assert.equal((await main.prompt(`Call the fork tool once with the task: ${TASK} Then reply with the word finished.`)).error, undefined);
+		await waitForEntry(() => entriesOf(path.join(work, "sessions")), (entry) => entry.customType === "result-cap");
 	} finally {
 		await main.close();
 	}
 	const entries = entriesOf(path.join(work, "sessions"));
 	const forkResult = entries.find((entry) => entry.message?.toolName === "fork");
 	assert.ok(forkResult, "main called the fork tool");
-	const reply = entries.find((entry) => entry.customType === "result-cap" && entry.data?.ref === `rc-fork-${forkResult.message.details.name}`);
-	return { spawns: fs.readFileSync(spawnLog, "utf8").trim().split("\n").filter(Boolean).length, result: forkResult.message, reply: reply?.data.text as string };
+	const reply = entries.find((entry) => entry.customType === "result-cap" && entry.data?.ref?.startsWith(`rc-fork-${forkResult.message.details.name}-`));
+	return { spawns: fs.readFileSync(spawnLog, "utf8").trim().split("\n").filter(Boolean).length, reply: reply?.data.text as string };
 }
 
 test("a fork with the MCP proxy reaches main's MCP server without starting its own", { skip: !process.env.PI_CONTEXT_INTEGRATION, timeout: 600_000 }, async (t) => {
@@ -46,9 +48,8 @@ test("a fork with the MCP proxy reaches main's MCP server without starting its o
 	assert.ok(agentDir && path.resolve(agentDir) !== path.join(os.homedir(), ".pi", "agent"), "PI_CONTEXT_AGENT_DIR must name a scratch agent directory");
 	const own = await runFork(agentDir, false);
 	const proxied = await runFork(agentDir, true);
-	for (const [label, run] of [["own MCP", own], ["proxy", proxied]] as const) t.diagnostic(`${label}: spawns ${run.spawns}, prefix ${run.result.details?.prefix}, first usage ${JSON.stringify(run.result.details?.firstUsage)}, result ${JSON.stringify(run.result.content)}`);
+	for (const [label, run] of [["own MCP", own], ["proxy", proxied]] as const) t.diagnostic(`${label}: spawns ${run.spawns}, result ${JSON.stringify(run.reply)}`);
 	assert.equal(own.spawns, 2);
 	assert.equal(proxied.spawns, 1);
 	assert.match(proxied.reply, /pong/);
-	assert.equal(proxied.result.details.prefix, "match");
 });

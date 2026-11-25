@@ -5,9 +5,10 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
 import { loadExtension, useEnv } from "./helpers.ts";
+import { projectResult } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/outcome.ts";
 import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
-import { prefixHash, trackPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
-import { registryOf } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
+import { trackPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
+import { isLive, registryOf } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 import { Background } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/background.ts";
 import { coldArgs, coldLabel, KEEP_FINISHED_MS, registerFork, resolveModel, seedEntries, sweepFinished } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
 import { LONG_CACHE_MS } from "../../src/llm_prompts/prompts/pi/extensions/context-fold.ts";
@@ -68,7 +69,23 @@ const forkDirs = () => fs.readdirSync(path.join(agentDir, "pi-context"), { recur
 
 const MAIN_TOOLS = [{ name: "mcp__semble__search", description: "d", parameters: {}, exposure: "codemode" }, { name: "read", description: "r", parameters: {}, exposure: "direct" }];
 
-async function fork(params: Record<string, unknown>, cwd = process.cwd(), main = { activeTools: ["read", "codemode"], allTools: MAIN_TOOLS }, appendEntry?: () => void) {
+const eventually = async (done: () => boolean) => {
+	for (let attempt = 0; attempt < 500 && !done(); attempt++) await new Promise((resolve) => setTimeout(resolve, 10));
+};
+
+/** Waits for the runs a start result names, then gives their reply as a result. */
+async function settle(started: any, appended: unknown[][], sent: any[][]): Promise<any> {
+	if (started instanceof Error) return started;
+	const latest = (name: string) => registryOf().all().filter((run) => run.name === name).at(-1);
+	const names = [started.details.name, ...(started.details.tasks ?? [])];
+	await eventually(() => names.every((name) => latest(name) && !isLive(latest(name)!)));
+	const run = latest(started.details.name)!;
+	const text = (appended.find(([type, entry]) => type === "result-cap" && (entry as any).ref === run.ref)?.[1] as any)?.text ?? "";
+	const digest = sent.map(([message]) => message.content).filter((content: string) => content.startsWith(`[fork ${run.name} `)).join("\n");
+	return { content: [{ type: "text", text }], details: { ...started.details, ...run, digest } };
+}
+
+async function start(params: Record<string, unknown>, cwd = process.cwd(), main = { activeTools: ["read", "codemode"], allTools: MAIN_TOOLS }, appendEntry?: () => void) {
 	const tools: Record<string, any> = {};
 	const appended: unknown[][] = [];
 	const sent: any[][] = [];
@@ -91,7 +108,14 @@ async function fork(params: Record<string, unknown>, cwd = process.cwd(), main =
 		model: { provider: "prov", id: "mod" },
 		sessionManager: { getBranch: () => branch, getHeader: () => ({ type: "session", version: 3, id: "main-id", timestamp: "t", cwd }) },
 	};
-	return { tool: await tools.fork.execute("call-id", params, undefined, undefined, ctx).catch((error: Error) => error), appended, sent, tools, background, ctx };
+	const execute = tools.fork.execute;
+	tools.fork = { ...tools.fork, execute: async (...args: unknown[]) => settle(await execute(...args), appended, sent) };
+	return { tool: await execute("call-id", params, undefined, undefined, ctx).catch((error: Error) => error), appended, sent, tools, background, ctx };
+}
+
+async function fork(...args: Parameters<typeof start>) {
+	const started = await start(...args);
+	return { ...started, tool: await settle(started.tool, started.appended, started.sent) };
 }
 
 describe("fork tool", () => {
@@ -131,12 +155,11 @@ describe("fork tool", () => {
 		assert.match(seen.prompt, /do not call fork\. You are read-only[\s\S]*STUB_INSPECT$/);
 	});
 
-	test("returns the reply cut to its outcome with the first request's cache numbers, and keeps the full text by ref", async () => {
+	test("keeps the full reply by ref and records its outcome", async () => {
 		const { tool, appended } = await fork({ task: "STUB_REPORT", name: "x" });
-		assert.equal(tool.content[0].text, "OUTCOME done ref:rc-fork-x\nbody line\n[fork x: cache 100/1, ref rc-fork-x-call-id]");
 		assert.deepEqual(appended, [["result-cap", { ref: "rc-fork-x-call-id", text: "OUTCOME done ref:rc-fork-x\nbody line" }]]);
 		assert.equal(tool.details.outcome, "done");
-		assert.equal(tool.details.usage.cacheRead, 300);
+		assert.equal(tool.details.digest, "[fork x done] body line ref rc-fork-x-call-id");
 	});
 
 	test("a finished cold worker keeps its files for a day after it finished, so its cost can be audited", async () => {
@@ -203,9 +226,9 @@ describe("fork tool", () => {
 		settings = PROXY_ON;
 		const before = forkDirs();
 		const failed = (await fork({ task: "hi", name: "setup" }, process.cwd(), { activeTools: [], allTools: undefined as never })).tool;
-		assert.ok(failed instanceof Error);
-		assert.match(failed.message, /fork setup failed/);
-		assert.deepEqual(forkDirs(), before);
+		assert.equal(failed.details.state, "failed");
+		assert.match(failed.details.digest, /^\[fork setup failed\]/);
+		assert.deepEqual(forkDirs().filter((dir) => !String(dir).includes("worktrees")), before);
 	});
 
 	describe("from a finished fork", () => {
@@ -225,29 +248,11 @@ describe("fork tool", () => {
 			assert.notEqual(kid.files, src.files);
 		});
 
-		test("a child's prefix is compared with its source's, and a source without one gives no verdict", async () => {
-			const child = async (tools: any, ctx: unknown, task: string, from: string, prefix: string) => {
-				process.env.STUB_PREFIX = prefix;
-				return (await tools.fork.execute("call-2", { task, from }, undefined, undefined, ctx)).details.prefix;
-			};
-			for (const [proxy, task] of [[{}, "x"], [PROXY_ON, "STUB_BRIDGE"]] as const) {
-				settings = proxy;
-				process.env.STUB_PREFIX = "source";
-				const { tools, ctx } = await fork({ task, name: "psrc" });
-				assert.deepEqual([await child(tools, ctx, task, "psrc", "source"), await child(tools, ctx, task, "psrc", "other")], ["match", "mismatch"]);
-			}
-			settings = {};
-			delete process.env.STUB_PREFIX;
-			const { tools, ctx } = await fork({ task: "x", name: "bare" });
-			assert.equal(await child(tools, ctx, "x", "bare", "source"), undefined);
-			delete process.env.STUB_PREFIX;
-		});
-
 		test("shared with tasks runs one cold stub on the shared text, then one child per task on a copy of its session", async () => {
 			const { tool } = await fork({ shared: "STUB_REPORT notes", tasks: [{ name: "t1", task: "STUB_INSPECT" }, { name: "t2", task: "STUB_INSPECT" }], model: "prov/cheap:low", name: "stub" });
 			const run = (name: string) => registryOf().all().find((candidate) => candidate.name === name)!;
-			assert.equal(run("stub").task, 'STUB_REPORT notes\n\nRead what the text above says, then reply "OUTCOME done ref:" and stop.');
-			assert.match(tool.content[0].text, /^OUTCOME done ref:rc-fork-x\nbody line\n\[fork stub: cold worker stub on prov\/cheap:low \(no shared context\), /);
+			assert.equal(run("stub").task, 'STUB_REPORT notes\n\nYour specific task arrives next, so reply only "OUTCOME done ref:" and stop.');
+			assert.equal(tool.content[0].text, "OUTCOME done ref:rc-fork-x\nbody line");
 			for (const name of ["t1", "t2"]) assert.equal(JSON.parse(fs.readFileSync(path.join(run(name).files!, "session", "session.jsonl"), "utf8").split("\n")[0]).piContextFork.parentSessionId, run("stub").id);
 			assert.equal(fs.existsSync(path.join(run("stub").files!, "finished")), true);
 			assert.match(String((await fork({ shared: "s", tasks: [{ name: "t3", task: "x" }] })).tool), /shared needs tasks and model, without task or from/);
@@ -255,7 +260,8 @@ describe("fork tool", () => {
 
 		test("a stub that replies exactly as its prompt asks lets the tasks start", async () => {
 			const { tool } = await fork({ shared: "STUB_COMPLY notes", tasks: [{ name: "k1", task: "STUB_REPORT" }], model: "prov/cheap", name: "kstub" });
-			assert.match(tool.content[0].text, /^OUTCOME done ref:\n[\s\S]*\nOUTCOME done ref:rc-fork-x/);
+			assert.equal(tool.content[0].text, "OUTCOME done ref:");
+			assert.equal(registryOf().all().find((run) => run.name === "k1")?.state, "done");
 		});
 
 		test("a fan-out bills the stub's turns once, to the stub, for warm and cold sources", async () => {
@@ -314,16 +320,13 @@ describe("fork tool", () => {
 	});
 
 	describe("in the background", () => {
-		const eventually = async (done: () => boolean) => {
-			for (let attempt = 0; attempt < 500 && !done(); attempt++) await new Promise((resolve) => setTimeout(resolve, 10));
-		};
 		const unhandled: unknown[] = [];
 		const onUnhandled = (reason: unknown) => unhandled.push(reason);
 		before(() => void process.on("unhandledRejection", onUnhandled));
 		after(() => void process.off("unhandledRejection", onUnhandled));
 
 		test("returns at once and wakes main with the result when the run ends", async () => {
-			const { tool, sent, appended } = await fork({ task: "STUB_REPORT", name: "bg", background: true });
+			const { tool, sent, appended } = await start({ task: "STUB_REPORT", name: "bg" });
 			assert.equal(tool.content[0].text, "started fork bg (background)");
 			assert.equal(registryOf().all().find((run) => run.name === "bg")?.background, true);
 			await eventually(() => sent.length > 0);
@@ -333,7 +336,7 @@ describe("fork tool", () => {
 		});
 
 		test("a run whose result cannot be saved is still finished and wakes main", async () => {
-			const { sent } = await fork({ task: "STUB_REPORT", name: "nosave", background: true }, process.cwd(), undefined, () => {
+			const { sent } = await start({ task: "STUB_REPORT", name: "nosave" }, process.cwd(), undefined, () => {
 				throw new Error("stale");
 			});
 			await eventually(() => sent.length > 0);
@@ -342,7 +345,7 @@ describe("fork tool", () => {
 		});
 
 		test("a crashing child wakes main with an error and raises no unhandled rejection", async () => {
-			const { sent } = await fork({ task: "STUB_CRASH", name: "boom", background: true });
+			const { sent } = await start({ task: "STUB_CRASH", name: "boom" });
 			await eventually(() => sent.length > 0);
 			assert.match(sent[0][0].content, /^\[fork boom failed\] .*ref/);
 			assert.equal(registryOf().all().find((run) => run.name === "boom")?.state, "failed");
@@ -352,7 +355,7 @@ describe("fork tool", () => {
 		test("a second cold worker with the same prefix sends its prompt only after the first worker's first reply", async () => {
 			const log = path.join(agentDir, "warmup.log");
 			process.env.STUB_LOG = log;
-			const forks = await Promise.all(["lead", "follow"].map((name) => fork({ task: "STUB_REPORT", name, model: "prov/cheap", background: true })));
+			const forks = await Promise.all(["lead", "follow"].map((name) => start({ task: "STUB_REPORT", name, model: "prov/cheap" })));
 			await eventually(() => forks.every(({ sent }) => sent.length > 0));
 			delete process.env.STUB_LOG;
 			const ids = Object.fromEntries(registryOf().all().map((run) => [run.name, run.id]));
@@ -361,15 +364,23 @@ describe("fork tool", () => {
 			assert.deepEqual(lines, [`${first} prompt`, `${first} message_end`, `${second} prompt`]);
 		});
 
-		test("shared with background starts each task's child in the background once the stub has finished", async () => {
-			const { tool, sent } = await fork({ shared: "STUB_REPORT notes", tasks: [{ name: "b1", task: "STUB_REPORT" }, { name: "b2", task: "STUB_REPORT" }], model: "prov/cheap", name: "bstub", background: true });
-			assert.match(tool.content[0].text, /, ref rc-fork-bstub-call-id\]\nstarted fork b1 \(background\)\nstarted fork b2 \(background\)$/);
-			await eventually(() => sent.length === 2);
-			assert.deepEqual(sent.map(([message]) => message.content.split("]")[0]).sort(), ["[fork b1 done", "[fork b2 done"]);
+		test("shared with tasks returns at once and starts each task's child once the stub has finished", async () => {
+			const { tool, sent } = await start({ shared: "STUB_REPORT notes", tasks: [{ name: "b1", task: "STUB_REPORT" }, { name: "b2", task: "STUB_REPORT" }], model: "prov/cheap", name: "bstub" });
+			assert.equal(tool.content[0].text, "started cold worker bstub on prov/cheap (no shared context) (background)\ntasks b1, b2 start when bstub finishes");
+			assert.equal(registryOf().all().some((run) => run.name === "b1"), false);
+			await eventually(() => sent.length === 3);
+			assert.deepEqual(sent.map(([message]) => message.content.split("]")[0]).sort(), ["[fork b1 done", "[fork b2 done", "[fork bstub done"]);
+		});
+
+		test("shared with tasks names each task that did not start when the stub fails", async () => {
+			const { sent } = await start({ shared: "STUB_CRASH", tasks: [{ name: "n1", task: "STUB_REPORT" }, { name: "n2", task: "STUB_REPORT" }], model: "prov/cheap", name: "cstub" });
+			await eventually(() => sent.length === 3);
+			assert.deepEqual(sent.map(([message]) => message.content.split("]")[0]).sort(), ["[fork cstub failed", "[fork n1 failed", "[fork n2 failed"]);
+			assert.equal(registryOf().all().some((run) => run.name === "n1" && run.state === "failed"), true);
 		});
 
 		test("fork_cancel stops a live run without waking main", async () => {
-			const { tools, sent } = await fork({ task: "STUB_HANG", name: "slow", background: true });
+			const { tools, sent } = await start({ task: "STUB_HANG", name: "slow" });
 			const cancelled = await tools.fork_cancel.execute("c", { name: "slow" }, undefined, undefined, {});
 			assert.equal(cancelled.content[0].text, "cancelled fork slow");
 			assert.equal(registryOf().all().find((run) => run.name === "slow")?.state, "cancelled");
@@ -379,7 +390,7 @@ describe("fork tool", () => {
 		});
 
 		test("fork_steer reaches a live background fork, and an unknown name lists the live forks", async () => {
-			const { tools, sent, appended, ctx } = await fork({ task: "STUB_STEER", name: "steer", background: true });
+			const { tools, sent, appended, ctx } = await start({ task: "STUB_STEER", name: "steer" });
 			await assert.rejects(tools.fork_steer.execute("s", { name: "nope", message: "m" }), /no live background fork nope\. Live forks: .*steer/);
 			await eventually(() => registryOf().all().find((run) => run.name === "steer")?.state === "running");
 			await new Promise((resolve) => setTimeout(resolve, 50));
@@ -390,7 +401,7 @@ describe("fork tool", () => {
 		});
 
 		test("a fork that the session's end stopped keeps its session, and fork_resume continues it", async () => {
-			const { tools, sent, appended, background, ctx } = await fork({ task: "STUB_STEER", name: "cut", background: true });
+			const { tools, sent, appended, background, ctx } = await start({ task: "STUB_STEER", name: "cut" });
 			await new Promise((resolve) => setTimeout(resolve, 50));
 			background.shutdown();
 			const run = () => registryOf().all().find((candidate) => candidate.name === "cut");
@@ -407,7 +418,7 @@ describe("fork tool", () => {
 		});
 
 		test("fork_resume of a warm fork whose handshake lost its boundary fails and keeps the handshake", async () => {
-			const { tools, sent, background, ctx } = await fork({ task: "STUB_STEER", name: "unbound", background: true });
+			const { tools, sent, background, ctx } = await start({ task: "STUB_STEER", name: "unbound" });
 			await new Promise((resolve) => setTimeout(resolve, 50));
 			background.shutdown();
 			const run = () => registryOf().all().find((candidate) => candidate.name === "unbound");
@@ -423,8 +434,9 @@ describe("fork tool", () => {
 
 		test("a tier fork records its resolved model, and fork_resume reuses it", async () => {
 			fs.writeFileSync(path.join(agentDir, "pi-context", "models.json"), JSON.stringify({ cheap: "prov/cheap" }));
-			const { tool, tools, appended, ctx } = await fork({ task: "STUB_REPORT", name: "tier", model: "cheap:low" });
-			assert.match(tool.content[0].text, /\[fork tier: cold worker tier on cheap:low = prov\/cheap:low \(no shared context\), /);
+			const { tool, tools, appended, ctx } = await start({ task: "STUB_REPORT", name: "tier", model: "cheap:low" });
+			assert.match(tool.content[0].text, /^started cold worker tier on cheap:low = prov\/cheap:low \(no shared context\) \(background\)/);
+			await eventually(() => appended.length > 0);
 			assert.equal(registryOf().all().find((run) => run.name === "tier")!.model, "prov/cheap:low");
 			await tools.fork_resume.execute("r", { name: "tier", task: "STUB_INSPECT" }, undefined, undefined, ctx);
 			await eventually(() => appended.length > 2);
@@ -434,6 +446,7 @@ describe("fork tool", () => {
 
 		test("fork_resume with a task continues a finished cold worker on its own session and model", async () => {
 			const { tools, sent, appended, ctx } = await fork({ task: "STUB_REPORT", name: "again", model: "prov/cheap" });
+			sent.length = 0;
 			const continued = await tools.fork_resume.execute("r", { name: "again", task: "STUB_INSPECT" }, undefined, undefined, ctx);
 			assert.equal(continued.content[0].text, "continued fork again (background)");
 			await eventually(() => sent.length > 0);
@@ -460,18 +473,12 @@ describe("fork tool", () => {
 
 		test("a new fork names a finished fork of the same role and directory whose cache is still warm", async () => {
 			await fork({ task: "STUB_REPORT", name: "warm" });
-			const { tool } = await fork({ task: "STUB_REPORT", name: "next", background: true });
+			const { tool } = await start({ task: "STUB_REPORT", name: "next" });
 			assert.equal(tool.content[0].text, "started fork next (background)\nfork warm finished 0m ago with 216 ctx, still cached: fork_resume({name, task}) is cheaper");
 		});
 	});
 
 	describe("with the MCP proxy", () => {
-		const mainPayload = { system: "s", tools: [{ name: "read" }] };
-		const trackMain = () => {
-			let handler: any;
-			trackPrefix({ on: (_event: string, listener: unknown) => (handler = listener) } as any);
-			handler({ payload: mainPayload });
-		};
 		beforeEach(() => void (settings = PROXY_ON));
 
 		test("starts the child without MCP servers and describes main's tools and servers section in the handshake", async () => {
@@ -482,15 +489,9 @@ describe("fork tool", () => {
 			assert.equal(seen.socketExists, true);
 		});
 
-		test("runs the child's MCP calls in main and reports whether its prefix matches main's last request", async () => {
-			trackMain();
-			process.env.STUB_PREFIX = prefixHash(mainPayload);
-			const matched = (await fork({ task: "STUB_BRIDGE" })).tool;
-			assert.match(matched.content[0].text, /^echo: ran mcp__semble__search {"query":"q"}/);
-			assert.equal(matched.details.prefix, "match");
-			process.env.STUB_PREFIX = "other";
-			assert.equal((await fork({ task: "STUB_BRIDGE" })).tool.details.prefix, "mismatch");
-			delete process.env.STUB_PREFIX;
+		test("runs the child's MCP calls in main and reaches main's tool result", async () => {
+			const { tool } = await fork({ task: "STUB_BRIDGE" });
+			assert.match(tool.content[0].text, /^echo: ran mcp__semble__search {"query":"q"}/);
 		});
 
 		test("leaves the child's own MCP servers on when the proxy is off", async () => {
@@ -499,20 +500,6 @@ describe("fork tool", () => {
 			const seen = JSON.parse(tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
 			assert.equal(seen.args.includes("--no-mcp"), false);
 			assert.equal(seen.handshake.bridge, undefined);
-		});
-
-		test("without the proxy, reports whether the child's prefix matches main's last request and flags a mismatch in the result line", async () => {
-			settings = {};
-			trackMain();
-			process.env.STUB_PREFIX = prefixHash(mainPayload);
-			const matched = (await fork({ task: "x" })).tool;
-			assert.equal(matched.details.prefix, "match");
-			assert.doesNotMatch(matched.content[0].text, /prefix mismatch/);
-			process.env.STUB_PREFIX = "other";
-			const missed = (await fork({ task: "x" })).tool;
-			delete process.env.STUB_PREFIX;
-			assert.equal(missed.details.prefix, "mismatch");
-			assert.match(missed.content[0].text, /\[fork [\w-]+: prefix mismatch, cache /);
 		});
 	});
 
@@ -564,7 +551,7 @@ describe("fork tool", () => {
 			assert.match((appended[0][1] as { text: string }).text, new RegExp(`Your worktree: ${handshake.worktree}`));
 			assert.ok(handshake.worktree.startsWith(path.join(agentDir, "pi-context", "worktrees")));
 			assert.match((appended[0][1] as { text: string }).text, new RegExp(`worktreeEnv ${handshake.worktree}$`, "m"));
-			assert.match(tool.content[0].text, /\[merge: landed [0-9a-f]{9}\]/);
+			assert.match(tool.details.digest, /\[merge: landed [0-9a-f]{9}\]/);
 			assert.equal(fs.readFileSync(path.join(repo, fs.readdirSync(repo).find((file) => file.startsWith("written-"))!), "utf8"), "from the fork");
 			assert.equal(fs.existsSync(handshake.worktree), false);
 		});
@@ -572,7 +559,7 @@ describe("fork tool", () => {
 		test("does not land the commits of a reply without an OUTCOME line", async () => {
 			const before = git(repo, "rev-parse", "HEAD");
 			const { tool } = await fork({ task: "STUB_WRITE STUB_NO_OUTCOME", role: "writer", name: "nooutcome" }, repo);
-			assert.doesNotMatch(tool.content[0].text, /\[merge: landed/);
+			assert.doesNotMatch(tool.details.digest, /\[merge: landed/);
 			assert.equal(git(repo, "rev-parse", "HEAD"), before);
 		});
 
@@ -587,7 +574,7 @@ describe("fork tool", () => {
 			const { tool, appended } = await fork({ task: "STUB_WRITE", role: "writer", name: "elsewhere", target: path.relative(repo, other) }, repo);
 			assert.equal(JSON.parse((appended[0][1] as { text: string }).text.split("\n")[1]).repo, other);
 			assert.ok((appended[0][1] as { text: string }).text.includes(`Your commits land on fork/elsewhere in ${other} when you finish. Do not name ${other} or other worktrees in commands.`));
-			assert.match(tool.content[0].text, /\[merge: landed [0-9a-f]{9}\]/);
+			assert.match(tool.details.digest, /\[merge: landed [0-9a-f]{9}\]/);
 			assert.equal(git(other, "log", "-1", "--format=%s", "trunk"), "write");
 			assert.equal(git(repo, "rev-parse", "HEAD"), before);
 			assert.equal(git(repo, "status", "--porcelain"), "");
@@ -603,7 +590,7 @@ describe("fork tool", () => {
 			const { tool, appended } = await fork({ task: "STUB_WRITE", role: "writer", name: "cold", model: "prov/cheap" }, repo);
 			const text = (appended[0][1] as { text: string }).text;
 			assert.equal(text.split("\ncwd ")[1], JSON.parse(text.split("\n")[1]).worktree);
-			assert.match(tool.content[0].text, /\[merge: landed [0-9a-f]{9}\]/);
+			assert.match(tool.details.digest, /\[merge: landed [0-9a-f]{9}\]/);
 		});
 
 		test("a reader with a target inside a checkout starts in that directory, not the checkout root", async () => {
@@ -622,14 +609,13 @@ describe("fork tool", () => {
 			assert.deepEqual([seen.handshake.worktree, seen.handshake.repo], [plain, undefined]);
 			assert.match(seen.prompt, new RegExp(`${plain} is not a git checkout, so you have no worktree: write in place there\\. Nothing lands\\.\nTask: STUB_INSPECT$`));
 			assert.equal(tool.details.merge, undefined);
-			assert.doesNotMatch(tool.content[0].text, /\[merge:/);
+			assert.doesNotMatch(tool.details.digest, /\[merge:/);
 		});
 
 		test("a failure before the child starts removes the clean worktree and its branch", async () => {
 			settings = PROXY_ON;
 			const failed = (await fork({ task: "hi", role: "writer", name: "early" }, repo, { activeTools: [], allTools: undefined as never })).tool;
-			assert.ok(failed instanceof Error);
-			assert.match(failed.message, /fork early failed[\s\S]*\(worktree removed: clean\)/);
+			assert.match(failed.details.digest, /^\[fork early failed\][\s\S]*\[merge: worktree removed: clean\]/);
 			assert.equal(execFileSync("git", ["-C", repo, "branch", "--list", "fork/early"], { encoding: "utf8" }), "");
 		});
 	});
