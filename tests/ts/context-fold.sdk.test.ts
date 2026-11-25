@@ -121,7 +121,7 @@ test("a rejected idle fold is not saved and folding stops", async () => {
 	assert.equal(JSON.stringify(requests.at(-1).messages).split(BIG).length - 1, 2);
 });
 
-test("a board note after an idle fold folds the full note restates the open tasks", async () => {
+test("a board note folded by an idle fold is not restated for the same revision", async () => {
 	const { session, sessionManager, requests, expireCache, finish } = await idleStart([fauxAssistantMessage(fauxToolCall("big", {})), () => fauxAssistantMessage("third")], [towerDoSlim]);
 	await session.prompt("go");
 	expireCache();
@@ -129,5 +129,5 @@ test("a board note after an idle fold folds the full note restates the open task
 	finish();
 
 	assert.deepEqual(sessionManager.getEntries().filter((entry: any) => entry.type === "custom" && entry.customType === "context-fold").map((entry: any) => entry.data.trigger), ["idle"]);
-	assert.ok(JSON.stringify(requests.at(-1).messages).includes("Open tasks: a"));
+	assert.ok(!JSON.stringify(requests.at(-1).messages).includes("Open tasks: a"));
 });
