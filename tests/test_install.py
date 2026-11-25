@@ -2929,11 +2929,19 @@ class TestPiVersionDrift:
     def test_reports_drift_from_the_pinned_version(
         self,
         tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
         installed: str | None,
         expected: str | None,
     ) -> None:
         set_root(tmp_path)
+        launcher = tmp_path / ".pi" / "agent" / "bin" / "pi"
+        launcher.parent.mkdir(parents=True)
+        launcher.write_text("", encoding="utf-8")
+        monkeypatch.setattr(
+            "llm_prompts.install.shutil.which",
+            lambda command: str(launcher) if command == "pi" else None,
+        )
         if installed is not None:
             version_file = tmp_path / ".pi" / "agent" / "install" / "current-version"
             version_file.parent.mkdir(parents=True)
@@ -2972,6 +2980,101 @@ class TestPiVersionDrift:
         _warn_pi_version_drift(["npm:@earendil-works/pi-coding-agent@1.2.0"])
 
         assert capsys.readouterr().err == ""
+
+    def _write_npm_install(self, tmp_path: Path, version: str) -> Path:
+        package = tmp_path / ".pi" / "agent" / "npm" / "node_modules"
+        package /= "@earendil-works/pi-coding-agent"
+        (package / "dist").mkdir(parents=True)
+        (package / "dist" / "cli.js").write_text("", encoding="utf-8")
+        (package / "package.json").write_text(
+            json.dumps({"name": "@earendil-works/pi-coding-agent", "version": version}),
+            encoding="utf-8",
+        )
+        return package
+
+    def test_warns_instead_of_reporting_a_version_when_a_launcher_shadows_the_npm_install(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        set_root(tmp_path)
+        version_file = tmp_path / ".pi" / "agent" / "install" / "current-version"
+        version_file.parent.mkdir(parents=True)
+        version_file.write_text("1.0.0\n", encoding="utf-8")
+        launcher = tmp_path / ".pi" / "agent" / "bin" / "pi"
+        launcher.parent.mkdir()
+        launcher.write_text("", encoding="utf-8")
+        package = self._write_npm_install(tmp_path, "1.2.0")
+        monkeypatch.setattr(
+            "llm_prompts.install.shutil.which",
+            lambda command: str(launcher) if command == "pi" else None,
+        )
+
+        _warn_pi_version_drift(["npm:@earendil-works/pi-coding-agent@1.2.0"])
+
+        err = capsys.readouterr().err
+        assert f"pi on PATH ({launcher}, 1.0.0)" in err
+        assert f"the npm one ({package}, 1.2.0)" in err
+        assert "#677" in err
+        assert "behind" not in err
+
+    def test_reports_no_version_when_no_pi_is_on_path(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        set_root(tmp_path)
+        self._write_npm_install(tmp_path, "1.1.9")
+        version_file = tmp_path / ".pi" / "agent" / "install" / "current-version"
+        version_file.parent.mkdir(parents=True)
+        version_file.write_text("1.1.8\n", encoding="utf-8")
+
+        _warn_pi_version_drift(["npm:@earendil-works/pi-coding-agent@1.2.0"])
+
+        assert capsys.readouterr().err == ""
+
+    def test_reports_no_version_for_a_pi_elsewhere_than_the_pi_agent_directory(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        set_root(tmp_path)
+        version_file = tmp_path / ".pi" / "agent" / "install" / "current-version"
+        version_file.parent.mkdir(parents=True)
+        version_file.write_text("1.1.8\n", encoding="utf-8")
+        other = tmp_path / "opt" / "pi"
+        other.parent.mkdir()
+        other.write_text("", encoding="utf-8")
+        monkeypatch.setattr(
+            "llm_prompts.install.shutil.which",
+            lambda command: str(other) if command == "pi" else None,
+        )
+
+        _warn_pi_version_drift(["npm:@earendil-works/pi-coding-agent@1.2.0"])
+
+        assert capsys.readouterr().err == ""
+
+    def test_reads_the_npm_install_that_pi_on_path_runs(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        set_root(tmp_path)
+        package = self._write_npm_install(tmp_path, "1.1.9")
+        bin_dir = tmp_path / ".pi" / "agent" / "npm" / "node_modules" / ".bin"
+        bin_dir.mkdir()
+        (bin_dir / "pi").symlink_to(package / "dist" / "cli.js")
+        monkeypatch.setattr(
+            "llm_prompts.install.shutil.which",
+            lambda command: str(bin_dir / command) if command == "pi" else None,
+        )
+
+        _warn_pi_version_drift(["npm:@earendil-works/pi-coding-agent@1.2.0"])
+
+        assert "pi 1.1.9 is behind the tested 1.2.0" in capsys.readouterr().err
 
 
 class TestLogBrokenPipe:
