@@ -154,6 +154,11 @@ class TestPassesGate:
             assert _passes_gate(rule, deferred=True) is False
         assert _parse_roles(content, "rule.md") == frozenset(roles)
 
+    def test_blank_deprecated_gate_passes(self, tmp_path: Path) -> None:
+        content = "---\nrequires_env:\n---\n"
+        assert _passes_gate(_make_rule(tmp_path, "rule.md", content)) is True
+        assert _parse_roles(content, "rule.md") == frozenset({"core"})
+
     def test_unknown_load_when_kind_passes(self, tmp_path: Path) -> None:
         rule = _make_rule(tmp_path, "rule.md", "---\nload_when: custom-kind\n---\n")
         assert _passes_gate(rule) is True

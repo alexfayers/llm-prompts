@@ -881,10 +881,10 @@ def _migrated(declared: dict[str, Any], label: str = "") -> dict[str, Any]:
     added: list[str] = []
     listed = False
     for key, kind in _DEPRECATED_GATES.items():
-        if key in migrated:
-            value = migrated.pop(key)
+        value = migrated.pop(key, None)
+        if value is not None and (conditions := _conditions(value)):
             listed = isinstance(value, list)
-            added.append(f"{kind}:{_conditions(value)[0]}")
+            added.append(f"{kind}:{conditions[0]}")
     if not added:
         return migrated
     conditions = [*_conditions(migrated.get("load_when", [])), *added]
