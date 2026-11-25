@@ -26,7 +26,7 @@ llm-prompts watch gh-pr|gh-triage|cmd TARGET... --until COND [--all] [--follow] 
 llm-prompts contribute list|sync|update        # keep each worktree branch in sync with local main and its own PR
 ```
 
-`install` runs `setup` first (installs or upgrades the tools in your config), then writes the files for the agent. `--no-update` skips `setup`. `update` pulls every git-based `[[tools]]` and `[[plugins]]` source, copies each local source's ready worktrees (`contribute sync --ready`) into its local main as `contribute sync --apply` does (nothing is pushed, no PR is opened, no worktree is removed), and reinstalls for each agent you have already installed. A copy that conflicts leaves main as it is and still installs. It stops before installing when a pull or copy fails or another `contribute` run holds the record lock.
+`install` runs `setup` first (installs or upgrades the tools in your config), then writes the files for the agent. `--no-update` skips `setup`. `update` pulls every git-based `[[tools]]` and `[[plugins]]` source, copies each local source's ready worktrees (`contribute sync --ready`) into its local main as `contribute sync --apply` does (nothing is pushed, no PR is opened, no recorded worktree is removed, and the worktree a conflict prints goes once `main` holds its resolution), and reinstalls for each agent you have already installed. A copy that conflicts leaves main as it is and still installs. It stops before installing when a pull or copy fails or another `contribute` run holds the record lock.
 
 `contribute` is covered in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
