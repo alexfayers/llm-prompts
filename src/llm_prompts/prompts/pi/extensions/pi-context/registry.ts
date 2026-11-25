@@ -31,7 +31,7 @@ export type Run = {
 	lastRequestAt?: number;
 	/** The context size of the delegate's last request, in tokens. */
 	context?: number;
-	/** The digest line of its result that main has not read yet. */
+	/** The digest lines of its results that main has not read yet, one per line. */
 	unread?: string;
 	/** Why the session that ran it ended while it was live. */
 	endedBy?: string;
