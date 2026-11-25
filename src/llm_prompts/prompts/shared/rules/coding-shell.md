@@ -16,6 +16,8 @@ roles: lead, reasoner, worker, surveyor, reviewer
 - MUST NOT shorten a build or test runner's output with `| tail`, `| head`, or `| grep`, and MUST NOT redirect it to a log then filter that log in the same call -
   a hook blocks the whole command list either way.
   MUST run the runner bare and read the summary it prints; if the output is genuinely too large, MAY redirect it in one call and read the file with the Read tool in the next.
+- MUST extract or filter JSON in ad hoc shell commands with `jq` (e.g. `jq -r '.version' package.json`),
+  not an inline `python -c` or `node -e` script. Project tools that take JSON as input are exempt.
 - MUST NOT use the `-f` flag with the `rm` command - too high risk.
 - MUST NOT use `rm -rf`; use `rm -r`.
 - MUST NOT kill processes by port number (e.g. `kill $(lsof -ti:PORT)`) - this can kill unrelated processes (e.g. VS Code extensions). MUST kill by specific PID.
