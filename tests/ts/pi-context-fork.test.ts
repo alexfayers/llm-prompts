@@ -133,7 +133,7 @@ describe("fork tool", () => {
 
 	test("returns the reply cut to its outcome with the first request's cache numbers, and keeps the full text by ref", async () => {
 		const { tool, appended } = await fork({ task: "STUB_REPORT", name: "x" });
-		assert.equal(tool.content[0].text, "OUTCOME done ref:rc-fork-x\n[fork x: cache 100/1, ref rc-fork-x-call-id]");
+		assert.equal(tool.content[0].text, "OUTCOME done ref:rc-fork-x\nbody line\n[fork x: cache 100/1, ref rc-fork-x-call-id]");
 		assert.deepEqual(appended, [["result-cap", { ref: "rc-fork-x-call-id", text: "OUTCOME done ref:rc-fork-x\nbody line" }]]);
 		assert.equal(tool.details.outcome, "done");
 		assert.equal(tool.details.usage.cacheRead, 300);
@@ -247,7 +247,7 @@ describe("fork tool", () => {
 			const { tool } = await fork({ shared: "STUB_REPORT notes", tasks: [{ name: "t1", task: "STUB_INSPECT" }, { name: "t2", task: "STUB_INSPECT" }], model: "prov/cheap:low", name: "stub" });
 			const run = (name: string) => registryOf().all().find((candidate) => candidate.name === name)!;
 			assert.equal(run("stub").task, 'STUB_REPORT notes\n\nRead what the text above says, then reply "OUTCOME done ref:" and stop.');
-			assert.match(tool.content[0].text, /^OUTCOME done ref:rc-fork-x\n\[fork stub: cold worker stub on prov\/cheap:low \(no shared context\), /);
+			assert.match(tool.content[0].text, /^OUTCOME done ref:rc-fork-x\nbody line\n\[fork stub: cold worker stub on prov\/cheap:low \(no shared context\), /);
 			for (const name of ["t1", "t2"]) assert.equal(JSON.parse(fs.readFileSync(path.join(run(name).files!, "session", "session.jsonl"), "utf8").split("\n")[0]).piContextFork.parentSessionId, run("stub").id);
 			assert.equal(fs.existsSync(path.join(run("stub").files!, "finished")), true);
 			assert.match(String((await fork({ shared: "s", tasks: [{ name: "t3", task: "x" }] })).tool), /shared needs tasks and model, without task or from/);
@@ -327,7 +327,7 @@ describe("fork tool", () => {
 			assert.equal(tool.content[0].text, "started fork bg (background)");
 			assert.equal(registryOf().all().find((run) => run.name === "bg")?.background, true);
 			await eventually(() => sent.length > 0);
-			assert.deepEqual(sent, [[{ customType: "pi-context-results", content: "[fork bg done] ref rc-fork-bg-call-id", display: true }, { triggerTurn: true }]]);
+			assert.deepEqual(sent, [[{ customType: "pi-context-results", content: "[fork bg done] body line ref rc-fork-bg-call-id", display: true }, { triggerTurn: true }]]);
 			assert.equal(registryOf().all().find((run) => run.name === "bg")?.state, "done");
 			assert.deepEqual(appended, [["result-cap", { ref: "rc-fork-bg-call-id", text: "OUTCOME done ref:rc-fork-x\nbody line" }]]);
 		});

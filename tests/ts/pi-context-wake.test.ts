@@ -26,13 +26,7 @@ describe("digestLine", () => {
 
 	test("heads the line with the run and its code, keeps ASK and DENIED lines and ends with the ref", () => {
 		const text = `${header}\nlong report\nASK: use A or B?\nmore\nDENIED: "no"`;
-		assert.equal(digestLine(run({ outcome: "blocked-on-user" }), text), `[fork scan blocked-on-user] ASK: use A or B?\nDENIED: "no" ref rc-fork-scan`);
-	});
-
-	test("keeps a short found-it line and drops a long one", () => {
-		const head = "OUTCOME found-it ref:rc-fork-scan";
-		assert.equal(digestLine(run({ outcome: "found-it" }), `${head}\nsrc/a.ts:12\nmore`), "[fork scan found-it] src/a.ts:12 ref rc-fork-scan");
-		assert.equal(digestLine(run({ outcome: "found-it" }), `${head}\n${"x".repeat(201)}`), "[fork scan found-it] ref rc-fork-scan");
+		assert.equal(digestLine(run({ outcome: "blocked-on-user" }), text), `[fork scan blocked-on-user] long report\nASK: use A or B?\nmore\nDENIED: "no" ref rc-fork-scan`);
 	});
 
 	test("puts the note before the ref", () => {
@@ -44,8 +38,14 @@ describe("digestLine", () => {
 		const line = digestLine(run({ outcome: "blocked-on-user" }), `${"y".repeat(900)}\n${asks}`);
 		assert.ok(line.includes(`ASK: ${"q".repeat(600)}`));
 		assert.ok(line.includes(`DENIED: "${"d".repeat(600)}"`));
-		assert.ok(!line.includes("y".repeat(501)));
+		assert.ok(!line.includes("y".repeat(601)));
 		assert.ok(line.includes("… (cut, result_fetch rc-fork-scan)"));
+	});
+
+	test("marks the cut of a coded reply whose body is over the limit", () => {
+		const line = digestLine(run({ outcome: "done" }), `OUTCOME done ref:rc-fork-scan\n${"y".repeat(900)}`);
+		assert.ok(line.includes(`${"y".repeat(600)}\n… (cut, result_fetch rc-fork-scan)`));
+		assert.ok(!digestLine(run({ outcome: "done" }), `OUTCOME done ref:rc-fork-scan\n${"y".repeat(600)}`).includes("cut"));
 	});
 
 	test("cuts a reply without a valid OUTCOME line", () => {
