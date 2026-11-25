@@ -1453,10 +1453,12 @@ class _RepoSync:
         return _skip_reason(self.repo, self.base, entry, ref, self.open_entries())
 
     def commits(self, entry: WorktreeEntry, ref: str) -> list[Commit]:
-        """Return the entry's own commits on its base, oldest first."""
+        """Return the entry's own non-merge commits on its base, oldest first."""
         return [
             _commit_of(self.repo, sha)
-            for sha in _commit_shas(self.repo, entry.base or self.base, ref)
+            for sha in _commit_shas(
+                self.repo, entry.base or self.base, ref, no_merges=True
+            )
         ]
 
     def observe(self) -> None:
@@ -2208,9 +2210,14 @@ def _diff_lines(repo: Path, floor: str, ref: str) -> tuple[int, bool]:
     )
 
 
-def _commit_shas(repo: Path, floor: str, ref: str) -> list[str]:
-    """Return the commits ``ref`` has on ``floor``, oldest first."""
-    return _git("rev-list", "--reverse", f"{floor}..{ref}", repo=repo).splitlines()
+def _commit_shas(
+    repo: Path, floor: str, ref: str, *, no_merges: bool = False
+) -> list[str]:
+    """Return the commits ``ref`` has on ``floor``, oldest first, leaving out merge commits when ``no_merges``."""
+    flags = ["--no-merges"] if no_merges else []
+    return _git(
+        "rev-list", "--reverse", *flags, f"{floor}..{ref}", repo=repo
+    ).splitlines()
 
 
 def _commit_identity(repo: Path, sha: str) -> str:

@@ -1455,6 +1455,23 @@ def test_a_recorded_why_fills_the_pr_body_sync_opens(project: Project) -> None:
     assert f"## Why\n\n{WHY}\n" in body
 
 
+def test_the_pr_what_leaves_merge_commits_out(project: Project) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    git(path, "checkout", "-q", "-b", "side", "main")
+    project.commit(path, "other.txt", "x\n", "chore: side")
+    git(path, "checkout", "-q", "feat/a")
+    git(path, "merge", "-q", "--no-ff", "-m", "Merge side into feat/a", "side")
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+
+    assert project.run(apply=True) == 0
+
+    [create] = project.gh_calls("pr", "create")
+    body = create[create.index("--body") + 1]
+    assert "- feat: a" in body
+    assert "Merge side" not in body
+
+
 def test_a_worktree_without_a_why_is_not_opened_and_the_others_still_sync(
     project: Project, capsys: pytest.CaptureFixture[str]
 ) -> None:
