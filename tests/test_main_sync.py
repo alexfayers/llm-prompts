@@ -732,6 +732,7 @@ class TestReuseResolutions:
     def test_clean_cherry_pick_returns_the_tree(
         self, fake_subprocess: FakeSubprocess
     ) -> None:
+        fake_subprocess.on_match(lambda argv: "--verify" in argv, returncode=1)
         fake_subprocess.on("commit-tree", stdout="change\n")
         fake_subprocess.on("write-tree", stdout="tree-x\n")
 

@@ -1124,8 +1124,8 @@ def test_an_unrelated_main_commit_titled_like_a_later_worktree_commit_is_kept(
 
 
 @pytest.fixture
-def hand_resolved(project: Project) -> main_sync.Squash:
-    """A squash that conflicts with local main, after its hand resolution was recorded and reused once."""
+def hand_staged(project: Project) -> main_sync.Squash:
+    """A squash that conflicts with local main, with its hand resolution staged in the resolve worktree."""
     repo = project.repo
     base = git(repo, "rev-parse", "HEAD")
     git(repo, "checkout", "-qb", "feat")
@@ -1136,17 +1136,45 @@ def hand_resolved(project: Project) -> main_sync.Squash:
     assert main_sync.rebuild_local(repo, base, {}, (), {}, [squash]).mode == "stopped"
     work = main_sync.resolve_worktree(repo)
     (work / "base.txt").write_text("resolved\n", encoding="utf-8")
-    git(work, "add", "base.txt")
-    assert main_sync.rebuild_local(repo, base, {}, (), {}, [squash]).mode == "rebuilt"
-    assert not work.exists()
+    (work / "related.txt").write_text("fix\n", encoding="utf-8")
+    git(work, "add", "base.txt", "related.txt")
     return squash
+
+
+@pytest.fixture
+def hand_resolved(project: Project, hand_staged: main_sync.Squash) -> main_sync.Squash:
+    """A squash that conflicts with local main, after its hand resolution was recorded and reused once."""
+    rebuilt = main_sync.rebuild_local(
+        project.repo, hand_staged.floor, {}, (), {}, [hand_staged]
+    )
+    assert rebuilt.mode == "rebuilt"
+    assert not main_sync.resolve_worktree(project.repo).exists()
+    return hand_staged
 
 
 def test_a_recorded_hand_resolution_settles_the_next_rebuild(
     project: Project, hand_resolved: main_sync.Squash
 ) -> None:
     assert (project.repo / "base.txt").read_text(encoding="utf-8") == "resolved\n"
+    assert (project.repo / "related.txt").read_text(encoding="utf-8") == "fix\n"
     assert project.main_subjects() == ["feat: main", "feat: feature"]
+
+
+def test_a_hand_resolution_stays_in_its_worktree_until_its_merge_comes_up(
+    project: Project, hand_staged: main_sync.Squash
+) -> None:
+    repo = project.repo
+    project.commit(repo, "base.txt", "moved\n", "feat: main moves")
+    main = git(repo, "rev-parse", "main")
+
+    rebuilt = main_sync.rebuild_local(
+        repo, hand_staged.floor, {}, (), {}, [hand_staged]
+    )
+
+    assert rebuilt.mode == "stopped"
+    assert git(repo, "rev-parse", "main") == main
+    work = main_sync.resolve_worktree(repo)
+    assert (work / "base.txt").read_text(encoding="utf-8") == "resolved\n"
 
 
 def test_a_hand_resolved_copy_is_current(

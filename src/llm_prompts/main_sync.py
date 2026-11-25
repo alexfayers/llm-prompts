@@ -23,6 +23,8 @@ GIT_TIMED_OUT = 124
 PRE_SYNC_REF = "refs/llm-prompts/pre-sync"
 EARLIER_MAINS_REF = "refs/llm-prompts/earlier-mains"
 RESOLVE_WORKTREE = "llm-prompts-resolve"
+_RESOLUTIONS_REF = "refs/llm-prompts/resolutions"
+_RESOLUTION_FILE = "llm-prompts-resolution"
 _RESOLVE_STEPS = "resolve the files there, git add them, then rerun"
 _RERERE = ("-c", "rerere.enabled=true", "-c", "rerere.autoUpdate=true")
 UPSTREAM = "refs/llm-prompts/upstream"
@@ -512,18 +514,43 @@ def _commit_as(repo: Path, tree: str, parent: str, source: str) -> str:
 def _reuse_resolutions(
     repo: Path, base: str, ours: str, theirs: str, keep: Path | None = None
 ) -> str | None:
-    """Merge in a throwaway worktree where git rerere records the conflicts and applies earlier hand resolutions.
+    """Return the tree staged by hand for this exact merge, else merge in a throwaway worktree where git rerere records the conflicts and applies earlier hand resolutions.
 
     Args:
         repo: The local clone.
         base: The merge base.
         ours: The commit to merge onto.
         theirs: The commit whose changes on ``base`` are merged.
-        keep: Where to add the worktree and leave it while any conflict has no recorded resolution.
+        keep: Where to add the worktree and leave it while any conflict has no recorded resolution, until its staged tree is returned.
 
     Returns:
         The merged tree, or None while any conflict has no recorded resolution.
+
+    Raises:
+        _Stopped: ``keep`` still holds a resolution staged for another merge.
     """
+    ref = "/".join(
+        (
+            _RESOLUTIONS_REF,
+            *_read(
+                repo, "rev-parse", *(f"{rev}^{{tree}}" for rev in (base, ours, theirs))
+            ).split(),
+        )
+    )
+    staged = run_git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{tree}}")
+    if staged.returncode == 0:
+        if (
+            keep is not None
+            and keep.exists()
+            and _resolution_file(keep).read_text(encoding="utf-8") == ref
+        ):
+            _read(repo, "worktree", "remove", "--force", str(keep))
+        return staged.stdout.strip()
+    if keep is not None and keep.exists():
+        raise _Stopped(
+            f"{keep} holds a resolution staged for another main; drop it with:"
+            f" git worktree remove --force {shlex.quote(str(keep))}"
+        )
     change = _read(
         repo, "commit-tree", f"{theirs}^{{tree}}", "-p", base, "-m", "replay"
     ).strip()
@@ -537,6 +564,8 @@ def _reuse_resolutions(
                 return None
             if run_git(work, "ls-files", "--unmerged").stdout:
                 kept = keep is not None
+                if kept:
+                    _resolution_file(work).write_text(ref, encoding="utf-8")
                 return None
             return _read(work, "write-tree").strip()
         finally:
@@ -550,8 +579,17 @@ def resolve_worktree(repo: Path) -> Path:
     return Path(common.strip()) / RESOLVE_WORKTREE
 
 
+def _resolution_file(work: Path) -> Path:
+    """Return the file in ``work`` that names the ref its staged tree is stored under."""
+    return Path(
+        _read(
+            work, "rev-parse", "--path-format=absolute", "--git-path", _RESOLUTION_FILE
+        ).strip()
+    )
+
+
 def _record_resolution(repo: Path) -> None:
-    """Record the hand resolution left in the resolve worktree with git rerere, then remove that worktree."""
+    """Record the hand resolution left in the resolve worktree with git rerere, and store its staged tree under the ref its merge names."""
     work = resolve_worktree(repo)
     if not work.exists():
         return
@@ -561,7 +599,18 @@ def _record_resolution(repo: Path) -> None:
             f" git worktree remove --force {shlex.quote(str(work))}"
         )
     _read(work, *_RERERE, "rerere")
-    _read(repo, "worktree", "remove", "--force", str(work))
+    if not (named := _resolution_file(work)).exists():
+        _read(repo, "worktree", "remove", "--force", str(work))
+        return
+    commit = _read(
+        repo,
+        "commit-tree",
+        _read(work, "write-tree").strip(),
+        "-m",
+        "llm-prompts: hand resolution",
+        env=_EARLIER_MAINS_IDENTITY,
+    ).strip()
+    _read(repo, "update-ref", named.read_text(encoding="utf-8"), commit)
 
 
 def holds_changes(repo: Path, tip: str, sha: str) -> bool:
@@ -795,7 +844,7 @@ def rebuild_local(
 ) -> SyncResult:
     """Move local main onto ``base`` with its local commits replayed, some swapped for squashes or dropped, plus new squashes.
 
-    A replay whose conflict has no recorded resolution stops the rebuild and leaves its merge in ``resolve_worktree``. The next rebuild records the hand resolution made there with git rerere, then reuses it.
+    A replay whose conflict has no recorded resolution stops the rebuild and leaves its merge in ``resolve_worktree``. The next rebuild records the hand resolution staged there with git rerere, and stores its whole tree for that exact merge, which it reuses. The worktree stays until that tree is reused.
 
     Args:
         repo: The local clone, on its main branch.
