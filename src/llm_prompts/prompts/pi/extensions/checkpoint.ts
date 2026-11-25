@@ -1,8 +1,10 @@
 // Adds the checkpoint tool: mark a point, then rewind to replace the work since a mark or an earlier tool call with a summary or the raw tool results.
 // Also appends a short checkpoint reminder to a tool result each time another threshold of tool-result tokens builds up since the last user message, until the model calls checkpoint. Only the first reminder after a reset carries the advice.
+// Once per run it also names the mark or tool call to rewind to, when the run's tokens cost more to carry than a rewind costs.
 // Config: settings.json llmPrompts.checkpoint.shape (set to "result" to carry the fold in the rewind tool result instead of a separate message)
 // Config: settings.json llmPrompts.checkpoint.nudgeTokens (tool-result tokens per nudge, default 10000)
-// Env: PI_CONTEXT_CHILD (set for delegates, which are never nudged)
+// Env: PI_CONTEXT_CHILD (set for delegates, which are never nudged), PI_CACHE_RETENTION (long prices cache writes at the one hour rate)
+import { calculateCost, type Api, type Model, type Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
@@ -80,23 +82,89 @@ const textTokens = (content: { type: string; text?: string }[]) =>
 type Settings = { shape?: string; nudgeTokens?: number };
 const readSettings = (pi: ExtensionAPI): Settings | undefined => (pi.getSettings() as { llmPrompts?: { checkpoint?: Settings } }).llmPrompts?.checkpoint;
 
+/**
+ * Cost invariant, at the active model's effective prices: a rewind pays once the run's tokens beyond the summary, read from cache by each expected later request,
+ * outweigh writing and generating the summary: `(tokens - SUMMARY_TOKENS) * EXPECTED_REMAINING_REQUESTS * cacheRead > SUMMARY_TOKENS * (cacheWrite + output)`.
+ */
+export const EXPECTED_REMAINING_REQUESTS = 20;
+export const SUMMARY_TOKENS = 1_000;
+export const MIN_RUN_CALLS = 5;
+
+const price = (model: Model<Api>, usage: Partial<Usage>) =>
+	calculateCost(model, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, ...usage, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }).total;
+
+/** Bedrock models that pi gives cache points, as its own `supportsPromptCaching` decides: Claude 3.5 Haiku, 3.7 Sonnet, 4.x and 5. */
+const BEDROCK_CACHE_POINT_MODEL = /fable-5|opus-5|sonnet-5|haiku-5|-4-|claude-3-7-sonnet|claude-3-5-haiku/;
+
+/** Whether pi asks this model for one hour cache writes under long retention: always on Anthropic unless its compat turns it off, and on Bedrock only for the models that get cache points. */
+function requestsOneHourWrites(model: Model<Api>, longRetention: boolean): boolean {
+	if (!longRetention) return false;
+	if (model.api === "anthropic-messages") return (model.compat as { supportsLongCacheRetention?: boolean } | undefined)?.supportsLongCacheRetention !== false;
+	const names = [model.id, model.name].map((name) => name?.toLowerCase().replace(/[\s_.:]+/g, "-") ?? "");
+	return model.api === "bedrock-converse-stream" && names.some((name) => name.includes("claude")) && names.some((name) => BEDROCK_CACHE_POINT_MODEL.test(name));
+}
+
+/** The usage of the summary request, classified as pi does: a model that prices cache writes writes them, and any other model bills the fresh tokens as input. */
+function summaryUsage(model: Model<Api>, longRetention: boolean): Partial<Usage> {
+	if (!(model.cost.cacheWrite > 0)) return { input: SUMMARY_TOKENS, output: SUMMARY_TOKENS };
+	return { cacheWrite: SUMMARY_TOKENS, cacheWrite1h: requestsOneHourWrites(model, longRetention) ? SUMMARY_TOKENS : 0, output: SUMMARY_TOKENS };
+}
+
+/** Prices through pi's `calculateCost`, so the context-size tier and the one hour cache-write rate apply. */
+function rewindPays(model: Model<Api>, runTokens: number, contextTokens: number, longRetention: boolean): boolean {
+	const context = Math.max(contextTokens, runTokens);
+	const carried = Math.max(runTokens - SUMMARY_TOKENS, 0);
+	const carryCost = EXPECTED_REMAINING_REQUESTS * (price(model, { cacheRead: context }) - price(model, { cacheRead: context - carried }));
+	const rest = { cacheRead: context - runTokens };
+	return carryCost > price(model, { ...rest, ...summaryUsage(model, longRetention) }) - price(model, rest);
+}
+
+/** The rewind target for the run, found by call id: the mark that opened it, else the call before its first call, else that first call. Results of the target's own batch stay, so they are not counted as removed. */
+function rewindPlan(entries: Projected[], markName: string | undefined, results: Map<string, number>) {
+	const calls = recentCalls(entries);
+	const first = [...calls].reverse().find((call) => results.has(call.callId));
+	const mark = markName ? visibleMarks(entries).find((candidate) => candidate.name === markName) : undefined;
+	const before = first && (calls[calls.indexOf(first) + 1] ?? first);
+	const anchor = mark ? { target: mark.name, callId: mark.callId } : before && { target: `-${calls.indexOf(before) + 1}`, callId: before.callId };
+	if (!anchor) return;
+	const kept = callIds(entries.find((entry) => callIds(entry.sourceEntry.message).includes(anchor.callId))?.sourceEntry.message);
+	const removed = [...results].filter(([id]) => !kept.includes(id)).map(([, tokens]) => tokens);
+	return { target: anchor.target, calls: removed.length, tokens: removed.reduce((sum, tokens) => sum + tokens, 0) };
+}
+
 function nudge(pi: ExtensionAPI) {
 	let calls = 0;
 	let tokens = 0;
 	let nudgedAt = 0;
-	const reset = () => void (calls = tokens = nudgedAt = 0);
+	let markName: string | undefined;
+	let suggested = false;
+	let results = new Map<string, number>();
+	const reset = () => void ((calls = tokens = nudgedAt = 0), (markName = undefined), (suggested = false), (results = new Map()));
 	pi.on("agent_start", reset);
 	pi.on("input", reset);
-	pi.on("tool_result", (event) => {
+	pi.on("tool_result", (event, ctx) => {
 		if (event.parentToolCallId) return;
-		if (event.toolName === "checkpoint") return reset();
+		if (event.toolName === "checkpoint") {
+			reset();
+			return void (markName = (event.details as Details | undefined)?.action === "mark" ? (event.details as Details).name : undefined);
+		}
 		calls++;
-		tokens += textTokens(event.content);
-		if (tokens - nudgedAt < (readSettings(pi)?.nudgeTokens || DEFAULT_NUDGE_TOKENS)) return;
-		const advice = nudgedAt === 0 ? " If a detour is finished, checkpoint rewind to the call before it, or to a mark set before it, with a summary before replying." : "";
-		nudgedAt = tokens;
-		const text = `[checkpoint] ${calls} calls, ~${Math.round(tokens / 1000)}K tokens since the last user message.${advice}`;
-		return { content: [...event.content, { type: "text" as const, text }], structuredContent: event.structuredContent };
+		const resultTokens = textTokens(event.content);
+		tokens += resultTokens;
+		results.set(event.toolCallId, resultTokens);
+		const lines: string[] = [];
+		if (tokens - nudgedAt >= (readSettings(pi)?.nudgeTokens || DEFAULT_NUDGE_TOKENS)) {
+			const advice = nudgedAt === 0 ? " If a detour is finished, checkpoint rewind to the call before it, or to a mark set before it, with a summary before replying." : "";
+			nudgedAt = tokens;
+			lines.push(`[checkpoint] ${calls} calls, ~${Math.round(tokens / 1000)}K tokens since the last user message.${advice}`);
+		}
+		const model = ctx.model as Model<Api> | undefined;
+		const plan = !suggested && model && calls >= MIN_RUN_CALLS ? rewindPlan(ctx.sessionManager.buildSessionProjection().entries as unknown as Projected[], markName, results) : undefined;
+		if (model && plan && plan.calls >= MIN_RUN_CALLS && rewindPays(model, plan.tokens, ctx.getContextUsage?.()?.tokens ?? 0, process.env.PI_CACHE_RETENTION === "long")) {
+			suggested = true;
+			lines.push(`[checkpoint] rewind to ${JSON.stringify(plan.target)}: ${plan.calls} calls, ~${Math.round(plan.tokens / 1000)}K tokens that every later request would carry. checkpoint rewind with a summary costs less.`);
+		}
+		if (lines.length) return { content: [...event.content, ...lines.map((text) => ({ type: "text" as const, text }))], structuredContent: event.structuredContent };
 	});
 }
 
