@@ -49,11 +49,11 @@
 | src/llm\_prompts/benchmark/transient.py                                       |       41 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/types.py                                           |      205 |        0 |    100% |           |
 | src/llm\_prompts/claude\_models.py                                            |       23 |        0 |    100% |           |
-| src/llm\_prompts/cli.py                                                       |      882 |       64 |     93% |109-110, 136-137, 144-157, 263-264, 279-284, 426, 704, 707, 730, 757, 795, 826, 958, 1166-1168, 1181-1184, 1254-1263, 1736-1738, 1741-1747, 1759-1761, 1772-1778, 1788, 1793, 1805, 1974-1975, 1980 |
+| src/llm\_prompts/cli.py                                                       |      888 |       64 |     93% |109-110, 136-137, 144-157, 263-264, 279-284, 426, 704, 707, 730, 757, 795, 826, 958, 1166-1168, 1181-1184, 1254-1263, 1750-1752, 1755-1761, 1773-1775, 1786-1792, 1802, 1807, 1819, 1990-1991, 1996 |
 | src/llm\_prompts/collection\_size.py                                          |      133 |        3 |     98% |291-292, 496 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/console.py                                                   |       18 |        1 |     94% |        48 |
-| src/llm\_prompts/contribute.py                                                |     1179 |       60 |     95% |105, 172, 199-200, 241-242, 274-275, 397, 541-542, 575, 707, 710, 767, 778, 888-889, 934, 1080-1081, 1118, 1506-1509, 1687, 1689, 1703-1704, 1713-1714, 1733, 1744-1745, 1816, 1872-1877, 1881, 1997, 2024-2025, 2077, 2082-2083, 2153-2175, 2277, 2393, 2416 |
+| src/llm\_prompts/contribute.py                                                |     1202 |       60 |     95% |106, 173, 200-201, 242-243, 275-276, 398, 542-543, 576, 748, 751, 808, 819, 929-930, 975, 1121-1122, 1159, 1547-1550, 1728, 1730, 1744-1745, 1754-1755, 1774, 1785-1786, 1857, 1913-1918, 1922, 2038, 2065-2066, 2118, 2123-2124, 2194-2216, 2318, 2434, 2457 |
 | src/llm\_prompts/exit\_reason.py                                              |        9 |        0 |    100% |           |
 | src/llm\_prompts/extension\_factories.py                                      |       12 |        0 |    100% |           |
 | src/llm\_prompts/git\_snapshot.py                                             |      102 |        5 |     95% |114, 134, 147, 151, 165 |
@@ -144,11 +144,11 @@
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
 | tests/test\_check\_repos\_script.py                                           |       67 |        0 |    100% |           |
 | tests/test\_claude\_models.py                                                 |       25 |        0 |    100% |           |
-| tests/test\_cli.py                                                            |     1201 |        1 |     99% |      1551 |
+| tests/test\_cli.py                                                            |     1210 |        1 |     99% |      1551 |
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
 | tests/test\_commit\_guard.py                                                  |      288 |        2 |     99% |   420-421 |
 | tests/test\_conftest.py                                                       |       94 |        4 |     96% |194-196, 209 |
-| tests/test\_contribute.py                                                     |      359 |        0 |    100% |           |
+| tests/test\_contribute.py                                                     |      390 |        0 |    100% |           |
 | tests/test\_contribute\_worktrees.py                                          |     2170 |        0 |    100% |           |
 | tests/test\_e2e\_git.py                                                       |      240 |        0 |    100% |           |
 | tests/test\_extension\_factories.py                                           |       29 |        0 |    100% |           |
@@ -197,7 +197,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       61 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **33030** |  **802** | **98%** |           |
+| **TOTAL**                                                                     | **33099** |  **802** | **98%** |           |
 
 
 ## Setup coverage badge
