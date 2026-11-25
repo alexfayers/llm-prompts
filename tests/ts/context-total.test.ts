@@ -101,6 +101,19 @@ test("fork runs become children whose seed cost before the fork started is not c
 	assert.equal(tree.cost, 0.5);
 });
 
+test("a live cold worker's tokens come from its session directory", async () => {
+	writeFileSync(join(dir, "c", "session", "s.jsonl"), assistant(7000));
+	const run = { id: "r1", name: "cold", role: "reader", state: "running", model: "prov/mod", files: join(dir, "c"), startedAt: 0 };
+	const tokens = async () => {
+		ext.module.addForkChildren(scan, scans, [run]);
+		return (await ext.module.sampleChildren(scan, scans)).nodes[0].tokens;
+	};
+	const scans = new Map();
+	assert.equal(await tokens(), 7000);
+	appendFileSync(join(dir, "c", "session", "s.jsonl"), assistant(9000));
+	assert.equal(await tokens(), 9000);
+});
+
 test("the total counts only live sessions and marks unknown and partial", () => {
 	const sample = {
 		nodes: [node("a", "live", 2000, 10000, 20), node("b", "live", null, null, null), node("c", "finished", 400, 1000, 40)],
@@ -122,7 +135,7 @@ test("the total counts only live sessions and marks unknown and partial", () => 
 			"Tree cumulative: 9.0M tokens, $8.40",
 		].join("\n"),
 	);
-	assert.equal(ext.module.formatFooter(sample), "agents 2k+ \u00b7 tree 9.0M $1.20/$8.40");
+	assert.equal(ext.module.formatFooter(sample), "agents 2 \u00b7 2k \u00b7 tree 9.0M $1.20/$8.40");
 	assert.equal(ext.module.formatFooter(bare), "agents 0 \u00b7 tree 0 $0.00/$0.00 partial");
 });
 

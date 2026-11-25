@@ -1,4 +1,6 @@
 // Keeps the state of every fork run, shared by the extensions of one pi process.
+import fs from "node:fs";
+import path from "node:path";
 import { cacheLifetimeMs } from "../context-fold.ts";
 
 export type RunState = "running" | "landing" | "done" | "found-it" | "blocked" | "failed" | "lost" | "cancelled";
@@ -51,6 +53,15 @@ export const FINISHED: RunState[] = ["done", "found-it", "blocked", "failed"];
 export const cacheLeftMs = (run: Run, now = Date.now()): number | undefined => (run.lastRequestAt === undefined ? undefined : Math.max(0, run.lastRequestAt + cacheLifetimeMs() - now));
 
 export const cacheText = (left: number): string => (left > 0 ? `cache ${Math.ceil(left / 60_000)}m left` : "cache expired");
+
+/** The session file a run's delegate wrote: the seed of a warm fork, or the newest session of a cold worker. */
+export function sessionFileOf(files: string, cold: boolean): string | undefined {
+	if (!cold) return fs.existsSync(path.join(files, "seed.jsonl")) ? path.join(files, "seed.jsonl") : undefined;
+	const sessions = path.join(files, "session");
+	if (!fs.existsSync(sessions)) return undefined;
+	const found = fs.readdirSync(sessions, { recursive: true, encoding: "utf8" }).filter((file) => file.endsWith(".jsonl")).map((file) => path.join(sessions, file));
+	return found.sort((a, b) => fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs).at(-1);
+}
 
 const REGISTRY_VERSION = 1;
 

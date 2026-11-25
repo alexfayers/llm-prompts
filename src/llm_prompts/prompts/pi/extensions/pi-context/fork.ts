@@ -12,7 +12,7 @@ import { describeMain, LEAD_PREFIX_FILE, serveBridge, writeLeadPrefix, type Brid
 import { createWorktree, dropIfClean, gitOut, land, mainSnapshot, restoreWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
 import { checkReadMcp, coldCard, expandHome, readHandshake, ROLES, withReadMcp, type ReadMcp, type Role } from "./roles.ts";
 import { findModel, tokens } from "./live-view.ts";
-import { cacheLeftMs, cacheText, FINISHED, isLive, registryOf, type Run, type RunState } from "./registry.ts";
+import { cacheLeftMs, cacheText, FINISHED, isLive, registryOf, sessionFileOf, type Run, type RunState } from "./registry.ts";
 import type { ForkLimits } from "./cap.ts";
 import { readOnlyAgentDir } from "./read-only-agent-dir.ts";
 import { RpcChild, type Turn, type UiAnswer, type UiRequest } from "./runner.ts";
@@ -87,15 +87,6 @@ function forkSettings(pi: ExtensionAPI, ctx?: ExtensionContext): { mcpProxy?: bo
 	if (dropped.length && ctx?.hasUI) ctx.ui.notify(warning, "warning");
 	else if (dropped.length) process.stderr.write(`${warning}\n`);
 	return { ...forks, readMcp: valid };
-}
-
-/** The session file a run's delegate wrote: the seed of a warm fork, or the newest session of a cold worker. */
-export function sessionFileOf(files: string, cold: boolean): string | undefined {
-	if (!cold) return fs.existsSync(path.join(files, "seed.jsonl")) ? path.join(files, "seed.jsonl") : undefined;
-	const sessions = path.join(files, "session");
-	if (!fs.existsSync(sessions)) return undefined;
-	const found = fs.readdirSync(sessions, { recursive: true, encoding: "utf8" }).filter((file) => file.endsWith(".jsonl")).map((file) => path.join(sessions, file));
-	return found.sort((a, b) => fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs).at(-1);
 }
 
 /** Archives the full session outside the usage store and retains only the delegate's entries for accounting. */
