@@ -57,7 +57,7 @@ describe("coldArgs", () => {
 });
 
 const STUB = path.join(import.meta.dirname, "fixtures/fork-stub.mjs");
-const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-fork-"));
+const agentDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-fork-")));
 after(() => fs.rmSync(agentDir, { recursive: true }));
 useEnv({ PI_CODING_AGENT_DIR: agentDir, PI_CONTEXT_CHILD: undefined });
 const PROXY_ON = { llmPrompts: { forks: { mcpProxy: true } } };
