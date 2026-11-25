@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
 
+from llm_prompts.watch.core import runner
 from llm_prompts.watch.core.runner import watch
 from llm_prompts.watch.core.source import Fields
 
@@ -112,14 +114,21 @@ def test_watch_follow_exits_after_printing_a_terminal_state(
 
 
 def test_watch_follow_keeps_watching_until_every_source_is_terminal(
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    done = CrLikeSource(("", "false"), ("a", "true"))
-    open_ = CrLikeSource(("", "false"), ("", "false"), ("", "false"), ("b", "false"))
+    class Counting(CrLikeSource):
+        polls = 0
 
-    assert (
-        watch([done, open_], ["update"], interval=0, timeout=0.05, follow=True) == 124
-    )
+        def poll(self) -> Fields:
+            Counting.polls += 1
+            return super().poll()
+
+    done = CrLikeSource(("", "false"), ("a", "true"))
+    open_ = Counting(("", "false"), ("", "false"), ("", "false"), ("b", "false"))
+    clock = SimpleNamespace(time=lambda: float(Counting.polls), sleep=lambda _: None)
+    monkeypatch.setattr(runner, "time", clock)
+
+    assert watch([done, open_], ["update"], interval=0, timeout=4, follow=True) == 124
     assert capsys.readouterr().out.splitlines()[:-1] == [
         "cr: update (approvals=a)",
         "cr: update (approvals=b)",
