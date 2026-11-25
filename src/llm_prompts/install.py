@@ -79,10 +79,11 @@ from .setup import (
 if TYPE_CHECKING:
     from .manifest import AgentManifest
 
+_LOAD_WHEN_KINDS = ("env", "tool")
+_REMOVED_GATE = "requires_"
+_DEPRECATED_GATES = {"requires_env": "env", "requires_command": "tool"}
 _TARGET_GATING_KEYS = {
-    "requires_env",
-    "requires_command",
-    "requires_absent_command",
+    "load_when",
     "targets",
     "exclude_targets",
     "extra_variants",
@@ -367,7 +368,7 @@ _ASSUMED_COMMANDS: set[str] = set()
 
 @contextlib.contextmanager
 def assume_commands(*commands: str) -> Iterator[None]:
-    """Treat the given commands as on PATH for ``requires_*`` gates.
+    """Treat the given commands as on PATH for ``load_when: tool:`` gates.
 
     Args:
         *commands: Command names to treat as present.
@@ -388,48 +389,97 @@ def _command_on_path(command: str) -> bool:
     return command in _ASSUMED_COMMANDS or shutil.which(command) is not None
 
 
-def _passes_requires_gate(src: Path, target: str = "") -> bool:
-    """Check a source file's ``requires_*`` frontmatter gates, if present.
+def _passes_gate(src: Path, *, deferred: bool = False, target: str = "") -> bool:
+    """Check a source file's ``load_when`` and ``source_file`` gates, if present.
 
     Args:
         src: Source file path.
-        target: Target agent name whose gate overrides apply.
+        deferred: The source is a pi rule, whose session can check a condition.
+        target: Target agent name whose ``<target>_load_when`` overrides
+            ``load_when``.
 
     Returns:
-        True if the file has no ``requires_*`` keys, or every present gate
-        is satisfied (env var set / command on or absent from PATH); False
-        if the file should be skipped.
+        False if the file should be skipped.
     """
     try:
         content = _read_text(src)
     except OSError:
         return True
     _, frontmatter = parse_frontmatter(content)
-    return _requirements_met(frontmatter, target)
+    declared = _migrated(frontmatter)
+    declared["load_when"] = _gating_value(declared, "load_when", target)
+    return _requirements_met(declared, deferred=deferred)
 
 
-def _requirements_met(declared: dict[str, str], target: str = "") -> bool:
-    """Check the ``requires_*`` gates among a set of declared keys.
+def _requirements_met(declared: dict[str, Any], *, deferred: bool = False) -> bool:
+    """Check the ``load_when`` and ``source_file`` gates among a set of declared keys.
 
     Args:
         declared: Frontmatter or pi package entry keys.
-        target: Target agent name whose gate overrides apply.
+        deferred: The keys are a pi rule's, whose session can check a condition.
 
     Returns:
-        True if there are no ``requires_*`` keys, or every present gate is
-        satisfied (env var set / command on or absent from PATH), and any
-        ``source_file`` glob matches a file.
+        True if any ``source_file`` glob matches a file, and every ``load_when``
+        condition decided at install time holds: ``env:<NAME>`` when the
+        variable is set, ``tool:<command>`` when the command is on PATH.
     """
     if "source_file" in declared and resolve_source_file(declared) is None:
         return False
-    required_env = _gating_value(declared, "requires_env", target)
-    if required_env and not _env_var_set(required_env):
-        return False
-    required_command = _gating_value(declared, "requires_command", target)
-    if required_command and not _command_on_path(required_command):
-        return False
-    absent_command = _gating_value(declared, "requires_absent_command", target)
-    return not (absent_command and _command_on_path(absent_command))
+    install, _ = _split_conditions(declared, deferred=deferred)
+    return all(
+        _env_var_set(name) if kind == "env" else _command_on_path(name)
+        for kind, _, name in (c.partition(":") for c in install)
+    )
+
+
+def _conditions(value: Any) -> list[str]:
+    """Split a ``load_when`` or ``roles`` value, one item or a ``[a, b]`` list, into items.
+
+    Args:
+        value: A string, or a list of strings, as declared.
+
+    Returns:
+        The items, stripped of quotes, in source order.
+    """
+    values = value if isinstance(value, list) else [value]
+    items = (
+        c.strip().strip("'\"")
+        for v in values
+        for c in str(v).strip().strip("[]").split(",")
+    )
+    return [c for c in items if c]
+
+
+def _lead_only(declared: dict[str, Any]) -> bool:
+    """Return whether a source declares no roles, or only ``lead``."""
+    return set(_conditions(declared.get("roles", []))) <= {"lead"}
+
+
+def _split_conditions(
+    declared: dict[str, Any], *, deferred: bool
+) -> tuple[list[str], str | None]:
+    """Split ``load_when`` into the conditions decided at install time and the one left to the session.
+
+    A pi rule with no roles or only ``lead`` leaves a single condition to the
+    session. With more conditions, the session gets the one that is not
+    ``env:`` or ``tool:``, if any. Everywhere else, ``env:`` and ``tool:`` are
+    decided at install time and other kinds are not checked.
+
+    Args:
+        declared: Frontmatter or pi package entry keys.
+        deferred: The keys are a pi rule's, whose session can check a condition.
+
+    Returns:
+        The ``env:`` and ``tool:`` conditions to check now, and the session's
+        condition or None.
+    """
+    conditions = _conditions(declared.get("load_when", []))
+    session = deferred and _lead_only(declared)
+    if session and len(conditions) == 1:
+        return [], conditions[0]
+    install = [c for c in conditions if c.partition(":")[0] in _LOAD_WHEN_KINDS]
+    rest = [c for c in conditions if c not in install]
+    return install, rest[0] if session and rest else None
 
 
 def _target_names(src: Path, key: str, target: str = "") -> set[str]:
@@ -824,12 +874,14 @@ AGENT_CLASSES: dict[str, type[_Agent]] = {
 }
 
 # Frontmatter keys consumed by the installer's own gating logic
-# (_passes_requires_gate, _targets_agent), with their per-target overrides.
+# (_passes_gate, _targets_agent), with their per-target overrides.
 # These are stripped from agent-specific files before install so they never
 # leak into the installed copy.
 _GATING_FRONTMATTER_KEYS = {
+    *_DEPRECATED_GATES,
     "audience",
     "generate_variants",
+    "load_when",
     "roles",
     "rules",
     *_TARGET_GATING_KEYS,
@@ -839,6 +891,169 @@ _GATING_FRONTMATTER_KEYS = {
 _AGENT_ROLES = ("coordinator", "reasoner", "worker", "surveyor", "reviewer")
 _RULE_ROLES = frozenset({"lead", *_AGENT_ROLES})
 _MAIN_AUDIENCE = "main"
+_LOAD_WHEN_PREFIX = "when:"
+_PATHS_PREFIX = "paths:"
+_MAIN_ONLY_KEY = "audience:main"
+_CONDITIONAL_RULES_FILE = "conditional-rules.json"
+
+
+def _migrated(declared: dict[str, Any], label: str = "") -> dict[str, Any]:
+    """Add a deprecated ``requires_env`` or ``requires_command`` key to ``load_when``.
+
+    Args:
+        declared: Frontmatter or pi package entry keys, with string or list values.
+        label: Source name to log a deprecation warning for; empty logs none.
+
+    Returns:
+        The keys with each deprecated gate appended to the ``load_when``
+        conditions as ``env:<NAME>`` or ``tool:<command>``.
+    """
+    migrated = dict(declared)
+    added: list[str] = []
+    listed = False
+    for key, kind in _DEPRECATED_GATES.items():
+        value = migrated.pop(key, None)
+        if value is not None and (conditions := _conditions(value)):
+            listed = isinstance(value, list)
+            added.append(f"{kind}:{conditions[0]}")
+    if not added:
+        return migrated
+    conditions = [*_conditions(migrated.get("load_when", [])), *added]
+    text = conditions[0] if len(conditions) == 1 else f"[{', '.join(conditions)}]"
+    migrated["load_when"] = [text] if listed else text
+    if label:
+        keys = [k for k in _DEPRECATED_GATES if k in declared]
+        verb = "are" if len(keys) > 1 else "is"
+        log(
+            "warn",
+            f"{label}: {', '.join(keys)} {verb} deprecated - use load_when: {text}",
+        )
+    return migrated
+
+
+def _frontmatter_values(content: str, label: str = "") -> dict[str, list[str]]:
+    """Return a source's raw frontmatter values by key.
+
+    Args:
+        content: Source content, frontmatter intact.
+        label: Source name to log a deprecation warning for; empty logs none.
+
+    Returns:
+        Every value declared for each key, in source order, after
+        ``_migrated``.
+    """
+    split = split_frontmatter(content)
+    values: dict[str, list[str]] = {}
+    for line in split[0] if split else []:
+        key, _, value = line.partition(":")
+        values.setdefault(key.strip(), []).append(value.strip())
+    return _migrated(values, label)
+
+
+def _declared_condition(declared: dict[str, list[str]], label: str) -> None:
+    """Validate the ``audience``, ``paths`` and ``load_when`` keys of a source.
+
+    Args:
+        declared: Every value declared for each key.
+        label: Source name for error messages.
+
+    Raises:
+        ValueError: A removed ``requires_*`` key is declared, ``audience`` is
+            not ``main`` or is combined with ``paths``, or ``load_when`` is
+            empty, has ``env:`` or ``tool:`` without a value, is combined with
+            ``paths``, or has more than one other condition, or one with
+            ``roles`` other than ``lead``. A ``<target>_load_when`` follows
+            the same rules, and may also be ``[]``.
+    """
+    if removed := sorted(k for k in declared if _REMOVED_GATE in k):
+        raise ValueError(
+            f"{label}: {', '.join(removed)} is no longer supported - use "
+            "load_when: env:<NAME> or load_when: tool:<command>"
+        )
+    audience = declared.get("audience", [])
+    if audience and audience[0] != _MAIN_AUDIENCE:
+        raise ValueError(
+            f"{label}: invalid audience '{audience[0]}' - use '{_MAIN_AUDIENCE}'"
+        )
+    if audience and "paths" in declared:
+        raise ValueError(f"{label}: audience cannot be combined with paths")
+    overrides = [_override_key(t, "load_when") for t in AGENT_CLASSES]
+    for key in (k for k in ("load_when", *overrides) if k in declared):
+        if key != "load_when" and declared[key] == ["[]"]:
+            continue
+        conditions = _conditions(declared[key])
+        split = [c.partition(":") for c in conditions]
+        if not conditions or any(k in _LOAD_WHEN_KINDS and not v for k, _, v in split):
+            raise ValueError(
+                f"{label}: invalid {key} '{', '.join(declared[key])}' - use "
+                + ", ".join(f"{k}:<value>" for k in _LOAD_WHEN_KINDS)
+                + " or a list of conditions"
+            )
+        if "paths" in declared:
+            raise ValueError(f"{label}: {key} cannot be combined with paths")
+        other = [
+            c for c, (k, _, _) in zip(conditions, split) if k not in _LOAD_WHEN_KINDS
+        ]
+        if len(other) > 1 or (other and not _lead_only(declared)):
+            raise ValueError(
+                f"{label}: {key} allows one condition other than env: or tool:, "
+                "and only with no roles or roles: lead"
+            )
+
+
+def _validate_rule_conditions(root_dir: Path, overlay_dirs: list[Path]) -> None:
+    """Validate the conditions of every rule, skill and agent source and pi package.
+
+    Args:
+        root_dir: Core prompts directory.
+        overlay_dirs: Overlay prompts directories.
+
+    Raises:
+        ValueError: A source's condition frontmatter is invalid.
+    """
+    errors: list[str] = []
+    for base in (root_dir, *overlay_dirs):
+        sources = [
+            *base.glob("*/rules/*.md"),
+            *base.glob("*/skills/*/SKILL.md"),
+            *base.glob("*/agents/*.md"),
+        ]
+        declared = [
+            (_frontmatter_values(_read_text(src), str(src)), str(src))
+            for src in sorted(sources)
+        ]
+        settings = base / "pi" / "settings.json"
+        if settings.is_file():
+            entries = json.loads(_read_text(settings)).get("packages", [])
+            label = str(settings)
+            declared += [
+                (
+                    _migrated(
+                        {
+                            k: v if isinstance(v, list) else [str(v)]
+                            for k, v in entry.items()
+                        },
+                        label,
+                    ),
+                    label,
+                )
+                for entry in entries
+                if isinstance(entry, dict)
+            ]
+        for values, label in declared:
+            try:
+                _declared_condition(values, label)
+            except ValueError as e:
+                errors.append(str(e))
+            if label == str(settings) and any(
+                c.partition(":")[0] not in _LOAD_WHEN_KINDS
+                for c in _conditions(values.get("load_when", []))
+            ):
+                errors.append(
+                    f"{label}: a package's load_when allows only env: and tool:"
+                )
+    if errors:
+        raise ValueError("; ".join(errors))
 
 
 def _parse_roles(content: str, label: str) -> frozenset[str]:
@@ -849,32 +1064,32 @@ def _parse_roles(content: str, label: str) -> frozenset[str]:
         label: Rule name for error messages.
 
     Returns:
-        The declared roles, or ``{"core"}`` when the rule declares none or
-        declares ``all``, plus ``main`` when ``audience: main`` keeps the rule
-        out of delegates.
+        ``{"when:<condition>"}``, plus ``main`` for ``audience: main``, when
+        ``_split_conditions`` leaves a condition to the session, else the
+        declared roles, or ``{"core"}`` when it declares none or declares
+        ``all``, plus ``main`` when ``audience: main`` keeps the rule out of
+        delegates, plus ``paths:<glob>`` for each ``paths`` glob.
 
     Raises:
         ValueError: ``roles`` is empty, malformed, or names an unknown role
-            (``core`` is the default and cannot be declared), or ``audience``
-            is not ``main``.
+            (``core`` is the default and cannot be declared), or
+            ``_declared_condition`` rejects the rule.
     """
-    split = split_frontmatter(content)
-    lines = split[0] if split else []
-
-    def declared(key: str) -> list[str]:
-        return [
-            line.partition(":")[2].strip()
-            for line in lines
-            if line.partition(":")[0].strip() == key
-        ]
-
-    audience = declared("audience")
-    if audience and audience[0] != _MAIN_AUDIENCE:
-        raise ValueError(
-            f"{label}: invalid audience '{audience[0]}' - use '{_MAIN_AUDIENCE}'"
-        )
+    declared = _frontmatter_values(content)
+    _declared_condition(declared, label)
+    audience = declared.get("audience", [])
     extra = frozenset({_MAIN_AUDIENCE} if audience else ())
-    roles_value = declared("roles")
+    _, condition = _split_conditions(declared, deferred=True)
+    if condition:
+        return frozenset({_LOAD_WHEN_PREFIX + condition}) | extra
+    roles_value = declared.get("roles", [])
+    paths = [
+        _PATHS_PREFIX + p.strip()
+        for value in declared.get("paths", [])
+        for p in value.strip("'\"").split(",")
+        if p.strip()
+    ]
+    extra |= frozenset(paths)
     if not roles_value:
         return frozenset({"core"}) | extra
     tokens = [t.strip() for t in roles_value[0].strip("'\"").split(",")]
@@ -1050,7 +1265,7 @@ def _collect_content_srcs(
     def add(src: Path, name: str, *, agent_specific: bool) -> None:
         if name in seen:
             return
-        if not _passes_requires_gate(src, agent.name):
+        if not _passes_gate(src, deferred=agent.name == "pi" and subdir == "rules"):
             log("debug", f"Skipping {name}: requires gate not satisfied.")
             return
         if not _targets_agent(src, agent.name):
@@ -1540,7 +1755,7 @@ def _install_skills(
         skill_md = skill_path / "SKILL.md"
         if not skill_md.is_file():
             return False
-        if not _passes_requires_gate(skill_md, agent_name):
+        if not _passes_gate(skill_md, target=agent_name):
             log(
                 "debug",
                 f"Skipping skill '{skill_path.name}': requires gate not satisfied.",
@@ -1617,7 +1832,15 @@ def _install_plugin_skills(
         skill_md = src_dir / "SKILL.md"
         if not skill_md.is_file():
             continue
-        if not _passes_requires_gate(skill_md, agent_name):
+        try:
+            _declared_condition(
+                _frontmatter_values(_read_text(skill_md), str(skill_md)),
+                str(skill_md),
+            )
+        except ValueError as e:
+            log("warn", f"Skipping plugin skill '{name}': {e}")
+            continue
+        if not _passes_gate(skill_md, target=agent_name):
             log(
                 "debug", f"Skipping plugin skill '{name}': requires gate not satisfied."
             )
@@ -2228,14 +2451,44 @@ class _PiRuleBundle:
         )
 
     def lead_names(self) -> list[str]:
-        """List the rules in the global ``AGENTS.md``: the core and lead rules.
+        """List the rules in the global ``AGENTS.md``: the core and lead rules
+        without ``paths``.
 
         Returns:
             Installed filenames, sorted.
         """
         return sorted(
-            name for name in self.texts if self.roles[name] & {"core", "lead"}
+            name
+            for name in self.texts
+            if self.roles[name] & {"core", "lead"} and not self._paths(name)
         )
+
+    def _paths(self, name: str) -> list[str]:
+        return sorted(r for r in self.roles[name] if r.startswith(_PATHS_PREFIX))
+
+    def conditional_names(self) -> dict[str, list[str]]:
+        """List the rules loaded only when a condition holds, by condition.
+
+        Returns:
+            Installed filenames, sorted, for each ``load_when`` condition and
+            for each ``paths:<glob>`` of a core or lead rule, and under
+            ``audience:main`` the ``load_when`` rules kept out of delegates.
+        """
+        conditional: dict[str, list[str]] = {}
+        for name in sorted(self.roles):
+            roles = self.roles[name]
+            keys = [
+                r.removeprefix(_LOAD_WHEN_PREFIX)
+                for r in roles
+                if r.startswith(_LOAD_WHEN_PREFIX)
+            ]
+            if keys and _MAIN_AUDIENCE in roles:
+                keys.append(_MAIN_ONLY_KEY)
+            if roles & {"core", "lead"}:
+                keys += self._paths(name)
+            for key in sorted(keys):
+                conditional.setdefault(key, []).append(name)
+        return conditional
 
     def lead_text(self, *, delegate: bool = False) -> str:
         """Return the global ``AGENTS.md`` text: the core and lead rules.
@@ -2264,18 +2517,24 @@ class _PiRuleBundle:
         Returns:
             Installed filenames, sorted, each once. A source with ``rules``
             gets those rules, one with ``omitClaudeMd`` gets none, a known
-            role gets the core rules and its own, any other gets every rule.
+            role gets the core rules and its own, any other gets every rule
+            except ``load_when`` rules.
         """
+        unconditional = {
+            name
+            for name in self.texts
+            if not any(r.startswith(_LOAD_WHEN_PREFIX) for r in self.roles[name])
+        }
         if "rules" in frontmatter:
             names = {
                 f"{token}.md" for token in _frontmatter_tokens(frontmatter, "rules")
             }
-            return sorted(names & self.texts.keys())
+            return sorted(names & unconditional)
         if frontmatter.get("omitClaudeMd") == "true":
             return []
         role = frontmatter.get("name", "")
         if role not in _AGENT_ROLES:
-            return sorted(self.texts)
+            return sorted(unconditional)
         return sorted(name for name, r in self.roles.items() if r & {"core", role})
 
 
@@ -3048,6 +3307,8 @@ def _install_pi_lead_rules(agent: _Agent, bundle: _PiRuleBundle) -> set[str]:
     """Write the global ``AGENTS.md`` holding the core and lead rules, and
     ``AGENTS.delegate.md`` holding them without the ``audience: main`` rules.
 
+    Also writes the ``load_when`` rule list when any rule declares a condition.
+
     Args:
         agent: The pi agent configuration.
         bundle: The rules pi installs.
@@ -3069,7 +3330,16 @@ def _install_pi_lead_rules(agent: _Agent, bundle: _PiRuleBundle) -> set[str]:
             log("warn", f"Unreplaced variable '{{{{{var}}}}}' in {filename}")
         _write_if_changed(dest_dir / filename, output, filename, "rules")
     write_rendered_rules(agent.name, bundle.texts)
-    return {_PiAgent.AGENTS_MD, _PiAgent.DELEGATE_AGENTS_MD}
+    installed = {_PiAgent.AGENTS_MD, _PiAgent.DELEGATE_AGENTS_MD}
+    if conditional := bundle.conditional_names():
+        _write_if_changed(
+            dest_dir / _CONDITIONAL_RULES_FILE,
+            json.dumps(conditional, indent=2) + "\n",
+            _CONDITIONAL_RULES_FILE,
+            "rules",
+        )
+        installed.add(_CONDITIONAL_RULES_FILE)
+    return installed
 
 
 def _previous_pi_bundle_files(
@@ -3083,14 +3353,15 @@ def _previous_pi_bundle_files(
         agents_md: Pi's global ``AGENTS.md``.
 
     Returns:
-        The previous definitions, rule files, ``AGENTS.md`` and
-        ``AGENTS.delegate.md``.
+        The previous definitions, rule files, ``AGENTS.md``,
+        ``AGENTS.delegate.md`` and conditional rule list.
     """
     agents_mds = (agents_md, agents_md.with_name(_PiAgent.DELEGATE_AGENTS_MD))
     return [
         f
         for f in previous_manifest.get("pi", {}).get("files", [])
-        if Path(f).parent in (agents_dir, _pi_rules_dir()) or Path(f) in agents_mds
+        if Path(f).parent in (agents_dir, _pi_rules_dir())
+        or Path(f) in (*agents_mds, agents_md.with_name(_CONDITIONAL_RULES_FILE))
     ]
 
 
@@ -3225,7 +3496,7 @@ def _pi_packages(fragments: list[Path]) -> dict[str, str | dict[str, Any]]:
         if not fragment.is_file():
             continue
         for entry in json.loads(_read_text(fragment)).get("packages", []):
-            if isinstance(entry, dict) and not _requirements_met(entry, "pi"):
+            if isinstance(entry, dict) and not _requirements_met(_migrated(entry)):
                 continue
             source = _package_source(entry)
             filters = {
@@ -4384,6 +4655,7 @@ def main(
     dirs = _get_dirs()
 
     overlay_dirs = _discover_overlay_paths()
+    _validate_rule_conditions(root_dir, overlay_dirs)
     trusted = _running_as_installed_tool()
     if not trusted and only is None:
         log(
@@ -4706,7 +4978,11 @@ def main(
                 shared_src = root_dir / "shared" / subdir
                 if subdir == "rules" and name == "pi" and pi_bundle is not None:
                     installed = (
-                        {_PiAgent.AGENTS_MD}
+                        {
+                            _PiAgent.AGENTS_MD,
+                            _PiAgent.DELEGATE_AGENTS_MD,
+                            _CONDITIONAL_RULES_FILE,
+                        }
                         & {Path(f).name for f in previous_pi_bundle}
                         if pi_bundle_held
                         else _install_pi_lead_rules(agent, pi_bundle)
