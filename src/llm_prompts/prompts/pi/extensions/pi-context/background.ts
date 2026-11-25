@@ -118,7 +118,7 @@ export class Background {
 
 	/** Sends a steering message to a live background run by name. */
 	async steer(name: string, message: string): Promise<void> {
-		const live = this.registry.live().filter((run) => run.background);
+		const live = this.registry.live().filter((run) => run.background && !run.stub);
 		const run = live.find((candidate) => candidate.name === name);
 		const child = run && this.children.get(run.id);
 		if (!child) throw new Error(`no live background fork ${name}. Live forks: ${live.map((candidate) => candidate.name).join(", ") || "none"}`);
@@ -142,7 +142,7 @@ export class Background {
 
 	/** Stops a live background run by name. */
 	cancel(name: string): Run | undefined {
-		return this.cancelRun(this.registry.live().find((live) => live.background && live.name === name)?.id);
+		return this.cancelRun(this.registry.live().find((live) => live.background && !live.stub && live.name === name)?.id);
 	}
 
 	/** Stops a live background run by id. */
