@@ -31,3 +31,18 @@ test("parseOutcome reads the code, the notify flag and the ref from the OUTCOME 
 	assert.deepEqual(parseOutcome("prose first\nOUTCOME done ref:rc-x 1a2b3c4\nmore"), { code: "done", notify: false, ref: "rc-x" });
 	assert.deepEqual(parseOutcome("OUTCOME found-it ref:rc-x \nthe answer"), { code: "found-it", notify: false, ref: "rc-x" });
 });
+
+test("a long run of emoji with no OUTCOME line matches nothing", { timeout: 5000 }, () => {
+	assert.equal(parseOutcome("✅".repeat(50)), undefined);
+	assert.equal(projectResult("✅".repeat(50)), "✅".repeat(50));
+});
+
+test("an OUTCOME line may open with an emoji", () => {
+	assert.deepEqual(parseOutcome("🦩 OUTCOME done ref:"), { code: "done", notify: false, ref: "" });
+	assert.equal(projectResult("🦩 OUTCOME done ref:r1\nbody"), "🦩 OUTCOME done ref:r1");
+	assert.equal(parseOutcome("see OUTCOME done ref:r1"), undefined);
+	for (const emoji of ["ℹ️", "1️⃣"]) {
+		assert.deepEqual(parseOutcome(`${emoji} OUTCOME done ref:r1`), { code: "done", notify: false, ref: "r1" });
+		assert.equal(projectResult(`${emoji} OUTCOME done ref:r1\nbody`), `${emoji} OUTCOME done ref:r1`);
+	}
+});

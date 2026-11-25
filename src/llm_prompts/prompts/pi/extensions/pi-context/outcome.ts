@@ -1,5 +1,7 @@
 // Reads a delegate's OUTCOME line and reduces its reply to what main needs to see.
-const OUTCOME = /^OUTCOME (done|blocked-on-user|failed|found-it)( notify)? ref:(?:\S+([ \t].*)?|[ \t]*)$/;
+// An OUTCOME line may open with an emoji or other symbols, never words.
+const LEAD = String.raw`^(?:[^\p{L}\p{N}\n]|[\p{L}\p{N}](?=[\uFE0F\u20E3]))*`;
+const OUTCOME = new RegExp(`${LEAD}OUTCOME (done|blocked-on-user|failed|found-it)( notify)? ref:(?:\\S+([ \\t].*)?|[ \\t]*)$`, "u");
 const KEPT_ANYWHERE = /^(ASK:|DENIED: ")/;
 const MAX_FOUND_LINE = 200;
 
@@ -12,7 +14,7 @@ export function projectResult(text: string): string {
 	return lines.filter((line, i) => i === at || KEPT_ANYWHERE.test(line) || (i === foundAt && line.length <= MAX_FOUND_LINE)).join("\n");
 }
 
-const OUTCOME_LINE = /^OUTCOME (\S+)( notify)? ref:(?:(\S+)([ \t].*)?|[ \t]*)$/m;
+const OUTCOME_LINE = new RegExp(`${LEAD}OUTCOME (\\S+)( notify)? ref:(?:(\\S+)([ \\t].*)?|[ \\t]*)$`, "mu");
 
 /** The code, notify flag and ref of the first OUTCOME line in a reply, whatever the code word is. Text after the ref is ignored. */
 export function parseOutcome(text: string): { code: string; notify: boolean; ref: string } | undefined {
