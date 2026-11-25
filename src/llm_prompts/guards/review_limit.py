@@ -5,7 +5,6 @@ from __future__ import annotations
 import itertools
 import os
 import subprocess
-import tomllib
 from typing import TYPE_CHECKING, cast
 
 from cline_hooks.core.plugin import (
@@ -109,13 +108,7 @@ class ReviewLimitGuard(HooksPlugin):
                             scope, reviews.get("max_in_flight", DEFAULT_LIMIT)
                         )
                     )
-                except (
-                    AttributeError,
-                    TypeError,
-                    ValueError,
-                    OSError,
-                    tomllib.TOMLDecodeError,
-                ):
+                except (AttributeError, TypeError, ValueError, OSError):
                     limit = DEFAULT_LIMIT
                 if count >= limit:
                     return HookResult(
