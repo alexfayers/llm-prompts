@@ -4,11 +4,11 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { getAgentDir, type ExtensionAPI, type ExtensionContext, type ExtensionToolContext, type SessionEntry } from "@earendil-works/pi-coding-agent";
+import { defineTool, getAgentDir, type AgentToolResult, type ExtensionAPI, type ExtensionContext, type ExtensionToolContext, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { parseOutcome, projectResult } from "./outcome.ts";
 import { Background } from "./background.ts";
-import { describeMain, lastPrefixHash, PREFIX_FILE, serveBridge, writeLeadPrefix, type BridgeOptions } from "./bridge.ts";
+import { describeMain, lastPrefixHash, LEAD_PREFIX_FILE, PREFIX_FILE, serveBridge, writeLeadPrefix, type BridgeOptions } from "./bridge.ts";
 import { createWorktree, dropIfClean, gitOut, land, mainSnapshot, restoreWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
 import { checkReadMcp, coldCard, expandHome, readHandshake, ROLES, withReadMcp, type ReadMcp, type Role } from "./roles.ts";
 import { tokens } from "./live-view.ts";
@@ -75,9 +75,9 @@ export function sessionFileOf(files: string, cold: boolean): string | undefined 
 export async function keepSession(files: string, cold: boolean, name: string, runId: string, agentDir = getAgentDir()): Promise<void> {
 	const session = sessionFileOf(files, cold);
 	if (!session) return;
-	const handshake = cold ? undefined : readHandshake(path.join(files, "handshake.json"));
+	const handshake = readHandshake(path.join(files, "handshake.json"));
 	if (!cold && handshake?.inherited === undefined) throw new Error("Cannot retain a warm session without its inherited boundary");
-	await retainSession(session, `${name}-${runId}.jsonl`, handshake?.inherited ?? undefined, agentDir);
+	await retainSession(session, `${name}-${runId}.jsonl`, (cold ? handshake?.billedFrom : handshake?.inherited) ?? undefined, agentDir);
 }
 
 /** How long a finished fork's files stay, so its session and cost can still be read. */
@@ -156,6 +156,8 @@ export type DelegateOptions = {
 	cwd?: string;
 	/** The run's file directory. A new one is made when it is not given. */
 	files?: string;
+	/** The files of the finished run whose session `files` holds a copy of: the child's prefix is compared with that run's, not main's. */
+	from?: string;
 	/** Continue the session already in `files` instead of seeding a new one. */
 	resume?: boolean;
 	/** Keeps the run's files when the delegate ends, so a lost run can resume. */
@@ -171,7 +173,7 @@ export type DelegateOptions = {
 };
 
 /** Runs the role's session on a copy of the given entries with main's model, thinking level and directory, or as a cold worker with `model`, and returns its first turn. */
-export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { role, name, entries = [], message, signal, command, runId = newRunId(), model, mcp, worktree, repo, cwd, files = path.join(getAgentDir(), "pi-context", randomUUID()), resume, keep, continuable, onChild, onWarmup, onTurn }: DelegateOptions): Promise<Turn & { prefix?: "match" | "mismatch" } & Pick<Run, "lastRequestAt" | "context">> {
+export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { role, name, entries = [], message, signal, command, runId = newRunId(), model, mcp, worktree, repo, cwd, files = path.join(getAgentDir(), "pi-context", randomUUID()), from, resume, keep, continuable, onChild, onWarmup, onTurn }: DelegateOptions): Promise<Turn & { prefix?: "match" | "mismatch" } & Pick<Run, "lastRequestAt" | "context">> {
 	if (!ctx.model) throw new Error("Cannot start a delegate without a model.");
 	const session = resume && model ? sessionFileOf(files, true) : undefined;
 	if (resume && model && !session) throw new Error("The cold worker's session is gone.");
@@ -181,7 +183,9 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 	const handshake = path.join(files, "handshake.json");
 	const cardFile = path.join(files, "card.md");
 	const sessionDir = path.join(files, "session");
-	const inherited = model ? undefined : resume ? readHandshake(handshake)?.inherited : (entries.at(-1)?.id ?? null);
+	const started = resume ? readHandshake(handshake) : undefined;
+	const inherited = resume ? started?.inherited : model ? undefined : (entries.at(-1)?.id ?? null);
+	const warm = { model: started?.model ?? `${ctx.model.provider}/${ctx.model.id}`, thinking: started?.thinking ?? pi.getThinkingLevel() };
 	if (!model && inherited === undefined) throw new Error("Cannot resume a warm fork without its inherited boundary");
 	let bridge: Awaited<ReturnType<typeof serveBridge>> | undefined;
 	let child: RpcChild | undefined;
@@ -190,12 +194,19 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 		fs.mkdirSync(files, { recursive: true, mode: 0o700 });
 		fs.rmSync(path.join(files, FINISHED_MARK), { force: true });
 		let prefix: "match" | "mismatch" | undefined;
-		const onPrefix = model ? undefined : (hash: string) => void (prefix = hash === lastPrefixHash() ? "match" : "mismatch");
+		const verdict = (hash: string) => {
+			const expected = from ? readText(path.join(from, PREFIX_FILE)) : lastPrefixHash();
+			return from && expected === undefined ? undefined : hash === expected ? "match" : "mismatch";
+		};
+		const onPrefix = model ? undefined : (hash: string) => {
+			fs.writeFileSync(path.join(files, PREFIX_FILE), hash, { mode: 0o600 });
+			prefix = verdict(hash);
+		};
 		const { readMcp } = forkSettings(pi, ctx);
 		const allowed = withReadMcp(role, readMcp);
 		bridge = mcp && (await serveBridge(files, { role: allowed, execute: mcp, onPrefix }));
 		const main = bridge && describeMain(pi, ctx, model ? allowed : undefined);
-		fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, repo, inherited, readMcp, bridge: bridge && { ...main, socket: bridge.socket } }), { mode: 0o600 });
+		fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, repo, inherited, ...(!model && warm), ...(model && started && { billedFrom: started.billedFrom, cacheKey: started.cacheKey }), readMcp, bridge: bridge && { ...main, socket: bridge.socket } }), { mode: 0o600 });
 		if (model) fs.writeFileSync(cardFile, coldCard(role), { mode: 0o600 });
 		else if (!resume) {
 			writeLeadPrefix(files);
@@ -207,7 +218,7 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 			cwd: childCwd,
 			args: model
 				? coldArgs(role, { model, sessionDir, cardFile, skillsDir: path.join(agentDir, "skills"), session })
-				: ["--mode", "rpc", "--session", seed, "--model", `${ctx.model.provider}/${ctx.model.id}`, "--thinking", pi.getThinkingLevel(), ...(bridge ? ["--no-mcp"] : [])],
+				: ["--mode", "rpc", "--session", seed, "--model", warm.model, "--thinking", warm.thinking, ...(bridge ? ["--no-mcp"] : [])],
 			env: { ...process.env, PI_CONTEXT_CHILD: handshake, PI_CONTEXT_ROLE: role.name, PI_CONTEXT_RUN_ID: runId, PI_CONTEXT_WORKTREE: worktree },
 			signal,
 			onUi: relayDialog(name, ctx),
@@ -223,7 +234,7 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 		if (model && !session) warmed = await warmUp(JSON.stringify([model, role.name, coldCard(role), role.skills, childCwd, main]), onWarmup, signal);
 		const turn = await child.prompt(model || resume ? message : `${role.card}\n\n${message}`);
 		const reported = !model && !bridge && readText(path.join(files, PREFIX_FILE));
-		if (reported) prefix = reported === lastPrefixHash() ? "match" : "mismatch";
+		if (reported) prefix = verdict(reported);
 		await onTurn?.(turn);
 		return { ...turn, prefix, ...last };
 	} finally {
@@ -257,6 +268,32 @@ export const canResume = (run: Run): boolean => run.state === "lost" && run.back
 
 /** Whether a finished run's session is still there to continue with a new task. */
 export const canContinue = (run: Run): boolean => FINISHED.includes(run.state) && Boolean(run.files && sessionFileOf(run.files, Boolean(run.model)));
+
+/** The latest finished run named `name` whose session is still there. */
+export function finishedRun(runs: Run[], name: string): Run & { files: string } {
+	const finished = runs.filter(canContinue);
+	const run = finished.filter((candidate) => candidate.name === name).at(-1);
+	if (!run?.files) throw new Error(`no finished fork ${name}. Finished: ${finished.map((candidate) => candidate.name).join(", ") || "none"}`);
+	return { ...run, files: run.files };
+}
+
+/** Copies the session of the finished run in `source` into the new run directory `files`, for a child to continue: a warm seed or a cold worker's newest session, under a new header id with the source as its parent, with the source's handshake and lead prefix. The last copied entry becomes the warm handshake's `inherited` or the cold one's `billedFrom`, so the child is billed only for its own turns, and a cold copy sends its source's prompt cache key. */
+export function copySession(source: string, files: string, cold: boolean): void {
+	const session = sessionFileOf(source, cold);
+	if (!session) throw new Error(`the session in ${source} is gone`);
+	const copy = cold ? path.join(files, "session", path.basename(session)) : path.join(files, "seed.jsonl");
+	fs.mkdirSync(path.dirname(copy), { recursive: true, mode: 0o700 });
+	const [header, ...rest] = fs.readFileSync(session, "utf8").split("\n").filter(Boolean);
+	const parent = JSON.parse(header);
+	const inherited = rest.length ? (JSON.parse(rest.at(-1)!).id as string) : null;
+	const forked = { ...parent.piContextFork, parentSessionId: parent.id, ...(!cold && { inherited }) };
+	fs.writeFileSync(copy, `${[JSON.stringify({ ...parent, id: randomUUID(), piContextFork: forked }), ...rest].join("\n")}\n`, { mode: 0o600 });
+	const handshake = readText(path.join(source, "handshake.json"));
+	const sourceHandshake = handshake ? JSON.parse(handshake) : undefined;
+	const boundary = cold ? { billedFrom: inherited, cacheKey: sourceHandshake?.cacheKey ?? parent.id } : { inherited };
+	if (sourceHandshake) fs.writeFileSync(path.join(files, "handshake.json"), JSON.stringify({ ...sourceHandshake, ...boundary }), { mode: 0o600 });
+	if (fs.existsSync(path.join(source, LEAD_PREFIX_FILE))) fs.copyFileSync(path.join(source, LEAD_PREFIX_FILE), path.join(files, LEAD_PREFIX_FILE));
+}
 
 /** A line naming the latest finished fork of `role` in `dir` whose prompt cache is still warm, or undefined. */
 function cachedHint(runs: Run[], role: string, dir: string, now = Date.now()): string | undefined {
@@ -321,7 +358,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 	const registry = registryOf();
 
 	/** Starts the delegate of a registered run. A background run reports its end to `background`. */
-	function startRun(ctx: ExtensionToolContext, run: { id: string; name: string; ref: string; role: Role; tree?: Worktree; target?: string; model?: string; files: string; background: boolean; signal?: AbortSignal }, delegate: Pick<DelegateOptions, "entries" | "message" | "resume">) {
+	function startRun(ctx: ExtensionToolContext, run: { id: string; name: string; ref: string; role: Role; tree?: Worktree; target?: string; model?: string; files: string; background: boolean; signal?: AbortSignal }, delegate: Pick<DelegateOptions, "entries" | "message" | "from" | "resume">) {
 		const { id: runId, name, ref, tree } = run;
 		const merged: { landing?: Landing } = {};
 		const runSignal = run.background ? background.track(runId) : run.signal;
@@ -356,44 +393,76 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		return { running, merged };
 	}
 
-	pi.registerTool({
+	const textOf = (result: AgentToolResult<unknown>) => result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+	const forkTool = defineTool({
 		name: "fork",
 		label: "Fork",
 		description:
-			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It blocks until the delegate replies with an OUTCOME line and the work has landed. With background true it returns at once and the result arrives as a message when the delegate finishes.",
+			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It blocks until the delegate replies with an OUTCOME line and the work has landed. With background true it returns at once and the result arrives as a message when the delegate finishes. from runs on a copy of a finished fork's session instead. shared with tasks and model runs one cold stub that reads shared, then one child per task from that stub, so they share its prompt cache.",
 		promptSnippet: "Run a read-only or worktree-writing delegate on a copy of this session and wait for its reply",
 		parameters: Type.Object({
-			task: Type.String({ description: "What the delegate should find out or check" }),
+			task: Type.Optional(Type.String({ description: "What the delegate should find out or check" })),
 			role: Type.Optional(Type.Union([Type.Literal("reader"), Type.Literal("writer")], { description: "reader (default) reads only, writer commits in its own worktree" })),
 			name: Type.Optional(Type.String({ pattern: "^[a-z0-9-]{1,24}$", description: "Short name for the delegate" })),
 			background: Type.Optional(Type.Boolean({ description: "Return at once and receive the result later as a message, so you can keep working" })),
 			target: Type.Optional(Type.String({ description: "Path of another directory, git checkout or worktree to read or land in, instead of this session's" })),
+			shared: Type.Optional(Type.String({ description: "Text a cold stub on model reads once before the tasks start from copies of its session" })),
+			tasks: Type.Optional(Type.Array(Type.Object({ name: Type.String({ pattern: "^[a-z0-9-]{1,24}$" }), task: Type.String() }), { description: "With shared: one child per task, each on a copy of the stub's session" })),
+			from: Type.Optional(Type.String({ pattern: "^[a-z0-9-]{1,24}$", description: "Name of a finished fork: run on a new copy of its session, at its model and effort, instead of on this session" })),
 			model: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9][\\w./:@-]*$", description: "Run as a cold worker on this model: provider/id (optionally :thinking) or a tier name such as sol or opus. Any model starts an empty session with no context and no prompt cache from you, so the task must be self-contained" })),
 		}),
-		async execute(toolCallId, params, signal, _onUpdate, ctx) {
+		async execute(toolCallId, params, signal, onUpdate, ctx): Promise<AgentToolResult<unknown>> {
 			if (process.env.PI_CONTEXT_CHILD) throw new Error("Only the top-level session can fork.");
 			if (!ctx.model) throw new Error("Cannot fork without a model.");
+			if (params.shared !== undefined || params.tasks !== undefined) {
+				if (params.shared === undefined || !params.tasks?.length || params.model === undefined || params.task !== undefined || params.from !== undefined) throw new Error("shared needs tasks and model, without task or from");
+				const stub = params.name ?? `stub-${randomUUID().slice(0, 6)}`;
+				const names = [stub, ...params.tasks.map(({ name }) => name)];
+				const repeated = names.find((name, at) => names.indexOf(name) !== at);
+				if (repeated) throw new Error(`task names must be unique and differ from the stub's: ${repeated}`);
+				const common = { role: params.role, target: params.target };
+				const started = await forkTool.execute(toolCallId, { ...common, name: stub, model: params.model, task: `${params.shared}\n\nRead what the text above says, then reply "OUTCOME done ref:" and stop.` }, signal, onUpdate, ctx);
+				const source = finishedRun(registry.all(), stub);
+				if (source.state !== "done") throw new Error(`stub ${stub} ended ${source.state}:\n${textOf(started)}`);
+				const mark = path.join(source.files, FINISHED_MARK);
+				const held = fs.existsSync(mark) && (fs.rmSync(mark), true);
+				try {
+					const children = await Promise.allSettled(params.tasks.map(({ name, task }) => forkTool.execute(toolCallId, { ...common, name, task, from: stub, background: params.background }, signal, onUpdate, ctx)));
+					const lines = children.map((child) => (child.status === "fulfilled" ? textOf(child.value) : String(child.reason instanceof Error ? child.reason.message : child.reason)));
+					return { content: [{ type: "text", text: [textOf(started), ...lines].join("\n") }], details: { name: stub, tasks: params.tasks.map(({ name }) => name) } };
+				} finally {
+					if (held) fs.writeFileSync(mark, "");
+				}
+			}
+			if (params.task === undefined) throw new Error("fork needs task, or shared with tasks");
 			sweepFinished();
-			const role: Role = ROLES[params.role ?? "reader"];
+			if (params.from !== undefined && params.model !== undefined) throw new Error("from runs at the source's model and effort: drop model");
+			const source = params.from === undefined ? undefined : finishedRun(registry.all(), params.from);
+			const role: Role = ROLES[params.role ?? (source?.role as Role["name"] | undefined) ?? "reader"];
 			const name = params.name ?? `fork-${randomUUID().slice(0, 6)}`;
-			const dir = path.resolve(ctx.cwd, expandHome(params.target ?? "."));
-			if (!fs.existsSync(dir)) throw new Error(`target ${params.target} does not exist`);
+			const targetPath = params.target ?? (source && (source.target ?? source.cwd));
+			const dir = path.resolve(ctx.cwd, expandHome(targetPath ?? "."));
+			if (!fs.existsSync(dir)) throw new Error(`target ${targetPath} does not exist`);
 			const checkout = await checkoutOf(dir);
 			if (role.writes && params.target === undefined && checkout && (await isPrimaryCheckout(checkout))) throw new Error(`${checkout} is a primary checkout: change_dir to a worktree first`);
-			const home = params.target === undefined ? ctx.cwd : role.writes ? (checkout ?? dir) : dir;
+			const home = targetPath === undefined ? ctx.cwd : role.writes ? (checkout ?? dir) : dir;
 			const target = sameDir(home, ctx.cwd) ? undefined : home;
-			const model = params.model && resolveModel(params.model);
-			const tree = role.writes && checkout ? await createWorktree(home, path.join(getAgentDir(), "pi-context", WORKTREES), name) : undefined;
+			const model = source ? source.model : params.model && resolveModel(params.model);
+			const files = path.join(getAgentDir(), "pi-context", randomUUID());
+			if (source) copySession(source.files, files, Boolean(source.model));
+			const tree = role.writes && checkout ? await createWorktree(home, path.join(getAgentDir(), "pi-context", WORKTREES), name).catch((error: unknown) => {
+				fs.rmSync(files, { recursive: true, force: true });
+				throw error;
+			}) : undefined;
 			const entries = seedEntries(ctx.sessionManager.getBranch(), toolCallId);
 			const runId = newRunId();
 			const ref = `rc-fork-${name}-${toolCallId}`;
-			const files = path.join(getAgentDir(), "pi-context", randomUUID());
 			const cold = params.model && model ? coldLabel(name, params.model, model) : undefined;
-			const hint = cachedHint(registry.all(), role.name, target ?? ctx.cwd);
+			const hint = source ? undefined : cachedHint(registry.all(), role.name, target ?? ctx.cwd);
 			const withHint = (text: string) => (hint ? `${text}\n${hint}` : text);
 			registry.start({ id: runId, name, role: role.name, model, background: Boolean(params.background), state: "running", task: params.task, worktree: tree?.path, branch: tree?.branch, tree, target, cwd: ctx.cwd, startedAt: Date.now() });
 			const message = `${worktreeLine(tree, role.writes ? home : undefined)}Task: ${params.task}`;
-			const { running, merged } = startRun(ctx, { id: runId, name, ref, role, tree, target, model, files, background: Boolean(params.background), signal }, { entries, message });
+			const { running, merged } = startRun(ctx, { id: runId, name, ref, role, tree, target, model, files, background: Boolean(params.background), signal }, { entries, message, from: source?.files, resume: Boolean(source) });
 			if (params.background) {
 				return { content: [{ type: "text", text: withHint(`started ${cold ?? `fork ${name}`} (background)`) }], details: { name, runId, background: true } };
 			}
@@ -420,12 +489,11 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			};
 		},
 	});
+	pi.registerTool(forkTool);
 	/** Gives a finished run a new task on its own session, model and role, in the background. */
 	async function continueRun(ctx: ExtensionToolContext, name: string, task: string, toolCallId: string) {
 		sweepFinished();
-		const continuable = registry.all().filter(canContinue);
-		const run = continuable.filter((candidate) => candidate.name === name).at(-1);
-		if (!run?.files) throw new Error(`no finished fork ${name} to continue. Continuable: ${continuable.map((candidate) => candidate.name).join(", ") || "none"}`);
+		const run = finishedRun(registry.all(), name);
 		background.resolveForkAsks(ctx, run.name);
 		const tree = run.tree && (fs.existsSync(run.tree.path) ? { ...run.tree, snapshot: await mainSnapshot(run.tree.repo) } : await createWorktree(run.tree.repo, path.join(getAgentDir(), "pi-context", WORKTREES), run.name));
 		registry.update(run.id, { state: "running", task, background: true, tree, worktree: tree?.path, branch: tree?.branch, startedAt: Date.now(), endedAt: undefined, endedBy: undefined, outcome: undefined, notify: undefined });

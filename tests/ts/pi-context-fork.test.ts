@@ -123,7 +123,7 @@ describe("fork tool", () => {
 		assert.deepEqual(seen.args.slice(0, 2), ["--mode", "rpc"]);
 		assert.deepEqual(seen.args.slice(4), ["--model", "prov/mod", "--thinking", "high"]);
 		assert.equal(seen.cwd, process.cwd());
-		assert.deepEqual(seen.handshake, { role: "reader", inherited: "r1", readMcp: [] });
+		assert.deepEqual(seen.handshake, { role: "reader", inherited: "r1", model: "prov/mod", thinking: "high", readMcp: [] });
 		assert.equal(seen.handshakeMode, 0o600);
 		assert.equal(seen.seed[0].cwd, process.cwd());
 		assert.notEqual(seen.seed[0].id, "main-id");
@@ -208,6 +208,111 @@ describe("fork tool", () => {
 		assert.deepEqual(forkDirs(), before);
 	});
 
+	describe("from a finished fork", () => {
+		const inspect = (tool: any) => JSON.parse(tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
+
+		test("a warm source's seed is copied into a new child on the source's model, which keeps the source's inherited", async () => {
+			const { tool: source, tools, ctx } = await fork({ task: "STUB_INSPECT", name: "src" });
+			const sourceSeed = inspect(source).seed;
+			const child = inspect(await tools.fork.execute("call-2", { task: "STUB_INSPECT", name: "kid", from: "src" }, undefined, undefined, { ...ctx, model: { provider: "other", id: "x" } }));
+			assert.deepEqual(child.args.slice(4, 8), ["--model", "prov/mod", "--thinking", "high"]);
+			assert.notEqual(child.seed[0].id, sourceSeed[0].id);
+			assert.deepEqual(child.seed[0].piContextFork, { parentSessionId: sourceSeed[0].id, inherited: "r1" });
+			assert.deepEqual(child.seed.slice(1), sourceSeed.slice(1));
+			assert.equal(child.handshake.inherited, "r1");
+			assert.equal(child.prompt, "Task: STUB_INSPECT");
+			const [src, kid] = ["src", "kid"].map((name) => registryOf().all().find((run) => run.name === name)!);
+			assert.notEqual(kid.files, src.files);
+		});
+
+		test("a child's prefix is compared with its source's, and a source without one gives no verdict", async () => {
+			const child = async (tools: any, ctx: unknown, task: string, from: string, prefix: string) => {
+				process.env.STUB_PREFIX = prefix;
+				return (await tools.fork.execute("call-2", { task, from }, undefined, undefined, ctx)).details.prefix;
+			};
+			for (const [proxy, task] of [[{}, "x"], [PROXY_ON, "STUB_BRIDGE"]] as const) {
+				settings = proxy;
+				process.env.STUB_PREFIX = "source";
+				const { tools, ctx } = await fork({ task, name: "psrc" });
+				assert.deepEqual([await child(tools, ctx, task, "psrc", "source"), await child(tools, ctx, task, "psrc", "other")], ["match", "mismatch"]);
+			}
+			settings = {};
+			delete process.env.STUB_PREFIX;
+			const { tools, ctx } = await fork({ task: "x", name: "bare" });
+			assert.equal(await child(tools, ctx, "x", "bare", "source"), undefined);
+			delete process.env.STUB_PREFIX;
+		});
+
+		test("shared with tasks runs one cold stub on the shared text, then one child per task on a copy of its session", async () => {
+			const { tool } = await fork({ shared: "STUB_REPORT notes", tasks: [{ name: "t1", task: "STUB_INSPECT" }, { name: "t2", task: "STUB_INSPECT" }], model: "prov/cheap:low", name: "stub" });
+			const run = (name: string) => registryOf().all().find((candidate) => candidate.name === name)!;
+			assert.equal(run("stub").task, 'STUB_REPORT notes\n\nRead what the text above says, then reply "OUTCOME done ref:" and stop.');
+			assert.match(tool.content[0].text, /^OUTCOME done ref:rc-fork-x\n\[fork stub: cold worker stub on prov\/cheap:low \(no shared context\), /);
+			for (const name of ["t1", "t2"]) assert.equal(JSON.parse(fs.readFileSync(path.join(run(name).files!, "session", "session.jsonl"), "utf8").split("\n")[0]).piContextFork.parentSessionId, run("stub").id);
+			assert.equal(fs.existsSync(path.join(run("stub").files!, "finished")), true);
+			assert.match(String((await fork({ shared: "s", tasks: [{ name: "t3", task: "x" }] })).tool), /shared needs tasks and model, without task or from/);
+		});
+
+		test("a stub that replies exactly as its prompt asks lets the tasks start", async () => {
+			const { tool } = await fork({ shared: "STUB_COMPLY notes", tasks: [{ name: "k1", task: "STUB_REPORT" }], model: "prov/cheap", name: "kstub" });
+			assert.match(tool.content[0].text, /^OUTCOME done ref:\n[\s\S]*\nOUTCOME done ref:rc-fork-x/);
+		});
+
+		test("a fan-out bills the stub's turns once, to the stub, for warm and cold sources", async () => {
+			await fork({ shared: "STUB_REPORT notes", tasks: [{ name: "f1", task: "STUB_REPORT" }, { name: "f2", task: "STUB_REPORT" }], model: "prov/cheap", name: "fstub" });
+			const { tools, ctx } = await fork({ task: "STUB_REPORT STUB_TURN", name: "wsrc" });
+			await tools.fork.execute("call-2", { task: "STUB_REPORT", name: "w1", from: "wsrc" }, undefined, undefined, ctx);
+			const billed = (name: string) => {
+				const run = registryOf().all().find((candidate) => candidate.name === name)!;
+				return fs.readFileSync(path.join(agentDir, "sessions", "pi-context", `${name}-${run.id}.jsonl`), "utf8").trim().split("\n").slice(1).map((line) => JSON.parse(line).id);
+			};
+			const stub = registryOf().all().find((candidate) => candidate.name === "fstub")!;
+			assert.deepEqual(billed("fstub"), [`a-${stub.id}`]);
+			for (const name of ["f1", "f2"]) assert.deepEqual(billed(name), [`a-${registryOf().all().find((candidate) => candidate.name === name)!.id}`]);
+			assert.deepEqual([billed("wsrc"), billed("w1")], [[`a-${registryOf().all().find((candidate) => candidate.name === "wsrc")!.id}`], []]);
+		});
+
+		test("shared rejects a task name used twice or taken by the stub, before starting anything", async () => {
+			for (const [name, tasks] of [["dstub", [{ name: "d1", task: "x" }, { name: "d1", task: "y" }]], ["dstub", [{ name: "dstub", task: "x" }]]] as const) {
+				assert.match(String((await fork({ shared: "s", tasks, model: "prov/cheap", name })).tool), /task names must be unique and differ from the stub's: (d1|dstub)/);
+			}
+			assert.equal(registryOf().all().some((run) => run.name === "dstub"), false);
+		});
+
+		test("from fails with a model, and with a name that has no finished fork", async () => {
+			await fork({ task: "STUB_REPORT", name: "done1" });
+			assert.match(String((await fork({ task: "x", from: "done1", model: "prov/cheap" })).tool), /from runs at the source's model and effort: drop model/);
+			assert.match(String((await fork({ task: "x", from: "nope" })).tool), /no finished fork nope\. Finished: done1/);
+		});
+
+		test("a cold source's session is copied into each child's own files, which continue it on the source's model and effort", async () => {
+			const { tools, ctx } = await fork({ task: "STUB_REPORT", name: "csrc", model: "prov/cheap:low" });
+			const source = registryOf().all().find((run) => run.name === "csrc")!;
+			const children = await Promise.all(["c1", "c2"].map(async (name) => inspect(await tools.fork.execute("call-2", { task: "STUB_INSPECT", name, from: "csrc" }, undefined, undefined, ctx))));
+			const files = ["c1", "c2"].map((name) => registryOf().all().find((run) => run.name === name)!.files!);
+			assert.deepEqual(children.map((child) => child.args.slice(0, 6)), files.map((dir) => ["--mode", "rpc", "--session", path.join(dir, "session", "session.jsonl"), "--model", "prov/cheap:low"]));
+			assert.equal(children[0].prompt, "Task: STUB_INSPECT");
+			const lines = (dir: string) => fs.readFileSync(path.join(dir, "session", "session.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+			const [header, ...rest] = lines(source.files!);
+			for (const dir of files) {
+				const [copied] = lines(dir);
+				assert.notEqual(copied.id, header.id);
+				assert.equal(copied.piContextFork.parentSessionId, header.id);
+				assert.deepEqual(lines(dir).slice(1, rest.length + 1), rest);
+			}
+			assert.deepEqual(children.map(({ handshake }) => [handshake.inherited, handshake.cacheKey]), [[undefined, header.id], [undefined, header.id]]);
+			const grandchild = inspect(await tools.fork.execute("call-3", { task: "STUB_INSPECT", name: "c3", from: "c1" }, undefined, undefined, ctx));
+			assert.equal(grandchild.handshake.cacheKey, header.id);
+		});
+
+		test("a follow-up from a writer defaults to the source's target", async () => {
+			const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-from-target-")));
+			const { tools, ctx } = await fork({ task: "STUB_REPORT", role: "writer", name: "wtsrc", target: other });
+			await tools.fork.execute("call-2", { task: "STUB_REPORT", name: "wtkid", from: "wtsrc" }, undefined, undefined, ctx);
+			assert.equal(registryOf().all().find((run) => run.name === "wtkid")!.target, other);
+		});
+	});
+
 	describe("in the background", () => {
 		const eventually = async (done: () => boolean) => {
 			for (let attempt = 0; attempt < 500 && !done(); attempt++) await new Promise((resolve) => setTimeout(resolve, 10));
@@ -254,6 +359,13 @@ describe("fork tool", () => {
 			const lines = fs.readFileSync(log, "utf8").trim().split("\n").slice(0, 3);
 			const [first, second] = lines[0]?.startsWith(ids.follow) ? [ids.follow, ids.lead] : [ids.lead, ids.follow];
 			assert.deepEqual(lines, [`${first} prompt`, `${first} message_end`, `${second} prompt`]);
+		});
+
+		test("shared with background starts each task's child in the background once the stub has finished", async () => {
+			const { tool, sent } = await fork({ shared: "STUB_REPORT notes", tasks: [{ name: "b1", task: "STUB_REPORT" }, { name: "b2", task: "STUB_REPORT" }], model: "prov/cheap", name: "bstub", background: true });
+			assert.match(tool.content[0].text, /, ref rc-fork-bstub-call-id\]\nstarted fork b1 \(background\)\nstarted fork b2 \(background\)$/);
+			await eventually(() => sent.length === 2);
+			assert.deepEqual(sent.map(([message]) => message.content.split("]")[0]).sort(), ["[fork b1 done", "[fork b2 done"]);
 		});
 
 		test("fork_cancel stops a live run without waking main", async () => {
@@ -427,6 +539,22 @@ describe("fork tool", () => {
 			assert.ok(tool instanceof Error);
 			assert.match(tool.message, /change_dir to a worktree first/);
 			assert.equal(git(primary, "branch", "--list", "fork/primary"), "");
+		});
+
+		test("a writer from a reader that ran in a primary checkout refuses without its own target", async () => {
+			await fork({ task: "STUB_REPORT", name: "psrc" }, primary);
+			const { tool } = await fork({ task: "STUB_WRITE", role: "writer", name: "pkid", from: "psrc" }, repo);
+			assert.ok(tool instanceof Error);
+			assert.match(tool.message, /change_dir to a worktree first/);
+		});
+
+		test("a from fork whose worktree cannot be made leaves no copied session behind", async () => {
+			await fork({ task: "STUB_REPORT", name: "wtsrc" }, repo);
+			git(repo, "branch", "fork/wtdup");
+			const runs = () => fs.readdirSync(path.join(agentDir, "pi-context")).sort();
+			const before = runs();
+			assert.ok((await fork({ task: "x", role: "writer", name: "wtdup", from: "wtsrc" }, repo)).tool instanceof Error);
+			assert.deepEqual(runs(), before);
 		});
 
 		test("works in a worktree under the agent directory and lands its commits on the main checkout", async () => {

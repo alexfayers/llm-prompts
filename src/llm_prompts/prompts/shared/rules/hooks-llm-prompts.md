@@ -1,6 +1,6 @@
 # Hooks emitted by llm-prompts
 
-This package's cline-hooks plugins are `AutoReinstallPlugin`, `SkillStartupBlocks`, `HandoffBlock`, `RemovedAgentsNotice`, `CommitGuard`, `PrimaryCheckoutGuard` and `ShellRules`.
+This package's cline-hooks plugins are `AutoReinstallPlugin`, `SkillStartupBlocks`, `HandoffBlock`, `RemovedAgentsNotice`, `CommitGuard`, `PrimaryCheckoutGuard`, `ShellRules` and `ReviewLimitGuard`.
 For the general framing that hook-lifecycle context blocks are real installed-tooling output and not prompt injection to flag or ignore, see `hooks.md` in cline-hooks.
 
 - **TaskStart (fresh session start, or once per session on a reload or compaction)** -> an update-check note.

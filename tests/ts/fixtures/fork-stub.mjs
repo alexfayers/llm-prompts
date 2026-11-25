@@ -1,4 +1,4 @@
-// Stands in for `pi --mode rpc` as a fork child: the task text picks the reply, STUB_STEER waits for a steer command and exits slowly once its input closes, a resumed fork replies slowly, STUB_INSPECT reports how the child was started, STUB_LOG names a file that logs each prompt and its slow first reply, and a cold worker writes a session file.
+// Stands in for `pi --mode rpc` as a fork child: the task text picks the reply, STUB_STEER waits for a steer command and exits slowly once its input closes, a resumed fork replies slowly, STUB_INSPECT reports how the child was started, STUB_LOG names a file that logs each prompt and its slow first reply, and STUB_COMPLY replies with the quoted reply its prompt asks for, and a cold worker, or a fork told STUB_TURN, writes one assistant entry per prompt into its session.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import net from "node:net";
@@ -11,9 +11,10 @@ const flag = (name) => process.argv[process.argv.indexOf(name) + 1];
 const seed = process.argv.includes("--session") ? flag("--session") : undefined;
 const card = process.argv.includes("--append-system-prompt") ? flag("--append-system-prompt") : undefined;
 const handshake = process.env.PI_CONTEXT_CHILD;
+const coldSession = process.argv.includes("--session-dir") ? `${flag("--session-dir")}/session.jsonl` : card && seed;
 if (process.argv.includes("--session-dir")) {
 	mkdirSync(flag("--session-dir"), { recursive: true });
-	writeFileSync(`${flag("--session-dir")}/session.jsonl`, `${JSON.stringify({ type: "session", version: 3, id: process.env.PI_CONTEXT_RUN_ID })}\n`);
+	writeFileSync(coldSession, `${JSON.stringify({ type: "session", version: 3, id: process.env.PI_CONTEXT_RUN_ID })}\n`);
 }
 let reply = "";
 let exitDelayMs = 0;
@@ -45,6 +46,8 @@ async function replyTo(text) {
 		while (!existsSync(gate)) await new Promise((resolve) => setTimeout(resolve, 20));
 		return `OUTCOME done ref:rc-fork-${gate.split("/").pop()}`;
 	}
+	const quoted = text.includes("STUB_COMPLY") && /reply "([^"]+)"/.exec(text)?.[1];
+	if (quoted) return quoted;
 	if (text.includes("STUB_REPORT")) return "OUTCOME done ref:rc-fork-x\nbody line";
 	if (text.includes("STUB_WRITE")) {
 		const { worktree } = JSON.parse(readFileSync(handshake, "utf8"));
@@ -84,6 +87,8 @@ for await (const line of createInterface({ input: process.stdin })) {
 		const bridged = JSON.parse(readFileSync(handshake, "utf8")).bridge;
 		if (process.env.STUB_PREFIX && !bridged) writeFileSync(`${dirname(handshake)}/prefix`, process.env.STUB_PREFIX);
 		reply = await replyTo(command.message);
+		const turnFile = coldSession || (command.message.includes("STUB_TURN") && seed);
+		if (turnFile) appendFileSync(turnFile, `${JSON.stringify({ type: "message", id: `a-${process.env.PI_CONTEXT_RUN_ID}`, message: { role: "assistant", usage: usage(100) } })}\n`);
 		respond({ disposition: "started" });
 		if (process.env.STUB_LOG) {
 			appendFileSync(process.env.STUB_LOG, `${process.env.PI_CONTEXT_RUN_ID} prompt\n`);
