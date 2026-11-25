@@ -513,6 +513,7 @@ def _commit_as(repo: Path, tree: str, parent: str, source: str) -> str:
     ).strip()
 
 
+@cache
 def _resolution_ref(repo: Path, base: str, ours: str, theirs: str) -> str:
     """Return the ref that stores the tree staged by hand for merging ``theirs`` onto ``ours`` from ``base``."""
     trees = _read(
@@ -594,6 +595,7 @@ def _reuse_resolutions(
                 run_git(repo, "worktree", "remove", "--force", str(work))
 
 
+@cache
 def resolve_worktree(repo: Path) -> Path:
     """Return where a rebuild leaves a conflicting copy for its hand resolution."""
     common = _read(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -986,8 +988,7 @@ def rebuild_local(
         _record_resolution(repo)
         keep = resolve_worktree(repo)
         merge_base = _read(repo, "merge-base", "HEAD", base).strip()
-        head = _read(repo, "rev-parse", "HEAD").strip()
-        tip = _read(repo, "rev-parse", base).strip()
+        head, tip = _read(repo, "rev-parse", "HEAD", base).split()
         replayed = 0
         copied: list[str] = []
         removed: dict[str, Squash | None] = {}
