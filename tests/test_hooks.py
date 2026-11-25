@@ -395,6 +395,52 @@ class TestPromptSizeGate:
         assert "big.md" in result.block
         assert str(FINALS[RULE_BYTES]) in result.block
 
+    def test_block_names_the_bytes_to_cut(
+        self, plugin: AutoReinstallPlugin, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "size-root"
+        for target in CHECKED_TARGETS:
+            _write(root / target / "vars.json", "{}")
+        path = root / "shared" / "rules" / "big.md"
+        content = "x" * (FINALS[RULE_BYTES] + 49) + "\n"
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=root):
+            result = plugin.on_hook(
+                "PreToolUse",
+                tool_name="Write",
+                parameters={"path": str(path), "content": content},
+            )
+
+        assert result is not None
+        assert result.block is not None
+        assert "cut 50 rendered bytes" in result.block
+
+    def test_block_on_an_oversized_file_names_the_bytes_added(
+        self, plugin: AutoReinstallPlugin, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "size-root"
+        for target in CHECKED_TARGETS:
+            _write(root / target / "vars.json", "{}")
+        path = _write(
+            root / "shared" / "rules" / "big.md",
+            "x" * (FINALS[RULE_BYTES] + 49) + "\n",
+        )
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=root):
+            result = plugin.on_hook(
+                "PreToolUse",
+                tool_name="Edit",
+                parameters={
+                    "path": str(path),
+                    "old_string": "x\n",
+                    "new_string": "xy\n",
+                },
+            )
+
+        assert result is not None
+        assert result.block is not None
+        assert "cut 1 rendered bytes" in result.block
+
     def test_edit_adding_a_second_lazy_continuation_is_denied(
         self, plugin: AutoReinstallPlugin, tmp_path: Path
     ) -> None:

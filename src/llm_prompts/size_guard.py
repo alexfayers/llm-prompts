@@ -121,7 +121,11 @@ class Artifact:
 
 @dataclass(frozen=True)
 class Violation:
-    """One artifact that failed its metric's ceiling."""
+    """One artifact that failed its metric's ceiling.
+
+    `cut_to` is the size that ends the failure, where it differs from
+    `threshold` (an edit only has to stop growing an already-oversized file).
+    """
 
     metric: str
     target: str
@@ -130,6 +134,7 @@ class Violation:
     threshold: int | bool
     source: Path
     lines: tuple[int, ...] = ()
+    cut_to: int | None = None
 
 
 @dataclass(frozen=True)
@@ -915,7 +920,8 @@ def format_report(violations: list[Violation], errors: list[str] | None = None) 
     Returns:
         Declaration errors first under their own header, then a report line
         per violation naming the file, metric, actual value, threshold, and
-        the compress-not-split remedy; a pass message if both are empty.
+        the compress-not-split remedy with the amount to cut; a pass message
+        if both are empty.
     """
     errors = errors or []
     if not violations and not errors:
@@ -934,6 +940,8 @@ def format_report(violations: list[Violation], errors: list[str] | None = None) 
                 else ""
             )
             fix = _FIXES.get(v.metric, "compress, don't split")
+            if v.metric in FINALS and v.metric not in _FIXES:
+                fix = f"cut {v.actual - (v.cut_to or v.threshold)} {unit}, {fix}"
             lines.append(
                 f"  [{v.metric}] {v.dest_name} ({v.target}): actual {v.actual} > "
                 f"threshold {v.threshold} {unit}{at_line} ({v.source}) - {fix}."

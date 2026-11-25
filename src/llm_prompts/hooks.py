@@ -581,7 +581,13 @@ class AutoReinstallPlugin(HooksPlugin):
                 added = tuple(
                     n for n in v.lines if current_line_of.get(n) not in current.lines
                 )
-                worsened.append(replace(v, lines=added or v.lines))
+                worsened.append(
+                    replace(
+                        v,
+                        lines=added or v.lines,
+                        cut_to=max(current.actual, v.threshold),
+                    )
+                )
         if not worsened:
             return None
 
