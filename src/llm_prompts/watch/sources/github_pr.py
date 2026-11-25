@@ -12,19 +12,46 @@ from ..core.source import Fields, WatchError
 from .rest import conditional_get
 
 FAILED_CONCLUSIONS = frozenset(
-    {"failure", "timed_out", "cancelled", "action_required", "startup_failure"}
+    {"failure", "timed_out", "action_required", "startup_failure"}
 )
+ADVISORY_CHECK = "automate / rebase-queue"
+ADVISORY_WORKFLOW = ".github/workflows/project-automation.yml"
 PAGE = "?per_page=100"
+
+
+def _job(run: dict[str, Any]) -> tuple[str, int, str] | None:
+    """A check's identity across reruns, or None where GitHub gave no stable one."""
+    suite = (run.get("check_suite") or {}).get("id")
+    external_id = run.get("external_id")
+    return (run["name"], suite, external_id) if suite and external_id else None
+
+
+def _current(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each job's latest run, plus its earlier cancelled runs unless the latest succeeded."""
+    latest: dict[tuple[str, int, str], dict[str, Any]] = {}
+    for run in runs:
+        job = _job(run)
+        if job and (job not in latest or run["id"] > latest[job]["id"]):
+            latest[job] = run
+    return [
+        run
+        for run in runs
+        if (job := _job(run)) is None
+        or run is latest[job]
+        or (run["conclusion"] == "cancelled" and latest[job]["conclusion"] != "success")
+    ]
 
 
 def _ci(runs: list[dict[str, Any]], status: dict[str, Any]) -> str:
     state = status["state"] if status["total_count"] else None
+    current = _current(runs)
     if state in {"failure", "error"} or any(
-        run["conclusion"] in FAILED_CONCLUSIONS for run in runs
+        run["conclusion"] in FAILED_CONCLUSIONS for run in current
     ):
         return "fail"
     if (state == "pending" and not runs) or any(
-        run["status"] != "completed" for run in runs
+        run["status"] != "completed" or run["conclusion"] == "cancelled"
+        for run in current
     ):
         return "pending"
     return "pass" if runs or state else "none"
@@ -192,6 +219,17 @@ class GithubPrSource:
             items += data[key] if key else data
         return items
 
+    def _is_advisory(self, run: dict[str, Any]) -> bool:
+        """Whether run is the rebase-queue job of the project automation workflow."""
+        workflow_run = re.search(r"/actions/runs/(\d+)/", run.get("details_url") or "")
+        if run["name"] != ADVISORY_CHECK or not workflow_run:
+            return False
+        try:
+            data, _ = self._get(f"repos/{self._repo}/actions/runs/{workflow_run[1]}")
+        except WatchError:
+            return False
+        return str(data.get("path", "")).split("@")[0] == ADVISORY_WORKFLOW
+
     def poll(self) -> Fields:
         """Return the pull request's current fields."""
         pulls = f"repos/{self._repo}/pulls/{self._number}"
@@ -201,9 +239,14 @@ class GithubPrSource:
         if self._head and not sha.startswith(self._head):
             ci = "pending"
         else:
-            runs = self._get_all(
-                f"repos/{self._repo}/commits/{sha}/check-runs{PAGE}", "check_runs"
-            )
+            runs = [
+                run
+                for run in self._get_all(
+                    f"repos/{self._repo}/commits/{sha}/check-runs?filter=all&per_page=100",
+                    "check_runs",
+                )
+                if not self._is_advisory(run)
+            ]
             status, _ = self._get(f"repos/{self._repo}/commits/{sha}/status")
             ci = _ci(runs, status)
         return {

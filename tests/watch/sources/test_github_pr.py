@@ -32,6 +32,10 @@ class FakeGithub:
     ) -> subprocess.CompletedProcess[str]:
         self.requests.append(argv)
         path = argv[3]
+        if path not in self.bodies:
+            return subprocess.CompletedProcess(
+                argv, 1, "HTTP/2.0 404 Not Found\n\n", "gh: HTTP 404"
+            )
         etag = f'"{hash(json.dumps(self.bodies[path], sort_keys=True))}"'
         headers = f"Etag: {etag}\n"
         if f"If-None-Match: {etag}" in argv:
@@ -45,15 +49,24 @@ class FakeGithub:
             argv, 0, f"HTTP/2.0 200 OK\n{headers}\n{body}", ""
         )
 
-    def pr(self, runs: list[dict[str, str | None]] | None = None) -> None:
+    def pr(self, runs: list[dict[str, Any]] | None = None) -> None:
         self.bodies["repos/o/r/pulls/7"] = {
             "state": "open",
             "merged": False,
             "head": {"sha": "abc123"},
         }
         self.bodies["repos/o/r/pulls/7/reviews?per_page=100"] = []
-        self.bodies["repos/o/r/commits/abc123/check-runs?per_page=100"] = {
-            "check_runs": runs or []
+        self.bodies["repos/o/r/commits/abc123/check-runs?filter=all&per_page=100"] = {
+            "check_runs": [
+                {
+                    "id": i,
+                    "name": f"check-{i}",
+                    "check_suite": {"id": 1},
+                    "external_id": run.get("name", f"check-{i}"),
+                    **run,
+                }
+                for i, run in enumerate(runs or [])
+            ]
         }
         self.bodies["repos/o/r/commits/abc123/status"] = {
             "state": "pending",
@@ -80,6 +93,182 @@ def test_gh_pr_ci_fails_over_pending_until_the_head_matches(
     assert GithubPrSource("o/r", 7, head).poll()["ci"] == ci
 
 
+def advisory_pr(github: FakeGithub, workflow_path: str) -> None:
+    github.pr(
+        [
+            {
+                "name": "automate / rebase-queue",
+                "details_url": "https://github.com/o/r/actions/runs/5/job/6",
+                "status": "completed",
+                "conclusion": "cancelled",
+            },
+            {"name": "test", "status": "completed", "conclusion": "success"},
+        ]
+    )
+    github.bodies["repos/o/r/actions/runs/5"] = {"path": workflow_path}
+
+
+def test_gh_pr_ci_ignores_the_cancelled_rebase_queue_job(github: FakeGithub) -> None:
+    advisory_pr(github, ".github/workflows/project-automation.yml")
+
+    assert GithubPrSource("o/r", 7, None).poll()["ci"] == "pass"
+
+
+def test_gh_pr_ci_keeps_a_cancelled_job_of_the_same_name_from_another_workflow(
+    github: FakeGithub,
+) -> None:
+    advisory_pr(github, ".github/workflows/ci.yml")
+
+    assert GithubPrSource("o/r", 7, None).poll()["ci"] == "pending"
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [{"check_suite": {"id": None}}, {"external_id": None}, {"check_suite": None}],
+)
+def test_gh_pr_ci_aggregates_a_run_without_a_stable_identity(
+    github: FakeGithub, identity: dict[str, Any]
+) -> None:
+    github.pr(
+        [
+            {
+                "id": 1,
+                "name": "test",
+                "status": "completed",
+                "conclusion": "cancelled",
+                **identity,
+            },
+            {
+                "id": 2,
+                "name": "test",
+                "status": "completed",
+                "conclusion": "success",
+                **identity,
+            },
+        ]
+    )
+
+    assert GithubPrSource("o/r", 7, None).poll()["ci"] == "pending"
+
+
+@pytest.mark.parametrize("details_url", [None, "https://example.test/job/6"])
+def test_gh_pr_ci_aggregates_a_rebase_queue_job_it_cannot_trace_to_a_workflow(
+    github: FakeGithub, details_url: str | None
+) -> None:
+    github.pr(
+        [
+            {
+                "name": "automate / rebase-queue",
+                "details_url": details_url,
+                "status": "completed",
+                "conclusion": "cancelled",
+            }
+        ]
+    )
+
+    assert GithubPrSource("o/r", 7, None).poll()["ci"] == "pending"
+
+
+def test_gh_pr_ci_aggregates_a_rebase_queue_job_when_the_workflow_lookup_fails(
+    github: FakeGithub,
+) -> None:
+    advisory_pr(github, ".github/workflows/project-automation.yml")
+    del github.bodies["repos/o/r/actions/runs/5"]
+
+    assert GithubPrSource("o/r", 7, None).poll()["ci"] == "pending"
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "ci"),
+    [("success", "failure", "fail"), ("cancelled", "success", "pending")],
+)
+def test_gh_pr_ci_does_not_let_a_job_hide_another_job_with_the_same_name(
+    github: FakeGithub, first: str, second: str, ci: str
+) -> None:
+    github.pr(
+        [
+            {
+                "id": 1,
+                "name": "test",
+                "external_id": "a",
+                "status": "completed",
+                "conclusion": first,
+            },
+            {
+                "id": 2,
+                "name": "test",
+                "external_id": "b",
+                "status": "completed",
+                "conclusion": second,
+            },
+        ]
+    )
+
+    assert GithubPrSource("o/r", 7, None).poll()["ci"] == ci
+
+
+def test_gh_pr_lists_every_check_run_attempt(github: FakeGithub) -> None:
+    github.pr()
+
+    GithubPrSource("o/r", 7, None).poll()
+
+    assert "repos/o/r/commits/abc123/check-runs?filter=all&per_page=100" in {
+        argv[3] for argv in github.requests
+    }
+
+
+def test_gh_pr_ci_passes_when_a_failed_run_was_rerun_successfully(
+    github: FakeGithub,
+) -> None:
+    github.pr(
+        [
+            {"id": 1, "name": "test", "status": "completed", "conclusion": "failure"},
+            {"id": 2, "name": "test", "status": "completed", "conclusion": "success"},
+        ]
+    )
+
+    assert GithubPrSource("o/r", 7, None).poll()["ci"] == "pass"
+
+
+RERUN_CONCLUSIONS = [("success", "pass"), ("skipped", "pending"), ("failure", "fail")]
+
+
+@pytest.mark.parametrize(("rerun", "ci"), RERUN_CONCLUSIONS)
+def test_gh_pr_ci_keeps_a_cancelled_run_until_its_rerun_succeeds(
+    github: FakeGithub, rerun: str, ci: str
+) -> None:
+    github.pr(
+        [
+            {"id": 1, "name": "test", "status": "completed", "conclusion": "cancelled"},
+            {"id": 2, "name": "test", "status": "completed", "conclusion": rerun},
+        ]
+    )
+
+    assert GithubPrSource("o/r", 7, None).poll()["ci"] == ci
+
+
+@pytest.mark.parametrize(
+    ("name", "suite"), [("test", 2), ("lint", 1)], ids=["workflow", "name"]
+)
+def test_gh_pr_ci_keeps_a_cancelled_run_when_another_check_succeeds(
+    github: FakeGithub, name: str, suite: int
+) -> None:
+    github.pr(
+        [
+            {"id": 1, "name": "test", "status": "completed", "conclusion": "cancelled"},
+            {
+                "id": 2,
+                "name": name,
+                "check_suite": {"id": suite},
+                "status": "completed",
+                "conclusion": "success",
+            },
+        ]
+    )
+
+    assert GithubPrSource("o/r", 7, None).poll()["ci"] == "pending"
+
+
 def test_gh_pr_ci_fails_when_a_commit_status_fails(github: FakeGithub) -> None:
     github.pr([{"status": "completed", "conclusion": "success"}])
     github.bodies["repos/o/r/commits/abc123/status"] = {
@@ -104,11 +293,19 @@ def test_gh_pr_ci_ignores_a_pending_commit_status_when_runs_passed(
 
 def test_gh_pr_ci_fails_on_a_failed_run_on_a_later_page(github: FakeGithub) -> None:
     github.pr([{"status": "completed", "conclusion": "success"}])
-    first = "repos/o/r/commits/abc123/check-runs?per_page=100"
+    first = "repos/o/r/commits/abc123/check-runs?filter=all&per_page=100"
     second = "https://api.github.com/repositories/1/commits/abc123/check-runs?page=2"
     github.next_pages[first] = second
     github.bodies[second] = {
-        "check_runs": [{"status": "completed", "conclusion": "failure"}]
+        "check_runs": [
+            {
+                "id": 9,
+                "name": "late",
+                "check_suite": {"id": 1},
+                "status": "completed",
+                "conclusion": "failure",
+            }
+        ]
     }
     source = GithubPrSource("o/r", 7, None)
 
