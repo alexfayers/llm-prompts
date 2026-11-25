@@ -1,6 +1,6 @@
 // A synthetic repository with a remote, saved ghosts for it, and a session extension with a push guard, shared by the ghost session tests.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -19,7 +19,7 @@ const SILENT: Check = { isError: false, output: { regex: "^(\\(no output\\))?$" 
 
 /** A clone whose origin is one commit ahead, with ghosts that sync it and push it. */
 export async function makeFixture() {
-	const root = mkdtempSync(join(tmpdir(), "ghost-session-"));
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "ghost-session-")));
 	const [origin, seed, work] = ["origin.git", "seed", "work"].map((name) => join(root, name));
 	git(root, "init", "--bare", "-b", "main", origin);
 	git(root, "clone", origin, seed);
