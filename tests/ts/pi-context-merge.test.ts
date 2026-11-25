@@ -136,6 +136,73 @@ describe("landing", () => {
 		}
 	});
 
+	describe("a fork whose commits were pushed to another remote branch", () => {
+		let remoteCount = 0;
+		async function pushedFork(name: string) {
+			const repo = newRepo();
+			const remote = path.join(scratch, `remote${remoteCount++}.git`);
+			git(scratch, "init", "-q", "--bare", remote);
+			git(repo, "remote", "add", "origin", remote);
+			git(repo, "push", "-q", "origin", "main");
+			const tree = await writer(repo, name);
+			commit(tree.path, "a.txt", "1", "pushed work");
+			git(tree.path, "push", "-q", "origin", "HEAD:pr-branch");
+			commit(repo, "b.txt", "main moved");
+			return { repo, remote, tree };
+		}
+
+		test("lands there, not on its base", async () => {
+			const { repo, tree } = await pushedFork("pushed");
+			const before = git(repo, "rev-parse", "HEAD");
+			const landing = await land({ tree, first: done });
+			assert.equal(landing.state, "landed");
+			assert.match(landing.note ?? "", /landed on origin\/pr-branch by push/);
+			assert.equal(git(repo, "rev-parse", "HEAD"), before);
+			assert.ok(!fs.existsSync(tree.path));
+			assert.equal(git(repo, "branch", "--list", tree.branch), "");
+		});
+
+		test("escalates when the remote branch is gone or the fetch fails, and keeps the work", async () => {
+			const gone = await pushedFork("gone");
+			git(gone.remote, "branch", "-q", "-D", "pr-branch");
+			const unreachable = await pushedFork("unreachable");
+			git(unreachable.repo, "remote", "set-url", "origin", path.join(scratch, "missing.git"));
+			for (const { repo, tree } of [gone, unreachable]) {
+				const landing = await land({ tree, first: done });
+				assert.equal(landing.state, "escalated", tree.branch);
+				assert.match(landing.reason ?? "", /do not sit on the current main/, tree.branch);
+				assert.ok(fs.existsSync(tree.path), tree.branch);
+				assert.notEqual(git(repo, "branch", "--list", tree.branch), "", tree.branch);
+			}
+		});
+
+		test("escalates when only a remote that was not fetched holds a stale ref", async () => {
+			const { repo, remote, tree } = await pushedFork("stale-remote");
+			const stale = path.join(scratch, "stale.git");
+			git(scratch, "init", "-q", "--bare", stale);
+			git(repo, "remote", "add", "stale", stale);
+			git(tree.path, "push", "-q", "stale", "HEAD:pr-branch");
+			git(remote, "branch", "-q", "-D", "pr-branch");
+			const landing = await land({ tree, first: done });
+			assert.equal(landing.state, "escalated");
+			assert.ok(fs.existsSync(tree.path));
+			assert.notEqual(git(repo, "branch", "--list", tree.branch), "");
+		});
+
+		test("escalates when the worktree left the fork branch for a pushed one", async () => {
+			const { repo, tree } = await pushedFork("switched");
+			git(tree.path, "switch", "-q", "-c", "other", "main");
+			commit(tree.path, "c.txt", "1", "other work");
+			git(tree.path, "push", "-q", "origin", "HEAD:other-pr");
+			git(tree.path, "push", "-q", "origin", "--delete", "pr-branch");
+			const landing = await land({ tree, first: done });
+			assert.equal(landing.state, "escalated");
+			assert.match(landing.reason ?? "", /left fork\/switched/);
+			assert.ok(fs.existsSync(tree.path));
+			assert.notEqual(git(repo, "branch", "--list", tree.branch), "");
+		});
+	});
+
 	test("a fork with no commits lands as a no-op and drops its worktree", async () => {
 		const repo = newRepo();
 		const tree = await writer(repo, "empty");
