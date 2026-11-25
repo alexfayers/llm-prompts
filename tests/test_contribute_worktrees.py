@@ -1123,9 +1123,8 @@ def test_an_unrelated_main_commit_titled_like_a_later_worktree_commit_is_kept(
     assert project.main_subjects() == ["feat: a2", "feat: a"]
 
 
-@pytest.fixture
-def hand_staged(project: Project) -> main_sync.Squash:
-    """A squash that conflicts with local main, with its hand resolution staged in the resolve worktree."""
+def stopped_copy(project: Project) -> main_sync.Squash:
+    """A squash that conflicts with local main, left in the resolve worktree."""
     repo = project.repo
     base = git(repo, "rev-parse", "HEAD")
     git(repo, "checkout", "-qb", "feat")
@@ -1134,7 +1133,14 @@ def hand_staged(project: Project) -> main_sync.Squash:
     project.commit(repo, "base.txt", "main\n", "feat: main")
     squash = main_sync.Squash(tip=tip, floor=base, first=tip)
     assert main_sync.rebuild_local(repo, base, {}, (), {}, [squash]).mode == "stopped"
-    work = main_sync.resolve_worktree(repo)
+    return squash
+
+
+@pytest.fixture
+def hand_staged(project: Project) -> main_sync.Squash:
+    """A squash that conflicts with local main, with its hand resolution staged in the resolve worktree."""
+    squash = stopped_copy(project)
+    work = main_sync.resolve_worktree(project.repo)
     (work / "base.txt").write_text("resolved\n", encoding="utf-8")
     (work / "related.txt").write_text("fix\n", encoding="utf-8")
     git(work, "add", "base.txt", "related.txt")
@@ -1175,6 +1181,22 @@ def test_a_hand_resolution_stays_in_its_worktree_until_its_merge_comes_up(
     assert git(repo, "rev-parse", "main") == main
     work = main_sync.resolve_worktree(repo)
     assert (work / "base.txt").read_text(encoding="utf-8") == "resolved\n"
+
+
+def test_a_hand_resolution_that_keeps_main_leaves_main_as_it_is(
+    project: Project,
+) -> None:
+    squash = stopped_copy(project)
+    work = main_sync.resolve_worktree(project.repo)
+    (work / "base.txt").write_text("main\n", encoding="utf-8")
+    git(work, "add", "base.txt")
+    main = git(project.repo, "rev-parse", "main")
+
+    rebuilt = main_sync.rebuild_local(project.repo, squash.floor, {}, (), {}, [squash])
+
+    assert rebuilt.mode == "rebuilt"
+    assert git(project.repo, "rev-parse", "main") == main
+    assert not work.exists()
 
 
 def test_a_hand_resolved_copy_is_current(

@@ -511,6 +511,31 @@ def _commit_as(repo: Path, tree: str, parent: str, source: str) -> str:
     ).strip()
 
 
+def _resolution_ref(repo: Path, base: str, ours: str, theirs: str) -> str:
+    """Return the ref that stores the tree staged by hand for merging ``theirs`` onto ``ours`` from ``base``."""
+    trees = _read(
+        repo, "rev-parse", *(f"{rev}^{{tree}}" for rev in (base, ours, theirs))
+    ).split()
+    return "/".join((_RESOLUTIONS_REF, *trees))
+
+
+def _staged_tree(
+    repo: Path, base: str, ours: str, theirs: str, keep: Path | None
+) -> str | None:
+    """Return the tree staged by hand for this exact merge, removing ``keep`` when it holds that resolution."""
+    ref = _resolution_ref(repo, base, ours, theirs)
+    staged = run_git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{tree}}")
+    if staged.returncode != 0:
+        return None
+    if (
+        keep is not None
+        and keep.exists()
+        and _resolution_file(keep).read_text(encoding="utf-8") == ref
+    ):
+        _read(repo, "worktree", "remove", "--force", str(keep))
+    return staged.stdout.strip()
+
+
 def _reuse_resolutions(
     repo: Path, base: str, ours: str, theirs: str, keep: Path | None = None
 ) -> str | None:
@@ -529,23 +554,8 @@ def _reuse_resolutions(
     Raises:
         _Stopped: ``keep`` still holds a resolution staged for another merge.
     """
-    ref = "/".join(
-        (
-            _RESOLUTIONS_REF,
-            *_read(
-                repo, "rev-parse", *(f"{rev}^{{tree}}" for rev in (base, ours, theirs))
-            ).split(),
-        )
-    )
-    staged = run_git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{tree}}")
-    if staged.returncode == 0:
-        if (
-            keep is not None
-            and keep.exists()
-            and _resolution_file(keep).read_text(encoding="utf-8") == ref
-        ):
-            _read(repo, "worktree", "remove", "--force", str(keep))
-        return staged.stdout.strip()
+    if (staged := _staged_tree(repo, base, ours, theirs, keep)) is not None:
+        return staged
     if keep is not None and keep.exists():
         raise _Stopped(
             f"{keep} holds a resolution staged for another main; drop it with:"
@@ -565,7 +575,9 @@ def _reuse_resolutions(
             if run_git(work, "ls-files", "--unmerged").stdout:
                 kept = keep is not None
                 if kept:
-                    _resolution_file(work).write_text(ref, encoding="utf-8")
+                    _resolution_file(work).write_text(
+                        _resolution_ref(repo, base, ours, theirs), encoding="utf-8"
+                    )
                 return None
             return _read(work, "write-tree").strip()
         finally:
@@ -654,12 +666,13 @@ def _replay(
     try:
         tree = _merge_tree(repo, floor, tip, changes)
     except _Conflict as conflict:
-        resolved = (
+        staged = _staged_tree(repo, floor, tip, changes, keep) if reuse else None
+        resolved = staged or (
             _reuse_resolutions(repo, floor, tip, changes, keep) if reuse else None
         )
-        if (
-            resolved is None
-            or resolved == _read(repo, "rev-parse", f"{tip}^{{tree}}").strip()
+        if resolved is None or (
+            staged is None
+            and resolved == _read(repo, "rev-parse", f"{tip}^{{tree}}").strip()
         ):
             message = (
                 f"local commit {commit.sha[:12]} ({commit.subject}) conflicts with {against}"
