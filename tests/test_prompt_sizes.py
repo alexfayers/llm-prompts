@@ -400,9 +400,10 @@ class TestIterArtifactsDispatch:
         assert ("agent-only.md" not in failed) is expected
         assert ("demo/part.md" not in failed) is expected
 
-    def test_pi_agent_source_lines_measured(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("kind", ["pi", "shared", "claude-code"])
+    def test_pi_agent_source_lines_measured(self, tmp_path: Path, kind: str) -> None:
         _make_prompts_tree(tmp_path, targets=("pi",))
-        source = tmp_path / "pi" / "agents" / "PiOnly.md"
+        source = tmp_path / kind / "agents" / "PiOnly.md"
         content = "---\nname: PiOnly\n---\n\n- Item\nLazy continuation.\n"
         _write(source, content)
 

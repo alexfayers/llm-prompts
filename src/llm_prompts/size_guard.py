@@ -555,7 +555,7 @@ def _iter_agent_artifacts(
 ) -> Iterator[Artifact]:
     """Yield post-expansion description/validity artifacts for claude-code agents.
 
-    For pi, yields only the line checks of each pi-only agent source.
+    For pi, yields only the line checks of each agent source pi installs.
 
     Each source is substituted with the target's variables, matching
     `_install_agents`. A `generate_variants` source is measured once per
@@ -569,8 +569,9 @@ def _iter_agent_artifacts(
             package's own.
     """
     if target == "pi":
-        for src in sorted((root / "pi" / "agents").glob("*.md")):
-            yield from _line_artifacts(target, src.name, src)
+        for agents_dir in _agent_source_dirs(root, [], target):
+            for src in sorted(agents_dir.glob("*.md")):
+                yield from _line_artifacts(target, src.name, src)
     if target != "claude-code":
         return
     sources = [
@@ -1213,7 +1214,10 @@ def _iter_source_artifacts(
                     yield artifact
     elif rel_parts[1:2] == ("agents",) and len(rel_parts) == 3:
         _mirror(tmp, rel_parts, content)
-        for target in _scoped_targets(rel_parts[0], targets):
+        scoped = _scoped_targets(rel_parts[0], targets)
+        if rel_parts[0] == "claude-code" and "pi" in targets:
+            scoped += ("pi",)
+        for target in scoped:
             yield from _iter_agent_artifacts(tmp, target, allowances)
 
 
