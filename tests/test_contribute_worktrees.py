@@ -1260,6 +1260,39 @@ def test_a_hand_resolution_that_keeps_main_leaves_main_as_it_is(
     assert not work.exists()
 
 
+def test_a_hand_resolution_that_keeps_main_replays_onto_an_unrelated_main_change(
+    project: Project,
+) -> None:
+    squash = stopped_copy(project)
+    work = main_sync.resolve_worktree(project.repo)
+    (work / "base.txt").write_text("main\n", encoding="utf-8")
+    git(work, "add", "base.txt")
+    assert (
+        main_sync.rebuild_local(project.repo, squash.floor, {}, (), {}, [squash]).mode
+        == "rebuilt"
+    )
+    project.commit(project.repo, "other.txt", "other\n", "feat: main other")
+
+    rebuilt = main_sync.rebuild_local(project.repo, squash.floor, {}, (), {}, [squash])
+
+    assert rebuilt.mode == "rebuilt"
+    assert project.main_subjects() == ["feat: main", "feat: main other"]
+
+
+def test_a_staged_hand_resolution_replays_onto_an_unrelated_main_change(
+    project: Project, hand_staged: main_sync.Squash
+) -> None:
+    project.commit(project.repo, "other.txt", "other\n", "feat: main other")
+
+    rebuilt = main_sync.rebuild_local(
+        project.repo, hand_staged.floor, {}, (), {}, [hand_staged]
+    )
+
+    assert rebuilt.mode == "rebuilt"
+    assert (project.repo / "related.txt").read_text(encoding="utf-8") == "fix\n"
+    assert not main_sync.resolve_worktree(project.repo).exists()
+
+
 def test_a_hand_resolved_copy_is_current(
     project: Project, hand_resolved: main_sync.Squash
 ) -> None:

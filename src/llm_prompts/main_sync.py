@@ -520,16 +520,20 @@ def _resolution_ref(repo: Path, base: str, ours: str, theirs: str) -> str:
 
 
 def _staged_tree(repo: Path, base: str, ours: str, theirs: str) -> str | None:
-    """Return the tree staged by hand for this exact merge."""
-    ref = _resolution_ref(repo, base, ours, theirs)
-    staged = run_git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{tree}}")
-    return staged.stdout.strip() if staged.returncode == 0 else None
+    """Return the newest tree staged by hand for merging ``theirs`` from ``base`` that replays cleanly from the main it was staged on onto ``ours``."""
+    merge = _resolution_ref(repo, base, ours, theirs).rpartition("/")[0]
+    for ref in _read(
+        repo, "for-each-ref", "--sort=-creatordate", "--format=%(refname)", f"{merge}/"
+    ).split():
+        with suppress(_Conflict):
+            return _merge_tree(repo, ref.rpartition("/")[2], ours, ref)
+    return None
 
 
 def _reuse_resolutions(
     repo: Path, base: str, ours: str, theirs: str, keep: Path | None = None
 ) -> str | None:
-    """Return the tree staged by hand for this exact merge, else merge in a throwaway worktree where git rerere records the conflicts and applies earlier hand resolutions.
+    """Return a tree staged by hand for this merge, else merge in a throwaway worktree where git rerere records the conflicts and applies earlier hand resolutions.
 
     Args:
         repo: The local clone.
@@ -542,7 +546,7 @@ def _reuse_resolutions(
         The merged tree, or None while any conflict has no recorded resolution.
 
     Raises:
-        _Stopped: ``keep`` holds a resolution staged for this merge onto another main.
+        _Stopped: ``keep`` holds a resolution staged for this merge that conflicts with ``ours``.
     """
     if (staged := _staged_tree(repo, base, ours, theirs)) is not None:
         return staged
@@ -553,8 +557,8 @@ def _reuse_resolutions(
             == ref.rpartition("/")[0]
         ):
             raise _Stopped(
-                f"{keep} holds a resolution staged for another main; drop it with:"
-                f" git worktree remove --force {shlex.quote(str(keep))}"
+                f"the resolution staged in {keep} conflicts with main; drop it with:"
+                f" git worktree remove --force {shlex.quote(str(keep))}, then rerun"
             )
         _read(repo, "worktree", "remove", "--force", str(keep))
     change = _read(
@@ -868,7 +872,7 @@ def rebuild_local(
 ) -> SyncResult:
     """Move local main onto ``base`` with its local commits replayed, some swapped for squashes or dropped, plus new squashes.
 
-    A replay whose conflict has no recorded resolution stops the rebuild and leaves its merge in ``resolve_worktree``. The next rebuild records the hand resolution staged there with git rerere, and stores its whole tree for that exact merge, which it reuses. The worktree stays until main is rebuilt, and a rebuild stops while it holds changes that are not staged.
+    A replay whose conflict has no recorded resolution stops the rebuild and leaves its merge in ``resolve_worktree``. The next rebuild records the hand resolution staged there with git rerere, and stores its whole tree for that merge, which it replays onto main. The worktree stays until main is rebuilt, and a rebuild stops while it holds changes that are not staged.
 
     Args:
         repo: The local clone, on its main branch.
