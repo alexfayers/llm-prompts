@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">53 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">53<span class="text"> run</span></button>
+            <span class="text">61 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">61<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_5d5e0fd9e5f327b4_test_watch_cli_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
-            created at 2026-11-25 22:16 +0000
+            created at 2026-11-25 22:27 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -206,6 +206,24 @@
     <p class="run run2"><span class="n"><a id="t124" href="#t124">124</a></span><span class="t">        <span class="str">&quot;cr: update (approvals=a)&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t125" href="#t125">125</a></span><span class="t">        <span class="str">&quot;cr: update (approvals=b)&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t126" href="#t126">126</a></span><span class="t">    <span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t127" href="#t127">127</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t128" href="#t128">128</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t129" href="#t129">129</a></span><span class="t"><span class="key">def</span> <span class="nam">test_watch_discover_rejoins_a_source_that_ended_and_is_listed_again</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t130" href="#t130">130</a></span><span class="t">    <span class="nam">capsys</span><span class="op">:</span> <span class="nam">pytest</span><span class="op">.</span><span class="nam">CaptureFixture</span><span class="op">[</span><span class="nam">str</span><span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t131" href="#t131">131</a></span><span class="t"><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t132" href="#t132">132</a></span><span class="t">    <span class="key">class</span> <span class="nam">Ending</span><span class="op">(</span><span class="nam">StubSource</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t133" href="#t133">133</a></span><span class="t">        <span class="nam">terminal</span><span class="op">:</span> <span class="nam">ClassVar</span><span class="op">[</span><span class="nam">list</span><span class="op">[</span><span class="nam">str</span><span class="op">]</span><span class="op">]</span> <span class="op">=</span> <span class="op">[</span><span class="str">&quot;state=closed&quot;</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t134" href="#t134">134</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t135" href="#t135">135</a></span><span class="t">    <span class="nam">runs</span> <span class="op">=</span> <span class="nam">iter</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t136" href="#t136">136</a></span><span class="t">        <span class="op">[</span><span class="op">[</span><span class="nam">Ending</span><span class="op">(</span><span class="str">&quot;pr&quot;</span><span class="op">,</span> <span class="str">&quot;open&quot;</span><span class="op">,</span> <span class="str">&quot;closed&quot;</span><span class="op">)</span><span class="op">]</span><span class="op">,</span> <span class="op">[</span><span class="op">]</span><span class="op">,</span> <span class="op">[</span><span class="nam">Ending</span><span class="op">(</span><span class="str">&quot;pr&quot;</span><span class="op">,</span> <span class="str">&quot;open&quot;</span><span class="op">,</span> <span class="str">&quot;closed&quot;</span><span class="op">)</span><span class="op">]</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t137" href="#t137">137</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t138" href="#t138">138</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t139" href="#t139">139</a></span><span class="t">    <span class="key">def</span> <span class="nam">listed</span><span class="op">(</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">list</span><span class="op">[</span><span class="nam">Ending</span><span class="op">]</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t140" href="#t140">140</a></span><span class="t">        <span class="key">return</span> <span class="nam">next</span><span class="op">(</span><span class="nam">runs</span><span class="op">,</span> <span class="op">[</span><span class="op">]</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t141" href="#t141">141</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t142" href="#t142">142</a></span><span class="t">    <span class="nam">watch</span><span class="op">(</span><span class="op">[</span><span class="op">]</span><span class="op">,</span> <span class="op">[</span><span class="str">&quot;changed:state&quot;</span><span class="op">]</span><span class="op">,</span> <span class="nam">interval</span><span class="op">=</span><span class="num">0</span><span class="op">,</span> <span class="nam">timeout</span><span class="op">=</span><span class="num">0.2</span><span class="op">,</span> <span class="nam">follow</span><span class="op">=</span><span class="key">True</span><span class="op">,</span> <span class="nam">discover</span><span class="op">=</span><span class="nam">listed</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t143" href="#t143">143</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t144" href="#t144">144</a></span><span class="t">    <span class="key">assert</span> <span class="nam">capsys</span><span class="op">.</span><span class="nam">readouterr</span><span class="op">(</span><span class="op">)</span><span class="op">.</span><span class="nam">out</span><span class="op">.</span><span class="nam">count</span><span class="op">(</span><span class="str">&quot;pr: &quot;</span><span class="op">)</span> <span class="op">==</span> <span class="num">2</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -215,7 +233,7 @@
             <a class="nav" href="z_5d5e0fd9e5f327b4_test_watch_cli_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
-            created at 2026-11-25 22:16 +0000
+            created at 2026-11-25 22:27 +0000
         </p>
     </div>
 </footer>
