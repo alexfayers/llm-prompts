@@ -29,7 +29,7 @@ All three repos' prompts trees go through `llm-prompts contribute` (`list`, `syn
 
 - `llm-prompts contribute` works without gh given GH_TOKEN or GITHUB_TOKEN.
 - MUST keep each repo's primary checkout on `main`. MUST work in a `git worktree` on your own branch. MUST NOT use a fresh clone.
-- PRs come from worktrees via `llm-prompts contribute`. Stack or link PRs only with `sync --depends-on`. Sync writes the `Depends on` lines.
+- PRs come from worktrees via `llm-prompts contribute`. Stack or link PRs only with `sync --depends-on` (`TOOL:BRANCH` or `owner/repo#N`). Sync writes the `Depends on` lines.
   A change building on one of your open PRs MUST be its own PR. MUST NOT copy another PR's commits outside a `sync --depends-on` stack, or add rebase notes.
 - Shared CI logic MUST live in llm-prompts. Other repos MUST import it, never copy it.
 - Check push access with `gh repo view --json viewerPermission`.

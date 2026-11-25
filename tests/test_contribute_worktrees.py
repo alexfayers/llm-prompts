@@ -15,7 +15,12 @@ from unittest.mock import patch
 import pytest
 
 from llm_prompts import cli, contribute, github_api, main_sync, setup, worktrees
-from llm_prompts.contribute import SyncOptions, empty_sections_message
+from llm_prompts.contribute import (
+    Commit,
+    SyncOptions,
+    empty_sections_message,
+    pr_title,
+)
 from llm_prompts.exit_reason import ExitReason
 from llm_prompts.worktrees import Link, WorktreeEntry, load_entries
 
@@ -921,6 +926,96 @@ def test_an_amended_worktree_commit_replaces_its_copy_in_main(project: Project) 
     assert (project.repo / "extra.txt").read_text(encoding="utf-8") == "more\n"
 
 
+@pytest.mark.parametrize("record", ["saved", "upgraded", "rebased"])
+def test_a_file_removed_from_a_worktree_since_its_copy_leaves_main(
+    project: Project, record: str
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    project.commit(path, "extra.txt", "more\n", "feat: extra")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    if record != "saved":
+        worktrees.save_entries(
+            project.record, [e._replace(copied_tip=None) for e in project.entries()]
+        )
+    if record == "rebased":
+        _land_upstream(project, "upstream.txt", pull=False)
+        git(project.repo, "fetch", "-q")
+        git(path, "rebase", "-q", "origin/main")
+    git(path, "rm", "-q", "extra.txt")
+    git(path, "commit", "-q", "-m", "fix: drop extra")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a"]
+    assert not (project.repo / "extra.txt").exists()
+
+
+@pytest.mark.parametrize(
+    ("name", "content"), [("f.txt", "1\n2\n3\nupstream\n"), ("g.txt", "1\n2\n3\n4\n")]
+)
+def test_an_edit_reverted_in_a_worktree_since_its_copy_leaves_main_though_upstream_edited_or_renamed_the_file(
+    project: Project, name: str, content: str
+) -> None:
+    project.commit(project.repo, "f.txt", "1\n2\n3\n4\n", "chore: f")
+    git(project.repo, "push", "-q", "origin", "main")
+    path = project.worktree("feat/a", "feat: a")
+    project.commit(path, "f.txt", "1\nlocal\n3\n4\n", "feat: f")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    other = project.root / "upstream-clone"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    if name != "f.txt":
+        git(other, "mv", "f.txt", name)
+    project.commit(other, name, content, "chore: upstream")
+    git(other, "push", "-q", "origin", "main")
+    project.run(apply=True)
+    project.commit(path, "f.txt", "1\n2\n3\n4\n", "fix: revert f")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a"]
+    assert (project.repo / name).read_text(encoding="utf-8") == content
+
+
+@pytest.mark.parametrize("shared", ["main", "record", "skipped"])
+def test_main_is_left_unchanged_when_a_file_removed_from_a_worktree_was_in_a_copy_it_shares(
+    project: Project, shared: str
+) -> None:
+    at = str(project.clock + 60)
+    if shared == "main":
+        _commit_at(project.repo, "other.txt", "feat: a", at)
+    path = project.worktree("feat/a", start="origin/main")
+    _commit_at(path, "a.txt", "feat: a", at)
+    project.commit(path, "extra.txt", "more\n", "feat: extra")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    if shared != "main":
+        project.worktree(
+            "feat/b",
+            "feat: b",
+            "feat: b2",
+            "feat: b33",
+            start="main" if shared == "skipped" else "origin/main",
+        )
+        project.run(branch="feat/b")
+        [copied] = [e.copied for e in project.entries() if e.branch == "feat/a"]
+        worktrees.save_entries(
+            project.record,
+            [
+                e._replace(copied=copied) if e.branch == "feat/b" else e
+                for e in project.entries()
+            ],
+        )
+    git(path, "rm", "-q", "extra.txt")
+    git(path, "commit", "-q", "-m", "fix: drop extra")
+    main = git(project.repo, "rev-parse", "main")
+
+    assert project.run(apply=True) == 1
+
+    assert git(project.repo, "rev-parse", "main") == main
+
+
 def test_main_is_not_reset_when_the_backup_ref_cannot_be_saved(
     project: Project,
     monkeypatch: pytest.MonkeyPatch,
@@ -1365,6 +1460,51 @@ def test_a_recorded_why_fills_the_pr_body_sync_opens(project: Project) -> None:
     assert f"## Why\n\n{WHY}\n" in body
 
 
+def test_the_pr_what_leaves_merge_commits_out(project: Project) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    git(path, "checkout", "-q", "-b", "side", "main")
+    project.commit(path, "other.txt", "x\n", "chore: side")
+    git(path, "checkout", "-q", "feat/a")
+    git(path, "merge", "-q", "--no-ff", "-m", "Merge side into feat/a", "side")
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+
+    assert project.run(apply=True) == 0
+
+    [create] = project.gh_calls("pr", "create")
+    body = create[create.index("--body") + 1]
+    assert "- feat: a" in body
+    assert "- chore: side" in body
+    assert "Merge side" not in body
+
+
+def test_a_root_commit_has_its_subject_and_is_no_merge(tmp_path: Path) -> None:
+    git(tmp_path, "init", "-q")
+    git(
+        tmp_path,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "root",
+    )
+
+    commit = contribute._commit_of(tmp_path, "HEAD")
+
+    assert (commit.subject, commit.is_merge) == ("root", False)
+
+
+def test_a_pr_of_only_merge_commits_still_lists_them_in_what() -> None:
+    commits = [Commit("a", "Merge side into feat/a", (), is_merge=True)]
+
+    assert pr_title(commits) == "Merge side into feat/a"
+    assert "- Merge side into feat/a" in contribute.pr_body("## What\n", commits)
+
+
 def test_a_worktree_without_a_why_is_not_opened_and_the_others_still_sync(
     project: Project, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1551,18 +1691,30 @@ def test_a_local_only_worktree_with_a_pr_is_never_pushed_or_edited(
     assert project.main_subjects() == ["fix: a"]
 
 
-def _merge(project: Project, number: int, oid: str) -> None:
+def _merge(project: Project, number: int, oid: str, land: bool = False) -> None:
+    """Merge PR ``number`` at ``oid``, landing its squash on origin main when ``land``."""
     state = project.load_state()
     state["prs"][str(number)].update(state="MERGED", headRefOid=oid)
     project.state = state
     project.save_state()
     git(project.origin, "branch", "-D", _remote("feat/a"))
+    if land:
+        squash = git(
+            project.origin,
+            "commit-tree",
+            f"{oid}^{{tree}}",
+            "-p",
+            "main",
+            "-m",
+            f"feat: a (#{number})",
+        )
+        git(project.origin, "update-ref", "refs/heads/main", squash)
 
 
 def test_a_merged_worktree_is_removed_with_its_branch_and_entry(
     project: Project, pushed: Path
 ) -> None:
-    _merge(project, 100, git(pushed, "rev-parse", "HEAD"))
+    _merge(project, 100, git(pushed, "rev-parse", "HEAD"), land=True)
 
     assert project.run(apply=True) == 0
 
@@ -1736,6 +1888,36 @@ def test_a_merged_worktree_is_not_copied_into_main(project: Project) -> None:
     assert project.main_subjects() == []
 
 
+def test_the_main_copy_of_a_merged_worktree_stays_when_it_restores_a_file_an_earlier_local_commit_deletes(
+    project: Project,
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    copy = git(project.repo, "rev-parse", "main")
+    git(project.repo, "reset", "-q", "--hard", "origin/main")
+    git(project.repo, "rm", "-q", "base.txt")
+    git(project.repo, "commit", "-qm", "chore: drop base")
+    git(project.repo, "cherry-pick", "-n", copy)
+    git(project.repo, "checkout", "origin/main", "--", "base.txt")
+    git(project.repo, "commit", "-q", "-C", copy)
+    project.add_pr(
+        7, "feat/a", state="MERGED", headRefOid=git(path, "rev-parse", "HEAD")
+    )
+    worktrees.save_entries(
+        project.record, [e._replace(pr=7) for e in project.entries()]
+    )
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "feat-a-7.txt", "feat: a\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["chore: drop base", "feat: a"]
+    assert (project.repo / "base.txt").read_text(encoding="utf-8") == "base\n"
+
+
 def test_the_main_copy_of_a_merged_worktree_is_dropped_once_its_squash_landed(
     project: Project,
 ) -> None:
@@ -1750,7 +1932,7 @@ def test_the_main_copy_of_a_merged_worktree_is_dropped_once_its_squash_landed(
     )
     other = project.root / "squasher"
     subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
-    project.commit(other, "feat-a-7.txt", "reviewed\n", "feat: a (#7)")
+    project.commit(other, "feat-a-7.txt", "feat: a\n", "feat: a (#7)")
     git(other, "push", "-q", "origin", "main")
 
     assert project.run(apply=True) == 0
@@ -1815,7 +1997,7 @@ def test_a_merged_worktree_is_kept_until_the_main_rebuild_that_drops_its_copy_su
     )
     other = project.root / "squasher"
     subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
-    project.commit(other, "feat-a-7.txt", "reviewed\n", "feat: a (#7)")
+    project.commit(other, "feat-a-7.txt", "feat: a\n", "feat: a (#7)")
     git(other, "push", "-q", "origin", "main")
     real_run_git = main_sync.run_git
     with monkeypatch.context() as broken:
@@ -1840,7 +2022,7 @@ def test_a_merged_worktree_is_kept_until_the_main_rebuild_that_drops_its_copy_su
     assert project.entries() == []
 
 
-def test_the_main_copy_of_a_merged_worktree_is_dropped_though_review_changed_its_tree(
+def test_the_main_copy_of_a_merged_worktree_is_dropped_though_review_changed_its_tree_and_the_record_lacks_its_copied_tip(
     project: Project,
 ) -> None:
     path = project.worktree("feat/a", "feat: a")
@@ -1853,6 +2035,333 @@ def test_the_main_copy_of_a_merged_worktree_is_dropped_though_review_changed_its
         7, "feat/a", state="MERGED", headRefOid=git(path, "rev-parse", "HEAD")
     )
     worktrees.save_entries(
+        project.record,
+        [e._replace(pr=7, copied_tip=None) for e in project.entries()],
+    )
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "feat-a-7.txt", "feat: a\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == []
+
+
+def test_the_main_copy_of_a_merged_worktree_stays_when_its_pr_reverted_it(
+    project: Project,
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    git(path, "revert", "--no-edit", "HEAD")
+    head = project.commit(path, "review.txt", "review\n", "fix: review")
+    project.add_pr(7, "feat/a", state="MERGED", headRefOid=head)
+    worktrees.save_entries(
+        project.record, [e._replace(pr=7) for e in project.entries()]
+    )
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "review.txt", "review\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a"]
+    assert (project.repo / "feat-a-7.txt").exists()
+
+
+def test_the_main_copy_of_a_merged_worktree_stays_when_an_open_worktree_shares_its_first_commit_and_reverts_it(
+    project: Project,
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    first = git(path, "rev-parse", "HEAD")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    git(path, "revert", "--no-edit", "HEAD")
+    head = project.commit(path, "review.txt", "review\n", "fix: review")
+    project.add_pr(7, "feat/a", state="MERGED", headRefOid=head)
+    worktrees.save_entries(
+        project.record, [e._replace(pr=7) for e in project.entries()]
+    )
+    upper = project.worktree("feat/b", start="origin/main")
+    git(upper, "cherry-pick", "-x", first)
+    project.commit(upper, "feat-b-7.txt", "feat: b\n", "feat: b")
+    git(upper, "revert", "--no-edit", "HEAD~1")
+    project.run(branch="feat/b")
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "review.txt", "review\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a", "feat: a"]
+    assert (project.repo / "feat-a-7.txt").exists()
+    assert (project.repo / "feat-b-7.txt").exists()
+
+
+def test_the_main_copy_of_a_merged_worktree_stays_when_an_open_worktree_copied_with_its_identity_reverts_it(
+    project: Project,
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    upper = project.worktree("feat/b", start="origin/main")
+    git(upper, "cherry-pick", "-x", git(path, "rev-parse", "HEAD"))
+    project.commit(upper, "feat-b-7.txt", "feat: b\n", "feat: b")
+    project.run(branch="feat/b")
+    project.run(apply=True)
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    git(path, "revert", "--no-edit", "HEAD")
+    head = project.commit(path, "review.txt", "review\n", "fix: review")
+    project.add_pr(7, "feat/a", state="MERGED", headRefOid=head)
+    worktrees.save_entries(
+        project.record,
+        [e._replace(pr=7) if e.branch == "feat/a" else e for e in project.entries()],
+    )
+    git(upper, "revert", "--no-edit", "HEAD~1")
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "review.txt", "review\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+    copied = [e for e in project.entries() if e.branch == "feat/b"]
+
+    assert project.run(apply=True) == 1
+
+    assert (project.repo / "feat-a-7.txt").exists()
+    assert (project.repo / "feat-b-7.txt").exists()
+    assert [e for e in project.entries() if e.branch == "feat/b"] == copied
+
+
+def test_main_is_left_unchanged_when_a_main_copy_holds_changes_of_a_merged_and_an_open_worktree_that_moved_on(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    upper = project.worktree("feat/b", start="origin/main")
+    git(upper, "cherry-pick", "-x", git(path, "rev-parse", "HEAD"))
+    project.commit(upper, "b.txt", "b\n", "feat: b")
+    project.run(branch="feat/b")
+    project.run(apply=True)
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    project.add_pr(
+        7, "feat/a", state="MERGED", headRefOid=git(path, "rev-parse", "HEAD")
+    )
+    worktrees.save_entries(
+        project.record,
+        [e._replace(pr=7) if e.branch == "feat/a" else e for e in project.entries()],
+    )
+    git(upper, "revert", "--no-edit", "HEAD")
+    project.commit(upper, "c.txt", "c\n", "feat: c")
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "feat-a-7.txt", "feat: a\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+    main = git(project.repo, "rev-parse", "main")
+    copies = [(e.branch, e.copied, e.copied_tip) for e in project.entries()]
+    capsys.readouterr()
+
+    assert project.run(apply=True) == 1
+
+    out = capsys.readouterr().out
+    assert "feat/b" in out
+    assert "feat/a" in out
+    assert git(project.repo, "rev-parse", "main") == main
+    assert [(e.branch, e.copied, e.copied_tip) for e in project.entries()] == copies
+
+
+@pytest.mark.parametrize("reverted", [False, True])
+def test_the_main_copy_of_a_merged_worktree_held_upstream_is_dropped_and_an_open_worktree_with_its_identity_refreshes_its_own_copy_unless_that_loses_changes(
+    project: Project, reverted: bool
+) -> None:
+    path = project.worktree("feat/a", "feat: a", "feat: a2")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    upper = project.worktree("feat/b", start="origin/main")
+    git(upper, "cherry-pick", "-x", git(path, "rev-parse", "HEAD~1"))
+    git(upper, "rm", "-q", "feat-a-7.txt")
+    (upper / "a2.txt").write_text("a2\n", encoding="utf-8")
+    git(upper, "add", "a2.txt")
+    git(upper, "commit", "-q", "--amend", "--no-edit")
+    project.commit(upper, "b.txt", "b\n", "feat: b")
+    project.run(branch="feat/b")
+    project.run(apply=True)
+    project.add_pr(
+        7, "feat/a", state="MERGED", headRefOid=git(path, "rev-parse", "HEAD")
+    )
+    worktrees.save_entries(
+        project.record,
+        [e._replace(pr=7) if e.branch == "feat/a" else e for e in project.entries()],
+    )
+    if reverted:
+        git(upper, "revert", "--no-edit", "HEAD~1")
+    project.commit(upper, "b2.txt", "b2\n", "feat: b2")
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    for name in ("feat-a-7.txt", "feat-a-8.txt"):
+        (other / name).write_text(
+            (path / name).read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        git(other, "add", name)
+    git(other, "commit", "-qm", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+    main = git(project.repo, "rev-parse", "main")
+
+    assert project.run(apply=True) == reverted
+
+    assert (project.repo / "a2.txt").exists()
+    if reverted:
+        assert git(project.repo, "rev-parse", "main") == main
+    else:
+        assert project.main_subjects() == ["feat: a"]
+        assert (project.repo / "b2.txt").exists()
+
+
+def test_main_is_left_unchanged_when_a_merged_copy_holds_an_unpublished_edit_next_to_a_line_its_replacement_changes(
+    project: Project,
+) -> None:
+    project.commit(project.repo, "f.txt", "1\n2\n3\n4\n", "chore: f")
+    git(project.repo, "push", "-q", "origin", "main")
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    upper = project.worktree("feat/b", start="origin/main")
+    git(upper, "cherry-pick", "-x", git(path, "rev-parse", "HEAD"))
+    git(upper, "rm", "-q", "feat-a-7.txt")
+    (upper / "f.txt").write_text("1\nlocal\n3\n4\n", encoding="utf-8")
+    git(upper, "commit", "-qa", "--amend", "--no-edit")
+    project.run(branch="feat/b")
+    project.run(apply=True)
+    project.add_pr(
+        7, "feat/a", state="MERGED", headRefOid=git(path, "rev-parse", "HEAD")
+    )
+    worktrees.save_entries(
+        project.record,
+        [e._replace(pr=7) if e.branch == "feat/a" else e for e in project.entries()],
+    )
+    (upper / "f.txt").write_text("1\n2\nupper\n4\n", encoding="utf-8")
+    git(upper, "commit", "-qa", "--amend", "--no-edit")
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "feat-a-7.txt", "feat: a\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+    main = git(project.repo, "rev-parse", "main")
+
+    assert project.run(apply=True) == 1
+
+    assert git(project.repo, "rev-parse", "main") == main
+
+
+@pytest.mark.parametrize("based", [False, True])
+def test_main_is_left_unchanged_when_an_open_worktree_that_claimed_a_merged_copy_conflicts_with_its_landed_squash_though_a_resolution_keeps_upstream(
+    project: Project, based: bool
+) -> None:
+    floor = git(project.repo, "rev-parse", "origin/main")
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    project.add_pr(
+        7, "feat/a", state="MERGED", headRefOid=git(path, "rev-parse", "HEAD")
+    )
+    worktrees.save_entries(
+        project.record, [e._replace(pr=7) for e in project.entries()]
+    )
+    upper = project.worktree("feat/b", start="origin/main")
+    git(upper, "cherry-pick", "-x", git(path, "rev-parse", "HEAD"))
+    project.commit(upper, "feat-b-7.txt", "feat: b\n", "feat: b")
+    project.run(branch="feat/b")
+    worktrees.save_entries(
+        project.record,
+        [
+            e._replace(base=floor) if based and e.branch == "feat/b" else e
+            for e in project.entries()
+        ],
+    )
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "feat-a-7.txt", "landed\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+    git(project.repo, "fetch", "-q", "origin")
+    rerere = ("-c", "rerere.enabled=true")
+    git(upper, "checkout", "-q", "--detach", "origin/main")
+    with pytest.raises(subprocess.CalledProcessError):
+        git(upper, *rerere, "cherry-pick", git(path, "rev-parse", "HEAD"))
+    (upper / "feat-a-7.txt").write_text("landed\n", encoding="utf-8")
+    git(upper, "add", "feat-a-7.txt")
+    git(upper, *rerere, "rerere")
+    git(upper, "cherry-pick", "--abort")
+    git(upper, "checkout", "-q", "feat/b")
+    main = git(project.repo, "rev-parse", "main")
+
+    assert project.run(apply=True) == 1
+
+    assert git(project.repo, "rev-parse", "main") == main
+    assert (upper / "feat-b-7.txt").exists()
+
+
+@pytest.mark.parametrize(
+    ("gone", "recorded"), [(False, True), (True, True), (True, False)]
+)
+def test_the_main_copy_of_a_merged_worktree_stays_when_it_conflicts_with_its_pr_though_a_resolution_was_recorded(
+    project: Project, gone: bool, recorded: bool
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    copy = git(path, "rev-parse", "HEAD")
+    git(path, "reset", "-q", "--hard", "HEAD~1")
+    head = project.commit(path, "feat-a-7.txt", "reviewed\n", "feat: a")
+    rerere = ("-c", "rerere.enabled=true")
+    with pytest.raises(subprocess.CalledProcessError):
+        git(path, *rerere, "cherry-pick", copy)
+    (path / "feat-a-7.txt").write_text("reviewed\n", encoding="utf-8")
+    git(path, "add", "feat-a-7.txt")
+    git(path, *rerere, "rerere")
+    git(path, "cherry-pick", "--abort")
+    if gone:
+        git(project.repo, "worktree", "remove", "--force", str(path))
+        git(project.repo, "branch", "-D", "feat/a")
+    project.add_pr(7, "feat/a", state="MERGED", headRefOid=head)
+    worktrees.save_entries(
+        project.record, [e._replace(pr=7) for e in project.entries() if recorded]
+    )
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "feat-a-7.txt", "reviewed\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+
+    for _ in range(2):
+        assert project.run(apply=True) == 1
+
+        assert project.main_subjects() == ["feat: a"]
+        assert (project.repo / "feat-a-7.txt").read_text(
+            encoding="utf-8"
+        ) == "feat: a\n"
+    assert [e.branch for e in project.entries()] == ["feat/a"] * recorded
+
+
+def test_a_deleted_merged_worktree_keeps_its_record_and_main_copy_across_the_release_that_holds_its_squash(
+    project: Project,
+) -> None:
+    git(project.repo, "tag", "v0.1.0")
+    main_sync.point_upstream(project.repo)
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    copy = git(path, "rev-parse", "HEAD")
+    git(path, "reset", "-q", "--hard", "HEAD~1")
+    head = project.commit(path, "feat-a-7.txt", "reviewed\n", "feat: a")
+    rerere = ("-c", "rerere.enabled=true")
+    with pytest.raises(subprocess.CalledProcessError):
+        git(path, *rerere, "cherry-pick", copy)
+    (path / "feat-a-7.txt").write_text("reviewed\n", encoding="utf-8")
+    git(path, "add", "feat-a-7.txt")
+    git(path, *rerere, "rerere")
+    git(path, "cherry-pick", "--abort")
+    git(project.repo, "worktree", "remove", "--force", str(path))
+    git(project.repo, "branch", "-D", "feat/a")
+    project.add_pr(7, "feat/a", state="MERGED", headRefOid=head)
+    worktrees.save_entries(
         project.record, [e._replace(pr=7) for e in project.entries()]
     )
     other = project.root / "squasher"
@@ -1862,7 +2371,151 @@ def test_the_main_copy_of_a_merged_worktree_is_dropped_though_review_changed_its
 
     assert project.run(apply=True) == 0
 
-    assert project.main_subjects() == []
+    assert [e.branch for e in project.entries()] == ["feat/a"]
+    git(other, "tag", "v0.2.0")
+    git(other, "push", "-q", "origin", "v0.2.0")
+    git(project.repo, "fetch", "-q", "--tags", "origin")
+    main_sync.point_upstream(project.repo)
+
+    assert project.run(apply=True) == 1
+
+    assert project.main_subjects() == ["feat: a"]
+    assert (project.repo / "feat-a-7.txt").read_text(encoding="utf-8") == "feat: a\n"
+    assert [e.branch for e in project.entries()] == ["feat/a"]
+
+
+def test_a_merged_copy_whose_squash_is_not_released_yet_replays_without_a_recorded_resolution(
+    project: Project,
+) -> None:
+    git(project.repo, "tag", "v0.1.0")
+    main_sync.point_upstream(project.repo)
+    path = project.worktree("feat/a", "feat: a")
+    project.commit(path, "b.txt", "b\n", "feat: b")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "feat-a-7.txt", "upstream\n", "feat: other")
+    git(other, "tag", "v0.2.0")
+    project.commit(other, "landed.txt", "landed\n", "feat: a (#7)")
+    git(other, "push", "-q", "--tags", "origin", "main")
+    git(project.repo, "fetch", "-q", "--tags", "origin")
+    main_sync.point_upstream(project.repo)
+    rerere = ("-c", "rerere.enabled=true")
+    git(path, "checkout", "-q", "--detach", "v0.2.0")
+    with pytest.raises(subprocess.CalledProcessError):
+        git(path, *rerere, "cherry-pick", git(project.repo, "rev-parse", "main"))
+    (path / "feat-a-7.txt").write_text("upstream\n", encoding="utf-8")
+    git(path, "add", "feat-a-7.txt")
+    git(path, *rerere, "rerere")
+    git(path, "cherry-pick", "--abort")
+    git(path, "checkout", "-q", "feat/a")
+    project.add_pr(
+        7, "feat/a", state="MERGED", headRefOid=git(path, "rev-parse", "HEAD")
+    )
+    worktrees.save_entries(
+        project.record, [e._replace(pr=7) for e in project.entries()]
+    )
+
+    assert project.run(apply=True) == 1
+
+    assert project.main_subjects() == ["feat: a"]
+    assert (project.repo / "feat-a-7.txt").read_text(encoding="utf-8") == "feat: a\n"
+
+
+def test_the_main_copy_of_a_merged_worktree_stays_when_it_holds_a_commit_its_pr_lacks_and_the_branch_moved_on(
+    project: Project,
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    copied = project.commit(path, "b.txt", "b\n", "feat: b")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    git(path, "reset", "-q", "--hard", "HEAD~1")
+    head = project.commit(path, "review.txt", "review\n", "fix: review")
+    git(path, "reset", "-q", "--hard", copied)
+    project.commit(path, "c.txt", "c\n", "feat: c")
+    project.add_pr(7, "feat/a", state="MERGED", headRefOid=head)
+    worktrees.save_entries(
+        project.record, [e._replace(pr=7) for e in project.entries()]
+    )
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "landed.txt", "reviewed\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a"]
+    assert (project.repo / "b.txt").exists()
+
+
+@pytest.mark.parametrize(("held", "subjects"), [(True, []), (False, ["feat: a"])])
+def test_the_main_copy_of_a_merged_worktree_whose_branch_moved_on_is_dropped_only_when_the_landed_squash_holds_it(
+    project: Project, held: bool, subjects: list[str]
+) -> None:
+    path = project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    head = project.commit(path, "review.txt", "review\n", "fix: review")
+    git(path, "reset", "-q", "--hard", "HEAD~1")
+    project.commit(path, "b.txt", "b\n", "feat: b")
+    project.add_pr(7, "feat/a", state="MERGED", headRefOid=head)
+    worktrees.save_entries(
+        project.record, [e._replace(pr=7) for e in project.entries()]
+    )
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    if held:
+        (other / "feat-a-7.txt").write_text("feat: a\n", encoding="utf-8")
+        git(other, "add", "feat-a-7.txt")
+    project.commit(other, "review.txt", "review\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == subjects
+    assert (project.repo / "feat-a-7.txt").read_text(encoding="utf-8") == "feat: a\n"
+
+
+def test_the_main_copy_of_a_merged_worktree_behind_its_pr_is_dropped_though_a_changed_open_worktree_shares_its_first_commit(
+    project: Project,
+) -> None:
+    lower = project.worktree("feat/a", "feat: a", "feat: a2")
+    upper = project.worktree(
+        "feat/b", "feat: b", start=git(lower, "rev-parse", "HEAD~1")
+    )
+    project.run(branch="feat/a")
+    project.run(branch="feat/b")
+    project.run(apply=True)
+    _commit_at(
+        project.repo,
+        "other.txt",
+        "feat: a",
+        git(lower, "log", "-1", "--format=%at", "HEAD~1"),
+    )
+    head = project.commit(lower, "review.txt", "review\n", "fix: review")
+    git(lower, "reset", "-q", "--hard", "HEAD~1")
+    project.add_pr(7, "feat/a", state="MERGED", headRefOid=head)
+    worktrees.save_entries(
+        project.record,
+        [e._replace(pr=7) if e.branch == "feat/a" else e for e in project.entries()],
+    )
+    other = project.root / "squasher"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    for name in ("feat-a-7.txt", "feat-a-8.txt"):
+        (other / name).write_text(
+            (lower / name).read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        git(other, "add", name)
+    project.commit(other, "review.txt", "review\n", "feat: a (#7)")
+    git(other, "push", "-q", "origin", "main")
+    project.commit(upper, "b2.txt", "b2\n", "feat: b2")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a", "feat: a"]
+    assert (project.repo / "b2.txt").exists()
+    assert (project.repo / "other.txt").exists()
 
 
 def test_the_main_copy_of_a_merged_worktree_stays_when_review_changed_its_tree_and_another_commit_shares_its_identity(
@@ -1871,8 +2524,8 @@ def test_the_main_copy_of_a_merged_worktree_stays_when_review_changed_its_tree_a
     path = project.worktree("feat/a", "feat: a")
     project.run(branch="feat/a")
     project.run(apply=True)
-    (path / "review.txt").write_text("review edit\n", encoding="utf-8")
-    git(path, "add", "review.txt")
+    (path / "feat-a-7.txt").write_text("reviewed\n", encoding="utf-8")
+    git(path, "add", "feat-a-7.txt")
     git(path, "commit", "-q", "--amend", "--no-edit")
     _commit_at(
         project.repo, "other.txt", "feat: a", git(path, "log", "-1", "--format=%at")
@@ -1911,7 +2564,7 @@ def test_an_unrelated_main_commit_with_the_time_and_subject_of_a_landed_copy_is_
     )
     other = project.root / "squasher"
     subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
-    project.commit(other, "feat-a-7.txt", "reviewed\n", "feat: a (#7)")
+    project.commit(other, "feat-a-7.txt", "feat: a\n", "feat: a (#7)")
     git(other, "push", "-q", "origin", "main")
 
     assert project.run(apply=True) == 0
@@ -2051,7 +2704,7 @@ def test_an_entry_whose_worktree_is_gone_is_forgotten_and_a_merged_branch_delete
 ) -> None:
     project.worktree("feat/b", "feat: b")
     project.run(branch="feat/b")
-    _merge(project, 100, git(pushed, "rev-parse", "HEAD"))
+    _merge(project, 100, git(pushed, "rev-parse", "HEAD"), land=True)
     git(project.repo, "worktree", "remove", "--force", str(pushed))
     git(
         project.repo,
@@ -2302,6 +2955,86 @@ def test_no_depends_on_removes_the_link_and_the_base_so_the_upper_is_skipped_for
     )
 
 
+def test_depends_on_a_pr_of_an_unmanaged_repo_writes_its_line_and_no_depends_on_removes_it(
+    project: Project,
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+
+    assert project.run(depends_on=("feat/a", "o/ci#23")) == 0
+    project.run(ready="feat/a")
+    assert project.run(apply=True) == 0
+
+    [entry] = project.entries()
+    assert entry.depends_on == (Link("", "", "o/ci#23"),)
+    assert "\nDepends on o/ci#23\n" in pr_body(project, entry.pr or 0)
+    assert project.run(no_depends_on=("feat/a", "o/ci#23")) == 0
+    assert project.entries()[0].depends_on == ()
+
+
+def test_a_pr_reference_link_reaches_a_branch_that_already_has_a_draft_pr(
+    project: Project,
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+    project.run(apply=True)
+
+    assert project.run(depends_on=("feat/a", "o/ci#23")) == 0
+    assert project.run(apply=True) == 0
+
+    [entry] = project.entries()
+    assert "\nDepends on o/ci#23\n" in pr_body(project, entry.pr or 0)
+
+
+def test_a_pr_reference_link_is_refused_once_the_pr_is_ready(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+    project.run(apply=True)
+    [entry] = project.entries()
+    state = project.load_state()
+    state["prs"][str(entry.pr)]["isDraft"] = False
+    project.state = state
+    project.save_state()
+    capsys.readouterr()
+
+    assert project.run(depends_on=("feat/a", "o/ci#23")) == 1
+
+    assert f"PR #{entry.pr} is not a draft" in capsys.readouterr().out
+    assert project.entries()[0].depends_on == ()
+
+
+@pytest.mark.parametrize(
+    ("states", "reason"),
+    [
+        (subprocess.CalledProcessError(1, "gh", stderr="boom"), "boom"),
+        ({}, "GitHub did not return it"),
+    ],
+)
+def test_a_pr_reference_link_is_refused_when_the_draft_check_fails(
+    project: Project,
+    capsys: pytest.CaptureFixture[str],
+    states: Any,
+    reason: str,
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+    project.run(apply=True)
+    [entry] = project.entries()
+    capsys.readouterr()
+
+    with patch.object(contribute, "pr_states", side_effect=[states]):
+        assert project.run(depends_on=("feat/a", "o/ci#23")) == 1
+
+    out = capsys.readouterr().out
+    assert f"PR #{entry.pr} draft state not checked ({reason})" in out
+    assert project.entries()[0].depends_on == ()
+
+
 def test_no_depends_on_for_a_link_that_is_not_there_fails(
     project: Project, stack: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -2390,6 +3123,15 @@ def published_stack(project: Project, stack: Path) -> Path:
     project.run("tool", ready="feat/b")
     project.run(apply=True)
     return project.root / "wt" / "feat-a"
+
+
+def test_a_pr_link_to_a_branch_dependency_writes_its_depends_on_line_once(
+    project: Project, published_stack: Path
+) -> None:
+    assert project.run("tool", depends_on=("feat/b", "o/repo#100")) == 0
+    assert project.run(apply=True) == 0
+
+    assert pr_body(project, 101).count("Depends on o/repo#100") == 1
 
 
 def _entry_of(project: Project, branch: str) -> WorktreeEntry:
@@ -2554,7 +3296,7 @@ def test_a_links_ref_is_kept_after_its_merged_dependency_is_removed(
             for e in project.entries()
         ],
     )
-    _merge(project, 100, git(lower, "rev-parse", "HEAD"))
+    _merge(project, 100, git(lower, "rev-parse", "HEAD"), land=True)
 
     assert project.run(apply=True) == 0
 
