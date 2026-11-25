@@ -61,7 +61,7 @@ export class Background {
 		if (!current || !isLive(current)) return;
 		const held = this.holding;
 		const ended = { ...current, ...patch, endedAt: Date.now() };
-		const run = this.registry.update(runId, { ...ended, unread: digestLine(ended, text, note) });
+		const run = this.registry.update(runId, { ...ended, unread: [current.unread, digestLine(ended, text, note)].filter(Boolean).join("\n") });
 		if (!run) return;
 		this.pinned.push(...pinForkAsks(this.pi, ctx, run, text));
 		if (wakeReason(run) && !held) this.wake(ctx);

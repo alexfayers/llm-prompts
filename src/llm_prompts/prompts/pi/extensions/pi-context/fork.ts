@@ -518,11 +518,13 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 	pi.registerTool({
 		name: "fork_steer",
 		label: "Fork steer",
-		description: "Send a message to a live background fork. It reaches the fork after its current tool calls, before its next model call.",
-		promptSnippet: "Steer a live background fork",
+		description: "Send a message to a live background fork. It reaches the fork after its current tool calls, before its next model call. A finished fork instead resumes in the background with the message as its new task.",
+		promptSnippet: "Steer a live background fork, or resume a finished one",
 		parameters: Type.Object({ name: Type.String({ description: "Name of the background fork" }), message: Type.String({ description: "What the fork should do differently or also do" }) }),
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			if (process.env.PI_CONTEXT_CHILD) throw new Error("Only the top-level session can steer a fork.");
+			const isLiveFork = registry.live().some((run) => run.background && run.name === params.name);
+			if (!isLiveFork && registry.all().some((run) => run.name === params.name && canContinue(run))) return continueRun(ctx, params.name, params.message, toolCallId);
 			await background.steer(params.name, params.message);
 			background.resolveForkAsks(ctx, params.name);
 			return { content: [{ type: "text", text: `steered fork ${params.name}` }], details: { name: params.name } };
