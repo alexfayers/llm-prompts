@@ -62,7 +62,14 @@ after(() => fs.rmSync(agentDir, { recursive: true }));
 useEnv({ PI_CODING_AGENT_DIR: agentDir, PI_CONTEXT_CHILD: undefined });
 const PROXY_ON = { llmPrompts: { forks: { mcpProxy: true } } };
 let settings: object = {};
-afterEach(() => void (settings = {}));
+let mainContext = 1000;
+let leadModel = "mod";
+const MODEL_COSTS: Record<string, { input: number; cacheRead: number }> = { mod: { input: 3, cacheRead: 0.3 }, cheap: { input: 0.01, cacheRead: 0.001 }, dear: { input: 1000, cacheRead: 100 } };
+afterEach(() => {
+	settings = {};
+	mainContext = 1000;
+	leadModel = "mod";
+});
 
 const branch = [user("u1"), assistantCalling("a1", "c1"), result("r1", "c1"), assistantCalling("a2", "call-id")];
 const forkDirs = () => fs.readdirSync(path.join(agentDir, "pi-context"), { recursive: true });
@@ -105,7 +112,9 @@ async function start(params: Record<string, unknown>, cwd = process.cwd(), main 
 		isIdle: () => true,
 		getSystemPrompt: () => "<mcp_servers>\nsemble (codemode)\n</mcp_servers>",
 		executeTool: async (name: string, args: unknown) => ({ result: { content: [{ type: "text", text: `ran ${name} ${JSON.stringify(args)}` }], details: {} }, isError: false }),
-		model: { provider: "prov", id: "mod" },
+		model: { provider: "prov", id: leadModel, cost: MODEL_COSTS[leadModel] },
+		modelRegistry: { find: (_provider: string, id: string) => ({ contextWindow: 200_000, cost: MODEL_COSTS[id] }) },
+		getContextUsage: () => ({ tokens: mainContext, contextWindow: 200_000, percent: 0 }),
 		sessionManager: { getBranch: () => branch, getHeader: () => ({ type: "session", version: 3, id: "main-id", timestamp: "t", cwd }) },
 	};
 	const execute = tools.fork.execute;
@@ -482,10 +491,48 @@ describe("fork tool", () => {
 			assert.equal(JSON.parse((appended.at(-1)![1] as { text: string }).text.replace(/^echo: /, "")).leadPrefix.system, "first");
 		});
 
-		test("a new fork names a finished fork of the same role and directory whose cache is still warm", async () => {
+		test("a new fork names every finished fork of the same role and directory whose cache is still warm", async () => {
 			await fork({ task: "STUB_REPORT", name: "warm" });
+			await fork({ task: "STUB_REPORT", name: "warmer" });
 			const { tool } = await start({ task: "STUB_REPORT", name: "next" });
-			assert.equal(tool.content[0].text, "started fork next (background)\nfork warm finished 0m ago with 216 ctx, still cached: fork_resume({name, task}) is cheaper");
+			assert.match(tool.content[0].text, /^started fork next \(background\)\nfork warmer: 216 ctx, cache \d+m left\nfork warm: 216 ctx, cache \d+m left\nfork_resume\(\{name, task\}\) is cheaper than a fresh fork$/);
+		});
+
+		test("the warm-fork hint stays silent when a fresh fork reads less cached context than the finished fork holds", async () => {
+			await fork({ task: "STUB_REPORT", name: "big" });
+			mainContext = 100;
+			const { tool } = await start({ task: "STUB_REPORT", name: "next" });
+			assert.equal(tool.content[0].text, "started fork next (background)");
+		});
+
+		test("the warm-fork hint prices a cold start at the selected model's rates", async () => {
+			await fork({ task: "STUB_REPORT", name: "lead" });
+			const cheap = await start({ task: "STUB_REPORT", name: "cheapcold", model: "prov/cheap" });
+			assert.equal(cheap.tool.content[0].text, "started cold worker cheapcold on prov/cheap (no shared context) (background)");
+			const dear = await start({ task: "STUB_REPORT", name: "dearcold", model: "prov/dear" });
+			assert.match(dear.tool.content[0].text, /\nfork lead: 216 ctx, cache \d+m left\n/);
+		});
+
+		test("the warm-fork hint prices a finished cold worker at its own model's rates", async () => {
+			await fork({ task: "STUB_REPORT", name: "dearrun", model: "prov/dear" });
+			const { tool } = await start({ task: "STUB_REPORT", name: "next" });
+			assert.equal(tool.content[0].text, "started fork next (background)");
+		});
+
+		test("the warm-fork hint prices a finished warm fork at the model it saved, not the lead's current one", async () => {
+			leadModel = "dear";
+			await fork({ task: "STUB_REPORT", name: "saved" });
+			leadModel = "mod";
+			const { tool } = await start({ task: "STUB_REPORT", name: "next" });
+			assert.equal(tool.content[0].text, "started fork next (background)");
+		});
+
+		test("the warm-fork hint skips a name whose latest finished fork, the one fork_resume picks, has a cold cache", async () => {
+			await fork({ task: "STUB_REPORT", name: "dup" });
+			await fork({ task: "STUB_REPORT", name: "dup" });
+			registryOf().update(registryOf().all().filter((run) => run.name === "dup").at(-1)!.id, { lastRequestAt: 0 });
+			const { tool } = await start({ task: "STUB_REPORT", name: "next" });
+			assert.equal(tool.content[0].text, "started fork next (background)");
 		});
 	});
 

@@ -76,6 +76,15 @@ Every spawn prompt MUST specify:
 - SHOULD parallelise decomposable work, design/research included; serial only if a step needs prior output.
 - On an open design question, SHOULD dispatch a few {% if AGENT == "pi" %}judgment{% else %}Opus{% endif %} delegates on different angles and synthesize.
 
+{% if AGENT == "pi" %}
+## Reuse a warm fork
+
+- SHOULD give a finished fork whose cache is warm and whose context is low its next task with `fork_resume`, not start a cold fork - cheaper.
+  The `fork` result lists each such fork with its context and cache time left.
+- MUST start cold only when no warm fork holds the context, or when the warm fork's context costs more than a cold start.
+- SHOULD use `from` and `shared` mainly to start several forks on one base.
+
+{% endif %}
 ## Effort, not model tier
 
 - Unset, a delegate inherits the spawner's effort: {% if AGENT == "pi" %}a mechanical/lookup agent SHOULD run `low`/`medium`{% else %}a mechanical Sonnet/Haiku SHOULD run `low`/`medium`{% endif %}.

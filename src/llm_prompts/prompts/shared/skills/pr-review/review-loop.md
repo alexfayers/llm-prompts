@@ -25,5 +25,9 @@ Pass this to the reviewer with the content to review.
 - Where findings repeat a root cause, the fixer MUST state the feature's invariant in one line, enforce it in one place by construction,
   and delete the per-path special cases, not patch each instance.
 - The caller MUST stop the review loop after 5 fix rounds, or once only edge cases remain.
+{% if AGENT == "pi" %}
+- Where a suitable warm fork exists and costs less than starting fresh, a fix round MUST resume the PR's writer, a re-review MUST resume the PR's last reviewer,
+  with `fork_resume`, and new parallel reviews MUST branch with `from` a finished brief, per `delegation.md`'s warm-fork rule. Otherwise start a fresh fork.
+{% endif %}
 - MUST add the `owner-reviewed` label, or approve, only after a review of the current head comes back CLEAN.
-  Reaching the fix-round limit is not a pass: MUST review again, and if it is still not CLEAN, report to the user.
+  Reaching the fix-round limit is not a pass: MUST review again, and if it is still not CLEAN, escalate to the user.
