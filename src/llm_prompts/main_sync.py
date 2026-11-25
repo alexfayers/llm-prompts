@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import suppress
+from difflib import SequenceMatcher
 from functools import cache
 from itertools import takewhile
 from pathlib import Path
@@ -22,6 +23,12 @@ _Identity = tuple[str, str]
 GIT_TIMED_OUT = 124
 PRE_SYNC_REF = "refs/llm-prompts/pre-sync"
 EARLIER_MAINS_REF = "refs/llm-prompts/earlier-mains"
+_MERGE_FILE_MAX_CONFLICTS = 127
+RESOLVE_WORKTREE = "llm-prompts-resolve"
+_RESOLUTIONS_REF = "refs/llm-prompts/resolutions"
+_RESOLUTION_FILE = "llm-prompts-resolution"
+_RESOLVE_STEPS = "resolve the files there, git add them, then rerun"
+_RERERE = ("-c", "rerere.enabled=true", "-c", "rerere.autoUpdate=true")
 UPSTREAM = "refs/llm-prompts/upstream"
 _EARLIER_MAINS_IDENTITY = {
     f"GIT_{role}_{field}": value
@@ -39,20 +46,12 @@ _FIXUP_PREFIXES = ("fixup! ", "squash! ", "amend! ")
 _NETWORK_COMMANDS = frozenset({"fetch", "pull", "ls-remote"})
 
 
-class SkippedCopy(NamedTuple):
-    """A copy of a worktree branch that could not replay, named by the branch's first commit."""
-
-    first: str
-    reason: str
-
-
 class SyncResult(NamedTuple):
     """How a diverged local main was brought onto its upstream."""
 
-    mode: Literal["reset", "rebased", "squash-synced", "rebuilt", "failed"]
+    mode: Literal["reset", "rebased", "squash-synced", "rebuilt", "stopped", "failed"]
     replayed: int = 0
     detail: str = ""
-    skipped: tuple[SkippedCopy, ...] = ()
     copied: tuple[str, ...] = ()
 
 
@@ -224,6 +223,10 @@ class _Bail(Exception):
 
 class _ReplayConflict(_Bail):
     """A local commit conflicts with the upstream it is replayed onto."""
+
+
+class _Stopped(_ReplayConflict):
+    """A conflict waits for its hand resolution in the resolve worktree."""
 
 
 class _Conflict(_Bail):
@@ -510,34 +513,153 @@ def _commit_as(repo: Path, tree: str, parent: str, source: str) -> str:
     ).strip()
 
 
-def _reuse_resolutions(repo: Path, base: str, ours: str, theirs: str) -> str | None:
-    """Merge in a throwaway worktree where git rerere records the conflicts and applies earlier hand resolutions.
+def _resolution_ref(repo: Path, base: str, ours: str, theirs: str) -> str:
+    """Return the ref that stores the tree staged by hand for merging ``theirs`` onto ``ours`` from ``base``."""
+    trees = _read(
+        repo, "rev-parse", *(f"{rev}^{{tree}}" for rev in (base, theirs, ours))
+    ).split()
+    return "/".join((_RESOLUTIONS_REF, *trees))
+
+
+def _staged_tree(repo: Path, base: str, ours: str, theirs: str) -> str | None:
+    """Return the newest tree staged by hand for merging ``theirs`` from ``base`` that replays cleanly from the main it was staged on onto ``ours``.
+
+    A tree replays only while ``ours`` leaves as they were the files ``theirs`` changes where it keeps the main it was staged on.
+    """
+    merge = _resolution_ref(repo, base, ours, theirs).rpartition("/")[0]
+    for ref in _read(
+        repo, "for-each-ref", "--sort=-creatordate", "--format=%(refname)", f"{merge}/"
+    ).split():
+        staged_on = ref.rpartition("/")[2]
+        kept_main = set(_changed_paths(repo, base, theirs)) - set(
+            _changed_paths(repo, staged_on, ref)
+        )
+        if kept_main & set(_changed_paths(repo, staged_on, ours)):
+            continue
+        with suppress(_Conflict):
+            return _merge_tree(repo, staged_on, ours, ref)
+    return None
+
+
+def _reuse_resolutions(
+    repo: Path, base: str, ours: str, theirs: str, keep: Path | None = None
+) -> str | None:
+    """Return a tree staged by hand for this merge, else merge in a throwaway worktree where git rerere records the conflicts and applies earlier hand resolutions.
+
+    Args:
+        repo: The local clone.
+        base: The merge base.
+        ours: The commit to merge onto.
+        theirs: The commit whose changes on ``base`` are merged.
+        keep: Where to add the worktree and leave it while any conflict has no recorded resolution. A worktree already there, whose resolution is stored for another merge, is removed first.
 
     Returns:
         The merged tree, or None while any conflict has no recorded resolution.
+
+    Raises:
+        _Stopped: ``keep`` holds a resolution staged for this merge that conflicts with ``ours``.
     """
+    if (staged := _staged_tree(repo, base, ours, theirs)) is not None:
+        return staged
+    ref = _resolution_ref(repo, base, ours, theirs)
+    if keep is not None and keep.exists():
+        if (
+            _resolution_file(keep).read_text(encoding="utf-8").rpartition("/")[0]
+            == ref.rpartition("/")[0]
+        ):
+            raise _Stopped(
+                f"the resolution staged in {keep} conflicts with main; drop it with:"
+                f" git worktree remove --force {shlex.quote(str(keep))}, then rerun"
+            )
+        _read(repo, "worktree", "remove", "--force", str(keep))
     change = _read(
         repo, "commit-tree", f"{theirs}^{{tree}}", "-p", base, "-m", "replay"
     ).strip()
     with tempfile.TemporaryDirectory() as parent:
-        work = Path(parent) / "work"
+        work = keep or Path(parent) / "work"
         _read(repo, "worktree", "add", "--quiet", "--detach", str(work), ours)
+        kept = False
         try:
-            pick = run_git(
-                work,
-                "-c",
-                "rerere.enabled=true",
-                "-c",
-                "rerere.autoUpdate=true",
-                "cherry-pick",
-                "--no-commit",
-                change,
-            )
-            if pick.returncode != 1 or run_git(work, "ls-files", "--unmerged").stdout:
+            pick = run_git(work, *_RERERE, "cherry-pick", "--no-commit", change)
+            if pick.returncode not in (0, 1):
+                return None
+            if run_git(work, "ls-files", "--unmerged").stdout:
+                kept = keep is not None
+                if kept:
+                    _resolution_file(work).write_text(ref, encoding="utf-8")
                 return None
             return _read(work, "write-tree").strip()
         finally:
-            run_git(repo, "worktree", "remove", "--force", str(work))
+            if not kept:
+                run_git(repo, "worktree", "remove", "--force", str(work))
+
+
+def resolve_worktree(repo: Path) -> Path:
+    """Return where a rebuild leaves a conflicting copy for its hand resolution."""
+    common = _read(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    return Path(common.strip()) / RESOLVE_WORKTREE
+
+
+def _resolution_file(work: Path) -> Path:
+    """Return the file in ``work`` that names the ref its staged tree is stored under."""
+    return Path(
+        _read(
+            work, "rev-parse", "--path-format=absolute", "--git-path", _RESOLUTION_FILE
+        ).strip()
+    )
+
+
+def _record_resolution(repo: Path) -> None:
+    """Record the hand resolution left in the resolve worktree with git rerere, and store its staged tree under the ref its merge names.
+
+    Raises:
+        _Stopped: The worktree has unresolved conflicts, changes that are not staged, or names no merge.
+    """
+    work = resolve_worktree(repo)
+    if not work.exists():
+        return
+    drop = f"git worktree remove --force {shlex.quote(str(work))}"
+    if run_git(work, "ls-files", "--unmerged").stdout:
+        raise _Stopped(
+            f"conflicts in {work} are unresolved; {_RESOLVE_STEPS}, or drop them with:"
+            f" {drop}"
+        )
+    if any(
+        line[1] != " "
+        for line in _read(
+            work, "status", "--porcelain", "--ignored", "--untracked-files=all"
+        ).splitlines()
+    ):
+        raise _Stopped(f"{work} has changes that are not staged; {_RESOLVE_STEPS}")
+    if not (named := _resolution_file(work)).exists():
+        raise _Stopped(
+            f"{work} names no merge to reuse its resolution for; save its changes,"
+            f" then drop it with: {drop}"
+        )
+    _read(work, *_RERERE, "rerere")
+    commit = _read(
+        repo,
+        "commit-tree",
+        _read(work, "write-tree").strip(),
+        "-m",
+        "llm-prompts: hand resolution",
+        env=_EARLIER_MAINS_IDENTITY,
+    ).strip()
+    _read(repo, "update-ref", named.read_text(encoding="utf-8"), commit)
+
+
+def _drop_resolve_worktree(repo: Path, work: Path, tip: str) -> None:
+    """Remove the resolve worktree ``work`` once main commit ``tip`` holds the resolution stored for it."""
+    if not work.exists():
+        return
+    try:
+        ref = _resolution_file(work).read_text(encoding="utf-8")
+        held = _merge_tree(repo, ref.rpartition("/")[2], tip, ref)
+        if held != _read(repo, "rev-parse", f"{tip}^{{tree}}").strip():
+            return
+    except _Bail:
+        return
+    run_git(repo, "worktree", "remove", "--force", str(work))
 
 
 def holds_changes(repo: Path, tip: str, sha: str) -> bool:
@@ -572,23 +694,30 @@ def _replay(
     commit: LocalCommit,
     squash: Squash | None = None,
     against: str = "upstream",
+    keep: Path | None = None,
     reuse: bool = False,
 ) -> str:
     floor, changes = (
         (squash.floor, squash.tip) if squash else (f"{commit.sha}^", commit.sha)
     )
+    staged = _staged_tree(repo, floor, tip, changes) if reuse else None
     try:
-        tree = _merge_tree(repo, floor, tip, changes)
+        tree = staged or _merge_tree(repo, floor, tip, changes)
     except _Conflict as conflict:
-        resolved = _reuse_resolutions(repo, floor, tip, changes) if reuse else None
+        resolved = (
+            _reuse_resolutions(repo, floor, tip, changes, keep) if reuse else None
+        )
         if (
             resolved is None
             or resolved == _read(repo, "rev-parse", f"{tip}^{{tree}}").strip()
         ):
-            raise _ReplayConflict(
+            message = (
                 f"local commit {commit.sha[:12]} ({commit.subject}) conflicts with {against}"
                 f" in {', '.join(conflict.paths)}"
-            ) from conflict
+            )
+            if keep is not None and keep.exists():
+                raise _Stopped(f"{message}; left in {keep}: {_RESOLVE_STEPS}")
+            raise _ReplayConflict(message) from conflict
         tree = resolved
     tip_tree, floor_tree, changes_tree = _read(
         repo, "rev-parse", f"{tip}^{{tree}}", f"{floor}^{{tree}}", f"{changes}^{{tree}}"
@@ -752,6 +881,70 @@ def _lost_paths(repo: Path, tip: str, sha: str, kept: Collection[str]) -> list[s
     )
 
 
+def _git_bytes(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            check=False,
+            timeout=GIT_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as expired:
+        raise _Bail(f"git {args[0]} timed out") from expired
+
+
+def _blob(repo: Path, rev: str, path: str) -> bytes | None:
+    result = _git_bytes(repo, "show", f"{rev}:{path}")
+    return result.stdout if result.returncode == 0 else None
+
+
+def _merge_file(
+    repo: Path, ours: bytes, base: bytes, theirs: bytes
+) -> tuple[bool, bytes]:
+    """Return whether merging ``theirs`` into ``ours`` from ``base`` is clean, and the merged content."""
+    with tempfile.TemporaryDirectory() as parent:
+        files = [Path(parent) / name for name in ("ours", "base", "theirs")]
+        for file, content in zip(files, (ours, base, theirs), strict=True):
+            file.write_bytes(content)
+        result = _git_bytes(repo, "merge-file", "-p", *map(str, files))
+    if result.returncode > _MERGE_FILE_MAX_CONFLICTS:
+        raise _Bail(
+            result.stderr.decode(errors="replace").strip() or "git merge-file failed"
+        )
+    return result.returncode == 0, result.stdout
+
+
+def _blocks_lacked(
+    repo: Path, sha: str, path: str, head: str, tip: str, kept: bool
+) -> bool:
+    """Return whether ``head`` lacks, without a clash, each block of changed lines of commit ``sha`` in ``path`` that ``tip`` lacks.
+
+    A clash with ``tip`` counts as held when ``kept``. An added, deleted or binary file is one block.
+    """
+    numstat = _read(
+        repo, "diff", "--numstat", "--no-renames", f"{sha}^", sha, "--", path
+    )
+    if numstat.startswith("-\t"):
+        return True
+    old, new = _blob(repo, f"{sha}^", path), _blob(repo, sha, path)
+    if old is None or new is None:
+        return True
+    head_text, tip_text = _blob(repo, head, path) or b"", _blob(repo, tip, path) or b""
+    before, after = old.split(b"\n"), new.split(b"\n")
+    matcher = SequenceMatcher(None, before, after, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        block = b"\n".join([*before[:i1], *after[j1:j2], *before[i2:]])
+        clean, merged = _merge_file(repo, tip_text, old, block)
+        if merged == tip_text if clean else kept:
+            continue
+        clean, merged = _merge_file(repo, head_text, old, block)
+        if not clean or merged == head_text:
+            return False
+    return True
+
+
 def rebuild_local(
     repo: Path,
     base: str,
@@ -765,22 +958,24 @@ def rebuild_local(
 ) -> SyncResult:
     """Move local main onto ``base`` with its local commits replayed, some swapped for squashes or dropped, plus new squashes.
 
+    A replay whose conflict has no recorded resolution stops the rebuild and leaves its merge in ``resolve_worktree``. The next rebuild records the hand resolution staged there with git rerere, and stores its whole tree for that merge, which it replays onto main. The worktree stays until main holds its resolution, and a rebuild stops while it holds changes that are not staged.
+
     Args:
         repo: The local clone, on its main branch.
         base: The ref local commits are counted from.
         substitutions: Local commit sha to the squash that replaces it.
         drops: Local commit shas to leave out.
-        copies: Local commit sha of each known copy of a worktree branch to the first commit of that branch. A copy that conflicts is skipped.
-        additions: Squashes to replay on top, in order. One that conflicts is skipped.
+        copies: Local commit sha of each known copy of a worktree branch to the first commit of that branch.
+        additions: Squashes to replay on top, in order.
         landed: Local commit shas to leave out where their changes are already on the commits replayed before them.
         exact: Local commit shas that copy merged branches.
         earlier: Local commit sha of a copy that only one worktree branch claims to the squash of that branch it was copied from.
 
-    ``landed`` and ``exact`` commits, and the squashes that replace them, replay without recorded hand resolutions, and a conflict of one leaves main untouched.
-    Every change of an unpublished commit left out or replaced must be on the new main, unless it is not a ``landed`` or ``exact`` commit and clashes with a change in a file its replacement changes, or it is in a file its ``earlier`` squash, replayed on the commit's parent, changes to the content the commit holds, or main is left untouched.
+    ``landed`` and ``exact`` commits, and the squashes that replace them, replay without recorded hand resolutions, and a conflict of one fails the rebuild.
+    Every change of an unpublished commit left out or replaced must be on the new main, unless it is not a ``landed`` or ``exact`` commit and clashes with a change in a file its replacement changes, or it is in a file its ``earlier`` squash, replayed on the commit's parent, changes to the content the commit holds, or the main being rebuilt already lacks that block of changed lines without a clash, or, for a commit with an ``earlier`` squash, a commit of its replacement held it, or main is left untouched.
 
     Returns:
-        ``rebuilt`` with the count of replayed commits, the skipped copies and the first commit of each squash replayed into a new commit, or a failed result that leaves main untouched.
+        ``rebuilt`` with the count of replayed commits and the first commit of each squash replayed into a new commit, ``stopped`` at a conflict waiting for its hand resolution, or a failed result. Neither of the last two changes main.
     """
     if (operation := _operation_in_progress(repo)) is not None:
         return SyncResult("failed", detail=f"a {operation} is in progress")
@@ -788,11 +983,12 @@ def rebuild_local(
         branch = _read(repo, "symbolic-ref", "--short", "-q", "HEAD").strip()
         if branch != "main":
             raise _Bail(f"{repo} has {branch or 'no branch'} checked out, not main")
+        _record_resolution(repo)
+        keep = resolve_worktree(repo)
         merge_base = _read(repo, "merge-base", "HEAD", base).strip()
         head = _read(repo, "rev-parse", "HEAD").strip()
         tip = _read(repo, "rev-parse", base).strip()
         replayed = 0
-        skipped: list[SkippedCopy] = []
         copied: list[str] = []
         removed: dict[str, Squash | None] = {}
         placed: dict[str, Squash] = {}
@@ -810,20 +1006,15 @@ def rebuild_local(
             if dropped:
                 removed[commit.sha] = None
                 continue
-            try:
-                new_tip = _replay(
-                    repo,
-                    tip,
-                    commit,
-                    squash,
-                    "main" if commit.sha in copies else "upstream",
-                    commit.sha not in guarded,
-                )
-            except _ReplayConflict as conflict:
-                if commit.sha not in copies or commit.sha in guarded:
-                    raise
-                skipped.append(SkippedCopy(copies[commit.sha], str(conflict)))
-                continue
+            new_tip = _replay(
+                repo,
+                tip,
+                commit,
+                squash,
+                "main" if commit.sha in copies else "upstream",
+                keep,
+                commit.sha not in guarded,
+            )
             if squash:
                 removed[commit.sha] = squash
                 if new_tip != tip:
@@ -832,20 +1023,15 @@ def rebuild_local(
             tip = new_tip
         for squash in additions:
             subject = _read(repo, "log", "-1", "--format=%s", squash.first).strip()
-            try:
-                new_tip = _replay(
-                    repo,
-                    tip,
-                    LocalCommit(squash.first, "", subject),
-                    squash,
-                    "main",
-                    squash.first not in guarded,
-                )
-            except _ReplayConflict as conflict:
-                if squash.first in guarded:
-                    raise
-                skipped.append(SkippedCopy(squash.first, str(conflict)))
-                continue
+            new_tip = _replay(
+                repo,
+                tip,
+                LocalCommit(squash.first, "", subject),
+                squash,
+                "main",
+                keep,
+                squash.first not in guarded,
+            )
             placed[squash.first] = squash
             if new_tip != tip:
                 copied.append(squash.first)
@@ -873,7 +1059,17 @@ def rebuild_local(
                 }
             )
             lost = _lost_paths(repo, tip, sha, kept)
-            if prior := (earlier or {}).get(sha):
+            if lost:
+                lacked = _lost_paths(
+                    repo, head, sha, _changed_paths(repo, f"{sha}^", sha)
+                )
+                lost = [
+                    path
+                    for path in lost
+                    if path not in lacked
+                    or not _blocks_lacked(repo, sha, path, head, tip, path in kept)
+                ]
+            if lost and (prior := (earlier or {}).get(sha)):
                 try:
                     replay = _merge_tree(repo, prior.floor, f"{sha}^", prior.tip)
                 except _Conflict:
@@ -884,6 +1080,18 @@ def rebuild_local(
                     if replay
                     else set()
                 )
+                if replacement:
+                    own |= {
+                        path
+                        for commit in _read(
+                            repo,
+                            "rev-list",
+                            f"{replacement.floor}..{replacement.tip}",
+                            "--",
+                            *lost,
+                        ).split()
+                        for path in set(lost) - set(_lost_paths(repo, commit, sha, ()))
+                    }
                 lost = [path for path in lost if path not in own]
             if lost:
                 raise _Bail(
@@ -891,7 +1099,8 @@ def rebuild_local(
                     " that its replacement drops"
                 )
         if tip == head:
-            return SyncResult("rebuilt", skipped=tuple(skipped), copied=tuple(copied))
+            _drop_resolve_worktree(repo, keep, tip)
+            return SyncResult("rebuilt", copied=tuple(copied))
         saved = run_git(
             repo,
             "update-ref",
@@ -905,10 +1114,11 @@ def rebuild_local(
             return SyncResult("failed", detail=saved.stderr.strip())
         _remember_main(repo, head)
         reset = run_git(repo, "reset", "--keep", tip)
+    except _Stopped as stopped:
+        return SyncResult("stopped", detail=f"main left untouched: {stopped}")
     except _Bail as bail:
         return SyncResult("failed", detail=f"main left untouched: {bail}")
     if reset.returncode != 0:
         return SyncResult("failed", detail=reset.stderr.strip())
-    return SyncResult(
-        "rebuilt", replayed=replayed, skipped=tuple(skipped), copied=tuple(copied)
-    )
+    _drop_resolve_worktree(repo, keep, tip)
+    return SyncResult("rebuilt", replayed=replayed, copied=tuple(copied))

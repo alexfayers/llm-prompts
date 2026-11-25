@@ -41,7 +41,7 @@ from llm_prompts.cli import (
 )
 from llm_prompts.contribute import SyncOptions
 from llm_prompts.hooks import _ReinstallDebouncer
-from llm_prompts.main_sync import SyncResult
+from llm_prompts.main_sync import RESOLVE_WORKTREE, SyncResult
 from llm_prompts.setup import (
     _UPDATE_INSTRUCTION,
     SHIPPED_PATHS,
@@ -1211,6 +1211,45 @@ class TestCollectUpdateMessages:
             result = _collect_update_messages()
 
         assert not any("update check failed" in line for line in result)
+
+    @pytest.mark.real_io
+    def test_unresolved_main_conflict_is_reported(self, tmp_path: Path) -> None:
+        clone = tmp_path / "clone"
+        work = clone / ".git" / RESOLVE_WORKTREE
+
+        def git(repo: Path, *args: str) -> None:
+            subprocess.run(["git", "-C", str(repo), *args], check=False)
+
+        git(tmp_path, "init", "-q", "-b", "main", str(clone))
+        for checkout, text in (([], "base"), (["-b", "other"], "b"), (["main"], "a")):
+            git(clone, "checkout", "-q", *checkout)
+            (clone / "f.txt").write_text(text)
+            git(clone, "add", "f.txt")
+            git(
+                clone,
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-qm",
+                text,
+            )
+        git(clone, "worktree", "add", "-q", "--detach", str(work), "main")
+        git(work, "cherry-pick", "--no-commit", "other")
+        with (
+            patch("llm_prompts.setup.config_path") as mock_config,
+            patch("llm_prompts.setup.read_config", return_value={}),
+            patch(
+                "llm_prompts.setup._load_config",
+                return_value=[{"name": "core", "source": str(clone)}],
+            ),
+            patch("llm_prompts.plugins._load_plugins", return_value=[]),
+        ):
+            mock_config.return_value.exists.return_value = True
+            result = _collect_update_messages()
+
+        assert f"[core] local main is waiting on a conflict in {work}: f.txt" in result
 
     def test_update_instruction_appears_once_after_all_packages(self) -> None:
         config = [
@@ -2711,6 +2750,10 @@ class TestContributeSubcommand:
         [
             (["--ready", "feat/x"], SyncOptions(ready="feat/x")),
             (["--why", "feat/x", "Because."], SyncOptions(why=("feat/x", "Because."))),
+            (
+                ["--title", "feat/x", "feat: x"],
+                SyncOptions(title=("feat/x", "feat: x")),
+            ),
             (
                 ["--depends-on", "feat/x", "b:feat/y"],
                 SyncOptions(depends_on=("feat/x", "b:feat/y")),

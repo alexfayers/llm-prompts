@@ -5,6 +5,8 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import shutil
+import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -27,17 +29,21 @@ class Link(NamedTuple):
     repo: str
     branch: str
     ref: str = ""
+    extra: tuple[tuple[str, Any], ...] = ()
 
 
 class WorktreeEntry(NamedTuple):
     """One worktree branch that is one PR, with the state last seen for it.
 
-    ``base`` is the lower commit a same-repo stacked branch sits on.
     ``dropped_refs`` are refs of removed links whose Depends on line sync wrote
     and has not yet taken out of the PR body.
     ``copied`` is the author time and subject of the first commit when sync last
     copied the branch into local main, and ``copied_tip`` is the branch tip it copied.
     ``why`` is the text sync puts under Why when it opens the PR.
+    ``title`` is the PR title sync gives the PR instead of the one it makes from the commits.
+    ``synced_title`` is the PR title sync last wrote, so a title edited since is kept.
+    ``extra`` holds the record keys this version does not know, kept so a save
+    writes them back.
     """
 
     repo: str
@@ -48,11 +54,13 @@ class WorktreeEntry(NamedTuple):
     remote_head: str | None
     ready: bool = False
     depends_on: tuple[Link, ...] = ()
-    base: str | None = None
     dropped_refs: tuple[str, ...] = ()
     copied: str | None = None
     copied_tip: str | None = None
     why: str = ""
+    title: str = ""
+    synced_title: str = ""
+    extra: tuple[tuple[str, Any], ...] = ()
 
 
 def record_path() -> Path:
@@ -63,18 +71,44 @@ def record_path() -> Path:
     )
 
 
+def _fields_from_json(fields: tuple[str, ...], data: dict[str, Any]) -> dict[str, Any]:
+    """Split ``data`` into the known ``fields`` and the ``extra`` keys."""
+    known = set(fields) - {"extra"}
+    return {
+        **{key: data[key] for key in data if key in known},
+        "extra": tuple((k, v) for k, v in data.items() if k not in known),
+    }
+
+
+def _as_json(record: Link | WorktreeEntry) -> dict[str, Any]:
+    return {
+        **dict(record.extra),
+        **{k: v for k, v in record._asdict().items() if k != "extra"},
+    }
+
+
 def _entry_from_json(data: dict[str, Any]) -> WorktreeEntry:
     return WorktreeEntry(
         **{
-            **data,
-            "depends_on": tuple(Link(**link) for link in data.get("depends_on", ())),
+            **_fields_from_json(WorktreeEntry._fields, data),
+            "depends_on": tuple(
+                Link(**_fields_from_json(Link._fields, link))
+                for link in data.get("depends_on", ())
+            ),
             "dropped_refs": tuple(data.get("dropped_refs", ())),
         }
     )
 
 
+def _corrupt_copy_name(path: Path) -> Path:
+    return path.with_name(f"{path.name}.corrupt-{time.strftime('%Y%m%dT%H%M%S')}")
+
+
 def load_entries(path: Path) -> list[WorktreeEntry]:
     """Read the recorded entries; a missing record holds none.
+
+    An entry that cannot be read is skipped with a warning, and the record is
+    copied to ``.corrupt-<time>`` first.
 
     Raises:
         CorruptRecord: The record was unreadable and has been renamed aside.
@@ -82,15 +116,31 @@ def load_entries(path: Path) -> list[WorktreeEntry]:
     if not path.exists():
         return []
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return [_entry_from_json(entry) for entry in data["entries"]]
+        records = json.loads(path.read_text(encoding="utf-8"))["entries"]
+        if not isinstance(records, list):
+            raise TypeError("entries is not a list")
     except (OSError, ValueError, TypeError, KeyError) as error:
-        aside = path.with_name(f"{path.name}.corrupt-{time.strftime('%Y%m%dT%H%M%S')}")
+        aside = _corrupt_copy_name(path)
         path.replace(aside)
         raise CorruptRecord(
             f"{path} is unreadable and was renamed to {aside.name}; "
             "rebuild it with: llm-prompts contribute sync --rescan"
         ) from error
+    entries: list[WorktreeEntry] = []
+    skipped: list[str] = []
+    for index, record in enumerate(records):
+        try:
+            entries.append(_entry_from_json(record))
+        except (AttributeError, TypeError):
+            skipped.append(f"entry {index}: {record!r}")
+    if skipped:
+        copy = _corrupt_copy_name(path)
+        shutil.copy2(path, copy)
+        print(
+            f"{path}: skipped unreadable {'; '.join(skipped)} (record copied to {copy.name})",
+            file=sys.stderr,
+        )
+    return entries
 
 
 def copied_identities(repo: Path) -> set[str]:
@@ -113,8 +163,8 @@ def save_entries(path: Path, entries: list[WorktreeEntry]) -> None:
         {
             "entries": [
                 {
-                    **entry._asdict(),
-                    "depends_on": [l._asdict() for l in entry.depends_on],
+                    **_as_json(entry),
+                    "depends_on": [_as_json(link) for link in entry.depends_on],
                 }
                 for entry in entries
             ]

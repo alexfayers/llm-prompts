@@ -413,6 +413,21 @@ def _update_check_or_failure(
         ]
 
 
+def _waiting_conflict_messages(name: str, source: str) -> list[str]:
+    """Return a message when local main waits on an unresolved conflict in its resolve worktree."""
+    from .main_sync import resolve_worktree, run_git
+    from .setup import _expand
+
+    repo = _expand(source)
+    if not (repo / ".git").is_dir() or not (work := resolve_worktree(repo)).exists():
+        return []
+    unmerged = run_git(work, "diff", "--name-only", "--diff-filter=U").stdout.split()
+    if not unmerged:
+        return []
+    files = ", ".join(unmerged)
+    return [f"[{name}] local main is waiting on a conflict in {work}: {files}"]
+
+
 def _local_source_messages(
     name: str, source: str, ref: str = "", fetch: bool = True
 ) -> list[str]:
@@ -707,6 +722,10 @@ def _pull_one_local_source(
     if not fetch_failed and (drops := unreleased(repo)):
         release = run_git(repo, "symbolic-ref", "--short", UPSTREAM).stdout.strip()
         synced = rebuild_local(repo, UPSTREAM, {}, drops, {}, [])
+        if synced.mode == "stopped":
+            return _PullOutcome(
+                name, False, [f"[{name}] main not updated: {synced.detail}"]
+            )
         if synced.mode == "failed":
             return _PullOutcome(
                 name,
@@ -730,6 +749,10 @@ def _pull_one_local_source(
         ):
             return unchanged
         synced = rebuild_local(repo, UPSTREAM, {}, empty, {}, [])
+        if synced.mode == "stopped":
+            return _PullOutcome(
+                name, False, [f"[{name}] main not updated: {synced.detail}"]
+            )
         if synced.mode == "failed":
             return _PullOutcome(
                 name,
@@ -812,7 +835,7 @@ def _copy_blocker(repo: Path) -> str | None:
 def _copy_recorded_into(
     name: str, repo: Path, entries: list[WorktreeEntry], test: str = ""
 ) -> tuple[bool, bool, list[WorktreeEntry]]:
-    """Copy the recorded worktrees of ``repo`` into its main, then run ``test`` when copying moved main.
+    """Copy the ready worktrees of ``repo`` into its main, then run ``test`` when copying moved main.
 
     Returns:
         Whether main moved, whether copying failed, and the updated record entries.
@@ -862,7 +885,7 @@ def _pull_and_copy(
     failed: set[str],
     copy_failed: set[str],
 ) -> tuple[set[str], list[WorktreeEntry]]:
-    """Pull every local source, then copy recorded worktrees into each main that pulled cleanly.
+    """Pull every local source, then copy ready worktrees into each main that pulled cleanly.
 
     Args:
         tools: The configured tool sources.
@@ -916,7 +939,7 @@ def _pull_and_copy(
 def _pull_local_sources(
     failed: set[str] | None = None, copy_failed: set[str] | None = None
 ) -> set[str]:
-    """Pull upstream changes for all local-path tool sources, then copy recorded worktrees into each main.
+    """Pull upstream changes for all local-path tool sources, then copy ready worktrees into each main.
 
     Args:
         failed: Collects the names of the tool sources that could not be pulled or copied.
@@ -996,6 +1019,7 @@ def _collect_update_messages(
         name = str(tool.get("name", ""))
         source = str(tool.get("source", ""))
         if _is_local_path(source):
+            checks.append(partial(_waiting_conflict_messages, name, source))
             check = partial(
                 _previous_failures_or,
                 _source_identity(tool),
@@ -1215,6 +1239,7 @@ def _sync_options(args: argparse.Namespace) -> SyncOptions:
         tuple(args.depends_on) if args.depends_on else None,
         tuple(args.no_depends_on) if args.no_depends_on else None,
         tuple(args.why) if args.why else None,
+        tuple(args.title) if args.title else None,
     )
 
 
@@ -1561,7 +1586,7 @@ def _run_command(
         "--depends-on",
         nargs=2,
         metavar=("BRANCH", "TOOL:BRANCH|OWNER/REPO#N"),
-        help="Make BRANCH depend on TOOL:BRANCH, stacking it when in the same repo, or on a PR in any repo.",
+        help="Make BRANCH depend on TOOL:BRANCH in another repo, or on a PR in any repo.",
     )
     sync_parser.add_argument(
         "--no-depends-on",
@@ -1574,6 +1599,12 @@ def _run_command(
         nargs=2,
         metavar=("BRANCH", "TEXT"),
         help="Record the text sync puts under Why in BRANCH's PR.",
+    )
+    sync_parser.add_argument(
+        "--title",
+        nargs=2,
+        metavar=("BRANCH", "TEXT"),
+        help="Record the title sync gives BRANCH's PR instead of its first commit's subject.",
     )
     sync_parser.add_argument(
         "--rescan",
@@ -1617,7 +1648,7 @@ def _run_command(
     ):
         sync_parser.error(
             "Pass only one of --branch, --forget, --ready, --local, "
-            "--depends-on, --no-depends-on, --why and --rescan."
+            "--depends-on, --no-depends-on, --why, --title and --rescan."
         )
 
     if (
@@ -1628,7 +1659,7 @@ def _run_command(
     ):
         sync_parser.error(
             "--branch, --forget, --ready, --local, --depends-on, "
-            "--no-depends-on and --why require --tool NAME."
+            "--no-depends-on, --why and --title require --tool NAME."
         )
 
     if args.command == "install" and args.root:

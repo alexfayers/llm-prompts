@@ -134,8 +134,10 @@ class Project:
         self.state = state
         self.save_state()
 
-    def commit(self, repo: Path, name: str, content: str, message: str) -> str:
-        (repo / name).write_text(content, encoding="utf-8")
+    def commit(
+        self, repo: Path, name: str, content: str, message: str, encoding: str = "utf-8"
+    ) -> str:
+        (repo / name).write_text(content, encoding=encoding)
         git(repo, "add", name)
         self.clock += 60
         git(repo, "commit", "-q", "-m", message, "--date", f"{self.clock} +0000")
@@ -175,6 +177,7 @@ class Project:
                 "depends_on",
                 "no_depends_on",
                 "why",
+                "title",
             )
         )
         name = tool or ("tool" if editing else None)
@@ -303,7 +306,7 @@ def copy_recorded(project: Project) -> int:
     return status
 
 
-def test_copying_recorded_worktrees_puts_them_in_main_and_sends_nothing_to_github(
+def test_copying_recorded_worktrees_puts_the_ready_ones_in_main_and_sends_nothing_to_github(
     project: Project,
 ) -> None:
     project.worktree("feat/a", "feat: a")
@@ -314,7 +317,7 @@ def test_copying_recorded_worktrees_puts_them_in_main_and_sends_nothing_to_githu
 
     assert copy_recorded(project) == 0
 
-    assert project.main_subjects() == ["feat: a", "feat: b"]
+    assert project.main_subjects() == ["feat: b"]
     assert project.remote_branches() == []
     assert project.gh_calls() == []
 
@@ -384,12 +387,14 @@ def run_update(project: Project) -> Any:
     return install
 
 
-def test_update_copies_recorded_worktrees_into_main_though_upstream_has_nothing_new(
+def test_update_copies_ready_worktrees_into_main_though_upstream_has_nothing_new(
     project: Project, capsys: pytest.CaptureFixture[str]
 ) -> None:
     configure_sources(project)
     project.worktree("feat/a", "feat: a")
     project.run(branch="feat/a")
+    project.run(ready="feat/a")
+    capsys.readouterr()
 
     assert cli._pull_local_sources() == {"tool"}
 
@@ -424,6 +429,19 @@ def test_update_says_when_main_has_no_copy_code_to_add_the_recorded_copies_next_
     assert "no copy-into-main code" not in capsys.readouterr().out
 
 
+def test_list_stops_on_a_held_lock(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    capsys.readouterr()
+
+    with worktrees.locked(project.record):
+        assert contribute.list_targets(project.targets) == 1
+
+    assert "another contribute run is in progress" in capsys.readouterr().out
+
+
 def test_update_stops_on_a_held_lock_without_touching_any_source(
     project: Project, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -445,6 +463,7 @@ def test_update_still_reinstalls_when_a_copy_conflicts_and_names_the_worktree(
     configure_sources(project)
     path = project.worktree("feat/a", "feat: a")
     project.run(branch="feat/a")
+    project.run(ready="feat/a")
     (path / "base.txt").write_text("worktree\n", encoding="utf-8")
     git(path, "commit", "-q", "-am", "feat: a edits base")
     project.commit(project.repo, "base.txt", "main\n", "feat: main edits base")
@@ -464,7 +483,11 @@ def test_update_still_reinstalls_when_a_copy_conflicts_and_names_the_worktree(
 
     install.assert_called_once()
     assert git(project.repo, "rev-parse", "main") == before
-    assert "[tool] feat/a: not copied into main" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    work = main_sync.resolve_worktree(project.repo)
+    assert "[tool] main not updated: " in out
+    assert f"left in {work}: resolve the files there, git add them, then rerun" in out
+    assert git(work, "diff", "--name-only", "--diff-filter=U") == "base.txt"
 
 
 def test_update_stops_when_a_copy_fails_with_its_own_reason(
@@ -494,6 +517,7 @@ def test_update_warns_about_a_failing_test_after_a_copy_and_still_reinstalls(
     configure_sources(project, command)
     project.worktree("feat/a", "feat: a")
     project.run(branch="feat/a")
+    project.run(ready="feat/a")
 
     install = run_update(project)
 
@@ -767,6 +791,36 @@ def test_update_drops_a_recorded_empty_copy_of_a_merged_pr_and_keeps_a_deliberat
     assert outcome.changed
     assert project.main_subjects() == ["feat: keep", "feat: b"]
     assert git(project.repo, "rev-parse", main_sync.PRE_SYNC_REF)
+
+
+def _main_ahead_of_a_release(project: Project) -> None:
+    _publish_release(project)
+    git(project.repo, "pull", "-q", "--ff-only")
+    project.commit(project.repo, "local.txt", "local\n", "feat: local")
+
+
+@pytest.mark.parametrize("setup", [_main_ahead_of_a_release, _main_with_empty_commits])
+def test_update_reports_a_waiting_conflict_and_leaves_main(
+    project: Project, setup: Any
+) -> None:
+    setup(project)
+    work = main_sync.resolve_worktree(project.repo)
+    git(project.repo, "worktree", "add", "-q", "--detach", str(work), "HEAD")
+    one = project.commit(work, "base.txt", "one\n", "feat: one")
+    git(work, "checkout", "-q", "HEAD~1")
+    project.commit(work, "base.txt", "two\n", "feat: two")
+    with pytest.raises(subprocess.CalledProcessError):
+        git(work, "cherry-pick", "--no-commit", one)
+    main = git(project.repo, "rev-parse", "main")
+
+    outcome = cli._pull_one_local_source("tool", str(project.repo))
+
+    assert not outcome.changed
+    assert (
+        "[tool] main not updated: main left untouched: conflicts in"
+        in (outcome.messages[0])
+    )
+    assert git(project.repo, "rev-parse", "main") == main
 
 
 def test_sync_keeps_a_deliberate_empty_commit_sharing_a_merged_prs_subject(
@@ -1094,6 +1148,53 @@ def test_a_rewritten_worktree_replaces_main_copies_of_its_earlier_commits(
     assert (project.repo / "feat-a-8.txt").read_text(encoding="utf-8") == "rewritten\n"
 
 
+def test_update_copies_the_recorded_remote_head_that_merged_a_newer_main_over_a_stale_local_branch(
+    project: Project,
+) -> None:
+    path = project.worktree("feat/a")
+    project.commit(path, "base.txt", "branch\n", "feat: a")
+    stale = git(path, "rev-parse", "HEAD")
+    project.run(branch="feat/a")
+    worktrees.save_entries(
+        project.record, [e._replace(ready=True) for e in project.entries()]
+    )
+    other = project.root / "other"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "base.txt", "main\n", "feat: upstream")
+    git(other, "push", "-q", "origin", "main")
+    git(project.repo, "fetch", "-q", "origin")
+    git(path, "merge", "-q", "-s", "ours", "--no-edit", "origin/main")
+    project.commit(path, "base.txt", "both\n", "fix: a")
+    head = git(path, "rev-parse", "HEAD")
+    git(path, "reset", "-q", "--hard", stale)
+    worktrees.save_entries(
+        project.record, [e._replace(remote_head=head) for e in project.entries()]
+    )
+
+    assert copy_recorded(project) == 0
+
+    assert not main_sync.resolve_worktree(project.repo).exists()
+    assert project.main_subjects() == ["feat: a"]
+    assert (project.repo / "base.txt").read_text(encoding="utf-8") == "both\n"
+
+
+def test_update_skips_a_worktree_whose_recorded_remote_head_cannot_be_fetched(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    missing = "0" * 40
+    worktrees.save_entries(
+        project.record,
+        [e._replace(ready=True, remote_head=missing) for e in project.entries()],
+    )
+
+    copy_recorded(project)
+
+    assert project.main_subjects() == []
+    assert f"its remote head {missing} could not be fetched" in capsys.readouterr().out
+
+
 def test_an_unrelated_main_commit_titled_like_a_later_worktree_commit_is_kept(
     project: Project,
 ) -> None:
@@ -1106,9 +1207,8 @@ def test_an_unrelated_main_commit_titled_like_a_later_worktree_commit_is_kept(
     assert project.main_subjects() == ["feat: a2", "feat: a"]
 
 
-@pytest.fixture
-def hand_resolved(project: Project) -> main_sync.Squash:
-    """A squash that conflicts with local main, after its hand resolution was recorded and reused once."""
+def stopped_copy(project: Project) -> main_sync.Squash:
+    """A squash that conflicts with local main, left in the resolve worktree."""
     repo = project.repo
     base = git(repo, "rev-parse", "HEAD")
     git(repo, "checkout", "-qb", "feat")
@@ -1116,25 +1216,243 @@ def hand_resolved(project: Project) -> main_sync.Squash:
     git(repo, "checkout", "-q", "main")
     project.commit(repo, "base.txt", "main\n", "feat: main")
     squash = main_sync.Squash(tip=tip, floor=base, first=tip)
-    skipped = main_sync.rebuild_local(repo, base, {}, (), {}, [squash]).skipped
-    assert [copy.first for copy in skipped] == [tip]
-    rerere = ("-c", "rerere.enabled=true")
-    git(repo, "checkout", "-q", "--detach")
-    with pytest.raises(subprocess.CalledProcessError):
-        git(repo, *rerere, "cherry-pick", tip)
-    (repo / "base.txt").write_text("resolved\n", encoding="utf-8")
-    git(repo, "add", "base.txt")
-    git(repo, *rerere, "commit", "-q", "--no-edit")
-    git(repo, "checkout", "-q", "main")
-    assert main_sync.rebuild_local(repo, base, {}, (), {}, [squash]).mode == "rebuilt"
+    assert main_sync.rebuild_local(repo, base, {}, (), {}, [squash]).mode == "stopped"
     return squash
+
+
+@pytest.fixture
+def hand_staged(project: Project) -> main_sync.Squash:
+    """A squash that conflicts with local main, with its hand resolution staged in the resolve worktree."""
+    squash = stopped_copy(project)
+    work = main_sync.resolve_worktree(project.repo)
+    (work / "base.txt").write_text("resolved\n", encoding="utf-8")
+    (work / "related.txt").write_text("fix\n", encoding="utf-8")
+    git(work, "add", "base.txt", "related.txt")
+    return squash
+
+
+@pytest.fixture
+def hand_resolved(project: Project, hand_staged: main_sync.Squash) -> main_sync.Squash:
+    """A squash that conflicts with local main, after its hand resolution was recorded and reused once."""
+    rebuilt = main_sync.rebuild_local(
+        project.repo, hand_staged.floor, {}, (), {}, [hand_staged]
+    )
+    assert rebuilt.mode == "rebuilt"
+    assert not main_sync.resolve_worktree(project.repo).exists()
+    return hand_staged
 
 
 def test_a_recorded_hand_resolution_settles_the_next_rebuild(
     project: Project, hand_resolved: main_sync.Squash
 ) -> None:
     assert (project.repo / "base.txt").read_text(encoding="utf-8") == "resolved\n"
+    assert (project.repo / "related.txt").read_text(encoding="utf-8") == "fix\n"
     assert project.main_subjects() == ["feat: main", "feat: feature"]
+
+
+@pytest.mark.parametrize(
+    ("name", "hidden"),
+    [
+        ("base.txt", ""),
+        ("note.txt", ""),
+        ("note.txt", "ignored"),
+        ("note.txt", "status.showUntrackedFiles"),
+    ],
+)
+def test_a_hand_resolution_with_unstaged_work_stays_in_its_worktree(
+    project: Project, hand_staged: main_sync.Squash, name: str, hidden: str
+) -> None:
+    work = main_sync.resolve_worktree(project.repo)
+    if hidden == "ignored":
+        exclude = Path(git(work, "rev-parse", "--git-path", "info/exclude"))
+        exclude.parent.mkdir(exist_ok=True)
+        exclude.write_text(f"{name}\n", encoding="utf-8")
+    elif hidden:
+        git(project.repo, "config", hidden, "no")
+    (work / name).write_text("unstaged\n", encoding="utf-8")
+    main = git(project.repo, "rev-parse", "main")
+
+    rebuilt = main_sync.rebuild_local(
+        project.repo, hand_staged.floor, {}, (), {}, [hand_staged]
+    )
+
+    assert rebuilt.mode == "stopped"
+    assert git(project.repo, "rev-parse", "main") == main
+    assert (work / name).read_text(encoding="utf-8") == "unstaged\n"
+
+
+def test_a_second_conflict_takes_the_resolve_worktree_after_the_first_is_resolved(
+    project: Project,
+) -> None:
+    repo = project.repo
+    base = git(repo, "rev-parse", "HEAD")
+    squashes = []
+    for name in ("a.txt", "b.txt"):
+        git(repo, "checkout", "-q", "-b", name, base)
+        tip = project.commit(repo, name, f"feature {name}\n", f"feat: {name}")
+        squashes.append(main_sync.Squash(tip=tip, floor=base, first=tip))
+    git(repo, "checkout", "-q", "main")
+    project.commit(repo, "a.txt", "main\n", "feat: main a")
+    project.commit(repo, "b.txt", "main\n", "feat: main b")
+    work = main_sync.resolve_worktree(repo)
+    for name in ("a.txt", "b.txt"):
+        assert (
+            main_sync.rebuild_local(repo, base, {}, (), {}, squashes).mode == "stopped"
+        )
+        (work / name).write_text("resolved\n", encoding="utf-8")
+        git(work, "add", name)
+
+    assert main_sync.rebuild_local(repo, base, {}, (), {}, squashes).mode == "rebuilt"
+
+    assert (repo / "a.txt").read_text(encoding="utf-8") == "resolved\n"
+    assert (repo / "b.txt").read_text(encoding="utf-8") == "resolved\n"
+    assert not work.exists()
+
+
+def test_a_resolve_worktree_without_its_merge_named_stays(
+    project: Project, hand_staged: main_sync.Squash
+) -> None:
+    work = main_sync.resolve_worktree(project.repo)
+    Path(git(work, "rev-parse", "--git-path", "llm-prompts-resolution")).unlink()
+    main = git(project.repo, "rev-parse", "main")
+
+    rebuilt = main_sync.rebuild_local(
+        project.repo, hand_staged.floor, {}, (), {}, [hand_staged]
+    )
+
+    assert rebuilt.mode == "stopped"
+    assert git(project.repo, "rev-parse", "main") == main
+    assert (work / "related.txt").read_text(encoding="utf-8") == "fix\n"
+
+
+def test_a_hand_resolution_stays_in_its_worktree_until_its_merge_comes_up(
+    project: Project, hand_staged: main_sync.Squash
+) -> None:
+    repo = project.repo
+    project.commit(repo, "base.txt", "moved\n", "feat: main moves")
+    main = git(repo, "rev-parse", "main")
+
+    rebuilt = main_sync.rebuild_local(
+        repo, hand_staged.floor, {}, (), {}, [hand_staged]
+    )
+
+    assert rebuilt.mode == "stopped"
+    assert git(repo, "rev-parse", "main") == main
+    work = main_sync.resolve_worktree(repo)
+    assert (work / "base.txt").read_text(encoding="utf-8") == "resolved\n"
+
+
+def test_a_hand_resolution_that_keeps_main_leaves_main_as_it_is(
+    project: Project,
+) -> None:
+    squash = stopped_copy(project)
+    work = main_sync.resolve_worktree(project.repo)
+    (work / "base.txt").write_text("main\n", encoding="utf-8")
+    git(work, "add", "base.txt")
+    main = git(project.repo, "rev-parse", "main")
+
+    rebuilt = main_sync.rebuild_local(project.repo, squash.floor, {}, (), {}, [squash])
+
+    assert rebuilt.mode == "rebuilt"
+    assert git(project.repo, "rev-parse", "main") == main
+    assert not work.exists()
+
+
+def test_a_hand_resolution_that_keeps_main_replays_onto_an_unrelated_main_change(
+    project: Project,
+) -> None:
+    squash = stopped_copy(project)
+    work = main_sync.resolve_worktree(project.repo)
+    (work / "base.txt").write_text("main\n", encoding="utf-8")
+    git(work, "add", "base.txt")
+    assert (
+        main_sync.rebuild_local(project.repo, squash.floor, {}, (), {}, [squash]).mode
+        == "rebuilt"
+    )
+    project.commit(project.repo, "other.txt", "other\n", "feat: main other")
+
+    rebuilt = main_sync.rebuild_local(project.repo, squash.floor, {}, (), {}, [squash])
+
+    assert rebuilt.mode == "rebuilt"
+    assert project.main_subjects() == ["feat: main", "feat: main other"]
+
+
+def test_a_hand_resolution_that_keeps_main_stays_when_main_changes_its_conflict(
+    project: Project,
+) -> None:
+    squash = stopped_copy(project)
+    work = main_sync.resolve_worktree(project.repo)
+    (work / "base.txt").write_text("main\n", encoding="utf-8")
+    git(work, "add", "base.txt")
+    project.commit(project.repo, "base.txt", "moved\n", "feat: main moves")
+    main = git(project.repo, "rev-parse", "main")
+
+    rebuilt = main_sync.rebuild_local(project.repo, squash.floor, {}, (), {}, [squash])
+
+    assert rebuilt.mode == "stopped"
+    assert git(project.repo, "rev-parse", "main") == main
+    assert work.exists()
+
+
+@pytest.mark.parametrize("resolved", ["feature\n", "resolved\n"])
+def test_a_staged_hand_resolution_reaches_main_or_stays_when_the_branch_merges_cleanly(
+    project: Project, resolved: str
+) -> None:
+    squash = stopped_copy(project)
+    work = main_sync.resolve_worktree(project.repo)
+    (work / "base.txt").write_text(resolved, encoding="utf-8")
+    (work / "related.txt").write_text("fix\n", encoding="utf-8")
+    git(work, "add", "base.txt", "related.txt")
+    project.commit(project.repo, "base.txt", "feature\n", "feat: main takes it")
+
+    rebuilt = main_sync.rebuild_local(project.repo, squash.floor, {}, (), {}, [squash])
+
+    assert rebuilt.mode == "rebuilt"
+    applied = resolved == "feature\n"
+    assert (project.repo / "related.txt").exists() == applied
+    assert work.exists() != applied
+
+
+def test_a_hand_resolution_that_keeps_main_in_one_file_stays_when_main_changes_it(
+    project: Project,
+) -> None:
+    repo = project.repo
+    base = git(repo, "rev-parse", "HEAD")
+    git(repo, "checkout", "-qb", "feat")
+    project.commit(repo, "a.txt", "feature\n", "feat: feature a")
+    tip = project.commit(repo, "b.txt", "feature\n", "feat: feature b")
+    git(repo, "checkout", "-q", "main")
+    project.commit(repo, "a.txt", "main\n", "feat: main a")
+    project.commit(repo, "b.txt", "main\n", "feat: main b")
+    squash = main_sync.Squash(tip=tip, floor=base, first=tip)
+    assert main_sync.rebuild_local(repo, base, {}, (), {}, [squash]).mode == "stopped"
+    work = main_sync.resolve_worktree(repo)
+    (work / "a.txt").write_text("main\n", encoding="utf-8")
+    (work / "b.txt").write_text("resolved\n", encoding="utf-8")
+    git(work, "add", "a.txt", "b.txt")
+    assert main_sync.rebuild_local(repo, base, {}, (), {}, [squash]).mode == "rebuilt"
+    project.commit(repo, "a.txt", "moved\n", "feat: main moves a")
+    main = git(repo, "rev-parse", "main")
+
+    rebuilt = main_sync.rebuild_local(repo, base, {}, (), {}, [squash])
+
+    assert rebuilt.mode == "stopped"
+    assert git(repo, "rev-parse", "main") == main
+    assert work.exists()
+
+
+def test_a_staged_hand_resolution_replays_onto_an_unrelated_main_change(
+    project: Project, hand_staged: main_sync.Squash
+) -> None:
+    project.commit(project.repo, "other.txt", "other\n", "feat: main other")
+
+    rebuilt = main_sync.rebuild_local(
+        project.repo, hand_staged.floor, {}, (), {}, [hand_staged]
+    )
+
+    assert rebuilt.mode == "rebuilt"
+    assert (project.repo / "related.txt").read_text(encoding="utf-8") == "fix\n"
+    assert not main_sync.resolve_worktree(project.repo).exists()
 
 
 def test_a_hand_resolved_copy_is_current(
@@ -1460,6 +1778,18 @@ def test_a_recorded_why_fills_the_pr_body_sync_opens(project: Project) -> None:
     assert f"## Why\n\n{WHY}\n" in body
 
 
+def test_a_recorded_title_names_the_pr_sync_opens(project: Project) -> None:
+    project.worktree("feat/a", "feat: a", "fix: a")
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+    project.run(title=("feat/a", "feat: add a"))
+
+    assert project.run(apply=True) == 0
+
+    [create] = project.gh_calls("pr", "create")
+    assert create[create.index("--title") + 1] == "feat: add a"
+
+
 def test_the_pr_what_leaves_merge_commits_out(project: Project) -> None:
     path = project.worktree("feat/a", "feat: a")
     git(path, "checkout", "-q", "-b", "side", "main")
@@ -1611,6 +1941,42 @@ def test_a_hand_written_why_is_kept_over_the_recorded_one(
 
     assert "## Why\n\nMy reason.\n" in pr_body(project, 100)
     assert WHY not in pr_body(project, 100)
+
+
+def _set_title(project: Project, number: int, title: str) -> None:
+    state = project.load_state()
+    state["prs"][str(number)]["title"] = title
+    project.state = state
+    project.save_state()
+
+
+def test_a_title_edited_by_hand_is_kept_but_one_sync_wrote_follows_the_commits(
+    project: Project, pushed: Path
+) -> None:
+    _amend(project, pushed, "fix: a")
+    assert project.run(apply=True) == 0
+    assert project.load_state()["prs"]["100"]["title"] == "fix: a"
+
+    _set_title(project, 100, "My own title")
+    _amend(project, pushed, "fix: b")
+    assert project.run(apply=True) == 0
+
+    assert project.load_state()["prs"]["100"]["title"] == "My own title"
+    assert "- fix: b" in pr_body(project, 100)
+
+
+def test_a_recorded_title_replaces_one_sync_wrote_but_not_one_edited_by_hand(
+    project: Project, pushed: Path
+) -> None:
+    project.run(title=("feat/a", "feat: add a"))
+    assert project.run(apply=True) == 0
+    assert project.load_state()["prs"]["100"]["title"] == "feat: add a"
+
+    _set_title(project, 100, "My own title")
+    project.run(title=("feat/a", "feat: add a better a"))
+    assert project.run(apply=True) == 0
+
+    assert project.load_state()["prs"]["100"]["title"] == "My own title"
 
 
 def _amend_remotely(project: Project, branch: str, message: str) -> str:
@@ -1846,9 +2212,9 @@ def test_list_shows_each_entry_offline(
     out = capsys.readouterr().out
     assert "feat/a  ready  no PR  1 lines" in out
     assert "feat/b  local only  no PR  2 commits, 2 lines" in out
-    assert "lines (over the 100-line limit)" in out.splitlines()[2]
+    assert "lines (over the 100-line guideline)" in out.splitlines()[2]
     assert (
-        "feat/d  local only  no PR  2 commits, 120 lines (over the 100-line limit)"
+        "feat/d  local only  no PR  2 commits, 120 lines (over the 100-line guideline)"
         in out
     )
     assert project.gh_calls() == []
@@ -2252,11 +2618,9 @@ def test_main_is_left_unchanged_when_a_merged_copy_holds_an_unpublished_edit_nex
     assert git(project.repo, "rev-parse", "main") == main
 
 
-@pytest.mark.parametrize("based", [False, True])
 def test_main_is_left_unchanged_when_an_open_worktree_that_claimed_a_merged_copy_conflicts_with_its_landed_squash_though_a_resolution_keeps_upstream(
-    project: Project, based: bool
+    project: Project,
 ) -> None:
-    floor = git(project.repo, "rev-parse", "origin/main")
     path = project.worktree("feat/a", "feat: a")
     project.run(branch="feat/a")
     project.run(apply=True)
@@ -2270,13 +2634,6 @@ def test_main_is_left_unchanged_when_an_open_worktree_that_claimed_a_merged_copy
     git(upper, "cherry-pick", "-x", git(path, "rev-parse", "HEAD"))
     project.commit(upper, "feat-b-7.txt", "feat: b\n", "feat: b")
     project.run(branch="feat/b")
-    worktrees.save_entries(
-        project.record,
-        [
-            e._replace(base=floor) if based and e.branch == "feat/b" else e
-            for e in project.entries()
-        ],
-    )
     other = project.root / "squasher"
     subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
     project.commit(other, "feat-a-7.txt", "landed\n", "feat: a (#7)")
@@ -2638,56 +2995,64 @@ def test_main_is_left_alone_unless_it_is_checked_out(
     assert "main not updated" in capsys.readouterr().out
 
 
-def test_a_copy_that_cannot_replay_is_skipped_and_the_others_still_copy(
-    project: Project, capsys: pytest.CaptureFixture[str]
-) -> None:
-    project.worktree("feat/a", "feat: a")
-    project.worktree("feat/b", "feat: b")
-    project.run(branch="feat/a")
-    project.run(branch="feat/b")
-    project.commit(project.repo, "feat-a-7.txt", "other\n", "feat: other")
+@pytest.fixture
+def swapped(project: Project) -> Path:
+    """Main holds copies of feat/x, feat/y and feat/z, then feat/x is rewritten so feat/y's copy conflicts; returns the resolve worktree path."""
+    lines = [f"line {n}\n" for n in range(40)]
 
-    assert project.run(apply=True) == 1
+    def shared(edits: dict[int, str]) -> str:
+        return "".join(edits.get(n, line) for n, line in enumerate(lines))
 
-    out = capsys.readouterr().out
-    assert "feat/a: not copied into main: " in out
-    assert "(feat: a) conflicts with main in feat-a-7.txt" in out
-    assert "feat/b: copied into main" in out
-    assert project.main_subjects() == ["feat: other", "feat: b"]
-    assert [(e.branch, e.copied is None) for e in project.entries()] == [
-        ("feat/a", True),
-        ("feat/b", False),
-    ]
-
-
-def test_an_upper_copy_that_conflicts_after_its_lower_is_amended_is_skipped_and_forgotten(
-    project: Project, capsys: pytest.CaptureFixture[str]
-) -> None:
-    lines = [f"line {n}\n" for n in range(60)]
-
-    def shared(middle: str) -> str:
-        return "".join([*lines[:30], middle, *lines[31:]])
-
-    lower = project.worktree("feat/a")
-    project.commit(lower, "shared.txt", shared("lower\n"), "feat: lower")
-    upper = project.worktree("feat/b", "feat: upper", start="feat/a", lines=60)
-    project.commit(upper, "shared.txt", shared("upper\n"), "feat: upper edit")
-    project.run(branch="feat/a")
-    project.run(branch="feat/b")
-    assert project.run("tool", depends_on=("feat/b", "tool:feat/a")) == 0
+    project.commit(project.repo, "shared.txt", shared({}), "chore: shared")
+    git(project.repo, "push", "-q", "origin", "main")
+    x = project.worktree("feat/x")
+    project.commit(x, "shared.txt", shared({10: "x\n"}), "feat: x")
+    y = project.worktree("feat/y")
+    project.commit(y, "shared.txt", shared({20: "y\n"}), "feat: y")
+    project.worktree("feat/z", "feat: z")
+    for branch in ("feat/x", "feat/y", "feat/z"):
+        project.run(branch=branch)
     assert project.run(apply=True) == 0
-    (lower / "shared.txt").write_text(shared("amended\n"), encoding="utf-8")
-    git(lower, "commit", "-q", "-a", "--amend", "--no-edit")
+    (x / "shared.txt").write_text(
+        shared({n: "x\n" for n in range(10, 21)}), encoding="utf-8"
+    )
+    git(x, "commit", "-q", "-a", "--amend", "--no-edit")
+    return main_sync.resolve_worktree(project.repo)
+
+
+def test_a_conflicting_copy_stops_sync_in_a_kept_worktree(
+    project: Project, swapped: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    before = git(project.repo, "rev-parse", "main")
     capsys.readouterr()
 
     assert project.run(apply=True) == 1
 
-    assert "feat/b: not copied into main: " in capsys.readouterr().out
-    assert project.main_subjects() == ["feat: lower"]
-    assert [(e.branch, e.copied is None) for e in project.entries()] == [
-        ("feat/a", False),
-        ("feat/b", True),
-    ]
+    out = capsys.readouterr().out
+    assert "(feat: y) conflicts with main in shared.txt" in out
+    assert str(swapped) in out
+    assert git(project.repo, "rev-parse", "main") == before
+    assert git(swapped, "diff", "--name-only", "--diff-filter=U") == "shared.txt"
+
+
+def test_a_rerun_records_the_hand_resolution_and_finishes_the_rebuild(
+    project: Project, swapped: Path
+) -> None:
+    project.run(apply=True)
+    resolved = (swapped / "shared.txt").read_text(encoding="utf-8")
+    resolved = (
+        resolved.split("<<<<<<<")[0]
+        + "resolved\n"
+        + resolved.split(">>>>>>>")[1].split("\n", 1)[1]
+    )
+    (swapped / "shared.txt").write_text(resolved, encoding="utf-8")
+    git(swapped, "add", "shared.txt")
+
+    assert project.run(apply=True) == 0
+
+    assert not swapped.exists()
+    assert project.main_subjects() == ["feat: x", "feat: y", "feat: z"]
+    assert (project.repo / "shared.txt").read_text(encoding="utf-8") == resolved
 
 
 def test_a_second_run_waits_for_nothing_and_stops(
@@ -2722,16 +3087,28 @@ def test_an_entry_whose_worktree_is_gone_is_forgotten_and_a_merged_branch_delete
     assert "feat/b: worktree is gone; forgotten" in capsys.readouterr().out
 
 
-def test_an_existing_pr_for_the_branch_is_adopted(project: Project) -> None:
+_OWN_BODY = "## What\n\n- my own summary\n\n## Why\n\nMy reason.\n"
+
+
+@pytest.mark.parametrize(
+    ("head", "body"),
+    [(_remote("feat/a"), ""), (_remote("feat/a"), _OWN_BODY), ("feat/a", _OWN_BODY)],
+)
+def test_an_existing_pr_for_the_branch_is_adopted_with_or_without_a_recorded_why(
+    project: Project, head: str, body: str
+) -> None:
+    project.auto_why = not body
     project.worktree("feat/a", "feat: a")
-    git(project.repo, "push", "-q", "origin", "feat/a:" + _remote("feat/a"))
-    project.add_pr(7, _remote("feat/a"))
+    git(project.repo, "push", "-q", "origin", f"feat/a:{head}")
+    project.add_pr(7, head, body=body)
     project.run(branch="feat/a")
     project.run(ready="feat/a")
 
     assert project.run(apply=True) == 0
 
     assert [e.pr for e in project.entries()] == [7]
+    if head == "feat/a":
+        assert pr_body(project, 7) == body
 
 
 def test_a_worktree_with_no_commits_is_skipped_by_sync_and_list(
@@ -2850,109 +3227,16 @@ def stack(project: Project) -> Path:
     return upper
 
 
-def test_a_same_repo_link_records_the_lower_tip_as_the_upper_base(
-    project: Project, stack: Path
-) -> None:
-    assert project.run("tool", depends_on=("feat/b", "tool:feat/a")) == 0
-
-    upper = {e.branch: e for e in project.entries()}["feat/b"]
-    assert upper.base == git(project.repo, "rev-parse", "feat/a")
-
-
-def test_a_same_repo_link_is_refused_unless_the_upper_is_on_the_lower(
-    project: Project, capsys: pytest.CaptureFixture[str]
-) -> None:
-    project.worktree("feat/a", "feat: a", lines=60)
-    project.worktree("feat/b", "feat: b", lines=60)
-    project.run(branch="feat/a")
-    project.run(branch="feat/b")
-
-    assert project.run("tool", depends_on=("feat/b", "tool:feat/a")) == 1
-
-    assert (
-        "feat/b is not on feat/a; rebase it onto feat/a first"
-        in capsys.readouterr().out
-    )
-
-
-def test_a_same_repo_link_takes_an_upper_of_several_commits(project: Project) -> None:
-    project.worktree("feat/a", "feat: a", lines=60)
-    project.worktree("feat/b", "feat: b", "feat: b2", start="feat/a", lines=60)
-    project.run(branch="feat/a")
-    project.run(branch="feat/b")
-
-    assert project.run("tool", depends_on=("feat/b", "tool:feat/a")) == 0
-
-    assert _entry_of(project, "feat/b").base == git(project.repo, "rev-parse", "feat/a")
-
-
-def _stack_of(project: Project, upper_file: str, upper_content: str | bytes) -> None:
-    project.worktree("feat/a", "feat: a", lines=60)
-    path = project.worktree("feat/b", start="feat/a")
-    target = path / upper_file
-    target.parent.mkdir(exist_ok=True)
-    if isinstance(upper_content, bytes):
-        target.write_bytes(upper_content)
-    else:
-        target.write_text(upper_content, encoding="utf-8")
-    git(path, "add", upper_file)
-    git(path, "commit", "-q", "-m", "feat: b")
-    project.run(branch="feat/a")
-    project.run(branch="feat/b")
-
-
-def test_a_small_same_repo_stack_is_refused(
-    project: Project, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _stack_of(project, "b.txt", "x\n" * 30)
-
-    assert project.run("tool", depends_on=("feat/b", "tool:feat/a")) == 1
-
-    assert (
-        "feat/a and feat/b change 90 lines together, within the slightly-yappy "
-        "limit of 100. Combine them into one worktree." in capsys.readouterr().out
-    )
-    assert project.entries()[1].depends_on == ()
-
-
-def test_a_stack_with_a_binary_file_is_never_refused(project: Project) -> None:
-    _stack_of(project, "b.bin", b"\x00\x01\x02")
-
-    assert project.run("tool", depends_on=("feat/b", "tool:feat/a")) == 0
-
-
-def test_a_file_that_only_ends_like_a_lockfile_name_is_counted(
-    project: Project,
-) -> None:
-    _stack_of(project, "not-uv.lock", "x\n" * 60)
-    assert project.run("tool", depends_on=("feat/b", "tool:feat/a")) == 0
-
-
-def test_a_lockfile_is_not_counted(
-    project: Project, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _stack_of(project, "sub/uv.lock", "x\n" * 60)
-    assert project.run("tool", depends_on=("feat/b", "tool:feat/a")) == 1
-    assert "change 60 lines together" in capsys.readouterr().out
-
-
-def test_no_depends_on_removes_the_link_and_the_base_so_the_upper_is_skipped_for_holding_the_lowers_commits(
+def test_a_same_repo_link_is_refused(
     project: Project, stack: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    project.run("tool", depends_on=("feat/b", "tool:feat/a"))
+    assert project.run("tool", depends_on=("feat/b", "tool:feat/a")) == 1
 
-    assert project.run("tool", no_depends_on=("feat/b", "tool:feat/a")) == 0
-
-    upper = {e.branch: e for e in project.entries()}["feat/b"]
-    assert (upper.depends_on, upper.base) == ((), None)
-    capsys.readouterr()
-    project.run()
-    assert "feat/b: skipped: holds commits of feat/a" in capsys.readouterr().out
-    assert contribute.list_targets(project.targets) == 0
     assert (
-        "feat/b  local only  no PR  skipped: holds commits of feat/a"
+        "tool:feat/a is in the same repo: put feat/b's change in feat/a's worktree"
         in capsys.readouterr().out
     )
+    assert _entry_of(project, "feat/b").depends_on == ()
 
 
 def test_depends_on_a_pr_of_an_unmanaged_repo_writes_its_line_and_no_depends_on_removes_it(
@@ -3094,41 +3378,13 @@ def test_a_dependent_tool_listed_first_opens_after_its_dependency_in_one_run(
     assert (lower.pr, upper.pr) == (100, 101)
 
 
-def test_a_same_repo_stack_opens_in_one_run_lower_first_both_on_main(
-    project: Project, stack: Path
-) -> None:
-    project.run("tool", depends_on=("feat/b", "tool:feat/a"))
-    project.run("tool", ready="feat/a")
-    project.run("tool", ready="feat/b")
-    worktrees.save_entries(project.record, project.entries()[::-1])
-
-    assert project.run(apply=True) == 0
-
-    assert project.main_subjects() == ["feat: a", "feat: b"]
-    lower, upper = (
-        e for b in ("feat/a", "feat/b") for e in project.entries() if e.branch == b
-    )
-    assert (lower.pr, upper.pr) == (100, 101)
-    creates = project.gh_calls("pr", "create")
-    assert [c[c.index("--base") + 1] for c in creates] == ["main", "main"]
-    assert "Depends on o/repo#100" in pr_body(project, 101)
-    assert "Depends on" not in pr_body(project, 100)
-
-
-@pytest.fixture
-def published_stack(project: Project, stack: Path) -> Path:
-    """The stack with both branches ready, pushed and drafted; returns the lower's worktree."""
-    project.run("tool", depends_on=("feat/b", "tool:feat/a"))
-    project.run("tool", ready="feat/a")
-    project.run("tool", ready="feat/b")
-    project.run(apply=True)
-    return project.root / "wt" / "feat-a"
-
-
 def test_a_pr_link_to_a_branch_dependency_writes_its_depends_on_line_once(
-    project: Project, published_stack: Path
+    project: Project, chain: Path
 ) -> None:
-    assert project.run("tool", depends_on=("feat/b", "o/repo#100")) == 0
+    project.run("tool", ready="feat/a")
+    project.run(apply=True)
+
+    assert project.run("other", depends_on=("feat/b", "o/repo#100")) == 0
     assert project.run(apply=True) == 0
 
     assert pr_body(project, 101).count("Depends on o/repo#100") == 1
@@ -3136,151 +3392,6 @@ def test_a_pr_link_to_a_branch_dependency_writes_its_depends_on_line_once(
 
 def _entry_of(project: Project, branch: str) -> WorktreeEntry:
     return next(e for e in project.entries() if e.branch == branch)
-
-
-def test_an_amended_lower_restacks_the_upper_onto_its_new_tip(
-    project: Project, published_stack: Path
-) -> None:
-    new_tip = _amend(project, published_stack, "feat: a amended")
-
-    assert project.run(apply=True) == 0
-
-    upper = _entry_of(project, "feat/b")
-    assert git(project.repo, "rev-list", "--count", f"{new_tip}..feat/b") == "1"
-    assert git(project.repo, "merge-base", "feat/b", new_tip) == new_tip
-    assert upper.base == new_tip
-    assert git(project.origin, "rev-parse", _remote("feat/b")) == git(
-        project.repo, "rev-parse", "feat/b"
-    )
-
-
-def test_an_upper_whose_worktree_is_gone_is_forgotten_before_restacking(
-    project: Project, published_stack: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _amend(project, published_stack, "feat: a amended")
-    git(
-        project.repo,
-        "worktree",
-        "remove",
-        "--force",
-        str(project.root / "wt" / "feat-b"),
-    )
-
-    assert project.run(apply=True) == 0
-
-    assert [e.branch for e in project.entries()] == ["feat/a"]
-    assert "feat/b: worktree is gone; forgotten" in capsys.readouterr().out
-
-
-def test_an_upper_is_kept_when_its_lowers_branch_was_deleted_outside_sync(
-    project: Project, published_stack: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    git(project.repo, "worktree", "remove", "--force", str(published_stack))
-    git(project.repo, "branch", "-D", "feat/a")
-
-    assert project.run(apply=True) == 0
-
-    assert [e.branch for e in project.entries()] == ["feat/b"]
-    assert "feat/a: worktree is gone; forgotten" in capsys.readouterr().out
-
-
-def _squash_merge_lower(
-    project: Project, lower: Path, target: Path | None = None
-) -> None:
-    """Merge PR 100 on the fake gh and land the lower's change on ``target`` (origin) main as a new commit."""
-    _merge(project, 100, git(lower, "rev-parse", "HEAD"))
-    other = project.root / "squasher"
-    subprocess.run(
-        ["git", "clone", "-q", str(target or project.origin), str(other)], check=True
-    )
-    project.commit(other, "feat-a-7.txt", "feat: a\n" * 60, "feat: a (#100)")
-    git(other, "push", "-q", "origin", "main")
-
-
-def test_a_squash_merged_lower_restacks_the_upper_onto_main_and_is_removed(
-    project: Project, published_stack: Path
-) -> None:
-    _squash_merge_lower(project, published_stack)
-
-    assert project.run(apply=True) == 0
-
-    upper = _entry_of(project, "feat/b")
-    assert (upper.depends_on, upper.base) == ((), None)
-    assert git(project.repo, "rev-list", "--count", "origin/main..feat/b") == "1"
-    assert not published_stack.exists()
-    assert [e.branch for e in project.entries()] == ["feat/b"]
-
-
-def test_a_merged_lower_is_kept_while_a_held_upper_still_sits_on_it(
-    project: Project, published_stack: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _squash_merge_lower(project, published_stack)
-    project.add_pr(101, _remote("feat/b"), isDraft=False)
-    capsys.readouterr()
-
-    assert project.run(apply=True) == 0
-
-    out = capsys.readouterr().out
-    assert "feat/b: not restacked (PR #101 is not a draft)" in out
-    assert "feat/a: merged, but feat/b sits on it; kept" in out
-    assert published_stack.exists()
-
-
-def test_a_non_draft_middle_leaves_it_and_everything_above_alone(
-    project: Project, published_stack: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    top = project.worktree("feat/c", "feat: c", start="feat/b", lines=60)
-    project.run(branch="feat/c")
-    project.run("tool", depends_on=("feat/c", "tool:feat/b"))
-    project.run("tool", ready="feat/c")
-    project.run(apply=True)
-    state = project.load_state()
-    state["prs"]["101"]["isDraft"] = False
-    project.state = state
-    project.save_state()
-    middle_tip = git(project.repo, "rev-parse", "feat/b")
-    top_tip = git(top, "rev-parse", "HEAD")
-    new_tip = _amend(project, published_stack, "feat: a amended")
-    capsys.readouterr()
-
-    assert project.run(apply=True) == 0
-
-    out = capsys.readouterr().out
-    assert (
-        "feat/b: not restacked (PR #101 is not a draft); feat/c left alone too" in out
-    )
-    assert git(project.repo, "rev-parse", "feat/b") == middle_tip
-    assert git(top, "rev-parse", "HEAD") == top_tip
-    assert git(project.origin, "rev-parse", _remote("feat/a")) == new_tip
-
-
-def test_a_repo_with_an_upstream_remote_stacks_and_restacks_against_upstream_main(
-    project: Project,
-) -> None:
-    upstream = project.root / "upstream.git"
-    subprocess.run(
-        ["git", "clone", "-q", "--bare", str(project.origin), str(upstream)],
-        check=True,
-    )
-    git(project.repo, "remote", "add", "upstream", str(upstream))
-    git(project.repo, "fetch", "-q", "upstream")
-    project.worktree("feat/a", "feat: a", lines=60)
-    project.worktree("feat/b", "feat: b", start="feat/a", lines=60)
-    project.run(branch="feat/a")
-    project.run(branch="feat/b")
-    assert project.run("tool", depends_on=("feat/b", "tool:feat/a")) == 0
-    project.run("tool", ready="feat/a")
-    project.run("tool", ready="feat/b")
-    project.run(apply=True)
-    lower = project.root / "wt" / "feat-a"
-    _squash_merge_lower(project, lower, upstream)
-
-    assert project.run(apply=True) == 0
-
-    assert git(project.repo, "rev-parse", "feat/b^") == git(
-        project.repo, "rev-parse", "upstream/main"
-    )
-    assert _entry_of(project, "feat/b").base is None
 
 
 def test_a_links_ref_is_kept_after_its_merged_dependency_is_removed(
@@ -3380,17 +3491,20 @@ def test_an_adopted_non_draft_pr_is_left_alone_and_named(
     assert project.gh_calls("pr", "edit") == []
 
 
-def test_rescan_keeps_an_existing_entrys_links_base_and_dropped_refs(
+def test_rescan_keeps_an_existing_entrys_links_and_dropped_refs(
     project: Project, stack: Path
 ) -> None:
-    project.run("tool", depends_on=("feat/b", "tool:feat/a"))
     git(project.repo, "push", "-q", "origin", "feat/b:" + _remote("feat/b"))
     project.add_pr(7, _remote("feat/b"))
-    before = _entry_of(project, "feat/b")
     worktrees.save_entries(
         project.record,
         [
-            e._replace(dropped_refs=("o/repo#3",)) if e.branch == "feat/b" else e
+            e._replace(
+                depends_on=(Link("/elsewhere", "feat/x", "o/else#2"),),
+                dropped_refs=("o/repo#3",),
+            )
+            if e.branch == "feat/b"
+            else e
             for e in project.entries()
         ],
     )
@@ -3399,315 +3513,10 @@ def test_rescan_keeps_an_existing_entrys_links_base_and_dropped_refs(
 
     after = _entry_of(project, "feat/b")
     assert after.pr == 7
-    assert (after.depends_on, after.base, after.dropped_refs) == (
-        before.depends_on,
-        before.base,
+    assert (after.depends_on, after.dropped_refs) == (
+        (Link("/elsewhere", "feat/x", "o/else#2"),),
         ("o/repo#3",),
     )
-
-
-def test_list_counts_a_stacked_upper_from_its_base(
-    project: Project, stack: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    project.run("tool", depends_on=("feat/b", "tool:feat/a"))
-    capsys.readouterr()
-
-    assert contribute.list_targets(project.targets) == 0
-
-    assert "feat/b  local only  no PR  60 lines" in capsys.readouterr().out
-
-
-def test_a_second_same_repo_link_or_a_repeated_link_is_refused(
-    project: Project, stack: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    project.worktree("feat/c", "feat: c", start="feat/b", lines=60)
-    project.run(branch="feat/c")
-    assert project.run("tool", depends_on=("feat/c", "tool:feat/b")) == 0
-
-    assert project.run("tool", depends_on=("feat/c", "tool:feat/b")) == 1
-    assert project.run("tool", depends_on=("feat/c", "tool:feat/a")) == 1
-
-    out = capsys.readouterr().out
-    assert "feat/c already depends on tool:feat/b" in out
-    assert "feat/c already depends on tool:feat/a" not in out
-    assert "feat/c already stacks on another branch of this repo" in out
-
-
-def test_a_cross_repo_link_keeps_the_stack_base(project: Project, stack: Path) -> None:
-    other = project.add_tool("other")
-    project.worktree("feat/x", "feat: x", repo=other)
-    project.run("other", branch="feat/x")
-    project.run("tool", depends_on=("feat/b", "tool:feat/a"))
-    base = _entry_of(project, "feat/b").base
-
-    assert project.run("tool", depends_on=("feat/b", "other:feat/x")) == 0
-
-    assert _entry_of(project, "feat/b").base == base is not None
-
-
-def test_a_merged_lower_whose_worktree_is_gone_is_kept_while_a_held_upper_sits_on_it(
-    project: Project, published_stack: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _squash_merge_lower(project, published_stack)
-    project.add_pr(101, _remote("feat/b"), isDraft=False)
-    git(project.repo, "worktree", "remove", "--force", str(published_stack))
-    capsys.readouterr()
-
-    assert project.run(apply=True) == 0
-
-    assert "feat/a: merged, but feat/b sits on it; kept" in capsys.readouterr().out
-    assert sorted(e.branch for e in project.entries()) == ["feat/a", "feat/b"]
-    assert git(project.repo, "branch", "--list", "feat/a") != ""
-
-
-def test_a_merged_lower_whose_worktree_is_gone_restacks_a_draft_upper_then_goes(
-    project: Project, published_stack: Path
-) -> None:
-    _squash_merge_lower(project, published_stack)
-    git(project.repo, "worktree", "remove", "--force", str(published_stack))
-
-    assert project.run(apply=True) == 0
-
-    assert [e.branch for e in project.entries()] == ["feat/b"]
-    assert git(project.repo, "rev-list", "--count", "origin/main..feat/b") == "1"
-    assert git(project.repo, "branch", "--list", "feat/a") == ""
-
-
-def test_a_merged_lower_whose_branch_was_deleted_restacks_the_upper_onto_main(
-    project: Project, published_stack: Path
-) -> None:
-    _squash_merge_lower(project, published_stack)
-    git(project.repo, "worktree", "remove", "--force", str(published_stack))
-    git(project.repo, "branch", "-D", "feat/a")
-
-    assert project.run(apply=True) == 0
-
-    upper = _entry_of(project, "feat/b")
-    assert (upper.depends_on, upper.base) == ((), None)
-    assert git(project.repo, "rev-list", "--count", "origin/main..feat/b") == "1"
-
-
-def test_an_unpublished_lower_whose_branch_was_deleted_restacks_the_upper_onto_main(
-    project: Project, stack: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    project.run("tool", depends_on=("feat/b", "tool:feat/a"))
-    git(
-        project.repo,
-        "worktree",
-        "remove",
-        "--force",
-        str(project.root / "wt" / "feat-a"),
-    )
-    git(project.repo, "branch", "-D", "feat/a")
-    capsys.readouterr()
-
-    assert project.run(apply=True) == 0
-
-    upper = _entry_of(project, "feat/b")
-    assert (upper.depends_on, upper.base) == ((), None)
-    assert git(project.repo, "rev-list", "--count", "origin/main..feat/b") == "1"
-    assert "feat/b: restacked onto main (feat/a was deleted)" in capsys.readouterr().out
-
-
-def test_a_deleted_unpublished_lower_is_kept_until_a_dirty_upper_can_restack(
-    project: Project, stack: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    project.run("tool", depends_on=("feat/b", "tool:feat/a"))
-    git(
-        project.repo,
-        "worktree",
-        "remove",
-        "--force",
-        str(project.root / "wt" / "feat-a"),
-    )
-    git(project.repo, "branch", "-D", "feat/a")
-    dirty = project.root / "wt" / "feat-b" / "scratch.txt"
-    dirty.write_text("wip\n")
-    capsys.readouterr()
-
-    assert project.run(apply=True) == 0
-
-    assert "feat/b: not restacked (the worktree has uncommitted changes)" in (
-        capsys.readouterr().out
-    )
-    dirty.unlink()
-
-    assert project.run(apply=True) == 0
-
-    upper = _entry_of(project, "feat/b")
-    assert (upper.depends_on, upper.base) == ((), None)
-    assert git(project.repo, "rev-list", "--count", "origin/main..feat/b") == "1"
-    assert [e.branch for e in project.entries()] == ["feat/b"]
-
-
-def test_a_stack_on_a_lower_of_several_commits_is_squashed_into_two_main_commits(
-    project: Project,
-) -> None:
-    project.worktree("feat/a", "feat: a", "feat: a2", lines=40)
-    project.worktree("feat/b", "feat: b", start="feat/a", lines=40)
-    project.run(branch="feat/a")
-    project.run(branch="feat/b")
-    project.run("tool", depends_on=("feat/b", "tool:feat/a"))
-
-    assert project.run(apply=True) == 0
-
-    assert project.main_subjects() == ["feat: a", "feat: b"]
-
-
-def test_a_stacked_upper_is_replayed_after_its_lower_even_when_its_old_copy_sits_first(
-    project: Project,
-) -> None:
-    project.commit(project.repo, "shared.txt", "L1\n-\n-\n-\nL2\n", "chore: shared")
-    git(project.repo, "push", "-q", "origin", "main")
-    for name, shared in (("b", "L1\n-\n-\n-\nB2\n"), ("a", "A1\n-\n-\n-\nL2\n")):
-        path = project.worktree(f"feat/{name}", start="origin/main")
-        (path / f"pad-{name}.txt").write_text("x\n" * 60, encoding="utf-8")
-        git(path, "add", f"pad-{name}.txt")
-        project.commit(path, "shared.txt", shared, f"feat: {name}")
-        project.run(branch=f"feat/{name}")
-        assert project.run(apply=True) == 0
-    upper = project.root / "wt" / "feat-b"
-    git(upper, "rebase", "feat/a")
-    project.clock += 60
-    (upper / "shared.txt").write_text("AB1\n-\n-\n-\nB2\n", encoding="utf-8")
-    git(
-        upper,
-        "commit",
-        "-qa",
-        "--amend",
-        "--no-edit",
-        "--date",
-        f"{project.clock} +0000",
-    )
-    project.run("tool", depends_on=("feat/b", "tool:feat/a"))
-
-    assert project.run(apply=True) == 0
-
-    assert project.main_subjects() == ["feat: a", "feat: b"]
-    assert (project.repo / "shared.txt").read_text(
-        encoding="utf-8"
-    ) == "AB1\n-\n-\n-\nB2\n"
-
-
-def test_an_amended_upper_copy_in_an_ordered_stack_is_replaced_in_place(
-    project: Project, published_stack: Path
-) -> None:
-    edited = project.root / "wt" / "feat-b" / "feat-b-7.txt"
-    lines = edited.read_text(encoding="utf-8").splitlines(keepends=True)
-    lines[30] = "local edit\n"
-    project.commit(project.repo, edited.name, "".join(lines), "chore: local edit")
-    _amend(project, project.root / "wt" / "feat-b", "feat: b amended")
-
-    assert project.run(apply=True) == 0
-
-    assert project.main_subjects() == [
-        "feat: a",
-        "feat: b amended",
-        "chore: local edit",
-    ]
-
-
-def test_branches_stacked_above_a_moved_branch_move_with_it(
-    project: Project,
-) -> None:
-    project.worktree("feat/a", "feat: a", lines=60)
-    middle = project.worktree("feat/b", "feat: b", start="feat/a", lines=60)
-    project.worktree("feat/c", "feat: c", start="feat/b", lines=60)
-    for name in "abc":
-        project.run(branch=f"feat/{name}")
-    project.run("tool", depends_on=("feat/b", "tool:feat/a"))
-    project.run("tool", depends_on=("feat/c", "tool:feat/b"))
-    assert project.run(apply=True) == 0
-    _amend(project, middle, "feat: b amended")
-
-    assert project.run(apply=True) == 0
-
-    assert project.main_subjects() == ["feat: a", "feat: b amended", "feat: c"]
-
-
-def test_restack_moves_an_upper_onto_an_amended_lower_of_several_commits(
-    project: Project,
-) -> None:
-    lower = project.worktree("feat/a", "feat: a", "feat: a2", lines=40)
-    upper = project.worktree("feat/b", "feat: b", start="feat/a", lines=40)
-    project.run(branch="feat/a")
-    project.run(branch="feat/b")
-    project.run("tool", depends_on=("feat/b", "tool:feat/a"))
-    project.run(apply=True)
-    new_tip = _amend(project, lower, "feat: a2 amended")
-
-    assert project.run(apply=True) == 0
-
-    assert git(upper, "rev-parse", "HEAD~1") == new_tip
-    assert _entry_of(project, "feat/b").base == new_tip
-    assert project.main_subjects() == ["feat: a", "feat: b"]
-
-
-def test_restack_moves_an_upper_of_several_commits(
-    project: Project, published_stack: Path
-) -> None:
-    upper = project.root / "wt" / "feat-b"
-    project.commit(upper, "extra.txt", "x\n", "feat: extra")
-    new_tip = _amend(project, published_stack, "feat: a amended")
-
-    assert project.run(apply=True) == 0
-
-    assert git(upper, "rev-parse", "HEAD~2") == new_tip
-    assert git(upper, "log", "--format=%s", f"{new_tip}..HEAD") == (
-        "feat: extra\nfeat: b"
-    )
-    assert _entry_of(project, "feat/b").base == new_tip
-
-
-def test_restack_holds_an_upper_that_is_no_longer_on_its_base(
-    project: Project, published_stack: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    upper = project.root / "wt" / "feat-b"
-    git(upper, "rebase", "-q", "--onto", "origin/main", "feat/a")
-    top_tip = git(upper, "rev-parse", "HEAD")
-    _amend(project, published_stack, "feat: a amended")
-    capsys.readouterr()
-
-    assert project.run(apply=True) == 0
-
-    assert "feat/b: not restacked (it is not on its base)" in capsys.readouterr().out
-    assert git(upper, "rev-parse", "HEAD") == top_tip
-
-
-def test_restack_holds_an_upper_paused_in_a_rebase_of_its_own(
-    project: Project, published_stack: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    upper = project.root / "wt" / "feat-b"
-    subprocess.run(
-        ["git", "-C", str(upper), "rebase", "-q", "-i", "feat/a"],
-        env={**os.environ, "GIT_SEQUENCE_EDITOR": "sed -i '1i break'"},
-        check=True,
-    )
-    paused = git(upper, "rev-parse", "--git-path", "rebase-merge")
-    _amend(project, published_stack, "feat: a amended")
-    capsys.readouterr()
-
-    assert project.run(apply=True) == 0
-
-    assert "feat/b: not restacked (a rebase is in progress)" in capsys.readouterr().out
-    assert (upper / paused).exists()
-
-
-def test_restack_only_records_the_base_of_an_upper_already_rebased_by_hand(
-    project: Project, published_stack: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    upper = project.root / "wt" / "feat-b"
-    old_base = _entry_of(project, "feat/b").base
-    new_tip = _amend(project, published_stack, "feat: a amended")
-    git(upper, "rebase", "-q", "--onto", new_tip, old_base or "")
-    tip = git(upper, "rev-parse", "HEAD")
-    capsys.readouterr()
-
-    assert project.run(apply=True) == 0
-
-    assert "feat/b: restacked" not in capsys.readouterr().out
-    assert _entry_of(project, "feat/b").base == new_tip
-    assert git(upper, "rev-parse", "HEAD") == tip
 
 
 def test_unlinking_a_non_draft_pr_keeps_its_line_and_the_record_and_says_so(
@@ -3729,3 +3538,188 @@ def test_unlinking_a_non_draft_pr_keeps_its_line_and_the_record_and_says_so(
     )
     assert "Depends on o/repo#100" in pr_body(project, 101)
     assert project.entries_of(chain)[0].dropped_refs == ("o/repo#100",)
+
+
+def test_a_changed_branch_replaces_its_hand_resolved_copy_on_main(
+    project: Project,
+) -> None:
+    body = "".join(f"line {n}\n" for n in range(9))
+    project.commit(project.repo, "s.txt", body, "chore: add s")
+    git(project.repo, "push", "-q", "origin", "main")
+    project.commit(
+        project.repo, "s.txt", body.replace("line 1", "local"), "chore: local"
+    )
+    path = project.worktree("feat/a", start="origin/main")
+    project.commit(path, "s.txt", body.replace("line 1", "a"), "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    work = main_sync.resolve_worktree(project.repo)
+    resolved = body.replace("line 1", "local a")
+    (work / "s.txt").write_text(resolved, encoding="utf-8")
+    git(work, "add", "s.txt")
+    assert project.run(apply=True) == 0
+    project.commit(
+        path, "s.txt", body.replace("line 1", "a").replace("line 7", "b"), "fix: a"
+    )
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["chore: local", "feat: a"]
+    assert (project.repo / "s.txt").read_text(encoding="utf-8") == resolved.replace(
+        "line 7", "b"
+    )
+
+
+def test_a_changed_branch_replaces_every_top_up_copy_on_main(
+    project: Project,
+) -> None:
+    body = "".join(f"line {n}\n" for n in range(9))
+    project.commit(project.repo, "s.txt", body, "chore: add s")
+    git(project.repo, "push", "-q", "origin", "main")
+    path = project.worktree("feat/a", start="origin/main")
+    project.commit(path, "s.txt", body.replace("line 1", "a"), "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    date = git(project.repo, "log", "-1", "--format=%ad", "--date=raw", "main")
+    (project.repo / "s.txt").write_text(
+        body.replace("line 1", "a").replace("line 3", "top"), encoding="utf-8"
+    )
+    git(project.repo, "commit", "-q", "-am", "feat: a", "--date", date)
+    fixed = body.replace("line 1", "a").replace("line 3", "top").replace("line 7", "b")
+    project.commit(path, "s.txt", fixed, "fix: a")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a"]
+    assert (project.repo / "s.txt").read_text(encoding="utf-8") == fixed
+
+
+def test_a_same_identity_main_commit_whose_changes_the_branch_lacks_is_kept(
+    project: Project,
+) -> None:
+    body = "".join(f"line {n}\n" for n in range(9))
+    project.commit(project.repo, "s.txt", body, "chore: add s")
+    git(project.repo, "push", "-q", "origin", "main")
+    path = project.worktree("feat/a", start="origin/main")
+    project.commit(path, "s.txt", body.replace("line 1", "a"), "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    date = git(project.repo, "log", "-1", "--format=%ad", "--date=raw", "main")
+    (project.repo / "s.txt").write_text(
+        body.replace("line 1", "mine"), encoding="utf-8"
+    )
+    git(project.repo, "commit", "-q", "-am", "feat: a", "--date", date)
+    project.commit(path, "s.txt", body.replace("line 1", "a2"), "fix: a")
+    main = git(project.repo, "rev-parse", "main")
+
+    assert project.run(apply=True) == 1
+
+    assert git(project.repo, "rev-parse", "main") == main
+
+
+def test_a_branch_that_merged_main_replaces_its_hand_resolved_copy_below_a_local_commit_that_removes_part_of_it(
+    project: Project,
+) -> None:
+    body = "".join(f"line {n}\n" for n in range(9))
+    project.commit(project.repo, "s.txt", body, "chore: add s")
+    git(project.repo, "push", "-q", "origin", "main")
+    path = project.worktree("feat/a", start="origin/main")
+    (path / "a.txt").write_text("a\n", encoding="utf-8")
+    git(path, "add", "a.txt")
+    project.commit(path, "s.txt", body.replace("line 1", "a"), "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    other = project.root / "other"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, "s.txt", body.replace("line 1", "up"), "chore: up")
+    git(other, "push", "-q", "origin", "main")
+    project.run(apply=True)
+    resolved = body.replace("line 1", "up a")
+    work = main_sync.resolve_worktree(project.repo)
+    (work / "s.txt").write_text(resolved, encoding="utf-8")
+    git(work, "add", "s.txt")
+    assert project.run(apply=True) == 0
+    git(project.repo, "rm", "-q", "a.txt")
+    git(project.repo, "commit", "-qm", "chore: drop a")
+    subprocess.run(["git", "-C", str(path), "merge", "-q", "origin/main"], check=False)
+    (path / "s.txt").write_text(resolved, encoding="utf-8")
+    git(path, "commit", "-qam", "Merge origin/main into feat/a")
+    project.commit(path, "b.txt", "b\n", "feat: b")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a", "chore: drop a"]
+    assert (project.repo / "b.txt").read_text(encoding="utf-8") == "b\n"
+    assert not (project.repo / "a.txt").exists()
+
+
+def test_a_changed_branch_replaces_its_hand_resolved_copy_with_a_change_its_history_reverts(
+    project: Project,
+) -> None:
+    body = "".join(f"line {n}\n" for n in range(9))
+    project.commit(project.repo, "s.txt", body, "chore: add s")
+    project.commit(project.repo, "r.txt", body, "chore: add r")
+    git(project.repo, "push", "-q", "origin", "main")
+    project.commit(
+        project.repo, "s.txt", body.replace("line 1", "local"), "chore: local"
+    )
+    path = project.worktree("feat/a", start="origin/main")
+    (path / "s.txt").write_text(body.replace("line 1", "a"), encoding="utf-8")
+    git(path, "add", "s.txt")
+    wrapped = body.replace("line 1", "a").replace("line 7", "a")
+    project.commit(path, "r.txt", wrapped, "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    resolved = body.replace("line 1", "local a")
+    work = main_sync.resolve_worktree(project.repo)
+    (work / "s.txt").write_text(resolved, encoding="utf-8")
+    git(work, "add", "s.txt")
+    assert project.run(apply=True) == 0
+    project.commit(path, "r.txt", body.replace("line 1", "a"), "fix: a")
+
+    assert project.run(apply=True) == 0
+
+    assert project.main_subjects() == ["chore: local", "feat: a"]
+    assert (project.repo / "r.txt").read_text(encoding="utf-8") == body.replace(
+        "line 1", "a"
+    )
+    assert (project.repo / "s.txt").read_text(encoding="utf-8") == resolved
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "latin-1"])
+def test_main_is_left_unchanged_when_a_changed_branch_drops_a_hand_resolved_line_beside_one_main_reverted(
+    project: Project, encoding: str
+) -> None:
+    body = "".join(f"line {n} \u00e9\n" for n in range(9))
+    project.commit(project.repo, "g.txt", body, "chore: add g")
+    project.commit(project.repo, "s.txt", body, "chore: add s", encoding)
+    git(project.repo, "push", "-q", "origin", "main")
+    project.commit(
+        project.repo, "g.txt", body.replace("line 1", "local"), "chore: local"
+    )
+    path = project.worktree("feat/a", start="origin/main")
+    (path / "g.txt").write_text(body.replace("line 1", "a"), encoding="utf-8")
+    git(path, "add", "g.txt")
+    project.commit(path, "s.txt", body.replace("line 1", "a"), "feat: a", encoding)
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    work = main_sync.resolve_worktree(project.repo)
+    (work / "g.txt").write_text(body.replace("line 1", "local a"), encoding="utf-8")
+    (work / "s.txt").write_text(
+        body.replace("line 1", "a").replace("line 7", "hand"), encoding=encoding
+    )
+    git(work, "add", "g.txt", "s.txt")
+    assert project.run(apply=True) == 0
+    project.commit(
+        project.repo,
+        "s.txt",
+        body.replace("line 7", "hand"),
+        "chore: undo a",
+        encoding,
+    )
+    project.commit(path, "b.txt", "b\n", "fix: a")
+    main = git(project.repo, "rev-parse", "main")
+
+    assert project.run(apply=True) == 1
+
+    assert git(project.repo, "rev-parse", "main") == main
