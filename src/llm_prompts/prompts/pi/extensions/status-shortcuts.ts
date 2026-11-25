@@ -3,7 +3,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { listAsks, openAsks } from "./pending-asks.ts";
 import { forkRegistry } from "./pi-context/registry.ts";
-import { loadTowerDo } from "./tower-do-patch.ts";
+import { foldBoard } from "./tower-do-patch.ts";
 
 type Task = { key: string; subject?: string; status: string; owner?: string };
 
@@ -42,9 +42,7 @@ async function readGit(pi: ExtensionAPI): Promise<string | undefined> {
 
 async function readBoard(cwd: string): Promise<Task[] | undefined> {
 	try {
-		const { boardFileFor } = await loadTowerDo<{ boardFileFor(cwd: string): string }>("paths.ts");
-		const { TowerBoard } = await loadTowerDo<{ TowerBoard: new (file: string) => { fold(): Promise<{ tasks: Task[] }> } }>("board.ts");
-		return (await new TowerBoard(boardFileFor(cwd)).fold()).tasks;
+		return (await foldBoard(cwd)).tasks;
 	} catch {
 		return undefined;
 	}

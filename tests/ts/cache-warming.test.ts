@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { after, afterEach, describe, mock, test } from "node:test";
@@ -7,11 +9,15 @@ import { loadExtension } from "./helpers.ts";
 
 const AGENT_DIR = "/agent";
 const towerUrl = (file: string) => pathToFileURL(join(AGENT_DIR, "npm", "node_modules", "tower-do", file)).href;
-const board = { tasks: [] as { status: string; owner: string }[] };
+const board = { tasks: [] as { status: string; owner: string }[], file: "missing/board.jsonl", folds: 0 };
 (globalThis as any).fakeBoard = board;
 const sources: Record<string, string> = {
-	[towerUrl("paths.ts")]: `export class BoardCache {
-		entryFor() { return { board: { fold: async () => ({ tasks: globalThis.fakeBoard.tasks }) }, config: {} }; }
+	[towerUrl("paths.ts")]: `export const boardFileFor = () => globalThis.fakeBoard.file;
+	export class BoardCache {
+		entryFor() { return { config: {} }; }
+	}`,
+	[towerUrl("board.ts")]: `export class TowerBoard {
+		async fold() { globalThis.fakeBoard.folds++; return { tasks: globalThis.fakeBoard.tasks }; }
 	}`,
 };
 const hooks = registerHooks({
@@ -24,6 +30,8 @@ afterEach(() => {
 	delete (globalThis as any)[REGISTRY];
 	mock.timers.reset();
 	board.tasks = [];
+	board.file = "missing/board.jsonl";
+	board.folds = 0;
 });
 
 const HOUR = 60 * 60 * 1000;
@@ -56,5 +64,25 @@ describe("cache warming", () => {
 		assert.deepEqual(await decide(["completed"]), { action: "warm" });
 		mock.timers.reset();
 		assert.deepEqual(await decide(["completed"], { idleHours: 2 }), { action: "stop" });
+	});
+
+	test("folds the board file again only after the file changes", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "board-"));
+		try {
+			board.file = join(dir, "board.jsonl");
+			writeFileSync(board.file, "a\n");
+			const decide = async () => {
+				const ext = await loadExtension("cache-warming", { agentDir: AGENT_DIR });
+				return ext.fire("cache_warming_decision", { action: "stop" }, ext.makeCtx());
+			};
+			await decide();
+			await decide();
+			assert.equal(board.folds, 1);
+			appendFileSync(board.file, "b\n");
+			await decide();
+			assert.equal(board.folds, 2);
+		} finally {
+			rmSync(dir, { recursive: true });
+		}
 	});
 });
