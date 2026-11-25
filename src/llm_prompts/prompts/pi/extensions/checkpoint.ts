@@ -15,6 +15,7 @@ type Mark = { name: string; resultEntryId: string; callId: string };
 type Call = { name: string; callId: string; args: unknown };
 
 const RECENT_CALLS = 5;
+const KEEP_USING_CHECKPOINTS = "Keep using checkpoints: mark before a detour, rewind after it.";
 
 const text = (content: Message["content"]): string =>
 	typeof content === "string" ? content : (content ?? []).map((block) => block.text ?? "").join("\n");
@@ -163,7 +164,7 @@ export default function (pi: ExtensionAPI) {
 		const inResult = readSettings(pi)?.shape === "result";
 		const content = mode === "raw" ? rawResults(region.filter((entry) => !(inResult ? turnIds : [resultEntryId]).includes(entry.sourceEntry.id)).flatMap((entry) => entry.messages)) : (summary ?? "");
 		const removedMarks = removed.length ? `\n\nMarks removed with them: ${removed.join(", ")}.` : "";
-		const foldText = `[checkpoint ${mode} to "${targetName}"] The steps since ${visibleMarks(entries).some((mark) => mark.name === targetName) ? "mark" : "call"} "${targetName}" were run, then removed from your context. Their outcome:\n${content}${removedMarks}`;
+		const foldText = `[checkpoint ${mode} to "${targetName}"] The steps since ${visibleMarks(entries).some((mark) => mark.name === targetName) ? "mark" : "call"} "${targetName}" were run, then removed from your context. Their outcome:\n${content}${removedMarks}\n\n${KEEP_USING_CHECKPOINTS}`;
 		const kept = inResult ? turnIds : [];
 		const edit = (targetId: string, replacement: { content: { type: "text"; text: string }[] } | null) => ({ type: "context_edit" as const, targetId, replacement });
 		return {
