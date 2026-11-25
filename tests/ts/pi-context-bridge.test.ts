@@ -5,7 +5,7 @@ import path from "node:path";
 import net from "node:net";
 import { after, describe, mock, test } from "node:test";
 import { loadExtension, useEnv } from "./helpers.ts";
-import { makeSocketDir, connectBridge, describeMain, prefixHash, reportPrefixToFile, serveBridge, trackPrefix, writeLeadPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
+import { makeSocketDir, connectBridge, describeMain, serveBridge, trackPrefix, writeLeadPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
 import { ROLES, withReadMcp } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-bridge-"));
@@ -84,17 +84,6 @@ describe("bridge", () => {
 		assert.deepEqual(settled.map((outcome) => (outcome.status === "fulfilled" ? outcome.value.content[0].text : (outcome.reason as Error).message)), ["mcp__semble__search:0", "mcp__semble__search:1", "server down", "mcp__semble__search:3"]);
 	});
 
-	test("the child reports its prefix hash to main", async () => {
-		const seen: string[] = [];
-		const server = await serveBridge({ role: ROLES.reader, execute: async () => reply("x"), onPrefix: (hash) => seen.push(hash) });
-		const client = await connectBridge(server.socket);
-		client.report("abc");
-		await client.call("mcp__semble__search", {});
-		client.close();
-		await server.close();
-		assert.deepEqual(seen, ["abc"]);
-	});
-
 	test("a server error after listening does not crash the process", async () => {
 		const created = mock.method(net, "createServer");
 		const server = await serveBridge({ role: ROLES.reader, execute: async () => reply("x") });
@@ -102,28 +91,6 @@ describe("bridge", () => {
 		created.mock.restore();
 		assert.doesNotThrow(() => listening.emit("error", new Error("EMFILE")));
 		await server.close();
-	});
-});
-
-describe("prefixHash", () => {
-	test("ignores the messages and follows the system prompt and tools of either payload shape", () => {
-		const base = { system: [{ text: "s" }], toolConfig: { tools: [{ name: "a" }] }, messages: [1] };
-		assert.equal(prefixHash(base), prefixHash({ ...base, messages: [1, 2, 3] }));
-		assert.notEqual(prefixHash(base), prefixHash({ ...base, system: [{ text: "t" }] }));
-		assert.notEqual(prefixHash(base), prefixHash({ ...base, toolConfig: { tools: [{ name: "b" }] } }));
-		assert.notEqual(prefixHash({ system: "s", tools: [{ name: "a" }] }), prefixHash({ system: "s", tools: [] }));
-	});
-});
-
-describe("reportPrefixToFile", () => {
-	test("a delegate with its own MCP servers writes its first request's prefix hash next to the handshake", async () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-prefix-"));
-		let handler: any;
-		reportPrefixToFile({ on: (_event: string, listener: unknown) => (handler = listener) } as any, path.join(dir, "handshake.json"));
-		handler({ payload: { system: "s", tools: [] } });
-		handler({ payload: { system: "later", tools: [] } });
-		assert.equal(fs.readFileSync(path.join(dir, "prefix"), "utf8"), prefixHash({ system: "s", tools: [] }));
-		fs.rmSync(dir, { recursive: true });
 	});
 });
 
@@ -174,7 +141,7 @@ describe("a warm fork's first request", () => {
 
 	test("sends main's system prompt and tools byte for byte, with its own messages", async () => {
 		const sent = await forkRequest({ system: [{ type: "text", text: "rules reinstalled since" }], tools: [{ name: "bash", description: "Run a command" }, { name: "read", description: "Read" }], messages: [1, 2] });
-		assert.equal(prefixHash(sent), prefixHash(lead));
+		assert.deepEqual([sent.system, sent.tools], [lead.system, lead.tools]);
 		assert.deepEqual(sent.messages, [1, 2]);
 	});
 
@@ -206,13 +173,7 @@ describe("a warm fork's first request", () => {
 
 	test("ignores main's requests without tools, such as a compaction summary", async () => {
 		const sent = await forkRequest(reinstalled, { system: "Summarize the conversation", messages: [] });
-		assert.equal(prefixHash(sent), prefixHash(lead));
-	});
-
-	test("reports main's prefix hash once it sent main's prefix", async () => {
-		fs.rmSync(path.join(scratch, "prefix"), { force: true });
-		await forkRequest(reinstalled);
-		assert.equal(fs.readFileSync(path.join(scratch, "prefix"), "utf8"), prefixHash(lead));
+		assert.deepEqual([sent.system, sent.tools], [lead.system, lead.tools]);
 	});
 
 	test("without main's prefix file, sends its own payload unchanged", async () => {
@@ -256,14 +217,11 @@ describe("a delegate started with the bridge", () => {
 	useEnv(() => ({ PI_CONTEXT_CHILD: handshake }));
 
 	async function child(execute: (tool: string, args: unknown) => Promise<ReturnType<typeof reply>>) {
-		const prefixes: string[] = [];
-		let reportReceived = () => {};
-		const reported = new Promise<void>((resolve) => (reportReceived = resolve));
-		const server = await serveBridge({ role: ROLES.reader, execute, onPrefix: (hash) => (prefixes.push(hash), reportReceived()) });
+		const server = await serveBridge({ role: ROLES.reader, execute });
 		const tool = { name: "mcp__semble__search", description: "Search code", parameters: { type: "object" }, exposure: "codemode", namespace: { name: "mcp__semble" }, annotations: { readOnlyHint: true } };
 		const bridge = { socket: server.socket, activeTools: ["read", "codemode"], tools: [tool], section: "MCP servers: semble" };
 		fs.writeFileSync(handshake, JSON.stringify({ role: "reader", bridge }));
-		return { loaded: await loadExtension("pi-context/index"), server, prefixes, reported, tool };
+		return { loaded: await loadExtension("pi-context/index"), server, tool };
 	}
 
 	test("registers main's MCP tools as proxies that run in main, and fails like the tool did", async () => {
@@ -281,18 +239,13 @@ describe("a delegate started with the bridge", () => {
 		await server.close();
 	});
 
-	test("declares main's tools and MCP servers section, and reports the first request's prefix", async () => {
-		const { loaded, server, prefixes, reported } = await child(async () => reply("x"));
+	test("declares main's tools and MCP servers section", async () => {
+		const { loaded, server } = await child(async () => reply("x"));
 		await loaded.fire("session_start", { reason: "startup" });
 		assert.deepEqual(loaded.pi.activeTools, ["read", "codemode"]);
 		const sections: Record<string, string> = {};
 		await loaded.fire("before_agent_start", { systemPromptOptions: { sections, contextFiles: [] } });
 		assert.equal(sections.mcp_servers, "MCP servers: semble");
-		const payload = { system: "s", tools: [] };
-		await loaded.fire("before_provider_request", { payload });
-		await loaded.fire("before_provider_request", { payload: { system: "later", tools: [] } });
-		await reported;
 		await server.close();
-		assert.deepEqual(prefixes, [prefixHash(payload)]);
 	});
 });

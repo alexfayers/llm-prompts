@@ -173,16 +173,6 @@ describe("hooks", () => {
 		assert.deepEqual(openAsks(branch()).map((ask) => ask.id), ["fork-y-y-1"]);
 	});
 
-	test("a foreground fork's pins clear when the run that got its result settles", () => {
-		const branch = () => appended.map(([customType, data]) => ({ type: "custom", customType, data }));
-		const main = { ...ctx(), hasUI: false, sessionManager: { getBranch: branch } };
-		background.pinForeground(main, { id: "f", name: "f" }, "OUTCOME blocked-on-user ref:rc\nASK: A or B?");
-		assert.deepEqual(openAsks(branch()).map((ask) => ask.id), ["fork-f-f-1"]);
-		handlers.agent_end({ messages: [{ role: "assistant" }] }, main);
-		handlers.agent_settled({ aborted: false }, main);
-		assert.deepEqual(openAsks(branch()), []);
-	});
-
 	test("a result that arrived while main was busy reaches the session that restarts after a quit", () => {
 		handlers.session_start({ reason: "startup" }, session());
 		registry.start(run("late"));

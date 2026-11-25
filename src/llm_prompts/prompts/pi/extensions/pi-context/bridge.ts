@@ -15,7 +15,6 @@ export type BridgeOptions = {
 	role: Role;
 	/** Runs the call in main, through its hooks. */
 	execute: (tool: string, args: unknown, signal?: AbortSignal) => Promise<BridgeResult>;
-	onPrefix?: (hash: string) => void;
 };
 
 /** The smallest unix socket path limit across platforms (macOS 104 bytes, Linux 108). */
@@ -51,10 +50,10 @@ function readRecords(socket: net.Socket, onRecord: (record: Record<string, unkno
 	socket.on("error", () => undefined);
 }
 
-const send = (socket: net.Socket, record: Reply | { prefix: string } | Request) => void (!socket.destroyed && socket.write(`${JSON.stringify(record)}\n`));
+const send = (socket: net.Socket, record: Reply | Request) => void (!socket.destroyed && socket.write(`${JSON.stringify(record)}\n`));
 
 /** Serves the role's MCP calls on a socket in a fresh private directory, removed on close. */
-export async function serveBridge({ role, execute, onPrefix }: BridgeOptions): Promise<{ socket: string; close(): Promise<void> }> {
+export async function serveBridge({ role, execute }: BridgeOptions): Promise<{ socket: string; close(): Promise<void> }> {
 	const socketDir = makeSocketDir();
 	const socketPath = path.join(socketDir, SOCKET_NAME);
 	const connections = new Set<net.Socket>();
@@ -62,7 +61,6 @@ export async function serveBridge({ role, execute, onPrefix }: BridgeOptions): P
 		connections.add(connection);
 		connection.once("close", () => connections.delete(connection));
 		readRecords(connection, (record) => {
-			if (typeof record.prefix === "string") return onPrefix?.(record.prefix);
 			const { id, tool, args } = record as Request;
 			if (!isProxied(tool)) return send(connection, { id, error: `${tool} is not an MCP tool` });
 			const blocked = decide(role, tool, (args ?? {}) as Record<string, unknown>);
@@ -91,7 +89,6 @@ export async function serveBridge({ role, execute, onPrefix }: BridgeOptions): P
 
 export type BridgeClient = {
 	call(tool: string, args: unknown): Promise<BridgeResult>;
-	report(prefixHash: string): void;
 	close(): void;
 };
 
@@ -123,7 +120,6 @@ export async function connectBridge(socketPath: string): Promise<BridgeClient> {
 				pending.set(id, { resolve, reject });
 				send(socket, { id, tool, args });
 			}),
-		report: (prefix) => send(socket, { prefix }),
 		close: () => void socket.destroy(),
 	};
 }
@@ -135,12 +131,6 @@ export type BridgeConfig = MainDescription & { socket: string };
 
 const SERVERS_SECTION = "mcp_servers";
 const SECTION_PATTERN = new RegExp(`<${SERVERS_SECTION}>\\n([\\s\\S]*?)\\n</${SERVERS_SECTION}>`);
-
-/** Hashes the part of a provider request that precedes the messages: the system prompt and the tool declarations. */
-export function prefixHash(payload: unknown): string {
-	const { system, tools, toolConfig } = payload as Record<string, unknown>;
-	return createHash("sha256").update(JSON.stringify([system, tools ?? toolConfig])).digest("hex");
-}
 
 /** Describes main's tools and servers section, cut to the tools `role` may use when given. */
 export function describeMain(pi: ExtensionAPI, ctx: ExtensionContext, role?: Role): MainDescription {
@@ -175,8 +165,6 @@ const toolSignatures = (prefix: Prefix): string =>
 	JSON.stringify(toolsOf(prefix).map((tool) => JSON.stringify([tool.name ?? tool.toolSpec?.name, tool.input_schema ?? tool.toolSpec?.inputSchema])).sort());
 
 let lastPrefix: Prefix | undefined;
-export const lastPrefixHash = () => lastPrefix && prefixHash(lastPrefix);
-
 /** Remembers the system prompt and tools of main's latest provider request that declares tools, which a compaction summary does not. */
 export function trackPrefix(pi: ExtensionAPI): void {
 	pi.on("before_provider_request", ({ payload }) => {
@@ -212,18 +200,6 @@ export function useLeadPrefix(pi: ExtensionAPI, handshakeFile: string): void {
 	});
 }
 
-export const PREFIX_FILE = "prefix";
-
-/** In a delegate with its own MCP servers: writes the prefix hash of its first provider request next to the handshake file. */
-export function reportPrefixToFile(pi: ExtensionAPI, handshakeFile: string): void {
-	let reported = false;
-	pi.on("before_provider_request", ({ payload }) => {
-		if (reported) return;
-		reported = true;
-		fs.writeFileSync(path.join(path.dirname(handshakeFile), PREFIX_FILE), prefixHash(payload), { mode: 0o600 });
-	});
-}
-
 /** In a delegate without MCP servers: registers main's MCP tools as proxies and declares main's tools and servers section. */
 export function registerChildBridge(pi: ExtensionAPI, config: BridgeConfig): void {
 	let connection: Promise<BridgeClient> | undefined;
@@ -252,11 +228,5 @@ export function registerChildBridge(pi: ExtensionAPI, config: BridgeConfig): voi
 	pi.on("before_agent_start", ({ systemPromptOptions: { sections } }) => {
 		if (config.section) sections[SERVERS_SECTION] = config.section;
 		else delete sections[SERVERS_SECTION];
-	});
-	let reported = false;
-	pi.on("before_provider_request", async ({ payload }) => {
-		if (reported) return;
-		reported = true;
-		(await connected()).report(prefixHash(payload));
 	});
 }

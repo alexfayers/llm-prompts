@@ -8,7 +8,7 @@ import { defineTool, getAgentDir, type AgentToolResult, type ExtensionAPI, type 
 import { Type } from "typebox";
 import { parseOutcome, projectResult } from "./outcome.ts";
 import { Background } from "./background.ts";
-import { describeMain, lastPrefixHash, LEAD_PREFIX_FILE, PREFIX_FILE, serveBridge, writeLeadPrefix, type BridgeOptions } from "./bridge.ts";
+import { describeMain, LEAD_PREFIX_FILE, serveBridge, writeLeadPrefix, type BridgeOptions } from "./bridge.ts";
 import { createWorktree, dropIfClean, gitOut, land, mainSnapshot, restoreWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
 import { checkReadMcp, coldCard, expandHome, readHandshake, ROLES, withReadMcp, type ReadMcp, type Role } from "./roles.ts";
 import { tokens } from "./live-view.ts";
@@ -156,8 +156,6 @@ export type DelegateOptions = {
 	cwd?: string;
 	/** The run's file directory. A new one is made when it is not given. */
 	files?: string;
-	/** The files of the finished run whose session `files` holds a copy of: the child's prefix is compared with that run's, not main's. */
-	from?: string;
 	/** Continue the session already in `files` instead of seeding a new one. */
 	resume?: boolean;
 	/** Keeps the run's files when the delegate ends, so a lost run can resume. */
@@ -173,7 +171,7 @@ export type DelegateOptions = {
 };
 
 /** Runs the role's session on a copy of the given entries with main's model, thinking level and directory, or as a cold worker with `model`, and returns its first turn. */
-export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { role, name, entries = [], message, signal, command, runId = newRunId(), model, mcp, worktree, repo, cwd, files = path.join(getAgentDir(), "pi-context", randomUUID()), from, resume, keep, continuable, onChild, onWarmup, onTurn }: DelegateOptions): Promise<Turn & { prefix?: "match" | "mismatch" } & Pick<Run, "lastRequestAt" | "context">> {
+export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { role, name, entries = [], message, signal, command, runId = newRunId(), model, mcp, worktree, repo, cwd, files = path.join(getAgentDir(), "pi-context", randomUUID()), resume, keep, continuable, onChild, onWarmup, onTurn }: DelegateOptions): Promise<Turn & Pick<Run, "lastRequestAt" | "context">> {
 	if (!ctx.model) throw new Error("Cannot start a delegate without a model.");
 	const session = resume && model ? sessionFileOf(files, true) : undefined;
 	if (resume && model && !session) throw new Error("The cold worker's session is gone.");
@@ -193,18 +191,9 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 	try {
 		fs.mkdirSync(files, { recursive: true, mode: 0o700 });
 		fs.rmSync(path.join(files, FINISHED_MARK), { force: true });
-		let prefix: "match" | "mismatch" | undefined;
-		const verdict = (hash: string) => {
-			const expected = from ? readText(path.join(from, PREFIX_FILE)) : lastPrefixHash();
-			return from && expected === undefined ? undefined : hash === expected ? "match" : "mismatch";
-		};
-		const onPrefix = model ? undefined : (hash: string) => {
-			fs.writeFileSync(path.join(files, PREFIX_FILE), hash, { mode: 0o600 });
-			prefix = verdict(hash);
-		};
 		const { readMcp } = forkSettings(pi, ctx);
 		const allowed = withReadMcp(role, readMcp);
-		bridge = mcp && (await serveBridge({ role: allowed, execute: mcp, onPrefix }));
+		bridge = mcp && (await serveBridge({ role: allowed, execute: mcp }));
 		const main = bridge && describeMain(pi, ctx, model ? allowed : undefined);
 		fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, repo, inherited, ...(!model && warm), ...(model && started && { billedFrom: started.billedFrom, cacheKey: started.cacheKey }), readMcp, bridge: bridge && { ...main, socket: bridge.socket } }), { mode: 0o600 });
 		if (model) fs.writeFileSync(cardFile, coldCard(role), { mode: 0o600 });
@@ -233,10 +222,8 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 		});
 		if (model && !session) warmed = await warmUp(JSON.stringify([model, role.name, coldCard(role), role.skills, childCwd, main]), onWarmup, signal);
 		const turn = await child.prompt(model || resume ? message : `${role.card}\n\n${message}`);
-		const reported = !model && !bridge && readText(path.join(files, PREFIX_FILE));
-		if (reported) prefix = verdict(reported);
 		await onTurn?.(turn);
-		return { ...turn, prefix, ...last };
+		return { ...turn, ...last };
 	} finally {
 		warmed?.();
 		await child?.close();
@@ -357,11 +344,11 @@ function report(ctx: ExtensionContext, error: unknown) {
 export function registerFork(pi: ExtensionAPI, command?: string[], background = new Background(pi)) {
 	const registry = registryOf();
 
-	/** Starts the delegate of a registered run. A background run reports its end to `background`. */
-	function startRun(ctx: ExtensionToolContext, run: { id: string; name: string; ref: string; role: Role; tree?: Worktree; target?: string; model?: string; files: string; background: boolean; signal?: AbortSignal }, delegate: Pick<DelegateOptions, "entries" | "message" | "from" | "resume">) {
+	/** Starts the delegate of a registered run in the background, which reports its end to `background`. */
+	function startRun(ctx: ExtensionToolContext, run: { id: string; name: string; ref: string; role: Role; tree?: Worktree; target?: string; model?: string; files: string }, delegate: Pick<DelegateOptions, "entries" | "message" | "resume">) {
 		const { id: runId, name, ref, tree } = run;
 		const merged: { landing?: Landing } = {};
-		const runSignal = run.background ? background.track(runId) : run.signal;
+		const runSignal = background.track(runId);
 		const onTurn = tree && (async (turn: Turn) => {
 			if (turn.error) return;
 			registry.update(runId, { state: "landing" });
@@ -372,25 +359,22 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			return { content: result.content, details: result.details, structuredContent: result.structuredContent, isError };
 		} : undefined;
 		const keep = () => registry.get(runId)?.state === "lost";
-		const running = runDelegate(pi, ctx, { role: run.role, name, ...delegate, signal: runSignal, command, runId, model: run.model, mcp, worktree: tree?.path ?? (run.role.writes ? (run.target ?? ctx.cwd) : undefined), repo: tree?.repo, cwd: run.target, files: run.files, keep, continuable: true, onChild: run.background ? (child) => background.attach(runId, child) : undefined, onWarmup: (waiting) => background.view?.note(runId, waiting ? "waiting for cache" : undefined), onTurn });
-		if (run.background) {
-			const onEnd = async (turn: Awaited<typeof running>) => {
-				const current = registry.get(runId);
-				if (!current || !isLive(current) || runSignal?.aborted) return;
-				const end = { ...endOf(ref, turn, merged.landing), lastRequestAt: turn.lastRequestAt, context: turn.context };
-				const text = turn.error ?? turn.text;
-				const note = merged.landing && tree ? `[merge: ${describeLanding(merged.landing, tree)}]` : tree && (await dropIfClean(tree)) ? "[merge: worktree removed: clean]" : undefined;
-				background.finish(ctx, runId, end, text, note);
-				pi.appendEntry("result-cap", { ref: end.ref, text });
-			};
-			const onFail = async (error: unknown) => {
-				if (registry.get(runId)?.state === "lost" || runSignal?.aborted) return;
-				const removed = tree && (await dropIfClean(tree));
-				background.finish(ctx, runId, { state: "failed" }, error instanceof Error ? error.message : String(error), removed ? "[merge: worktree removed: clean]" : undefined);
-			};
-			void running.then(onEnd, onFail).catch((error) => report(ctx, error));
-		}
-		return { running, merged };
+		const running = runDelegate(pi, ctx, { role: run.role, name, ...delegate, signal: runSignal, command, runId, model: run.model, mcp, worktree: tree?.path ?? (run.role.writes ? (run.target ?? ctx.cwd) : undefined), repo: tree?.repo, cwd: run.target, files: run.files, keep, continuable: true, onChild: (child) => background.attach(runId, child), onWarmup: (waiting) => background.view?.note(runId, waiting ? "waiting for cache" : undefined), onTurn });
+		const onEnd = async (turn: Awaited<typeof running>) => {
+			const current = registry.get(runId);
+			if (!current || !isLive(current) || runSignal.aborted) return;
+			const end = { ...endOf(ref, turn, merged.landing), lastRequestAt: turn.lastRequestAt, context: turn.context };
+			const text = turn.error ?? turn.text;
+			const note = merged.landing && tree ? `[merge: ${describeLanding(merged.landing, tree)}]` : tree && (await dropIfClean(tree)) ? "[merge: worktree removed: clean]" : undefined;
+			background.finish(ctx, runId, end, text, note);
+			pi.appendEntry("result-cap", { ref: end.ref, text });
+		};
+		const onFail = async (error: unknown) => {
+			if (registry.get(runId)?.state === "lost" || runSignal.aborted) return;
+			const removed = tree && (await dropIfClean(tree));
+			background.finish(ctx, runId, { state: "failed" }, error instanceof Error ? error.message : String(error), removed ? "[merge: worktree removed: clean]" : undefined);
+		};
+		void running.then(onEnd, onFail).catch((error) => report(ctx, error));
 	}
 
 	const textOf = (result: AgentToolResult<unknown>) => result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
@@ -398,13 +382,12 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		name: "fork",
 		label: "Fork",
 		description:
-			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It blocks until the delegate replies with an OUTCOME line and the work has landed. With background true it returns at once and the result arrives as a message when the delegate finishes. from runs on a copy of a finished fork's session instead. shared with tasks and model runs one cold stub that reads shared, then one child per task from that stub, so they share its prompt cache.",
-		promptSnippet: "Run a read-only or worktree-writing delegate on a copy of this session and wait for its reply",
+			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It returns at once and the result arrives as a message when the delegate replies with an OUTCOME line and the work has landed. from runs on a copy of a finished fork's session instead. shared with tasks and model runs one cold stub that reads shared, then starts one child per task from that stub when it finishes, so they share its prompt cache.",
+		promptSnippet: "Run a read-only or worktree-writing delegate on a copy of this session in the background",
 		parameters: Type.Object({
 			task: Type.Optional(Type.String({ description: "What the delegate should find out or check" })),
 			role: Type.Optional(Type.Union([Type.Literal("reader"), Type.Literal("writer")], { description: "reader (default) reads only, writer commits in its own worktree" })),
 			name: Type.Optional(Type.String({ pattern: "^[a-z0-9-]{1,24}$", description: "Short name for the delegate" })),
-			background: Type.Optional(Type.Boolean({ description: "Return at once and receive the result later as a message, so you can keep working" })),
 			target: Type.Optional(Type.String({ description: "Path of another directory, git checkout or worktree to read or land in, instead of this session's" })),
 			shared: Type.Optional(Type.String({ description: "Text a cold stub on model reads once before the tasks start from copies of its session" })),
 			tasks: Type.Optional(Type.Array(Type.Object({ name: Type.String({ pattern: "^[a-z0-9-]{1,24}$" }), task: Type.String() }), { description: "With shared: one child per task, each on a copy of the stub's session" })),
@@ -421,18 +404,31 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 				const repeated = names.find((name, at) => names.indexOf(name) !== at);
 				if (repeated) throw new Error(`task names must be unique and differ from the stub's: ${repeated}`);
 				const common = { role: params.role, target: params.target };
-				const started = await forkTool.execute(toolCallId, { ...common, name: stub, model: params.model, task: `${params.shared}\n\nRead what the text above says, then reply "OUTCOME done ref:" and stop.` }, signal, onUpdate, ctx);
-				const source = finishedRun(registry.all(), stub);
-				if (source.state !== "done") throw new Error(`stub ${stub} ended ${source.state}:\n${textOf(started)}`);
-				const mark = path.join(source.files, FINISHED_MARK);
-				const held = fs.existsSync(mark) && (fs.rmSync(mark), true);
-				try {
-					const children = await Promise.allSettled(params.tasks.map(({ name, task }) => forkTool.execute(toolCallId, { ...common, name, task, from: stub, background: params.background }, signal, onUpdate, ctx)));
-					const lines = children.map((child) => (child.status === "fulfilled" ? textOf(child.value) : String(child.reason instanceof Error ? child.reason.message : child.reason)));
-					return { content: [{ type: "text", text: [textOf(started), ...lines].join("\n") }], details: { name: stub, tasks: params.tasks.map(({ name }) => name) } };
-				} finally {
-					if (held) fs.writeFileSync(mark, "");
-				}
+				const started = await forkTool.execute(toolCallId, { ...common, name: stub, model: params.model, task: `${params.shared}\n\nYour specific task arrives next, so reply only "OUTCOME done ref:" and stop.` }, signal, onUpdate, ctx);
+				const stubId = (started.details as { runId: string }).runId;
+				const failTask = ({ name, task }: { name: string; task: string }, error: unknown) => {
+					const id = newRunId();
+					registry.start({ id, name, role: params.role ?? "reader", background: true, state: "running", task, cwd: ctx.cwd, startedAt: Date.now() });
+					background.finish(ctx, id, { state: "failed" }, error instanceof Error ? error.message : String(error));
+				};
+				const startTasks = async () => {
+					const source = finishedRun(registry.all(), stub);
+					if (source.state !== "done") throw new Error(`stub ${stub} ended ${source.state}: its task did not start`);
+					const mark = path.join(source.files, FINISHED_MARK);
+					const held = fs.existsSync(mark) && (fs.rmSync(mark), true);
+					try {
+						const children = await Promise.allSettled(params.tasks!.map((child) => forkTool.execute(toolCallId, { ...common, name: child.name, task: child.task, from: stub }, signal, onUpdate, ctx)));
+						children.forEach((child, at) => child.status === "rejected" && failTask(params.tasks![at], child.reason));
+					} finally {
+						if (held) fs.writeFileSync(mark, "");
+					}
+				};
+				const stopWatching = registry.onChange((run) => {
+					if (run.id !== stubId || isLive(run)) return;
+					stopWatching();
+					void startTasks().catch((error) => params.tasks!.forEach((task) => failTask(task, error)));
+				});
+				return { content: [{ type: "text", text: `${textOf(started)}\ntasks ${params.tasks.map(({ name }) => name).join(", ")} start when ${stub} finishes` }], details: { name: stub, runId: stubId, tasks: params.tasks.map(({ name }) => name) } };
 			}
 			if (params.task === undefined) throw new Error("fork needs task, or shared with tasks");
 			sweepFinished();
@@ -460,33 +456,10 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			const cold = params.model && model ? coldLabel(name, params.model, model) : undefined;
 			const hint = source ? undefined : cachedHint(registry.all(), role.name, target ?? ctx.cwd);
 			const withHint = (text: string) => (hint ? `${text}\n${hint}` : text);
-			registry.start({ id: runId, name, role: role.name, model, background: Boolean(params.background), state: "running", task: params.task, worktree: tree?.path, branch: tree?.branch, tree, target, cwd: ctx.cwd, startedAt: Date.now() });
+			registry.start({ id: runId, name, role: role.name, model, background: true, state: "running", task: params.task, worktree: tree?.path, branch: tree?.branch, tree, target, cwd: ctx.cwd, startedAt: Date.now() });
 			const message = `${worktreeLine(tree, role.writes ? home : undefined)}Task: ${params.task}`;
-			const { running, merged } = startRun(ctx, { id: runId, name, ref, role, tree, target, model, files, background: Boolean(params.background), signal }, { entries, message, from: source?.files, resume: Boolean(source) });
-			if (params.background) {
-				return { content: [{ type: "text", text: withHint(`started ${cold ?? `fork ${name}`} (background)`) }], details: { name, runId, background: true } };
-			}
-			let turn: Awaited<typeof running>;
-			try {
-				turn = await running;
-			} catch (error) {
-				registry.update(runId, { state: "failed", endedAt: Date.now() });
-				throw new Error(`fork ${name} failed: ${error instanceof Error ? error.message : String(error)}${await treeNote(tree)}`, { cause: error });
-			}
-			const request = { lastRequestAt: turn.lastRequestAt, context: turn.context };
-			if (turn.error) {
-				registry.update(runId, { state: "failed", endedAt: Date.now(), ...request });
-				throw new Error(`fork ${name} failed: ${turn.error}${await treeNote(tree)}`);
-			}
-			const end = endOf(ref, turn, merged.landing);
-			registry.update(runId, { ...end, endedAt: Date.now(), ...request });
-			pi.appendEntry("result-cap", { ref: end.ref, text: turn.text });
-			background.pinForeground(ctx, { id: runId, name }, turn.text);
-			const cache = `${cold ? `${cold}, ` : ""}${turn.prefix === "mismatch" ? "prefix mismatch, " : ""}${turn.firstUsage ? `cache ${turn.firstUsage.cacheRead}/${turn.firstUsage.cacheWrite}, ` : ""}`;
-			return {
-				content: [{ type: "text", text: withHint(`${projectResult(turn.text)}\n[fork ${name}: ${cache}ref ${end.ref}]${merged.landing && tree ? `\n[merge: ${describeLanding(merged.landing, tree)}]` : ""}`) }],
-				details: { name, role: role.name, outcome: end.outcome, usage: turn.usage, firstUsage: turn.firstUsage, prefix: turn.prefix, merge: merged.landing },
-			};
+			startRun(ctx, { id: runId, name, ref, role, tree, target, model, files }, { entries, message, resume: Boolean(source) });
+			return { content: [{ type: "text", text: withHint(`started ${cold ?? `fork ${name}`} (background)`) }], details: { name, runId, background: true } };
 		},
 	});
 	pi.registerTool(forkTool);
@@ -498,7 +471,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		const tree = run.tree && (fs.existsSync(run.tree.path) ? { ...run.tree, snapshot: await mainSnapshot(run.tree.repo) } : await createWorktree(run.tree.repo, path.join(getAgentDir(), "pi-context", WORKTREES), run.name));
 		registry.update(run.id, { state: "running", task, background: true, tree, worktree: tree?.path, branch: tree?.branch, startedAt: Date.now(), endedAt: undefined, endedBy: undefined, outcome: undefined, notify: undefined });
 		const message = `${worktreeLine(tree)}Task: ${task}`;
-		startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${toolCallId}`, role: ROLES[run.role as Role["name"]], tree, target: run.target ?? run.cwd, model: run.model, files: run.files, background: true }, { message, resume: true });
+		startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${toolCallId}`, role: ROLES[run.role as Role["name"]], tree, target: run.target ?? run.cwd, model: run.model, files: run.files }, { message, resume: true });
 		return { content: [{ type: "text" as const, text: `continued fork ${run.name} (background)` }], details: { name: run.name, runId: run.id, background: true } };
 	}
 
@@ -538,7 +511,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			if (run.tree) await restoreWorktree(run.tree);
 			registry.update(run.id, { state: "running", endedAt: undefined, endedBy: undefined });
 			const message = `${worktreeLine(run.tree)}Your session stopped before you finished. Continue the task from where you left off, and end with your OUTCOME line.`;
-			startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${toolCallId}`, role: ROLES[run.role as Role["name"]], tree: run.tree, target: run.target, model: run.model, files: run.files, background: true }, { message, resume: true });
+			startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${toolCallId}`, role: ROLES[run.role as Role["name"]], tree: run.tree, target: run.target, model: run.model, files: run.files }, { message, resume: true });
 			return { content: [{ type: "text", text: `resumed fork ${run.name} (background)` }], details: { name: run.name, runId: run.id, background: true } };
 		},
 	});

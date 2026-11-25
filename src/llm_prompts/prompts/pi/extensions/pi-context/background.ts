@@ -89,11 +89,6 @@ export class Background {
 		return lines.join("\n");
 	}
 
-	/** Pins the `ASK:` lines of a foreground fork's reply, to clear when the main run that got it settles. */
-	pinForeground(ctx: Parameters<typeof pinForkAsks>[1], run: Parameters<typeof pinForkAsks>[2], text: string): void {
-		this.announced.push(...pinForkAsks(this.pi, ctx, run, text));
-	}
-
 	/** Notes whether an `ask_user` call of a main run went unanswered. */
 	noteRun(messages: Parameters<typeof askUserUnanswered>[0]): void {
 		this.askUnanswered ||= askUserUnanswered(messages);
