@@ -2718,6 +2718,20 @@ class TestContributeTargets:
         )
 
 
+class TestPrSubcommand:
+    def test_number_and_tool_reach_run_pr(self, tmp_path: Path) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "pr", "7", "--tool", "a"]),
+            patch(
+                "llm_prompts.cli._contribute_target",
+                return_value=(tmp_path, "src/pkg/prompts/"),
+            ),
+            patch("llm_prompts.pr.run_pr", return_value=0) as mock_pr,
+        ):
+            assert main() == 0
+        mock_pr.assert_called_once_with(tmp_path, "src/pkg/prompts/", 7)
+
+
 class TestContributeSubcommand:
     def test_list_reaches_list_targets(self, tmp_path: Path) -> None:
         targets = [_ContributeTarget("llm-prompts", tmp_path, "src/pkg/prompts/")]

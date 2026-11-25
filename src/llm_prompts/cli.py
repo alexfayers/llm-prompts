@@ -1638,6 +1638,18 @@ def _run_command(
     )
     ready_parser.add_argument("number", type=int, help="The PR number.")
 
+    pr_parser = subparsers.add_parser(
+        "pr",
+        help="Check the size of a PR's prompts, rebase it onto main, mark it ready and set auto-merge.",
+    )
+    pr_parser.add_argument("number", type=int, help="The PR number.")
+    pr_parser.add_argument(
+        "--tool",
+        metavar="NAME",
+        required=True,
+        help="The configured tool the PR is in.",
+    )
+
     args = parser.parse_args()
 
     if (
@@ -1986,6 +1998,12 @@ def _run_command(
             sync_options,
             _contribute_targets() if linking else targets,
         )
+    elif args.command == "pr":
+        from .pr import run_pr
+
+        with run.exit_outcome("usage_error"):
+            repo, prefix = _contribute_target(args.tool)
+        return run_pr(repo, prefix, args.number)
     else:
         parser.print_help()
         sys.exit(1)
