@@ -1,4 +1,4 @@
-// Stands in for `pi --mode rpc` as a fork child: the task text picks the reply, STUB_STEER waits for a steer command and exits slowly once its input closes, a resumed fork replies slowly, STUB_INSPECT reports how the child was started, STUB_LOG names a file that logs each prompt and its slow first reply, and STUB_COMPLY replies with the quoted reply its prompt asks for, and a cold worker, or a fork told STUB_TURN, writes one assistant entry per prompt into its session.
+// Stands in for `pi --mode rpc` as a fork child: the task text picks the reply, STUB_STEER waits for a steer command and exits slowly once its input closes, a resumed fork replies slowly, STUB_INSPECT reports how the child was started, STUB_LOG names a file that logs each prompt and its slow first reply, and STUB_COMPLY or a cold stub's prompt replies with the quoted reply its prompt asks for, and a cold worker, or a fork told STUB_TURN, writes one assistant entry per prompt into its session.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import net from "node:net";
@@ -45,7 +45,7 @@ async function replyTo(text) {
 		while (!existsSync(gate)) await new Promise((resolve) => setTimeout(resolve, 20));
 		return `OUTCOME done ref:rc-fork-${gate.split("/").pop()}`;
 	}
-	const quoted = text.includes("STUB_COMPLY") && /reply(?: only)? "([^"]+)"/.exec(text)?.[1];
+	const quoted = (text.includes("STUB_COMPLY") || text.includes("You hold the system prompt")) && /reply(?: only)? "([^"]+)"/.exec(text)?.[1];
 	if (quoted) return quoted;
 	if (text.includes("STUB_REPORT")) return "OUTCOME done ref:rc-fork-x\nbody line";
 	if (text.includes("STUB_WRITE")) {

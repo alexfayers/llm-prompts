@@ -29,6 +29,8 @@ export type Run = {
 	from?: string;
 	/** The prompt cache key its requests send when it joined such a group. */
 	cacheKey?: string;
+	/** An automatic cold stub, which no `from`, `fork_resume` or `fork_steer` can continue. */
+	stub?: boolean;
 	/** The model of a cold worker. */
 	model?: string;
 	startedAt: number;

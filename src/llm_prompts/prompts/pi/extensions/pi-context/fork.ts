@@ -1,11 +1,11 @@
 // Adds the fork tool, which runs a delegate on a copy of this session that shares its prompt cache, or a cold worker on a cheaper model. A writer works in a git worktree and lands its commits through the merge queue.
 // Config: llmPrompts.forks in pi settings: mcpProxy (true: a fork uses main's MCP servers), privateNames (regex of names a writer's commits may not land with), memoryMax and cpuQuota (systemd limits of one fork and its processes, defaulting to a quarter of the host's memory and half its cores), readMcp (array of {tool, argsMatch?}: extra MCP tools, as globs, a delegate may call when each argsMatch regex matches the whole of that string argument)
 // Env: PI_CONTEXT_CHILD (set in a delegate, which cannot fork), PI_CONTEXT_ROLE and PI_CONTEXT_RUN_ID (set for a delegate), PI_CONTEXT_WORKTREE (set for a writer: its worktree, for hooks that resolve the session repo), PI_CODING_AGENT_DIR (set for a reader: a copy of the agent directory without the language server extension)
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { buildSessionContext, defineTool, generateSummary, getAgentDir, type AgentToolResult, type ExtensionAPI, type ExtensionContext, type ExtensionToolContext, type SessionEntry } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { buildSessionContext, defineTool, formatSkillsForPrompt, generateSummary, getAgentDir, loadProjectContextFiles, loadSkills, type AgentToolResult, type ExtensionAPI, type ExtensionContext, type ExtensionToolContext, type SessionEntry } from "@earendil-works/pi-coding-agent";
+import { Type, type Static } from "typebox";
 import { parseOutcome, projectResult } from "./outcome.ts";
 import { Background } from "./background.ts";
 import { describeMain, LEAD_PREFIX_FILE, serveBridge, writeLeadPrefix, type BridgeOptions } from "./bridge.ts";
@@ -108,6 +108,81 @@ export function sweepFinished(root = path.join(getAgentDir(), "pi-context"), now
 		const mark = path.join(root, dir, FINISHED_MARK);
 		const stat = fs.statSync(mark, { throwIfNoEntry: false });
 		if (stat && now - stat.mtimeMs > KEEP_FINISHED_MS) fs.rmSync(path.join(root, dir), { recursive: true, force: true });
+	}
+	const stubs = path.join(root, STUBS);
+	for (const entry of fs.existsSync(stubs) ? fs.readdirSync(stubs) : []) if (now - fs.statSync(path.join(stubs, entry)).mtimeMs > KEEP_FINISHED_MS) fs.rmSync(path.join(stubs, entry), { recursive: true, force: true });
+}
+
+const stubTask = (shared: string) => `${shared}\n\nYour specific task arrives next, so reply only "OUTCOME done ref:" and stop.`;
+const COLD_STUB_TEXT = "You hold the system prompt, rules and context that the cold workers on your model share.";
+
+const STUBS = "stubs";
+const STUB_LOCK_STALE_MS = 5 * 60_000;
+const STUB_POLL_MS = 100;
+const stubsDir = () => path.join(getAgentDir(), "pi-context", STUBS);
+/** Names the published stub a child copies, which no `from` can name. */
+const STUB_SOURCE = Symbol("stubSource");
+/** Marks the run that builds a stub, which no public fork control reaches. */
+const STUB_BUILD = Symbol("stubBuild");
+
+/** The files a cold worker in `dir` reads into its prompt: the context files pi loads for `dir`, with the agent dir's AGENTS.md replaced by AGENTS.delegate.md as the worker does, and the SYSTEM.md and APPEND_SYSTEM.md files. */
+function promptInputs(dir: string): [string, string | undefined][] {
+	const agentDir = getAgentDir();
+	const rules = path.resolve(agentDir, "AGENTS.md");
+	const delegateRules = readText(path.join(agentDir, "AGENTS.delegate.md"));
+	const context = loadProjectContextFiles({ cwd: dir, agentDir }).map(({ path: file, content }): [string, string | undefined] => [file, path.resolve(file) === rules ? (delegateRules ?? content) : content]);
+	const system = ["SYSTEM.md", "APPEND_SYSTEM.md"].flatMap((name) => [path.join(dir, ".pi", name), path.join(agentDir, name)]).map((file): [string, string | undefined] => [file, readText(file)]);
+	return [...context, ...system];
+}
+
+/** The name, description and path of the role's skills, as pi puts them into the worker's prompt. */
+const skillPrompt = (role: Role, dir: string): string => {
+	const agentDir = getAgentDir();
+	return formatSkillsForPrompt(loadSkills({ cwd: dir, agentDir, skillPaths: role.skills.map((skill) => path.join(agentDir, "skills", skill)), includeDefaults: false }).skills);
+};
+
+/** The hash that names the stub for a cold worker: it changes with the model and effort, role card, skills, directory and the prompt files, so a changed prompt builds a new stub. */
+const coldStubHash = (role: Role, model: string, dir: string): string =>
+	createHash("sha256").update(JSON.stringify([model, role.name, coldCard(role), role.skills, dir, promptInputs(dir), skillPrompt(role, dir)])).digest("hex").slice(0, 16);
+
+/** Takes the lock file, or says another build holds it. Shortcut: two processes that both find a stale lock may both build, and the atomic publish keeps one stub, upgrade when builds run long enough to matter. */
+function lockStub(lock: string): boolean {
+	fs.mkdirSync(path.dirname(lock), { recursive: true });
+	for (let attempt = 0; attempt < 2; attempt++) {
+		try {
+			fs.closeSync(fs.openSync(lock, "wx"));
+			return true;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+			const taken = fs.statSync(lock, { throwIfNoEntry: false });
+			if (taken && Date.now() - taken.mtimeMs <= STUB_LOCK_STALE_MS) return false;
+			fs.rmSync(lock, { force: true });
+		}
+	}
+	return false;
+}
+
+/** Waits until the stub is published, or false once its lock is gone or stale without it. */
+async function awaitStub(dir: string, lock: string): Promise<boolean> {
+	while (!fs.existsSync(dir)) {
+		const taken = fs.statSync(lock, { throwIfNoEntry: false });
+		if (!taken || Date.now() - taken.mtimeMs > STUB_LOCK_STALE_MS) return false;
+		await new Promise((resolve) => setTimeout(resolve, STUB_POLL_MS));
+	}
+	return true;
+}
+
+/** Copies what a child needs of the stub run's files to `dir` in one rename, so no reader sees half a stub. */
+function publishStub(files: string, dir: string): void {
+	const temp = `${dir}.${randomUUID()}.tmp`;
+	fs.mkdirSync(temp, { recursive: true });
+	fs.cpSync(path.join(files, "session"), path.join(temp, "session"), { recursive: true });
+	for (const name of ["handshake.json", LEAD_PREFIX_FILE]) if (fs.existsSync(path.join(files, name))) fs.copyFileSync(path.join(files, name), path.join(temp, name));
+	try {
+		fs.renameSync(temp, dir);
+	} catch (error) {
+		fs.rmSync(temp, { recursive: true, force: true });
+		if (!fs.existsSync(dir)) throw error;
 	}
 }
 
@@ -273,10 +348,10 @@ const isPrimaryCheckout = async (dir: string) => {
 const sameDir = (a: string, b: string) => fs.realpathSync(a) === fs.realpathSync(b);
 
 /** Whether a lost run's session is still there to continue. */
-export const canResume = (run: Run): boolean => run.state === "lost" && run.background && Boolean(run.files && sessionFileOf(run.files, Boolean(run.model)));
+export const canResume = (run: Run): boolean => !run.stub && run.state === "lost" && run.background && Boolean(run.files && sessionFileOf(run.files, Boolean(run.model)));
 
 /** Whether a finished run's session is still there to continue with a new task. */
-export const canContinue = (run: Run): boolean => FINISHED.includes(run.state) && Boolean(run.files && sessionFileOf(run.files, Boolean(run.model)));
+export const canContinue = (run: Run): boolean => !run.stub && FINISHED.includes(run.state) && Boolean(run.files && sessionFileOf(run.files, Boolean(run.model)));
 
 /** The latest finished run named `name` whose session is still there. */
 export function finishedRun(runs: Run[], name: string): Run & { files: string } {
@@ -444,23 +519,52 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		void running.then(onEnd, onFail).catch((error) => report(ctx, error));
 	}
 
+	type ForkTask = { name: string; task: string };
+	const failTask = (ctx: ExtensionContext, role: string | undefined, { name, task }: ForkTask, error: unknown) => {
+		const id = newRunId();
+		registry.start({ id, name, role: role ?? "reader", background: true, state: "running", task, cwd: ctx.cwd, startedAt: Date.now() });
+		background.finish(ctx, id, { state: "failed" }, error instanceof Error ? error.message : String(error));
+	};
+
+	/** Starts each task once the stub run `stubId` named `stub` has ended done, or fails each when it did not. */
+	function afterStub(stub: string, stubId: string, tasks: ForkTask[], start: (task: ForkTask) => Promise<unknown>, fail: (task: ForkTask, error: unknown) => void) {
+		const startTasks = async () => {
+			const source = finishedRun(registry.all(), stub);
+			if (source.state !== "done") throw new Error(`stub ${stub} ended ${source.state}: its task did not start`);
+			const mark = path.join(source.files, FINISHED_MARK);
+			const held = fs.existsSync(mark) && (fs.rmSync(mark), true);
+			try {
+				const children = await Promise.allSettled(tasks.map(start));
+				children.forEach((child, at) => child.status === "rejected" && fail(tasks[at], child.reason));
+			} finally {
+				if (held) fs.writeFileSync(mark, "");
+			}
+		};
+		const stopWatching = registry.onChange((run) => {
+			if (run.id !== stubId || isLive(run)) return;
+			stopWatching();
+			void startTasks().catch((error) => tasks.forEach((task) => fail(task, error)));
+		});
+	}
+
 	const textOf = (result: AgentToolResult<unknown>) => result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+	const forkParams = Type.Object({
+		task: Type.Optional(Type.String({ description: "What the delegate should find out or check" })),
+		role: Type.Optional(Type.Union([Type.Literal("reader"), Type.Literal("writer")], { description: "reader (default) reads only, writer commits in its own worktree" })),
+		name: Type.Optional(Type.String({ pattern: "^[a-z0-9-]{1,24}$", description: "Short name for the delegate" })),
+		target: Type.Optional(Type.String({ description: "Path of another directory, git checkout or worktree to read or land in, instead of this session's" })),
+		shared: Type.Optional(Type.String({ description: "Text a cold stub on model reads once before the tasks start from copies of its session" })),
+		tasks: Type.Optional(Type.Array(Type.Object({ name: Type.String({ pattern: "^[a-z0-9-]{1,24}$" }), task: Type.String() }), { description: "With shared: one child per task, each on a copy of the stub's session" })),
+		from: Type.Optional(Type.String({ pattern: "^[a-z0-9-]{1,24}$", description: "Name of a finished fork: run on a new copy of its session, at its model and effort, instead of on this session" })),
+		model: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9][\\w./:@-]*$", description: "Run as a cold worker on this model: provider/id (optionally :thinking) or a tier name such as sol or opus. Any model starts an empty session with no context and no prompt cache from you, so the task must be self-contained" })),
+	});
 	const forkTool = defineTool({
 		name: "fork",
 		label: "Fork",
 		description:
-			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It returns at once and the result arrives as a message when the delegate replies with an OUTCOME line and the work has landed. from runs on a copy of a finished fork's session instead. A session over 150000 tokens of context starts the fork cold on the same model with a summary instead of a copy. shared with tasks and model runs one cold stub that reads shared, then starts one child per task from that stub when it finishes, so they share its prompt cache.",
+			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It returns at once and the result arrives as a message when the delegate replies with an OUTCOME line and the work has landed. from runs on a copy of a finished fork's session instead. A session over 150000 tokens of context starts the fork cold on the same model with a summary instead of a copy. A cold worker (model, no from) starts on a copy of a stub kept for its model, effort and role, which the first one builds. shared with tasks and model runs one cold stub that reads shared, then starts one child per task from that stub when it finishes, so they share its prompt cache.",
 		promptSnippet: "Run a read-only or worktree-writing delegate on a copy of this session in the background",
-		parameters: Type.Object({
-			task: Type.Optional(Type.String({ description: "What the delegate should find out or check" })),
-			role: Type.Optional(Type.Union([Type.Literal("reader"), Type.Literal("writer")], { description: "reader (default) reads only, writer commits in its own worktree" })),
-			name: Type.Optional(Type.String({ pattern: "^[a-z0-9-]{1,24}$", description: "Short name for the delegate" })),
-			target: Type.Optional(Type.String({ description: "Path of another directory, git checkout or worktree to read or land in, instead of this session's" })),
-			shared: Type.Optional(Type.String({ description: "Text a cold stub on model reads once before the tasks start from copies of its session" })),
-			tasks: Type.Optional(Type.Array(Type.Object({ name: Type.String({ pattern: "^[a-z0-9-]{1,24}$" }), task: Type.String() }), { description: "With shared: one child per task, each on a copy of the stub's session" })),
-			from: Type.Optional(Type.String({ pattern: "^[a-z0-9-]{1,24}$", description: "Name of a finished fork: run on a new copy of its session, at its model and effort, instead of on this session" })),
-			model: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9][\\w./:@-]*$", description: "Run as a cold worker on this model: provider/id (optionally :thinking) or a tier name such as sol or opus. Any model starts an empty session with no context and no prompt cache from you, so the task must be self-contained" })),
-		}),
+		parameters: forkParams,
 		async execute(toolCallId, params, signal, onUpdate, ctx): Promise<AgentToolResult<unknown>> {
 			if (process.env.PI_CONTEXT_CHILD) throw new Error("Only the top-level session can fork.");
 			if (!ctx.model) throw new Error("Cannot fork without a model.");
@@ -471,36 +575,16 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 				const repeated = names.find((name, at) => names.indexOf(name) !== at);
 				if (repeated) throw new Error(`task names must be unique and differ from the stub's: ${repeated}`);
 				const common = { role: params.role, target: params.target };
-				const started = await forkTool.execute(toolCallId, { ...common, name: stub, model: params.model, task: `${params.shared}\n\nYour specific task arrives next, so reply only "OUTCOME done ref:" and stop.` }, signal, onUpdate, ctx);
+				const started = await forkTool.execute(toolCallId, { ...common, name: stub, model: params.model, task: stubTask(params.shared) }, signal, onUpdate, ctx);
 				const stubId = (started.details as { runId: string }).runId;
-				const failTask = ({ name, task }: { name: string; task: string }, error: unknown) => {
-					const id = newRunId();
-					registry.start({ id, name, role: params.role ?? "reader", background: true, state: "running", task, cwd: ctx.cwd, startedAt: Date.now() });
-					background.finish(ctx, id, { state: "failed" }, error instanceof Error ? error.message : String(error));
-				};
-				const startTasks = async () => {
-					const source = finishedRun(registry.all(), stub);
-					if (source.state !== "done") throw new Error(`stub ${stub} ended ${source.state}: its task did not start`);
-					const mark = path.join(source.files, FINISHED_MARK);
-					const held = fs.existsSync(mark) && (fs.rmSync(mark), true);
-					try {
-						const children = await Promise.allSettled(params.tasks!.map((child) => forkTool.execute(toolCallId, { ...common, name: child.name, task: child.task, from: stub }, signal, onUpdate, ctx)));
-						children.forEach((child, at) => child.status === "rejected" && failTask(params.tasks![at], child.reason));
-					} finally {
-						if (held) fs.writeFileSync(mark, "");
-					}
-				};
-				const stopWatching = registry.onChange((run) => {
-					if (run.id !== stubId || isLive(run)) return;
-					stopWatching();
-					void startTasks().catch((error) => params.tasks!.forEach((task) => failTask(task, error)));
-				});
+				const startChild = (child: ForkTask) => forkTool.execute(toolCallId, { ...common, ...child, from: stub }, signal, onUpdate, ctx);
+				afterStub(stub, stubId, params.tasks, startChild, (task, error) => failTask(ctx, params.role, task, error));
 				return { content: [{ type: "text", text: `${textOf(started)}\ntasks ${params.tasks.map(({ name }) => name).join(", ")} start when ${stub} finishes` }], details: { name: stub, runId: stubId, tasks: params.tasks.map(({ name }) => name) } };
 			}
 			if (params.task === undefined) throw new Error("fork needs task, or shared with tasks");
 			sweepFinished();
 			if (params.from !== undefined && params.model !== undefined) throw new Error("from runs at the source's model and effort: drop model");
-			const source = params.from === undefined ? undefined : finishedRun(registry.all(), params.from);
+			const source = (params as { [STUB_SOURCE]?: Run & { files: string } })[STUB_SOURCE] ?? (params.from === undefined ? undefined : finishedRun(registry.all(), params.from));
 			const role: Role = ROLES[params.role ?? (source?.role as Role["name"] | undefined) ?? "reader"];
 			const name = params.name ?? `fork-${randomUUID().slice(0, 6)}`;
 			const targetPath = params.target ?? (source && (source.target ?? source.cwd));
@@ -532,7 +616,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 				}
 				const placed = { worktree: tree?.path, branch: tree?.branch, tree };
 				if (tooLarge) registry.update(runId, placed);
-				else registry.start({ id: runId, name, role: role.name, ...(source && { from: source.from ?? source.name, cacheKey: cacheKeyOf(files) }), model, background: true, state: "running", task: params.task!, ...placed, target, cwd: ctx.cwd, startedAt: Date.now() });
+				else registry.start({ id: runId, name, role: role.name, ...(source && { from: source.from ?? source.name, cacheKey: cacheKeyOf(files) }), ...((params as { [STUB_BUILD]?: true })[STUB_BUILD] && { stub: true }), model, background: true, state: "running", task: params.task!, ...placed, target, cwd: ctx.cwd, startedAt: Date.now() });
 				const message = `${worktreeLine(tree, role.writes ? home : undefined)}${summary ? `Summary of the session you fork from:\n${summary}\n\n` : ""}Task: ${params.task}`;
 				startRun(ctx, { id: runId, name, ref, role, tree, target, model, files }, { entries, message, resume: Boolean(source) });
 			};
@@ -548,7 +632,55 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			return { content: [{ type: "text", text: withHint(`started ${cold ?? `fork ${name}`} (background)`) }], details: { name, runId, background: true } };
 		},
 	});
-	pi.registerTool(forkTool);
+	/** Starts a cold worker as a copy of the stub shared by the cold workers of its model, effort, role, directory and prompt files. The first worker without one builds it under a lock file, and the others, in any session, wait for it to be published. */
+	const coldTool = {
+		...forkTool,
+		async execute(toolCallId: string, params: Static<typeof forkParams>, signal: AbortSignal | undefined, onUpdate: Parameters<typeof forkTool.execute>[3], ctx: Parameters<typeof forkTool.execute>[4]): Promise<AgentToolResult<unknown>> {
+			if (process.env.PI_CONTEXT_CHILD || params.model === undefined || params.task === undefined || params.from !== undefined || params.shared !== undefined || params.tasks !== undefined) return forkTool.execute(toolCallId, params, signal, onUpdate, ctx);
+			const model = resolveModel(params.model);
+			const role = ROLES[params.role ?? "reader"];
+			const hash = coldStubHash(role, model, path.resolve(ctx.cwd, expandHome(params.target ?? ".")));
+			const stub = `stub-${hash}`;
+			const dir = path.join(stubsDir(), hash);
+			const lock = `${dir}.lock`;
+			const child = { name: params.name ?? `fork-${randomUUID().slice(0, 6)}`, task: params.task };
+			const common = { role: params.role, target: params.target };
+			const source: Run = { id: hash, name: stub, role: role.name, background: true, state: "done", task: "", model, files: dir, cwd: ctx.cwd, startedAt: 0 };
+			const startChild = (task: ForkTask) => forkTool.execute(toolCallId, { ...common, ...task, [STUB_SOURCE]: source } as Static<typeof forkParams>, signal, onUpdate, ctx);
+			const labelled = (text: string) => ({ content: [{ type: "text" as const, text: text.replace(/^[^\n]*/, `started ${coldLabel(child.name, params.model!, model)} (background)`) }], details: { name: child.name, background: true } });
+			sweepFinished();
+			if (fs.existsSync(dir)) return labelled(textOf(await startChild(child)));
+			let started = "";
+			if (lockStub(lock)) {
+				if (fs.existsSync(dir)) {
+					fs.rmSync(lock, { force: true });
+					return labelled(textOf(await startChild(child)));
+				}
+				try {
+					const result = await forkTool.execute(toolCallId, { ...common, name: stub, model: params.model, task: stubTask(COLD_STUB_TEXT), [STUB_BUILD]: true } as Static<typeof forkParams>, signal, onUpdate, ctx);
+					const stubId = (result.details as { runId: string }).runId;
+					started = textOf(result);
+					const stopWatching = registry.onChange((run) => {
+						if (run.id !== stubId || isLive(run)) return;
+						stopWatching();
+						try {
+							if (run.state === "done" && run.files) publishStub(run.files, dir);
+						} catch (error) {
+							report(ctx, error);
+						} finally {
+							fs.rmSync(lock, { force: true });
+						}
+					});
+				} catch (error) {
+					fs.rmSync(lock, { force: true });
+					throw error;
+				}
+			}
+			void awaitStub(dir, lock).then((ready) => (ready ? startChild(child) : Promise.reject(new Error(`stub ${stub} did not finish: its task did not start`)))).catch((error) => failTask(ctx, params.role, child, error));
+			return labelled(`${started}\n${child.name} starts when ${stub} finishes`);
+		},
+	};
+	pi.registerTool(coldTool);
 	/** Gives a finished run a new task on its own session, model and role, in the background. */
 	async function continueRun(ctx: ExtensionToolContext, name: string, task: string, toolCallId: string) {
 		sweepFinished();
@@ -609,7 +741,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		parameters: Type.Object({ name: Type.String({ description: "Name of the background fork" }), message: Type.String({ description: "What the fork should do differently or also do" }) }),
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			if (process.env.PI_CONTEXT_CHILD) throw new Error("Only the top-level session can steer a fork.");
-			const isLiveFork = registry.live().some((run) => run.background && run.name === params.name);
+			const isLiveFork = registry.live().some((run) => run.background && !run.stub && run.name === params.name);
 			if (!isLiveFork && registry.all().some((run) => run.name === params.name && canContinue(run))) return continueRun(ctx, params.name, params.message, toolCallId);
 			await background.steer(params.name, params.message);
 			background.resolveForkAsks(ctx, params.name);
