@@ -16,7 +16,7 @@ import subprocess
 from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from functools import partial
+from functools import cache, partial
 from pathlib import Path
 from typing import Any, NamedTuple, TextIO
 
@@ -85,6 +85,26 @@ def _git(*args: str, repo: Path) -> str:
     return completed.stdout.strip()
 
 
+@cache
+def _git_cached(repo: Path, *args: str) -> str:
+    """Return ``_git``'s output, kept until ``_refs_moved``."""
+    return _git(*args, repo=repo)
+
+
+def _refs_moved() -> None:
+    """Forget the git reads that depend on where refs point. Call it after anything moves a ref."""
+    _git_cached.cache_clear()
+    _contains.cache_clear()
+
+
+def _heads(repo: Path) -> dict[str, str]:
+    """Return the tip of each local branch."""
+    rows = _git_cached(
+        repo, "for-each-ref", "--format=%(objectname) %(refname:lstrip=2)", "refs/heads"
+    )
+    return {name: sha for sha, name in (row.split(" ", 1) for row in rows.splitlines())}
+
+
 def _run_with_retries(argv: list[str], cwd: Path) -> str:
     """Run a network command in ``cwd`` and return its stdout, retrying transient failures with backoff."""
     return run_with_retries(
@@ -94,7 +114,10 @@ def _run_with_retries(argv: list[str], cwd: Path) -> str:
 
 def _git_network(*args: str, repo: Path) -> str:
     """Run a git command that contacts a remote against ``repo`` and return its stripped stdout."""
-    return _run_with_retries(["git", "-C", str(repo), *args], repo).strip()
+    try:
+        return _run_with_retries(["git", "-C", str(repo), *args], repo).strip()
+    finally:
+        _refs_moved()
 
 
 def _gh_json(*args: str, repo: Path) -> Any:
@@ -432,6 +455,7 @@ def open_draft_pr(repo: Path, base: str, head: str, title: str, body: str) -> st
     return _run_with_retries(argv, repo).strip()
 
 
+@cache
 def _contains(repo: Path, ancestor: str, sha: str) -> bool:
     """Return whether ``sha`` has ``ancestor`` in its history."""
     try:
@@ -881,6 +905,7 @@ def _current_ref(repo: Path, base: str, entry: WorktreeEntry) -> str | None:
         return local
     if not _is_commit(repo, head):
         main_sync.run_git(repo, "fetch", "--quiet", base.split("/", 1)[0], head)
+        _refs_moved()
         if not _is_commit(repo, head):
             return None
     return head if _contains(repo, local, head) else local
@@ -905,7 +930,9 @@ def _tips(repo: Path, base: str, entries: Sequence[WorktreeEntry]) -> list[Tip]:
     return tips
 
 
+@cache
 def _patch_id(repo: Path, *diff_args: str) -> str:
+    """Return the stable patch id of a ``show`` or ``diff`` that names its commits by sha."""
     shown = subprocess.run(
         ["git", "-C", str(repo), *diff_args], capture_output=True, check=True
     ).stdout.strip()
@@ -950,8 +977,8 @@ def _main_rows(repo: Path, base: str) -> list[list[str]]:
     """Return the sha, author time and subject of each main commit ahead of ``base``."""
     return [
         row.split("\t", 2)
-        for row in _git(
-            "log", "--format=%H%x09%at%x09%s", f"{base}..main", repo=repo
+        for row in _git_cached(
+            repo, "log", "--format=%H%x09%at%x09%s", f"{base}..main"
         ).splitlines()
     ]
 
@@ -1472,6 +1499,7 @@ class _RepoSync:
         label: str = "",
         ready_only: bool = False,
     ) -> None:
+        _refs_moved()
         self.tool = tool
         self.ready_only = ready_only
         self.label = label
@@ -1532,7 +1560,7 @@ class _RepoSync:
         return self.update(entry, depends_on=links), waiting
 
     def tip(self, entry: WorktreeEntry) -> str:
-        return _git("rev-parse", f"refs/heads/{entry.branch}", repo=self.repo)
+        return _heads(self.repo)[entry.branch]
 
     def skip_reason(self, entry: WorktreeEntry, ref: str) -> str | None:
         """Return why ``ref`` is not copied or pushed, or None when it has commits on the entry's floor."""
@@ -1601,6 +1629,7 @@ class _RepoSync:
             text=True,
             check=False,
         )
+        _refs_moved()
         if done.returncode != 0:
             self.fail(entry, f"not pulled ({done.stderr.strip()})")
             return entry
@@ -1645,6 +1674,7 @@ class _RepoSync:
 
     def delete_branch(self, entry: WorktreeEntry) -> None:
         _git("branch", "-D", entry.branch, repo=self.repo)
+        _refs_moved()
 
     def remove_worktree_and_branch(self, entry: WorktreeEntry) -> None:
         _remove_worktree(self.repo, Path(entry.path))
@@ -1793,7 +1823,9 @@ class _RepoSync:
             return
         _git_network("fetch", "--quiet", "--tags", "--force", repo=self.repo)
         ref = str(source.get("ref", "")) if source else ""
-        if main_sync.point_upstream(self.repo, ref):
+        moved = main_sync.point_upstream(self.repo, ref)
+        _refs_moved()
+        if moved:
             self.main_base = main_sync.UPSTREAM
 
     def copy_into_main(self, fail_stopped: bool = False) -> bool:
@@ -1864,6 +1896,7 @@ class _RepoSync:
                 },
                 earlier,
             )
+            _refs_moved()
             if result.mode in ("failed", "stopped"):
                 print(f"{self.label}main not updated: {result.detail}")
                 if result.mode == "failed" or fail_stopped:
@@ -2031,20 +2064,7 @@ class _RepoSync:
 
 
 def _branch_exists(repo: Path, branch: str) -> bool:
-    done = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(repo),
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            f"refs/heads/{branch}",
-        ],
-        capture_output=True,
-        check=False,
-    )
-    return done.returncode == 0
+    return branch in _heads(repo)
 
 
 def _remove_worktree(repo: Path, path: Path) -> None:
@@ -2189,10 +2209,12 @@ def _diff_lines(repo: Path, floor: str, ref: str) -> tuple[int, bool]:
 
 def _commit_shas(repo: Path, floor: str, ref: str) -> list[str]:
     """Return the commits ``ref`` has on ``floor``, oldest first."""
-    return _git("rev-list", "--reverse", f"{floor}..{ref}", repo=repo).splitlines()
+    return _git_cached(repo, "rev-list", "--reverse", f"{floor}..{ref}").splitlines()
 
 
+@cache
 def _commit_identity(repo: Path, sha: str) -> str:
+    """Return the author time and subject of ``sha``, which never change."""
     return _git("log", "-1", "--format=%at%x09%s", sha, repo=repo)
 
 
@@ -2274,6 +2296,7 @@ def list_targets(targets: Sequence[Target]) -> int:
     except (worktrees.LockHeld, worktrees.CorruptRecord) as error:
         print(error)
         return 1
+    _refs_moved()
     for name, repo, _ in targets:
         key = _repo_key(repo)
         if len(targets) > 1:

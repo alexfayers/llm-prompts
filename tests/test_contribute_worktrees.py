@@ -3723,3 +3723,28 @@ def test_main_is_left_unchanged_when_a_changed_branch_drops_a_hand_resolved_line
     assert project.run(apply=True) == 1
 
     assert git(project.repo, "rev-parse", "main") == main
+
+
+SYNC_GIT_SPAWN_BUDGET = 170
+
+
+def test_a_sync_pass_over_three_worktrees_stays_within_the_git_spawn_budget(
+    project: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("feat/a", "feat/b", "feat/c"):
+        project.worktree(name, f"feat: {name}-1", f"feat: {name}-2")
+        project.run(branch=name)
+    spawned: list[str] = []
+    start = subprocess.Popen.__init__
+
+    def counting(self: subprocess.Popen[Any], args: Any, *rest: Any, **kw: Any) -> None:
+        if args[0] == "git":
+            spawned.append(" ".join(args))
+        start(self, args, *rest, **kw)
+
+    monkeypatch.setattr(subprocess.Popen, "__init__", counting)
+
+    assert project.run(apply=True) == 0
+    assert project.run(apply=True) == 0
+
+    assert len(spawned) <= SYNC_GIT_SPAWN_BUDGET, spawned
