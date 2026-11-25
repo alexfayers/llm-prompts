@@ -2955,6 +2955,86 @@ def test_no_depends_on_removes_the_link_and_the_base_so_the_upper_is_skipped_for
     )
 
 
+def test_depends_on_a_pr_of_an_unmanaged_repo_writes_its_line_and_no_depends_on_removes_it(
+    project: Project,
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+
+    assert project.run(depends_on=("feat/a", "o/ci#23")) == 0
+    project.run(ready="feat/a")
+    assert project.run(apply=True) == 0
+
+    [entry] = project.entries()
+    assert entry.depends_on == (Link("", "", "o/ci#23"),)
+    assert "\nDepends on o/ci#23\n" in pr_body(project, entry.pr or 0)
+    assert project.run(no_depends_on=("feat/a", "o/ci#23")) == 0
+    assert project.entries()[0].depends_on == ()
+
+
+def test_a_pr_reference_link_reaches_a_branch_that_already_has_a_draft_pr(
+    project: Project,
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+    project.run(apply=True)
+
+    assert project.run(depends_on=("feat/a", "o/ci#23")) == 0
+    assert project.run(apply=True) == 0
+
+    [entry] = project.entries()
+    assert "\nDepends on o/ci#23\n" in pr_body(project, entry.pr or 0)
+
+
+def test_a_pr_reference_link_is_refused_once_the_pr_is_ready(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+    project.run(apply=True)
+    [entry] = project.entries()
+    state = project.load_state()
+    state["prs"][str(entry.pr)]["isDraft"] = False
+    project.state = state
+    project.save_state()
+    capsys.readouterr()
+
+    assert project.run(depends_on=("feat/a", "o/ci#23")) == 1
+
+    assert f"PR #{entry.pr} is not a draft" in capsys.readouterr().out
+    assert project.entries()[0].depends_on == ()
+
+
+@pytest.mark.parametrize(
+    ("states", "reason"),
+    [
+        (subprocess.CalledProcessError(1, "gh", stderr="boom"), "boom"),
+        ({}, "GitHub did not return it"),
+    ],
+)
+def test_a_pr_reference_link_is_refused_when_the_draft_check_fails(
+    project: Project,
+    capsys: pytest.CaptureFixture[str],
+    states: Any,
+    reason: str,
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+    project.run(apply=True)
+    [entry] = project.entries()
+    capsys.readouterr()
+
+    with patch.object(contribute, "pr_states", side_effect=[states]):
+        assert project.run(depends_on=("feat/a", "o/ci#23")) == 1
+
+    out = capsys.readouterr().out
+    assert f"PR #{entry.pr} draft state not checked ({reason})" in out
+    assert project.entries()[0].depends_on == ()
+
+
 def test_no_depends_on_for_a_link_that_is_not_there_fails(
     project: Project, stack: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -3043,6 +3123,15 @@ def published_stack(project: Project, stack: Path) -> Path:
     project.run("tool", ready="feat/b")
     project.run(apply=True)
     return project.root / "wt" / "feat-a"
+
+
+def test_a_pr_link_to_a_branch_dependency_writes_its_depends_on_line_once(
+    project: Project, published_stack: Path
+) -> None:
+    assert project.run("tool", depends_on=("feat/b", "o/repo#100")) == 0
+    assert project.run(apply=True) == 0
+
+    assert pr_body(project, 101).count("Depends on o/repo#100") == 1
 
 
 def _entry_of(project: Project, branch: str) -> WorktreeEntry:
