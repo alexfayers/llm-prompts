@@ -1,7 +1,8 @@
-"""Claude-plugin git sources: tracked checkouts and skill discovery."""
+"""Claude-plugin git sources: tracked checkouts, skill and agent discovery."""
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -22,6 +23,8 @@ from .setup import (
 
 _SKILLS_DIR = "skills"
 _SKILL_FILE = "SKILL.md"
+_AGENTS_DIR = "agents"
+_PLUGIN_MANIFEST = Path(".claude-plugin") / "plugin.json"
 
 
 def plugin_dir() -> Path:
@@ -372,7 +375,47 @@ def _installed_pathspecs(subset: list[str] | None) -> list[str]:
     return [f":(glob){_SKILLS_DIR}/**/{name}/**" for name in subset] + [_SKILL_FILE]
 
 
-_IGNORED_COMPONENTS = ("commands", "agents", "hooks", ".mcp.json", ".lsp.json")
+_IGNORED_COMPONENTS = ("commands", "hooks", ".mcp.json", ".lsp.json")
+
+
+def discover_agents(checkout: Path) -> list[Path]:
+    """Discover agent files within a plugin checkout.
+
+    Args:
+        checkout: The plugin's checkout directory.
+
+    Returns:
+        The Markdown files the ``agents`` key of ``.claude-plugin/plugin.json``
+        names, as files or as directories searched recursively. The key replaces
+        the default ``agents/`` directory, which is otherwise searched
+        recursively. Files that resolve outside the checkout are left out.
+    """
+    declared: Any = _AGENTS_DIR
+    try:
+        declared = json.loads((checkout / _PLUGIN_MANIFEST).read_text("utf-8")).get(
+            _AGENTS_DIR, _AGENTS_DIR
+        )
+    except (OSError, ValueError, AttributeError):
+        pass
+    root = checkout.resolve()
+    files: list[Path] = []
+    if isinstance(declared, str):
+        declared = [declared]
+    elif not isinstance(declared, list):
+        return []
+    for entry in declared:
+        if not isinstance(entry, str):
+            continue
+        path = checkout / entry
+        for agent in sorted(path.rglob("*.md")) if path.is_dir() else [path]:
+            if (
+                agent.suffix == ".md"
+                and agent.is_file()
+                and agent.resolve().is_relative_to(root)
+                and agent not in files
+            ):
+                files.append(agent)
+    return files
 
 
 def discover_skills(checkout: Path, subset: list[str] | None) -> list[tuple[str, Path]]:

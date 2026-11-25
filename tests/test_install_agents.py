@@ -22,6 +22,7 @@ from llm_prompts.install import (
     get_managed_dirs,
 )
 from llm_prompts.install import main as install_main
+from llm_prompts.manifest import AgentManifest
 from llm_prompts.render_template import parse_frontmatter, split_frontmatter
 
 pytestmark = pytest.mark.usefixtures("bare_tree")
@@ -514,6 +515,126 @@ class TestInstallAgents:
                 encoding="utf-8"
             )
         assert managed == {"architect.md", "reviewer.md"}
+
+    def test_plugin_agent_installs_without_overriding_builtin(
+        self, tmp_path: Path
+    ) -> None:
+        builtin = tmp_path / "builtin"
+        plugin = tmp_path / "plugin"
+        _make_agent(builtin, "architect.md", "builtin body")
+        _make_agent(plugin, "architect.md", "plugin body")
+        _make_agent(plugin, "extra.md", "extra body")
+        dest = tmp_path / "dest"
+
+        managed = _install_agents(
+            [builtin],
+            dest,
+            plugin_agents=[plugin / "architect.md", plugin / "extra.md"],
+        )
+
+        assert managed == {"architect.md", "extra.md"}
+        assert "builtin body" in (dest / "architect.md").read_text(encoding="utf-8")
+        assert "plugin body" not in (dest / "architect.md").read_text(encoding="utf-8")
+        assert "extra body" in (dest / "extra.md").read_text(encoding="utf-8")
+
+    def test_plugin_agent_skipped_when_runtime_name_taken(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        builtin = tmp_path / "builtin"
+        plugin = tmp_path / "plugin"
+        _make_agent(builtin, "architect.md", "builtin body")
+        (plugin).mkdir()
+        (plugin / "other.md").write_text(
+            "---\nname: architect.md\n---\n\nplugin body\n", encoding="utf-8"
+        )
+        dest = tmp_path / "dest"
+
+        managed = _install_agents([builtin], dest, plugin_agents=[plugin / "other.md"])
+
+        assert managed == {"architect.md"}
+        assert not (dest / "other.md").exists()
+        assert "skipped" in capsys.readouterr().err
+
+    def test_plugin_agent_skipped_when_it_would_overwrite_variant(
+        self, tmp_path: Path
+    ) -> None:
+        builtin = tmp_path / "builtin"
+        plugin = tmp_path / "plugin"
+        _make_variant_template(builtin, "worker.md", "worker", "sonnet-low")
+        _make_agent(plugin, "worker-sonnet-low.md", "plugin body")
+        dest = tmp_path / "dest"
+
+        managed = _install_agents(
+            [builtin], dest, plugin_agents=[plugin / "worker-sonnet-low.md"]
+        )
+
+        assert managed == {"worker-sonnet-low.md"}
+        assert "plugin body" not in (dest / "worker-sonnet-low.md").read_text(
+            encoding="utf-8"
+        )
+
+    def test_plugin_agent_does_not_overwrite_unmanaged_file(
+        self, tmp_path: Path
+    ) -> None:
+        plugin = tmp_path / "plugin"
+        _make_agent(plugin, "mine.md", "plugin body")
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        (dest / "mine.md").write_text("hand-placed", encoding="utf-8")
+
+        managed = _install_agents([], dest, plugin_agents=[plugin / "mine.md"])
+
+        assert managed == set()
+        assert (dest / "mine.md").read_text(encoding="utf-8") == "hand-placed"
+
+    def test_plugin_agent_updates_file_it_installed_before(
+        self, tmp_path: Path
+    ) -> None:
+        plugin = tmp_path / "plugin"
+        _make_agent(plugin, "mine.md", "new body")
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        (dest / "mine.md").write_text("old", encoding="utf-8")
+        manifest: dict[str, AgentManifest] = {
+            "claude-code": {"files": [str(dest / "mine.md")]}
+        }
+
+        managed = _install_agents(
+            [], dest, previous_manifest=manifest, plugin_agents=[plugin / "mine.md"]
+        )
+
+        assert managed == {"mine.md"}
+        assert "new body" in (dest / "mine.md").read_text(encoding="utf-8")
+
+    def test_plugin_agent_skipped_when_name_matches_carried_forward_agent(
+        self, tmp_path: Path
+    ) -> None:
+        builtin = tmp_path / "builtin"
+        source = _make_agent(builtin, "architect.md", "builtin body")
+        plugin = tmp_path / "plugin"
+        (plugin).mkdir()
+        (plugin / "other.md").write_text(
+            "---\nname: architect.md\n---\n\nplugin body\n", encoding="utf-8"
+        )
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        (dest / "architect.md").write_text(
+            "---\nname: architect.md\n---\n\nold\n", encoding="utf-8"
+        )
+        manifest: dict[str, AgentManifest] = {
+            "claude-code": {"files": [str(dest / "architect.md")]}
+        }
+
+        managed = _install_agents(
+            [builtin],
+            dest,
+            frozenset({source.resolve()}),
+            manifest,
+            plugin_agents=[plugin / "other.md"],
+        )
+
+        assert managed == {"architect.md"}
+        assert not (dest / "other.md").exists()
 
     def test_idempotent_second_run_does_not_rewrite(self, tmp_path: Path) -> None:
         src = tmp_path / "agents"

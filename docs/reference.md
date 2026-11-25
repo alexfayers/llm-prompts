@@ -86,7 +86,7 @@ auto = false
 
 ### Plugins
 
-`[[plugins]]` tracks a git repo of Claude Code plugin skills (a `skills/**/SKILL.md` layout) and installs them for every agent:
+`[[plugins]]` tracks a git repo of Claude Code plugin skills and agents (a `skills/**/SKILL.md` layout) and installs them for every agent:
 
 ```toml
 [[plugins]]
@@ -96,7 +96,7 @@ ref = "main"                      # optional: branch, tag or SHA
 skills = ["tdd", "code-review"]   # optional: defaults to all
 ```
 
-`update` fetches and hard-resets each checkout (under `~/.config/llm-prompts/plugin-sources/<name>`) to the upstream tip. A plugin skill never overwrites a built-in or overlay skill of the same name. Only skills are used. `commands/`, `agents/`, `hooks/` and MCP/LSP servers are ignored.
+`update` fetches and hard-resets each checkout (under `~/.config/llm-prompts/plugin-sources/<name>`) to the upstream tip. A plugin skill never overwrites a built-in or overlay skill of the same name. A plugin `agents/` directory, searched recursively (or the files and directories its `.claude-plugin/plugin.json` `agents` key names, which replace it), installs for Claude Code and pi, and a plugin agent is skipped where a built-in or overlay agent has the same filename or agent name. `commands/`, `hooks/` and MCP/LSP servers are ignored.
 
 ## Overlays
 
