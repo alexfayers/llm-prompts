@@ -3220,3 +3220,26 @@ def test_a_changed_branch_replaces_every_top_up_copy_on_main(
 
     assert project.main_subjects() == ["feat: a"]
     assert (project.repo / "s.txt").read_text(encoding="utf-8") == fixed
+
+
+def test_a_same_identity_main_commit_whose_changes_the_branch_lacks_is_kept(
+    project: Project,
+) -> None:
+    body = "".join(f"line {n}\n" for n in range(9))
+    project.commit(project.repo, "s.txt", body, "chore: add s")
+    git(project.repo, "push", "-q", "origin", "main")
+    path = project.worktree("feat/a", start="origin/main")
+    project.commit(path, "s.txt", body.replace("line 1", "a"), "feat: a")
+    project.run(branch="feat/a")
+    project.run(apply=True)
+    date = git(project.repo, "log", "-1", "--format=%ad", "--date=raw", "main")
+    (project.repo / "s.txt").write_text(
+        body.replace("line 1", "mine"), encoding="utf-8"
+    )
+    git(project.repo, "commit", "-q", "-am", "feat: a", "--date", date)
+    project.commit(path, "s.txt", body.replace("line 1", "a2"), "fix: a")
+    main = git(project.repo, "rev-parse", "main")
+
+    assert project.run(apply=True) == 1
+
+    assert git(project.repo, "rev-parse", "main") == main

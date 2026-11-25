@@ -1092,7 +1092,7 @@ def _copies_of(
     A copy matches by the identity saved when it was copied, else by its first
     commit's author time and subject.
     A sole match of the saved identity that touches the squash's files is the copy, since a hand resolution may have changed it.
-    Every other match that touches those files is an extra copy, such as a top-up.
+    Every other match that touches those files is an extra copy, such as a top-up, when the squash holds all its changes or its patch is of an earlier version of the branch.
     Otherwise it must hold the changes of the squash, of its first commit, of the squash last copied, or of an earlier version of the branch.
     A copy with a ``reserved`` identity, mapped to the merged branch it copies, must hold all the changes of the squash, or the squash must hold all of its changes.
     Else it may be the one main commit with that identity that replays the squash last copied, when ``base`` holds the changes of every other.
@@ -1161,7 +1161,16 @@ def _copies_of(
         if copy := proven or touching[:1]:
             free = [row for row in free if row != copy[0] and row not in touching]
             found[squash.tip] = copy[0][0]
-            extra |= {row[0] for row in touching} - {copy[0][0]}
+            extra |= {
+                row[0]
+                for row in touching
+                if row != copy[0]
+                and (
+                    _is_copy(repo, row[0], squash, True)
+                    or _patch_id(repo, "show", "-U0", row[0])
+                    in _earlier_patches(repo, tip)
+                )
+            }
     for squash in squashes:
         if squash.tip in found:
             continue
