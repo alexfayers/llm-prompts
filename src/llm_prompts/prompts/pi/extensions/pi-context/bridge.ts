@@ -1,6 +1,7 @@
 // Lets a delegate call main's MCP tools over a unix socket, so a fork starts no MCP servers of its own.
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import net from "node:net";
 import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -17,7 +18,17 @@ export type BridgeOptions = {
 	onPrefix?: (hash: string) => void;
 };
 
-const SOCKET = "b.sock";
+/** The smallest unix socket path limit across platforms (macOS 104 bytes, Linux 108). */
+const MAX_SOCKET_PATH_BYTES = 104;
+const SOCKET_NAME = "b.sock";
+
+/** Creates a private directory whose socket path stays under 104 bytes on every OS. */
+export function makeSocketDir(): string {
+	const tmp = os.tmpdir();
+	const base = Buffer.byteLength(path.join(tmp, "pi-XXXXXX", SOCKET_NAME)) < MAX_SOCKET_PATH_BYTES ? tmp : "/tmp";
+	return fs.mkdtempSync(path.join(base, "pi-"));
+}
+
 const MCP_RESOURCE_TOOLS = new Set(["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"]);
 const isProxied = (name: string) => name.startsWith("mcp__") || MCP_RESOURCE_TOOLS.has(name);
 
@@ -42,9 +53,10 @@ function readRecords(socket: net.Socket, onRecord: (record: Record<string, unkno
 
 const send = (socket: net.Socket, record: Reply | { prefix: string } | Request) => void (!socket.destroyed && socket.write(`${JSON.stringify(record)}\n`));
 
-/** Serves the role's MCP calls on a socket in `dir`, which must be private to the user. */
-export async function serveBridge(dir: string, { role, execute, onPrefix }: BridgeOptions): Promise<{ socket: string; close(): Promise<void> }> {
-	const socketPath = path.join(dir, SOCKET);
+/** Serves the role's MCP calls on a socket in a fresh private directory, removed on close. */
+export async function serveBridge({ role, execute, onPrefix }: BridgeOptions): Promise<{ socket: string; close(): Promise<void> }> {
+	const socketDir = makeSocketDir();
+	const socketPath = path.join(socketDir, SOCKET_NAME);
 	const connections = new Set<net.Socket>();
 	const server = net.createServer((connection) => {
 		connections.add(connection);
@@ -72,7 +84,7 @@ export async function serveBridge(dir: string, { role, execute, onPrefix }: Brid
 		close: () =>
 			new Promise<void>((resolve) => {
 				for (const connection of connections) connection.destroy();
-				server.close(() => resolve());
+				server.close(() => (fs.rmSync(socketDir, { recursive: true, force: true }), resolve()));
 			}),
 	};
 }

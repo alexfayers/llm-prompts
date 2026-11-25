@@ -204,7 +204,7 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 		};
 		const { readMcp } = forkSettings(pi, ctx);
 		const allowed = withReadMcp(role, readMcp);
-		bridge = mcp && (await serveBridge(files, { role: allowed, execute: mcp, onPrefix }));
+		bridge = mcp && (await serveBridge({ role: allowed, execute: mcp, onPrefix }));
 		const main = bridge && describeMain(pi, ctx, model ? allowed : undefined);
 		fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, repo, inherited, ...(!model && warm), ...(model && started && { billedFrom: started.billedFrom, cacheKey: started.cacheKey }), readMcp, bridge: bridge && { ...main, socket: bridge.socket } }), { mode: 0o600 });
 		if (model) fs.writeFileSync(cardFile, coldCard(role), { mode: 0o600 });
