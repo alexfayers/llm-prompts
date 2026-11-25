@@ -598,7 +598,8 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			const merge = merged.landing && tree ? `[merge: ${describeLanding(merged.landing, tree)}]` : tree && (await dropIfClean(tree)) ? "[merge: worktree removed: clean]" : undefined;
 			const note = [merge, next !== undefined && !proceeds ? `[queued task kept: ${next}]` : undefined].filter(Boolean).join(" ") || undefined;
 			background.finish(ctx, runId, end, turn.error ?? turn.reply ?? text, note);
-			pi.appendEntry("result-cap", { ref: end.ref, text: merged.landing?.state === "escalated" && tree ? `${text}\n[merge: ${describeLanding(merged.landing, tree, true)}]` : text });
+			const ended = registry.get(runId);
+			if (!(ended?.stub && ended.state === "done")) pi.appendEntry("result-cap", { ref: end.ref, text: merged.landing?.state === "escalated" && tree ? `${text}\n[merge: ${describeLanding(merged.landing, tree, true)}]` : text });
 			if (next !== undefined && proceeds) await continueRun(ctx, name, next, `next-${newRunId()}`);
 		};
 		const onFail = async (error: unknown) => {
