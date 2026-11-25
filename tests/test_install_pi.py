@@ -1338,6 +1338,27 @@ class TestPiAgents:
         assert str(tiers_path) in recorded["agents"]["pi"]["files"]
 
     @pytest.mark.usefixtures("core_tree")
+    def test_install_writes_the_fork_limit_from_config(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_config_dir: Path,
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        limits_path = home / ".pi/agent/pi-context/forks.json"
+
+        _install(home, tmp_path / "installed.json")
+        assert json.loads(limits_path.read_text(encoding="utf-8")) == {}
+
+        (isolated_config_dir / "config.toml").write_text("[forks]\nmax_live = 3\n")
+        _install(home, tmp_path / "installed.json")
+
+        assert json.loads(limits_path.read_text(encoding="utf-8")) == {"maxLive": 3}
+        recorded = json.loads((tmp_path / "installed.json").read_text())
+        assert str(limits_path) in recorded["agents"]["pi"]["files"]
+
+    @pytest.mark.usefixtures("core_tree")
     def test_overlay_models_resolve_tiers_last_overlay_winning(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

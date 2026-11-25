@@ -12,6 +12,48 @@ type AskContext = Pick<ExtensionContext, "hasUI" | "ui" | "sessionManager">;
 type Steerable = Watchable & { steer(text: string): Promise<string | undefined> };
 const MAX_HOLD_MS = 2 * 60 * 60 * 1000;
 
+/** Lets at most `limit()` jobs run at once: the rest wait in order and start as a running one ends. */
+export class Slots {
+	private active = 0;
+	private waiting: (() => void)[] = [];
+
+	private limit: () => number;
+
+	constructor(limit: () => number) {
+		this.limit = limit;
+	}
+
+	/** Whether a job started now would have to wait. */
+	get full(): boolean {
+		return this.active >= this.limit();
+	}
+
+	/** Runs `job` once a slot is free. A `signal` that aborts while the job waits rejects it without starting it. */
+	async run<T>(job: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+		if (this.full) {
+			await new Promise<void>((resolve, reject) => {
+				const start = () => {
+					signal?.removeEventListener("abort", leave);
+					this.active++;
+					resolve();
+				};
+				const leave = () => {
+					this.waiting.splice(this.waiting.indexOf(start), 1);
+					reject(signal?.reason);
+				};
+				this.waiting.push(start);
+				signal?.addEventListener("abort", leave, { once: true });
+			});
+		} else this.active++;
+		try {
+			return await job();
+		} finally {
+			this.active--;
+			if (!this.full) this.waiting.shift()?.();
+		}
+	}
+}
+
 export class Background {
 	private controllers = new Map<string, AbortController>();
 	private children = new Map<string, Steerable>();
