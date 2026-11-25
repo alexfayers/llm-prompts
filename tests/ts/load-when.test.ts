@@ -15,7 +15,7 @@ chmodSync(join(dir, "bin", "load-when-cmd"), 0o755);
 mkdirSync(project);
 writeFileSync(join(dir, "conditional-rules.json"), JSON.stringify(conditions));
 for (const name of "abcdefg") writeFileSync(join(dir, "rules", `${name}.md`), name.toUpperCase());
-useEnv(() => ({ LOAD_WHEN_SET: "1", LOAD_WHEN_UNSET: undefined, PI_CONTEXT_CHILD: undefined, PATH: `${join(dir, "bin")}${delimiter}${process.env.PATH}` }));
+useEnv(() => ({ LOAD_WHEN_SET: "1", LOAD_WHEN_UNSET: undefined, PI_CONTEXT_CHILD: undefined, HOME: project, PATH: `${join(dir, "bin")}${delimiter}${process.env.PATH}` }));
 after(() => rmSync(dir, { recursive: true }));
 
 async function start(rules = "AGENTS.md") {
@@ -78,6 +78,15 @@ test("a paths rule is sent once a read, grep, find, edit or write call touches a
 	await ext.fire("session_start", {});
 	await fire();
 	assert.deepEqual(await call("edit", { path: "Cargo.toml" }), ["A"]);
+});
+
+test("a paths rule matches a path given with a leading @ or ~", async () => {
+	const { fire, call, ext } = await start();
+	await fire();
+	assert.deepEqual(await call("read", { path: "~/docs/guide.md" }), ["D"]);
+	await ext.fire("session_start", {});
+	await fire();
+	assert.deepEqual(await call("write", { path: "@docs/new.md" }), ["D"]);
 });
 
 test("a resumed session does not send a paths rule its branch already holds", async () => {

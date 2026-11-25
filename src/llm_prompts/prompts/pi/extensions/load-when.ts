@@ -2,6 +2,7 @@
 // Config: conditional-rules.json and rules/ in the pi agent directory, written by llm-prompts install
 // Env: PI_CONTEXT_CHILD (a pi-context handshake without `inherited` marks a cold delegate, which skips audience:main rules)
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -68,7 +69,7 @@ function sentRules(ctx: ExtensionContext): Set<string> {
 }
 
 function touchedFiles(toolName: string, input: { path?: string }, text: string, cwd: string): string[] {
-	const target = path.resolve(cwd, input.path ?? ".");
+	const target = path.resolve(cwd, (input.path ?? ".").replace(/^@/, "").replace(/^~(?=$|\/)/, os.homedir()));
 	if (PATH_TOOLS.has(toolName)) return [target];
 	const listed = text.split("\n").flatMap((line) => (toolName === "grep" ? (GREP_LINE.exec(line)?.[1] ?? []) : line ? [line] : []));
 	return [target, ...listed.map((file) => path.resolve(target, file))];
