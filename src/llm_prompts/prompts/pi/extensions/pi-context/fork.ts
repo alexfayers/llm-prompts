@@ -1,6 +1,6 @@
 // Adds the fork tool, which runs a delegate on a copy of this session that shares its prompt cache, or a cold worker on a cheaper model. A writer works in a git worktree and lands its commits through the merge queue.
 // Config: llmPrompts.forks in pi settings: mcpProxy (true: a fork uses main's MCP servers), privateNames (regex of names a writer's commits may not land with), memoryMax and cpuQuota (systemd limits of one fork and its processes, defaulting to a quarter of the host's memory and half its cores), readMcp (array of {tool, argsMatch?}: extra MCP tools, as globs, a delegate may call when each argsMatch regex matches the whole of that string argument)
-// Env: PI_CONTEXT_CHILD (set in a delegate, which cannot fork), PI_CONTEXT_ROLE and PI_CONTEXT_RUN_ID (set for a delegate), PI_CONTEXT_WORKTREE (set for a writer: its worktree, for hooks that resolve the session repo)
+// Env: PI_CONTEXT_CHILD (set in a delegate, which cannot fork), PI_CONTEXT_ROLE and PI_CONTEXT_RUN_ID (set for a delegate), PI_CONTEXT_WORKTREE (set for a writer: its worktree, for hooks that resolve the session repo), PI_CODING_AGENT_DIR (set for a reader: a copy of the agent directory without the language server extension)
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -14,6 +14,7 @@ import { checkReadMcp, coldCard, expandHome, readHandshake, ROLES, withReadMcp, 
 import { findModel, tokens } from "./live-view.ts";
 import { cacheLeftMs, cacheText, FINISHED, isLive, registryOf, type Run, type RunState } from "./registry.ts";
 import type { ForkLimits } from "./cap.ts";
+import { readOnlyAgentDir } from "./read-only-agent-dir.ts";
 import { RpcChild, type Turn, type UiAnswer, type UiRequest } from "./runner.ts";
 import { retainSession } from "./usage-sessions.ts";
 
@@ -214,6 +215,7 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 	let bridge: Awaited<ReturnType<typeof serveBridge>> | undefined;
 	let child: RpcChild | undefined;
 	let warmed: (() => void) | undefined;
+	let readerAgentDir: ReturnType<typeof readOnlyAgentDir> | undefined;
 	try {
 		fs.mkdirSync(files, { recursive: true, mode: 0o700 });
 		fs.rmSync(path.join(files, FINISHED_MARK), { force: true });
@@ -227,6 +229,7 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 			writeLeadPrefix(files);
 			fs.writeFileSync(seed, jsonl([{ ...ctx.sessionManager.getHeader(), id: randomUUID(), ...(cwd && { cwd }), piContextFork: { parentSessionId: ctx.sessionManager.getHeader()?.id, inherited } }, ...entries]), { mode: 0o600 });
 		}
+		readerAgentDir = role.writes ? undefined : readOnlyAgentDir(agentDir);
 		const childCwd = (model && worktree) || cwd || ctx.cwd;
 		child = RpcChild.start({
 			command,
@@ -235,7 +238,7 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 			args: model
 				? coldArgs(role, { model, sessionDir, cardFile, skillsDir: path.join(agentDir, "skills"), session })
 				: ["--mode", "rpc", "--session", seed, "--model", warm.model, "--thinking", warm.thinking, ...(bridge ? ["--no-mcp"] : [])],
-			env: { ...process.env, PI_CONTEXT_CHILD: handshake, PI_CONTEXT_ROLE: role.name, PI_CONTEXT_RUN_ID: runId, PI_CONTEXT_WORKTREE: worktree },
+			env: { ...process.env, PI_CONTEXT_CHILD: handshake, PI_CONTEXT_ROLE: role.name, PI_CONTEXT_RUN_ID: runId, PI_CONTEXT_WORKTREE: worktree, ...(readerAgentDir && { PI_CODING_AGENT_DIR: readerAgentDir.dir }) },
 			signal,
 			onUi: relayDialog(name, ctx),
 		});
@@ -255,6 +258,7 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 		warmed?.();
 		await child?.close();
 		await bridge?.close();
+		readerAgentDir?.dispose();
 		let retained = true;
 		try { if (child) await keepSession(files, Boolean(model), name, runId, agentDir); } catch (error) {
 			retained = false;
