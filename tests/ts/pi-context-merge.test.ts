@@ -76,6 +76,39 @@ describe("landing", () => {
 		assert.equal(git(repo, "status", "--porcelain"), "");
 	});
 
+	test("a fork that folded a fixup into a commit of a PR branch behind origin/main lands on that branch", async () => {
+		const repo = newRepo();
+		git(repo, "update-ref", "refs/remotes/origin/main", "HEAD");
+		const pr = path.join(scratch, "pr-worktree");
+		git(repo, "worktree", "add", "-q", "-b", "feat/pr", pr);
+		commit(pr, "pr.txt", "1", "pr work");
+		commit(repo, "up.txt", "1", "upstream");
+		git(repo, "update-ref", "refs/remotes/origin/main", "HEAD");
+		const tree = await writer(pr, "fold-pr");
+		commit(tree.path, "pr.txt", "2", "fixup! pr work");
+		execFileSync("git", ["rebase", "-q", "-i", "--autosquash", "HEAD~2"], { cwd: tree.path, env: { ...process.env, GIT_SEQUENCE_EDITOR: "true" } });
+		const landing = await land({ tree, first: done });
+		assert.deepEqual([landing.state, landing.reason], ["landed", undefined]);
+		assert.equal(git(pr, "symbolic-ref", "--short", "HEAD"), "feat/pr");
+		assert.deepEqual(subjects(pr, "origin/main..HEAD"), ["pr work"]);
+		assert.equal(git(pr, "show", "HEAD:pr.txt"), "2");
+	});
+
+	test("a fork that rebased away a merge commit of a PR branch escalates", async () => {
+		const repo = newRepo();
+		git(repo, "update-ref", "refs/remotes/origin/main", "HEAD");
+		const pr = path.join(scratch, "pr-merged");
+		git(repo, "worktree", "add", "-q", "-b", "feat/merged", pr);
+		commit(pr, "pr.txt", "1", "pr work");
+		commit(repo, "up.txt", "1", "upstream");
+		git(repo, "update-ref", "refs/remotes/origin/main", "HEAD");
+		git(pr, "merge", "-q", "--no-ff", "-m", "merge main", "origin/main");
+		const tree = await writer(pr, "flatten");
+		commit(tree.path, "pr.txt", "2", "fixup! pr work");
+		execFileSync("git", ["rebase", "-q", "-i", "--autosquash", "origin/main"], { cwd: tree.path, env: { ...process.env, GIT_SEQUENCE_EDITOR: "true" } });
+		assert.match((await land({ tree, first: done })).reason ?? "", /do not sit on the current feat\/merged/);
+	});
+
 	test("a fork on a newer origin/main that dropped a base commit escalates", async () => {
 		const repo = newRepo();
 		git(repo, "update-ref", "refs/remotes/origin/main", "HEAD");

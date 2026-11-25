@@ -90,9 +90,11 @@ const privateNames = (extra?: string) => new RegExp([escapeRegExp(os.homedir()),
 
 const UPSTREAM = "origin/main";
 
-/** Whether HEAD sits on the upstream and holds every base commit the upstream lacks: by patch-id, or as a fold, a fork commit with its subject that changes all its files. */
+/** Whether HEAD sits on the commit where the base left the upstream and holds every base commit the upstream lacks, none of them a merge: by patch-id, or as a fold, a fork commit with its subject that changes all its files. */
 async function rebasedOntoUpstream(checkout: string, base: string): Promise<boolean> {
-	if ((await git(checkout, "merge-base", "--is-ancestor", UPSTREAM, "HEAD")).code) return false;
+	const forkPoint = await git(checkout, "merge-base", base, UPSTREAM);
+	if (forkPoint.code || (await git(checkout, "merge-base", "--is-ancestor", forkPoint.out.trim(), "HEAD")).code) return false;
+	if (await gitOut(checkout, "rev-list", "--merges", "-n1", base, "^HEAD", `^${UPSTREAM}`)) return false;
 	const cherry = await git(checkout, "cherry", "HEAD", base, UPSTREAM);
 	const missing = cherry.out.split("\n").filter((line) => line.startsWith("+ ")).map((line) => line.slice(2));
 	if (cherry.code || !missing.length) return cherry.code === 0;
@@ -109,7 +111,7 @@ const subjectOf = (checkout: string, sha: string) => gitOut(checkout, "log", "-1
 /** The files a commit changes. */
 const filesOf = async (checkout: string, sha: string) => (await gitOut(checkout, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha)).split("\n").filter(Boolean);
 
-/** The commit after which the fork's own commits start: its base, or the upstream it rebased onto. */
+/** The commit after which the fork's own commits start: its base, or the upstream when the fork rewrote the base's commits. */
 async function landFrom(tree: Worktree): Promise<string | undefined> {
 	const checkout = checkoutOf(tree);
 	if ((await git(checkout, "merge-base", "--is-ancestor", tree.base, "HEAD")).code === 0) return tree.base;
