@@ -19,10 +19,21 @@ import { retainSession } from "./usage-sessions.ts";
 const holdsCall = (entry: SessionEntry, toolCallId: string) =>
 	entry.type === "message" && entry.message.role === "assistant" && entry.message.content.some((block) => block.type === "toolCall" && block.id === toolCallId);
 
-/** The entries before the assistant message holding the call: the part of the session the last request cached. */
+const SAVED_STATE = new Set(["hide-tools", "attic", "attic-unlock", "pending-asks"]);
+
+/** The entries before the assistant message holding the call, from the last compaction's first kept entry: what the lead's model saw in the last request. The saved state the extensions read from before it stays, chained ahead of them: tool visibility, pending asks, and each capped result a kept entry names. */
 export function seedEntries(branch: SessionEntry[], toolCallId: string): SessionEntry[] {
 	const at = branch.findIndex((entry) => holdsCall(entry, toolCallId.split("/")[0]));
-	return at < 0 ? branch : branch.slice(0, at);
+	const sent = at < 0 ? branch : branch.slice(0, at);
+	const compaction = [...sent].reverse().find((entry) => entry.type === "compaction");
+	if (!compaction) return sent;
+	const firstKept = Math.max(0, sent.findIndex((entry) => entry.id === compaction.firstKeptEntryId));
+	const kept = sent.slice(firstKept);
+	const keptText = JSON.stringify(kept);
+	const isSaved = (entry: SessionEntry) =>
+		entry.type === "custom" && (SAVED_STATE.has(entry.customType) || (entry.customType === "result-cap" && keptText.includes((entry.data as { ref: string }).ref)));
+	const chained = [...sent.slice(0, firstKept).filter(isSaved), ...kept];
+	return chained.map((entry, index) => ({ ...entry, parentId: chained[index - 1]?.id ?? null }));
 }
 
 /** The model a fork's `model` names: a provider/id as given, or a tier alias from the installed `pi-context/models.json`. */

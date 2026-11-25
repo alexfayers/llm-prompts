@@ -24,6 +24,35 @@ describe("seedEntries", () => {
 	});
 });
 
+describe("seedEntries after a compaction", () => {
+	test("a warm fork gets the last compaction's kept entries, the compaction and what follows, not the history before", () => {
+		const compaction = (id: string, firstKeptEntryId: string) => ({ type: "compaction", id, firstKeptEntryId, summary: id });
+		const branch = [user("u0"), user("u1"), compaction("k1", "u1"), user("u2"), user("u3"), compaction("k2", "u3"), user("u4"), assistantCalling("a1", "c1")];
+		assert.deepEqual(seedEntries(branch as any, "c1").map((entry) => entry.id), ["u3", "k2", "u4"]);
+	});
+
+	test("the lead's saved state from before the compaction stays in the chain ahead of the kept entries", () => {
+		const saved = (id: string, customType: string, data: object = { hidden: [id] }) => ({ type: "custom", id, customType, data });
+		const link = (parentId: string | null, entry: object) => ({ ...entry, parentId });
+		const kept = { type: "message", id: "u2", message: { role: "toolResult", content: "[capped: 9 chars, ref rc-c9; result_fetch]" } };
+		const branch = [
+			link(null, saved("h1", "hide-tools")),
+			link("h1", saved("t1", "attic")),
+			link("t1", saved("p1", "pending-asks", { action: "add", id: "a1", text: "still open" })),
+			link("p1", saved("r1", "result-cap", { ref: "rc-c9", text: "kept result" })),
+			link("r1", saved("r2", "result-cap", { ref: "rc-c1", text: "compacted result" })),
+			link("r2", saved("x1", "context-fold", {})),
+			link("x1", user("u1")),
+			link("u1", kept),
+			link("u2", { type: "compaction", id: "k1", firstKeptEntryId: "u2", summary: "k1" }),
+			link("k1", assistantCalling("a1", "c1")),
+		];
+		const seed = seedEntries(branch as any, "c1") as any[];
+		assert.deepEqual(seed.map((entry) => entry.id), ["h1", "t1", "p1", "r1", "u2", "k1"]);
+		assert.deepEqual(seed.map((entry) => entry.parentId), [null, "h1", "t1", "p1", "r1", "u2"]);
+	});
+});
+
 describe("resolveModel", () => {
 	const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "fork-tiers-"));
 	fs.mkdirSync(path.join(agentDir, "pi-context"));
