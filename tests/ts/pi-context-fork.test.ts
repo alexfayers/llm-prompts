@@ -9,7 +9,7 @@ import { loadExtension, useEnv } from "./helpers.ts";
 import { projectResult } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/outcome.ts";
 import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
 import { trackPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
-import { isLive, MAIN_TOOLS_WAIT, registryOf } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
+import { isLive, MAIN_TOOLS_WAIT, registryOf, type Run } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 import { Background } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/background.ts";
 import { coldArgs, coldLabel, FANOUT_EXTRA, KEEP_FINISHED_MS, SHARED_FILE_MAX_CHARS, registerFork, WARM_FORK_MAX_TOKENS, resolveModel, seedEntries, sweepFinished } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
 import { LONG_CACHE_MS } from "../../src/llm_prompts/prompts/pi/extensions/context-fold.ts";
@@ -218,6 +218,44 @@ describe("fork tool", () => {
 		assert.notEqual(seen.seed[0].id, "main-id");
 		assert.deepEqual(seen.seed.slice(1).map((entry: any) => entry.id), ["u1", "a1", "r1"]);
 		assert.match(seen.prompt, /do not call fork\. You are read-only[\s\S]*STUB_INSPECT$/);
+	});
+
+	describe("as a delegate", () => {
+		const bridge = { socket: "/main/b.sock", activeTools: ["read", "fork", "mcp__semble__search"], tools: [{ name: "mcp__semble__search", description: "d", parameters: {}, exposure: "codemode" }] };
+		const delegate = (role: string) => {
+			const file = path.join(agentDir, `${role}-handshake.json`);
+			fs.writeFileSync(file, JSON.stringify({ role, bridge }));
+			return file;
+		};
+		const asRole = (role: string) => useEnv(() => ({ PI_CONTEXT_CHILD: delegate(role), PI_CONTEXT_ROLE: role }));
+
+		describe("a team", () => {
+			asRole("team");
+
+			test("forks a member that calls main's MCP bridge directly and cannot fork", async () => {
+				const { tool } = await fork({ task: "STUB_INSPECT" });
+				const seen = JSON.parse(tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
+				assert.equal(seen.handshake.role, "reader");
+				assert.deepEqual(seen.handshake.bridge, { ...bridge, activeTools: ["read", "mcp__semble__search"] });
+				assert.ok(seen.args.includes("--no-mcp"));
+				assert.equal(seen.env.role, "reader");
+				assert.equal((await start({ task: "x", role: "team" })).tool.message, "A team cannot start a team.");
+			});
+		});
+
+		for (const role of ["reader", "writer"]) {
+			describe(`a ${role}`, () => {
+				asRole(role);
+
+				test("cannot fork", async () => {
+					const { tool, tools, ctx } = await start({ task: "STUB_INSPECT" });
+					assert.equal(tool.message, "Only the top-level session or a team can fork.");
+					for (const [name, params] of [["fork_cancel", { name: "x" }], ["fork_resume", { name: "x" }], ["fork_steer", { name: "x", message: "y" }]] as const) {
+						await assert.rejects(tools[name].execute("c", params, undefined, undefined, ctx), /Only the top-level session or a team can/);
+					}
+				});
+			});
+		}
 	});
 
 	test("a warm fork over the token limit starts cold on main's model with a summary of the session", async () => {
@@ -915,6 +953,86 @@ describe("fork tool", () => {
 			assert.ok(handshake.worktree.startsWith(path.join(agentDir, "pi-context", "worktrees")));
 			assert.match(tool.details.digest, /\[merge: landed [0-9a-f]{9}\]/);
 			assert.equal(git(primary, "log", "-1", "--format=%s", "main"), "write");
+		});
+
+		describe("as a team", () => {
+			const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-team-")));
+			const lead = path.join(root, "lead");
+			const handshake = path.join(root, "team-handshake.json");
+			after(() => fs.rmSync(root, { recursive: true }));
+			before(() => {
+				git(root, "init", "-b", "main");
+				git(root, "config", "user.email", "t@example.com");
+				git(root, "config", "user.name", "t");
+				git(root, "commit", "--allow-empty", "-m", "start");
+				git(root, "worktree", "add", "-q", "-b", "lead", lead);
+				fs.writeFileSync(handshake, JSON.stringify({ role: "team" }));
+			});
+			useEnv(() => ({ PI_CONTEXT_CHILD: handshake, PI_CONTEXT_ROLE: "team", PI_CONTEXT_WORKTREE: lead }));
+
+			test("a writer member defaults to the team's worktree, not the directory the team's process started in, and may not work outside it", async () => {
+				const { tool } = await fork({ task: "STUB_INSPECT", role: "writer", name: "mate" }, root);
+				const seen = JSON.parse(tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
+				assert.equal(seen.handshake.repo, lead);
+				const outside = await start({ task: "STUB_INSPECT", role: "writer", name: "stray", target: root }, root);
+				assert.match(outside.tool.message, /only inside the team's worktree/);
+				assert.equal(git(root, "branch", "--list", "fork/stray"), "");
+			});
+
+			test("writers forked together from one commit each land on the team's branch, even though the first landing moved it", async () => {
+				const before = git(lead, "rev-parse", "HEAD");
+				const started = await Promise.all(["w1", "w2"].map((name) => start({ task: "STUB_WRITE", role: "writer", name }, root)));
+				const landed = await Promise.all(started.map(({ tool, appended, sent }) => settle(tool, appended, sent)));
+				for (const { details } of landed) assert.match(details.unread, /\[merge: landed [0-9a-f]{9}\]/);
+				assert.equal(git(lead, "rev-list", "--count", `${before}..HEAD`), "2");
+			});
+
+			test("a team's writer cannot take its own branch or base, which would push around the team's worktree", async () => {
+				for (const extra of [{ branch: "feature/x" }, { branch: "feature/x", base: "main" }]) {
+					const { tool } = await start({ task: "STUB_WRITE", role: "writer", name: "pusher", ...extra }, root);
+					assert.match(tool.message, /branch and base are not allowed in a team/);
+				}
+				assert.equal(git(root, "branch", "--list", "feature/x"), "");
+			});
+
+			test("a reload that reload_now requested resumes the team's own lost members and not another session's", async () => {
+				const { ctx, handlers } = await start({ task: "STUB_INSPECT", name: "unused" }, root);
+				const files = fs.mkdtempSync(path.join(agentDir, "reload-"));
+				const previous = process.env.PI_CONTEXT_RUN_ID;
+				process.env.PI_CONTEXT_RUN_ID = "team1";
+				const lost = { role: "reader", background: true, state: "lost", task: "t", files, startedAt: 1, endedBy: "reload", queued: { message: "again", resume: false } } satisfies Omit<Run, "id" | "name">;
+				registryOf().start({ ...lost, id: "mine1", name: "mine" });
+				registryOf().start({ ...lost, id: "theirs1", name: "theirs" });
+				registryOf().update("theirs1", { owner: "other" });
+				const requested = Symbol.for("llm-prompts.reload-now.requested");
+				(globalThis as any)[requested] = true;
+				try {
+					await handlers.session_start({ reason: "reload" }, ctx);
+				} finally {
+					delete (globalThis as any)[requested];
+					if (previous === undefined) delete process.env.PI_CONTEXT_RUN_ID;
+					else process.env.PI_CONTEXT_RUN_ID = previous;
+				}
+				assert.equal(registryOf().get("mine1")?.state, "running");
+				assert.equal(registryOf().get("theirs1")?.state, "lost");
+			});
+
+			test("a team cannot resume or continue a team", async () => {
+				const files = fs.mkdtempSync(path.join(agentDir, "nested-"));
+				fs.writeFileSync(path.join(files, "seed.jsonl"), "{}\n");
+				registryOf().start({ id: "nested1", name: "nested", role: "team", background: true, state: "done", task: "t", files, startedAt: 1 });
+				const { tools, ctx } = await start({ task: "STUB_INSPECT", name: "unused" }, root);
+				await assert.rejects(tools.fork_resume.execute("c", { name: "nested", task: "again" }, undefined, undefined, ctx), /A team cannot start a team/);
+			});
+		});
+
+		test("a team gets its own worktree and main's MCP bridge without the mcpProxy setting", async () => {
+			const { tool } = await fork({ task: "STUB_INSPECT", role: "team", name: "crew" }, repo);
+			const seen = JSON.parse(tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
+			assert.equal(seen.handshake.role, "team");
+			assert.match(seen.handshake.worktree, /\/crew$/);
+			assert.ok(seen.handshake.bridge.socket);
+			assert.ok(seen.args.includes("--no-mcp"));
 		});
 
 		test("a writer from a reader that ran in a primary checkout makes its own worktree", async () => {

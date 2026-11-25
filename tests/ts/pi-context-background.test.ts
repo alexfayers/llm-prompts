@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, mock, test } from "node:test";
+import { useEnv } from "./helpers.ts";
 import { openAsks } from "../../src/llm_prompts/prompts/pi/extensions/pending-asks.ts";
 import { Background, registerBackgroundHooks } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/background.ts";
 import { LiveView } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/live-view.ts";
@@ -11,6 +12,7 @@ import { Registry, type Run } from "../../src/llm_prompts/prompts/pi/extensions/
 const run = (id: string, patch: Partial<Run> = {}): Run => ({ id, name: id, role: "reader", background: true, state: "running", task: "t", startedAt: 1, ...patch });
 const done = (code = "done") => ({ state: "done" as const, outcome: code, ref: "rc" });
 
+useEnv({ PI_CONTEXT_RUN_ID: undefined, PI_CONTEXT_ROLE: undefined });
 let sent: [{ customType: string; content: string }, Record<string, unknown>][];
 let appended: { type: string; customType: string; data: any }[];
 let registry: Registry;
@@ -137,6 +139,32 @@ describe("hooks", () => {
 		assert.equal(settled.continue, true);
 		assert.equal(settled.entries[0].content, "[fork a done] ref rc");
 		assert.deepEqual(sent, []);
+	});
+
+	describe("in a team", () => {
+		useEnv({ PI_CONTEXT_ROLE: "team", PI_CONTEXT_RUN_ID: "team1" });
+
+		test("a session with a UI waits for a live member to finish when it settles", async () => {
+			const settling = handlers.agent_before_settle({ entries: [] }, { ...ctx(), hasUI: true });
+			background.finish(ctx(), "a", done(), "OUTCOME done ref:rc");
+			assert.equal((await settling).entries[0].content, "[fork a done] ref rc");
+		});
+
+		test("a shutdown stops every member, waits for each to end and releases the wait, so a cancelled team leaves none running", async () => {
+			const signal = background.track("a");
+			let ended = false;
+			background.follow("a", new Promise<void>((resolve) => signal.addEventListener("abort", () => setTimeout(() => ((ended = true), resolve()), 20))));
+			const settling = handlers.agent_before_settle({ entries: [] }, { ...ctx(), hasUI: true });
+			await handlers.session_shutdown({ reason: "quit" }, ctx());
+			assert.equal(ended, true);
+			await settling;
+			assert.equal(registry.get("a")?.state, "lost");
+		});
+
+		test("a team restores only the runs it started", () => {
+			handlers.session_start({ reason: "startup" }, session(run("m1", { owner: "team1", state: "done", unread: "u" }), run("main-run", { state: "done", unread: "u" }), run("m2", { owner: "other", state: "done", unread: "u" })));
+			assert.deepEqual(registry.all().map((each) => each.id).filter((id) => ["m1", "main-run", "m2"].includes(id)), ["m1"]);
+		});
 	});
 
 	test("a background run's every change is saved as an entry, and only a background run's", () => {

@@ -1,7 +1,7 @@
 // Adds the fork tool, which runs a delegate on a copy of this session that shares its prompt cache, or a cold worker on a cheaper model. A writer works in a git worktree and lands its commits through the merge queue.
 // Config: llmPrompts.forks in pi settings: mcpProxy (true: a fork uses main's MCP servers), privateNames (regex of names a writer's commits may not land with), memoryMax and cpuQuota (systemd limits of one fork and its processes, defaulting to a quarter of the host's memory and half its cores), readMcp (array of {tool, argsMatch?}: extra MCP tools, as globs, a delegate may call when each argsMatch regex matches the whole of that string argument), checkInMinutes (see background.ts)
 // Config: pi-context/forks.json in the pi agent directory, written by llm-prompts install from `max_live` under `[forks]` in config.toml (most forks that run at once, default 10: more wait in a queue)
-// Env: PI_CONTEXT_CHILD (set in a delegate, which cannot fork), PI_CONTEXT_ROLE and PI_CONTEXT_RUN_ID (set for a delegate), PI_CONTEXT_WORKTREE (set for a writer: its worktree, for hooks that resolve the session repo)
+// Env: PI_CONTEXT_CHILD (set in a delegate, which cannot fork unless its role is team), PI_CONTEXT_ROLE and PI_CONTEXT_RUN_ID (set for a delegate), PI_CONTEXT_WORKTREE (set for a writer: its worktree, for hooks that resolve the session repo)
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -10,11 +10,11 @@ import { Type } from "typebox";
 import { parseOutcome, projectResult } from "./outcome.ts";
 import { replyText } from "./reply.ts";
 import { Background, RESULTS_TYPE, Slots } from "./background.ts";
-import { describeMain, LEAD_PREFIX_FILE, serveBridge, writeLeadPrefix, type BridgeOptions } from "./bridge.ts";
+import { describeMain, LEAD_PREFIX_FILE, narrowBridge, readBridgeConfig, serveBridge, writeLeadPrefix, type BridgeConfig, type BridgeOptions } from "./bridge.ts";
 import { createWorktree, dropIfClean, gitOut, land, restoreWorktree, resumeWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
-import { checkReadMcp, coldCard, expandHome, readHandshake, ROLES, withReadMcp, type ReadMcp, type Role } from "./roles.ts";
+import { checkReadMcp, coldCard, expandHome, isTeam, readHandshake, ROLES, withReadMcp, type ReadMcp, type Role } from "./roles.ts";
 import { findModel, tokens } from "./live-view.ts";
-import { cacheLeftMs, cacheText, canResume, FINISHED, isLive, mainToolsContext, recordMainTools, registryOf, reloadRequested, sessionFileOf, type Run, type RunState } from "./registry.ts";
+import { cacheLeftMs, cacheText, canResume, FINISHED, isLive, isOwnRun, mainToolsContext, recordMainTools, registryOf, reloadRequested, sessionFileOf, type Run, type RunState } from "./registry.ts";
 import type { ForkLimits } from "./cap.ts";
 import { RpcChild, type Turn, type UiAnswer, type UiRequest } from "./runner.ts";
 import { retainSession } from "./usage-sessions.ts";
@@ -208,6 +208,8 @@ export type DelegateOptions = {
 	model?: string;
 	/** Runs the delegate's MCP calls in main, so the delegate starts no MCP servers of its own. */
 	mcp?: BridgeOptions["execute"];
+	/** Main's bridge, which a team passes to its member in place of serving one. */
+	forward?: BridgeConfig;
 	/** The worktree a writer works in. */
 	worktree?: string;
 	/** The main checkout the writer's worktree belongs to. */
@@ -231,7 +233,7 @@ export type DelegateOptions = {
 };
 
 /** Runs the role's session on a copy of the given entries with main's model, thinking level and directory, or as a cold worker with `model`, and returns its first turn. */
-export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { role, name, entries = [], message, signal, command, runId = newRunId(), model, mcp, worktree, repo, cwd, files = path.join(getAgentDir(), "pi-context", randomUUID()), resume, keep, continuable, onChild, onWarmup, onTurn }: DelegateOptions): Promise<Turn & Pick<Run, "lastRequestAt" | "context">> {
+export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { role, name, entries = [], message, signal, command, runId = newRunId(), model, mcp, forward, worktree, repo, cwd, files = path.join(getAgentDir(), "pi-context", randomUUID()), resume, keep, continuable, onChild, onWarmup, onTurn }: DelegateOptions): Promise<Turn & Pick<Run, "lastRequestAt" | "context">> {
 	if (!ctx.model) throw new Error("Cannot start a delegate without a model.");
 	const session = resume && model ? sessionFileOf(files, true) : undefined;
 	if (resume && model && !session) throw new Error("The cold worker's session is gone.");
@@ -255,7 +257,8 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 		const allowed = withReadMcp(role, readMcp);
 		bridge = mcp && (await serveBridge({ role: allowed, execute: mcp }));
 		const main = bridge && describeMain(pi, ctx, model ? allowed : undefined);
-		fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, repo, inherited, ...(!model && warm), ...(model && started && { billedFrom: started.billedFrom, cacheKey: started.cacheKey }), readMcp, bridge: bridge && { ...main, socket: bridge.socket } }), { mode: 0o600 });
+		const route = main && bridge ? { ...main, socket: bridge.socket } : forward && narrowBridge(forward, allowed);
+		fs.writeFileSync(handshake, JSON.stringify({ role: role.name, worktree, repo, inherited, ...(!model && warm), ...(model && started && { billedFrom: started.billedFrom, cacheKey: started.cacheKey }), readMcp, bridge: route }), { mode: 0o600 });
 		if (model) fs.writeFileSync(cardFile, coldCard(role), { mode: 0o600 });
 		else if (!resume) {
 			writeLeadPrefix(files);
@@ -268,7 +271,7 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 			cwd: childCwd,
 			args: model
 				? coldArgs(role, { model, sessionDir, cardFile, skillsDir: path.join(agentDir, "skills"), session })
-				: ["--mode", "rpc", "--session", seed, "--model", warm.model, "--thinking", warm.thinking, ...(bridge ? ["--no-mcp"] : [])],
+				: ["--mode", "rpc", "--session", seed, "--model", warm.model, "--thinking", warm.thinking, ...(route ? ["--no-mcp"] : [])],
 			env: { ...process.env, PI_CONTEXT_CHILD: handshake, PI_CONTEXT_ROLE: role.name, PI_CONTEXT_RUN_ID: runId, PI_CONTEXT_WORKTREE: worktree },
 			signal,
 			onUi: relayDialog(name, ctx),
@@ -281,7 +284,7 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 			Object.assign(last, { lastRequestAt: Date.now(), context: input + output + cacheRead + cacheWrite });
 			warmed?.();
 		});
-		if (model && !session) warmed = await warmUp(JSON.stringify([model, role.name, coldCard(role), role.skills, childCwd, main]), onWarmup, signal);
+		if (model && !session) warmed = await warmUp(JSON.stringify([model, role.name, coldCard(role), role.skills, childCwd, main ?? route]), onWarmup, signal);
 		const turn = await child.prompt(model || resume ? message : `${role.card}\n\n${message}`);
 		await onTurn?.(turn);
 		return { ...turn, ...last };
@@ -301,6 +304,25 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 }
 
 const WORKTREES = "worktrees";
+
+/** Throws when a delegate starts a team, so a team's members cannot fork. */
+function assertMayStart(role: Role) {
+	if (role.name === "team" && process.env.PI_CONTEXT_CHILD) throw new Error("A team cannot start a team.");
+}
+
+/** The directory a fork of this session works in by default: a team's own worktree, which a warm team's process does not start in. */
+const homeOf = (ctx: Pick<ExtensionContext, "cwd">) => (isTeam() && process.env.PI_CONTEXT_WORKTREE) || ctx.cwd;
+
+/** Throws when a team's writer would work outside the team's worktree. */
+function assertInside(base: string, dir: string) {
+	const relative = path.relative(fs.realpathSync(base), fs.realpathSync(dir));
+	if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`a team's writer may work only inside the team's worktree ${base}, not in ${dir}`);
+}
+
+/** Throws in a delegate that is not a team, so a team's members cannot fork. */
+function assertMayFork() {
+	if (process.env.PI_CONTEXT_CHILD && !isTeam()) throw new Error("Only the top-level session or a team can fork.");
+}
 
 /** The toplevel of the git checkout at `dir`, or undefined when it is not one. */
 const checkoutOf = (dir: string) => gitOut(dir, "rev-parse", "--show-toplevel").catch(() => undefined);
@@ -461,9 +483,10 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		const onTurn = tree && (async (turn: Turn) => {
 			if (turn.error) return;
 			registry.update(runId, { state: "landing" });
-			merged.landing = await land({ tree, first: replyEvent(turn), privateNames: forkSettings(pi).privateNames });
+			merged.landing = await land({ tree, first: replyEvent(turn), privateNames: forkSettings(pi).privateNames, signal: runSignal, rebase: isTeam() });
 		});
-		const mcp = run.model || forkSettings(pi).mcpProxy === true ? async (tool: string, args: unknown) => {
+		const forward = process.env.PI_CONTEXT_CHILD ? readBridgeConfig(process.env.PI_CONTEXT_CHILD) : undefined;
+		const mcp = !forward && (run.model || run.role.name === "team" || forkSettings(pi).mcpProxy === true) ? async (tool: string, args: unknown) => {
 			const mainTools = await mainToolsContext();
 			if (!mainTools) return { content: [{ type: "text" as const, text: "Main has not run a tool since its reload, so it cannot run this MCP call yet, so retry in a minute." }], isError: true };
 			const { result, isError } = await mainTools.executeTool(tool, args, { signal: runSignal });
@@ -475,7 +498,8 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			fs.writeFileSync(path.join(run.files, QUEUED_ENTRIES), JSON.stringify(delegate.entries ?? []), { mode: 0o600 });
 			registry.update(runId, { files: run.files, queued: { message: delegate.message, resume: Boolean(delegate.resume) } });
 		}
-		const running = slots.run(() => (registry.get(runId)?.queued && (registry.update(runId, { queued: undefined }), fs.rmSync(path.join(run.files, QUEUED_ENTRIES), { force: true })), runDelegate(pi, ctx, { role: run.role, name, ...delegate, signal: runSignal, command, runId, model: run.model, mcp, worktree: tree?.path ?? (run.role.writes ? (run.target ?? ctx.cwd) : undefined), repo: tree?.repo, cwd: run.target, files: run.files, keep, continuable: true, onChild: (child) => background.attach(runId, child), onWarmup: (waiting) => background.view?.note(runId, waiting ? "waiting for cache" : undefined), onTurn })), runSignal, immediate);
+		const running = slots.run(() => (registry.get(runId)?.queued && (registry.update(runId, { queued: undefined }), fs.rmSync(path.join(run.files, QUEUED_ENTRIES), { force: true })), runDelegate(pi, ctx, { role: run.role, name, ...delegate, signal: runSignal, command, runId, model: run.model, mcp, forward, worktree: tree?.path ?? (run.role.writes ? (run.target ?? homeOf(ctx)) : undefined), repo: tree?.repo, cwd: run.target, files: run.files, keep, continuable: true, onChild: (child) => background.attach(runId, child), onWarmup: (waiting) => background.view?.note(runId, waiting ? "waiting for cache" : undefined), onTurn })), runSignal, immediate);
+		background.follow(runId, running);
 		const onEnd = async (turn: Awaited<typeof running>) => {
 			const current = registry.get(runId);
 			if (!current || !isLive(current) || runSignal.aborted) return;
@@ -503,7 +527,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		promptSnippet: "Run a read-only or worktree-writing delegate on a copy of this session in the background",
 		parameters: Type.Object({
 			task: Type.Optional(Type.String({ description: "What the delegate should find out or check" })),
-			role: Type.Optional(Type.Union([Type.Literal("reader"), Type.Literal("writer")], { description: "reader (default) reads only, writer commits in its own worktree" })),
+			role: Type.Optional(Type.Union([Type.Literal("reader"), Type.Literal("writer"), Type.Literal("team")], { description: "reader (default) reads only, writer commits in its own worktree, team forks readers and writers as its members and reports their results once" })),
 			name: Type.Optional(Type.String({ pattern: "^[a-z0-9-]{1,24}$", description: "Short name for the delegate" })),
 			target: Type.Optional(Type.String({ description: "Path of another directory, git checkout or worktree to read or land in, instead of this session's" })),
 			base: Type.Optional(Type.String({ description: "Writer only, with branch: the ref its new branch starts from, such as origin/main. Default: the current branch" })),
@@ -516,8 +540,9 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		}),
 		async execute(toolCallId, params, signal, onUpdate, ctx): Promise<AgentToolResult<unknown>> {
 			recordMainTools(ctx);
-			if (process.env.PI_CONTEXT_CHILD) throw new Error("Only the top-level session can fork.");
+			assertMayFork();
 			if (!ctx.model) throw new Error("Cannot fork without a model.");
+			if (isTeam() && (params.branch !== undefined || params.base !== undefined)) throw new Error("branch and base are not allowed in a team: its writers land in the team's worktree.");
 			if (params.shared !== undefined || params.sharedFiles !== undefined || params.tasks !== undefined) {
 				if (params.shared === undefined || !params.tasks?.length || params.model === undefined || params.task !== undefined || params.from !== undefined) throw new Error("shared needs tasks and model, without task or from");
 				const stub = params.name ?? `stub-${randomUUID().slice(0, 6)}`;
@@ -561,12 +586,15 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			if (params.from !== undefined && params.model !== undefined) throw new Error("from runs at the source's model and effort: drop model");
 			const source = params.from === undefined ? undefined : finishedRun(registry.all(), params.from);
 			const role: Role = ROLES[params.role ?? (source?.role as Role["name"] | undefined) ?? "reader"];
+			assertMayStart(role);
+			const base = homeOf(ctx);
 			const name = params.name ?? `fork-${randomUUID().slice(0, 6)}`;
 			const targetPath = params.target ?? (source && (source.target ?? source.cwd));
-			const dir = path.resolve(ctx.cwd, expandHome(targetPath ?? "."));
+			const dir = path.resolve(base, expandHome(targetPath ?? "."));
 			if (!fs.existsSync(dir)) throw new Error(`target ${targetPath} does not exist`);
 			const checkout = await checkoutOf(dir);
-			const home = targetPath === undefined ? ctx.cwd : role.writes ? (checkout ?? dir) : dir;
+			const home = targetPath === undefined ? base : role.writes ? (checkout ?? dir) : dir;
+			if (isTeam() && role.writes) assertInside(base, home);
 			const target = sameDir(home, ctx.cwd) ? undefined : home;
 			const entries = seedEntries(ctx.sessionManager.getBranch(), toolCallId);
 			const tooLarge = !source && !params.model && (ctx.getContextUsage()?.tokens ?? 0) > WARM_FORK_MAX_TOKENS;
@@ -613,6 +641,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 	pi.registerTool(forkTool);
 	/** Restarts a lost run on its own session and worktree. */
 	async function resumeRun(ctx: ExtensionToolContext, run: Run & { files: string }, callId: string) {
+		assertMayStart(ROLES[run.role as Role["name"]]);
 		background.resolveForkAsks(ctx, run.name);
 		if (run.tree) await restoreWorktree(run.tree);
 		const { queued } = run;
@@ -626,6 +655,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 	async function continueRun(ctx: ExtensionToolContext, name: string, task: string, toolCallId: string) {
 		sweepFinished();
 		const run = finishedRun(registry.all(), name);
+		assertMayStart(ROLES[run.role as Role["name"]]);
 		background.resolveForkAsks(ctx, run.name);
 		const tree = run.tree && (await resumeWorktree(run.tree, path.join(getAgentDir(), "pi-context", WORKTREES), run.name));
 		registry.update(run.id, { state: "running", task, background: true, tree, worktree: tree?.path, branch: tree?.branch, startedAt: Date.now(), endedAt: undefined, endedBy: undefined, outcome: undefined, notify: undefined });
@@ -642,7 +672,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		parameters: Type.Object({ name: Type.String({ description: "Name of the background fork" }) }),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			recordMainTools(ctx);
-			if (process.env.PI_CONTEXT_CHILD) throw new Error("Only the top-level session can fork.");
+			assertMayFork();
 			const run = background.cancel(params.name);
 			if (!run) throw new Error(`no live background fork ${params.name}`);
 			return { content: [{ type: "text", text: `cancelled fork ${run.name}${run.worktree ? ` (worktree ${run.worktree} kept)` : ""}` }], details: { name: run.name } };
@@ -663,7 +693,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		}),
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			recordMainTools(ctx);
-			if (process.env.PI_CONTEXT_CHILD) throw new Error("Only the top-level session can resume a fork.");
+			assertMayFork();
 			if (params.task !== undefined) return continueRun(ctx, params.name, params.task, toolCallId);
 			const resumable = registry.all().filter(canResume);
 			const run = resumable.filter((candidate) => candidate.name === params.name).at(-1);
@@ -680,7 +710,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		parameters: Type.Object({ name: Type.String({ description: "Name of the background fork" }), message: Type.String({ description: "What the fork should do differently or also do" }) }),
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			recordMainTools(ctx);
-			if (process.env.PI_CONTEXT_CHILD) throw new Error("Only the top-level session can steer a fork.");
+			assertMayFork();
 			const isLiveFork = registry.live().some((run) => run.background && run.name === params.name);
 			if (!isLiveFork && registry.all().some((run) => run.name === params.name && canContinue(run))) return continueRun(ctx, params.name, params.message, toolCallId);
 			await background.steer(params.name, params.message);
@@ -691,9 +721,9 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 
 	pi.on("session_shutdown", () => recordMainTools(undefined));
 	pi.on("session_start", async (event, ctx) => {
-		if (process.env.PI_CONTEXT_CHILD || event.reason !== "reload" || !reloadRequested()) return;
+		if ((process.env.PI_CONTEXT_CHILD && !isTeam()) || event.reason !== "reload" || !reloadRequested()) return;
 		const resumed: string[] = [];
-		for (const run of registry.all().filter((candidate) => candidate.endedBy === "reload" && canResume(candidate))) {
+		for (const run of registry.all().filter((candidate) => isOwnRun(candidate) && candidate.endedBy === "reload" && canResume(candidate))) {
 			await resumeRun(ctx as ExtensionToolContext, { ...run, files: run.files! }, `reload-${run.id}`);
 			resumed.push(run.name);
 		}

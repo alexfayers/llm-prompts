@@ -14,6 +14,15 @@ describe("decide", () => {
 		assert.match(decide(ROLES.reader, "fork", {})?.reason ?? "", /may not use fork/);
 	});
 
+	test("only a team may fork, and its fork tools are the only ones a role adds to a writer", () => {
+		for (const tool of ["fork", "fork_resume", "fork_cancel", "fork_steer"]) {
+			assert.equal(decide(ROLES.team, tool, {}, "/wt", "/repo"), undefined);
+			assert.match(decide(ROLES.writer, tool, {})?.reason ?? "", /may not use fork/);
+		}
+		assert.deepEqual(ROLES.team.tools.filter((tool) => !ROLES.writer.tools.includes(tool)), ["fork", "fork_resume", "fork_cancel", "fork_steer"]);
+		assert.equal(ROLES.team.writes, true);
+	});
+
 	test("MCP tools follow the role's allowlist, including nested calls", () => {
 		assert.equal(decide(ROLES.reader, "mcp__memory__search_nodes", {}), undefined);
 		assert.match(decide(ROLES.writer, "mcp__memory__create_entities", {})?.reason ?? "", /may not use mcp__memory__create_entities/);
@@ -136,7 +145,8 @@ describe("child mode", () => {
 		const ext = await loadExtension("pi-context/index", { ctx: { cwd: "/main" } });
 		return { ext, result: (await ext.fire("tool_call", { toolName, input })) as unknown };
 	};
-	useEnv({ PI_CONTEXT_CHILD: undefined });
+	useEnv({ PI_CONTEXT_CHILD: undefined, PI_CONTEXT_ROLE: undefined });
+	const useRole = (role: string) => void (process.env.PI_CONTEXT_ROLE = role);
 
 	test("without PI_CONTEXT_CHILD no call is guarded", async () => {
 		assert.equal((await call(undefined, "edit", { path: "/other/x" })).result, undefined);
@@ -161,6 +171,13 @@ describe("child mode", () => {
 		assert.deepEqual(await fire("edit", { path: "/repo/src/x.md" }), { block: true, reason: "role writer may not change the main checkout /repo. Use /wt/a/src/x.md in your worktree instead" });
 		assert.equal(await fire("edit", { path: "/wt/a/src/x.md" }), undefined);
 		assert.match(String(((await fire("bash", { command: "cd /repo && git status" })) as any).reason), /may not name the main checkout \/repo in a command, even to read it. Use your worktree \/wt\/a/);
+	});
+
+	test("only a team session registers the hooks that deliver its members' results", async () => {
+		useRole("writer");
+		assert.equal((await call(handshake({ role: "writer" }), "read", {})).ext.handlers.agent_settled, undefined);
+		useRole("team");
+		assert.equal((await call(handshake({ role: "team" }), "read", {})).ext.handlers.agent_settled?.length, 1);
 	});
 
 	test("a reader cannot edit and its bash command is unchanged", async () => {

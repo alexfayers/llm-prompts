@@ -1,10 +1,11 @@
 // Tracks background fork runs: wakes the main session when one finishes, delivers results that arrive during a run when it settles, holds a session without a UI until they finish and notes a fork that runs long.
 // Config: llmPrompts.forks.checkInMinutes in pi settings (minutes a fork runs before the next tool result names it, default 5; 0 turns the note off)
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { canResume, isLive, registryOf, reloadRequested, sessionFileOf, type Registry, type Run } from "./registry.ts";
+import { canResume, isLive, isOwnRun, registryOf, reloadRequested, sessionFileOf, type Registry, type Run } from "./registry.ts";
 import type { LiveView, Watchable } from "./live-view.ts";
 import { openAsks, resolveAsk } from "../pending-asks.ts";
 import type { Reply } from "./reply.ts";
+import { isTeam } from "./roles.ts";
 import { askPrefix, askUserUnanswered, digestLine, openForkAsks, pinForkAsks, wakeReason } from "./wake.ts";
 
 export const RESULTS_TYPE = "pi-context-results";
@@ -71,6 +72,10 @@ export class Background {
 	/** Fork-ask pins announced in the current main run, cleared when it settles unless an `ask_user` went unanswered. */
 	private announced: string[] = [];
 	private askUnanswered = false;
+	/** Each started run's end, once its delegate has stopped and its landing is over. */
+	private following = new Map<string, Promise<unknown>>();
+	/** Ends the wait of `hold`, while one is running. */
+	private releaseHold: (() => void) | undefined;
 	/** Whether the latest run ended aborted or in an error. */
 	private runFailed = false;
 	/** The unread line of each run in a digest main has received but not yet settled on. */
@@ -92,6 +97,12 @@ export class Background {
 		const controller = new AbortController();
 		this.controllers.set(runId, controller);
 		return controller.signal;
+	}
+
+	/** Lets `shutdown` wait until the run has ended. */
+	follow(runId: string, running: Promise<unknown>): void {
+		const ended = running.then(undefined, () => undefined).finally(() => this.following.delete(runId));
+		this.following.set(runId, ended);
 	}
 
 	/** Lets `steer` reach the run's child. */
@@ -207,6 +218,7 @@ export class Background {
 				off();
 				clearTimeout(timer);
 				this.holding = false;
+				this.releaseHold = undefined;
 				resolve();
 			};
 			const off = this.registry.onChange((run) => {
@@ -215,11 +227,12 @@ export class Background {
 			});
 			const timer = setTimeout(release, maxMs);
 			timer.unref();
+			this.releaseHold = release;
 		});
 	}
 
-	/** Stops every live background run and marks it lost, so the next session reports it. */
-	shutdown(): void {
+	/** Stops every live background run and marks it lost, so the next session reports it, releases the wait of `hold`, and resolves once every run has ended. */
+	async shutdown(): Promise<void> {
 		for (const run of this.registry.live()) {
 			if (!run.background) continue;
 			this.controllers.get(run.id)?.abort();
@@ -227,6 +240,8 @@ export class Background {
 			this.children.delete(run.id);
 			this.registry.update(run.id, { state: "lost", endedAt: Date.now() });
 		}
+		this.releaseHold?.();
+		await Promise.all(this.following.values());
 	}
 
 	/** Starts a turn with the digest when main is idle. A busy main gets it when its run settles. */
@@ -263,7 +278,7 @@ export function registerBackgroundHooks(pi: ExtensionAPI, background: Background
 		stopSaving?.();
 		const entries = ctx.sessionManager.getEntries();
 		const latest = new Map<string, Run>();
-		for (const entry of entries) if (entry.type === "custom" && entry.customType === RUN_TYPE) latest.set((entry.data as Run).id, entry.data as Run);
+		for (const entry of entries) if (entry.type === "custom" && entry.customType === RUN_TYPE && isOwnRun(entry.data as Run)) latest.set((entry.data as Run).id, entry.data as Run);
 		const askIds = openAsks(entries as Parameters<typeof openAsks>[0]).map((ask) => ask.id);
 		const lost = registry.restore([...latest.values()], (run) => isRetained(run, askIds));
 		for (const run of lost) {
@@ -274,11 +289,12 @@ export function registerBackgroundHooks(pi: ExtensionAPI, background: Background
 		stopSaving = registry.onChange(save);
 	});
 
-	pi.on("session_shutdown", ({ reason }) => {
+	pi.on("session_shutdown", async ({ reason }) => {
 		for (const run of registry.live()) if (run.background) registry.update(run.id, { endedBy: reason });
 		stopSaving?.();
 		stopSaving = undefined;
-		background.shutdown();
+		const stopped = background.shutdown();
+		if (isTeam()) await stopped;
 	});
 
 	pi.on("before_agent_start", () => {
@@ -300,7 +316,7 @@ export function registerBackgroundHooks(pi: ExtensionAPI, background: Background
 	});
 
 	pi.on("agent_before_settle", async (event, ctx) => {
-		if (!ctx.hasUI) await background.hold();
+		if (!ctx.hasUI || isTeam()) await background.hold();
 		const content = background.digest();
 		if (!content) return undefined;
 		return { entries: [...event.entries, { type: "custom_message" as const, customType: RESULTS_TYPE, content, display: true }], continue: true };

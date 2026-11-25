@@ -1,6 +1,6 @@
 // Runs delegated pi sessions as cache-sharing forks and workers, restricts a delegate to its role, gives a cold worker AGENTS.delegate.md in place of AGENTS.md, and records and replays ghosts.
 // Commands: /ghost save <name> [param=value ...], /ghost list
-// Env: PI_CONTEXT_CHILD (path of the handshake JSON `{role, worktree?, bridge?}`; set only in a delegated session)
+// Env: PI_CONTEXT_CHILD (path of the handshake JSON `{role, worktree?, bridge?}`; set only in a delegated session), PI_CONTEXT_ROLE (`team` in a coordinator, the only delegate that forks)
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Background, registerBackgroundHooks } from "./background.ts";
 import { readBridgeConfig, registerChildBridge, trackPrefix, useCacheKey, useLeadPrefix } from "./bridge.ts";
@@ -10,7 +10,7 @@ import { Recorder, registerRecorder } from "./ghost/recorder.ts";
 import { registerGhostRun } from "./ghost/run.ts";
 import { LiveView, registerLiveView } from "./live-view.ts";
 import { registerReply } from "./reply.ts";
-import { childGuard, readHandshake, registerDelegateRules } from "./roles.ts";
+import { childGuard, isTeam, readHandshake, registerDelegateRules } from "./roles.ts";
 
 export default function (pi: ExtensionAPI) {
 	const background = new Background(pi);
@@ -23,6 +23,7 @@ export default function (pi: ExtensionAPI) {
 		if (!inherited) registerDelegateRules(pi);
 		else useLeadPrefix(pi, handshake);
 		if (cacheKey) useCacheKey(pi, cacheKey);
+		if (isTeam()) registerBackgroundHooks(pi, background);
 		const bridge = readBridgeConfig(handshake);
 		if (bridge) registerChildBridge(pi, bridge);
 	} else {

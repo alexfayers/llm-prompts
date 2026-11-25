@@ -46,6 +46,49 @@ describe("landing", () => {
 		assert.equal(git(clean.path, "symbolic-ref", "--short", "HEAD"), "fork/clean");
 	});
 
+	test("a cancelled fork lands nothing and keeps its commits", async () => {
+		const repo = newRepo();
+		const tree = await writer(repo, "cancelled");
+		commit(tree.path, "a.txt", "1", "work");
+		const before = git(repo, "rev-parse", "HEAD");
+		const landing = await land({ tree, first: done, signal: AbortSignal.abort() });
+		assert.deepEqual([landing.state, landing.reason, landing.removed], ["escalated", "cancelled before landing", false]);
+		assert.equal(git(repo, "rev-parse", "HEAD"), before);
+		assert.ok(fs.existsSync(tree.path));
+	});
+
+	test("with rebase, parallel writers on one base each land after rebasing onto the branch the others advanced, and a conflicting one is left as it was", async () => {
+		const repo = newRepo();
+		const [first, second, clash] = [await writer(repo, "first"), await writer(repo, "second"), await writer(repo, "clash")];
+		commit(first.path, "a.txt", "1", "first work");
+		commit(second.path, "b.txt", "2", "second work");
+		commit(clash.path, "a.txt", "3", "clash work");
+		const landings = await Promise.all([first, second, clash].map((tree) => land({ tree, first: done, rebase: true })));
+		assert.deepEqual(landings.map((landing) => landing.state), ["landed", "landed", "escalated"]);
+		assert.deepEqual(subjects(repo, "HEAD~2..HEAD"), ["second work", "first work"]);
+		assert.match(landings[2].reason ?? "", /do not sit on the current main/);
+		assert.equal(git(clash.path, "status", "--porcelain"), "");
+		assert.deepEqual(subjects(clash.path, "HEAD~1..HEAD"), ["clash work"]);
+		const loose = await writer(repo, "loose");
+		commit(loose.path, "c.txt", "4", "loose work");
+		commit(repo, "d.txt", "5", "lead moved");
+		assert.match((await land({ tree: loose, first: done })).reason ?? "", /do not sit on the current main/);
+	});
+
+	test("with rebase, a writer started from a commit the lead then amended is not replayed over the amend", async () => {
+		const repo = newRepo();
+		commit(repo, "x.txt", "1", "lead x");
+		const tree = await writer(repo, "stale");
+		commit(tree.path, "a.txt", "1", "stale work");
+		git(repo, "rm", "-q", "x.txt");
+		git(repo, "commit", "-q", "--amend", "--allow-empty", "-m", "lead without x");
+		const landing = await land({ tree, first: done, rebase: true });
+		assert.equal(landing.state, "escalated");
+		assert.match(landing.reason ?? "", /do not sit on the current main/);
+		assert.equal(fs.existsSync(path.join(repo, "x.txt")), false);
+		assert.deepEqual(subjects(tree.path, "HEAD~1..HEAD"), ["stale work"]);
+	});
+
 	test("rewritten commits on the current base fast-forward the main checkout", async () => {
 		const repo = newRepo();
 		const tree = await writer(repo, "rewrite");
