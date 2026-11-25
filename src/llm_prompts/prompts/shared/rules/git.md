@@ -15,5 +15,5 @@ roles: lead, worker, reviewer
 - Many files make a change bigger. A deleted file or a trusted tool-generated refactor counts as small.
 - Refactors SHOULD go in a separate PR.
 - In a batch or multi-delegate run, the lead MUST bundle finished changes into one PR per related area, within the size guideline above - MUST NOT open one per delegate or pick.
-MUST stay within the in-flight review limit (`max_in_flight` under `[reviews]` in llm-prompts' `config.toml`) and raise it only on the user's direction.
+  MUST stay within the in-flight review limit (`max_in_flight` under `[reviews]` in llm-prompts' `config.toml`) and raise it only on the user's direction.
 - One logical change stays one commit.
