@@ -1,5 +1,6 @@
 // Runs a pi child in rpc mode and drives it one prompt at a time.
 import { type ChildProcess, spawn } from "node:child_process";
+import { capCommand, type CappedCommand, type ForkLimits } from "./cap.ts";
 
 export interface Usage {
 	input: number;
@@ -35,6 +36,10 @@ export interface RpcChildOptions {
 	env?: NodeJS.ProcessEnv;
 	/** Executable and leading arguments that start pi; defaults to the running pi. */
 	command?: string[];
+	/** Starts the child in a capped systemd scope with these limits, where one is available. */
+	limits?: ForkLimits;
+	/** Wraps the command in a capped scope; defaults to a systemd user scope. */
+	cap?: (command: string[], limits: ForkLimits) => CappedCommand;
 	/** Aborts the running turn and closes the child. */
 	signal?: AbortSignal;
 	/** Receives the child's extension UI requests; a dialog it answers with nothing is cancelled. */
@@ -78,6 +83,7 @@ export class RpcChild {
 	/** Resolves once the child has ended; never rejects. */
 	readonly exited: Promise<Exit>;
 	private readonly child: ChildProcess;
+	private readonly releaseScope: (() => Promise<void>) | undefined;
 	private readonly onUi: RpcChildOptions["onUi"];
 	private readonly replies = new Map<string, (record: Message) => void>();
 	private buffer = "";
@@ -90,8 +96,11 @@ export class RpcChild {
 
 	private constructor(options: RpcChildOptions) {
 		this.onUi = options.onUi;
-		const [executable, ...leading] = options.command ?? [process.execPath, process.argv[1] ?? "pi"];
-		this.child = spawn(executable, [...leading, ...options.args], {
+		const argv = [...(options.command ?? [process.execPath, process.argv[1] ?? "pi"]), ...options.args];
+		const capped = options.limits ? (options.cap ?? capCommand)(argv, options.limits) : undefined;
+		this.releaseScope = capped?.release;
+		const [executable, ...args] = capped?.command ?? argv;
+		this.child = spawn(executable, args, {
 			cwd: options.cwd,
 			env: options.env ?? process.env,
 			stdio: ["pipe", "pipe", "pipe"],
@@ -116,6 +125,7 @@ export class RpcChild {
 			process.once("exit", killLiveChildren);
 		}
 		void this.exited.then(() => live.delete(this));
+		this.child.once("exit", () => void this.releaseScope?.());
 		if (options.signal?.aborted) this.stop();
 		else options.signal?.addEventListener("abort", () => this.stop(), { once: true });
 		for (const stream of [this.child.stdin, this.child.stdout, this.child.stderr]) stream?.on("error", () => undefined);
@@ -162,11 +172,12 @@ export class RpcChild {
 		this.child.stdin?.end();
 		const timers = [setTimeout(() => this.kill(), graceMs), setTimeout(() => this.child.kill("SIGKILL"), graceMs * 2)];
 		for (const timer of timers) timer.unref();
-		return this.exited.finally(() => timers.forEach(clearTimeout));
+		return this.exited.finally(() => timers.forEach(clearTimeout)).then(async (exit) => (await this.releaseScope?.(), exit));
 	}
 
 	kill(): void {
 		this.child.kill("SIGTERM");
+		void this.releaseScope?.();
 	}
 
 	private stop(): void {

@@ -1,5 +1,5 @@
 // Adds the fork tool, which runs a delegate on a copy of this session that shares its prompt cache, or a cold worker on a cheaper model. A writer works in a git worktree and lands its commits through the merge queue.
-// Config: llmPrompts.forks in pi settings: mcpProxy (true: a fork uses main's MCP servers), privateNames (regex of names a writer's commits may not land with), readMcp (array of {tool, argsMatch?}: extra MCP tools, as globs, a delegate may call when each argsMatch regex matches the whole of that string argument)
+// Config: llmPrompts.forks in pi settings: mcpProxy (true: a fork uses main's MCP servers), privateNames (regex of names a writer's commits may not land with), memoryMax and cpuQuota (systemd limits of one fork and its processes, defaulting to a quarter of the host's memory and half its cores), readMcp (array of {tool, argsMatch?}: extra MCP tools, as globs, a delegate may call when each argsMatch regex matches the whole of that string argument)
 // Env: PI_CONTEXT_CHILD (set in a delegate, which cannot fork), PI_CONTEXT_ROLE and PI_CONTEXT_RUN_ID (set for a delegate), PI_CONTEXT_WORKTREE (set for a writer: its worktree, for hooks that resolve the session repo)
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -13,6 +13,7 @@ import { createWorktree, dropIfClean, gitOut, land, mainSnapshot, restoreWorktre
 import { checkReadMcp, coldCard, expandHome, readHandshake, ROLES, withReadMcp, type ReadMcp, type Role } from "./roles.ts";
 import { findModel, tokens } from "./live-view.ts";
 import { cacheLeftMs, cacheText, FINISHED, isLive, registryOf, type Run, type RunState } from "./registry.ts";
+import type { ForkLimits } from "./cap.ts";
 import { RpcChild, type Turn, type UiAnswer, type UiRequest } from "./runner.ts";
 import { retainSession } from "./usage-sessions.ts";
 
@@ -78,8 +79,8 @@ export function coldArgs(role: Role, { model, sessionDir, cardFile, skillsDir, s
 const FINISHED_MARK = "finished";
 
 /** The `llmPrompts.forks` object of pi's settings. */
-function forkSettings(pi: ExtensionAPI, ctx?: ExtensionContext): { mcpProxy?: boolean; privateNames?: string; readMcp: ReadMcp[] } {
-	const forks = ((pi.getSettings?.() as { llmPrompts?: { forks?: object } } | undefined)?.llmPrompts?.forks ?? {}) as { mcpProxy?: boolean; privateNames?: string; readMcp?: unknown };
+function forkSettings(pi: ExtensionAPI, ctx?: ExtensionContext): { mcpProxy?: boolean; privateNames?: string; readMcp: ReadMcp[] } & ForkLimits {
+	const forks = ((pi.getSettings?.() as { llmPrompts?: { forks?: object } } | undefined)?.llmPrompts?.forks ?? {}) as { mcpProxy?: boolean; privateNames?: string; readMcp?: unknown } & ForkLimits;
 	const { valid, dropped } = checkReadMcp(forks.readMcp);
 	const warning = `pi-context: dropped invalid llmPrompts.forks.readMcp entries: ${JSON.stringify(dropped)}`;
 	if (dropped.length && ctx?.hasUI) ctx.ui.notify(warning, "warning");
@@ -216,7 +217,7 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 	try {
 		fs.mkdirSync(files, { recursive: true, mode: 0o700 });
 		fs.rmSync(path.join(files, FINISHED_MARK), { force: true });
-		const { readMcp } = forkSettings(pi, ctx);
+		const { readMcp, memoryMax, cpuQuota } = forkSettings(pi, ctx);
 		const allowed = withReadMcp(role, readMcp);
 		bridge = mcp && (await serveBridge({ role: allowed, execute: mcp }));
 		const main = bridge && describeMain(pi, ctx, model ? allowed : undefined);
@@ -229,6 +230,7 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 		const childCwd = (model && worktree) || cwd || ctx.cwd;
 		child = RpcChild.start({
 			command,
+			limits: { memoryMax, cpuQuota },
 			cwd: childCwd,
 			args: model
 				? coldArgs(role, { model, sessionDir, cardFile, skillsDir: path.join(agentDir, "skills"), session })
