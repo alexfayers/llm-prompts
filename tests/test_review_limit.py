@@ -72,6 +72,13 @@ def test_blocks_a_new_pr_at_the_limit_of_the_repo_it_targets(
     assert "--paginate" in open_prs.call_args.args[0]
 
 
+def test_counts_a_repo_named_with_its_host_on_that_host(open_prs: MagicMock) -> None:
+    assert _guard("gh pr create --repo ghe.example.com/other/app --fill") is not None
+    calls = [c.args[0] for c in open_prs.call_args_list]
+    assert calls[-1][4].startswith("repos/other/app/pulls?")
+    assert all(c[-2:] == ["--hostname", "ghe.example.com"] for c in calls)
+
+
 @pytest.mark.parametrize("command", ["gh pr edit 5 --title x", "git push"])
 def test_never_blocks_updates_or_checks_the_count(
     open_prs: MagicMock, command: str

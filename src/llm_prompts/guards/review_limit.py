@@ -27,11 +27,12 @@ if TYPE_CHECKING:
 DEFAULT_LIMIT = 5
 
 
-def _gh(cwd: str, endpoint: str, jq: str) -> str | None:
+def _gh(cwd: str, endpoint: str, jq: str, host: str = "") -> str | None:
     """Return the output of a paginated `gh api` GET in the directory, or None when it fails."""
     try:
         ran = subprocess.run(
-            ["gh", "api", "-X", "GET", endpoint, "--jq", jq, "--paginate"],
+            ["gh", "api", "-X", "GET", endpoint, "--jq", jq, "--paginate"]
+            + (["--hostname", host] if host else []),
             capture_output=True,
             text=True,
             timeout=10,
@@ -75,9 +76,15 @@ class ReviewLimitGuard(HooksPlugin):
             word.removeprefix("--repo=") for word in words if word.startswith("--repo=")
         ]
         repo = named[0] if named else _gh(cwd, "repos/{owner}/{repo}", ".full_name")
-        login = repo and _gh(cwd, "user", ".login")
+        host, _, owner_repo = (
+            repo.partition("/") if repo and repo.count("/") == 2 else ("", "", repo)
+        )
+        login = repo and _gh(cwd, "user", ".login", host)
         authors = login and _gh(
-            cwd, f"repos/{repo}/pulls?state=open&per_page=100", ".[].user.login"
+            cwd,
+            f"repos/{owner_repo}/pulls?state=open&per_page=100",
+            ".[].user.login",
+            host,
         )
         return (
             (repo, authors.split().count(login))
