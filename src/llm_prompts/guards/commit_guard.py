@@ -31,6 +31,15 @@ TEST_COMMAND_ENV = "PI_CONTEXT_TEST_CMD"
 _PROMPTS = Path(__file__).parent.parent / "prompts"
 _UNCHAINED = re.compile(r";|\||\n|(?<![&<>])&(?![&>])")
 _READ_ONLY_AFTER_TEST = frozenset({"echo", "printf", "true", "pwd", "ls", "cat"})
+_LOCKFILE_TOOLS = {
+    "uv.lock": ("uv",),
+    "pnpm-lock.yaml": ("pnpm", "node"),
+    "package-lock.json": ("npm", "node"),
+    "Cargo.lock": ("cargo", "rustc"),
+}
+_SKIPPED_RUN = (
+    "echo 'Skipped: the tests already passed on these exact files and tool versions.'"
+)
 _IN_PROGRESS = ("rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD")
 
 
@@ -161,6 +170,24 @@ def _test_gate(toplevel: Path) -> _TestRun | None:
     return _from_command(configured) if configured else _detected_gate(toplevel)
 
 
+def _run_fingerprint(toplevel: Path) -> str:
+    """Return the tree fingerprint with the versions of the tools of each lockfile."""
+    tools = [
+        tool
+        for lockfile, lockfile_tools in _LOCKFILE_TOOLS.items()
+        if (toplevel / lockfile).exists()
+        for tool in lockfile_tools
+    ]
+    return tree_fingerprint(toplevel, tools)
+
+
+def _run_key(toplevel: Path, directory: str, words: list[str]) -> str:
+    """Return the receipt key of a test run: its directory relative to the repo, then its command."""
+    return (
+        f"{os.path.relpath(os.path.realpath(directory), toplevel)}\0{shlex.join(words)}"
+    )
+
+
 def _gate_words(words: list[str]) -> list[str]:
     """Drop a leading `timeout [options] <duration>` from the words."""
     if words[0] == "timeout":
@@ -223,10 +250,9 @@ class CommitGuard(HooksPlugin):
         if not guards_active():
             return None
         if hook_name == PluginScope.PRE_SHELL:
-            return self._check(
-                cast("str", kwargs.get("command") or ""),
-                cast("list[str]", kwargs.get("workspace_roots") or []),
-            )
+            command = cast("str", kwargs.get("command") or "")
+            roots = cast("list[str]", kwargs.get("workspace_roots") or [])
+            return self._skip(command, roots) or self._check(command, roots)
         if (
             hook_name == CanonicalHook.POST_TOOL_USE
             and kwargs.get("tool_name") == CanonicalTool.SHELL
@@ -256,17 +282,54 @@ class CommitGuard(HooksPlugin):
                 for later in commands[index + 1 :]
             ):
                 continue
-            repo = _repo(
-                effective_cwd(
-                    commands,
-                    index,
-                    workspace_roots[0] if workspace_roots else os.getcwd(),
-                )
+            directory = effective_cwd(
+                commands,
+                index,
+                workspace_roots[0] if workspace_roots else os.getcwd(),
             )
+            repo = _repo(directory)
             gate = repo and _test_gate(repo[0])
-            if repo and gate and gate.matches(_gate_words([cmd.name, *cmd.words])):
-                ReceiptStore().record(repo[0], tree_fingerprint(repo[0]))
+            words = _gate_words([cmd.name, *cmd.words])
+            if repo and gate and gate.matches(words):
+                receipts = ReceiptStore()
+                receipts.record(repo[0], tree_fingerprint(repo[0]))
+                receipts.record(
+                    repo[0],
+                    _run_fingerprint(repo[0]),
+                    _run_key(repo[0], directory, words),
+                )
                 return
+
+    def _skip(self, command: str, workspace_roots: list[str]) -> HookResult | None:
+        """Return a replacement command that skips a test run by itself where the same command last passed on the same files and tool versions."""
+        commands = _parse(command)
+        if not commands or len(commands) > 1 or _UNCHAINED.search(command):
+            return None
+        cmd = commands[0]
+        directory = effective_cwd(
+            commands, 0, workspace_roots[0] if workspace_roots else os.getcwd()
+        )
+        repo = _repo(directory)
+        gate = repo and _test_gate(repo[0])
+        words = _gate_words([cmd.name, *cmd.words])
+        if (
+            not repo
+            or not gate
+            or cmd.redirect_outputs
+            or not gate.matches(words)
+            or not ReceiptStore().fresh(
+                repo[0],
+                _run_fingerprint(repo[0]),
+                _run_key(repo[0], directory, words),
+            )
+        ):
+            return None
+        return HookResult(
+            updated_input={"command": _SKIPPED_RUN},
+            fallback_notes=[
+                "MUST NOT run the tests again: they already passed on these exact files and tool versions."
+            ],
+        )
 
     def _check(self, command: str, workspace_roots: list[str]) -> HookResult | None:
         """Return a block for a git commit or push in a repo whose tests have not passed on its current files."""
