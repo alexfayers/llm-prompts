@@ -873,26 +873,36 @@ class Tip(NamedTuple):
     skipped: str | None
 
 
-def _current_ref(repo: Path, entry: WorktreeEntry) -> str:
-    """Return the entry's recorded remote head when it fast-forwards the local branch, else the local branch."""
+def _current_ref(repo: Path, base: str, entry: WorktreeEntry) -> str | None:
+    """Return the entry's recorded remote head when it fast-forwards the local branch, else the local branch, or None when the head cannot be fetched."""
     local = f"refs/heads/{entry.branch}"
     head = entry.remote_head
-    if head and _is_commit(repo, head) and _contains(repo, local, head):
-        return head
-    return local
+    if not head:
+        return local
+    if not _is_commit(repo, head):
+        main_sync.run_git(repo, "fetch", "--quiet", base.split("/", 1)[0], head)
+        if not _is_commit(repo, head):
+            return None
+    return head if _contains(repo, local, head) else local
 
 
 def _tips(repo: Path, base: str, entries: Sequence[WorktreeEntry]) -> list[Tip]:
     """Return each entry's commits on the base, taken from its recorded remote head when that is ahead of its local branch."""
-    return [
-        Tip(
-            entry,
-            base,
-            _commit_shas(repo, base, ref := _current_ref(repo, entry)),
-            _skip_reason(repo, base, entry, ref, entries),
+    tips = []
+    for entry in entries:
+        if (ref := _current_ref(repo, base, entry)) is None:
+            missing = f"its remote head {entry.remote_head} could not be fetched"
+            tips.append(Tip(entry, base, [], missing))
+            continue
+        tips.append(
+            Tip(
+                entry,
+                base,
+                _commit_shas(repo, base, ref),
+                _skip_reason(repo, base, entry, ref, entries),
+            )
         )
-        for entry in entries
-    ]
+    return tips
 
 
 def _patch_id(repo: Path, *diff_args: str) -> str:

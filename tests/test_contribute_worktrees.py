@@ -1178,6 +1178,23 @@ def test_update_copies_the_recorded_remote_head_that_merged_a_newer_main_over_a_
     assert (project.repo / "base.txt").read_text(encoding="utf-8") == "both\n"
 
 
+def test_update_skips_a_worktree_whose_recorded_remote_head_cannot_be_fetched(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    missing = "0" * 40
+    worktrees.save_entries(
+        project.record,
+        [e._replace(ready=True, remote_head=missing) for e in project.entries()],
+    )
+
+    copy_recorded(project)
+
+    assert project.main_subjects() == []
+    assert f"its remote head {missing} could not be fetched" in capsys.readouterr().out
+
+
 def test_an_unrelated_main_commit_titled_like_a_later_worktree_commit_is_kept(
     project: Project,
 ) -> None:
