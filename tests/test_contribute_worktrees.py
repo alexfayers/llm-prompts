@@ -1166,6 +1166,67 @@ def test_a_recorded_hand_resolution_settles_the_next_rebuild(
     assert project.main_subjects() == ["feat: main", "feat: feature"]
 
 
+@pytest.mark.parametrize("name", ["base.txt", "note.txt"])
+def test_a_hand_resolution_with_unstaged_work_stays_in_its_worktree(
+    project: Project, hand_staged: main_sync.Squash, name: str
+) -> None:
+    work = main_sync.resolve_worktree(project.repo)
+    (work / name).write_text("unstaged\n", encoding="utf-8")
+    main = git(project.repo, "rev-parse", "main")
+
+    rebuilt = main_sync.rebuild_local(
+        project.repo, hand_staged.floor, {}, (), {}, [hand_staged]
+    )
+
+    assert rebuilt.mode == "stopped"
+    assert git(project.repo, "rev-parse", "main") == main
+    assert (work / name).read_text(encoding="utf-8") == "unstaged\n"
+
+
+def test_a_second_conflict_takes_the_resolve_worktree_after_the_first_is_resolved(
+    project: Project,
+) -> None:
+    repo = project.repo
+    base = git(repo, "rev-parse", "HEAD")
+    squashes = []
+    for name in ("a.txt", "b.txt"):
+        git(repo, "checkout", "-q", "-b", name, base)
+        tip = project.commit(repo, name, f"feature {name}\n", f"feat: {name}")
+        squashes.append(main_sync.Squash(tip=tip, floor=base, first=tip))
+    git(repo, "checkout", "-q", "main")
+    project.commit(repo, "a.txt", "main\n", "feat: main a")
+    project.commit(repo, "b.txt", "main\n", "feat: main b")
+    work = main_sync.resolve_worktree(repo)
+    for name in ("a.txt", "b.txt"):
+        assert (
+            main_sync.rebuild_local(repo, base, {}, (), {}, squashes).mode == "stopped"
+        )
+        (work / name).write_text("resolved\n", encoding="utf-8")
+        git(work, "add", name)
+
+    assert main_sync.rebuild_local(repo, base, {}, (), {}, squashes).mode == "rebuilt"
+
+    assert (repo / "a.txt").read_text(encoding="utf-8") == "resolved\n"
+    assert (repo / "b.txt").read_text(encoding="utf-8") == "resolved\n"
+    assert not work.exists()
+
+
+def test_a_resolve_worktree_without_its_merge_named_stays(
+    project: Project, hand_staged: main_sync.Squash
+) -> None:
+    work = main_sync.resolve_worktree(project.repo)
+    Path(git(work, "rev-parse", "--git-path", "llm-prompts-resolution")).unlink()
+    main = git(project.repo, "rev-parse", "main")
+
+    rebuilt = main_sync.rebuild_local(
+        project.repo, hand_staged.floor, {}, (), {}, [hand_staged]
+    )
+
+    assert rebuilt.mode == "stopped"
+    assert git(project.repo, "rev-parse", "main") == main
+    assert (work / "related.txt").read_text(encoding="utf-8") == "fix\n"
+
+
 def test_a_hand_resolution_stays_in_its_worktree_until_its_merge_comes_up(
     project: Project, hand_staged: main_sync.Squash
 ) -> None:

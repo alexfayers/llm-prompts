@@ -514,26 +514,16 @@ def _commit_as(repo: Path, tree: str, parent: str, source: str) -> str:
 def _resolution_ref(repo: Path, base: str, ours: str, theirs: str) -> str:
     """Return the ref that stores the tree staged by hand for merging ``theirs`` onto ``ours`` from ``base``."""
     trees = _read(
-        repo, "rev-parse", *(f"{rev}^{{tree}}" for rev in (base, ours, theirs))
+        repo, "rev-parse", *(f"{rev}^{{tree}}" for rev in (base, theirs, ours))
     ).split()
     return "/".join((_RESOLUTIONS_REF, *trees))
 
 
-def _staged_tree(
-    repo: Path, base: str, ours: str, theirs: str, keep: Path | None
-) -> str | None:
-    """Return the tree staged by hand for this exact merge, removing ``keep`` when it holds that resolution."""
+def _staged_tree(repo: Path, base: str, ours: str, theirs: str) -> str | None:
+    """Return the tree staged by hand for this exact merge."""
     ref = _resolution_ref(repo, base, ours, theirs)
     staged = run_git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{tree}}")
-    if staged.returncode != 0:
-        return None
-    if (
-        keep is not None
-        and keep.exists()
-        and _resolution_file(keep).read_text(encoding="utf-8") == ref
-    ):
-        _read(repo, "worktree", "remove", "--force", str(keep))
-    return staged.stdout.strip()
+    return staged.stdout.strip() if staged.returncode == 0 else None
 
 
 def _reuse_resolutions(
@@ -546,21 +536,27 @@ def _reuse_resolutions(
         base: The merge base.
         ours: The commit to merge onto.
         theirs: The commit whose changes on ``base`` are merged.
-        keep: Where to add the worktree and leave it while any conflict has no recorded resolution, until its staged tree is returned.
+        keep: Where to add the worktree and leave it while any conflict has no recorded resolution. A worktree already there, whose resolution is stored for another merge, is removed first.
 
     Returns:
         The merged tree, or None while any conflict has no recorded resolution.
 
     Raises:
-        _Stopped: ``keep`` still holds a resolution staged for another merge.
+        _Stopped: ``keep`` holds a resolution staged for this merge onto another main.
     """
-    if (staged := _staged_tree(repo, base, ours, theirs, keep)) is not None:
+    if (staged := _staged_tree(repo, base, ours, theirs)) is not None:
         return staged
+    ref = _resolution_ref(repo, base, ours, theirs)
     if keep is not None and keep.exists():
-        raise _Stopped(
-            f"{keep} holds a resolution staged for another main; drop it with:"
-            f" git worktree remove --force {shlex.quote(str(keep))}"
-        )
+        if (
+            _resolution_file(keep).read_text(encoding="utf-8").rpartition("/")[0]
+            == ref.rpartition("/")[0]
+        ):
+            raise _Stopped(
+                f"{keep} holds a resolution staged for another main; drop it with:"
+                f" git worktree remove --force {shlex.quote(str(keep))}"
+            )
+        _read(repo, "worktree", "remove", "--force", str(keep))
     change = _read(
         repo, "commit-tree", f"{theirs}^{{tree}}", "-p", base, "-m", "replay"
     ).strip()
@@ -575,9 +571,7 @@ def _reuse_resolutions(
             if run_git(work, "ls-files", "--unmerged").stdout:
                 kept = keep is not None
                 if kept:
-                    _resolution_file(work).write_text(
-                        _resolution_ref(repo, base, ours, theirs), encoding="utf-8"
-                    )
+                    _resolution_file(work).write_text(ref, encoding="utf-8")
                 return None
             return _read(work, "write-tree").strip()
         finally:
@@ -601,19 +595,30 @@ def _resolution_file(work: Path) -> Path:
 
 
 def _record_resolution(repo: Path) -> None:
-    """Record the hand resolution left in the resolve worktree with git rerere, and store its staged tree under the ref its merge names."""
+    """Record the hand resolution left in the resolve worktree with git rerere, and store its staged tree under the ref its merge names.
+
+    Raises:
+        _Stopped: The worktree has unresolved conflicts, changes that are not staged, or names no merge.
+    """
     work = resolve_worktree(repo)
     if not work.exists():
         return
+    drop = f"git worktree remove --force {shlex.quote(str(work))}"
     if run_git(work, "ls-files", "--unmerged").stdout:
         raise _Stopped(
             f"conflicts in {work} are unresolved; {_RESOLVE_STEPS}, or drop them with:"
-            f" git worktree remove --force {shlex.quote(str(work))}"
+            f" {drop}"
+        )
+    if any(
+        line[1] != " " for line in _read(work, "status", "--porcelain").splitlines()
+    ):
+        raise _Stopped(f"{work} has changes that are not staged; {_RESOLVE_STEPS}")
+    if not (named := _resolution_file(work)).exists():
+        raise _Stopped(
+            f"{work} names no merge to reuse its resolution for; save its changes,"
+            f" then drop it with: {drop}"
         )
     _read(work, *_RERERE, "rerere")
-    if not (named := _resolution_file(work)).exists():
-        _read(repo, "worktree", "remove", "--force", str(work))
-        return
     commit = _read(
         repo,
         "commit-tree",
@@ -623,6 +628,12 @@ def _record_resolution(repo: Path) -> None:
         env=_EARLIER_MAINS_IDENTITY,
     ).strip()
     _read(repo, "update-ref", named.read_text(encoding="utf-8"), commit)
+
+
+def _drop_resolve_worktree(repo: Path, work: Path) -> None:
+    """Remove the resolve worktree ``work``, whose resolution is stored, once main is rebuilt."""
+    if work.exists():
+        run_git(repo, "worktree", "remove", "--force", str(work))
 
 
 def holds_changes(repo: Path, tip: str, sha: str) -> bool:
@@ -666,7 +677,7 @@ def _replay(
     try:
         tree = _merge_tree(repo, floor, tip, changes)
     except _Conflict as conflict:
-        staged = _staged_tree(repo, floor, tip, changes, keep) if reuse else None
+        staged = _staged_tree(repo, floor, tip, changes) if reuse else None
         resolved = staged or (
             _reuse_resolutions(repo, floor, tip, changes, keep) if reuse else None
         )
@@ -857,7 +868,7 @@ def rebuild_local(
 ) -> SyncResult:
     """Move local main onto ``base`` with its local commits replayed, some swapped for squashes or dropped, plus new squashes.
 
-    A replay whose conflict has no recorded resolution stops the rebuild and leaves its merge in ``resolve_worktree``. The next rebuild records the hand resolution staged there with git rerere, and stores its whole tree for that exact merge, which it reuses. The worktree stays until that tree is reused.
+    A replay whose conflict has no recorded resolution stops the rebuild and leaves its merge in ``resolve_worktree``. The next rebuild records the hand resolution staged there with git rerere, and stores its whole tree for that exact merge, which it reuses. The worktree stays until main is rebuilt, and a rebuild stops while it holds changes that are not staged.
 
     Args:
         repo: The local clone, on its main branch.
@@ -976,6 +987,7 @@ def rebuild_local(
                     " that its replacement drops"
                 )
         if tip == head:
+            _drop_resolve_worktree(repo, keep)
             return SyncResult("rebuilt", copied=tuple(copied))
         saved = run_git(
             repo,
@@ -996,4 +1008,5 @@ def rebuild_local(
         return SyncResult("failed", detail=f"main left untouched: {bail}")
     if reset.returncode != 0:
         return SyncResult("failed", detail=reset.stderr.strip())
+    _drop_resolve_worktree(repo, keep)
     return SyncResult("rebuilt", replayed=replayed, copied=tuple(copied))
