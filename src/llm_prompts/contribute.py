@@ -288,7 +288,7 @@ def _with_depends(
     ).rstrip()
     if not depends_on:
         return f"{kept}\n" if kept != body.rstrip() else body
-    block = "\n".join(f"{_DEPENDS_PREFIX}{ref}" for ref in depends_on)
+    block = "\n".join(f"{_DEPENDS_PREFIX}{ref}" for ref in dict.fromkeys(depends_on))
     heading = _DEPENDENCIES_HEADING.search(f"{kept}\n")
     if heading is None:
         return f"{kept}\n\n{block}\n"

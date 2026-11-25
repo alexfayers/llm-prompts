@@ -3097,6 +3097,15 @@ def published_stack(project: Project, stack: Path) -> Path:
     return project.root / "wt" / "feat-a"
 
 
+def test_a_pr_link_to_a_branch_dependency_writes_its_depends_on_line_once(
+    project: Project, published_stack: Path
+) -> None:
+    assert project.run("tool", depends_on=("feat/b", "o/repo#100")) == 0
+    assert project.run(apply=True) == 0
+
+    assert pr_body(project, 101).count("Depends on o/repo#100") == 1
+
+
 def _entry_of(project: Project, branch: str) -> WorktreeEntry:
     return next(e for e in project.entries() if e.branch == branch)
 
