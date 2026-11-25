@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from . import home
+from .main_sync import UPSTREAM
 from .network import run_with_retries
 from .setup import (
     GIT_TIMEOUT,
@@ -28,8 +29,8 @@ def plugin_dir() -> Path:
     return home.config_dir() / "plugin-sources"
 
 
-def _load_plugins() -> list[dict[str, Any]]:
-    """Load the plugins list from config.
+def _load_plugins(config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Load the plugins list from config, or from an already-read config.
 
     Returns:
         The ``[[plugins]]`` entries, or an empty list if config or the key is
@@ -37,7 +38,7 @@ def _load_plugins() -> list[dict[str, Any]]:
     """
     from .setup import read_config
 
-    plugins = read_config().get("plugins", [])
+    plugins = (read_config() if config is None else config).get("plugins", [])
     if not isinstance(plugins, list):
         return []
     return plugins
@@ -266,11 +267,12 @@ def pull_plugin_sources() -> None:
             print(line)
 
 
-def plugin_source_messages(plugin: dict[str, Any]) -> list[str]:
+def plugin_source_messages(plugin: dict[str, Any], fetch: bool = True) -> list[str]:
     """Return update-availability messages for a plugin checkout.
 
     Args:
         plugin: A ``[[plugins]]`` entry with ``name``, ``source``, optional ``ref``.
+        fetch: Whether to fetch, or compare against the commit the last remote check resolved.
 
     Returns:
         Message lines describing an available update, or an empty list.
@@ -295,22 +297,65 @@ def plugin_source_messages(plugin: dict[str, Any]) -> list[str]:
         return []
     local_sha = local.stdout.strip()
 
-    remote_sha = _remote_head(git_url, plugin.get("ref"))
+    if fetch:
+        remote_sha = _remote_head(git_url, plugin.get("ref"))
+        if remote_sha not in (None, local_sha):
+            run_with_retries(
+                ["git", "-C", str(checkout), "fetch", "--quiet"],
+                check=True,
+                capture_output=True,
+                timeout=GIT_TIMEOUT,
+            )
+        _record_resolved_target(checkout, remote_sha)
+    else:
+        remote_sha = _resolved_target(checkout)
     if remote_sha is None or remote_sha == local_sha:
         return []
 
-    run_with_retries(
-        ["git", "-C", str(checkout), "fetch", "--quiet"],
-        check=True,
-        capture_output=True,
-        timeout=GIT_TIMEOUT,
-    )
     subjects = _commit_subjects_between(
-        checkout, local_sha, "FETCH_HEAD", _installed_pathspecs(plugin.get("skills"))
+        checkout,
+        local_sha,
+        remote_sha,
+        _installed_pathspecs(plugin.get("skills")),
     )
     if subjects == []:
         return []
     return _format_update_message(name, subjects, local_sha[:8], remote_sha[:8])
+
+
+def _record_resolved_target(checkout: Path, sha: str | None) -> None:
+    """Record the commit the remote check resolved for a plugin checkout, or clear it when the ref resolved to nothing.
+
+    Raises:
+        subprocess.CalledProcessError: If the record cannot be written or cleared.
+    """
+    update = ["-d", UPSTREAM] if sha is None else [UPSTREAM, sha]
+    subprocess.run(
+        ["git", "-C", str(checkout), "update-ref", *update],
+        capture_output=True,
+        check=True,
+        timeout=GIT_TIMEOUT,
+    )
+
+
+def _resolved_target(checkout: Path) -> str | None:
+    """Return the commit the last remote check resolved for a plugin checkout, or ``None`` if it recorded none."""
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(checkout),
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            f"{UPSTREAM}^{{commit}}",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=GIT_TIMEOUT,
+    )
+    return result.stdout.strip() if result.returncode == 0 else None
 
 
 def _installed_pathspecs(subset: list[str] | None) -> list[str]:

@@ -53,6 +53,7 @@ class SyncResult(NamedTuple):
     replayed: int = 0
     detail: str = ""
     skipped: tuple[SkippedCopy, ...] = ()
+    copied: tuple[str, ...] = ()
 
 
 class _OpenPrCommit(NamedTuple):
@@ -539,13 +540,26 @@ def _reuse_resolutions(repo: Path, base: str, ours: str, theirs: str) -> str | N
             run_git(repo, "worktree", "remove", "--force", str(work))
 
 
-def replays_to(repo: Path, parent: str, squash: Squash, result: str) -> bool:
-    """Return whether replaying ``squash`` on ``parent``, reusing recorded hand resolutions, gives ``result``'s tree."""
+def holds_changes(repo: Path, tip: str, sha: str) -> bool:
+    """Return whether the changes of commit ``sha`` merge into ``tip`` cleanly and leave its tree as it is."""
+    try:
+        tree = _merge_tree(repo, f"{sha}^", tip, sha)
+    except _Conflict:
+        return False
+    return tree == _read(repo, "rev-parse", f"{tip}^{{tree}}").strip()
+
+
+def replays_to(
+    repo: Path, parent: str, squash: Squash, result: str, reuse: bool = True
+) -> bool:
+    """Return whether replaying ``squash`` on ``parent``, reusing recorded hand resolutions when ``reuse``, gives ``result``'s tree."""
     try:
         tree: str | None
         try:
             tree = _merge_tree(repo, squash.floor, parent, squash.tip)
         except _Conflict:
+            if not reuse:
+                return False
             tree = _reuse_resolutions(repo, squash.floor, parent, squash.tip)
     except _Bail:
         return False
@@ -558,6 +572,7 @@ def _replay(
     commit: LocalCommit,
     squash: Squash | None = None,
     against: str = "upstream",
+    reuse: bool = False,
 ) -> str:
     floor, changes = (
         (squash.floor, squash.tip) if squash else (f"{commit.sha}^", commit.sha)
@@ -565,8 +580,11 @@ def _replay(
     try:
         tree = _merge_tree(repo, floor, tip, changes)
     except _Conflict as conflict:
-        resolved = _reuse_resolutions(repo, floor, tip, changes)
-        if resolved is None:
+        resolved = _reuse_resolutions(repo, floor, tip, changes) if reuse else None
+        if (
+            resolved is None
+            or resolved == _read(repo, "rev-parse", f"{tip}^{{tree}}").strip()
+        ):
             raise _ReplayConflict(
                 f"local commit {commit.sha[:12]} ({commit.subject}) conflicts with {against}"
                 f" in {', '.join(conflict.paths)}"
@@ -580,14 +598,6 @@ def _replay(
     return _commit_as(repo, tree, tip, squash.first if squash else commit.sha)
 
 
-def _holds_every_change(repo: Path, commit: LocalCommit, head: str) -> bool:
-    try:
-        tree = _merge_tree(repo, f"{commit.sha}^", head, commit.sha)
-    except _Conflict:
-        return False
-    return tree == _read(repo, "rev-parse", f"{head}^{{tree}}").strip()
-
-
 def _replay_or_open_pr_version(
     repo: Path,
     tip: str,
@@ -595,17 +605,20 @@ def _replay_or_open_pr_version(
     open_pr_commits: Callable[[], dict[_Identity, list[_OpenPrCommit]]],
     merged_squashes: Mapping[str, list[str]] | None = None,
 ) -> str:
+    reuse = commit.subject not in (merged_squashes or {})
     try:
-        return _replay(repo, tip, commit)
+        return _replay(repo, tip, commit, reuse=reuse)
     except _ReplayConflict:
         for pr_commit in open_pr_commits().get(
             (commit.authored_at, commit.subject), ()
         ):
-            if _holds_every_change(repo, commit, pr_commit.head):
+            if holds_changes(repo, pr_commit.head, commit.sha):
                 with suppress(_ReplayConflict):
-                    return _replay(repo, tip, commit._replace(sha=pr_commit.sha))
+                    return _replay(
+                        repo, tip, commit._replace(sha=pr_commit.sha), reuse=reuse
+                    )
         if any(
-            _holds_every_change(repo, commit, squash)
+            holds_changes(repo, squash, commit.sha)
             for squash in (merged_squashes or {}).get(commit.subject, ())
         ):
             return tip
@@ -712,6 +725,33 @@ def _remember_main(repo: Path, head: str) -> None:
     _read(repo, "update-ref", EARLIER_MAINS_REF, kept)
 
 
+def _changed_paths(repo: Path, old: str, new: str) -> list[str]:
+    return _read(repo, "diff", "--name-only", "--no-renames", old, new).splitlines()
+
+
+def _lost_paths(repo: Path, tip: str, sha: str, kept: Collection[str]) -> list[str]:
+    """Return the paths where commit ``sha`` has changes that ``tip`` lacks, counting a clash in a ``kept`` path as replaced."""
+    result = run_git(
+        repo,
+        "merge-tree",
+        "--write-tree",
+        "--name-only",
+        f"--merge-base={sha}^",
+        tip,
+        sha,
+    )
+    if result.returncode not in (0, 1):
+        raise _Bail(
+            result.stderr.strip() or f"git merge-tree exited {result.returncode}"
+        )
+    tree, *rest = result.stdout.splitlines()
+    clashes = set(takewhile(bool, rest)) if result.returncode else set()
+    return sorted(
+        {path for path in _changed_paths(repo, tip, tree) if path not in clashes}
+        | (clashes - set(kept))
+    )
+
+
 def rebuild_local(
     repo: Path,
     base: str,
@@ -719,6 +759,9 @@ def rebuild_local(
     drops: Collection[str],
     copies: Mapping[str, str],
     additions: Sequence[Squash],
+    landed: Collection[str] = (),
+    exact: Collection[str] = (),
+    earlier: Mapping[str, Squash] | None = None,
 ) -> SyncResult:
     """Move local main onto ``base`` with its local commits replayed, some swapped for squashes or dropped, plus new squashes.
 
@@ -729,9 +772,15 @@ def rebuild_local(
         drops: Local commit shas to leave out.
         copies: Local commit sha of each known copy of a worktree branch to the first commit of that branch. A copy that conflicts is skipped.
         additions: Squashes to replay on top, in order. One that conflicts is skipped.
+        landed: Local commit shas to leave out where their changes are already on the commits replayed before them.
+        exact: Local commit shas that copy merged branches.
+        earlier: Local commit sha of a copy that only one worktree branch claims to the squash of that branch it was copied from.
+
+    ``landed`` and ``exact`` commits, and the squashes that replace them, replay without recorded hand resolutions, and a conflict of one leaves main untouched.
+    Every change of an unpublished commit left out or replaced must be on the new main, unless it is not a ``landed`` or ``exact`` commit and clashes with a change in a file its replacement changes, or it is in a file its ``earlier`` squash, replayed on the commit's parent, changes to the content the commit holds, or main is left untouched.
 
     Returns:
-        ``rebuilt`` with the count of replayed commits and the skipped copies, or a failed result that leaves main untouched.
+        ``rebuilt`` with the count of replayed commits, the skipped copies and the first commit of each squash replayed into a new commit, or a failed result that leaves main untouched.
     """
     if (operation := _operation_in_progress(repo)) is not None:
         return SyncResult("failed", detail=f"a {operation} is in progress")
@@ -744,15 +793,22 @@ def rebuild_local(
         tip = _read(repo, "rev-parse", base).strip()
         replayed = 0
         skipped: list[SkippedCopy] = []
+        copied: list[str] = []
+        removed: dict[str, Squash | None] = {}
+        placed: dict[str, Squash] = {}
         untouched = tip == merge_base
+        guarded = {*landed, *exact, *(copies[sha] for sha in exact if sha in copies)}
         for commit in _local_commits(repo, merge_base):
             squash = substitutions.get(commit.sha)
-            dropped = commit.sha in drops
+            dropped = commit.sha in drops or (
+                commit.sha in landed and holds_changes(repo, tip, commit.sha)
+            )
             if squash is None and not dropped and untouched:
                 tip = commit.sha
                 continue
             untouched = False
             if dropped:
+                removed[commit.sha] = None
                 continue
             try:
                 new_tip = _replay(
@@ -761,12 +817,17 @@ def rebuild_local(
                     commit,
                     squash,
                     "main" if commit.sha in copies else "upstream",
+                    commit.sha not in guarded,
                 )
             except _ReplayConflict as conflict:
-                if commit.sha not in copies:
+                if commit.sha not in copies or commit.sha in guarded:
                     raise
                 skipped.append(SkippedCopy(copies[commit.sha], str(conflict)))
                 continue
+            if squash:
+                removed[commit.sha] = squash
+                if new_tip != tip:
+                    copied.append(squash.first)
             replayed += new_tip != tip
             tip = new_tip
         for squash in additions:
@@ -778,14 +839,59 @@ def rebuild_local(
                     LocalCommit(squash.first, "", subject),
                     squash,
                     "main",
+                    squash.first not in guarded,
                 )
             except _ReplayConflict as conflict:
+                if squash.first in guarded:
+                    raise
                 skipped.append(SkippedCopy(squash.first, str(conflict)))
                 continue
+            placed[squash.first] = squash
+            if new_tip != tip:
+                copied.append(squash.first)
             replayed += new_tip != tip
             tip = new_tip
+        replacements = [s for s in removed.values() if s] + list(placed.values())
+        for sha, replacement in removed.items():
+            if (
+                replacement is None
+                and sha in copies
+                and (replacement := placed.get(copies[sha])) is None
+            ):
+                continue
+            if _read(
+                repo, "for-each-ref", "--count=1", "--contains", sha, "refs/remotes"
+            ):
+                continue
+            kept = (
+                set()
+                if sha in guarded
+                else {
+                    path
+                    for squash in ([replacement] if replacement else replacements)
+                    for path in _changed_paths(repo, squash.floor, squash.tip)
+                }
+            )
+            lost = _lost_paths(repo, tip, sha, kept)
+            if prior := (earlier or {}).get(sha):
+                try:
+                    replay = _merge_tree(repo, prior.floor, f"{sha}^", prior.tip)
+                except _Conflict:
+                    replay = None
+                own = (
+                    set(_changed_paths(repo, f"{sha}^", replay))
+                    - set(_changed_paths(repo, sha, replay))
+                    if replay
+                    else set()
+                )
+                lost = [path for path in lost if path not in own]
+            if lost:
+                raise _Bail(
+                    f"local commit {sha[:12]} has changes in {', '.join(lost)}"
+                    " that its replacement drops"
+                )
         if tip == head:
-            return SyncResult("rebuilt", skipped=tuple(skipped))
+            return SyncResult("rebuilt", skipped=tuple(skipped), copied=tuple(copied))
         saved = run_git(
             repo,
             "update-ref",
@@ -803,4 +909,6 @@ def rebuild_local(
         return SyncResult("failed", detail=f"main left untouched: {bail}")
     if reset.returncode != 0:
         return SyncResult("failed", detail=reset.stderr.strip())
-    return SyncResult("rebuilt", replayed=replayed, skipped=tuple(skipped))
+    return SyncResult(
+        "rebuilt", replayed=replayed, skipped=tuple(skipped), copied=tuple(copied)
+    )

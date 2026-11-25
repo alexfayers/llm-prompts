@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
 from conftest import FakeSubprocess
 
-from llm_prompts import plugins, setup
+from llm_prompts import cli, plugins, setup
 from llm_prompts.exit_reason import ExitReason
 
 
@@ -482,6 +483,109 @@ class TestPluginSourceMessages:
         messages = plugins.plugin_source_messages(plugin)
         assert len(messages) == 1
         assert messages[0] == ("[p] update available:\n- second commit subject")
+        (log,) = fake_subprocess.matching("log")
+        assert "aaaaaaa..bbbbbbb" in log
+
+    def test_a_failed_target_write_fails_the_check(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_subprocess: FakeSubprocess,
+    ) -> None:
+        (plugins._checkout_dir("p") / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-parse", "HEAD", stdout="aaaaaaa\n")
+        fake_subprocess.on("ls-remote", stdout="bbbbbbb\tHEAD\n")
+        fake_subprocess.on("rev-parse", "--verify", stdout="ccccccc\n")
+        fake_subprocess.on("update-ref", returncode=1, stderr="cannot lock ref")
+        fake_subprocess.on(
+            "log",
+            "--pretty=format:%s%n%b%x1e",
+            stdout=fake_subprocess.log_lines("stale"),
+        )
+        config = tmp_path / "config.toml"
+        config.touch()
+        monkeypatch.setattr(setup, "config_path", lambda: config)
+        monkeypatch.setattr(setup, "_load_config", lambda _config: [])
+        monkeypatch.setattr(
+            plugins,
+            "_load_plugins",
+            lambda _config: [{"name": "p", "source": f"git+file://{tmp_path}"}],
+        )
+
+        checked = cli._collect_update_messages()
+        rebuilt = cli._collect_update_messages(
+            previous=(cli._installed_fingerprint(), checked)
+        )
+
+        assert checked[0].startswith("[p] update check failed")
+        assert rebuilt == checked
+
+    def test_without_fetching_compares_against_the_resolved_target(
+        self, tmp_path: Path, fake_subprocess: FakeSubprocess
+    ) -> None:
+        (plugins._checkout_dir("p") / ".git").mkdir(parents=True)
+        fake_subprocess.on("rev-parse", "HEAD", stdout="aaaaaaa\n")
+        fake_subprocess.on(
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "refs/llm-prompts/upstream^{commit}",
+            stdout="bbbbbbb\n",
+        )
+        fake_subprocess.on(
+            "log",
+            "--pretty=format:%s%n%b%x1e",
+            stdout=fake_subprocess.log_lines("second commit subject"),
+        )
+        plugin = {"name": "p", "source": f"git+file://{tmp_path / 'upstream'}"}
+
+        messages = plugins.plugin_source_messages(plugin, fetch=False)
+
+        assert messages == ["[p] update available:\n- second commit subject"]
+        assert fake_subprocess.matching("ls-remote") == []
+        assert fake_subprocess.matching("fetch") == []
+        (log,) = fake_subprocess.matching("log")
+        assert "aaaaaaa..bbbbbbb" in log
+
+    @pytest.mark.real_io
+    def test_without_fetching_reuses_the_target_the_remote_check_resolved(
+        self, tmp_path: Path
+    ) -> None:
+        upstream = tmp_path / "upstream"
+
+        def git(*args: str) -> None:
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(upstream),
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    *args,
+                ],
+                check=True,
+                capture_output=True,
+            )
+
+        upstream.mkdir()
+        git("init", "-q", "-b", "main")
+        git("commit", "-q", "--allow-empty", "-m", "tagged")
+        git("tag", "both")
+        git("switch", "-q", "-c", "both")
+        (upstream / "skills" / "s").mkdir(parents=True)
+        (upstream / "skills" / "s" / "SKILL.md").write_text("s\n")
+        git("add", "skills")
+        git("commit", "-q", "-m", "branched")
+        git("switch", "-q", "main")
+        plugin = {"name": "p", "source": f"git+file://{upstream}", "ref": "both"}
+        assert plugins.ensure_cloned(plugin) is not None
+        git("branch", "-q", "-D", "both")
+
+        fetched = plugins.plugin_source_messages(plugin)
+
+        assert plugins.plugin_source_messages(plugin, fetch=False) == fetched
 
     @pytest.fixture
     def outdated_plugin(

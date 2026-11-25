@@ -10,7 +10,7 @@ not totalled.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,7 +25,7 @@ from .install import (
     _collect_content_srcs,
     _expand_agent_variants,
     _linked_content,
-    _passes_requires_gate,
+    _passes_gate,
     _pi_agent_dialect,
     _pi_definitions,
     _PiRuleBundle,
@@ -60,6 +60,8 @@ from .size_limits import (
     ALWAYS_RULE_BYTES,
     ALWAYS_SKILL_FRONTMATTER_BYTES,
     COLLECTION_BYTES,
+    COLLECTION_SCHEDULE,
+    COLLECTION_SHARE_BYTES,
     ON_DEMAND_AGENT_BODY_BYTES,
     ON_DEMAND_ROLE_RULE_BYTES,
     ON_DEMAND_SKILL_BODY_BYTES,
@@ -110,6 +112,99 @@ class LoadedBytes:
         return cls(len(content.encode()) - len(body.encode()), len(body.encode()))
 
 
+def _counted_files(
+    root: Path,
+    overlays: Sequence[Path],
+    target: str,
+    subdir: str,
+    vars_root: Path | None = None,
+) -> Iterator[tuple[str, Path, LoadedBytes]]:
+    """Yield each file one content subdir installs for a target, priority resolved.
+
+    A skill yields the whole substituted ``SKILL.md`` `_materialize_builtin_skill`
+    writes, not just the body `skill_body_bytes` gates, then each sibling
+    ``*.md`` part. A part is read on demand like a body, so all its bytes are
+    ``body``.
+
+    Args:
+        root: This package's own prompts directory.
+        overlays: Discovered overlay prompts directories, in priority order.
+        target: Render target.
+        subdir: Content subdirectory (``"rules"``, ``"workflows"`` or
+            ``"skills"``).
+        vars_root: Prompts directory to read variables from, instead of this
+            package's own.
+
+    Yields:
+        The installed name, the source file and its installed bytes. A skill's
+        files all carry the skill's name, its ``SKILL.md`` first.
+    """
+    vars_path = _own_vars_path(target, vars_root)
+    if subdir != "skills":
+        for name, src, agent_specific in _collect_content_srcs(
+            _agent_for(target, root),
+            subdir,
+            root / "shared" / subdir,
+            [d / "shared" / subdir for d in overlays],
+            [d / target / subdir for d in overlays],
+        ):
+            try:
+                content = (
+                    _linked_content(src)
+                    if agent_specific
+                    else _rendered_content(src, vars_path, target)
+                )
+            except TemplateError:
+                continue
+            yield name, src, LoadedBytes.of(content)
+        return
+
+    variables = _builtin_skill_vars(vars_path)
+
+    def gate(skill_dir: Path) -> bool:
+        skill_md = skill_dir / "SKILL.md"
+        if not skill_md.is_file():
+            return False
+        if not _passes_gate(skill_md):
+            return False
+        return _targets_agent(skill_md, target)
+
+    candidate_dirs = [
+        *(d / "shared" / "skills" for d in overlays),
+        root / "shared" / "skills",
+        root / target / "skills",
+        *(d / target / "skills" for d in overlays),
+    ]
+    resolved = _resolve_priority_sources(
+        candidate_dirs,
+        lambda d: [p for p in sorted(d.iterdir()) if p.is_dir()],
+        lambda p: p.name,
+        gate,
+    )
+    for name, skill_dir in resolved:
+        try:
+            substituted = strip_gating_keys(
+                substitute_variables(_read_text(skill_dir / "SKILL.md"), variables),
+                _GATING_FRONTMATTER_KEYS,
+            )
+            parts = [
+                (
+                    part,
+                    LoadedBytes(
+                        body=len(
+                            render_skill_part(_read_text(part), variables).encode()
+                        )
+                    ),
+                )
+                for part in _skill_part_files(_skill_layers(candidate_dirs, name, gate))
+            ]
+        except TemplateError:
+            continue
+        yield name, skill_dir / "SKILL.md", LoadedBytes.of(substituted)
+        for part, size in parts:
+            yield name, part, size
+
+
 def _rendered_kind_bytes(
     root: Path,
     overlays: Sequence[Path],
@@ -130,26 +225,10 @@ def _rendered_kind_bytes(
     Returns:
         Total bytes the install writes for this target and subdirectory.
     """
-    agent = _agent_for(target, root)
-    vars_path = _own_vars_path(target, vars_root)
-    total = 0
-    for _, src, agent_specific in _collect_content_srcs(
-        agent,
-        subdir,
-        root / "shared" / subdir,
-        [d / "shared" / subdir for d in overlays],
-        [d / target / subdir for d in overlays],
-    ):
-        try:
-            content = (
-                _linked_content(src)
-                if agent_specific
-                else _rendered_content(src, vars_path, target)
-            )
-        except TemplateError:
-            continue
-        total += len(content.encode())
-    return total
+    return sum(
+        size.total
+        for _, _, size in _counted_files(root, overlays, target, subdir, vars_root)
+    )
 
 
 def _skill_bytes(
@@ -159,10 +238,6 @@ def _skill_bytes(
     vars_root: Path | None = None,
 ) -> LoadedBytes:
     """Sum the bytes a session loads from skills for one target, priority resolved.
-
-    Measures the whole substituted ``SKILL.md`` `_materialize_builtin_skill`
-    writes, not just the body `skill_body_bytes` gates. Each sibling ``*.md``
-    part is read on demand like a body, so its bytes join the ``body`` part.
 
     Args:
         root: This package's own prompts directory.
@@ -175,48 +250,15 @@ def _skill_bytes(
         Skill bytes a session loads for this target, split into frontmatter and
         body.
     """
-    variables = _builtin_skill_vars(_own_vars_path(target, vars_root))
-
-    def gate(skill_dir: Path) -> bool:
-        skill_md = skill_dir / "SKILL.md"
-        if not skill_md.is_file():
-            return False
-        if not _passes_requires_gate(skill_md, target):
-            return False
-        return _targets_agent(skill_md, target)
-
-    candidate_dirs = [
-        *(d / "shared" / "skills" for d in overlays),
-        root / "shared" / "skills",
-        root / target / "skills",
-        *(d / target / "skills" for d in overlays),
-    ]
-    resolved = _resolve_priority_sources(
-        candidate_dirs,
-        lambda d: [p for p in sorted(d.iterdir()) if p.is_dir()],
-        lambda p: p.name,
-        gate,
+    return sum(
+        (
+            size
+            for _, _, size in _counted_files(
+                root, overlays, target, "skills", vars_root
+            )
+        ),
+        LoadedBytes(),
     )
-    total = LoadedBytes()
-    for name, skill_dir in resolved:
-        try:
-            substituted = strip_gating_keys(
-                substitute_variables(_read_text(skill_dir / "SKILL.md"), variables),
-                _GATING_FRONTMATTER_KEYS,
-            )
-            parts = LoadedBytes(
-                body=sum(
-                    len(render_skill_part(_read_text(part), variables).encode())
-                    for part in _skill_part_files(
-                        _skill_layers(candidate_dirs, name, gate)
-                    )
-                )
-            )
-        except TemplateError:
-            continue
-        total += LoadedBytes.of(substituted)
-        total += parts
-    return total
 
 
 def _agent_bytes(
@@ -370,6 +412,59 @@ def _target_parts(
     return parts
 
 
+def _collection_credits(
+    roots: Sequence[Path],
+    target: str,
+    counted: Iterable[tuple[tuple[str, str], Path, LoadedBytes]],
+) -> list[Artifact]:
+    """Credit each declared skill or workflow with the bytes its root owns.
+
+    An overlay declares each credit under ``<subdir>/<name>``, such as
+    ``skills/foo`` or ``workflows/foo.md``. The declaration counts only when
+    that overlay owns the name's winning file, and then only that overlay's own
+    files for the name, up to the declared bytes.
+
+    Args:
+        roots: Prompts directories, this package's own first.
+        target: Render target the files were counted for.
+        counted: Skill and workflow files from `_counted_files`, each named
+            by its subdir and installed name, only read if a root declares a
+            credit.
+
+    Returns:
+        One `collection_share_bytes` artifact per credited declaration, its
+        value the credit and its source the winning file.
+    """
+    declared = {
+        root: shares
+        for root in roots[1:]
+        if (shares := _declared_allowances(root)[0].get(COLLECTION_SHARE_BYTES))
+    }
+    if not declared:
+        return []
+
+    def owner(path: Path) -> Path:
+        return next(root for root in roots if path.is_relative_to(root))
+
+    winners: dict[tuple[str, str], Path] = {}
+    sizes: dict[tuple[str, str], list[tuple[Path, int]]] = {}
+    for key, path, size in counted:
+        winners.setdefault(key, path)
+        sizes.setdefault(key, []).append((owner(path), size.total))
+    return [
+        Artifact(
+            COLLECTION_SHARE_BYTES,
+            target,
+            name,
+            min(limit, sum(size for src_root, size in sizes[key] if src_root == root)),
+            winner,
+        )
+        for root, shares in declared.items()
+        for key, winner in winners.items()
+        if owner(winner) == root and (limit := shares.get(name := "/".join(key)))
+    ]
+
+
 def collection_artifacts(
     roots: Sequence[Path],
     targets: tuple[str, ...] = CHECKED_TARGETS,
@@ -393,8 +488,9 @@ def collection_artifacts(
     Returns:
         One `collection_bytes` `Artifact` per target, carrying that target's
         worst-case session bytes and any allowance the base root declares for
-        it, then report-only artifacts per target: `start_bytes` and one for
-        each part that splits the bytes into up-front and on-demand.
+        it, raised by the target's `collection_share_bytes` credits, then
+        report-only artifacts per target: `start_bytes`, one for each part
+        that splits the bytes into up-front and on-demand, and one per credit.
     """
     if not roots:
         return []
@@ -405,6 +501,22 @@ def collection_artifacts(
     start = {
         t: sum(parts[m] for m in ALWAYS_LOADED_METRICS) for t, parts in measured.items()
     }
+    credits = {
+        t: _collection_credits(
+            roots,
+            t,
+            (
+                ((subdir, name), path, size)
+                for subdir in ("workflows", "skills")
+                if subdir == "skills" or subdir in content_subdirs(t)
+                for name, path, size in _counted_files(
+                    root, overlays, t, subdir, vars_root
+                )
+            ),
+        )
+        for t in targets
+    }
+    credited = {t: sum(int(a.value) for a in shares) for t, shares in credits.items()}
     return [
         *(
             Artifact(
@@ -413,7 +525,10 @@ def collection_artifacts(
                 target,
                 start[target] + sum(parts[m] for m in WORST_CASE_ON_DEMAND_METRICS),
                 root,
-                declared.get(target),
+                declared.get(target, COLLECTION_SCHEDULE.active_threshold())
+                + credited[target]
+                if credited[target]
+                else declared.get(target),
             )
             for target, parts in measured.items()
         ),
@@ -426,6 +541,7 @@ def collection_artifacts(
             for target, parts in measured.items()
             for metric, value in parts.items()
         ),
+        *(share for shares in credits.values() for share in shares),
     ]
 
 

@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.8.0](https://github.com/alexfayers/llm-prompts/compare/v0.7.0...v0.8.0) (2026-11-25)
+
+
+### Features
+
+* **guards:** let a test gate match its command by pattern ([#583](https://github.com/alexfayers/llm-prompts/issues/583)) ([b2b4193](https://github.com/alexfayers/llm-prompts/commit/b2b41932c768a7e4db38df9e1ad642b7bbf36beb))
+* reinstall one pi extension with update --only ([#613](https://github.com/alexfayers/llm-prompts/issues/613)) ([8720bef](https://github.com/alexfayers/llm-prompts/commit/8720bef91a9fe3d68d1d74bdaf5f21372b7c7abc))
+* **rules:** pick the cheapest option that fully works ([#535](https://github.com/alexfayers/llm-prompts/issues/535)) ([657f883](https://github.com/alexfayers/llm-prompts/commit/657f883c92518af3b5239a67d4b1b2600fa1df71))
+* **size:** credit collection budget for declared overlay files ([#618](https://github.com/alexfayers/llm-prompts/issues/618)) ([7ac9d59](https://github.com/alexfayers/llm-prompts/commit/7ac9d59b62c2e73018ede517f2ddeda5455e6ac7))
+
+
+### Bug Fixes
+
+* **benchmark:** drop the host's pi-context vars from cell envs (+5 more) ([#563](https://github.com/alexfayers/llm-prompts/issues/563)) ([5d19aa9](https://github.com/alexfayers/llm-prompts/commit/5d19aa9c1888a5767a5ecd1e61ef6cb826e88f46))
+* **contribute:** drop a merged worktree's main copy when its local branch differs from the PR head ([#620](https://github.com/alexfayers/llm-prompts/issues/620)) ([a9a0c8b](https://github.com/alexfayers/llm-prompts/commit/a9a0c8ba9c352ca978ec413360e49c788eebd968))
+* **guards:** count a redirected test run before a read-only && step and name the counting forms ([#538](https://github.com/alexfayers/llm-prompts/issues/538)) ([1ab5749](https://github.com/alexfayers/llm-prompts/commit/1ab57492173dd5c7e5a466151dbf7b61bd8ecb27))
+* **pi-context:** count fork usage without inherited history ([#616](https://github.com/alexfayers/llm-prompts/issues/616)) ([cbf2e4f](https://github.com/alexfayers/llm-prompts/commit/cbf2e4f18c7edc74cffe77d3077f89be55d87e72))
+* **rules:** exempt the delegate timer from the coding-shell sleep ban ([#602](https://github.com/alexfayers/llm-prompts/issues/602)) ([86871d1](https://github.com/alexfayers/llm-prompts/commit/86871d1dc07e215e8153615443bf39cc2901849a))
+* **update:** give the model the full changelog whenever an update is found or starts ([#543](https://github.com/alexfayers/llm-prompts/issues/543)) ([32cfffd](https://github.com/alexfayers/llm-prompts/commit/32cfffd789d0e492aa9ece33866b6cdabd40c005))
+
+
+### Performance Improvements
+
+* **update:** refresh the update check in the background ([#561](https://github.com/alexfayers/llm-prompts/issues/561)) ([db2979d](https://github.com/alexfayers/llm-prompts/commit/db2979d74f83c4a86ff3c8a252553a23935ec625))
+
+
+### Miscellaneous Chores
+
+* **deps:** update github actions ([#595](https://github.com/alexfayers/llm-prompts/issues/595)) ([f3558a7](https://github.com/alexfayers/llm-prompts/commit/f3558a70afd228ad673164c911135d0887cea08d))
+* **deps:** update pi extensions ([#597](https://github.com/alexfayers/llm-prompts/issues/597)) ([d2ddfb9](https://github.com/alexfayers/llm-prompts/commit/d2ddfb9d15c3e4f01274f219cc1bde6be267cf26))
+* **deps:** update pi extensions ([#615](https://github.com/alexfayers/llm-prompts/issues/615)) ([eaa28ef](https://github.com/alexfayers/llm-prompts/commit/eaa28ef4d6cb458f1ee00181a8d6b8ecde9d44aa))
+
 ## [0.7.0](https://github.com/alexfayers/llm-prompts/compare/v0.6.3...v0.7.0) (2026-11-24)
 
 

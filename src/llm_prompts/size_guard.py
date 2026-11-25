@@ -34,7 +34,7 @@ from .install import (
     _expand_agent_variants,
     _expanded_definition,
     _linked_content,
-    _passes_requires_gate,
+    _passes_gate,
     _pi_agent_dialect,
     _pi_definitions,
     _PiRuleBundle,
@@ -61,6 +61,7 @@ from .size_limits import (
     COLLECTION_BYTES,
     COLLECTION_CEILING_METRICS,
     COLLECTION_SCHEDULE,
+    DECLARABLE_METRICS,
     FINALS,
     FRONTMATTER_VALID,
     NO_UNSUBSTITUTED_PLACEHOLDERS,
@@ -239,7 +240,7 @@ def _declared_allowances(root: Path) -> tuple[dict[str, dict[str, int]], list[st
     allowances: dict[str, dict[str, int]] = {}
     errors: list[str] = []
     for metric, entries in raw.items():
-        if metric not in FINALS:
+        if metric not in DECLARABLE_METRICS:
             errors.append(f"{path}: unknown metric '{metric}'")
             continue
         if not isinstance(entries, dict):
@@ -353,7 +354,7 @@ def _iter_skill_artifacts(
         skill_md = skill_dir / "SKILL.md"
         if not skill_md.is_file():
             return False
-        if not _passes_requires_gate(skill_md, target):
+        if not _passes_gate(skill_md):
             return False
         return _targets_agent(skill_md, target)
 
