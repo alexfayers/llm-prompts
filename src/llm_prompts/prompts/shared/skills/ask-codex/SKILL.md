@@ -1,20 +1,41 @@
 ---
 name: ask-codex
-description: Get an independent or adversarial second opinion on a diff, plan, or work from codex, a separate CLI agent.
+description: Get an independent or adversarial second opinion on a diff, plan, or work from a different model engine.
 load_when: tool:codex
+pi_load_when: []
 exclude_targets: codex
 ---
 
 # Ask codex
 
-Delegate a task to `codex` - a separate CLI coding agent running a different underlying engine - to get a genuinely independent perspective.
-The headline use is an adversarial second opinion on a diff, plan, or piece of work: a different engine catches what another Claude pass would miss.
+Delegate a task to an agent on a different model engine for an independent perspective.
+The headline use is an adversarial second opinion on a diff, plan, or piece of work:
+a different engine catches what another pass on the same engine would miss.
 
 ## When to use
 
 - The user explicitly asks for a "second opinion", to "ask codex", or for an "adversarial"/"antagonistic" review.
 - Proactively before finalizing a non-trivial plan, design, or code review, when an outside check adds real value.
-- To have codex run one of its own installed skills and return the result.
+{% if AGENT != "pi" %}- To have codex run one of its own installed skills and return the result.
+{% endif %}
+{% if AGENT == "pi" %}
+## Running on pi
+
+- MUST NOT run the `codex` CLI.
+- A delegate MUST NOT fork - MUST relay the review request to its lead.
+- MUST run the review as a `fork` reader with `model` set to a model from a different engine than your own:
+  from `pi --list-models`, MUST first pick one engine family other than yours (e.g. `openai.` GPT when you run Claude),
+  then its highest-version model id, passed as `<provider>/<model>`.
+- On a version tie, MUST prefer the plain name over a suffixed one (e.g. `-ultrafast`).
+- If no different-engine model is listed, MUST tell the user and stop.
+- The fork starts empty, so its `task` MUST carry the adversarial prompt plus the content (diff, plan) or the paths to read.
+- To have the fork run a skill, MUST pass that skill's file path and tell the fork to open it,
+  do only the steps a reader can do, and return the rest (e.g. starting forks) to you.
+- MUST read the full report with `result_fetch` before summarizing it.
+
+{% else %}
+
+`codex` is a separate CLI coding agent.
 
 ## Availability guard
 
@@ -50,15 +71,18 @@ Codex receives the same shared skill set as you and has a native skills tool, so
 codex exec -p {{CODEX_REVIEW_PROFILE}} -s read-only --skip-git-repo-check "Use your refine-plan skill to score this plan, then return the scored output:\n\n<plan>"
 ```
 
+{% endif %}
 ## Reading output & safety
 
+- Where the reviewer disagrees with your view, MUST present both to the user - MUST NOT silently pick a side.
+{% if AGENT != "pi" %}
 - MUST read codex's stdout directly. MUST NOT use `-o <file>`.
-- Where codex disagrees with your view, MUST present both to the user - MUST NOT silently pick a side.
 - Codex has its own auth/config under `~/.codex`. On an auth failure, MUST tell the user to run `codex login`; MUST NOT swallow the error.
 - MUST NOT use `--dangerously-bypass-approvals-and-sandbox`, `-s workspace-write`, or `-s danger-full-access`.
+{% endif %}
 - A review can take a while; MUST fire a notification when it finishes, per the notify rule.
 
 ## Relationship to other skills
 
 This skill is specifically for an *external, different-engine* take - self-scoring a plan against a rubric and interrogating the user about a design are other skills.
-SHOULD use it when the value is that the reviewer is not Claude.
+SHOULD use it when the value is that the reviewer runs a different engine from yours.

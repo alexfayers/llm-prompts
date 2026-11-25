@@ -4806,7 +4806,7 @@ def main(
         )
         skills_dir = skills_parent / "skills"
         installed_files[skill_agent].extend(str(skills_dir / s) for s in managed)
-        if _CODEX_REVIEW_SKILL in managed:
+        if _CODEX_REVIEW_SKILL in managed and skill_agent != "pi":
             review_targets.append(skill_agent)
 
     pi_bundle: _PiRuleBundle | None = None

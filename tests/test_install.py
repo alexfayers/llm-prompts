@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.resources
 import json
 import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -388,6 +390,26 @@ class TestInstallSkillsGating:
         assert ask_codex.is_dir() and not ask_codex.is_symlink()
         assert "ask-codex" in cc_managed
         assert "load_when" not in (ask_codex / "SKILL.md").read_text()
+
+    @pytest.mark.parametrize(
+        ("target", "installed"), [("pi", True), ("claude-code", False)]
+    )
+    def test_ask_codex_needs_codex_on_path_except_on_pi(
+        self, tmp_path: Path, target: str, installed: bool
+    ) -> None:
+        skills_src = tmp_path / "skills_src"
+        shutil.copytree(
+            Path(str(importlib.resources.files("llm_prompts")))
+            / "prompts/shared/skills/ask-codex",
+            skills_src / "ask-codex",
+        )
+
+        with patch("llm_prompts.install.shutil.which", return_value=None):
+            managed = _install_skills(
+                [skills_src], tmp_path / "agents", target, tmp_path / "vars.json"
+            )
+
+        assert ("ask-codex" in managed) is installed
 
     def test_overlay_skill_overrides_base_on_name_collision(
         self, tmp_path: Path
