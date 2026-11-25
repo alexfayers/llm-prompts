@@ -568,6 +568,23 @@ class TestInstallPluginSkills:
         assert (agents_dir / "skills" / "gated").exists() is False
         assert "gated" not in managed
 
+    def test_invalid_condition_skips_skill(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        src = self._make_skill(
+            tmp_path / "checkout", "old", "---\nrequires_absent_command: x\n---\n"
+        )
+        agents_dir = tmp_path / "agents"
+
+        managed = _install_plugin_skills(
+            [("old", src, {})], agents_dir, "claude-code", set()
+        )
+
+        assert "old" not in managed
+        assert (
+            "requires_absent_command is no longer supported" in capsys.readouterr().err
+        )
+
     def test_duplicate_plugin_name_first_wins(self, tmp_path: Path) -> None:
         first = self._make_skill(tmp_path / "a", "dup", "# FIRST\n")
         second = self._make_skill(tmp_path / "b", "dup", "# SECOND\n")

@@ -1796,6 +1796,14 @@ def _install_plugin_skills(
         skill_md = src_dir / "SKILL.md"
         if not skill_md.is_file():
             continue
+        try:
+            _declared_condition(
+                _frontmatter_values(_read_text(skill_md), str(skill_md)),
+                str(skill_md),
+            )
+        except ValueError as e:
+            log("warn", f"Skipping plugin skill '{name}': {e}")
+            continue
         if not _passes_gate(skill_md):
             log(
                 "debug", f"Skipping plugin skill '{name}': requires gate not satisfied."
