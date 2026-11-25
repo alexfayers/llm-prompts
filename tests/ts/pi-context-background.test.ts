@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { beforeEach, describe, test } from "node:test";
+import { afterEach, beforeEach, describe, mock, test } from "node:test";
 import { openAsks } from "../../src/llm_prompts/prompts/pi/extensions/pending-asks.ts";
 import { Background, registerBackgroundHooks } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/background.ts";
+import { LiveView } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/live-view.ts";
 import { Registry, type Run } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 
 const run = (id: string, patch: Partial<Run> = {}): Run => ({ id, name: id, role: "reader", background: true, state: "running", task: "t", startedAt: 1, ...patch });
@@ -156,6 +157,51 @@ describe("hooks", () => {
 		assert.deepEqual(registry.all().map((r) => [r.id, r.state]), [["x", "lost"], ["y", "done"]]);
 		assert.deepEqual(appended.map(([, data]) => [data.id, data.state]), [["x", "lost"]]);
 		assert.deepEqual(sent.map(([message, options]) => [message.content, options]), [["[fork x lost] its session ended before it finished. Task: t", { deliverAs: "nextTurn" }]]);
+	});
+
+	describe("check-in note", () => {
+		const MINUTE = 60_000;
+		let listeners: ((record: any) => void)[];
+		const emit = (record: object) => listeners.forEach((listener) => listener(record));
+		const call = (command: string) => emit({ type: "tool_execution_start", toolName: "bash", args: { command } });
+		const notes = () => handlers.tool_result({ content: [{ type: "text", text: "out" }] }, ctx())?.content.slice(1).map((block: { text: string }) => block.text);
+		beforeEach(() => {
+			mock.timers.enable({ apis: ["Date"], now: 100 * MINUTE });
+			listeners = [];
+			background.view = new LiveView(registry);
+			registry.update("a", { startedAt: 100 * MINUTE });
+			registry.update("b", { state: "done" });
+			background.attach("a", { steer: async () => undefined, watch: (listener) => (listeners.push(listener), () => undefined) });
+			emit({ type: "message_end", message: { role: "assistant", content: [] } });
+			call("git diff --stat");
+		});
+		afterEach(() => mock.timers.reset());
+
+		test("a fork past the interval is named with its turns and last call on a tool result, once per interval", () => {
+			mock.timers.setTime(104 * MINUTE);
+			assert.equal(notes(), undefined);
+			mock.timers.setTime(106 * MINUTE);
+			assert.deepEqual(notes(), ["[fork a] still running after 6m, 1 turn, last call bash: git diff --stat. Check on it with fork_steer, or stop it with fork_cancel."]);
+			assert.equal(notes(), undefined);
+			mock.timers.setTime(112 * MINUTE);
+			assert.match(notes()?.[0], /after 12m/);
+		});
+
+		test("a fork is not noted while an llm-prompts watch call runs, and is again once it ends", () => {
+			emit({ type: "tool_execution_start", toolCallId: "w1", toolName: "bash", args: { command: "timeout 540 llm-prompts watch gh-pr alexfayers/llm-prompts#1 --until merged" } });
+			call("git status");
+			mock.timers.setTime(120 * MINUTE);
+			assert.equal(notes(), undefined);
+			emit({ type: "tool_execution_end", toolCallId: "w1", toolName: "bash" });
+			assert.match(notes()?.[0], /after 20m, 1 turn, last call bash: git status/);
+		});
+
+		test("the llmPrompts.forks.checkInMinutes setting sets the interval", () => {
+			const pi = { on: (event: string, handler: any) => (handlers[event] = handler), getSettings: () => ({ llmPrompts: { forks: { checkInMinutes: 2 } } }) };
+			registerBackgroundHooks(pi as any, background, registry);
+			mock.timers.setTime(103 * MINUTE);
+			assert.match(notes()?.[0], /after 3m/);
+		});
 	});
 
 	test("a woken run's fork pins clear when it settles, unless its ask_user was cancelled", () => {

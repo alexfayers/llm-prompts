@@ -1,4 +1,5 @@
-// Tracks background fork runs: wakes the main session when one finishes, delivers results that arrive during a run when it settles and holds a session without a UI until they finish.
+// Tracks background fork runs: wakes the main session when one finishes, delivers results that arrive during a run when it settles, holds a session without a UI until they finish and notes a fork that runs long.
+// Config: llmPrompts.forks.checkInMinutes in pi settings (minutes a fork runs before the next tool result names it, default 5; 0 turns the note off)
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isLive, registryOf, type Registry, type Run } from "./registry.ts";
 import type { LiveView, Watchable } from "./live-view.ts";
@@ -11,6 +12,8 @@ export const RESULTS_TYPE = "pi-context-results";
 type AskContext = Pick<ExtensionContext, "hasUI" | "ui" | "sessionManager">;
 type Steerable = Watchable & { steer(text: string): Promise<string | undefined> };
 const MAX_HOLD_MS = 2 * 60 * 60 * 1000;
+const MINUTE_MS = 60_000;
+const DEFAULT_CHECK_IN_MINUTES = 5;
 
 /** Lets at most `limit()` jobs run at once: the rest wait in order and start as a running one ends. */
 export class Slots {
@@ -67,6 +70,8 @@ export class Background {
 	private runFailed = false;
 	/** The unread line of each run in a digest main has received but not yet settled on. */
 	private delivered = new Map<string, string>();
+	/** When each live fork was last noted as running long. */
+	private checkedInAt = new Map<string, number>();
 	private pi: Pick<ExtensionAPI, "sendMessage" | "appendEntry">;
 	private registry: Registry;
 	/** Shows the run's activity in the UI once its child is attached. */
@@ -139,6 +144,20 @@ export class Background {
 		this.announced.push(...pins);
 		if (pins.length) lines.push(`Pinned: ${pins.join(", ")}. They clear at the end of this turn unless you put them to the user with ask_user.`);
 		return lines.join("\n");
+	}
+
+	/** One line per live fork that ran `intervalMs` since it started or was last noted, with its turns and last tool call. A fork with an `llm-prompts watch` call still running is skipped. Undefined when none. */
+	checkIns(intervalMs: number, now = Date.now()): string | undefined {
+		const live = this.registry.live().filter((run) => run.background);
+		for (const id of this.checkedInAt.keys()) if (!live.some((run) => run.id === id)) this.checkedInAt.delete(id);
+		const lines = live.flatMap((run) => {
+			const { turns, lastCall, watching } = this.view?.progress(run.id) ?? { turns: 0, watching: false };
+			if (watching || now - (this.checkedInAt.get(run.id) ?? run.startedAt) < intervalMs) return [];
+			this.checkedInAt.set(run.id, now);
+			const last = lastCall ? `, last call ${lastCall}` : "";
+			return [`[fork ${run.name}] still running after ${Math.floor((now - run.startedAt) / MINUTE_MS)}m, ${turns} turn${turns === 1 ? "" : "s"}${last}. Check on it with fork_steer, or stop it with fork_cancel.`];
+		});
+		return lines.length ? lines.join("\n") : undefined;
 	}
 
 	/** Notes whether an `ask_user` call of a main run went unanswered, and whether the run ended in an error. */
@@ -244,6 +263,13 @@ export function registerBackgroundHooks(pi: ExtensionAPI, background: Background
 	pi.on("before_agent_start", () => {
 		const content = background.digest();
 		return content ? { message: { customType: RESULTS_TYPE, content, display: true } } : undefined;
+	});
+
+	pi.on("tool_result", (event) => {
+		const settings = (pi.getSettings?.() as { llmPrompts?: { forks?: { checkInMinutes?: number } } } | undefined)?.llmPrompts?.forks;
+		const minutes = settings?.checkInMinutes ?? DEFAULT_CHECK_IN_MINUTES;
+		const note = minutes > 0 ? background.checkIns(minutes * MINUTE_MS) : undefined;
+		return note ? { content: [...event.content, { type: "text" as const, text: note }] } : undefined;
 	});
 
 	pi.on("agent_end", (event) => background.noteRun(event.messages));

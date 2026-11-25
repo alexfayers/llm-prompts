@@ -8,7 +8,7 @@ import { hasOpenAsks } from "./wake.ts";
 
 type Event = { [key: string]: any };
 export type Watchable = { watch(listener: (record: Event) => void): () => void };
-type Activity = { turns: number; last?: string; usage?: Usage };
+type Activity = { turns: number; last?: string; lastCall?: string; watches?: Set<string>; usage?: Usage };
 type Usage = { context: number; cache: number };
 type Paint = { fg(color: string, text: string): string; bold(text: string): string };
 
@@ -21,6 +21,7 @@ const LOW_CACHE = 0.5;
 const WIDGET_KEY = "pi-context-forks";
 const SNIPPET = 60;
 const KEY_CHARS = 6;
+const WATCH_COMMAND = /\bllm-prompts watch\b/;
 const showsUi = (ctx: Pick<ExtensionContext, "hasUI">): boolean => ctx.hasUI && !process.env.PI_CONTEXT_CHILD;
 const CLOCK_MS = 1000;
 
@@ -124,6 +125,12 @@ export class LiveView {
 		});
 	}
 
+	/** The turns a live fork's child took, its last tool call, and whether an `llm-prompts watch` call is still running. */
+	progress(runId: string): { turns: number; lastCall?: string; watching: boolean } {
+		const { turns, lastCall, watches } = this.activity.get(runId) ?? { turns: 0 };
+		return { turns, lastCall, watching: Boolean(watches?.size) };
+	}
+
 	/** The widget lines, or undefined when no background fork is live or still cached. */
 	lines(now = Date.now(), paint: Paint = PLAIN, width = Number.POSITIVE_INFINITY, entries: Parameters<typeof hasOpenAsks>[0] = []): string[] | undefined {
 		const live = this.registry.live().filter((run) => run.background);
@@ -189,7 +196,10 @@ export class LiveView {
 
 	private record(runId: string, record: Event): void {
 		const activity = this.activity.get(runId) ?? { turns: 0 };
-		if (record.type === "tool_execution_start") activity.last = call(record.toolName, record.args);
+		if (record.type === "tool_execution_start") {
+			activity.last = activity.lastCall = call(record.toolName, record.args);
+			if (WATCH_COMMAND.test(record.args?.command ?? "")) (activity.watches ??= new Set()).add(record.toolCallId);
+		} else if (record.type === "tool_execution_end") activity.watches?.delete(record.toolCallId);
 		else if (record.type === "message_end" && record.message?.role === "assistant") {
 			activity.turns++;
 			activity.usage = usageOf(record.message.usage) ?? activity.usage;
