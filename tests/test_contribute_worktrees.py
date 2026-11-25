@@ -2987,6 +2987,26 @@ def test_a_pr_reference_link_reaches_a_branch_that_already_has_a_draft_pr(
     assert "\nDepends on o/ci#23\n" in pr_body(project, entry.pr or 0)
 
 
+def test_a_pr_reference_link_is_refused_once_the_pr_is_ready(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+    project.run(apply=True)
+    [entry] = project.entries()
+    state = project.load_state()
+    state["prs"][str(entry.pr)]["isDraft"] = False
+    project.state = state
+    project.save_state()
+    capsys.readouterr()
+
+    assert project.run(depends_on=("feat/a", "o/ci#23")) == 1
+
+    assert f"PR #{entry.pr} is not a draft" in capsys.readouterr().out
+    assert project.entries()[0].depends_on == ()
+
+
 def test_no_depends_on_for_a_link_that_is_not_there_fails(
     project: Project, stack: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -683,6 +683,13 @@ def _link_branches(
         raise LookupError(
             f"{branch} already has PR #{dependent.pr}; links must be added before sync opens it"
         )
+    if (
+        dependent.pr is not None
+        and not pr_states(repo, [dependent.pr])[dependent.pr].is_draft
+    ):
+        raise LookupError(
+            f"PR #{dependent.pr} is not a draft; links to a PR must be added while it is a draft"
+        )
     link = Link(lower_key, lower_branch, spec if pr_ref else "")
     if any(_same_link(k, link) for k in dependent.depends_on):
         raise LookupError(f"{branch} already depends on {spec}")
