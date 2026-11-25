@@ -181,12 +181,12 @@ export function rewriteForWorktree(toolName: string, input: Record<string, unkno
 
 const optionalString = (value: unknown) => (typeof value === "string" ? value : undefined);
 
-/** Reads a delegate's handshake. `inherited` is the last entry a warm fork copied from main's session. */
-export function readHandshake(file: string): { role: Role; worktree?: string; repo?: string; inherited?: string | null; readMcp: ReadMcp[] } | undefined {
+/** Reads a delegate's handshake. `inherited` is the last entry a warm fork copied from main's session. A cold worker continuing a copied session has `billedFrom`, the last copied entry, and `cacheKey`, its source's prompt cache key. */
+export function readHandshake(file: string): { role: Role; worktree?: string; repo?: string; inherited?: string | null; billedFrom?: string | null; cacheKey?: string; readMcp: ReadMcp[]; model?: string; thinking?: string } | undefined {
 	try {
-		const { role, worktree, repo, inherited, readMcp } = JSON.parse(fs.readFileSync(file, "utf8")) as { role?: string; worktree?: unknown; repo?: unknown; inherited?: unknown; readMcp?: unknown };
+		const { role, worktree, repo, inherited, billedFrom, cacheKey, readMcp, model, thinking } = JSON.parse(fs.readFileSync(file, "utf8")) as { role?: string; worktree?: unknown; repo?: unknown; inherited?: unknown; billedFrom?: unknown; cacheKey?: unknown; readMcp?: unknown; model?: unknown; thinking?: unknown };
 		if (role === undefined || !Object.hasOwn(ROLES, role)) return undefined;
-		return { role: ROLES[role as Role["name"]], worktree: optionalString(worktree), repo: optionalString(repo), inherited: inherited === null ? null : optionalString(inherited), readMcp: checkReadMcp(readMcp).valid };
+		return { role: ROLES[role as Role["name"]], worktree: optionalString(worktree), repo: optionalString(repo), inherited: inherited === null ? null : optionalString(inherited), billedFrom: billedFrom === null ? null : optionalString(billedFrom), cacheKey: optionalString(cacheKey), readMcp: checkReadMcp(readMcp).valid, model: optionalString(model), thinking: optionalString(thinking) };
 	} catch {
 		return undefined;
 	}
