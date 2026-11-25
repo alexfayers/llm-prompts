@@ -108,9 +108,14 @@ class ReviewLimitGuard(HooksPlugin):
             ):
                 try:
                     reviews = read_config().get("reviews", {})
+                    repos = {
+                        key.lower(): value
+                        for key, value in reviews.get("repos", {}).items()
+                    }
                     limit = int(
-                        reviews.get("repos", {}).get(
-                            scope, reviews.get("max_in_flight", DEFAULT_LIMIT)
+                        repos.get(
+                            scope.lower(),
+                            reviews.get("max_in_flight", DEFAULT_LIMIT),
                         )
                     )
                 except (AttributeError, TypeError, ValueError, OSError):

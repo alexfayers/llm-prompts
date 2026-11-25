@@ -94,6 +94,14 @@ def test_a_repo_limit_overrides_the_default(isolated_config_dir: Path) -> None:
     assert _guard("gh pr create --fill") is not None
 
 
+@pytest.mark.usefixtures("open_prs")
+def test_a_repo_limit_matches_the_repo_in_any_case(isolated_config_dir: Path) -> None:
+    (isolated_config_dir / "config.toml").write_text(
+        '[reviews]\nmax_in_flight = 5\n\n[reviews.repos]\n"ACME/widgets" = 9\n'
+    )
+    assert _guard("gh pr create --repo Acme/Widgets --fill") is None
+
+
 def test_a_registered_source_blocks_at_its_limit(
     open_prs: MagicMock, isolated_config_dir: Path
 ) -> None:
