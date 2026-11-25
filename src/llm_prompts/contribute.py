@@ -683,10 +683,7 @@ def _link_branches(
         raise LookupError(
             f"{branch} already has PR #{dependent.pr}; links must be added before sync opens it"
         )
-    if (
-        dependent.pr is not None
-        and not pr_states(repo, [dependent.pr])[dependent.pr].is_draft
-    ):
+    if dependent.pr is not None and not _is_draft(repo, dependent.pr):
         raise LookupError(
             f"PR #{dependent.pr} is not a draft; links to a PR must be added while it is a draft"
         )
@@ -708,6 +705,19 @@ def _link_branches(
         lambda e: e._replace(depends_on=(*e.depends_on, link), base=base or e.base),
         f"depends on {spec}",
     )
+
+
+def _is_draft(repo: Path, number: int) -> bool:
+    """Return whether PR ``number`` is a draft, raising LookupError when GitHub cannot say."""
+    try:
+        pr = pr_states(repo, [number]).get(number)
+    except subprocess.CalledProcessError as error:
+        reason = first_stderr_line(error)
+    else:
+        if pr is not None:
+            return pr.is_draft
+        reason = "GitHub did not return it"
+    raise LookupError(f"PR #{number} draft state not checked ({reason})")
 
 
 def _refuse_small_stack(repo: Path, lower: str, upper: str) -> None:

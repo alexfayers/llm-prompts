@@ -3007,6 +3007,34 @@ def test_a_pr_reference_link_is_refused_once_the_pr_is_ready(
     assert project.entries()[0].depends_on == ()
 
 
+@pytest.mark.parametrize(
+    ("states", "reason"),
+    [
+        (subprocess.CalledProcessError(1, "gh", stderr="boom"), "boom"),
+        ({}, "GitHub did not return it"),
+    ],
+)
+def test_a_pr_reference_link_is_refused_when_the_draft_check_fails(
+    project: Project,
+    capsys: pytest.CaptureFixture[str],
+    states: Any,
+    reason: str,
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+    project.run(apply=True)
+    [entry] = project.entries()
+    capsys.readouterr()
+
+    with patch.object(contribute, "pr_states", side_effect=[states]):
+        assert project.run(depends_on=("feat/a", "o/ci#23")) == 1
+
+    out = capsys.readouterr().out
+    assert f"PR #{entry.pr} draft state not checked ({reason})" in out
+    assert project.entries()[0].depends_on == ()
+
+
 def test_no_depends_on_for_a_link_that_is_not_there_fails(
     project: Project, stack: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
