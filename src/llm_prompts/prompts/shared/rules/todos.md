@@ -5,7 +5,8 @@ roles: lead
 
 # TODOs
 
-Default to memory-only TODOs (a `task/` entity, per the memory rules) rather than a TODO.md file. Only add to a TODO.md file if one already exists in the place you're working - do not create a new TODO.md file to record a TODO.
+Default to memory-only TODOs (a `task/` entity, per the memory rules) rather than a TODO.md file.
+Only add to a TODO.md file if one already exists in the place you're working - do not create a new TODO.md file to record a TODO.
 
 A speculative aside - "we should maybe X", "can we X?" - counts as a side request: MUST capture it as a TODO and carry on with the current task.
 
@@ -16,16 +17,24 @@ When the user asks to do something that is **not directly related** to the curre
 4. **Add it to the end of the current {{TASK_PROGRESS}} checklist** so it will be picked up after the current task completes.
 5. **Continue** the current task to completion before picking up the side request.
 
-**Steps 1-2 are not a substitute for steps 3-4.** Acknowledging a side request in prose ("I'll get to that after") without also making the memory write and checklist entry in that same turn is the specific failure this rule exists to prevent - a promise in text is not tracked anywhere and reliably gets lost under later tool calls or context compaction. Do not defer the memory write to "when I have a free moment" - make it in the same response where you acknowledge the ask, before doing anything else for the current task.
+**Steps 1-2 are not a substitute for steps 3-4.**
+Acknowledging a side request in prose ("I'll get to that after") without also making the memory write and checklist entry in that same turn is the specific failure this rule exists to prevent -
+a promise in text is not tracked anywhere and reliably gets lost under later tool calls or context compaction.
+Do not defer the memory write to "when I have a free moment" - make it in the same response where you acknowledge the ask, before doing anything else for the current task.
 
 NOTE: You are allowed to write to files in {{PLAN_MODE}} for this use case, but prefer memory over a new file per the default above.
 
-An idea YOU raised is a suggestion until the user says go - MUST NOT act on it, and MUST NOT create a tracking task for it either - this does not cover the steps of an approved plan. Immediate tracking applies only to work the user asked for.
+An idea YOU raised is a suggestion until the user says go - MUST NOT act on it, and MUST NOT create a tracking task for it either - this does not cover the steps of an approved plan.
+Immediate tracking applies only to work the user asked for.
 
-A gap found in delivered work - an unverified check, a known caveat, a bug outside scope - is not an idea. MUST track it in the same turn: draft an issue to fix it in the project's tracker where one exists, or at minimum one to review it, plus its memory `task/`. MUST show every drafted issue to the user and open it only once they approve. A note only in memory or a handoff doc is not tracking.
+A gap found in delivered work - an unverified check, a known caveat, a bug outside scope - is not an idea.
+MUST track it in the same turn: draft an issue to fix it in the project's tracker where one exists, or at minimum one to review it, plus its memory `task/`.
+MUST show every drafted issue to the user and open it only once they approve. A note only in memory or a handoff doc is not tracking.
 
 ## Tracking completion in an existing TODO/task-list file
 
-When working through a list of items in an existing file (a `TODO.md`, a checklist in a plan doc, a persisted task list), mark each entry done as soon as you finish it - the same way completed work is marked `resolved` in memory. Do not wait until the end of the session to update the file in one batch.
+When working through a list of items in an existing file (a `TODO.md`, a checklist in a plan doc, a persisted task list), mark each entry done as soon as you finish it -
+the same way completed work is marked `resolved` in memory. Do not wait until the end of the session to update the file in one batch.
 
-If an entry is a plain list item without a markdown checkbox (`- item` rather than `- [ ] item`), convert it to a checkbox (`- [ ]`) the first time you touch that list, then check it off (`- [x]`) the moment the item is done. A missing checkbox is not licence to leave the item unmarked - retrofit the syntax rather than skipping the update.
+If an entry is a plain list item without a markdown checkbox (`- item` rather than `- [ ] item`), convert it to a checkbox (`- [ ]`) the first time you touch that list,
+then check it off (`- [x]`) the moment the item is done. A missing checkbox is not licence to leave the item unmarked - retrofit the syntax rather than skipping the update.

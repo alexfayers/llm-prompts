@@ -24,6 +24,9 @@ Runs `ruff check --fix`, `ruff format`, `mypy` (strict), and `pytest` via `uv ru
 
 Files under `src/llm_prompts/prompts/**` (rules, skills, workflows, agents) are subject to enforced size budgets, checked by `tests/test_prompt_sizes.py` and separately live: editing a tracked rule/skill/workflow/agent source file triggers cline-hooks' auto-reinstall, which blocks the write outright if the result would push that file over its threshold. If you hit this, compress the file's wording rather than splitting it into multiple files or asking to raise the ceiling - the fix preserves every existing directive in fewer bytes.
 
+A `no_long_lines` block names a prose line over 200 characters. Fix it by wrapping that line.
+A `no_lazy_continuations` block names a column-0 line directly after a list item. Fix it by indenting that line under the item's text.
+
 ## Commit messages
 
 Single-line, conventional-commit style (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:` ...), no body. Match `git log --oneline -20` for tone.
@@ -45,7 +48,7 @@ llm-prompts contribute sync --apply
 
 - `sync --apply` never pushes or opens a PR for a local-only worktree. Once `--ready`, it pushes the branch, opens a draft PR and keeps its title and What current.
 - Record the text for the PR's Why with `--why B "TEXT"` before `--ready`. `sync` never opens a PR, nor edits a draft PR's body, while a section the PR template check requires (every template section except Dependencies and Issues) is empty. It prints the worktree, the empty section and the `--why` command, skips that PR, still syncs the others and exits nonzero. A Why you wrote in a PR is kept.
-- Stack a branch on another with `--depends-on B TOOL:B2`. `sync` restacks it and writes the `Depends on` line.
+- Stack a branch on another with `--depends-on B TOOL:B2`. `sync` restacks it and writes the `Depends on` line. `--depends-on B owner/repo#N` links a PR in any other repo.
 - Run `llm-prompts contribute sync --help` for every flag, and `contribute list` for each worktree's state and size.
 - Marking a contribute PR ready for review enables squash auto-merge. It merges once checks pass and a reviewer approves.
 - When main moves, open PRs with auto-merge on are rebased onto it automatically.
