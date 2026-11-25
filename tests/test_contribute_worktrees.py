@@ -2980,49 +2980,28 @@ def test_an_entry_whose_worktree_is_gone_is_forgotten_and_a_merged_branch_delete
     assert "feat/b: worktree is gone; forgotten" in capsys.readouterr().out
 
 
-def test_an_existing_pr_for_the_branch_is_adopted(project: Project) -> None:
-    project.worktree("feat/a", "feat: a")
-    git(project.repo, "push", "-q", "origin", "feat/a:" + _remote("feat/a"))
-    project.add_pr(7, _remote("feat/a"))
-    project.run(branch="feat/a")
-    project.run(ready="feat/a")
-
-    assert project.run(apply=True) == 0
-
-    assert [e.pr for e in project.entries()] == [7]
+_OWN_BODY = "## What\n\n- my own summary\n\n## Why\n\nMy reason.\n"
 
 
-def test_a_pr_on_the_published_branch_is_adopted_without_a_recorded_why(
-    project: Project,
+@pytest.mark.parametrize(
+    ("head", "body"),
+    [(_remote("feat/a"), ""), (_remote("feat/a"), _OWN_BODY), ("feat/a", _OWN_BODY)],
+)
+def test_an_existing_pr_for_the_branch_is_adopted_with_or_without_a_recorded_why(
+    project: Project, head: str, body: str
 ) -> None:
-    project.auto_why = False
+    project.auto_why = not body
     project.worktree("feat/a", "feat: a")
-    git(project.repo, "push", "-q", "origin", "feat/a:" + _remote("feat/a"))
-    body = "## What\n\n- my own summary\n\n## Why\n\nMy reason.\n"
-    project.add_pr(7, _remote("feat/a"), body=body)
+    git(project.repo, "push", "-q", "origin", f"feat/a:{head}")
+    project.add_pr(7, head, body=body)
     project.run(branch="feat/a")
     project.run(ready="feat/a")
 
     assert project.run(apply=True) == 0
 
     assert [e.pr for e in project.entries()] == [7]
-
-
-def test_an_existing_pr_with_a_hand_written_why_is_adopted_without_a_recorded_why(
-    project: Project,
-) -> None:
-    project.auto_why = False
-    project.worktree("feat/a", "feat: a")
-    git(project.repo, "push", "-q", "origin", "feat/a")
-    body = "## What\n\n- my own summary\n\n## Why\n\nMy reason.\n"
-    project.add_pr(7, "feat/a", body=body)
-    project.run(branch="feat/a")
-    project.run(ready="feat/a")
-
-    assert project.run(apply=True) == 0
-
-    assert [e.pr for e in project.entries()] == [7]
-    assert pr_body(project, 7) == body
+    if head == "feat/a":
+        assert pr_body(project, 7) == body
 
 
 def test_a_worktree_with_no_commits_is_skipped_by_sync_and_list(
