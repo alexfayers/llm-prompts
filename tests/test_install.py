@@ -37,6 +37,7 @@ from llm_prompts.install import (
     _linked_content,
     _materialize_builtin_skill,
     _materialize_override_skill,
+    _migrate_curl_pi,
     _parse_roles,
     _passes_gate,
     _pi_definitions,
@@ -3075,6 +3076,227 @@ class TestPiVersionDrift:
         _warn_pi_version_drift(["npm:@earendil-works/pi-coding-agent@1.2.0"])
 
         assert "pi 1.1.9 is behind the tested 1.2.0" in capsys.readouterr().err
+
+
+@pytest.mark.real_io
+class TestMigrateCurlPi:
+    @pytest.fixture(autouse=True)
+    def home(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        monkeypatch.setattr("llm_prompts.home._HOME.root", None)
+        monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+        set_root(tmp_path)
+        npm_bin = tmp_path / ".pi" / "agent" / "npm" / "node_modules" / ".bin"
+        monkeypatch.setenv(
+            "PATH", os.pathsep.join([str(tmp_path / ".local" / "bin"), str(npm_bin)])
+        )
+        return tmp_path
+
+    @staticmethod
+    def _install_curl_pi(home: Path, link_dir: Path | None = None) -> list[Path]:
+        agent = home / ".pi" / "agent"
+        (agent / "bin").mkdir(parents=True)
+        launcher_script = agent / "bin" / "pi"
+        launcher_script.write_text("cat install/current-version\n", encoding="utf-8")
+        launcher_script.chmod(0o755)
+        link = (link_dir or home / ".local" / "bin") / "pi"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(launcher_script)
+        (agent / "install" / "releases").mkdir(parents=True)
+        (agent / "install" / "current-version").write_text("1.0.0", encoding="utf-8")
+        (agent / "install" / "managed-install.json").write_text(
+            json.dumps(
+                {
+                    "kind": "pi-managed-install",
+                    "schemaVersion": 1,
+                    "entrypoint": {"type": "symlink", "path": str(link)},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return [
+            link,
+            launcher_script,
+            agent / "install" / "current-version",
+            agent / "bin",
+        ]
+
+    @staticmethod
+    def _install_npm_pi(home: Path, exit_code: int = 0) -> None:
+        npm_pi = home / ".pi" / "agent" / "npm" / "node_modules" / ".bin" / "pi"
+        npm_pi.parent.mkdir(parents=True)
+        npm_pi.write_text(f"#!/bin/sh\nexit {exit_code}\n", encoding="utf-8")
+        npm_pi.chmod(0o755)
+
+    def test_removes_the_curl_install_once_the_npm_pi_runs(
+        self, home: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        curl_paths = self._install_curl_pi(home)
+        self._install_npm_pi(home)
+
+        _migrate_curl_pi()
+
+        err = capsys.readouterr().err
+        for path in curl_paths:
+            assert not path.is_symlink()
+            assert not path.exists()
+            assert str(path) in err
+
+    @pytest.mark.parametrize("npm_exit_code", [None, 1])
+    def test_keeps_the_curl_install_while_the_npm_pi_does_not_run(
+        self, home: Path, npm_exit_code: int | None
+    ) -> None:
+        curl_paths = self._install_curl_pi(home)
+        if npm_exit_code is not None:
+            self._install_npm_pi(home, npm_exit_code)
+
+        _migrate_curl_pi()
+
+        assert all(path.exists() for path in curl_paths)
+
+    def test_keeps_other_files_in_the_agent_bin_directory(self, home: Path) -> None:
+        curl_paths = self._install_curl_pi(home)
+        self._install_npm_pi(home)
+        tool = curl_paths[1].parent / "rg"
+        tool.write_text("", encoding="utf-8")
+
+        _migrate_curl_pi()
+
+        assert tool.exists()
+        assert not curl_paths[1].exists()
+
+    @pytest.mark.parametrize("missing", ["install/managed-install.json", "bin/pi"])
+    def test_keeps_directories_the_curl_installer_does_not_clearly_own(
+        self, home: Path, missing: str
+    ) -> None:
+        curl_paths = self._install_curl_pi(home)
+        self._install_npm_pi(home)
+        (home / ".pi" / "agent" / missing).unlink()
+
+        _migrate_curl_pi()
+
+        assert curl_paths[2].exists()
+
+    def test_keeps_a_bin_pi_that_is_not_the_managed_launcher(self, home: Path) -> None:
+        curl_paths = self._install_curl_pi(home)
+        self._install_npm_pi(home)
+        curl_paths[1].write_text("#!/bin/sh\necho my own pi\n", encoding="utf-8")
+
+        _migrate_curl_pi()
+
+        assert curl_paths[1].exists()
+        assert curl_paths[2].exists()
+
+    def test_keeps_the_curl_install_when_pi_would_not_resolve_to_the_npm_pi(
+        self,
+        home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        curl_paths = self._install_curl_pi(home)
+        self._install_npm_pi(home)
+        monkeypatch.setenv("PATH", str(home / ".local" / "bin"))
+
+        _migrate_curl_pi()
+
+        assert all(path.exists() for path in curl_paths)
+        assert "keeping it" in capsys.readouterr().err
+
+    def test_reports_pi_node_without_removing_it(
+        self, home: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._install_curl_pi(home)
+        self._install_npm_pi(home)
+        pi_node = home / ".local" / "share" / "pi-node"
+        (pi_node / "current" / "bin").mkdir(parents=True)
+
+        _migrate_curl_pi()
+
+        assert pi_node.exists()
+        assert str(pi_node) in capsys.readouterr().err
+
+    def test_removes_the_launcher_the_marker_records_outside_local_bin(
+        self, home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        link_dir = home / "elsewhere"
+        curl_paths = self._install_curl_pi(home, link_dir)
+        self._install_npm_pi(home)
+        npm_bin = home / ".pi" / "agent" / "npm" / "node_modules" / ".bin"
+        monkeypatch.setenv("PATH", os.pathsep.join([str(link_dir), str(npm_bin)]))
+
+        _migrate_curl_pi()
+
+        assert not curl_paths[0].is_symlink()
+
+    def test_keeps_a_recorded_launcher_that_does_not_link_to_the_curl_pi(
+        self, home: Path
+    ) -> None:
+        curl_paths = self._install_curl_pi(home)
+        self._install_npm_pi(home)
+        other = home / "other-pi"
+        other.write_text("#!/bin/sh\n", encoding="utf-8")
+        curl_paths[0].unlink()
+        curl_paths[0].symlink_to(other)
+
+        _migrate_curl_pi()
+
+        assert curl_paths[0].is_symlink()
+        assert not curl_paths[2].exists()
+
+    def test_probes_the_npm_pi_without_the_curl_launchers_node_on_path(
+        self, home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        curl_paths = self._install_curl_pi(home)
+        self._install_npm_pi(home)
+        npm_pi = home / ".pi" / "agent" / "npm" / "node_modules" / ".bin" / "pi"
+        npm_pi.write_text(
+            '#!/bin/sh\ncase "$PATH" in *pi-node*) exit 1 ;; esac\n', encoding="utf-8"
+        )
+        pi_node_bin = home / ".local" / "share" / "pi-node" / "current" / "bin"
+        monkeypatch.setenv("PATH", f"{os.environ['PATH']}{os.pathsep}{pi_node_bin}")
+
+        _migrate_curl_pi()
+
+        assert not curl_paths[2].exists()
+
+    def test_leaves_release_and_staging_folders_and_reports_them(
+        self, home: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        curl_paths = self._install_curl_pi(home)
+        self._install_npm_pi(home)
+        install_dir = curl_paths[2].parent
+        kept = [
+            install_dir / "releases" / "1.0.0" / "pi",
+            install_dir / "releases" / "1.0.0-backup" / "keep.txt",
+            install_dir / "staging" / "keep.txt",
+            install_dir / "notes.txt",
+        ]
+        for path in kept:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("mine", encoding="utf-8")
+
+        _migrate_curl_pi()
+
+        err = capsys.readouterr().err
+        assert all(path.exists() for path in kept)
+        assert not (install_dir / "current-version").exists()
+        assert not (install_dir / "managed-install.json").exists()
+        assert not curl_paths[1].exists()
+        assert str(install_dir / "releases") in err
+        assert str(install_dir / "staging") in err
+
+    def test_keeps_a_current_version_directory_and_reports_it(
+        self, home: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        curl_paths = self._install_curl_pi(home)
+        self._install_npm_pi(home)
+        curl_paths[2].unlink()
+        (curl_paths[2] / "keep").mkdir(parents=True)
+
+        _migrate_curl_pi()
+
+        assert (curl_paths[2] / "keep").is_dir()
+        assert not curl_paths[1].exists()
+        assert str(curl_paths[2]) in capsys.readouterr().err
 
 
 class TestLogBrokenPipe:
