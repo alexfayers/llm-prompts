@@ -477,8 +477,10 @@ def test_update_still_reinstalls_when_a_copy_conflicts_and_names_the_worktree(
     install.assert_called_once()
     assert git(project.repo, "rev-parse", "main") == before
     out = capsys.readouterr().out
+    work = main_sync.resolve_worktree(project.repo)
     assert "[tool] main not updated: " in out
-    assert "resolve the files there, git add them, then rerun" in out
+    assert f"left in {work}: resolve the files there, git add them, then rerun" in out
+    assert git(work, "diff", "--name-only", "--diff-filter=U") == "base.txt"
 
 
 def test_update_stops_when_a_copy_fails_with_its_own_reason(
