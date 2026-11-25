@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { after, describe, test } from "node:test";
-import { loadExtension } from "./helpers.ts";
+import { after, beforeEach, describe, test } from "node:test";
+import { loadExtension, useEnv } from "./helpers.ts";
 
 const AGENT_DIR = "/agent";
 const towerUrl = (file: string) => pathToFileURL(join(AGENT_DIR, "npm", "node_modules", "tower-do", file)).href;
@@ -26,6 +26,8 @@ after(() => hooks.deregister());
 const ext = await loadExtension("tower-do-slim", { agentDir: AGENT_DIR });
 
 describe("tower-do-slim", () => {
+	useEnv({ PI_CONTEXT_CHILD: undefined, PI_SUBAGENT_CHILD: undefined });
+	beforeEach(() => ext.fire("session_start", {}));
 	test("replaces the description and guidelines of a tower-do tool", () => {
 		const { tower_do } = ext.tools;
 		assert.match(tower_do.description, /idle 6h\+/);
@@ -45,7 +47,7 @@ describe("tower-do-slim", () => {
 		assert.equal(await ext.callTool("tower_do"), "do");
 		assert.equal(ext.tools.other.description, "kept");
 		assert.deepEqual(ext.tools.other.parameters, { description: "kept" });
-		assert.equal(ext.handlers.session_start.length, 1);
+		assert.equal(ext.handlers.session_start.length, 2);
 	});
 
 	const board = (revision: number, tasks: string[], identity = "main") =>
@@ -114,6 +116,29 @@ describe("tower-do-slim", () => {
 			test(`${name} is not board state`, async () => {
 				assert.equal(await remind(visible, board(2, [a])), fullAgain);
 			});
+	});
+
+	for (const marker of ["PI_CONTEXT_CHILD", "PI_SUBAGENT_CHILD"])
+		test(`a fork marked by ${marker} gets no board note`, async () => {
+			process.env[marker] = "1";
+			assert.equal(await remind([], board(1, [a])), undefined);
+		});
+
+	test("a revision already noted gets no second note, even when the note was folded away", async () => {
+		await remind([], board(7, [a]));
+		assert.equal(await remind([], board(7, [a])), undefined);
+		assert.equal(await remind([], board(8, [a, b])), [header(8, 2), "Changed since the last board note:", a, b, "Open tasks: a, b"].join("\n"));
+	});
+
+	test("a reload or resume keeps the revision already noted", async () => {
+		await remind([], board(7, [a]));
+		const [customType, data] = ext.pi.appended.at(-1)!;
+		const entry = { type: "custom", customType, data };
+		const ctx = ext.makeCtx();
+		ctx.sessionManager.getBranch = () => [entry] as never;
+		await ext.fire("session_start", {}, ctx);
+		assert.equal(await remind([], board(7, [a])), undefined);
+		assert.equal((await remind([], board(8, [a])))?.startsWith(header(8, 1)), true);
 	});
 
 	test("drops a board reminder no tool result took before the turn ends", async () => {

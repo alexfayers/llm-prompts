@@ -6,6 +6,7 @@ import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-age
 import { IDLE_FOLD_EVENT } from "./context-fold.ts";
 
 const REMINDER_TYPE = "pi-tower-do-reminder";
+const REVISION_ENTRY_TYPE = "tower-do-noted-revisions";
 
 type Slim = { description: string; promptGuidelines: string[] };
 type TowerState = { formatTakeoverWindow(): string; MAX_TOWER_DO_OPEN_TASKS: number; TASK_KEY_PATTERN: RegExp };
@@ -65,6 +66,7 @@ const textOf = ({ content }: { content: string | { text?: string }[] }) => (type
 export function boardNotes(taskKeyPattern: RegExp) {
 	const key = taskKeyPattern.source.replace(/^\^|\$$/g, "");
 	const taskLine = new RegExp(`^- \\[[a-z_]+\\] (${key}): `);
+	const notedRevisions = new Map<string, string>();
 	const noteTaskLine = new RegExp(`${taskLine.source}.*$`);
 	const listPattern = new RegExp(`^(${[OPEN_LABEL, NEW_LABEL, GONE_LABEL].join("|")})((?: ${key}(?:, ${key})*)?)$`);
 
@@ -103,12 +105,14 @@ export function boardNotes(taskKeyPattern: RegExp) {
 		return board;
 	};
 
-	/** Rewrites a tower-do board reminder to counts and task keys, with the full line only for tasks the notes in `messages` do not state. */
+	/** Rewrites a tower-do board reminder to counts and task keys, or to nothing for a revision already noted, with the full line only for tasks the notes in `messages` do not state. */
 	const compactReminder = (text: string, messages: any[]) => {
 		const [header = "", ...rest] = text.split("\n");
 		const match = REMINDER_HEADER.exec(header);
 		if (!match) return text;
 		const [, identity, revision, open, blocked, unread] = match;
+		if (notedRevisions.get(identity) === revision) return;
+		notedRevisions.set(identity, revision);
 		const visible = visibleBoard(messages, identity);
 		const known = visible ?? new Map<string, string>();
 		const tasks = new Map<string, string>();
@@ -128,7 +132,14 @@ export function boardNotes(taskKeyPattern: RegExp) {
 			...(gone.length ? [listLine(GONE_LABEL, gone)] : []),
 		].join("\n");
 	};
-	return { compactReminder };
+	return {
+		compactReminder,
+		notedRevisions: () => Object.fromEntries(notedRevisions),
+		restoreRevisions: (saved: Record<string, string>) => {
+			notedRevisions.clear();
+			for (const [identity, revision] of Object.entries(saved)) notedRevisions.set(identity, revision);
+		},
+	};
 }
 
 const towerDir = () => join(getAgentDir(), "npm", "node_modules", "tower-do");
@@ -137,7 +148,7 @@ const loadFromTowerDo = <T>(file: string): Promise<T> => import(pathToFileURL(jo
 export default async function (pi: ExtensionAPI) {
 	const towerState = await loadFromTowerDo<TowerState>("state.ts");
 	const slim = slimTools(towerState);
-	const { compactReminder } = boardNotes(towerState.TASK_KEY_PATTERN);
+	const { compactReminder, notedRevisions, restoreRevisions } = boardNotes(towerState.TASK_KEY_PATTERN);
 	const { default: towerDo } = await loadFromTowerDo<TowerModule>("index.ts");
 	const registerTool = (tool: ToolDefinition) => {
 		const override = slim[tool.name];
@@ -156,13 +167,19 @@ export default async function (pi: ExtensionAPI) {
 	pi.events.on(IDLE_FOLD_EVENT, (data) => {
 		if (pendingReminder) pendingReminder.messages = (data as { messages: any[] }).messages;
 	});
+	pi.on("session_start", (_event, ctx) => {
+		const saved = (ctx.sessionManager.getBranch() as { type: string; customType?: string; data?: Record<string, string> }[]).filter((entry) => entry.type === "custom" && entry.customType === REVISION_ENTRY_TYPE).at(-1);
+		restoreRevisions(saved?.data ?? {});
+	});
 	pi.on("turn_end", () => {
 		pendingReminder = undefined;
 	});
 	pi.on("tool_result", (event) => {
-		if (event.parentToolCallId || pendingReminder === undefined) return;
+		if (event.parentToolCallId || process.env.PI_CONTEXT_CHILD || process.env.PI_SUBAGENT_CHILD || pendingReminder === undefined) return;
 		const text = compactReminder(pendingReminder.text, pendingReminder.messages);
 		pendingReminder = undefined;
+		if (text === undefined) return;
+		pi.appendEntry(REVISION_ENTRY_TYPE, notedRevisions());
 		return { content: [...event.content, { type: "text", text }], structuredContent: event.structuredContent };
 	});
 	const wrappers: Record<string, unknown> = { registerTool, on };
