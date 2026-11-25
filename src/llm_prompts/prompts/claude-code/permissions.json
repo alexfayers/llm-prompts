@@ -1,0 +1,12 @@
+{
+  "allow": [
+    "Bash(git status *)",
+    "Bash(git branch --show-current)",
+    "Bash(ls *)"
+  ],
+  "ask": [
+    "Bash(git push *)",
+    "Bash(git reset --hard *)",
+    "Bash(git clean *)"
+  ]
+}
