@@ -156,10 +156,10 @@
 | tests/test\_handoff\_block.py                                                 |       14 |        0 |    100% |           |
 | tests/test\_hooks.py                                                          |      684 |        0 |    100% |           |
 | tests/test\_inspect\_range\_script.py                                         |       89 |        0 |    100% |           |
-| tests/test\_install.py                                                        |     1454 |        0 |    100% |           |
+| tests/test\_install.py                                                        |     1463 |        0 |    100% |           |
 | tests/test\_install\_agents.py                                                |      603 |        0 |    100% |           |
 | tests/test\_install\_antigravity.py                                           |       62 |        4 |     94% |     20-23 |
-| tests/test\_install\_codex.py                                                 |      269 |        0 |    100% |           |
+| tests/test\_install\_codex.py                                                 |      273 |        0 |    100% |           |
 | tests/test\_install\_opencode.py                                              |       66 |        0 |    100% |           |
 | tests/test\_install\_pi.py                                                    |     1641 |        1 |     99% |      2313 |
 | tests/test\_jsonfile.py                                                       |        9 |        0 |    100% |           |
@@ -193,7 +193,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       53 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **31834** |  **777** | **98%** |           |
+| **TOTAL**                                                                     | **31847** |  **777** | **98%** |           |
 
 
 ## Setup coverage badge

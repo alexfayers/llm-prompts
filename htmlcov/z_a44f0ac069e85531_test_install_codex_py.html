@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">269 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">269<span class="text"> run</span></button>
+            <span class="text">273 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">273<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_a44f0ac069e85531_test_install_opencode_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-25 15:42 +0000
+            created at 2026-11-25 15:52 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -569,6 +569,15 @@
     <p class="run run2"><span class="n"><a id="t487" href="#t487">487</a></span><span class="t">            <span class="op">(</span><span class="nam">isolated_config_dir</span> <span class="op">/</span> <span class="str">&quot;installed.json&quot;</span><span class="op">)</span><span class="op">.</span><span class="nam">read_text</span><span class="op">(</span><span class="nam">encoding</span><span class="op">=</span><span class="str">&quot;utf-8&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t488" href="#t488">488</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t489" href="#t489">489</a></span><span class="t">        <span class="key">assert</span> <span class="nam">str</span><span class="op">(</span><span class="nam">profile</span><span class="op">)</span> <span class="key">in</span> <span class="nam">manifest</span><span class="op">[</span><span class="str">&quot;agents&quot;</span><span class="op">]</span><span class="op">[</span><span class="str">&quot;claude-code&quot;</span><span class="op">]</span><span class="op">[</span><span class="str">&quot;files&quot;</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t490" href="#t490">490</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t491" href="#t491">491</a></span><span class="t">    <span class="key">def</span> <span class="nam">test_pi_only_install_leaves_codex_review_profile_untouched</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t492" href="#t492">492</a></span><span class="t">        <span class="nam">self</span><span class="op">,</span> <span class="nam">home</span><span class="op">:</span> <span class="nam">Path</span><span class="op">,</span> <span class="nam">overlay</span><span class="op">:</span> <span class="nam">Path</span><span class="op">,</span> <span class="nam">isolated_config_dir</span><span class="op">:</span> <span class="nam">Path</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t493" href="#t493">493</a></span><span class="t">    <span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t494" href="#t494">494</a></span><span class="t">        <span class="op">(</span><span class="nam">home</span> <span class="op">/</span> <span class="str">&quot;.codex&quot;</span> <span class="op">/</span> <span class="str">&quot;config.toml&quot;</span><span class="op">)</span><span class="op">.</span><span class="nam">write_text</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">CONFIG</span><span class="op">,</span> <span class="nam">encoding</span><span class="op">=</span><span class="str">&quot;utf-8&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t495" href="#t495">495</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t496" href="#t496">496</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">_install</span><span class="op">(</span><span class="nam">home</span><span class="op">,</span> <span class="nam">overlay</span><span class="op">,</span> <span class="op">[</span><span class="str">&quot;pi&quot;</span><span class="op">]</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t497" href="#t497">497</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t498" href="#t498">498</a></span><span class="t">        <span class="key">assert</span> <span class="key">not</span> <span class="op">(</span><span class="nam">home</span> <span class="op">/</span> <span class="str">&quot;.codex&quot;</span> <span class="op">/</span> <span class="fst">f&quot;</span><span class="op">{</span><span class="nam">self</span><span class="op">.</span><span class="nam">PROFILE</span><span class="op">}</span><span class="fst">.config.toml</span><span class="fst">&quot;</span><span class="op">)</span><span class="op">.</span><span class="nam">exists</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -578,7 +587,7 @@
             <a class="nav" href="z_a44f0ac069e85531_test_install_opencode_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-25 15:42 +0000
+            created at 2026-11-25 15:52 +0000
         </p>
     </div>
 </footer>
