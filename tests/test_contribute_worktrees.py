@@ -15,7 +15,12 @@ from unittest.mock import patch
 import pytest
 
 from llm_prompts import cli, contribute, github_api, main_sync, setup, worktrees
-from llm_prompts.contribute import SyncOptions, empty_sections_message
+from llm_prompts.contribute import (
+    Commit,
+    SyncOptions,
+    empty_sections_message,
+    pr_title,
+)
 from llm_prompts.exit_reason import ExitReason
 from llm_prompts.worktrees import Link, WorktreeEntry, load_entries
 
@@ -1469,7 +1474,15 @@ def test_the_pr_what_leaves_merge_commits_out(project: Project) -> None:
     [create] = project.gh_calls("pr", "create")
     body = create[create.index("--body") + 1]
     assert "- feat: a" in body
+    assert "- chore: side" in body
     assert "Merge side" not in body
+
+
+def test_a_pr_of_only_merge_commits_still_lists_them_in_what() -> None:
+    commits = [Commit("a", "Merge side into feat/a", (), is_merge=True)]
+
+    assert pr_title(commits) == "Merge side into feat/a"
+    assert "- Merge side into feat/a" in contribute.pr_body("## What\n", commits)
 
 
 def test_a_worktree_without_a_why_is_not_opened_and_the_others_still_sync(
