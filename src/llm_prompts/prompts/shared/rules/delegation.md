@@ -90,6 +90,7 @@ Every spawn prompt MUST specify:
 ## Escalation and waiting
 
 - A delegate stuck on ambiguity or needing a user preference SHOULD escalate.
+- MUST stop a review loop per `pr-review`'s `review-loop.md`.
 - A delegate whose work outgrows its estimate (steps/files/phases) MUST stop and escalate to its owner, noting more agents may help - MUST NOT grind alone.
 - MUST NOT idle-wait on a background agent/command, `sleep` or placeholder - completion re-invokes you; work or end turn.{% if AGENT != "pi" %} Exception: while any delegate runs,
   MUST keep ONE background `sleep 300` armed per session, not per delegate. When it fires, MUST `SendMessage` each delegate silent since arming for status, then re-arm.

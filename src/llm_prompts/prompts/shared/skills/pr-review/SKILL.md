@@ -39,3 +39,4 @@ JSON
 - MUST NOT report a finding without evidence in the diff, a new file, or PR text.
 - Output `[]`: say there are no findings.
 - MUST suggest fixes for the findings. MUST NOT apply them.
+- A review loop (review, fix, re-review) MUST follow `<base-dir>/review-loop.md`.

@@ -29,6 +29,7 @@ a different engine catches what another pass on the same engine would miss.
 - On a version tie, MUST prefer the plain name over a suffixed one (e.g. `-ultrafast`).
 - If no different-engine model is listed, MUST tell the user and stop.
 - The fork starts empty, so its `task` MUST carry the adversarial prompt plus the content (diff, plan) or the paths to read.
+- For a code or PR review, the `task` MUST carry the `pr-review` skill's `review-loop.md`, and the loop MUST follow it.
 - To have the fork run a skill, MUST pass that skill's file path and tell the fork to open it,
   do only the steps a reader can do, and return the rest (e.g. starting forks) to you.
 - MUST read the full report with `result_fetch` before summarizing it.
