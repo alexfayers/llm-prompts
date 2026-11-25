@@ -197,9 +197,9 @@
 | tests/test\_worktrees.py                                                      |       82 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_pr.py                                       |      184 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
-| tests/watch/test\_runner.py                                                   |       61 |        0 |    100% |           |
+| tests/watch/test\_runner.py                                                   |       70 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **33296** |  **805** | **98%** |           |
+| **TOTAL**                                                                     | **33305** |  **805** | **98%** |           |
 
 
 ## Setup coverage badge
