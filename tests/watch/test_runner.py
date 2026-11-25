@@ -124,3 +124,21 @@ def test_watch_follow_keeps_watching_until_every_source_is_terminal(
         "cr: update (approvals=a)",
         "cr: update (approvals=b)",
     ]
+
+
+def test_watch_discover_rejoins_a_source_that_ended_and_is_listed_again(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class Ending(StubSource):
+        terminal: ClassVar[list[str]] = ["state=closed"]
+
+    runs = iter(
+        [[Ending("pr", "open", "closed")], [], [Ending("pr", "open", "closed")]]
+    )
+
+    def listed() -> list[Ending]:
+        return next(runs, [])
+
+    watch([], ["changed:state"], interval=0, timeout=0.2, follow=True, discover=listed)
+
+    assert capsys.readouterr().out.count("pr: ") == 2

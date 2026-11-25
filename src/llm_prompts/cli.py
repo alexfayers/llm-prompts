@@ -1924,11 +1924,16 @@ def _run_command(
         from .watch.core.registry import sources
         from .watch.core.runner import watch
 
-        built = sources()[args.source].from_args(args)
+        source_type = sources()[args.source]
+        built = source_type.from_args(args)
+        discoverer = getattr(source_type, "discoverer", None)
         return watch(
             built if isinstance(built, Sequence) else [built],
             args.until,
-            interval=args.interval,
+            interval=source_type.default_interval
+            if args.interval is None
+            else args.interval,
+            discover=discoverer(args) if discoverer else None,
             timeout=args.timeout,
             require_all=args.all,
             follow=args.follow,

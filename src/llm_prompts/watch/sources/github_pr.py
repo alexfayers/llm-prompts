@@ -49,6 +49,46 @@ def _parse_target(text: str) -> tuple[str, int]:
     return match.group(1) or "{owner}/{repo}", int(match.group(2))
 
 
+class GithubPrDiscovery:
+    """Lists the open pull requests an author has in each repo, through conditional REST requests."""
+
+    def __init__(self, author: str, repos: Sequence[str], head: str | None) -> None:
+        """List pull requests by author (``@me`` is the signed-in user) in repos."""
+        self._author = author
+        self._repos = repos
+        self._head = head
+        self._cache: dict[str, tuple[str, Any, str | None]] = {}
+
+    def _get(self, path: str) -> tuple[Any, str | None]:
+        cached = self._cache.get(path)
+        response = conditional_get(path, cached[0] if cached else None)
+        if response.code == 304 and cached:
+            return cached[1], cached[2]
+        if response.code != 200:
+            raise WatchError(f"GitHub request failed for {path}.")
+        link = re.search(r'<([^>]+)>;\s*rel="next"', response.headers.get("link", ""))
+        data = json.loads(response.body)
+        self._cache[path] = (response.headers["etag"], data, link[1] if link else None)
+        return data, self._cache[path][2]
+
+    def __call__(self) -> list[GithubPrSource]:
+        """Return a source for each open pull request found now."""
+        author = (
+            self._get("user")[0]["login"] if self._author == "@me" else self._author
+        )
+        found = []
+        for repo in self._repos:
+            next_path: str | None = f"repos/{repo}/pulls?state=open&per_page=100"
+            while next_path:
+                pulls, next_path = self._get(next_path)
+                found += [
+                    GithubPrSource(repo, pull["number"], self._head)
+                    for pull in pulls
+                    if pull["user"]["login"].lower() == author.lower()
+                ]
+        return found
+
+
 class GithubPrSource:
     """Reports a pull request's state, reviews, head commit and check results."""
 
@@ -74,9 +114,19 @@ class GithubPrSource:
         """Add the target and head arguments."""
         parser.add_argument(
             "target",
-            nargs="+",
+            nargs="*",
             type=_parse_target,
             help="PR numbers, owner/repo#number or PR URLs. Any match stops the watch.",
+        )
+        parser.add_argument(
+            "--author",
+            help="With --repo and --follow, also watch every open PR this user (or @me) has, picking up new ones.",
+        )
+        parser.add_argument(
+            "--repo",
+            action="append",
+            default=[],
+            help="owner/repo to list --author's PRs in. Repeat for several.",
         )
         parser.add_argument(
             "--head",
@@ -86,7 +136,20 @@ class GithubPrSource:
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> list[Self]:
         """Build one source per target from parsed arguments."""
+        if args.author and not (args.repo and args.follow):
+            raise SystemExit("watch: --author needs --repo and --follow.")
+        if not args.target and not args.author:
+            raise SystemExit("watch: give a PR target or --author.")
         return [cls(repo, number, args.head) for repo, number in args.target]
+
+    @classmethod
+    def discoverer(cls, args: argparse.Namespace) -> GithubPrDiscovery | None:
+        """Return the lister of --author's open PRs, or None without --author."""
+        return (
+            GithubPrDiscovery(args.author, args.repo, args.head)
+            if args.author
+            else None
+        )
 
     def describe(self) -> str:
         """Return the short label printed with the result."""

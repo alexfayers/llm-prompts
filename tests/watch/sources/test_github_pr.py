@@ -12,7 +12,7 @@ from conftest import FakeSubprocess
 
 from llm_prompts.watch.core.runner import watch
 from llm_prompts.watch.core.store import Persisted
-from llm_prompts.watch.sources.github_pr import GithubPrSource
+from llm_prompts.watch.sources.github_pr import GithubPrDiscovery, GithubPrSource
 
 
 class FakeGithub:
@@ -249,3 +249,42 @@ def test_gh_pr_failed_cache_replace_leaves_no_temporary_file_and_is_retried(
 
 def _fail_replace(self: Path, target: Path) -> Path:
     raise OSError("replace failed")
+
+
+def test_gh_pr_author_watch_picks_up_a_new_pr_and_drops_a_merged_one(
+    github: FakeGithub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    github.pr()
+    for path in ("pulls/9", "pulls/9/reviews?per_page=100"):
+        github.bodies[f"repos/o/r/{path}"] = github.bodies[
+            f"repos/o/r/{path.replace('9', '7')}"
+        ]
+    github.bodies["repos/o/r/pulls/7"] = {
+        "state": "closed",
+        "merged": True,
+        "head": {"sha": "abc123"},
+    }
+    github.bodies["user"] = {"login": "me"}
+    listings = iter(
+        [
+            [{"number": 7, "user": {"login": "me"}}],
+            [
+                {"number": 8, "user": {"login": "someone"}},
+                {"number": 9, "user": {"login": "ME"}},
+            ],
+        ]
+    )
+    pulls = "repos/o/r/pulls?state=open&per_page=100"
+    discovery = GithubPrDiscovery("@me", ["o/r"], None)
+
+    def listed() -> list[GithubPrSource]:
+        github.bodies[pulls] = next(listings, [])
+        return discovery()
+
+    code = watch([], ["ci"], interval=0, timeout=0.2, follow=True, discover=listed)
+
+    assert code == 124
+    out = capsys.readouterr().out
+    assert out.count("gh-pr o/r#7: ") == 1
+    assert "gh-pr o/r#9: " in out
+    assert "o/r#8" not in out
