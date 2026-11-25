@@ -2644,7 +2644,10 @@ class TestSkipFailingPrompt:
         dest = state["dest"]
 
         assert dest["kiro_rule"].read_text(encoding="utf-8").strip() == "new rule"
-        assert dest["claude_rule"].read_text(encoding="utf-8").strip() == "new rule"
+        assert (
+            dest["claude_rule"].with_name("llm-prompts.md").read_text("utf-8").strip()
+            == "new rule"
+        )
         assert (dest["kiro_skill"] / "SKILL.md").read_text(
             encoding="utf-8"
         ) == "# Skill\nnew skill\n"
@@ -2692,7 +2695,7 @@ class TestMainOnly:
         rules = overlay / "shared" / "rules"
         _make_rule(rules, "edited.md", "new edited")
         _make_rule(rules, "other.md", "new other")
-        dest_rules = home / ".claude" / "rules"
+        dest_rules = home / ".kiro" / "steering"
         return {
             "home": home,
             "overlay": overlay,
@@ -2708,7 +2711,7 @@ class TestMainOnly:
             env[key].parent.mkdir(parents=True, exist_ok=True)
             env[key].write_text(f"old {key}", encoding="utf-8")
         write_manifest(
-            "claude-code",
+            "kiro",
             [str(env["edited_dest"]), str(env["other_dest"]), *(extra_files or [])],
         )
 
@@ -2724,7 +2727,7 @@ class TestMainOnly:
                 return_value=[env["overlay"]],
             ),
         ):
-            return install_main(["claude-code"], only=env["edited_src"])
+            return install_main(["kiro"], only=env["edited_src"])
 
     def test_rewrites_only_the_edited_rule_and_keeps_the_manifest(
         self, tmp_path: Path
@@ -2742,7 +2745,7 @@ class TestMainOnly:
         assert env["edited_dest"].read_text(encoding="utf-8").strip() == "new edited"
         assert env["other_dest"].read_text(encoding="utf-8") == "old other_dest"
         assert orphan.read_text(encoding="utf-8") == "orphan"
-        files = read_manifest()["claude-code"]["files"]
+        files = read_manifest()["kiro"]["files"]
         assert set(files) >= {
             str(orphan),
             str(env["edited_dest"]),

@@ -52,6 +52,7 @@ from .mcp import (
 from .overlay_merge import merge_agent_text, merged_seed_text
 from .render_template import (
     _read_text,
+    _scoped_paths,
     clear_read_cache,
     find_unreplaced_variables,
     frontmatter_list,
@@ -754,6 +755,10 @@ class _Agent:
         """Return the destination filename for a source file."""
         return src.name
 
+    def joins_rule(self, src: Path) -> bool:
+        """Return whether a rule source is joined into the agent's single rules file."""
+        return False
+
     def install_rules(
         self,
         shared_src: Path,
@@ -790,6 +795,32 @@ class _CodexAgent(_Agent):
 
     AGENTS_MD: ClassVar[str] = "AGENTS.md"
 
+    def joins_rule(self, src: Path) -> bool:
+        return True
+
+    def files_kept(
+        self,
+        dest: Path,
+        rule_names: list[str],
+        skip_set: Container[Path],
+        previous_manifest: "dict[str, AgentManifest] | None",
+        *,
+        incomplete: bool,
+    ) -> set[str] | None:
+        """Return the filenames to leave as they are instead of writing the joined file.
+
+        Args:
+            dest: The joined rules file.
+            rule_names: Filenames of the rules joined into ``dest``.
+            skip_set: Resolved source paths to leave untouched.
+            previous_manifest: The manifest from the previous installation.
+            incomplete: Whether a rule is held back or failed to render.
+
+        Returns:
+            Filenames to leave untouched, or ``None`` to write the file.
+        """
+        return {self.AGENTS_MD} if incomplete and dest.exists() else None
+
     def install_rules(
         self,
         shared_src: Path,
@@ -811,7 +842,10 @@ class _CodexAgent(_Agent):
 
         rules: dict[str, str] = {}
         held_back: list[str] = []
-        for name, src in sorted((name, src) for name, src, _ in collected):
+        joined = sorted(
+            (name, src) for name, src, _ in collected if self.joins_rule(src)
+        )
+        for name, src in joined:
             if src.resolve() in skip_set:
                 cached = read_rendered_rule(self.name, name)
                 if cached is not None:
@@ -831,8 +865,16 @@ class _CodexAgent(_Agent):
                 f"[{self.name}] Held back {self.AGENTS_MD}: "
                 f"rules/{name} skipped with no cached copy",
             )
-        if held_back and dest.exists():
-            return {self.AGENTS_MD}
+        names = [name for name, _ in joined]
+        kept = self.files_kept(
+            dest,
+            names,
+            skip_set,
+            previous_manifest,
+            incomplete=bool(held_back or len(rules) < len(joined)),
+        )
+        if kept is not None:
+            return kept
 
         output = normalize_whitespace("\n\n".join(rules.values()))
         for var in find_unreplaced_variables(output):
@@ -840,6 +882,11 @@ class _CodexAgent(_Agent):
 
         dest_dir.mkdir(parents=True, exist_ok=True)
         _write_if_changed(dest, output, self.AGENTS_MD, "rules")
+        if not dest.is_file() or dest.read_text(encoding="utf-8") != output:
+            kept = self.files_kept(
+                dest, names, skip_set, previous_manifest, incomplete=True
+            )
+            return {self.AGENTS_MD} if kept is None else kept
         write_rendered_rules(self.name, rules)
         return {self.AGENTS_MD}
 
@@ -856,6 +903,82 @@ class _OpencodeAgent(_CodexAgent):
     AGENTS_MD: ClassVar[str] = "AGENTS.md"
 
 
+class _ClaudeAgent(_CodexAgent):
+    """Claude Code agent that joins its always-loaded rules into one file.
+
+    Rules scoped with ``paths`` stay separate files, so Claude Code keeps
+    loading them only for matching files.
+    """
+
+    AGENTS_MD: ClassVar[str] = "llm-prompts.md"
+
+    def joins_rule(self, src: Path) -> bool:
+        return not _scoped_paths(parse_frontmatter(_read_text(src))[1])
+
+    def _previous_files(
+        self, previous_manifest: "dict[str, AgentManifest] | None"
+    ) -> set[Path]:
+        entry = (previous_manifest or {}).get(self.name, {})
+        return {Path(f) for f in entry.get("files", [])}
+
+    def files_kept(
+        self,
+        dest: Path,
+        rule_names: list[str],
+        skip_set: Container[Path],
+        previous_manifest: "dict[str, AgentManifest] | None",
+        *,
+        incomplete: bool,
+    ) -> set[str] | None:
+        previous = self._previous_files(previous_manifest)
+        if dest in previous and dest.exists():
+            return {dest.name} if incomplete else None
+        legacy = {
+            n
+            for n in rule_names
+            if (dest.parent / n) in previous and (dest.parent / n).is_file()
+        }
+        if isinstance(skip_set, _AllExcept) or (incomplete and legacy):
+            return legacy
+        return None
+
+    def install_rules(
+        self,
+        shared_src: Path,
+        overlay_srcs: list[Path],
+        overlay_agent_srcs: list[Path],
+        skip_set: Container[Path] = frozenset(),
+        previous_manifest: "dict[str, AgentManifest] | None" = None,
+    ) -> set[str]:
+        bundle = self.dest_dir("rules") / self.AGENTS_MD
+        if any(
+            name.casefold() == self.AGENTS_MD.casefold()
+            for name, _, _ in _collect_content_srcs(
+                self, "rules", shared_src, overlay_srcs, overlay_agent_srcs
+            )
+        ):
+            raise RuntimeError(
+                f"rules/{self.AGENTS_MD} is the name of the joined rules file. "
+                "Rename the rule."
+            )
+        if (bundle.is_symlink() or bundle.exists()) and bundle not in (
+            self._previous_files(previous_manifest)
+        ):
+            raise RuntimeError(
+                f"{bundle} exists and was not installed by llm-prompts. "
+                "Move or delete it, then install again."
+            )
+        args = (shared_src, overlay_srcs, overlay_agent_srcs, skip_set)
+        bundled = super().install_rules(*args, previous_manifest)
+        return bundled | _install_content(
+            self,
+            "rules",
+            *args,
+            previous_manifest,
+            include_joined=self.AGENTS_MD not in bundled,
+        )
+
+
 class _PiAgent(_CodexAgent):
     """Pi agent that concatenates all rules into its global AGENTS.md file."""
 
@@ -866,7 +989,7 @@ class _PiAgent(_CodexAgent):
 REMOVED_AGENTS = ("cline", "copilot")
 AGENT_CLASSES: dict[str, type[_Agent]] = {
     "kiro": _Agent,
-    "claude-code": _Agent,
+    "claude-code": _ClaudeAgent,
     "codex": _CodexAgent,
     "antigravity": _AntigravityAgent,
     "opencode": _OpencodeAgent,
@@ -1304,6 +1427,8 @@ def _install_content(
     overlay_agent_srcs: list[Path],
     skip_set: Container[Path] = frozenset(),
     previous_manifest: "dict[str, AgentManifest] | None" = None,
+    *,
+    include_joined: bool = False,
 ) -> set[str]:
     """Install shared and agent-specific content for one agent and content type.
 
@@ -1315,6 +1440,7 @@ def _install_content(
         overlay_agent_srcs: Overlay agent-specific source directories in priority order.
         skip_set: Resolved source paths to leave untouched.
         previous_manifest: The manifest from the previous installation.
+        include_joined: Install the rules the agent joins into one file as separate files too.
 
     Returns:
         Set of destination filenames that were installed.
@@ -1332,6 +1458,8 @@ def _install_content(
     )
     managed: set[str] = set()
     for name, src, agent_specific in collected:
+        if subdir == "rules" and agent.joins_rule(src) and not include_joined:
+            continue
         if src.resolve() in skip_set:
             if _carry_forward(
                 target,
@@ -5146,7 +5274,11 @@ def main(
                         previous_manifest=previous_manifest,
                     )
                 dest_dir = agent.dest_dir(subdir)
-                if not (isinstance(agent, _CodexAgent) and subdir == "rules"):
+                if not (
+                    isinstance(agent, _CodexAgent)
+                    and not isinstance(agent, _ClaudeAgent)
+                    and subdir == "rules"
+                ):
                     _check_unmanaged(dest_dir, installed, f"{agent.name} {subdir}")
                 installed_files[name].extend(str(dest_dir / f) for f in installed)
 
