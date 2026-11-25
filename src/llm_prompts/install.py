@@ -3805,27 +3805,39 @@ def _version_key(version: str) -> tuple[int, ...]:
     return tuple(int(part) for part in re.findall(r"\d+", version))
 
 
-def _running_pi_version() -> str:
-    """Return the version of the pi that ``pi`` on PATH runs, or "" if unknown.
+def _pi_package_version(manifest: Path) -> str:
+    """Return the version in the pi package.json ``manifest``, or "" if it is not one."""
+    if not manifest.is_file():
+        return ""
+    package = json.loads(_read_text(manifest))
+    return str(package.get("version", "")) if package.get("name") == _PI_PACKAGE else ""
+
+
+def _path_pi_version(launcher: Path) -> str:
+    """Return the version of the pi at ``launcher``, or "" if unknown.
 
     An npm install resolves to a file inside its package, whose package.json
-    names the version. The managed launcher instead reads ``current-version``.
+    names the version. The managed launcher under the pi agent directory instead
+    reads ``current-version``. A pi anywhere else has no known version.
     """
-    launcher = shutil.which("pi")
-    if launcher:
-        for parent in Path(launcher).resolve().parents:
-            manifest = parent / "package.json"
-            if manifest.is_file():
-                package = json.loads(_read_text(manifest))
-                if package.get("name") == _PI_PACKAGE:
-                    return str(package.get("version", ""))
-                break
+    resolved = launcher.resolve()
+    for parent in resolved.parents:
+        if (parent / "package.json").is_file():
+            if version := _pi_package_version(parent / "package.json"):
+                return version
+            break
     version_file = _pi_agent_dir() / "install" / "current-version"
-    return _read_text(version_file).strip() if version_file.exists() else ""
+    managed = resolved.is_relative_to(
+        _pi_agent_dir().resolve()
+    ) and not resolved.is_relative_to(_pi_package_dir(_PI_PACKAGE).resolve())
+    return _read_text(version_file).strip() if managed and version_file.exists() else ""
 
 
 def _warn_pi_version_drift(sources: Iterable[str]) -> None:
-    """Print a dim note when the installed pi differs from the pinned version.
+    """Print a dim note when the pi that runs differs from the pinned version.
+
+    A version is only reported for the pi that ``pi`` on PATH resolves to. Where
+    that is not the npm install under the pi agent directory, the note names both.
 
     Args:
         sources: Package sources llm-prompts declares.
@@ -3838,7 +3850,25 @@ def _warn_pi_version_drift(sources: Iterable[str]) -> None:
         ),
         "",
     )
-    installed = _running_pi_version()
+    which = shutil.which("pi")
+    if not which:
+        return
+    launcher = Path(which)
+    npm_dir = _pi_package_dir(_PI_PACKAGE)
+    npm_version = _pi_package_version(npm_dir / "package.json")
+    if npm_version and not launcher.resolve().is_relative_to(npm_dir.resolve()):
+        path_version = _path_pi_version(launcher) or "an unknown version"
+        print(
+            paint(
+                f"[llm-prompts] pi on PATH ({launcher}, {path_version}) is a different "
+                f"install from the npm one ({npm_dir}, {npm_version}), so the running "
+                "version is unknown, #677 migrates it",
+                "grey",
+            ),
+            file=sys.stderr,
+        )
+        return
+    installed = npm_version or _path_pi_version(launcher)
     if not pinned or not installed:
         return
     if _version_key(installed) == _version_key(pinned):
