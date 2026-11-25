@@ -1514,13 +1514,20 @@ def _resolve_priority_sources(
     return resolved
 
 
-def _agent_sources(candidate_dirs: list[Path]) -> list[tuple[str, Path, str]]:
+def _agent_sources(
+    candidate_dirs: list[Path], plugin_agents: Sequence[Path] = ()
+) -> list[tuple[str, Path, str]]:
     """Resolve agent sources by filename, merging the same-named file of each directory.
+
+    Args:
+        candidate_dirs: Source agent directories in priority order (first wins).
+        plugin_agents: Plugin agent files in config order, after every
+            candidate. A plugin agent is never merged into a candidate's.
 
     Returns:
         ``(filename, first-wins source path, merged source text)`` per agent.
     """
-    return [
+    sources = [
         (
             name,
             src,
@@ -1537,6 +1544,12 @@ def _agent_sources(candidate_dirs: list[Path]) -> list[tuple[str, Path, str]]:
             candidate_dirs, lambda d: sorted(d.glob("*.md")), lambda p: p.name
         )
     ]
+    seen = {name for name, _, _ in sources}
+    for src in plugin_agents:
+        if src.name not in seen:
+            seen.add(src.name)
+            sources.append((src.name, src, _read_text(src)))
+    return sources
 
 
 def _install_symlink(
@@ -3314,6 +3327,11 @@ def _generated_agents(
     return generated
 
 
+def _agent_runtime_name(filename: str, content: str) -> str:
+    """Return the name an installed agent is addressed by: its ``name`` or filename stem."""
+    return str(parse_frontmatter(content)[1].get("name") or Path(filename).stem)
+
+
 def _install_agents(
     candidate_dirs: list[Path],
     agents_dir: Path,
@@ -3324,6 +3342,7 @@ def _install_agents(
     dialect: _AgentDialect = _CLAUDE_AGENT_DIALECT,
     variables: dict[str, str] | None = None,
     bundle: "_PiRuleBundle | None" = None,
+    plugin_agents: Sequence[Path] = (),
 ) -> set[str]:
     """Install subagent definitions as rendered files.
 
@@ -3342,6 +3361,8 @@ def _install_agents(
         dialect: The target agent's subagent definition dialect.
         variables: Variables the sources are rendered with.
         bundle: Rules to reference from definitions instead of inlining them.
+        plugin_agents: Plugin agent files, installed after every candidate
+            and skipped where a generated filename or agent name is taken.
 
     Returns:
         Set of installed agent filenames.
@@ -3349,8 +3370,18 @@ def _install_agents(
     previous_manifest = previous_manifest if previous_manifest is not None else {}
     log("debug", f"[{agent_name}] Installing agents...")
     managed: set[str] = set()
+    runtime_names: set[str] = set()
     variables = variables or {}
-    for name, src, source in _agent_sources(candidate_dirs):
+    previous_files = set(previous_manifest.get(agent_name, {}).get("files", []))
+
+    def keep(filename: str) -> None:
+        managed.add(filename)
+        if (agents_dir / filename).is_file():
+            runtime_names.add(
+                _agent_runtime_name(filename, _read_text(agents_dir / filename))
+            )
+
+    for name, src, source in _agent_sources(candidate_dirs, plugin_agents):
         try:
             rendered = substitute_variables(source, variables)
         except TemplateError as e:
@@ -3362,7 +3393,6 @@ def _install_agents(
             **dialect.additions.get(src.stem, {}),
         }
         if src.resolve() in skip_set:
-            previous_files = previous_manifest.get(agent_name, {}).get("files", [])
             if has_variants:
                 prefix = f"{src.stem}-"
                 for filepath in previous_files:
@@ -3379,7 +3409,7 @@ def _install_agents(
                             quiet=isinstance(skip_set, _AllExcept),
                         )
                     ):
-                        managed.add(prev_path.name)
+                        keep(prev_path.name)
             elif _carry_forward(
                 agent_name,
                 agents_dir / name,
@@ -3387,16 +3417,32 @@ def _install_agents(
                 previous_manifest,
                 quiet=isinstance(skip_set, _AllExcept),
             ):
-                managed.add(name)
+                keep(name)
             continue
-        for gen_name, gen_content in _generated_agents(
+        generated = _generated_agents(
             src, rendered, name, dialect, variables, agent_name, rules, bundle, source
+        )
+        if src in plugin_agents and (
+            taken := [
+                gen_name
+                for gen_name, gen_content in generated
+                if gen_name in managed
+                or _agent_runtime_name(gen_name, gen_content) in runtime_names
+                or (
+                    str(agents_dir / gen_name) not in previous_files
+                    and os.path.lexists(agents_dir / gen_name)
+                )
+            ]
         ):
+            log("warn", f"Plugin agent '{name}' skipped: {taken[0]} already exists")
+            continue
+        for gen_name, gen_content in generated:
             dest = agents_dir / gen_name
             if dest.is_symlink():
                 dest.unlink()
             _write_if_changed(dest, gen_content, f"agent {gen_name}", "agents")
             managed.add(gen_name)
+            runtime_names.add(_agent_runtime_name(gen_name, gen_content))
     return managed
 
 
@@ -5011,6 +5057,7 @@ def main(
         _load_plugins,
         _stringify_override,
         _validate_plugins,
+        discover_agents,
         discover_skills,
         ensure_cloned,
     )
@@ -5023,10 +5070,12 @@ def main(
         raise ExitReason("invalid_plugins")
 
     plugin_skill_pairs: list[tuple[str, Path, dict[str, str]]] = []
+    plugin_agent_files: list[Path] = []
     for plugin in plugins:
         checkout = ensure_cloned(plugin)
         if checkout is None:
             continue
+        plugin_agent_files.extend(discover_agents(checkout))
         overrides_by_skill: dict[str, dict[str, Any]] = (
             plugin.get("frontmatter_overrides") or {}
         )
@@ -5211,6 +5260,7 @@ def main(
                     pi_dialect,
                     _builtin_skill_vars(all_agents[agents_target].vars_path()),
                     bundle=pi_bundle if agents_target == "pi" else None,
+                    plugin_agents=plugin_agent_files,
                 )
                 if agents_target == "pi":
                     variants_path = agents_dest.parent / _ROLE_VARIANTS_FILE

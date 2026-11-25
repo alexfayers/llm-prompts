@@ -237,6 +237,81 @@ class TestDiscoverSkills:
         assert "Duplicate" not in capsys.readouterr().err
 
 
+class TestDiscoverAgents:
+    def test_default_agents_dir_is_searched_recursively(self, tmp_path: Path) -> None:
+        checkout = tmp_path / "repo"
+        (checkout / "agents" / "nested").mkdir(parents=True)
+        (checkout / "agents" / "a.md").write_text("a")
+        (checkout / "agents" / "nested" / "b.md").write_text("b")
+        (checkout / "agents" / "notes.txt").write_text("c")
+        assert plugins.discover_agents(checkout) == [
+            checkout / "agents" / "a.md",
+            checkout / "agents" / "nested" / "b.md",
+        ]
+
+    def test_no_agents_dir_yields_nothing(self, tmp_path: Path) -> None:
+        assert plugins.discover_agents(tmp_path) == []
+
+    def _manifest(self, checkout: Path, agents: str) -> None:
+        (checkout / ".claude-plugin").mkdir(parents=True)
+        (checkout / ".claude-plugin" / "plugin.json").write_text(
+            f'{{"agents": {agents}}}'
+        )
+
+    def test_manifest_agents_key_replaces_default(self, tmp_path: Path) -> None:
+        checkout = tmp_path / "repo"
+        (checkout / "agents").mkdir(parents=True)
+        (checkout / "agents" / "default.md").write_text("d")
+        (checkout / "custom").mkdir()
+        (checkout / "custom" / "c.md").write_text("c")
+        self._manifest(checkout, '["./custom"]')
+        assert plugins.discover_agents(checkout) == [checkout / "custom" / "c.md"]
+
+    def test_manifest_accepts_agent_files(self, tmp_path: Path) -> None:
+        checkout = tmp_path / "repo"
+        checkout.mkdir()
+        (checkout / "one.md").write_text("1")
+        self._manifest(checkout, '["./one.md", "./missing.md"]')
+        assert plugins.discover_agents(checkout) == [checkout / "one.md"]
+
+    @pytest.mark.parametrize("value", ["5", "true", '{"a": 1}', "null"])
+    def test_non_string_or_list_agents_value_yields_nothing(
+        self, tmp_path: Path, value: str
+    ) -> None:
+        checkout = tmp_path / "repo"
+        (checkout / "agents").mkdir(parents=True)
+        (checkout / "agents" / "a.md").write_text("a")
+        self._manifest(checkout, value)
+        assert plugins.discover_agents(checkout) == []
+
+    def test_absent_agents_key_keeps_default(self, tmp_path: Path) -> None:
+        checkout = tmp_path / "repo"
+        (checkout / "agents").mkdir(parents=True)
+        (checkout / "agents" / "a.md").write_text("a")
+        (checkout / ".claude-plugin").mkdir()
+        (checkout / ".claude-plugin" / "plugin.json").write_text('{"name": "x"}')
+        assert plugins.discover_agents(checkout) == [checkout / "agents" / "a.md"]
+
+    def test_paths_outside_checkout_are_rejected(self, tmp_path: Path) -> None:
+        checkout = tmp_path / "repo"
+        checkout.mkdir()
+        (tmp_path / "outside.md").write_text("x")
+        (checkout / "agents").mkdir()
+        (checkout / "agents" / "link.md").symlink_to(tmp_path / "outside.md")
+        assert plugins.discover_agents(checkout) == []
+        self._manifest(checkout, '["../outside.md"]')
+        assert plugins.discover_agents(checkout) == []
+
+    def test_does_not_warn_about_agents(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        checkout = tmp_path / "repo"
+        _make_skill(checkout / "skills" / "tdd")
+        (checkout / "agents").mkdir()
+        plugins.discover_skills(checkout, None)
+        assert "agents" not in capsys.readouterr().err
+
+
 class TestEnsureCloned:
     def test_clones_when_missing(
         self,
