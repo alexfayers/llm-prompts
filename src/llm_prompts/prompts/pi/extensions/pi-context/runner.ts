@@ -1,6 +1,7 @@
 // Runs a pi child in rpc mode and drives it one prompt at a time.
 import { type ChildProcess, spawn } from "node:child_process";
 import { capCommand, type CappedCommand, type ForkLimits } from "./cap.ts";
+import type { Reply } from "./reply.ts";
 
 export interface Usage {
 	input: number;
@@ -15,6 +16,8 @@ export interface Turn {
 	usage: Usage;
 	/** Usage of the turn's first request. */
 	firstUsage?: Usage;
+	/** The arguments of the turn's last successful reply call. */
+	reply?: Reply;
 	error?: string;
 }
 
@@ -188,6 +191,7 @@ export class RpcChild {
 	private async runPrompt(text: string): Promise<Turn> {
 		const usage = zeroUsage();
 		let firstUsage: Usage | undefined;
+		let reply: Reply | undefined;
 		let aborted = false;
 		const settled = new Promise<void>((resolve) => {
 			this.onRecord = (record) => {
@@ -195,6 +199,8 @@ export class RpcChild {
 					const requestUsage = pickUsage(record.message.usage);
 					firstUsage ??= requestUsage;
 					addUsage(usage, requestUsage);
+				} else if (record.type === "tool_execution_end" && record.toolName === "reply" && !record.isError) {
+					reply = record.result?.details;
 				} else if (record.type === "agent_settled") {
 					aborted = Boolean(record.aborted);
 					resolve();
@@ -207,7 +213,7 @@ export class RpcChild {
 		await Promise.race([settled, this.exited]);
 		if (this.ended) return failedTurn(this.endReason());
 		const last = await this.request({ type: "get_last_assistant_text" });
-		return { text: last.data?.text ?? "", usage, firstUsage, error: aborted ? "aborted" : undefined };
+		return { text: last.data?.text ?? "", usage, firstUsage, reply, error: aborted ? "aborted" : undefined };
 	}
 
 	private end(resolve: (exit: Exit) => void, exit: Exit): void {

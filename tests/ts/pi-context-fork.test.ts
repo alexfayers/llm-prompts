@@ -250,6 +250,15 @@ describe("fork tool", () => {
 		assert.equal(tool.details.digest, "[fork x done] body line ref rc-fork-x-call-id");
 	});
 
+	test("a reply call's arguments decide the outcome and the kept reply, whatever the text says", async () => {
+		const { tool, appended } = await fork({ task: 'STUB_REPLY:{"outcome":"found-it","ref":"pr-1","verdict":"CLEAN","asks":["Which?"],"text":"ASK: an example"}', name: "replied" });
+		assert.equal(tool.content[0].text, "OUTCOME found-it ref:pr-1\nVerdict: CLEAN\nASK: Which?\nASK: an example");
+		assert.deepEqual(appended.filter(([type]) => type === "pending-asks").map(([, entry]) => (entry as any).text), ["replied: Which?"]);
+		assert.equal(tool.details.outcome, "found-it");
+		const failed = await fork({ task: 'STUB_REPORT STUB_REPLY:{"outcome":"failed","ref":""}', name: "replyfailed" });
+		assert.equal(failed.tool.details.outcome, "failed");
+	});
+
 	test("a finished cold worker keeps its files for a day after it finished, so its cost can be audited", async () => {
 		await fork({ task: "STUB_REPORT", name: "swept", model: "prov/cheap" });
 		const files = registryOf().all().find((run) => run.name === "swept")!.files!;
@@ -339,7 +348,7 @@ describe("fork tool", () => {
 		test("shared with tasks runs one cold stub on the shared text, then one child per task on a copy of its session", async () => {
 			const { tool } = await fork({ shared: "STUB_REPORT notes", tasks: [{ name: "t1", task: "STUB_INSPECT" }, { name: "t2", task: "STUB_INSPECT" }], model: "prov/cheap:low", name: "stub" });
 			const run = (name: string) => registryOf().all().find((candidate) => candidate.name === name)!;
-			assert.equal(run("stub").task, 'STUB_REPORT notes\n\nYour specific task arrives next, so reply only "OUTCOME done ref:" and stop.');
+			assert.equal(run("stub").task, 'STUB_REPORT notes\n\nYour specific task arrives next, so call reply with {"outcome":"done","ref":""} and stop.');
 			assert.equal(tool.content[0].text, "OUTCOME done ref:rc-fork-x\nbody line");
 			for (const name of ["t1", "t2"]) assert.equal(JSON.parse(fs.readFileSync(path.join(run(name).files!, "session", "session.jsonl"), "utf8").split("\n")[0]).piContextFork.parentSessionId, run("stub").id);
 			assert.equal(fs.existsSync(path.join(run("stub").files!, "finished")), true);

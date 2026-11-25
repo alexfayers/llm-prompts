@@ -28,6 +28,12 @@ describe("RpcChild.prompt", { timeout: 10_000 }, () => {
 		assert.equal(turn.firstUsage?.cacheRead, 100);
 	});
 
+	test("gives the arguments of the turn's last successful reply call, and none without one", async () => {
+		const child = start();
+		assert.deepEqual((await child.prompt("reply")).reply, { outcome: "done", ref: "r1" });
+		assert.equal((await child.prompt("hello")).reply, undefined);
+	});
+
 	test("ignores malformed and non-protocol lines", async () => {
 		const turn = await start().prompt("garbage");
 		assert.equal(turn.text, "echo: garbage");

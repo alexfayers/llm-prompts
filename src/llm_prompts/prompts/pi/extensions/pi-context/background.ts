@@ -3,6 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { isLive, registryOf, type Registry, type Run } from "./registry.ts";
 import type { LiveView, Watchable } from "./live-view.ts";
 import { openAsks, resolveAsk } from "../pending-asks.ts";
+import type { Reply } from "./reply.ts";
 import { askUserUnanswered, digestLine, openForkAsks, pinForkAsks, wakeReason } from "./wake.ts";
 
 export const RESULTS_TYPE = "pi-context-results";
@@ -58,7 +59,7 @@ export class Background {
 	}
 
 	/** Records how a background run ended, pins what it asks, and wakes main. A cancelled run is ignored. */
-	finish(ctx: Pick<ExtensionContext, "isIdle"> & AskContext, runId: string, patch: Partial<Run>, text: string, note?: string): void {
+	finish(ctx: Pick<ExtensionContext, "isIdle"> & AskContext, runId: string, patch: Partial<Run>, text: string | Reply, note?: string): void {
 		this.controllers.delete(runId);
 		this.children.delete(runId);
 		const current = this.registry.get(runId);

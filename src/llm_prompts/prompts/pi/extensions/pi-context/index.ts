@@ -10,6 +10,7 @@ import { registerGhostCommand } from "./ghost/command.ts";
 import { Recorder, registerRecorder } from "./ghost/recorder.ts";
 import { registerGhostRun } from "./ghost/run.ts";
 import { LiveView, registerLiveView } from "./live-view.ts";
+import { registerReply } from "./reply.ts";
 import { childGuard, readHandshake, registerDelegateRules } from "./roles.ts";
 
 export default function (pi: ExtensionAPI) {
@@ -18,13 +19,15 @@ export default function (pi: ExtensionAPI) {
 	const handshake = process.env.PI_CONTEXT_CHILD;
 	if (handshake) {
 		pi.on("tool_call", childGuard(handshake));
-		const { inherited, cacheKey } = readHandshake(handshake) ?? {};
+		const { role, inherited, cacheKey } = readHandshake(handshake) ?? {};
+		registerReply(pi, Boolean(role && role.name !== "btw"));
 		if (!inherited) registerDelegateRules(pi);
 		else useLeadPrefix(pi, handshake);
 		if (cacheKey) useCacheKey(pi, cacheKey);
 		const bridge = readBridgeConfig(handshake);
 		if (bridge) registerChildBridge(pi, bridge);
 	} else {
+		registerReply(pi, false);
 		const recorder = new Recorder();
 		registerRecorder(pi, recorder);
 		registerGhostCommand(pi, recorder);
