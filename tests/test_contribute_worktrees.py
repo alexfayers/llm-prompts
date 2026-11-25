@@ -3725,7 +3725,7 @@ def test_main_is_left_unchanged_when_a_changed_branch_drops_a_hand_resolved_line
     assert git(project.repo, "rev-parse", "main") == main
 
 
-SYNC_GIT_SPAWN_BUDGET = 170
+SYNC_GIT_SPAWN_BUDGET = 100
 
 
 def test_a_sync_pass_over_three_worktrees_stays_within_the_git_spawn_budget(
