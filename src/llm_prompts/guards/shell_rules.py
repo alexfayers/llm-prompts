@@ -1,10 +1,13 @@
-"""Cline-hooks plugin that blocks shell patterns the rule text no longer states under pi."""
+"""Cline-hooks plugin that blocks or corrects shell patterns the rule text no longer states under pi."""
 
 from __future__ import annotations
 
+import logging
 import re
+from typing import Any, cast
 
-from cline_hooks.core.plugin import HooksPlugin, hookimpl
+from cline_hooks.core.plugin import HookResult, HooksPlugin, hookimpl
+from cline_hooks.core.vocabulary import PluginScope
 from cline_hooks.handlers.commands import CommandRule, ParsedCommand
 
 from .gate import guards_active
@@ -17,10 +20,88 @@ _VOLUME_MESSAGE = (
 )
 
 
-def _sets_errexit(cmd: ParsedCommand, _all: list[ParsedCommand]) -> bool:
-    """Report `set -e` (also combined, like `-euo`) or `set -o errexit`."""
-    short = any(flag[1:2] != "-" and "e" in flag[1:] for flag in cmd.flags)
-    return short or ("-o" in cmd.flags and "errexit" in cmd.args)
+_SET_OPTIONS = re.compile(r"[-+][a-zA-Z]+")
+_LITERAL_WORD = re.compile(r"[\w./:=@%+,^-]+")
+_BARE_SET_MESSAGE = "MUST NOT use set -e. MUST NOT pass `set` only words that may expand to nothing - it prints every shell variable."
+_ERREXIT_NOTE = "Removed `-e` from `set`: MUST NOT use set -e."
+
+
+def _sets_errexit_option(cmd: ParsedCommand, _all: list[ParsedCommand]) -> bool:
+    """Report `set -o errexit`, also grouped like `-eo errexit`."""
+    return "errexit" in cmd.args and any(
+        flag[1:2] != "-" and "o" in flag[1:] for flag in cmd.flags
+    )
+
+
+class _MaybeBareSet(Exception):
+    """A `set -e` whose remaining words may expand to nothing, so it would print every shell variable."""
+
+
+def _set_edits(command: Any) -> list[tuple[int, int, str]]:
+    """Return the (start, end, text) edits that take `-e` out of a parsed `set` command, else none."""
+    words = [part for part in command.parts if part.kind == "word"]
+    if not words or words[0].word != "set":
+        return []
+    edits: list[tuple[int, int, str]] = []
+    kept = 0
+    sets_something = False
+    arguments = iter(words[1:])
+    for word in arguments:
+        if not _SET_OPTIONS.fullmatch(word.word):
+            rest = [word, *arguments]
+            kept += len(rest)
+            sets_something |= any(_LITERAL_WORD.fullmatch(w.word) for w in rest)
+            break
+        letters = word.word[1:]
+        stripped = letters.replace("e", "") if word.word[0] == "-" else letters
+        if stripped != letters:
+            edits.append((*word.pos, f"-{stripped}" if stripped else ""))
+        kept += bool(stripped)
+        sets_something |= bool(stripped) or stripped == letters
+        if "o" in letters:
+            value = next(arguments, None)
+            kept += value is not None
+    if not edits:
+        return []
+    if kept and not sets_something:
+        raise _MaybeBareSet
+    if not kept:
+        edits.append((*words[0].pos, "true"))
+    return edits
+
+
+def _all_set_edits(node: Any) -> list[tuple[int, int, str]]:
+    """Return the `-e` removals of every `set` command under the parsed node."""
+    edits = _set_edits(node) if node.kind == "command" else []
+    children = [
+        *(getattr(node, "parts", None) or []),
+        *(getattr(node, "list", None) or []),
+        *([node.command] if getattr(node, "command", None) else []),
+        *([node.output] if getattr(node, "output", None) else []),
+    ]
+    return edits + [edit for child in children for edit in _all_set_edits(child)]
+
+
+def _without_errexit(command: str) -> str | None:
+    """Return the shell line without `-e` in its `set` commands, or None where it has none.
+
+    Raises:
+        _MaybeBareSet: A `set -e` would be left with only words that may expand to nothing.
+    """
+    import bashlex  # type: ignore[import-untyped]
+    import bashlex.errors  # type: ignore[import-untyped]
+
+    try:
+        edits = [
+            edit for node in bashlex.parse(command) for edit in _all_set_edits(node)
+        ]
+    except (bashlex.errors.ParsingError, NotImplementedError):
+        return None
+    for start, end, text in sorted(edits, reverse=True):
+        if not text:
+            start = len(command[:start].rstrip(" \t"))
+        command = command[:start] + text + command[end:]
+    return command if edits else None
 
 
 def _lists_pids_by_port(text: str) -> bool:
@@ -53,7 +134,21 @@ def _removes_volumes(cmd: ParsedCommand, _all: list[ParsedCommand]) -> bool:
 
 
 class ShellRules(HooksPlugin):
-    """Contributes command rules for `set -e`, kill by port and Docker volume removal."""
+    """Contributes command rules for `set -o errexit`, kill by port and Docker volume removal, and drops `-e` from `set`."""
+
+    def on_hook(
+        self, hook_name: str, *, logger: logging.Logger, **kwargs: object
+    ) -> HookResult | None:
+        """Return the shell line without `-e` in its `set` calls, where the guards are active."""
+        if hook_name != PluginScope.PRE_SHELL or not guards_active():
+            return None
+        try:
+            fixed = _without_errexit(cast("str", kwargs.get("command") or ""))
+        except _MaybeBareSet:
+            return HookResult(block=_BARE_SET_MESSAGE)
+        if fixed is None:
+            return None
+        return HookResult(updated_input={"command": fixed}, notes=[_ERREXIT_NOTE])
 
     @hookimpl
     def command_rules(self) -> list[CommandRule]:
@@ -62,7 +157,9 @@ class ShellRules(HooksPlugin):
             return []
         return [
             CommandRule(
-                command="set", message="MUST NOT use set -e.", validator=_sets_errexit
+                command="set",
+                message="MUST NOT use set -o errexit.",
+                validator=_sets_errexit_option,
             ),
             CommandRule(
                 command="fuser", blocked_flags=frozenset({"-k"}), message=_PORT_MESSAGE
