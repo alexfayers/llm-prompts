@@ -487,3 +487,12 @@ class TestCodexReviewProfile:
             (isolated_config_dir / "installed.json").read_text(encoding="utf-8")
         )
         assert str(profile) in manifest["agents"]["claude-code"]["files"]
+
+    def test_pi_only_install_leaves_codex_review_profile_untouched(
+        self, home: Path, overlay: Path, isolated_config_dir: Path
+    ) -> None:
+        (home / ".codex" / "config.toml").write_text(self.CONFIG, encoding="utf-8")
+
+        self._install(home, overlay, ["pi"])
+
+        assert not (home / ".codex" / f"{self.PROFILE}.config.toml").exists()
