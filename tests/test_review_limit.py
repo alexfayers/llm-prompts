@@ -46,25 +46,24 @@ def _guard(command: str) -> HookResult | None:
     )
 
 
-@pytest.mark.usefixtures("open_prs")
-def test_blocks_a_new_pr_at_the_limit_of_the_repo_it_runs_in(
-    open_prs: MagicMock,
+@pytest.mark.parametrize(
+    ("command", "repo", "cwd"),
+    [
+        ("cd x && gh pr create --fill", "acme/widgets", "/work/x"),
+        ("gh pr create --repo other/app --fill", "other/app", "/work"),
+        ("gh pr create -R other/app --fill", "other/app", "/work"),
+        ("gh pr create --repo=other/app --fill", "other/app", "/work"),
+    ],
+)
+def test_blocks_a_new_pr_at_the_limit_of_the_repo_it_targets(
+    open_prs: MagicMock, command: str, repo: str, cwd: str
 ) -> None:
-    result = _guard("cd x && gh pr create --fill")
-    assert result is not None and "acme/widgets are open, at the limit of 5" in (
+    result = _guard(command)
+    assert result is not None and f"{repo} are open, at the limit of 5" in (
         result.block or ""
     )
-    assert open_prs.call_args.kwargs["cwd"] == "/work/x"
-    assert "repo:acme/widgets" in open_prs.call_args.args[0][4]
-
-
-@pytest.mark.parametrize(
-    "flag", ["--repo other/app", "-R other/app", "--repo=other/app"]
-)
-def test_counts_the_repo_a_new_pr_targets(open_prs: MagicMock, flag: str) -> None:
-    result = _guard(f"gh pr create {flag} --fill")
-    assert result is not None and "other/app are open" in (result.block or "")
-    assert "repo:other/app" in open_prs.call_args.args[0][4]
+    assert open_prs.call_args.kwargs["cwd"] == cwd
+    assert f"repo:{repo}" in open_prs.call_args.args[0][4]
 
 
 @pytest.mark.parametrize("command", ["gh pr edit 5 --title x", "git push"])
