@@ -460,7 +460,10 @@ def behind_prs(
 
 def first_stderr_line(error: subprocess.CalledProcessError) -> str:
     """Return the first line of a failed command's stderr."""
-    return (error.stderr or "").strip().split("\n")[0]
+    stderr = error.stderr or ""
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode(errors="replace")
+    return stderr.strip().split("\n")[0]
 
 
 def pr_title_body(repo: Path, number: int) -> tuple[str, str]:

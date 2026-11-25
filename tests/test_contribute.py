@@ -851,3 +851,10 @@ class TestWithoutGh:
         contribute.update_pr_branch(tmp_path, 4)
 
         assert "updateMethod: REBASE" in fake_github.requests[-1][2]["query"]
+
+
+@pytest.mark.parametrize("stderr", ["fatal: bad\nmore", b"fatal: bad\nmore"])
+def test_first_stderr_line_reads_text_or_bytes(stderr: str | bytes) -> None:
+    error = subprocess.CalledProcessError(1, ["git"], stderr=stderr)
+
+    assert contribute.first_stderr_line(error) == "fatal: bad"
