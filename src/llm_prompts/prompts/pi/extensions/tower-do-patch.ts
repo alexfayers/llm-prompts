@@ -1,5 +1,6 @@
 // Adds the tower_do_patch tool, which changes single tasks on the board without resending all of them.
 // Env: TOWER_DO_PATCH_TIMEOUT_MS (milliseconds a board call may take, default 60000)
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -8,6 +9,27 @@ import { Type } from "typebox";
 
 export const loadTowerDo = <T>(file: string): Promise<T> =>
 	import(pathToFileURL(join(getAgentDir(), "npm", "node_modules", "tower-do", file)).href);
+
+type BoardView = { revision: number; tasks: { key: string; subject?: string; status: string; owner?: string }[] };
+type BoardModule = { TowerBoard: new (file: string) => { fold(): Promise<BoardView> } };
+type PathsModule = { boardFileFor: (cwd: string) => string };
+
+const foldedBoards = new Map<string, { stamp: string; view: BoardView }>();
+
+/** Folds the board file of `cwd`, or returns the last fold while the file's modification time, size and inode are unchanged. */
+export async function foldBoard(cwd: string): Promise<BoardView> {
+	const [{ TowerBoard }, { boardFileFor }] = await Promise.all([loadTowerDo<BoardModule>("board.ts"), loadTowerDo<PathsModule>("paths.ts")]);
+	const file = boardFileFor(cwd);
+	const stamp = await stat(file, { bigint: true }).then(
+		({ mtimeNs, size, ino }) => `${mtimeNs}:${size}:${ino}`,
+		() => undefined,
+	);
+	const known = foldedBoards.get(file);
+	if (stamp !== undefined && known?.stamp === stamp) return known.view;
+	const view = await new TowerBoard(file).fold();
+	if (stamp !== undefined) foldedBoards.set(file, { stamp, view });
+	return view;
+}
 
 export type TaskRow = { key: string; [field: string]: unknown };
 
@@ -73,17 +95,13 @@ const PARAMETERS = Type.Object({
 	as: Type.Optional(Type.String({ description: "Identity to act as, as in tower_do." })),
 });
 
-type BoardModule = { TowerBoard: new (file: string) => { fold(): Promise<{ revision: number; tasks: { key: string }[] }> } };
-type PathsModule = { boardFileFor: (cwd: string) => string };
-
 export default function (pi: ExtensionAPI) {
 	const depsFor = (ctx: ExtensionToolContext, signal: AbortSignal | undefined): PatchDeps => {
 		const configuredMs = Number(process.env.TOWER_DO_PATCH_TIMEOUT_MS);
 		const timeoutMs = Number.isFinite(configuredMs) && configuredMs > 0 && configuredMs <= MAX_TIMER_MS ? configuredMs : DEFAULT_TIMEOUT_MS;
 		return {
 			async readBoard() {
-				const [{ TowerBoard }, { boardFileFor }] = await Promise.all([loadTowerDo<BoardModule>("board.ts"), loadTowerDo<PathsModule>("paths.ts")]);
-				const view = await new TowerBoard(boardFileFor(ctx.cwd)).fold();
+				const view = await foldBoard(ctx.cwd);
 				return { revision: view.revision, keys: view.tasks.map((task) => task.key) };
 			},
 			write(args) {
