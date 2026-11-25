@@ -41,7 +41,8 @@ FAILED_STOP_REASONS = {"error", "aborted"}
 HOOK_MESSAGE_TYPE = "cline-hooks"
 DELEGATION_TOOLS = ("fork", "fork_resume", "fork_steer", "fork_cancel")
 FEATURE_TOOLS = {"consult": ("consult",), "ghost": ("ghost_run",)}
-FEATURES = (*FEATURE_TOOLS, "attic")
+FEATURES = (*FEATURE_TOOLS, "attic", "lsp")
+LSP_PACKAGE = "npm:pi-lsp-extension@"
 PERMISSION_CONFIG = Path(".pi/agent/extensions/pi-permission-system/config.json")
 PATH_EDIT_TOOLS = ("edit", "write", "path_write")
 FORK_FILES = Path(".pi/agent/pi-context")
@@ -141,9 +142,19 @@ class PiAdapter:
         )
 
     def install_features(self, home: Path, features: Mapping[str, bool]) -> None:
-        """Hide every unpinned skill behind the attic when ``features`` turns it on."""
+        """Hide every unpinned skill behind the attic when ``features`` turns it on, and drop the language server package when it turns that off."""
+        agent_dir = home / ".pi" / "agent"
+        if features.get("lsp", True) is False:
+            settings = read_json(agent_dir / "settings.json")
+            settings["packages"] = [
+                package
+                for package in settings.get("packages", [])
+                if not (
+                    package.get("source", "") if isinstance(package, dict) else package
+                ).startswith(LSP_PACKAGE)
+            ]
+            write_json(agent_dir / "settings.json", settings)
         if features.get("attic"):
-            agent_dir = home / ".pi" / "agent"
             manifest = build_manifest(
                 [],
                 skill_stubs(agent_dir / "skills"),

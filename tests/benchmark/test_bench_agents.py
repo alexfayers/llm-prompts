@@ -57,6 +57,21 @@ def test_pi_hides_every_unpinned_skill_behind_the_attic_only_when_the_feature_is
     assert [i["name"] for i in json.loads(manifest.read_text())["items"]] == ["idle"]
 
 
+def test_pi_drops_the_language_server_package_only_when_the_feature_is_off(
+    tmp_path: Path,
+) -> None:
+    settings = tmp_path / ".pi/agent/settings.json"
+    settings.parent.mkdir(parents=True)
+    packages = ["npm:pi-lsp-extension@1.4.0", {"source": "npm:tower-do@0.8.2"}]
+    settings.write_text(json.dumps({"packages": packages}))
+
+    AGENTS["pi"].install_features(tmp_path, {"lsp": True})
+    assert json.loads(settings.read_text())["packages"] == packages
+
+    AGENTS["pi"].install_features(tmp_path, {"lsp": False})
+    assert json.loads(settings.read_text())["packages"] == packages[1:]
+
+
 def test_pi_models_come_from_the_pi_settings() -> None:
     assert AGENTS["pi"].default_model == "test-model"
     assert AGENTS["pi"].judge_model == "test-model"
