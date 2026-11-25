@@ -48,6 +48,7 @@ class Commit(NamedTuple):
     paths: tuple[str, ...]
     patch_id: str = ""
     authored_date: str = ""
+    is_merge: bool = False
 
 
 class Pr(NamedTuple):
@@ -270,8 +271,9 @@ def pr_template(repo: Path, base: str) -> str:
 
 
 def _what_lines(commits: Sequence[Commit]) -> list[str]:
-    """Return the What section's subject bullets, one per commit."""
-    return [f"- {commit.subject}{WHAT_MARK}" for commit in commits]
+    """Return the What section's subject bullets, one per non-merge commit, or per commit when all are merges."""
+    shown = [commit for commit in commits if not commit.is_merge] or commits
+    return [f"- {commit.subject}{WHAT_MARK}" for commit in shown]
 
 
 def _with_depends(
@@ -1296,8 +1298,10 @@ _PR_URL_NUMBER = re.compile(r"/pull/(\d+)")
 
 
 def _commit_of(repo: Path, sha: str) -> Commit:
-    subject = _git("log", "-1", "--format=%s", sha, repo=repo)
-    return Commit(sha, subject, ())
+    parents, _, subject = _git(
+        "log", "-1", "--format=:%P%x09%s", sha, repo=repo
+    ).partition("\t")
+    return Commit(sha, subject, (), is_merge=len(parents.split()) > 1)
 
 
 def _pr_number_of(repo: Path, branch: str) -> int:
