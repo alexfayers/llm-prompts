@@ -881,20 +881,36 @@ def _lost_paths(repo: Path, tip: str, sha: str, kept: Collection[str]) -> list[s
     )
 
 
-def _blob(repo: Path, rev: str, path: str) -> str | None:
-    result = run_git(repo, "show", f"{rev}:{path}")
+def _git_bytes(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            check=False,
+            timeout=GIT_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as expired:
+        raise _Bail(f"git {args[0]} timed out") from expired
+
+
+def _blob(repo: Path, rev: str, path: str) -> bytes | None:
+    result = _git_bytes(repo, "show", f"{rev}:{path}")
     return result.stdout if result.returncode == 0 else None
 
 
-def _merge_file(repo: Path, ours: str, base: str, theirs: str) -> tuple[bool, str]:
-    """Return whether merging ``theirs`` into ``ours`` from ``base`` is clean, and the merged text."""
+def _merge_file(
+    repo: Path, ours: bytes, base: bytes, theirs: bytes
+) -> tuple[bool, bytes]:
+    """Return whether merging ``theirs`` into ``ours`` from ``base`` is clean, and the merged content."""
     with tempfile.TemporaryDirectory() as parent:
         files = [Path(parent) / name for name in ("ours", "base", "theirs")]
-        for file, text in zip(files, (ours, base, theirs), strict=True):
-            file.write_text(text, encoding="utf-8")
-        result = run_git(repo, "merge-file", "-p", *map(str, files))
+        for file, content in zip(files, (ours, base, theirs), strict=True):
+            file.write_bytes(content)
+        result = _git_bytes(repo, "merge-file", "-p", *map(str, files))
     if result.returncode > _MERGE_FILE_MAX_CONFLICTS:
-        raise _Bail(result.stderr.strip() or "git merge-file failed")
+        raise _Bail(
+            result.stderr.decode(errors="replace").strip() or "git merge-file failed"
+        )
     return result.returncode == 0, result.stdout
 
 
@@ -913,13 +929,13 @@ def _blocks_lacked(
     old, new = _blob(repo, f"{sha}^", path), _blob(repo, sha, path)
     if old is None or new is None:
         return True
-    head_text, tip_text = _blob(repo, head, path) or "", _blob(repo, tip, path) or ""
-    before, after = old.splitlines(keepends=True), new.splitlines(keepends=True)
+    head_text, tip_text = _blob(repo, head, path) or b"", _blob(repo, tip, path) or b""
+    before, after = old.split(b"\n"), new.split(b"\n")
     matcher = SequenceMatcher(None, before, after, autojunk=False)
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             continue
-        block = "".join([*before[:i1], *after[j1:j2], *before[i2:]])
+        block = b"\n".join([*before[:i1], *after[j1:j2], *before[i2:]])
         clean, merged = _merge_file(repo, tip_text, old, block)
         if merged == tip_text if clean else kept:
             continue

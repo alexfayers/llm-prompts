@@ -134,8 +134,10 @@ class Project:
         self.state = state
         self.save_state()
 
-    def commit(self, repo: Path, name: str, content: str, message: str) -> str:
-        (repo / name).write_text(content, encoding="utf-8")
+    def commit(
+        self, repo: Path, name: str, content: str, message: str, encoding: str = "utf-8"
+    ) -> str:
+        (repo / name).write_text(content, encoding=encoding)
         git(repo, "add", name)
         self.clock += 60
         git(repo, "commit", "-q", "-m", message, "--date", f"{self.clock} +0000")
@@ -3637,12 +3639,13 @@ def test_a_changed_branch_replaces_its_hand_resolved_copy_with_a_change_its_hist
     assert (project.repo / "s.txt").read_text(encoding="utf-8") == resolved
 
 
+@pytest.mark.parametrize("encoding", ["utf-8", "latin-1"])
 def test_main_is_left_unchanged_when_a_changed_branch_drops_a_hand_resolved_line_beside_one_main_reverted(
-    project: Project,
+    project: Project, encoding: str
 ) -> None:
-    body = "".join(f"line {n}\n" for n in range(9))
+    body = "".join(f"line {n} \u00e9\n" for n in range(9))
     project.commit(project.repo, "g.txt", body, "chore: add g")
-    project.commit(project.repo, "s.txt", body, "chore: add s")
+    project.commit(project.repo, "s.txt", body, "chore: add s", encoding)
     git(project.repo, "push", "-q", "origin", "main")
     project.commit(
         project.repo, "g.txt", body.replace("line 1", "local"), "chore: local"
@@ -3650,18 +3653,22 @@ def test_main_is_left_unchanged_when_a_changed_branch_drops_a_hand_resolved_line
     path = project.worktree("feat/a", start="origin/main")
     (path / "g.txt").write_text(body.replace("line 1", "a"), encoding="utf-8")
     git(path, "add", "g.txt")
-    project.commit(path, "s.txt", body.replace("line 1", "a"), "feat: a")
+    project.commit(path, "s.txt", body.replace("line 1", "a"), "feat: a", encoding)
     project.run(branch="feat/a")
     project.run(apply=True)
     work = main_sync.resolve_worktree(project.repo)
     (work / "g.txt").write_text(body.replace("line 1", "local a"), encoding="utf-8")
     (work / "s.txt").write_text(
-        body.replace("line 1", "a").replace("line 7", "hand"), encoding="utf-8"
+        body.replace("line 1", "a").replace("line 7", "hand"), encoding=encoding
     )
     git(work, "add", "g.txt", "s.txt")
     assert project.run(apply=True) == 0
     project.commit(
-        project.repo, "s.txt", body.replace("line 7", "hand"), "chore: undo a"
+        project.repo,
+        "s.txt",
+        body.replace("line 7", "hand"),
+        "chore: undo a",
+        encoding,
     )
     project.commit(path, "b.txt", "b\n", "fix: a")
     main = git(project.repo, "rev-parse", "main")

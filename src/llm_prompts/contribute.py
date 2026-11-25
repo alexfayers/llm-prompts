@@ -884,16 +884,17 @@ def _tips(repo: Path, base: str, entries: Sequence[WorktreeEntry]) -> list[Tip]:
 
 
 def _patch_id(repo: Path, *diff_args: str) -> str:
-    shown = _git(*diff_args, repo=repo)
+    shown = subprocess.run(
+        ["git", "-C", str(repo), *diff_args], capture_output=True, check=True
+    ).stdout.strip()
     done = subprocess.run(
         ["git", "patch-id", "--stable"],
         cwd=repo,
         input=shown,
         capture_output=True,
-        text=True,
         check=True,
     )
-    return done.stdout.split()[0] if done.stdout else ""
+    return done.stdout.decode().split()[0] if done.stdout else ""
 
 
 def _squash_patch_id(repo: Path, squash: main_sync.Squash) -> str:
