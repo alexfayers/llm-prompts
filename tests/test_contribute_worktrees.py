@@ -1310,6 +1310,25 @@ def test_a_hand_resolution_that_keeps_main_stays_when_main_changes_its_conflict(
     assert work.exists()
 
 
+@pytest.mark.parametrize("resolved", ["feature\n", "resolved\n"])
+def test_a_staged_hand_resolution_reaches_main_or_stays_when_the_branch_merges_cleanly(
+    project: Project, resolved: str
+) -> None:
+    squash = stopped_copy(project)
+    work = main_sync.resolve_worktree(project.repo)
+    (work / "base.txt").write_text(resolved, encoding="utf-8")
+    (work / "related.txt").write_text("fix\n", encoding="utf-8")
+    git(work, "add", "base.txt", "related.txt")
+    project.commit(project.repo, "base.txt", "feature\n", "feat: main takes it")
+
+    rebuilt = main_sync.rebuild_local(project.repo, squash.floor, {}, (), {}, [squash])
+
+    assert rebuilt.mode == "rebuilt"
+    applied = resolved == "feature\n"
+    assert (project.repo / "related.txt").exists() == applied
+    assert work.exists() != applied
+
+
 def test_a_staged_hand_resolution_replays_onto_an_unrelated_main_change(
     project: Project, hand_staged: main_sync.Squash
 ) -> None:

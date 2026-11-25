@@ -645,10 +645,18 @@ def _record_resolution(repo: Path) -> None:
     _read(repo, "update-ref", named.read_text(encoding="utf-8"), commit)
 
 
-def _drop_resolve_worktree(repo: Path, work: Path) -> None:
-    """Remove the resolve worktree ``work``, whose resolution is stored, once main is rebuilt."""
-    if work.exists():
-        run_git(repo, "worktree", "remove", "--force", str(work))
+def _drop_resolve_worktree(repo: Path, work: Path, tip: str) -> None:
+    """Remove the resolve worktree ``work`` once main commit ``tip`` holds the resolution stored for it."""
+    if not work.exists():
+        return
+    try:
+        ref = _resolution_file(work).read_text(encoding="utf-8")
+        held = _merge_tree(repo, ref.rpartition("/")[2], tip, ref)
+        if held != _read(repo, "rev-parse", f"{tip}^{{tree}}").strip():
+            return
+    except _Bail:
+        return
+    run_git(repo, "worktree", "remove", "--force", str(work))
 
 
 def holds_changes(repo: Path, tip: str, sha: str) -> bool:
@@ -689,16 +697,16 @@ def _replay(
     floor, changes = (
         (squash.floor, squash.tip) if squash else (f"{commit.sha}^", commit.sha)
     )
+    staged = _staged_tree(repo, floor, tip, changes) if reuse else None
     try:
-        tree = _merge_tree(repo, floor, tip, changes)
+        tree = staged or _merge_tree(repo, floor, tip, changes)
     except _Conflict as conflict:
-        staged = _staged_tree(repo, floor, tip, changes) if reuse else None
-        resolved = staged or (
+        resolved = (
             _reuse_resolutions(repo, floor, tip, changes, keep) if reuse else None
         )
-        if resolved is None or (
-            staged is None
-            and resolved == _read(repo, "rev-parse", f"{tip}^{{tree}}").strip()
+        if (
+            resolved is None
+            or resolved == _read(repo, "rev-parse", f"{tip}^{{tree}}").strip()
         ):
             message = (
                 f"local commit {commit.sha[:12]} ({commit.subject}) conflicts with {against}"
@@ -883,7 +891,7 @@ def rebuild_local(
 ) -> SyncResult:
     """Move local main onto ``base`` with its local commits replayed, some swapped for squashes or dropped, plus new squashes.
 
-    A replay whose conflict has no recorded resolution stops the rebuild and leaves its merge in ``resolve_worktree``. The next rebuild records the hand resolution staged there with git rerere, and stores its whole tree for that merge, which it replays onto main. The worktree stays until main is rebuilt, and a rebuild stops while it holds changes that are not staged.
+    A replay whose conflict has no recorded resolution stops the rebuild and leaves its merge in ``resolve_worktree``. The next rebuild records the hand resolution staged there with git rerere, and stores its whole tree for that merge, which it replays onto main. The worktree stays until main holds its resolution, and a rebuild stops while it holds changes that are not staged.
 
     Args:
         repo: The local clone, on its main branch.
@@ -1002,7 +1010,7 @@ def rebuild_local(
                     " that its replacement drops"
                 )
         if tip == head:
-            _drop_resolve_worktree(repo, keep)
+            _drop_resolve_worktree(repo, keep, tip)
             return SyncResult("rebuilt", copied=tuple(copied))
         saved = run_git(
             repo,
@@ -1023,5 +1031,5 @@ def rebuild_local(
         return SyncResult("failed", detail=f"main left untouched: {bail}")
     if reset.returncode != 0:
         return SyncResult("failed", detail=reset.stderr.strip())
-    _drop_resolve_worktree(repo, keep)
+    _drop_resolve_worktree(repo, keep, tip)
     return SyncResult("rebuilt", replayed=replayed, copied=tuple(copied))
