@@ -1,7 +1,8 @@
 ---
 name: ask-codex
 description: Get an independent or adversarial second opinion on a diff, plan, or work from a different model engine.
-load_when: tool:codex
+requires_command: codex
+pi_requires_command: ""
 exclude_targets: codex
 ---
 
