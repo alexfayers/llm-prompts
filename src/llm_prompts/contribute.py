@@ -22,6 +22,7 @@ from typing import Any, NamedTuple, TextIO
 
 from . import github_api, main_sync, worktrees
 from .exit_reason import ExitReason
+from .git_snapshot import Snapshot, read_refs, resolve_ref
 from .network import run_with_retries, with_retries
 from .squash_subject import squash_pr_number
 from .worktrees import Link, WorktreeEntry
@@ -91,18 +92,58 @@ def _git_cached(repo: Path, *args: str) -> str:
     return _git(*args, repo=repo)
 
 
+@cache
+def _refs(repo: Path) -> dict[str, str]:
+    """Return the sha of every ref ``read_refs`` lists, kept until ``_refs_moved``."""
+    return read_refs(repo)
+
+
+@cache
+def _snapshot(repo: Path, floor: str) -> Snapshot | None:
+    """Return what the tracked branches hold above ``floor`` when it names a ref, kept until ``_refs_moved``."""
+    if resolve_ref(_refs(repo), floor) is None:
+        return None
+    return Snapshot(repo, _refs(repo), floor, ["main", *_branches.get(repo, ())])
+
+
+_branches: dict[Path, Collection[str]] = {}
+_floors: dict[Path, Sequence[str]] = {}
+
+
+def _track(repo: Path, branches: Collection[str], floors: Sequence[str]) -> None:
+    """Have the snapshots of ``repo`` hold ``branches`` above each of ``floors``."""
+    _branches[repo] = branches
+    _floors[repo] = tuple(dict.fromkeys(floors))
+    _snapshot.cache_clear()
+
+
+def _ask[Answer](
+    repo: Path, question: Callable[[Snapshot], Answer | None]
+) -> Answer | None:
+    """Return the first answer a tracked floor's snapshot gives, or None when git must be asked."""
+    for floor in _floors.get(repo, ()):
+        if (snapshot := _snapshot(repo, floor)) is not None and (
+            answer := question(snapshot)
+        ) is not None:
+            return answer
+    return None
+
+
 def _refs_moved() -> None:
     """Forget the git reads that depend on where refs point. Call it after anything moves a ref."""
     _git_cached.cache_clear()
-    _contains.cache_clear()
+    _git_contains.cache_clear()
+    _refs.cache_clear()
+    _snapshot.cache_clear()
 
 
 def _heads(repo: Path) -> dict[str, str]:
     """Return the tip of each local branch."""
-    rows = _git_cached(
-        repo, "for-each-ref", "--format=%(objectname) %(refname:lstrip=2)", "refs/heads"
-    )
-    return {name: sha for sha, name in (row.split(" ", 1) for row in rows.splitlines())}
+    return {
+        name.removeprefix("refs/heads/"): sha
+        for name, sha in _refs(repo).items()
+        if name.startswith("refs/heads/")
+    }
 
 
 def _run_with_retries(argv: list[str], cwd: Path) -> str:
@@ -455,9 +496,14 @@ def open_draft_pr(repo: Path, base: str, head: str, title: str, body: str) -> st
     return _run_with_retries(argv, repo).strip()
 
 
-@cache
 def _contains(repo: Path, ancestor: str, sha: str) -> bool:
     """Return whether ``sha`` has ``ancestor`` in its history."""
+    known = _ask(repo, lambda snapshot: snapshot.is_ancestor(ancestor, sha))
+    return _git_contains(repo, ancestor, sha) if known is None else known
+
+
+@cache
+def _git_contains(repo: Path, ancestor: str, sha: str) -> bool:
     try:
         _git("merge-base", "--is-ancestor", ancestor, sha, repo=repo)
     except subprocess.CalledProcessError as error:
@@ -645,7 +691,7 @@ def checkouts(repo: Path) -> list[Checkout]:
     """List the branches checked out in ``repo``'s linked worktrees."""
     found: list[Checkout] = []
     path: Path | None = None
-    for line in _git("worktree", "list", "--porcelain", repo=repo).splitlines():
+    for line in _git_cached(repo, "worktree", "list", "--porcelain").splitlines():
         if line.startswith("worktree "):
             path = Path(line.removeprefix("worktree ")).resolve()
         elif line.startswith("branch refs/heads/") and path is not None:
@@ -954,10 +1000,16 @@ def _squash_of(
     repo: Path, floor: str, commits: Sequence[str], tip: str
 ) -> main_sync.Squash:
     """Return the squash of ``commits`` (oldest first) that end at ``tip`` on ``floor``."""
-    return main_sync.Squash(tip, _git("merge-base", floor, tip, repo=repo), commits[0])
+    snapshot = _snapshot(repo, floor)
+    base = snapshot.merge_base(floor, tip) if snapshot else None
+    return main_sync.Squash(
+        tip, base or _git("merge-base", floor, tip, repo=repo), commits[0]
+    )
 
 
 def _is_commit(repo: Path, sha: str) -> bool:
+    if _ask(repo, lambda snapshot: snapshot.is_commit(sha)):
+        return True
     return (
         main_sync.run_git(
             repo, "rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}"
@@ -975,10 +1027,17 @@ def _squash_at(repo: Path, floor: str, tip: str | None) -> main_sync.Squash | No
 
 def _main_rows(repo: Path, base: str) -> list[list[str]]:
     """Return the sha, author time and subject of each main commit ahead of ``base``."""
+    snapshot = _snapshot(repo, base)
+    if snapshot and (chain := snapshot.chain(base, "main")) is not None:
+        return [[c.sha, c.authored_at, c.subject] for c in chain]
     return [
         row.split("\t", 2)
         for row in _git_cached(
-            repo, "log", "--format=%H%x09%at%x09%s", f"{base}..main"
+            repo,
+            "log",
+            "--no-show-signature",
+            "--format=%H%x09%at%x09%s",
+            f"{base}..main",
         ).splitlines()
     ]
 
@@ -986,7 +1045,13 @@ def _main_rows(repo: Path, base: str) -> list[list[str]]:
 def _squash_landed(repo: Path, base: str, number: int) -> bool:
     """Return whether ``base`` holds the squash-merge commit of PR ``number``."""
     subjects = _git(
-        "log", "--format=%s", "--fixed-strings", f"--grep=(#{number})", base, repo=repo
+        "log",
+        "--no-show-signature",
+        "--format=%s",
+        "--fixed-strings",
+        f"--grep=(#{number})",
+        base,
+        repo=repo,
     ).splitlines()
     return any(squash_pr_number(subject) == number for subject in subjects)
 
@@ -1029,7 +1094,9 @@ def _rewritten_copies(
     found: set[str] = set()
     earlier_mains = dict.fromkeys(
         [
-            *_git("log", "-g", "--format=%H", "main", repo=repo).split(),
+            *_git(
+                "log", "--no-show-signature", "-g", "--format=%H", "main", repo=repo
+            ).split(),
             *_git(
                 "for-each-ref",
                 "--format=%(refname)",
@@ -1040,12 +1107,18 @@ def _rewritten_copies(
     )
     for tip in tips:
         past = _git(
-            "log", "-g", "--format=%H", f"refs/heads/{tip.entry.branch}", repo=repo
+            "log",
+            "--no-show-signature",
+            "-g",
+            "--format=%H",
+            f"refs/heads/{tip.entry.branch}",
+            repo=repo,
         ).split()
         if not past:
             continue
         held = _git(
             "log",
+            "--no-show-signature",
             "--format=%H",
             *dict.fromkeys(past),
             f"^{tip.floor}",
@@ -1104,7 +1177,12 @@ def _versions(repo: Path, tip: Tip) -> list[str]:
     return list(
         dict.fromkeys(
             _git(
-                "log", "-g", "--format=%H", f"refs/heads/{tip.entry.branch}", repo=repo
+                "log",
+                "--no-show-signature",
+                "-g",
+                "--format=%H",
+                f"refs/heads/{tip.entry.branch}",
+                repo=repo,
             ).split()
         )
     )
@@ -1361,8 +1439,10 @@ _PR_URL_NUMBER = re.compile(r"/pull/(\d+)")
 
 
 def _commit_of(repo: Path, sha: str) -> Commit:
+    if (known := _ask(repo, lambda snapshot: snapshot.commit(sha))) is not None:
+        return Commit(sha, known.subject, (), is_merge=len(known.parents) > 1)
     parents, _, subject = _git(
-        "log", "-1", "--format=:%P%x09%s", sha, repo=repo
+        "log", "--no-show-signature", "-1", "--format=:%P%x09%s", sha, repo=repo
     ).partition("\t")
     return Commit(sha, subject, (), is_merge=len(parents.split()) > 1)
 
@@ -1511,18 +1591,17 @@ class _RepoSync:
         self.status = 0
         self.base = base_ref(repo)
         self.main_base = (
-            main_sync.UPSTREAM
-            if main_sync.run_git(
-                repo, "rev-parse", "--verify", "--quiet", main_sync.UPSTREAM
-            ).returncode
-            == 0
-            else self.base
+            main_sync.UPSTREAM if main_sync.UPSTREAM in _refs(repo) else self.base
         )
+        self.track()
         self.remote_heads: dict[str, str] = {}
         self.prs: dict[int, PrState] = {}
         self._remote: tuple[str, bool] | None = None
         self.landed: list[str] = []
         self.cleanup: list[tuple[WorktreeEntry, str, Callable[[], None]]] = []
+
+    def track(self) -> None:
+        _track(self.repo, [e.branch for e in self.entries], (self.base, self.main_base))
 
     def remote(self) -> tuple[str, bool]:
         if self._remote is None:
@@ -1827,6 +1906,7 @@ class _RepoSync:
         _refs_moved()
         if moved:
             self.main_base = main_sync.UPSTREAM
+        self.track()
 
     def copy_into_main(self, fail_stopped: bool = False) -> bool:
         """Return whether main is up to date, so merged entries may go. A conflict waiting for its hand resolution counts as a failure when ``fail_stopped``."""
@@ -2209,13 +2289,23 @@ def _diff_lines(repo: Path, floor: str, ref: str) -> tuple[int, bool]:
 
 def _commit_shas(repo: Path, floor: str, ref: str) -> list[str]:
     """Return the commits ``ref`` has on ``floor``, oldest first."""
+    snapshot = _snapshot(repo, floor)
+    if snapshot and (known := snapshot.shas(floor, ref)) is not None:
+        return known
     return _git_cached(repo, "rev-list", "--reverse", f"{floor}..{ref}").splitlines()
 
 
-@cache
 def _commit_identity(repo: Path, sha: str) -> str:
+    known = _ask(repo, lambda snapshot: snapshot.identity(sha))
+    return _logged_identity(repo, sha) if known is None else known
+
+
+@cache
+def _logged_identity(repo: Path, sha: str) -> str:
     """Return the author time and subject of ``sha``, which never change."""
-    return _git("log", "-1", "--format=%at%x09%s", sha, repo=repo)
+    return _git(
+        "log", "--no-show-signature", "-1", "--format=%at%x09%s", sha, repo=repo
+    )
 
 
 def _on_main_only(repo: Path, base: str, entry: WorktreeEntry, sha: str) -> bool:
@@ -2303,6 +2393,7 @@ def list_targets(targets: Sequence[Target]) -> int:
             print(f"[{name}]")
         base = base_ref(repo)
         mine = [e for e in entries if e.repo == key]
+        _track(repo, [e.branch for e in mine], (base,))
         unmerged = [e for e in mine if e.pr_state != "MERGED"]
         for entry in mine:
             print(_list_line(repo, base, entry, unmerged))
@@ -2363,6 +2454,7 @@ def sync_targets(
 
     ``tools`` are the tools a link may name, ``targets`` when empty.
     """
+    _refs_moved()
     try:
         with worktrees.locked(worktrees.record_path()):
             return _sync_locked(targets, login, options, tools or targets)
