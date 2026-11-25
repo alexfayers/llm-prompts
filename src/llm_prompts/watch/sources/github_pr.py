@@ -19,19 +19,26 @@ ADVISORY_WORKFLOW = ".github/workflows/project-automation.yml"
 PAGE = "?per_page=100"
 
 
-def _job(run: dict[str, Any]) -> tuple[str, int, str] | None:
+def _job(run: dict[str, Any]) -> tuple[object, ...] | None:
     """A check's identity across reruns, or None where GitHub gave no stable one."""
+    attempt_key: tuple[object, ...] | None = run.get("attempt_key")
+    if attempt_key:
+        return attempt_key
     suite = (run.get("check_suite") or {}).get("id")
     external_id = run.get("external_id")
     return (run["name"], suite, external_id) if suite and external_id else None
 
 
+def _order(run: dict[str, Any]) -> tuple[int, int]:
+    return run.get("run_attempt", 0), run["id"]
+
+
 def _current(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Each job's latest run, plus its earlier cancelled runs unless the latest succeeded."""
-    latest: dict[tuple[str, int, str], dict[str, Any]] = {}
+    latest: dict[tuple[object, ...], dict[str, Any]] = {}
     for run in runs:
         job = _job(run)
-        if job and (job not in latest or run["id"] > latest[job]["id"]):
+        if job and (job not in latest or _order(run) > _order(latest[job])):
             latest[job] = run
     return [
         run
@@ -230,6 +237,41 @@ class GithubPrSource:
             return False
         return str(data.get("path", "")).split("@")[0] == ADVISORY_WORKFLOW
 
+    def _with_attempt(self, run: dict[str, Any]) -> dict[str, Any]:
+        """Tag run with its workflow run and attempt when each attempt has one job of its name."""
+        ids = re.search(r"/actions/runs/(\d+)/job/(\d+)", run.get("details_url") or "")
+        if not ids:
+            return run
+        try:
+            jobs = self._get_all(
+                f"repos/{self._repo}/actions/runs/{ids[1]}/jobs?filter=all&per_page=100",
+                "jobs",
+            )
+        except WatchError:
+            return run
+        named = [job for job in jobs if job.get("name") == run["name"]]
+        this = [job for job in named if str(job.get("id")) == ids[2]]
+        attempts = [job.get("run_attempt") for job in named]
+        if (
+            len(this) != 1
+            or len(attempts) != len(set(attempts))
+            or not all(type(attempt) is int and attempt > 0 for attempt in attempts)
+        ):
+            return run
+        return {
+            **run,
+            "attempt_key": (run["name"], ids[1]),
+            "run_attempt": this[0]["run_attempt"],
+        }
+
+    def _with_attempts(self, runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Tag the runs that share their check name, the only ones a rerun can replace."""
+        names = [run["name"] for run in runs]
+        return [
+            self._with_attempt(run) if names.count(run["name"]) > 1 else run
+            for run in runs
+        ]
+
     def poll(self) -> Fields:
         """Return the pull request's current fields."""
         pulls = f"repos/{self._repo}/pulls/{self._number}"
@@ -239,14 +281,16 @@ class GithubPrSource:
         if self._head and not sha.startswith(self._head):
             ci = "pending"
         else:
-            runs = [
-                run
-                for run in self._get_all(
-                    f"repos/{self._repo}/commits/{sha}/check-runs?filter=all&per_page=100",
-                    "check_runs",
-                )
-                if not self._is_advisory(run)
-            ]
+            runs = self._with_attempts(
+                [
+                    run
+                    for run in self._get_all(
+                        f"repos/{self._repo}/commits/{sha}/check-runs?filter=all&per_page=100",
+                        "check_runs",
+                    )
+                    if not self._is_advisory(run)
+                ]
+            )
             status, _ = self._get(f"repos/{self._repo}/commits/{sha}/status")
             ci = _ci(runs, status)
         return {
