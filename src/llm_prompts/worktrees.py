@@ -37,7 +37,7 @@ class WorktreeEntry(NamedTuple):
     ``dropped_refs`` are refs of removed links whose Depends on line sync wrote
     and has not yet taken out of the PR body.
     ``copied`` is the author time and subject of the first commit when sync last
-    copied the branch into local main.
+    copied the branch into local main, and ``copied_tip`` is the branch tip it copied.
     ``why`` is the text sync puts under Why when it opens the PR.
     ``title`` is the PR title sync gives the PR instead of the one it makes from the commits.
     ``synced_title`` is the PR title sync last wrote, so a title edited since is kept.
@@ -55,6 +55,7 @@ class WorktreeEntry(NamedTuple):
     depends_on: tuple[Link, ...] = ()
     dropped_refs: tuple[str, ...] = ()
     copied: str | None = None
+    copied_tip: str | None = None
     why: str = ""
     title: str = ""
     synced_title: str = ""
