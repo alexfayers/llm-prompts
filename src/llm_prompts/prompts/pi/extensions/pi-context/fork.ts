@@ -316,6 +316,15 @@ function cachedHint(runs: Run[], role: string, dir: string, priceOfRun: (run: Ru
 	return [...lines, "fork_resume({name, task}) is cheaper than a fresh fork"].join("\n");
 }
 
+/** The prompt cache key the session in run directory `files` sends: a cold worker's own, else main's from its lead prefix. */
+const cacheKeyOf = (files: string): string | undefined => {
+	const key = (name: string, field: string): string | undefined => {
+		const text = readText(path.join(files, name));
+		return text ? JSON.parse(text)[field] : undefined;
+	};
+	return key("handshake.json", "cacheKey") ?? key(LEAD_PREFIX_FILE, "prompt_cache_key");
+};
+
 const readText = (file: string) => {
 	try {
 		return fs.readFileSync(file, "utf8");
@@ -483,7 +492,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			const cold = params.model && model ? coldLabel(name, params.model, model) : undefined;
 			const hint = source ? undefined : cachedHint(registry.all(), role.name, target ?? ctx.cwd, (run) => savedPrice(ctx, run), freshStartCost(ctx, role, params.task, model));
 			const withHint = (text: string) => (hint ? `${text}\n${hint}` : text);
-			registry.start({ id: runId, name, role: role.name, model, background: true, state: "running", task: params.task, worktree: tree?.path, branch: tree?.branch, tree, target, cwd: ctx.cwd, startedAt: Date.now() });
+			registry.start({ id: runId, name, role: role.name, ...(source && { from: source.from ?? source.name, cacheKey: cacheKeyOf(files) }), model, background: true, state: "running", task: params.task, worktree: tree?.path, branch: tree?.branch, tree, target, cwd: ctx.cwd, startedAt: Date.now() });
 			const message = `${worktreeLine(tree, role.writes ? home : undefined)}Task: ${params.task}`;
 			startRun(ctx, { id: runId, name, ref, role, tree, target, model, files }, { entries, message, resume: Boolean(source) });
 			return { content: [{ type: "text", text: withHint(`started ${cold ?? `fork ${name}`} (background)`) }], details: { name, runId, background: true } };

@@ -23,6 +23,10 @@ export type Run = {
 	cwd?: string;
 	/** The directory of the delegate's seed, handshake and session files. */
 	files?: string;
+	/** The name of the fork that began the prompt cache group it joined by starting from a finished fork's session. */
+	from?: string;
+	/** The prompt cache key its requests send when it joined such a group. */
+	cacheKey?: string;
 	/** The model of a cold worker. */
 	model?: string;
 	startedAt: number;
