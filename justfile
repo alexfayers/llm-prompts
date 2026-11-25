@@ -1,3 +1,6 @@
+ts_test_heap_mb := "4096"
+ts_test_timeout_seconds := "900"
+
 @_default: lint _checks
 
 [parallel]
@@ -23,7 +26,7 @@ test: _uv
     uv run pytest -q --nf -n auto --maxprocesses 4 --dist worksteal --cov=. --cov-report=xml
 
 test-ts:
-    pnpm test-ts
+    NODE_OPTIONS=--max-old-space-size={{ts_test_heap_mb}} node tests/ts/run-with-timeout.mjs {{ts_test_timeout_seconds}} node --test --experimental-test-module-mocks tests/ts/*.test.ts
 
 check: _uv
     uv run llm-prompts check
