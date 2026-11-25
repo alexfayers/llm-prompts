@@ -57,7 +57,7 @@ export class Background {
 		if (refused) throw new Error(`fork ${name} did not take the message: ${refused}`);
 	}
 
-	/** Records how a background run ended, pins what it asks, and wakes main. A cancelled run is ignored. */
+	/** Records how a background run ended, pins what it asks, and wakes main. A cancelled run is ignored, and a stub that finished done is recorded without a message. */
 	finish(ctx: Pick<ExtensionContext, "isIdle"> & AskContext, runId: string, patch: Partial<Run>, text: string, note?: string): void {
 		this.controllers.delete(runId);
 		this.children.delete(runId);
@@ -65,6 +65,10 @@ export class Background {
 		if (!current || !isLive(current)) return;
 		const held = this.holding;
 		const ended = { ...current, ...patch, endedAt: Date.now() };
+		if (ended.stub && ended.state === "done") {
+			this.registry.update(runId, ended);
+			return;
+		}
 		const run = this.registry.update(runId, { ...ended, unread: [current.unread, digestLine(ended, text, note)].filter(Boolean).join("\n") });
 		if (!run) return;
 		this.pinned.push(...pinForkAsks(this.pi, ctx, run, text));

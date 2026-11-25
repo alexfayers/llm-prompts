@@ -509,7 +509,8 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			const text = turn.error ?? turn.text;
 			const note = merged.landing && tree ? `[merge: ${describeLanding(merged.landing, tree)}]` : tree && (await dropIfClean(tree)) ? "[merge: worktree removed: clean]" : undefined;
 			background.finish(ctx, runId, end, text, note);
-			pi.appendEntry("result-cap", { ref: end.ref, text });
+			const ended = registry.get(runId);
+			if (!(ended?.stub && ended.state === "done")) pi.appendEntry("result-cap", { ref: end.ref, text });
 		};
 		const onFail = async (error: unknown) => {
 			if (registry.get(runId)?.state === "lost" || runSignal.aborted) return;

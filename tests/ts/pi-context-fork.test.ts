@@ -554,6 +554,30 @@ describe("fork tool", () => {
 			assert.deepEqual(appended, [["result-cap", { ref: "rc-fork-bg-call-id", text: "OUTCOME done ref:rc-fork-x\nbody line" }]]);
 		});
 
+		test("a stub that finishes sends no message, wakes nobody and adds nothing to the digest", async () => {
+			const { sent, appended, background } = await start({ task: "STUB_REPORT", name: "quiet", model: "prov/cheap" });
+			await eventually(() => sent.length > 0);
+			const stub = registryOf().all().find((run) => run.name.startsWith("stub-"))!;
+			assert.equal(stub.state, "done");
+			assert.deepEqual(sent.map(([message]) => (message as { content: string }).content.split(" ")[1]), ["quiet"]);
+			assert.deepEqual(appended.map(([, entry]) => (entry as { ref: string }).ref), ["rc-fork-quiet-call-id"]);
+			assert.doesNotMatch(background.digest() ?? "", /stub-/);
+		});
+
+		test("a stub that fails reports its diagnostic under a saved ref", async () => {
+			process.env.STUB_BAD_STUB = "1";
+			try {
+				const { sent, appended } = await start({ task: "STUB_REPORT", name: "unlucky", model: "prov/cheap" });
+				await eventually(() => sent.some(([message]) => /^\[fork stub-/.test((message as { content: string }).content)));
+				const stub = registryOf().all().find((run) => run.name.startsWith("stub-"))!;
+				assert.equal(stub.state, "failed");
+				assert.match((sent.find(([message]) => /^\[fork stub-/.test((message as { content: string }).content))![0] as { content: string }).content, new RegExp(`ref ${stub.ref}`));
+				assert.ok(appended.some(([, entry]) => (entry as { ref: string }).ref === stub.ref));
+			} finally {
+				delete process.env.STUB_BAD_STUB;
+			}
+		});
+
 		test("a run whose result cannot be saved is still finished and wakes main", async () => {
 			const { sent } = await start({ task: "STUB_REPORT", name: "nosave" }, process.cwd(), undefined, () => {
 				throw new Error("stale");
