@@ -50,4 +50,4 @@ Decision order for touching this repo's own rule/skill/workflow/agent sources.
 - Where no auto-reinstall hook runs (cline-hooks not installed), MUST run the installed `llm-prompts update` after editing a source.
 - If an unpushed commit already changes the same rule or skill, fix that commit up instead of making a new one.
 - Keep a compression edit in its own commit, separate from the content change - easier to review.
-- To open the change as a PR: `<base-dir>/contribute.md`.
+- To open the change as a PR: `{{SKILL_DIR}}/contribute.md`.

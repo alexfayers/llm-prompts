@@ -15,10 +15,10 @@ The `cline-hook` session counter tracks this - read it and pass it to the script
 ```bash
 count=$(cline-hook retro-count --get 2>/dev/null || echo 0)
 sessions=${SESSIONS:-$(( count > 0 ? count : 1 ))}
-python3 "<base-dir>/extract_signals.py" --sessions "$sessions"
+python3 "{{SKILL_DIR}}/extract_signals.py" --sessions "$sessions"
 ```
 
-Where `<base-dir>` is the base directory shown at the top of this skill's context. Save the JSON output for the next steps.
+Save the JSON output for the next steps.
 
 ## 2. Analyse (parallel subagents)
 

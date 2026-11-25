@@ -63,7 +63,7 @@ A node's only tests - write no others. Each criterion:
 
 ## Plan directory
 
-- Manage it with `python3 "<base-dir>/focus.py" <command> <dir> ...` - `-h` per command.
+- Manage it with `python3 "{{SKILL_DIR}}/focus.py" <command> <dir> ...` - `-h` per command.
 - Multi-repo: one plan dir per repo, as siblings, under a parent PLAN.md holding only the shared layers.
 - Cross-repo order MUST be `--depends <dir>/<node>`.
 - SHOULD run commands on the parent with `<dir>/<node>` ids.
@@ -90,7 +90,8 @@ A node's only tests - write no others. Each criterion:
 ## Build
 
 - Per wave, MUST run `build-wave.js` {% if TOOL_WORKFLOW %}with {{TOOL_WORKFLOW}} as {% if AGENT == "pi" %}`scriptPath`{% else %}`script`{% endif %}, args{% else %}by hand,
-  one {{TOOL_AGENT}} per `agent()` call{% if AGENT == "pi" %} as a cold `writer` (`model` set){% endif %}, with{% endif %} `{plan: <dir>, skill: <base-dir>, wave, stamp}` (`probeOnly` before wave 1).
+  one {{TOOL_AGENT}} per `agent()` call{% if AGENT == "pi" %} as a cold `writer` (`model` set){% endif %}, with{% endif %} `{plan: <dir>, skill: {{SKILL_DIR}}, wave, stamp}`
+  (`probeOnly` before wave 1).
 - Build steps go in `<dir>/build.sh`, overriding the script's `HOOKS`.
 - MUST fix each escalation (asking the user what only they decide), then `resume: true`.
 - MUST check running waves every 5 min and hand off to a new lead every 3-4 waves or before 300k context.

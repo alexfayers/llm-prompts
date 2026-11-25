@@ -467,7 +467,7 @@ class TestInstallSkillsGating:
 
 class TestLiveHandoffInstall:
     SKILLS = prompts_dir("llm_prompts") / "shared" / "skills"
-    LIVE_POINTER = "<base-dir>/live.md"
+    LIVE_POINTER = "/skills/handoff/live.md"
 
     def _install(self, tmp_path: Path, agent: str) -> Path:
         _install_skills(
@@ -864,6 +864,34 @@ class TestMaterializeBuiltinSkill:
         rendered = dest / "parts" / "live.md"
         assert not rendered.is_symlink()
         assert rendered.read_text(encoding="utf-8") == "pi\n"
+
+    def test_skill_dir_variable_is_the_installed_skill_path(
+        self, tmp_path: Path
+    ) -> None:
+        src = self._make_skill(
+            tmp_path / "src", "tidy-code", 'run "{{SKILL_DIR}}/x.py"\n'
+        )
+        (src / "part.md").write_text("see {{SKILL_DIR}}/y.md\n", encoding="utf-8")
+        dest = tmp_path / "dest" / "tidy-code"
+        vars_path = self._write_vars(tmp_path, {})
+
+        _materialize_builtin_skill(src, dest, vars_path, set())
+
+        assert (dest / "SKILL.md").read_text(encoding="utf-8") == f'run "{dest}/x.py"\n'
+        assert (dest / "part.md").read_text(encoding="utf-8") == f"see {dest}/y.md\n"
+
+    def test_skill_dir_variable_is_absolute_for_a_relative_destination(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        src = self._make_skill(tmp_path / "src", "tidy-code", "{{SKILL_DIR}}/x.py\n")
+        vars_path = self._write_vars(tmp_path, {})
+        monkeypatch.chdir(tmp_path)
+
+        _materialize_builtin_skill(src, Path("dest") / "tidy-code", vars_path, set())
+
+        assert (tmp_path / "dest" / "tidy-code" / "SKILL.md").read_text(
+            encoding="utf-8"
+        ) == f"{tmp_path}/dest/tidy-code/x.py\n"
 
     def test_siblings_still_resolve_and_stay_live(self, tmp_path: Path) -> None:
         src = self._make_skill(

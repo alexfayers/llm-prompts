@@ -10,7 +10,7 @@ metadata:
 Before the first reply, run this once. Then do each printed step in order:
 
 ```bash
-python3 "<base-dir>/checklist.py" --agent {{AGENT}} [--outstanding] [--everywhere] [--updates]
+python3 "{{SKILL_DIR}}/checklist.py" --agent {{AGENT}} [--outstanding] [--everywhere] [--updates]
 ```
 
 - `--outstanding`: the opening message asks about outstanding work.

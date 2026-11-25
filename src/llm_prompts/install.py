@@ -1847,7 +1847,7 @@ def _materialize_builtin_skill(
             managed.add(dest.name)
         return
     raw = _read_text(skill_md)
-    variables = _builtin_skill_vars(vars_path)
+    variables = {**_builtin_skill_vars(vars_path), "SKILL_DIR": str(dest.absolute())}
     try:
         substituted = strip_gating_keys(
             substitute_variables(raw, variables),

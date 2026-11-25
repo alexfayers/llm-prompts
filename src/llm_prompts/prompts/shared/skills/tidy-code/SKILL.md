@@ -53,7 +53,7 @@ MUST be minimal, no unrelated reformatting.
 5. **Gate: diff MUST be net-negative, or net-neutral with a clear maintainability win.**
 
    ```bash
-   python3 "<base-dir>/check_reduction.py" [range]
+   python3 "{{SKILL_DIR}}/check_reduction.py" [range]
    ```
 
    `range`: optional commit range (e.g. `@{u}..`), default working tree vs `HEAD`. JSON output: `added`, `removed`, `net`, `pass`, `reason`; non-zero exit past the +5-line neutral band.

@@ -53,4 +53,4 @@ All three repos' prompts trees go through `llm-prompts contribute` (`list`, `syn
 - Title: first commit's subject, plus `(+N more)`. It is the squash commit subject: a multi-commit PR MUST set one with `--title B "TEXT"`.
 - Description: full-sentence bullets stating WHAT and WHY, not HOW. No diff restating or process commentary.
 - If you used an eagle-vision plan directory or the user names one, MUST post the plan once as a separate PR comment:
-  `python3 "<base-dir>/../eagle-vision/focus.py" comment <dir> | gh pr comment <pr-url> --body-file -`. MUST NOT put it in the description.
+  `python3 "{{SKILL_DIR}}/../eagle-vision/focus.py" comment <dir> | gh pr comment <pr-url> --body-file -`. MUST NOT put it in the description.

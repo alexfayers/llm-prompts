@@ -7,7 +7,7 @@ description: "Review pending changes against the repo's review instructions, and
 
 ## Scope
 
-- MUST run `python3 "<base-dir>/filter_findings.py" --scope`, and review all of its output: uncommitted changes, unpushed commits, the complete diff against the PR base and the default branch,
+- MUST run `python3 "{{SKILL_DIR}}/filter_findings.py" --scope`, and review all of its output: uncommitted changes, unpushed commits, the complete diff against the PR base and the default branch,
   and untracked paths.
 - MUST read the contents of each untracked path.
 - MUST also review the PR title and body where given.
@@ -26,11 +26,11 @@ description: "Review pending changes against the repo's review instructions, and
 ## Report
 
 - MUST give each finding a `severity`, `path:line`, and the rule file cited. A general finding cites no rule file.
-- MUST run `python3 "<base-dir>/filter_findings.py" --help` for the severity scale.
+- MUST run `python3 "{{SKILL_DIR}}/filter_findings.py" --help` for the severity scale.
 - MUST pipe the findings as a JSON array through the script, and report only its output:
 
 ```bash
-python3 "<base-dir>/filter_findings.py" <<'JSON'
+python3 "{{SKILL_DIR}}/filter_findings.py" <<'JSON'
 [{"severity": 2, "path": "a.py:12", "rule": "...", "text": "..."}]
 JSON
 ```
@@ -39,4 +39,4 @@ JSON
 - MUST NOT report a finding without evidence in the diff, a new file, or PR text.
 - Output `[]`: say there are no findings.
 - MUST suggest fixes for the findings. MUST NOT apply them.
-- A review loop (review, fix, re-review) MUST follow `<base-dir>/review-loop.md`.
+- A review loop (review, fix, re-review) MUST follow `{{SKILL_DIR}}/review-loop.md`.
