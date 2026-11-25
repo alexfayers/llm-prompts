@@ -19,7 +19,7 @@ description: "Review pending changes against the repo's review instructions, and
 - MUST always also review as a senior developer: correctness, design, naming, edge cases, tests.
 - MUST push back hard on unnecessary changes and unnecessary tests, per the coding rules' smallest change: an unused extension point, local state a live check can replace,
   an unrequested CLI option or doc, more than one test per behaviour, or a test not through the public entry point.
-- On your own diff before pushing, MUST first make those cuts, then re-run `git diff --stat` and report its line count before and after. The no-apply rule below covers only the other findings.
+- On your own diff before pushing, MUST first make those cuts, and check with `git diff --stat <base>...HEAD` before and after that they shrank it. The no-apply rule below covers only the other findings.
 
 ## Report
 
