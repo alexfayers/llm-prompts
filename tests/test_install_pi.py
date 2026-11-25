@@ -2086,6 +2086,7 @@ class TestRoles:
             'load_when: ""',
             "load_when: tool:",
             "load_when: env:",
+            "pi_load_when: tool:",
             "load_when: custom\nroles: worker",
             "load_when: a\nload_when: b",
             "load_when: env:A\npaths: x",

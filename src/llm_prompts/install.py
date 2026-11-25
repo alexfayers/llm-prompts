@@ -936,7 +936,8 @@ def _declared_condition(declared: dict[str, list[str]], label: str) -> None:
             not ``main`` or is combined with ``paths``, or ``load_when`` is
             empty, has ``env:`` or ``tool:`` without a value, is combined with
             ``paths``, or has more than one other condition, or one with
-            ``roles`` other than ``lead``.
+            ``roles`` other than ``lead``. A ``<target>_load_when`` follows
+            the same rules, and may also be ``[]``.
     """
     if removed := sorted(k for k in declared if _REMOVED_GATE in k):
         raise ValueError(
@@ -950,24 +951,28 @@ def _declared_condition(declared: dict[str, list[str]], label: str) -> None:
         )
     if audience and "paths" in declared:
         raise ValueError(f"{label}: audience cannot be combined with paths")
-    if "load_when" not in declared:
-        return
-    conditions = _conditions(declared["load_when"])
-    split = [c.partition(":") for c in conditions]
-    if not conditions or any(k in _LOAD_WHEN_KINDS and not v for k, _, v in split):
-        raise ValueError(
-            f"{label}: invalid load_when '{', '.join(declared['load_when'])}' - use "
-            + ", ".join(f"{k}:<value>" for k in _LOAD_WHEN_KINDS)
-            + " or a list of conditions"
-        )
-    if "paths" in declared:
-        raise ValueError(f"{label}: load_when cannot be combined with paths")
-    other = [c for c, (k, _, _) in zip(conditions, split) if k not in _LOAD_WHEN_KINDS]
-    if len(other) > 1 or (other and not _lead_only(declared)):
-        raise ValueError(
-            f"{label}: load_when allows one condition other than env: or tool:, "
-            "and only with no roles or roles: lead"
-        )
+    overrides = [_override_key(t, "load_when") for t in AGENT_CLASSES]
+    for key in (k for k in ("load_when", *overrides) if k in declared):
+        if key != "load_when" and declared[key] == ["[]"]:
+            continue
+        conditions = _conditions(declared[key])
+        split = [c.partition(":") for c in conditions]
+        if not conditions or any(k in _LOAD_WHEN_KINDS and not v for k, _, v in split):
+            raise ValueError(
+                f"{label}: invalid {key} '{', '.join(declared[key])}' - use "
+                + ", ".join(f"{k}:<value>" for k in _LOAD_WHEN_KINDS)
+                + " or a list of conditions"
+            )
+        if "paths" in declared:
+            raise ValueError(f"{label}: {key} cannot be combined with paths")
+        other = [
+            c for c, (k, _, _) in zip(conditions, split) if k not in _LOAD_WHEN_KINDS
+        ]
+        if len(other) > 1 or (other and not _lead_only(declared)):
+            raise ValueError(
+                f"{label}: {key} allows one condition other than env: or tool:, "
+                "and only with no roles or roles: lead"
+            )
 
 
 def _validate_rule_conditions(root_dir: Path, overlay_dirs: list[Path]) -> None:
