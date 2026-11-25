@@ -173,6 +173,39 @@ describe("hooks", () => {
 		assert.deepEqual(openAsks(branch()).map((ask) => ask.id), ["fork-y-y-1"]);
 	});
 
+	test("a result stays unread until a turn that delivered it settles, so an aborted or failed turn loses none", () => {
+		const main = { ...ctx(false), hasUI: false, sessionManager: { getBranch: () => [] } };
+		background.finish(main, "a", done(), "OUTCOME done ref:rc");
+		const settle = (aborted: boolean, ...messages: unknown[]) => {
+			assert.equal(background.digest(), registry.get("a")?.unread);
+			handlers.agent_end({ messages }, main);
+			handlers.agent_settled({ aborted }, main);
+		};
+		settle(true);
+		settle(false, { role: "assistant", stopReason: "error" });
+		assert.equal(registry.get("a")?.unread, "[fork a done] ref rc");
+		settle(false, { role: "assistant", stopReason: "stop" });
+		assert.equal(registry.get("a")?.unread, undefined);
+	});
+
+	test("the pins of a result whose turn failed are announced again with it, and clear once a later turn settles", () => {
+		const branch = () => appended.map(([customType, data]) => ({ type: "custom", customType, data }));
+		const main = { ...ctx(false), hasUI: false, sessionManager: { getBranch: branch } };
+		background.finish(main, "a", { state: "blocked", outcome: "blocked-on-user", ref: "rc" }, "OUTCOME blocked-on-user ref:rc\nASK: A or B?");
+		const pinned = /Pinned: fork-a-a-1\./;
+		const turn = (stopReason: string) => {
+			const content = handlers.before_agent_start({}, main)?.message.content;
+			handlers.agent_end({ messages: [{ role: "assistant", stopReason }] }, main);
+			handlers.agent_settled({ aborted: false }, main);
+			return content;
+		};
+		assert.match(turn("error"), pinned);
+		assert.match(turn("aborted"), pinned);
+		assert.deepEqual(openAsks(branch()).map((ask) => ask.id), ["fork-a-a-1"]);
+		assert.match(turn("stop"), pinned);
+		assert.deepEqual(openAsks(branch()), []);
+	});
+
 	test("a result that arrived while main was busy reaches the session that restarts after a quit", () => {
 		handlers.session_start({ reason: "startup" }, session());
 		registry.start(run("late"));

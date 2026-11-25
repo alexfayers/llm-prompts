@@ -67,16 +67,57 @@ test("a read blocked fork leaves the widget once its asks are answered, but stay
 	assert.deepEqual(view.lines(2_000, paint, Number.POSITIVE_INFINITY, entries)?.slice(1).map((line) => line.split(" ")[1]), ["pending"]);
 });
 
-test("a done or found-it fork, or a read blocked one with no open ask, leaves the widget, while a failed one stays", () => {
+test("a fork leaves the widget once main has read its result, whatever its outcome", () => {
 	const registry = new Registry();
 	const background = new Background({ sendMessage: () => undefined, appendEntry: () => undefined } as any, registry);
 	const view = new LiveView(registry);
-	const ctx = { isIdle: () => false, hasUI: false } as any;
+	const ctx = { isIdle: () => false, hasUI: false, sessionManager: { getBranch: () => [] } } as any;
 	for (const [name, state] of [["d", "done"], ["f", "found-it"], ["b", "blocked"], ["x", "failed"]] as const) {
 		registry.start(run({ id: name, name }));
 		background.finish(ctx, name, { state, lastRequestAt: Date.now() }, `OUTCOME ${state} ref:rc`);
 	}
 	assert.equal(view.lines()?.length, 5);
 	background.digest();
-	assert.deepEqual(view.lines()?.slice(1).map((line) => line.split(" ")[1]), ["x"]);
+	assert.equal(view.lines()?.length, 5);
+	background.settle(ctx, true);
+	assert.equal(view.lines()?.length, 5);
+	assert.equal(background.digest()?.split("\n").length, 4);
+	background.settle(ctx, false);
+	assert.equal(view.lines(), undefined);
+});
+
+test("a read failed fork stays while one of its asks is open, with no request to cache", () => {
+	const registry = new Registry();
+	const view = new LiveView(registry);
+	registry.start(run({ id: "x1", name: "broken", state: "failed" }));
+	const entries = [{ type: "custom", customType: "pending-asks", data: { action: "add" as const, id: "fork-broken-x1-1", text: "retry?" } }];
+	assert.deepEqual(view.lines(2_000, undefined, Number.POSITIVE_INFINITY, entries)?.slice(1).map((line) => line.split(" ")[1]), ["broken"]);
+	assert.equal(view.lines(2_000), undefined);
+});
+
+test("forks started from the same source show it, and a fork with none shows nothing", () => {
+	const registry = new Registry();
+	const view = new LiveView(registry);
+	const fork = (patch: Partial<Run>) => registry.start(run({ role: "reader", model: "prov/cheap:low", from: "stub-ab12", startedAt: 20_000, ...patch }));
+	fork({ id: "a", name: "api-scan" });
+	fork({ id: "b", name: "docs-scan" });
+	fork({ id: "c", name: "fix-widget", role: "writer", model: undefined, from: undefined, startedAt: 5_000, target: "/repo/worktrees/fix-widget" });
+	fork({ id: "d", name: "tests-scan", state: "failed", lastRequestAt: 60_000, unread: "r" });
+	fork({ id: "e", name: "review", state: "done", model: undefined, from: undefined, lastRequestAt: 60_000, unread: "r" });
+	assert.deepEqual(view.lines(125_000), [
+		"Background forks",
+		"◓ api-scan [cold cheap:low] 1m45s · 0 turns · from stub-ab12",
+		"◓ docs-scan [cold cheap:low] 1m45s · 0 turns · from stub-ab12",
+		"◓ fix-widget [writer] 2m00s · 0 turns · fix-widget",
+		"● tests-scan [cold cheap:low] failed · cache 59m left · from stub-ab12",
+		"● review [reader] done · cache 59m left",
+	]);
+});
+
+test("two sources that share a name are told apart by their cache key", () => {
+	const registry = new Registry();
+	const view = new LiveView(registry);
+	for (const [id, key] of [["a", "3f9a2c11"], ["b", "3f9a2c11"], ["c", "77b0de42"]]) registry.start(run({ id, name: `kid-${id}`, from: "stub", cacheKey: key }));
+	registry.start(run({ id: "d", name: "kid-d", from: "other", cacheKey: "0000aa" }));
+	assert.deepEqual(view.lines(2_000)?.slice(1).map((line) => line.split(" · ").at(-1)), ["from stub#3f9a2c", "from stub#3f9a2c", "from stub#77b0de", "from other"]);
 });

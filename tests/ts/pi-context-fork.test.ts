@@ -318,6 +318,8 @@ describe("fork tool", () => {
 			assert.deepEqual(children.map(({ handshake }) => [handshake.inherited, handshake.cacheKey]), [[undefined, header.id], [undefined, header.id]]);
 			const grandchild = inspect(await tools.fork.execute("call-3", { task: "STUB_INSPECT", name: "c3", from: "c1" }, undefined, undefined, ctx));
 			assert.equal(grandchild.handshake.cacheKey, header.id);
+			const runs = ["csrc", "c1", "c2", "c3"].map((name) => registryOf().all().find((run) => run.name === name)!);
+			assert.deepEqual(runs.map((entry) => [entry.from, entry.cacheKey]), [[undefined, undefined], ...Array(3).fill(["csrc", header.id])]);
 		});
 
 		test("a follow-up from a writer defaults to the source's target", async () => {

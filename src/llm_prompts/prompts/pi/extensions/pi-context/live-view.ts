@@ -1,4 +1,4 @@
-// Shows the live background forks, and the finished ones whose prompt cache is still warm until main reads a done or found-it result, above the editor. UI only: nothing reaches the model.
+// Shows the live background forks, and the finished ones until main reads their result and answers their asks, above the editor. UI only: nothing reaches the model.
 import path from "node:path";
 import os from "node:os";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -17,11 +17,10 @@ const ROLE_COLORS: Record<string, string> = { reader: "success", writer: "warnin
 const COLD_COLOR = "muted";
 const SPINNER = ["◐", "◓", "◑", "◒"];
 const LOW_CACHE = 0.5;
-/** The finished states that leave the widget once main has read the result. */
-const READ_HIDES: Run["state"][] = ["done", "found-it"];
 
 const WIDGET_KEY = "pi-context-forks";
 const SNIPPET = 60;
+const KEY_CHARS = 6;
 const showsUi = (ctx: Pick<ExtensionContext, "hasUI">): boolean => ctx.hasUI && !process.env.PI_CONTEXT_CHILD;
 const CLOCK_MS = 1000;
 
@@ -39,6 +38,12 @@ const tilde = (file: string): string => {
 	return file === home || file.startsWith(`${home}/`) ? `~${file.slice(home.length)}` : file;
 };
 const targetText = (run: Run): string => (run.target ? ` · ${path.basename(run.target)}` : "");
+/** A run's cache group, as ` · from stub`, or ` · from stub#3f9a2c` when other shown runs have a source of that name and another cache key. */
+const sourceText = (run: Run, shown: Run[]): string => {
+	if (!run.from) return "";
+	const ambiguous = shown.some((other) => other.from === run.from && other.cacheKey !== run.cacheKey);
+	return ` · from ${run.from}${ambiguous && run.cacheKey ? `#${run.cacheKey.slice(0, KEY_CHARS)}` : ""}`;
+};
 /** A finished run's cache time left, as ` · cache 3m left` or ` · cache expired`. */
 const cacheNote = (run: Run, now: number): string => {
 	const left = FINISHED.includes(run.state) ? cacheLeftMs(run, now) : undefined;
@@ -122,9 +127,9 @@ export class LiveView {
 	/** The widget lines, or undefined when no background fork is live or still cached. */
 	lines(now = Date.now(), paint: Paint = PLAIN, width = Number.POSITIVE_INFINITY, entries: Parameters<typeof hasOpenAsks>[0] = []): string[] | undefined {
 		const live = this.registry.live().filter((run) => run.background);
-		const hides = (run: Run) => READ_HIDES.includes(run.state) || (run.state === "blocked" && !hasOpenAsks(entries, run));
-		const cached = this.registry.all().filter((run) => run.background && FINISHED.includes(run.state) && (cacheLeftMs(run, now) ?? 0) > 0 && (run.unread || !hides(run)));
-		if (!live.length && !cached.length) return undefined;
+		const pending = this.registry.all().filter((run) => run.background && FINISHED.includes(run.state) && (run.unread || hasOpenAsks(entries, run)));
+		if (!live.length && !pending.length) return undefined;
+		const shown = [...live, ...pending];
 		const frame = SPINNER[Math.floor(now / CLOCK_MS) % SPINNER.length];
 		const fit = (line: string) => (Number.isFinite(width) ? truncateToWidth(line, width) : line);
 		return [
@@ -133,11 +138,11 @@ export class LiveView {
 				const activity = this.activity.get(run.id);
 				const turns = activity?.turns ?? 0;
 				const glyph = run.state === "landing" ? paint.fg("success", "↳") : paint.fg("accent", frame);
-				const meta = paint.fg("dim", `${elapsed(now - run.startedAt)} · ${turns} turn${turns === 1 ? "" : "s"}${targetText(run)}`) + usageText(activity?.usage, windowFor(run, this.modelRegistry, this.window), paint) + (run.state === "landing" ? paint.fg("dim", " · landing") : "");
+				const meta = paint.fg("dim", `${elapsed(now - run.startedAt)} · ${turns} turn${turns === 1 ? "" : "s"}${targetText(run)}${sourceText(run, shown)}`) + usageText(activity?.usage, windowFor(run, this.modelRegistry, this.window), paint) + (run.state === "landing" ? paint.fg("dim", " · landing") : "");
 				const last = activity?.last ? `  ${paint.fg("muted", activity.last)}` : "";
 				return fit(`${glyph} ${paint.fg("accent", paint.bold(run.name))} ${roleTag(run, paint)} ${meta}${last}`);
 			}),
-			...cached.map((run) => fit(`${paint.fg(FINISH_COLOR[run.state] ?? "dim", "●")} ${paint.fg("accent", run.name)} ${roleTag(run, paint)} ${paint.fg("dim", `${run.state}${cacheNote(run, now)}`)}`)),
+			...pending.map((run) => fit(`${paint.fg(FINISH_COLOR[run.state] ?? "dim", "●")} ${paint.fg("accent", run.name)} ${roleTag(run, paint)} ${paint.fg("dim", `${run.state}${cacheNote(run, now)}${sourceText(run, shown)}`)}`)),
 		];
 	}
 
