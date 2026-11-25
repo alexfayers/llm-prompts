@@ -69,15 +69,16 @@ const usageText = (usage: Usage | undefined, window: number | undefined, paint: 
 	const cache = `cache ${Math.round(usage.cache * 100)}%`;
 	return paint.fg("dim", ` · ctx ${tokens(usage.context)}${window ? `/${tokens(window)}` : ""} · `) + paint.fg(usage.cache < LOW_CACHE ? "error" : "dim", cache);
 };
-/** A cold worker's own context window, found through its model string; falls back to main's for a session fork. */
-const modelWindow = (model: string, registry: ExtensionContext["modelRegistry"] | undefined): number | undefined => {
+/** A cold worker's model, found through its provider/id string. */
+export const findModel = (model: string, registry: ExtensionContext["modelRegistry"] | undefined) => {
 	const slash = model.indexOf("/");
 	if (slash < 0 || !registry) return undefined;
 	const provider = model.slice(0, slash);
 	const id = model.slice(slash + 1);
-	const found = registry.find(provider, id) ?? (id.includes(":") ? registry.find(provider, id.slice(0, id.lastIndexOf(":"))) : undefined);
-	return found?.contextWindow;
+	return registry.find(provider, id) ?? (id.includes(":") ? registry.find(provider, id.slice(0, id.lastIndexOf(":"))) : undefined);
 };
+/** A cold worker's own context window; falls back to main's for a session fork. */
+const modelWindow = (model: string, registry: ExtensionContext["modelRegistry"] | undefined): number | undefined => findModel(model, registry)?.contextWindow;
 const windowFor = (run: Run, registry: ExtensionContext["modelRegistry"] | undefined, mainWindow: number | undefined): number | undefined => (run.model ? modelWindow(run.model, registry) : mainWindow);
 /** A cold worker's model, without its provider and a Bedrock-style `anthropic.` prefix. */
 const shortModel = (model: string): string => {

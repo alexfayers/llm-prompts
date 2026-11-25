@@ -11,8 +11,8 @@ import { Background } from "./background.ts";
 import { describeMain, LEAD_PREFIX_FILE, serveBridge, writeLeadPrefix, type BridgeOptions } from "./bridge.ts";
 import { createWorktree, dropIfClean, gitOut, land, mainSnapshot, restoreWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
 import { checkReadMcp, coldCard, expandHome, readHandshake, ROLES, withReadMcp, type ReadMcp, type Role } from "./roles.ts";
-import { tokens } from "./live-view.ts";
-import { cacheLeftMs, FINISHED, isLive, registryOf, type Run, type RunState } from "./registry.ts";
+import { findModel, tokens } from "./live-view.ts";
+import { cacheLeftMs, cacheText, FINISHED, isLive, registryOf, type Run, type RunState } from "./registry.ts";
 import { RpcChild, type Turn, type UiAnswer, type UiRequest } from "./runner.ts";
 import { retainSession } from "./usage-sessions.ts";
 
@@ -282,11 +282,38 @@ export function copySession(source: string, files: string, cold: boolean): void 
 	if (fs.existsSync(path.join(source, LEAD_PREFIX_FILE))) fs.copyFileSync(path.join(source, LEAD_PREFIX_FILE), path.join(files, LEAD_PREFIX_FILE));
 }
 
-/** A line naming the latest finished fork of `role` in `dir` whose prompt cache is still warm, or undefined. */
-function cachedHint(runs: Run[], role: string, dir: string, now = Date.now()): string | undefined {
-	const cached = runs.filter((run) => run.role === role && (run.target ?? run.cwd) === dir && (cacheLeftMs(run, now) ?? 0) > 0 && canContinue(run));
-	const run = cached.sort((a, b) => (a.lastRequestAt ?? 0) - (b.lastRequestAt ?? 0)).at(-1);
-	return run && `fork ${run.name} finished ${Math.floor((now - (run.endedAt ?? now)) / 60_000)}m ago with ${tokens(run.context ?? 0)} ctx, still cached: fork_resume({name, task}) is cheaper`;
+const PER_MILLION_TOKENS = 1_000_000;
+const CHARS_PER_TOKEN = 4;
+
+type Price = { input: number; cacheRead: number };
+/** The prices of a cold worker's model, or of the session's model for a warm fork. Undefined where the registry does not know them. */
+const priceOf = (ctx: ExtensionContext, model?: string): Price | undefined => (model ? findModel(model, ctx.modelRegistry)?.cost : ctx.model?.cost);
+
+/** The prices of the model a finished run resumes on: a cold worker's, or the one a warm fork's handshake saved. */
+const savedPrice = (ctx: ExtensionContext, run: Run): Price | undefined => {
+	const model = run.model ?? (run.files ? readHandshake(path.join(run.files, "handshake.json"))?.model : undefined);
+	return model ? priceOf(ctx, model) : undefined;
+};
+
+/** What a fresh fork on `model` would pay for its starting context, in dollars: a warm fork reads main's cached context, a cold worker writes its card and task uncached. Undefined without the model's prices. */
+function freshStartCost(ctx: ExtensionContext, role: Role, task: string, model?: string): number | undefined {
+	const price = priceOf(ctx, model);
+	if (!price) return undefined;
+	const tokensRead = model ? Math.ceil((coldCard(role).length + task.length) / CHARS_PER_TOKEN) : (ctx.getContextUsage()?.tokens ?? 0);
+	return (tokensRead * (model ? price.input : price.cacheRead)) / PER_MILLION_TOKENS;
+}
+
+/** Lines naming every finished fork `fork_resume` would pick by name, of `role` in `dir`, whose prompt cache is still warm and whose context costs less to read from the cache, at its own model's price, than `freshCost`, newest first, each with its context size and cache time left, or undefined. */
+function cachedHint(runs: Run[], role: string, dir: string, priceOfRun: (run: Run) => Price | undefined, freshCost: number | undefined, now = Date.now()): string | undefined {
+	if (freshCost === undefined) return undefined;
+	const picked = new Map(runs.filter(canContinue).map((run) => [run.name, run]));
+	const cached = [...picked.values()].filter((run) => {
+		const price = priceOfRun(run);
+		return run.role === role && (run.target ?? run.cwd) === dir && (cacheLeftMs(run, now) ?? 0) > 0 && price !== undefined && ((run.context ?? 0) * price.cacheRead) / PER_MILLION_TOKENS < freshCost;
+	});
+	if (!cached.length) return undefined;
+	const lines = cached.sort((a, b) => (b.lastRequestAt ?? 0) - (a.lastRequestAt ?? 0)).map((run) => `fork ${run.name}: ${tokens(run.context ?? 0)} ctx, ${cacheText(cacheLeftMs(run, now) ?? 0)}`);
+	return [...lines, "fork_resume({name, task}) is cheaper than a fresh fork"].join("\n");
 }
 
 const readText = (file: string) => {
@@ -454,7 +481,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			const runId = newRunId();
 			const ref = `rc-fork-${name}-${toolCallId}`;
 			const cold = params.model && model ? coldLabel(name, params.model, model) : undefined;
-			const hint = source ? undefined : cachedHint(registry.all(), role.name, target ?? ctx.cwd);
+			const hint = source ? undefined : cachedHint(registry.all(), role.name, target ?? ctx.cwd, (run) => savedPrice(ctx, run), freshStartCost(ctx, role, params.task, model));
 			const withHint = (text: string) => (hint ? `${text}\n${hint}` : text);
 			registry.start({ id: runId, name, role: role.name, model, background: true, state: "running", task: params.task, worktree: tree?.path, branch: tree?.branch, tree, target, cwd: ctx.cwd, startedAt: Date.now() });
 			const message = `${worktreeLine(tree, role.writes ? home : undefined)}Task: ${params.task}`;
