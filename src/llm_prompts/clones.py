@@ -37,14 +37,6 @@ def clones_dir() -> Path:
     return home.user_home() / ".llm-prompts"
 
 
-def _tilde(path: Path) -> str:
-    """Return ``path`` as ``~/...`` when it is under the user's home directory."""
-    try:
-        return f"~/{path.relative_to(Path.home())}"
-    except ValueError:
-        return str(path)
-
-
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", "-C", str(repo), *args],
@@ -257,7 +249,7 @@ def migrate(tools: list[dict[str, Any]], *, dry_run: bool = False) -> bool:
         name, source = str(tool["name"]), str(tool["source"])
         git_url = str(_extract_git_url(source))
         dest = clones_dir() / name
-        new_source = _tilde(dest)
+        new_source = home.tilde(dest)
         if dry_run:
             print(f'[{name}] would clone it to {dest} and set source = "{new_source}"')
             continue

@@ -40,7 +40,7 @@ from .claude_models import catalogue
 from .colors import paint
 from .console import LogLevel, log
 from .exit_reason import ExitReason
-from .home import is_rooted, set_root, user_home
+from .home import is_rooted, set_root, tilde, user_home
 from .jsonfile import write_text_atomic
 from .mcp import (
     CLAUDE_NAMING,
@@ -4059,7 +4059,8 @@ def _warn_pi_version_drift(sources: Iterable[str]) -> None:
     """Print a dim note when the pi that runs differs from the pinned version.
 
     A version is only reported for the pi that ``pi`` on PATH resolves to. Where
-    that is not the npm install under the pi agent directory, the note names both.
+    that is not the npm install under the pi agent directory, a warning names the
+    pi that runs and the PATH fix.
 
     Args:
         sources: Package sources llm-prompts declares.
@@ -4079,15 +4080,14 @@ def _warn_pi_version_drift(sources: Iterable[str]) -> None:
     npm_dir = _pi_package_dir(_PI_PACKAGE)
     npm_version = _pi_package_version(npm_dir / "package.json")
     if npm_version and not launcher.resolve().is_relative_to(npm_dir.resolve()):
-        path_version = _path_pi_version(launcher) or "an unknown version"
-        print(
-            paint(
-                f"[llm-prompts] pi on PATH ({launcher}, {path_version}) is a different "
-                f"install from the npm one ({npm_dir}, {npm_version}), so the running "
-                "version is unknown, #677 migrates it",
-                "grey",
-            ),
-            file=sys.stderr,
+        path_version = _path_pi_version(launcher) or "unknown version"
+        wants = f", wants {pinned}" if pinned and pinned != npm_version else ""
+        npm_bin = _pi_agent_dir() / "npm" / "node_modules" / ".bin"
+        log(
+            "warn",
+            f"[pi] {tilde(launcher)} ({path_version}) runs instead of the managed pi "
+            f"({npm_version}{wants}). Put {tilde(npm_bin)} first on PATH, then rerun "
+            "llm-prompts update.",
         )
         return
     installed = _running_pi_version()
@@ -4187,11 +4187,6 @@ def _migrate_curl_pi() -> None:
         return
     remaining = _first_pi_on_path(curl_pi)
     if remaining is None or remaining.resolve() != npm_pi.resolve():
-        log(
-            "warn",
-            f"[pi] `pi` would not resolve to {npm_pi} on PATH without the curl install, "
-            "keeping it. Put its directory on PATH first.",
-        )
         return
     entrypoint = marker.get("entrypoint")
     entrypoint_path = entrypoint.get("path") if isinstance(entrypoint, dict) else None

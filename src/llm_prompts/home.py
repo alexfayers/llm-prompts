@@ -156,6 +156,14 @@ def user_home() -> Path:
     return _HOME.user_home()
 
 
+def tilde(path: Path) -> str:
+    """Return ``path`` as ``~/...`` when it is under the user's home directory."""
+    try:
+        return f"~/{path.relative_to(Path.home())}"
+    except ValueError:
+        return str(path)
+
+
 def is_rooted() -> bool:
     """Return whether an install root replaces the user's home directory."""
     return _HOME.is_rooted()
