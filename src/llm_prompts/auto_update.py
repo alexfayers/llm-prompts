@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import resource
 import shutil
 import subprocess
 import sys
@@ -184,6 +185,15 @@ def _fingerprint() -> str:
     return _installed_fingerprint()
 
 
+def _lift_address_space_cap() -> None:
+    """Raise the address-space soft limit inherited from the hook process to its hard limit, where the platform allows it."""
+    _, hard = resource.getrlimit(resource.RLIMIT_AS)
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (hard, hard))
+    except (ValueError, OSError):
+        pass
+
+
 def run(fingerprint: str) -> None:
     """Run ``llm-prompts update --auto`` once, logging its output and recording a failure.
 
@@ -203,6 +213,7 @@ def run(fingerprint: str) -> None:
         log = state_dir() / "auto-update.log"
         started = f"Started at {datetime.now(tz=UTC).isoformat()}\n"
         log.write_text(started, encoding="utf-8")
+        _lift_address_space_cap()
         result = subprocess.run(
             [_script(), "update", "--auto"],
             pass_fds=(int(os.environ[LOCK_FD_ENV]),),

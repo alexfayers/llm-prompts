@@ -178,6 +178,32 @@ def test_a_run_logs_its_start_before_the_update_runs(
     assert log.startswith(logged[0]) and log.endswith("Updated\n")
 
 
+@pytest.fixture
+def capped_address_space() -> Iterator[int]:
+    """Lower this process's address-space soft limit below its hard limit, as cline-hooks does, and yield the hard limit."""
+    resource = pytest.importorskip("resource")
+    soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+    resource.setrlimit(resource.RLIMIT_AS, (64 << 30, hard))
+    yield hard
+    resource.setrlimit(resource.RLIMIT_AS, (soft, hard))
+
+
+def test_a_run_lifts_the_address_space_cap_before_the_update_runs(
+    unblocked: Path, fake_subprocess: FakeSubprocess, capped_address_space: int
+) -> None:
+    import resource
+
+    seen: list[int] = []
+    fake_subprocess.on_match(
+        _is_update,
+        side_effect=lambda argv, kwargs: seen.append(
+            resource.getrlimit(resource.RLIMIT_AS)[0]
+        ),
+    )
+    auto_update.run("v1")
+    assert seen == [capped_address_space]
+
+
 def _reported(telemetry_popen: MagicMock) -> dict[str, object]:
     properties: dict[str, object] = json.loads(telemetry_popen.call_args.args[0][3])[
         "properties"
