@@ -99,9 +99,9 @@
 | src/llm\_prompts/tool\_paths.py                                               |       14 |        0 |    100% |           |
 | src/llm\_prompts/watch/\_\_init\_\_.py                                        |        0 |        0 |    100% |           |
 | src/llm\_prompts/watch/core/\_\_init\_\_.py                                   |        0 |        0 |    100% |           |
-| src/llm\_prompts/watch/core/condition.py                                      |       25 |        3 |     88% | 33, 49-50 |
+| src/llm\_prompts/watch/core/condition.py                                      |       36 |        3 |     92% | 51, 67-68 |
 | src/llm\_prompts/watch/core/registry.py                                       |       13 |        0 |    100% |           |
-| src/llm\_prompts/watch/core/runner.py                                         |       81 |        1 |     99% |        83 |
+| src/llm\_prompts/watch/core/runner.py                                         |       82 |        1 |     99% |        83 |
 | src/llm\_prompts/watch/core/source.py                                         |       29 |        0 |    100% |           |
 | src/llm\_prompts/watch/core/store.py                                          |       61 |        1 |     98% |        43 |
 | src/llm\_prompts/watch/sources/\_\_init\_\_.py                                |        0 |        0 |    100% |           |
@@ -206,11 +206,11 @@
 | tests/test\_tool\_paths.py                                                    |       27 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      119 |        0 |    100% |           |
 | tests/test\_worktrees.py                                                      |       82 |        0 |    100% |           |
-| tests/watch/sources/test\_github\_pr.py                                       |      225 |        0 |    100% |           |
+| tests/watch/sources/test\_github\_pr.py                                       |      230 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
-| tests/watch/test\_runner.py                                                   |       70 |        0 |    100% |           |
+| tests/watch/test\_runner.py                                                   |       84 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **36780** |  **842** | **98%** |           |
+| **TOTAL**                                                                     | **36811** |  **842** | **98%** |           |
 
 
 ## Setup coverage badge
