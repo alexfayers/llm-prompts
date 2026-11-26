@@ -268,7 +268,6 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 		warmed?.();
 		await child?.close();
 		await bridge?.close();
-		readerAgentDir?.dispose();
 		let retained = true;
 		try { if (child) await keepSession(files, Boolean(model), name, runId, agentDir); } catch (error) {
 			retained = false;
