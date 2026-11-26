@@ -1311,7 +1311,7 @@ def _add_watch_parser(
             "--until",
             action="append",
             required=True,
-            help="Stop when field=value or changed:field holds, or an alias does. Repeat to stop on any.",
+            help="Stop when field=value or changed:field holds, label=GLOB (gh-pr) matches a label, or an alias does. Repeat to stop on any.",
         )
         source_parser.add_argument(
             "--interval",

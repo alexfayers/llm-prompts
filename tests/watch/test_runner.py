@@ -74,6 +74,45 @@ def test_watch_follow_prints_each_change_once_and_exits_only_on_timeout(
     assert capsys.readouterr().out.splitlines()[:-1] == expected
 
 
+class LabelledSource:
+    default_interval = 0.0
+    aliases: ClassVar[dict[str, list[str]]] = {}
+
+    def __init__(self, *states: tuple[str, str]) -> None:
+        self.states, self.state = iter(states), states[0]
+
+    def describe(self) -> str:
+        return "pr"
+
+    def poll(self) -> Fields:
+        self.state = next(self.states, self.state)
+        return dict(zip(("labels", "ci"), self.state, strict=True))
+
+
+def test_watch_follow_reports_each_newly_added_matching_label_once(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = LabelledSource(
+        ("", "pending"),
+        ("blocked:checks", "pending"),
+        ("blocked:checks", "fail"),
+        ("blocked:checks,docs", "fail"),
+        ("blocked:checks,blocked:conflicts,docs", "fail"),
+        ("blocked:conflicts,docs", "fail"),
+        ("blocked:checks,blocked:conflicts,docs", "pass"),
+    )
+
+    assert (
+        watch([source], ["label=blocked:*"], interval=0, timeout=0.05, follow=True)
+        == 124
+    )
+    assert capsys.readouterr().out.splitlines()[:-1] == [
+        "pr: label=blocked:* (labels=blocked:checks)",
+        "pr: label=blocked:* (labels=blocked:checks,blocked:conflicts,docs)",
+        "pr: label=blocked:* (labels=blocked:checks,blocked:conflicts,docs)",
+    ]
+
+
 class CrLikeSource:
     default_interval = 0.0
     aliases: ClassVar[dict[str, list[str]]] = {

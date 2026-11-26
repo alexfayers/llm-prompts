@@ -101,6 +101,7 @@ def _poll_until_done(
                     break
             else:
                 reported.pop(index, None)
+                baselines[index] = current
             if not require_all and not follow and index not in waiting:
                 return 0
         if not waiting and not discover:

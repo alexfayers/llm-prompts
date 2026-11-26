@@ -317,4 +317,5 @@ class GithubPrSource:
             "approved": str(_approved(reviews)).lower(),
             "reviews": ",".join(sorted(f"{r['id']}:{r['state']}" for r in reviews)),
             "ci": ci,
+            "labels": ",".join(sorted(label["name"] for label in pull["labels"])),
         }

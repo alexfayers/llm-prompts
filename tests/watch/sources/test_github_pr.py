@@ -55,6 +55,7 @@ class FakeGithub:
             "state": "open",
             "merged": False,
             "head": {"sha": "abc123"},
+            "labels": [],
         }
         self.bodies["repos/o/r/pulls/7/reviews?per_page=100"] = []
         self.bodies["repos/o/r/commits/abc123/check-runs?filter=all&per_page=100"] = {
@@ -424,11 +425,35 @@ def test_gh_pr_follow_exits_on_a_merged_or_closed_pr(
         "state": "closed",
         "merged": merged,
         "head": {"sha": "abc123"},
+        "labels": [],
     }
     source = GithubPrSource("o/r", 7, None)
 
     assert watch([source], ["ci"], interval=0, timeout=5, follow=True) == 0
     assert capsys.readouterr().out.startswith("gh-pr o/r#7: ")
+
+
+@pytest.mark.parametrize(
+    ("until", "code"),
+    [
+        ("label=blocked:conflicts", 0),
+        ("label=blocked:*", 0),
+        ("label=blocked:checks", 124),
+    ],
+)
+def test_gh_pr_stops_while_the_pr_has_a_matching_label(
+    github: FakeGithub, until: str, code: int
+) -> None:
+    github.pr()
+    github.bodies["repos/o/r/pulls/7"]["labels"] = [  # type: ignore[index]
+        {"name": "docs"},
+        {"name": "blocked:conflicts"},
+    ]
+
+    assert (
+        watch([GithubPrSource("o/r", 7, None)], [until], interval=0, timeout=0.05)
+        == code
+    )
 
 
 def _block_cache() -> Path:
@@ -529,6 +554,7 @@ def test_gh_pr_author_watch_picks_up_a_new_pr_and_drops_a_merged_one(
         "state": "closed",
         "merged": True,
         "head": {"sha": "abc123"},
+        "labels": [],
     }
     github.bodies["user"] = {"login": "me"}
     listings = iter(
@@ -569,12 +595,14 @@ def test_gh_pr_author_watch_reports_a_pr_opened_and_merged_between_polls(
         "state": "closed",
         "merged": True,
         "head": {"sha": "abc123"},
+        "labels": [],
     }
     github.bodies["repos/o/r/pulls/11/reviews?per_page=100"] = []
     github.bodies["repos/o/r/pulls/12"] = {
         "state": "closed",
         "merged": True,
         "head": {"sha": "abc123"},
+        "labels": [],
     }
     github.bodies["repos/o/r/pulls/12/reviews?per_page=100"] = []
     github.bodies["repos/o/r/pulls?state=open&per_page=100"] = []
