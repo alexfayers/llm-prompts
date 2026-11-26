@@ -62,7 +62,10 @@ def send_session(stats: dict[str, Any]) -> None:
         else None,
         "compactions": int(stats["compactions"]),
         "wall_s": round(float(stats["wallMs"]) / 1000, 1),
-        "llm_prompts": telemetry_core.versions(read_config())["llm-prompts"],
+        **{
+            name.replace("-", "_"): entry
+            for name, entry in telemetry_core.versions(read_config()).items()
+        },
         **telemetry_core.context(2),
     }
     telemetry_core.send({"event": "pi_session", "properties": properties}, install_id)
