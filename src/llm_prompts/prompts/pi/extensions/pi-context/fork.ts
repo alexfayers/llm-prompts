@@ -505,11 +505,13 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			if (!current || !isLive(current) || runSignal.aborted) return;
 			const end = { ...endOf(ref, turn, merged.landing), lastRequestAt: turn.lastRequestAt, context: turn.context };
 			const text = turn.error ?? replyOf(turn);
-			const note = merged.landing && tree ? `[merge: ${describeLanding(merged.landing, tree)}]` : tree && (await dropIfClean(tree)) ? "[merge: worktree removed: clean]" : undefined;
+			const { next } = current;
+			const proceeds = end.state === "done" || end.state === "found-it";
+			const merge = merged.landing && tree ? `[merge: ${describeLanding(merged.landing, tree)}]` : tree && (await dropIfClean(tree)) ? "[merge: worktree removed: clean]" : undefined;
+			const note = [merge, next !== undefined && !proceeds ? `[queued task kept: ${next}]` : undefined].filter(Boolean).join(" ") || undefined;
 			background.finish(ctx, runId, end, turn.error ?? turn.reply ?? text, note);
 			pi.appendEntry("result-cap", { ref: end.ref, text });
-			const next = registry.get(runId)?.next;
-			if (next !== undefined) await continueRun(ctx, name, next, `next-${newRunId()}`);
+			if (next !== undefined && proceeds) await continueRun(ctx, name, next, `next-${newRunId()}`);
 		};
 		const onFail = async (error: unknown) => {
 			if (registry.get(runId)?.state === "cancelled") fs.rmSync(path.join(run.files, QUEUED_ENTRIES), { force: true });
@@ -696,8 +698,8 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		name: "fork_resume",
 		label: "Fork resume",
 		description:
-			"Without task, restart a background fork that a reload, a crash or the end of the session stopped, on its own session and worktree. With task, give a finished fork (done, found-it, blocked, failed or cancelled), warm or cold, a new task on its own session, model and role: a reader works in its old directory, a writer in a new worktree from the current branch of its checkout, or its kept one. Both run in the background.",
-		promptSnippet: "Resume a lost background fork, or give a finished fork a new task",
+			"Without task, restart a background fork that a reload, a crash or the end of the session stopped, on its own session and worktree. With task, give a finished fork (done, found-it, blocked, failed or cancelled), warm or cold, a new task on its own session, model and role: a reader works in its old directory, a writer in a new worktree from the current branch of its checkout, or its kept one. Both run in the background. With task on a fork that is still running, queue one task, which the fork starts after it replies done or found-it. fork_cancel drops the queued task.",
+		promptSnippet: "Resume a lost background fork, give a finished fork a new task, or queue a task for a running fork",
 		promptGuidelines: [
 			"Use fork_resume with task instead of fork when a finished fork of the same role and directory already holds the context the task needs, and its prompt cache is still warm: the fork tool's result names such a fork.",
 		],
@@ -710,6 +712,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			assertMayFork();
 			const running = params.task !== undefined && registry.live().find((live) => live.background && live.name === params.name);
 			if (running && params.task !== undefined) {
+				if (running.next !== undefined) throw new Error(`a task is already queued for fork ${running.name}: ${running.next}. Drop it with fork_cancel first`);
 				registry.update(running.id, { next: params.task });
 				return { content: [{ type: "text", text: `queued for fork ${running.name} (background): ${params.task} starts after it replies` }], details: { name: running.name, runId: running.id, queued: true } };
 			}

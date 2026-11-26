@@ -869,6 +869,26 @@ describe("fork tool", () => {
 			assert.ok(appended.some(([, entry]) => /"prompt":"Task: STUB_INSPECT"/.test((entry as { text?: string }).text ?? "")));
 		});
 
+		test("a queued task stays queued when the fork ends blocked, and the result says so", async () => {
+			const gate = path.join(agentDir, `gate-blocked-${randomUUID()}`);
+			const { tools, ctx } = await start({ task: `STUB_GATE:${gate} STUB_REPLY:{"outcome":"blocked-on-user","ref":""}`, name: "stuck", model: "prov/cheap" });
+			await tools.fork_resume.execute("r", { name: "stuck", task: "STUB_INSPECT" }, undefined, undefined, ctx);
+			fs.writeFileSync(gate, "");
+			await eventually(() => registryOf().all().find((run) => run.name === "stuck")?.state === "blocked");
+			const run = registryOf().all().find((candidate) => candidate.name === "stuck");
+			assert.equal(run?.next, "STUB_INSPECT");
+			assert.match(run?.unread ?? "", /queued task kept: STUB_INSPECT/);
+		});
+
+		test("a second fork_resume task on a running fork is rejected and names the queued one", async () => {
+			const { tools, ctx } = await start({ task: "STUB_HANG", name: "twice", model: "prov/cheap" });
+			await tools.fork_resume.execute("r", { name: "twice", task: "STUB_INSPECT" }, undefined, undefined, ctx);
+			await assert.rejects(tools.fork_resume.execute("r", { name: "twice", task: "other" }, undefined, undefined, ctx), /already queued for fork twice: STUB_INSPECT/);
+			assert.equal(registryOf().all().find((run) => run.name === "twice")?.next, "STUB_INSPECT");
+			await tools.fork_cancel.execute("c", { name: "twice" }, undefined, undefined, ctx);
+			await tools.fork_cancel.execute("c", { name: "twice" }, undefined, undefined, ctx);
+		});
+
 		test("fork_cancel drops a queued task before it stops the fork", async () => {
 			const { tools, ctx } = await start({ task: "STUB_HANG", name: "hung", model: "prov/cheap" });
 			await tools.fork_resume.execute("r", { name: "hung", task: "STUB_INSPECT" }, undefined, undefined, ctx);
