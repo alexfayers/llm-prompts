@@ -49,7 +49,10 @@ DELEGATION_TOOLS = ("fork", "fork_resume", "fork_steer", "fork_cancel")
 FEATURE_TOOLS = {"consult": ("consult",), "ghost": ("ghost_run",)}
 FEATURE_EXTENSIONS = ("test-output-fold",)
 FORK_MODE = "warm-fork"
-FEATURE_OFF_ENV = {"shared-tasks": {"PI_CONTEXT_SHARED": "off"}}
+FEATURE_OFF_ENV = {
+    "shared-tasks": {"PI_CONTEXT_SHARED": "off"},
+    "delegate-checkpoint-nudge": {"PI_CONTEXT_CHECKPOINT_NUDGE": "off"},
+}
 CACHE_WARMING = "cache-warming"
 FEATURES = (
     *FEATURE_TOOLS,

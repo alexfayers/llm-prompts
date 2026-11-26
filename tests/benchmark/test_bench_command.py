@@ -625,6 +625,19 @@ def test_shared_tasks_are_switched_off_in_a_by_the_environment_of_its_agents(
     } == {"a": "off", "b": None}
 
 
+def test_the_delegate_checkpoint_nudge_is_switched_off_in_a_by_the_environment(
+    builds: Builds, add: Any, fake_agent: FakeAgent
+) -> None:
+    fake_agent.script("s1", trace=trace(tool_calls=OK))
+
+    run(features=("delegate-checkpoint-nudge",))
+
+    assert {
+        p.cell.variant.label: p.env.get("PI_CONTEXT_CHECKPOINT_NUDGE")
+        for p in fake_agent.executed
+    } == {"a": "off", "b": None}
+
+
 def test_a_cell_is_not_reused_after_the_measured_features_change(
     builds: Builds, add: Any, fake_agent: FakeAgent, run_ids: None
 ) -> None:
