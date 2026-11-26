@@ -11,7 +11,7 @@
 | src/llm\_prompts/benchmark/agents/adapter.py                                  |       34 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/agents/claude.py                                   |      158 |        3 |     98% |57, 133-134 |
 | src/llm\_prompts/benchmark/agents/files.py                                    |       53 |        1 |     98% |        32 |
-| src/llm\_prompts/benchmark/agents/pi.py                                       |      192 |        1 |     99% |       180 |
+| src/llm\_prompts/benchmark/agents/pi.py                                       |      187 |        1 |     99% |       169 |
 | src/llm\_prompts/benchmark/cell/\_\_init\_\_.py                               |        0 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/cell/audit.py                                      |       98 |        3 |     97% |     60-62 |
 | src/llm\_prompts/benchmark/cell/env.py                                        |       26 |        0 |    100% |           |
@@ -65,7 +65,7 @@
 | src/llm\_prompts/handoff\_block.py                                            |       13 |        1 |     92% |        20 |
 | src/llm\_prompts/home.py                                                      |       85 |        2 |     98% |  171, 176 |
 | src/llm\_prompts/hooks.py                                                     |      332 |       20 |     94% |94, 99, 192, 205-206, 356, 416-417, 443-445, 533, 541-542, 604, 619-620, 639-641 |
-| src/llm\_prompts/install.py                                                   |     2370 |      156 |     93% |192, 592, 639, 704, 714, 718-719, 879, 1096, 1256-1258, 1310, 1313-1315, 1330, 1356, 1358, 1414-1415, 1579, 1588-1590, 1664, 1676, 1688, 1770-1771, 1853-1855, 1973, 1988-1989, 2071-2072, 2074, 2139, 2376-2377, 2445-2447, 2449, 2493, 2580-2582, 2878, 2982, 3041, 3397-3399, 3483, 3486, 3514, 3581-3596, 3606-3610, 3629-3636, 3684, 3763, 3772, 3841-3842, 3844-3845, 3892, 3896, 4012, 4204, 4243-4244, 4382, 4508-4521, 4534-4536, 4697-4701, 4711-4717, 4735-4741, 4747-4756, 4776-4777, 4835-4838, 4905-4907, 4939, 5001, 5004, 5110, 5130-5131, 5321, 5383, 5385, 5658, 5784, 5788, 5801 |
+| src/llm\_prompts/install.py                                                   |     2370 |      156 |     93% |192, 592, 639, 704, 714, 718-719, 879, 1096, 1256-1258, 1310, 1313-1315, 1330, 1356, 1358, 1414-1415, 1579, 1588-1590, 1664, 1676, 1688, 1770-1771, 1853-1855, 1973, 1988-1989, 2071-2072, 2074, 2139, 2376-2377, 2445-2447, 2449, 2493, 2580-2582, 2878, 2982, 3041, 3397-3399, 3483, 3486, 3514, 3581-3596, 3606-3610, 3629-3636, 3684, 3763, 3772, 3841-3842, 3844-3845, 3892, 3896, 4013, 4205, 4244-4245, 4383, 4509-4522, 4535-4537, 4698-4702, 4712-4718, 4736-4742, 4748-4757, 4777-4778, 4836-4839, 4906-4908, 4940, 5002, 5005, 5111, 5131-5132, 5322, 5384, 5386, 5659, 5785, 5789, 5802 |
 | src/llm\_prompts/jsonfile.py                                                  |       23 |        0 |    100% |           |
 | src/llm\_prompts/main\_sync.py                                                |      529 |       19 |     96% |190-191, 272-273, 358, 591, 666, 693-694, 892, 911-912, 930, 947, 960, 964, 1000, 1065, 1131 |
 | src/llm\_prompts/manifest.py                                                  |       89 |        3 |     97% |69-70, 107 |
@@ -112,7 +112,7 @@
 | src/llm\_prompts/worktrees.py                                                 |       89 |        3 |     97% |119, 148-149 |
 | tests/benchmark/\_\_init\_\_.py                                               |        0 |        0 |    100% |           |
 | tests/benchmark/conftest.py                                                   |      192 |        0 |    100% |           |
-| tests/benchmark/test\_bench\_agents.py                                        |       52 |        0 |    100% |           |
+| tests/benchmark/test\_bench\_agents.py                                        |       43 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_audit.py                                         |       67 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_cell.py                                          |      233 |        4 |     98% |169, 292, 297, 409 |
 | tests/benchmark/test\_bench\_check\_sandbox.py                                |       59 |        0 |    100% |           |
@@ -171,7 +171,7 @@
 | tests/test\_install\_claude\_permissions.py                                   |      267 |        1 |     99% |       312 |
 | tests/test\_install\_codex.py                                                 |      273 |        0 |    100% |           |
 | tests/test\_install\_opencode.py                                              |       66 |        0 |    100% |           |
-| tests/test\_install\_pi.py                                                    |     1653 |        1 |     99% |      2334 |
+| tests/test\_install\_pi.py                                                    |     1657 |        1 |     99% |      2337 |
 | tests/test\_jsonfile.py                                                       |       23 |        0 |    100% |           |
 | tests/test\_main\_sync.py                                                     |      318 |        0 |    100% |           |
 | tests/test\_manifest.py                                                       |       83 |        0 |    100% |           |
@@ -209,7 +209,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       70 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **36262** |  **835** | **98%** |           |
+| **TOTAL**                                                                     | **36252** |  **835** | **98%** |           |
 
 
 ## Setup coverage badge
