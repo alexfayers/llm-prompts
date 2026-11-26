@@ -62,7 +62,7 @@ export const FINISHED: RunState[] = ["done", "found-it", "blocked", "failed"];
 /** The milliseconds a finished run's prompt cache has left, 0 once expired, or undefined without a recorded request. */
 export const cacheLeftMs = (run: Run, now = Date.now()): number | undefined => (run.lastRequestAt === undefined ? undefined : Math.max(0, run.lastRequestAt + cacheLifetimeMs() - now));
 
-export const cacheText = (left: number): string => (left > 0 ? `cache ${Math.ceil(left / 60_000)}m left` : "cache expired");
+export const cacheText = (left: number): string => (left > 0 ? `cache ${Math.ceil(left / 60_000)}m` : "cache expired");
 
 /** The session file a run's delegate wrote: the seed of a warm fork, or the newest session of a cold worker. */
 export function sessionFileOf(files: string, cold: boolean): string | undefined {

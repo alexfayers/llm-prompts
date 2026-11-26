@@ -17,7 +17,8 @@ const PLAIN: Paint = { fg: (_color, text) => text, bold: (text) => text };
 const ROLE_COLORS: Record<string, string> = { reader: "success", writer: "warning" };
 const COLD_COLOR = "muted";
 const SPINNER = ["◐", "◓", "◑", "◒"];
-const LOW_CACHE = 0.5;
+const LOW_CACHE = 0.8;
+const CALL_CHARS = 40;
 
 const WIDGET_KEY = "pi-context-forks";
 const SNIPPET = 60;
@@ -46,7 +47,7 @@ const sourceText = (run: Run, shown: Run[]): string => {
 	const ambiguous = shown.some((other) => other.from === run.from && other.cacheKey !== run.cacheKey);
 	return ` · from ${run.from}${ambiguous && run.cacheKey ? `#${run.cacheKey.slice(0, KEY_CHARS)}` : ""}`;
 };
-/** A finished run's cache time left, as ` · cache 3m left` or ` · cache expired`. */
+/** A finished run's cache time left, as ` · cache 3m` or ` · cache expired`. */
 const cacheNote = (run: Run, now: number): string => {
 	const left = FINISHED.includes(run.state) ? cacheLeftMs(run, now) : undefined;
 	return left === undefined ? "" : ` · ${cacheText(left)}`;
@@ -61,7 +62,7 @@ const stripCd = (command: string): string => command.replace(/^cd\s+\S+\s*(?:&&|
 const call = (name: string, args: unknown): string => {
 	const arg = args && typeof args === "object" ? argOf(args as Event) : undefined;
 	const text = arg && name === "bash" ? stripCd(arg) : arg;
-	return short(text ? `${name}: ${text}` : name);
+	return text ? `${name}: ${short(text, CALL_CHARS)}` : name;
 };
 const textOf = (message: Event | undefined): string =>
 	(Array.isArray(message?.content) ? message.content : []).flatMap((block: Event) => (block.type === "text" ? [block.text] : [])).join(" ");
@@ -73,8 +74,8 @@ const usageOf = (usage: Event | undefined): Usage | undefined => {
 };
 const usageText = (usage: Usage | undefined, window: number | undefined, paint: Paint): string => {
 	if (!usage) return "";
-	const cache = `cache ${Math.round(usage.cache * 100)}%`;
-	return paint.fg("dim", ` · ctx ${tokens(usage.context)}${window ? `/${tokens(window)}` : ""} · `) + paint.fg(usage.cache < LOW_CACHE ? "error" : "dim", cache);
+	const bigContext = window !== undefined && usage.context > window / 2;
+	return (bigContext ? paint.fg("warning", ` · ctx ${tokens(usage.context)}/${tokens(window)}`) : "") + (usage.cache < LOW_CACHE ? paint.fg("error", ` · cache ${Math.round(usage.cache * 100)}%`) : "");
 };
 /** A cold worker's model, found through its provider/id string. */
 export const findModel = (model: string, registry: ExtensionContext["modelRegistry"] | undefined) => {
@@ -87,15 +88,15 @@ export const findModel = (model: string, registry: ExtensionContext["modelRegist
 /** A cold worker's own context window; falls back to main's for a session fork. */
 const modelWindow = (model: string, registry: ExtensionContext["modelRegistry"] | undefined): number | undefined => findModel(model, registry)?.contextWindow;
 const windowFor = (run: Run, registry: ExtensionContext["modelRegistry"] | undefined, mainWindow: number | undefined): number | undefined => (run.model ? modelWindow(run.model, registry) : mainWindow);
-/** A cold worker's model, without its provider and a Bedrock-style `anthropic.` prefix. */
+/** A cold worker's model as its tier (`sonnet`, `opus`, `haiku`), or its id without the provider and a Bedrock-style `anthropic.` prefix. */
 const shortModel = (model: string): string => {
 	const id = model.slice(model.indexOf("/") + 1);
-	return id.startsWith("anthropic.") ? id.slice("anthropic.".length) : id;
+	return id.match(/opus|sonnet|haiku/)?.[0] ?? (id.startsWith("anthropic.") ? id.slice("anthropic.".length) : id);
 };
-const roleTag = (run: Run, paint: Paint): string => paint.fg(run.model ? COLD_COLOR : (ROLE_COLORS[run.role] ?? COLD_COLOR), `[${run.model ? `cold ${shortModel(run.model)}` : run.role}]`);
+const roleTag = (run: Run, paint: Paint): string => paint.fg(run.model ? COLD_COLOR : (ROLE_COLORS[run.role] ?? COLD_COLOR), `[${run.model ? shortModel(run.model) : run.role}]`);
 /** The theme color for a finished run's status glyph. */
 const FINISH_COLOR: Record<string, string> = { done: "success", "found-it": "success", blocked: "warning", failed: "error", lost: "error" };
-/** The finished runs as one row, such as `✓ 3 done · 1 blocked · cache 2-5m left`, each count in its outcome's color. */
+/** The finished runs as one row, such as `✓ 3 done · 1 blocked · cache 2-5m`, each count in its outcome's color. */
 const summaryRow = (runs: Run[], now: number, paint: Paint): string => {
 	const counts = FINISHED.flatMap((state) => {
 		const count = runs.filter((run) => run.state === state).length;
@@ -107,7 +108,7 @@ const summaryRow = (runs: Run[], now: number, paint: Paint): string => {
 	});
 	const low = Math.min(...minutes);
 	const high = Math.max(...minutes);
-	const cache = minutes.length ? ` · cache ${low === high ? low : `${low}-${high}`}m left` : runs.some((run) => run.lastRequestAt !== undefined) ? ` · ${cacheText(0)}` : "";
+	const cache = minutes.length ? ` · cache ${low === high ? low : `${low}-${high}`}m` : runs.some((run) => run.lastRequestAt !== undefined) ? ` · ${cacheText(0)}` : "";
 	return `${paint.fg("dim", "✓ ")}${counts.join(paint.fg("dim", " · "))}${paint.fg("dim", cache)}`;
 };
 const elapsed = (ms: number): string => {
