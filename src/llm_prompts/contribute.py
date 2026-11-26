@@ -760,6 +760,7 @@ class SyncOptions(NamedTuple):
     no_depends_on: tuple[str, str] | None = None
     why: tuple[str, str] | None = None
     title: tuple[str, str] | None = None
+    force: bool = False
 
     @property
     def record_edits(self) -> int:
@@ -862,14 +863,21 @@ def _link_branches(
     tools: Sequence[Target],
     branch: str,
     spec: str,
+    force: bool = False,
 ) -> str:
-    """Record that ``branch`` depends on the ``TOOL:BRANCH`` or ``owner/repo#N`` named by ``spec``."""
+    """Record that ``branch`` depends on the ``TOOL:BRANCH`` or ``owner/repo#N`` named by ``spec``.
+
+    A link within the same repo is refused unless ``force`` is set, which turns the refusal into a warning.
+    """
     pr_ref = _PR_SPEC.fullmatch(spec) is not None
     lower_key, lower_branch = ("", "") if pr_ref else _spec_target(tools, spec)
+    warning = ""
     if lower_key == _repo_key(repo):
-        raise LookupError(
-            f"{spec} is in the same repo: put {branch}'s change in {lower_branch}'s worktree"
-        )
+        if not force:
+            raise LookupError(
+                f"{spec} is in the same repo: put {branch}'s change in {lower_branch}'s worktree"
+            )
+        warning = f"warning: {spec} is in the same repo, recorded as a stacked PR\n"
     if not pr_ref and _find(entries, lower_key, lower_branch) is None:
         raise LookupError(f"{spec}: not recorded")
     dependent = _find(entries, _repo_key(repo), branch)
@@ -888,7 +896,7 @@ def _link_branches(
         raise LookupError(f"{branch} already depends on {spec}")
     if not pr_ref and _has_cycle(entries, dependent, link):
         raise LookupError(f"{spec}: {branch} would make a cycle")
-    return _entry_edit(
+    return warning + _entry_edit(
         repo,
         entries,
         branch,
@@ -1008,7 +1016,9 @@ def edit_record(
 ) -> str:
     """Apply the record edit ``options`` asks for to ``entries`` and describe it."""
     if options.depends_on is not None:
-        return _link_branches(repo, entries, tools, *options.depends_on)
+        return _link_branches(
+            repo, entries, tools, *options.depends_on, force=options.force
+        )
     if options.no_depends_on is not None:
         return _unlink_branches(repo, entries, tools, *options.no_depends_on)
     if options.why is not None:

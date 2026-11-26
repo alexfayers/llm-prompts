@@ -3239,6 +3239,20 @@ def test_a_same_repo_link_is_refused(
     assert _entry_of(project, "feat/b").depends_on == ()
 
 
+def test_a_forced_same_repo_link_is_recorded_with_a_warning(
+    project: Project, stack: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert project.run("tool", depends_on=("feat/b", "tool:feat/a"), force=True) == 0
+
+    assert (
+        "warning: tool:feat/a is in the same repo, recorded as a stacked PR"
+        in capsys.readouterr().out
+    )
+    assert [link.branch for link in _entry_of(project, "feat/b").depends_on] == [
+        "feat/a"
+    ]
+
+
 def test_depends_on_a_pr_of_an_unmanaged_repo_writes_its_line_and_no_depends_on_removes_it(
     project: Project,
 ) -> None:

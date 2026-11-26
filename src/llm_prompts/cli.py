@@ -1238,6 +1238,7 @@ def _sync_options(args: argparse.Namespace) -> SyncOptions:
         tuple(args.no_depends_on) if args.no_depends_on else None,
         tuple(args.why) if args.why else None,
         tuple(args.title) if args.title else None,
+        args.force,
     )
 
 
@@ -1608,6 +1609,11 @@ def _run_command(
         help="Make BRANCH depend on TOOL:BRANCH in another repo, or on a PR in any repo.",
     )
     sync_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="With --depends-on, record a link to a branch in the same repo with a warning instead of refusing it.",
+    )
+    sync_parser.add_argument(
         "--no-depends-on",
         nargs=2,
         metavar=("BRANCH", "TOOL:BRANCH|OWNER/REPO#N"),
@@ -1701,6 +1707,14 @@ def _run_command(
             "Pass only one of --branch, --forget, --ready, --local, "
             "--depends-on, --no-depends-on, --why, --title and --rescan."
         )
+
+    if (
+        args.command == "contribute"
+        and args.contribute_command == "sync"
+        and args.force
+        and not args.depends_on
+    ):
+        sync_parser.error("--force requires --depends-on.")
 
     if (
         args.command == "contribute"

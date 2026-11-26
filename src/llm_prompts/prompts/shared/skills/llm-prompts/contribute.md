@@ -1,6 +1,6 @@
 # Opening a PR
 
-Covers llm-prompts, cline-hooks, and mcp-memory. Read the TARGET repo's CONTRIBUTING.md and `.github/PULL_REQUEST_TEMPLATE.md`. Never assume another repo's applies.
+Covers llm-prompts, cline-hooks, and mcp-memory. Read the TARGET repo's own CONTRIBUTING.md and `.github/PULL_REQUEST_TEMPLATE.md`.
 
 - MUST open every PR as a draft (`gh pr create --draft`). MUST NOT request reviewers unasked.
 - MUST NOT rewrite commits backing an approved or in-review PR. New work MUST get its own commit and PR. MUST ask if unsure.
@@ -12,24 +12,25 @@ All three repos' prompts trees go through `llm-prompts contribute` (`list`, `syn
 
 - MUST work in a `git worktree` on your own branch with its commits ahead of `origin/main`. Any number is allowed.
   `list` flags a worktree whose combined diff is over the line guideline in `yappy_limits.json`.
-- MUST start the worktree from `origin/main`. A change that needs another unmerged change in the same repo MUST go in that change's worktree and PR, never a stacked PR.
+- MUST start the worktree from `origin/main`. A change that needs another unmerged change in the same repo SHOULD go in that change's worktree and PR.
+  A stacked PR in the same repo needs `sync --depends-on B TOOL:BASE --force`.
   `sync` skips a branch holding another worktree's commits or other local `main` commits.
 - `sync --tool NAME --branch B` records the worktree, local only.
-  `sync` copies it into local `main` as one squashed commit and pulls remote changes, never pushing or touching a PR.
+  `sync` copies it into local `main` as one squashed commit and pulls remote changes.
 - `sync --tool NAME --why B "TEXT"` records the Why for B's PR, local only. MUST record it before `--ready`. `sync` skips a PR (nonzero exit) while a required template section is empty.
 - `sync --tool NAME --ready B` lets `sync --apply` push B as `<login>/contribute/B` and open a draft PR (no reviewers), body per the repo's template,
   then refresh its What, and its title only while it is still the one sync wrote. `--local B` reverses it. `--forget B` drops it.
 - `sync --rescan` records your open PRs checked out in worktrees, local only.
 - `sync` is a dry run until `--apply`. It force-pushes only a draft PR whose remote branch is unchanged since the last sync. Once the PR merges, `sync --apply` removes the worktree and branch.
 - `list` shows each recorded worktree's state, offline.
-- `update --apply` - rebases your open PRs behind `main`.
+- `update --apply` rebases your open PRs behind `main`.
 - MUST NOT edit local `main` by hand. `update` copies ready worktrees into it, then installs. On a conflict that prints a worktree, MUST resolve its files, `git add`, rerun.
 
 ## Everything else
 
 - `llm-prompts contribute` works without gh given GH_TOKEN or GITHUB_TOKEN.
 - MUST keep each repo's primary checkout on `main`, work in a `git worktree` on your own branch, and never use a fresh clone.
-- Every PR SHOULD target `main`. Link PRs across repos only with `sync --depends-on` (`TOOL:BRANCH` or `owner/repo#N`).
+- Every PR SHOULD target `main`. Link PRs with `sync --depends-on` (`TOOL:BRANCH` or `owner/repo#N`), and use `--force` for a same-repo stack.
   Sync writes the `Depends on` lines. MUST NOT copy another PR's commits, or add rebase notes.
 - Shared CI logic MUST live in llm-prompts. Other repos MUST import it, never copy it.
 - Check push access with `gh repo view --json viewerPermission`.
@@ -48,7 +49,7 @@ All three repos' prompts trees go through `llm-prompts contribute` (`list`, `syn
 
 ## PR content
 
-- Follow the template structure (What/Why, optional Dependencies/Issues).
+- Follow the template (What/Why, optional Dependencies/Issues).
 - `sync` writes the recorded Why and no placeholder comments. A body edit MUST NOT contain `<!--`. Sync marks its What bullets with `[](#sync)`.
   Use at most 3 short bullets per section, not restating the title. Descriptions MUST be easy for reluctant reviewers to follow.
 - Title: first commit's subject, plus `(+N more)`. It is the squash commit subject: a multi-commit PR MUST set one with `--title B "TEXT"`.

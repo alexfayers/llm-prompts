@@ -2857,6 +2857,20 @@ class TestContributeSubcommand:
         assert exc_info.value.code == 2
         assert "Pass only one of" in capsys.readouterr().err
 
+    def test_force_without_depends_on_errors(
+        self, fake_subprocess: FakeSubprocess, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch(
+                "sys.argv",
+                ["llm-prompts", "contribute", "sync", "--tool", "a", "--force"],
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            main()
+        assert exc_info.value.code == 2
+        assert "--force requires --depends-on" in capsys.readouterr().err
+
     @pytest.mark.parametrize("flag", ["--depends-on", "--no-depends-on"])
     def test_link_edits_without_tool_error(self, flag: str) -> None:
         with (
