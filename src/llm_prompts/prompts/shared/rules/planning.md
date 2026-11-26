@@ -1,4 +1,5 @@
 ---
+audience: writer
 roles: lead
 targets: claude-code, pi
 ---
@@ -41,23 +42,10 @@ then {% if AGENT == "pi" %}present the plan{% else %}`EnterPlanMode`{% endif %}.
 
 ## Scope discipline during execution
 
-- Where an action's scope (files, commands, steps) is larger than the request implies, MUST pause and summarise it first.
 {% if AGENT == "claude-code" %}
 - MUST NOT assume a broad mandate from a narrow request.
 {% endif %}
 - 2+ asks: MUST {% if AGENT == "pi" %}add one `tower_do_patch` task each{% else %}`TaskCreate` one entry each{% endif %} before starting.
-
-## Check feasibility before designing
-
-- Before investing in a design, SHOULD state the mechanism the request depends on and confirm it can deliver the goal.
-- MUST surface a constraint fatal to the approach rather than carry it forward.
-- SHOULD distinguish "can this do X" from "can it do a related-but-different Y"; favour the user's instinct over the plan.
-- Before rejecting a mechanism, SHOULD check whether you narrowed the goal it was judged against, and re-read the user's literal words on pushback.
-- SHOULD NOT build a fix for an unmeasured problem - confirm the gap is real, or measure it cheaply first.
-- Where research rejects EVERY option, treat that as a framing signal, not a finding.
-  MUST NOT ship the leftover scope as if it satisfied the ask: say the goal is unmet, then re-ask or return it to the user.
-- Where a plan rests on a numeric claim you can cheaply observe, MUST measure it rather than compute it, run the codebase's own harness when one gives the real number,
-  and label any computed value an estimate until measured.
 
 ## Session scope discipline
 

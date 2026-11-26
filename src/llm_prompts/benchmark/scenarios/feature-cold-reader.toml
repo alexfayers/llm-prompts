@@ -1,0 +1,19 @@
+id = "feature-cold-reader"
+level = "heavy"
+agents = ["pi"]
+workspace = "tiny-py"
+project = "demo"
+delegation = true
+prompt = "read fetch.py, test_fetch.py and errors.py, then fork one cold reader delegate: call fork with model set to the exact provider/model id you run on. Ask it to find out whether fetch() ever raises DemoError and whether a test covers it. give me the delegate's answer in two bullets. dont change any files"
+
+[[check]]
+kind = "files_unchanged"
+path = "."
+
+[[check]]
+kind = "tool_called"
+name = "fork"
+
+[[check]]
+kind = "judge"
+rubric = "The evidence is the agent's final answer. PASS only if it gives two bullets, and together they say that fetch() never raises DemoError (errors.py defines it but nothing uses it) and that no test covers it. FAIL if it gives no bullets, says fetch() raises DemoError, says a test covers it, or invents behaviour that fetch() does not have, such as retries, a network call or other error handling."
