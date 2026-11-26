@@ -154,7 +154,11 @@ def prepare(
             gitconfig = home / ".gitconfig"
             if not gitconfig.exists():
                 gitconfig.write_text(PLACEHOLDER_GITCONFIG)
-            _init_repo(workspace, {**host_env, **shared}, cell.scenario.setup)
+            _init_repo(
+                workspace,
+                {**host_env, **shared, "SEEN_WORKSPACE": str(seen / "workspace")},
+                cell.scenario.setup,
+            )
             if hits := audit(root, stores=stores.roots()):
                 raise IsolationBreach(hits)
             yield PreparedCell(

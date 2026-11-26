@@ -135,7 +135,7 @@ path = "fetch.py"
 rubric = "The retries use exponential backoff."
 ```
 
-`setup` is a list of shell scripts run in the workspace right after its first commit. `delegation = true` leaves the claude subagent tools and the pi `fork` tools on, and the `tool_called` and `not_called` checks take `by = "lead"` or `by = "subagent"`.
+`setup` is a list of shell scripts run in the workspace right after its first commit, with `SEEN_WORKSPACE` set to the workspace path the agent sees. `delegation = true` leaves the claude subagent tools and the pi `fork` tools on, and the `tool_called` and `not_called` checks take `by = "lead"` or `by = "subagent"`.
 
 ### Check kinds
 

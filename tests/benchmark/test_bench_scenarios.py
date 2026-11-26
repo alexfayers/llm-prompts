@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import shutil
@@ -354,6 +355,7 @@ def test_the_ghost_scenario_saves_the_ghost_it_asks_the_agent_to_replay(
     )
     shutil.copytree(scenario.workspace, tmp_path / "w")
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("SEEN_WORKSPACE", "/seen/workspace")
     monkeypatch.setitem(os.environ, "PATH", f"{tmp_path / 'bin'}:{os.environ['PATH']}")
     (tmp_path / "bin").mkdir()
     (tmp_path / "bin" / "pi").write_text("#!/bin/sh\necho 1.6.0\n")
@@ -379,6 +381,10 @@ def test_the_ghost_scenario_saves_the_ghost_it_asks_the_agent_to_replay(
 
     (file,) = (tmp_path / ".pi/agent/ghosts").glob("*/add-fetch-all.json")
     ghost = json.loads(file.read_text())
+    assert (
+        ghost["repoKey"]
+        == f"workspace-{hashlib.sha1(b'/seen/workspace').hexdigest()[:8]}"
+    )
     assert [step["tool"] for step in ghost["steps"]] == ["bash"] * 3
     assert (ghost["piVersion"], len(ghost["approvedHash"])) == ("1.6.0", 64)
 
