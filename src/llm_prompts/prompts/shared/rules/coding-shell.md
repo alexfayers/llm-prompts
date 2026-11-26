@@ -27,7 +27,7 @@ roles: lead, reasoner, worker, surveyor, reviewer
 - MUST NOT run a fixed `sleep` or poll in a loop{% if AGENT == "pi" %}, except a short-backoff retry loop of an MCP call inside one codemode
   script{% else %}, except the one background delegate timer `delegation.md` requires{% endif %}.
   Run long commands in the foreground with an explicit `timeout`.
-- To wait for an external event (PR or command output), MUST run `llm-prompts watch <source> <target> --until <alias|field=value|changed:field>`, not a `sleep` poll.
+- To wait for an external event (PR or command output), MUST run `llm-prompts watch <source> <target> --until <alias|field=value|changed:field|label=glob>`, not a `sleep` poll.
   The root session runs it {% if AGENT == "pi" %}with `process start`{% elif AGENT == "claude-code" %}with Bash `run_in_background`{% else %}in the foreground with
   `timeout`{% endif %}{% if AGENT in ["pi", "claude-code"] %} and ends the turn{% endif %}. Exit codes: 0 matched, 124 timeout, 1 error.
   MUST pass several PRs to one `watch gh-pr` (any match ends it, `--all` waits for every one) instead of one process per PR.

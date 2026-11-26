@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from fnmatch import fnmatchcase
 from typing import NamedTuple
 
 from .source import Fields, WatchError
 
 CHANGED_PREFIX = "changed:"
+LABEL_PREFIX = "label="
 
 
 class Condition(NamedTuple):
@@ -24,8 +26,24 @@ class Condition(NamedTuple):
         return current[self.field] == self.value
 
 
+class LabelCondition(Condition):
+    """Holds when a label matching the glob value is added, or is on at the first poll."""
+
+    def matched(self, baseline: Fields, current: Fields) -> bool:
+        """Return whether current has a matching label that baseline lacks."""
+        before = set() if baseline is current else self._matching(baseline)
+        return bool(self._matching(current) - before)
+
+    def _matching(self, fields: Fields) -> set[str]:
+        # shortcut: labels are split on commas, so a label name holding a comma never matches.
+        names = fields[self.field].split(",")
+        return {name for name in names if fnmatchcase(name, self.value or "")}
+
+
 def parse(text: str, label: str) -> Condition:
-    """Parse ``field=value`` or ``changed:field``."""
+    """Parse ``field=value``, ``changed:field`` or ``label=glob``."""
+    if text.startswith(LABEL_PREFIX):
+        return LabelCondition(label, "labels", text.removeprefix(LABEL_PREFIX))
     if text.startswith(CHANGED_PREFIX):
         return Condition(label, text.removeprefix(CHANGED_PREFIX), None)
     field, separator, value = text.partition("=")
