@@ -63,6 +63,8 @@ export const WORKTREE_PROVIDER = Symbol.for("pi-context.worktree-provider");
 
 const provider = () => (globalThis as { [WORKTREE_PROVIDER]?: WorktreeProvider })[WORKTREE_PROVIDER];
 
+const PUSH_REMOTE = "origin";
+
 /** The git checkout the fork commits in. */
 const checkoutOf = (tree: Worktree) => tree.checkout ?? tree.path;
 
@@ -74,11 +76,16 @@ export async function createWorktree(cwd: string, root: string, name: string, ow
 	const base = own?.base ?? (await gitOut(repo, "symbolic-ref", "--short", "HEAD"));
 	const branch = own?.branch ?? `fork/${name}`;
 	if (own?.branch) await gitOut(repo, "check-ref-format", "--branch", branch);
+	if (own?.branch) {
+		await git(repo, "fetch", "-q", PUSH_REMOTE);
+		if ((await git(repo, "rev-parse", "--verify", "--quiet", `refs/remotes/${PUSH_REMOTE}/${branch}`)).code === 0) throw new Error(`${branch} already exists on ${PUSH_REMOTE}`);
+	}
 	const snapshot = await mainSnapshot(repo);
 	const provided = await provider()?.create(repo, branch, base);
 	if (provided) return { repo, path: provided.path, checkout: await gitOut(provided.gitDir ?? provided.path, "rev-parse", "--show-toplevel"), provided: true, branch, ...(own?.branch && { own: true }), base, snapshot };
 	const dir = path.join(root, repoKey(repo), name);
 	await gitOut(repo, "worktree", "add", "--no-track", "-b", branch, dir, base);
+	if (own?.branch) await Promise.all([gitOut(repo, "config", `branch.${branch}.remote`, PUSH_REMOTE), gitOut(repo, "config", `branch.${branch}.merge`, `refs/heads/${branch}`)]);
 	return { repo, path: dir, branch, ...(own?.branch && { own: true }), base, snapshot };
 }
 
@@ -174,7 +181,10 @@ export async function restoreWorktree(tree: Worktree): Promise<void> {
 	if (fs.existsSync(tree.path)) return;
 	if (tree.provided) throw new Error(`the worktree ${tree.path} is gone`);
 	await git(tree.repo, "worktree", "prune");
-	await gitOut(tree.repo, "worktree", "add", ...((await hasBranch(tree)) ? [tree.path, tree.branch] : ["-b", tree.branch, tree.path, tree.base]));
+	if (tree.own) await git(tree.repo, "fetch", "-q", PUSH_REMOTE);
+	const remote = `refs/remotes/${PUSH_REMOTE}/${tree.branch}`;
+	const from = tree.own && (await git(tree.repo, "rev-parse", "--verify", "--quiet", remote)).code === 0 ? remote : tree.base;
+	await gitOut(tree.repo, "worktree", "add", ...((await hasBranch(tree)) ? [tree.path, tree.branch] : ["-b", tree.branch, tree.path, from]));
 }
 
 export interface Landing {
@@ -193,8 +203,6 @@ export interface LandOptions {
 	/** Regex of private names, besides the home directory path, that must not land. */
 	privateNames?: string;
 }
-
-const PUSH_REMOTE = "origin";
 
 /** The remote branch other than the base that holds the fork branch's tip, when the worktree is on that branch, clean, and has commits past the base. Only refs of `PUSH_REMOTE` count, and a failed fetch trusts none. */
 async function pushedTo(tree: Worktree): Promise<string | undefined> {

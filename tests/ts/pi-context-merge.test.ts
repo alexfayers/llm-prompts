@@ -181,6 +181,36 @@ describe("landing", () => {
 			assert.ok(fs.existsSync(tree.path));
 		});
 
+		test("pushes with a plain git push", async () => {
+			const repo = originRepo("plain");
+			const tree = await own(repo, "own-plain");
+			commit(tree.path, "a.txt", "1", "pr work");
+			git(tree.path, "-c", "push.default=simple", "push", "-q");
+			assert.equal(git(repo, "rev-parse", "origin/feature/own"), git(tree.path, "rev-parse", "HEAD"));
+		});
+
+		test("fetches the base and refuses a branch that exists on origin", async () => {
+			const repo = originRepo("fetch");
+			const other = path.join(scratch, "fetch-other");
+			git(scratch, "clone", "-q", "-b", "main", path.join(scratch, "fetch.git"), other);
+			commit(other, "up.txt", "1", "upstream moved");
+			git(other, "push", "-q", "origin", "HEAD:main");
+			const tree = await own(repo, "own-fetch");
+			assert.equal(git(tree.path, "rev-parse", "HEAD"), git(other, "rev-parse", "HEAD"));
+			git(other, "push", "-q", "origin", "HEAD:feature/taken");
+			await assert.rejects(createWorktree(repo, path.join(scratch, "worktrees"), "own-taken", { base: "origin/main", branch: "feature/taken" }), /feature\/taken/);
+		});
+
+		test("a restored worktree continues from the pushed branch", async () => {
+			const repo = originRepo("restore");
+			const tree = await own(repo, "own-restore");
+			commit(tree.path, "a.txt", "1", "pr work");
+			git(tree.path, "push", "-q");
+			assert.equal((await land({ tree, first: done })).state, "landed");
+			await restoreWorktree(tree);
+			assert.equal(git(tree.path, "rev-parse", "HEAD"), git(repo, "rev-parse", "origin/feature/own"));
+		});
+
 		test("rejects a base without a branch", async () => {
 			await assert.rejects(createWorktree(originRepo("nobranch"), path.join(scratch, "worktrees"), "own-nobranch", { base: "origin/main" }), /branch/);
 		});
