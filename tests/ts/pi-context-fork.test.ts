@@ -522,6 +522,17 @@ describe("fork tool", () => {
 			assert.deepEqual(sent.map(([message]) => message.content.split("]")[0]).sort(), ["[fork q1 done", "[fork q2 done", "[fork qstub done"]);
 		});
 
+		test("shared with tasks starts every child at once when the stub finishes, however low the limit", async () => {
+			limit(1);
+			const gates = ["u1", "u2"].map((name) => path.join(agentDir, `gate-${name}`));
+			const { sent } = await start({ shared: "STUB_REPORT notes", tasks: gates.map((gate, at) => ({ name: `u${at + 1}`, task: `STUB_GATE:${gate}` })), model: "prov/cheap", name: "ustub" });
+			const run = (name: string) => registryOf().all().find((candidate) => candidate.name === name);
+			await eventually(() => Boolean(run("u1") && run("u2")));
+			assert.deepEqual([run("u1")?.queued, run("u2")?.queued], [undefined, undefined]);
+			gates.forEach((gate) => fs.writeFileSync(gate, ""));
+			await eventually(() => sent.length === 3);
+		});
+
 		test("a missing or invalid forks.json leaves the limit at 10", async () => {
 			for (const value of [undefined, 0, -1, 1.5, "2"]) {
 				value === undefined ? fs.rmSync(FORKS_FILE, { force: true }) : limit(value);
