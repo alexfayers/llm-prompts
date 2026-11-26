@@ -121,6 +121,31 @@ describe("a cold worker continuing a copied session", () => {
 	});
 });
 
+describe("a cold reader's rules", () => {
+	const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-reader-rules-"));
+	after(() => fs.rmSync(scratch, { recursive: true }));
+	const handshake = path.join(scratch, "handshake.json");
+	useEnv(() => ({ PI_CONTEXT_CHILD: handshake, PI_CODING_AGENT_DIR: scratch }));
+	const rulesOf = async (role: string) => {
+		fs.writeFileSync(handshake, JSON.stringify({ role, billedFrom: "e9", cacheKey: "source-session" }));
+		const file = { path: path.join(scratch, "AGENTS.md"), content: "main rules" };
+		await (await loadExtension("pi-context/index")).fire("before_agent_start", { systemPromptOptions: { contextFiles: [file] } });
+		return file.content;
+	};
+
+	test("a reader loads the reader rules and a writer the delegate rules", async () => {
+		fs.writeFileSync(path.join(scratch, "AGENTS.delegate.md"), "delegate rules");
+		fs.writeFileSync(path.join(scratch, "AGENTS.reader.md"), "reader rules");
+		assert.equal(await rulesOf("reader"), "reader rules");
+		assert.equal(await rulesOf("writer"), "delegate rules");
+	});
+
+	test("a reader falls back to the delegate rules without a reader file", async () => {
+		fs.rmSync(path.join(scratch, "AGENTS.reader.md"));
+		assert.equal(await rulesOf("reader"), "delegate rules");
+	});
+});
+
 describe("a warm fork's first request", () => {
 	const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-lead-prefix-"));
 	after(() => fs.rmSync(scratch, { recursive: true }));

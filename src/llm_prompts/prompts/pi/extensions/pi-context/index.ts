@@ -20,7 +20,7 @@ export default function (pi: ExtensionAPI) {
 		pi.on("tool_call", childGuard(handshake));
 		const { role, inherited, cacheKey } = readHandshake(handshake) ?? {};
 		registerReply(pi, Boolean(role));
-		if (!inherited) registerDelegateRules(pi);
+		if (!inherited) registerDelegateRules(pi, role?.name ?? "writer");
 		else useLeadPrefix(pi, handshake);
 		if (cacheKey) useCacheKey(pi, cacheKey);
 		if (isTeam()) registerBackgroundHooks(pi, background);
