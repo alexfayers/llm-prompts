@@ -30,6 +30,7 @@ from llm_prompts import (
     telemetry,
     telemetry_core,
 )
+from llm_prompts.cli import _pull_local_sources
 from llm_prompts.exit_reason import REASONS, ExitReason, Reason
 
 A, B = "a" * 40, "b" * 40
@@ -961,3 +962,40 @@ def test_an_opted_out_pi_session_sends_nothing(
     _main("session-telemetry", json.dumps(SESSION))
 
     assert not telemetry_popen.called
+
+
+@pytest.mark.usefixtures("stubbed_cli")
+@pytest.mark.parametrize(
+    ("route", "behind", "reason"),
+    [
+        (("fetch",), "0", "source_fetch_failed"),
+        (("merge", "--ff-only"), "1", "source_merge_failed"),
+    ],
+)
+def test_a_source_sync_stop_sends_the_fixed_code_of_its_cause(
+    telemetry_popen: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    route: tuple[str, ...],
+    behind: str,
+    reason: str,
+) -> None:
+    clone = tmp_path / "acme-clone"
+    (clone / ".git").mkdir(parents=True)
+    fake = FakeSubprocess()
+    fake.on(*route, side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=30))
+    fake.on("rev-list", "--count", stdout=f"{behind}\n")
+    monkeypatch.setattr("subprocess.run", fake.run)
+    monkeypatch.setattr("llm_prompts.cli._pull_local_sources", _pull_local_sources)
+    monkeypatch.setenv("LLM_PROMPTS_CONTRIBUTE_RECORD", str(tmp_path / "record.json"))
+    monkeypatch.setattr(
+        "llm_prompts.setup._load_config",
+        lambda *_: [{"name": "core", "source": str(clone), "ref": "acme-branch"}],
+    )
+
+    assert _main("update") == 1
+
+    assert _props(telemetry_popen)["outcome"] == "source_sync_failed"
+    assert _props(telemetry_popen)["exit_reason"] == reason
+    assert reason in REASONS
+    assert "acme" not in json.dumps(_events(telemetry_popen))
