@@ -341,13 +341,14 @@ def test_plugin_overrides_are_edited_as_toml_pairs_without_showing_values(
     )
 
 
+@pytest.mark.parametrize("text", ["s = hunter2", 's = {k = "hunter2"}, s = {}'])
 def test_plugin_overrides_that_are_not_toml_stay_on_the_editor(
-    isolated_config_dir: Path,
+    isolated_config_dir: Path, text: str
 ) -> None:
     path = _write_config(isolated_config_dir, f"{_TOOL}\n{_PLUGIN}")
 
     screen = _edit_entries(
-        "plugins", ("type", "#plugins-0-frontmatter_overrides=s = hunter2")
+        "plugins", ("type", f"#plugins-0-frontmatter_overrides={text}")
     )
 
     assert "frontmatter_overrides must be TOML key = value pairs" in screen

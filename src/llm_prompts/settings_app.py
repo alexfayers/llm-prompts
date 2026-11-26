@@ -13,6 +13,7 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Input, Label, Static, Switch
 from tomlkit import TOMLDocument
+from tomlkit.exceptions import TOMLKitError
 from tomlkit.items import Table
 
 from .config_edit import LoadedConfig, save_doc
@@ -109,7 +110,7 @@ def _apply_rows(doc: TOMLDocument, table: str, rows: list[Row]) -> None:
             elif field.is_table:
                 try:
                     entry[field.key] = tomlkit.parse(f"v = {{{text}}}")["v"].unwrap()
-                except ValueError:
+                except TOMLKitError:
                     raise ValueError(
                         f"{field.key} must be TOML key = value pairs"
                     ) from None
