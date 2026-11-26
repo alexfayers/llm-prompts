@@ -35,6 +35,8 @@ Single-line, conventional-commit style (`feat:`, `fix:`, `docs:`, `chore:`, `ref
 
 `main` is protected - direct pushes are rejected, so all changes go through a PR (squash or rebase merge only).
 
+A PR that fixes a user-facing problem MUST add a CI test that fails without the fix.
+
 For a change under `src/llm_prompts/prompts/**` (rules, skills, workflows, agents), work in a `git worktree` on your own branch and use `contribute` instead of pushing the branch yourself. Each worktree branch is one PR, squash-merged:
 
 ```sh
