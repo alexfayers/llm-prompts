@@ -492,6 +492,22 @@ def test_terminal_table_marks_reused_passes_with_a_footnote_and_drops_all_zero_c
     assert "[" not in text
 
 
+def test_every_summary_shows_the_median_start_context_of_the_forks_per_side() -> None:
+    rows = [
+        base_row("s", "a", fork_start_contexts=[500, 600]),
+        base_row("s", "a", fork_start_contexts=[580]),
+        base_row("s", "b", fork_start_contexts=[300]),
+    ]
+    report = full_report(rows)
+
+    (line,) = [x for x in render(report).splitlines() if x.startswith("| s |")]
+    table = summary_table_text(list(report.scenarios))
+
+    assert "| 580 | 300 |" in line
+    assert "Fork start A" in table and "580" in table
+    assert "fork start 580 -> 300" in summary(list(report.scenarios), "")
+
+
 def test_terminal_table_fits_without_truncating_any_column_or_scenario_name() -> None:
     width = 140
     names = [

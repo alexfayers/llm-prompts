@@ -169,6 +169,7 @@ COLUMNS = (
         lambda s: f"{s.median_start_context:,.0f}",
     ),
     Column("Context change", lambda d: change_text(d.context_change)),
+    *_pair("Fork start", lambda s: f"{s.median_fork_start_context:,.0f}"),
     *_pair("Cost", lambda s: cost_text(s.median_cost_usd)),
     Column("Cost change", lambda d: change_text(d.cost_change)),
     *_pair("Time", lambda s: _time(s.median_wall_s)),

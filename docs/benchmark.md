@@ -48,7 +48,7 @@ Runs need `sandbox-exec` (macOS) or `bwrap` (Linux) unless `--no-os-sandbox` is 
 
 ## Output
 
-The end of a run shows a table comparing A and B per scenario and agent: pass rate, start->peak context, cost, time, model turns and failed test runs. The last two lines are the paths of the reports.
+The end of a run shows a table comparing A and B per scenario and agent: pass rate, start->peak context, the median start context of the forks, cost, time, model turns and failed test runs. The last two lines are the paths of the reports.
 
 The run folder under `~/.local/share/llm-prompts/llm-prompts/state/benchmark/runs/` holds:
 
@@ -56,7 +56,7 @@ The run folder under `~/.local/share/llm-prompts/llm-prompts/state/benchmark/run
 - `report.md` and `report.json`: the comparison, with the gate result and the actual token use.
 - One folder per run, with its agent log, trace, memory and workspace.
 
-Peak context is the largest prompt sent on one model call. Cost is the agent's own reported USD cost. Failed test runs count bash calls that ran `pytest` and were rejected or reported a failure.
+Peak context is the largest prompt sent on one model call. A fork's start context is the prompt of its own first model call, for pi only. Cost is the agent's own reported USD cost. Failed test runs count bash calls that ran `pytest` and were rejected or reported a failure.
 
 Runs of A and of B are reused from earlier runs on the same side when nothing that shapes them changed. That includes the pinned build and, for B, `--b-env`. A reused run keeps its agent run and its checks run again against the current scenario.
 

@@ -200,6 +200,7 @@ class Trace:
     cost_usd: float | None = None
     turns: int = 0
     prefix_reads: tuple[PrefixRead, ...] = ()
+    fork_start_contexts: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -249,6 +250,7 @@ class ResultRow:
     judge_tokens: int = 0
     context: int = 0
     start_context: int = 0
+    fork_start_contexts: tuple[int, ...] = ()
     cost_usd: float | None = None
     turns: int = 0
     tool_calls: int = 0
