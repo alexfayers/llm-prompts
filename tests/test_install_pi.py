@@ -3035,8 +3035,6 @@ class TestPiPackageRemoval:
     ) -> None:
         _installed_package(tmp_path / "home", "user-ext", None)
         self._install(tmp_path, ["npm:acme-ext", "npm:user-ext"])
-        calls: list[list[str]] = []
-
         with (
             patch("llm_prompts.install.Path.home", return_value=tmp_path / "home"),
             patch("llm_prompts.install.shutil.which", return_value="/usr/bin/pi"),
@@ -3046,11 +3044,12 @@ class TestPiPackageRemoval:
             ),
             patch(
                 "llm_prompts.install.subprocess.run",
-                side_effect=lambda cmd, **_: calls.append(cmd),
-            ),
+                side_effect=lambda cmd, **_: subprocess.CompletedProcess(cmd, 0),
+            ) as run,
         ):
             uninstall(["pi"])
 
+        calls = [call.args[0] for call in run.call_args_list]
         removed = [c[2] for c in calls if c[1] == "remove"]
         assert "npm:acme-ext" in removed
         assert "npm:user-ext" not in removed

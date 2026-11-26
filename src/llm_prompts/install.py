@@ -139,14 +139,21 @@ def _log_changes() -> None:
 _PI_PACKAGE = "@earendil-works/pi-coding-agent"
 
 
-def _run_tool(args: list[str], env: dict[str, str] | None = None) -> int:
+def _run_tool(
+    args: list[str],
+    env: dict[str, str] | None = None,
+    *,
+    progress_on_stderr: bool = False,
+) -> int:
     """Run a companion tool, showing its stdout only with --verbose or on failure.
 
-    Its stderr is always shown as a warning.
+    Its stderr is shown as a warning, or at the stdout level when progress_on_stderr is set.
 
     Args:
         args: Command line to run.
         env: Environment for the command, or None to inherit.
+        progress_on_stderr: Show stderr like stdout, for a tool such as npm
+            that writes notices to stderr.
 
     Returns:
         The tool's exit code.
@@ -158,7 +165,7 @@ def _run_tool(args: list[str], env: dict[str, str] | None = None) -> int:
     for line in stdout_lines:
         log(stdout_level, line)
     for line in stderr_lines:
-        log("warn", line)
+        log(stdout_level if progress_on_stderr else "warn", line)
     if result.returncode and not (stdout_lines or stderr_lines):
         log("warn", f"{shlex.join(args)} failed with exit code {result.returncode}")
     return result.returncode
@@ -4244,16 +4251,16 @@ def _install_pi_packages(
         ):
             continue
         absent = not manifest.parent.exists()
-        if subprocess.run(
-            [pi, "install", source], env=_pi_env(), check=False
-        ).returncode:
+        if _run_tool([pi, "install", source], _pi_env(), progress_on_stderr=True):
             log(
                 "error",
                 f"[pi] `pi install {source}` failed. "
                 "Check npm auth (`~/.npmrc`, `npm whoami`).",
             )
             failed.append(source)
-        elif absent and name in adoptable:
+            continue
+        log("success", f"[pi] Installed {source}.")
+        if absent and name in adoptable:
             installed.add(name)
     return failed, installed
 
@@ -4276,7 +4283,7 @@ def _remove_owned_pi_packages(owned: set[str], wanted: set[str]) -> set[str]:
         log("warn", "[pi] `pi` not found, skipping package removal.")
         return stale
     for name in sorted(stale):
-        subprocess.run([pi, "remove", f"npm:{name}"], env=_pi_env(), check=False)
+        _run_tool([pi, "remove", f"npm:{name}"], _pi_env(), progress_on_stderr=True)
     kept = {name for name in stale if _pi_package_dir(name).exists()}
     for name in sorted(kept):
         log("warn", f"[pi] Could not remove package {name}.")
