@@ -55,6 +55,7 @@ PERMISSION_CONFIG = Path(".pi/agent/extensions/pi-permission-system/config.json"
 PATH_EDIT_TOOLS = ("edit", "write", "path_write")
 FORK_FILES = Path(".pi/agent/pi-context")
 USAGE_KEYS = ("input", "output", "cacheRead", "cacheWrite")
+CONTEXT_KEYS = ("input", "cacheRead", "cacheWrite")
 
 
 def _text(message: Mapping[str, object]) -> str:
@@ -291,9 +292,11 @@ class PiAdapter:
         usage = list(dataclasses.astuple(trace.tokens))
         cost_usd = trace.cost_usd
         prefix_reads = []
+        start_contexts = []
         for handshake in sorted((home / FORK_FILES).glob("*/handshake.json")):
             if (prefix := _prefix_read(handshake.parent)) is not None:
                 prefix_reads.append(prefix)
+            calls = []
             for message in _fork_messages(handshake.parent, since):
                 match message.get("role"):
                     case "toolResult":
@@ -306,6 +309,12 @@ class PiAdapter:
                         call_usage = message.get("usage")
                         for i, key in enumerate(USAGE_KEYS):
                             usage[i] += count(call_usage, key)
+                        calls.append(
+                            (
+                                count(message, "timestamp"),
+                                sum(count(call_usage, key) for key in CONTEXT_KEYS),
+                            )
+                        )
                         if (total := _cost(call_usage)) is not None:
                             cost_usd = (cost_usd or 0.0) + total
                         content = message.get("content")
@@ -321,6 +330,8 @@ class PiAdapter:
                                     count(message, "timestamp") / 1000,
                                     subagent=True,
                                 )
+            if calls:
+                start_contexts.append(min(calls)[1])
         return dataclasses.replace(
             trace,
             tool_calls=tuple(
@@ -329,6 +340,7 @@ class PiAdapter:
             tokens=Tokens(*usage),
             cost_usd=cost_usd,
             prefix_reads=tuple(prefix_reads),
+            fork_start_contexts=tuple(start_contexts),
         )
 
     def replied(self, line: str) -> bool:
@@ -401,12 +413,7 @@ class PiAdapter:
                     call_usage = message.get("usage")
                     for i, key in enumerate(USAGE_KEYS):
                         usage[i] += count(call_usage, key)
-                    meter.add(
-                        sum(
-                            count(call_usage, key)
-                            for key in ("input", "cacheRead", "cacheWrite")
-                        )
-                    )
+                    meter.add(sum(count(call_usage, key) for key in CONTEXT_KEYS))
                     if (total := _cost(call_usage)) is not None:
                         cost_usd = (cost_usd or 0.0) + total
                     model = str(message.get("model", ""))

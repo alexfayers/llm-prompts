@@ -309,6 +309,39 @@ def test_each_shared_tasks_child_reports_whether_it_read_the_stub_prefix(
     ]
 
 
+def test_each_fork_reports_the_context_of_its_own_first_request(
+    tmp_path: Path,
+) -> None:
+    for first_read in (500, 30):
+        _fork_files(
+            tmp_path,
+            "seed",
+            {"type": "message", "id": "seed", "message": _cached(9000, 0)},
+            {"type": "message", "id": "f1", "message": _cached(first_read, 40)},
+            {"type": "message", "id": "f2", "message": _cached(900, 0)},
+        )
+
+    trace = PiAdapter().add_delegates(make_trace(), tmp_path, 0)
+
+    assert sorted(trace.fork_start_contexts) == [70, 540]
+
+
+def test_a_fork_start_context_is_its_earliest_call_across_its_sessions(
+    tmp_path: Path,
+) -> None:
+    later = {**_cached(900, 0), "timestamp": LATER_MS + 1}
+    files = _fork_files(
+        tmp_path, None, {"type": "message", "id": "f2", "message": later}
+    )
+    (files / "session").mkdir()
+    first = {"type": "message", "id": "f1", "message": _cached(50, 0)}
+    (files / "session" / "x.jsonl").write_text(json.dumps(first) + "\n")
+
+    trace = PiAdapter().add_delegates(make_trace(), tmp_path, 0)
+
+    assert trace.fork_start_contexts == (50,)
+
+
 def test_on_reply_fires_once_at_the_first_assistant_line(
     popen: FakePopen, cell: tuple[PreparedCell, Scenario]
 ) -> None:

@@ -160,6 +160,7 @@ def _row(
         judge_tokens=sum(outcome.tokens for outcome in outcomes),
         context=trace.context,
         start_context=trace.start_context,
+        fork_start_contexts=trace.fork_start_contexts,
         cost_usd=trace.cost_usd,
         turns=trace.turns,
         tool_calls=len(trace.tool_calls),

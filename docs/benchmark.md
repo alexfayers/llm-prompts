@@ -18,7 +18,7 @@ Run it from an llm-prompts checkout. Any commit, branch or `:worktree` works for
 | `--b-drop RULE` | Leave this shared rule (a `shared/rules/RULE.md` source) out of ref B's build. A pinned rule is refused. Repeatable. |
 | `--feature NAME` | Measure a pi feature: `consult`, `ghost`, `test-output-fold`, `warm-fork` or `shared-tasks` (the `shared` and `tasks` parameters of `fork`, left out of A by `PI_CONTEXT_SHARED=off`). A runs without it and B with it, so give both the same ref. Both sides use the tools pinned by `--a-tool`, and `--b-tool` is refused. Only pi runs, and `--agents` must be `pi`. Repeatable. The `feature-fork` scenario keeps the fork tools on for both sides, so it compares two refs, such as one before and one after #676 made every fork run in the background. `warm-fork` runs every plain `fork` call as a cold worker on A and as a warm fork on B, both on the model and thinking level of the session. The `feature-warm-fork` scenario measures it. |
 | `--no-reuse` | Run A and B again instead of reusing finished runs. |
-| `--level LEVEL` | `light`, `medium` or `heavy` (default: `light`). A level includes all lower levels. |
+| `--level LEVEL` | `light`, `medium` or `heavy` (default: `light`). A level includes all lower levels. A scenario runs only when `--level` is at its `level` or higher, so `--scenario feature-warm-fork` needs `--level heavy`. |
 | `--agents LIST` | Comma separated agents (default: `claude,pi`). |
 | `--model AGENT=ID` | Model id for one agent. Repeatable. Default: `sonnet` for claude, and `defaultModel` from your pi settings (`~/.pi/agent/settings.json`) for pi. The pi judge always uses that `defaultModel`. |
 | `--repeats N` | Run every scenario exactly N times per agent and ref. Without it, each runs once and then repeats, see [Repeats](#repeats). |
@@ -48,7 +48,7 @@ Runs need `sandbox-exec` (macOS) or `bwrap` (Linux) unless `--no-os-sandbox` is 
 
 ## Output
 
-The end of a run shows a table comparing A and B per scenario and agent: pass rate, start->peak context, cost, time, model turns and failed test runs. The last two lines are the paths of the reports.
+The end of a run shows a table comparing A and B per scenario and agent: pass rate, start->peak context, the median start context of the forks, cost, time, model turns and failed test runs. The last two lines are the paths of the reports.
 
 The run folder under `~/.local/share/llm-prompts/llm-prompts/state/benchmark/runs/` holds:
 
@@ -56,7 +56,7 @@ The run folder under `~/.local/share/llm-prompts/llm-prompts/state/benchmark/run
 - `report.md` and `report.json`: the comparison, with the gate result and the actual token use.
 - One folder per run, with its agent log, trace, memory and workspace.
 
-Peak context is the largest prompt sent on one model call. Cost is the agent's own reported USD cost. Failed test runs count bash calls that ran `pytest` and were rejected or reported a failure.
+Peak context is the largest prompt sent on one model call. A fork's start context is the prompt of its own first model call, for pi only. Cost is the agent's own reported USD cost. Failed test runs count bash calls that ran `pytest` and were rejected or reported a failure.
 
 Runs of A and of B are reused from earlier runs on the same side when nothing that shapes them changed. That includes the pinned build and, for B, `--b-env`. A reused run keeps its agent run and its checks run again against the current scenario.
 

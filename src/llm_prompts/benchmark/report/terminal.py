@@ -56,10 +56,16 @@ def footer_text(report: Report) -> str:
 
 def _summary_line(delta: ScenarioDelta) -> str:
     a, b = delta.a, delta.b
+    fork_start = (
+        f", fork start {a.median_fork_start_context:,.0f} -> "
+        f"{b.median_fork_start_context:,.0f}"
+        if a.median_fork_start_context or b.median_fork_start_context
+        else ""
+    )
     line = (
         f"{_name(delta)} {delta.agent}: pass {a.passed}/{a.total} -> "
         f"{b.passed}/{b.total}, context {a.median_context:,.0f} -> "
-        f"{b.median_context:,.0f} ({change_text(delta.context_change)}), cost "
+        f"{b.median_context:,.0f} ({change_text(delta.context_change)}){fork_start}, cost "
         f"{cost_text(a.median_cost_usd)} -> {cost_text(b.median_cost_usd)} "
         f"({change_text(delta.cost_change)}), time {_time(a.median_wall_s)} -> "
         f"{_time(b.median_wall_s)} ({change_text(delta.time_change)})"

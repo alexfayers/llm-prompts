@@ -13,7 +13,7 @@ Agent = Literal["claude", "pi"]
 
 DEFAULT_FAIL_FAST_AFTER = 3
 WORKTREE = ":worktree"
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 CheckArg = str | int | bool | tuple[str, ...]
 JsonValue = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
@@ -200,6 +200,7 @@ class Trace:
     cost_usd: float | None = None
     turns: int = 0
     prefix_reads: tuple[PrefixRead, ...] = ()
+    fork_start_contexts: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -249,6 +250,7 @@ class ResultRow:
     judge_tokens: int = 0
     context: int = 0
     start_context: int = 0
+    fork_start_contexts: tuple[int, ...] = ()
     cost_usd: float | None = None
     turns: int = 0
     tool_calls: int = 0
@@ -288,4 +290,6 @@ class ResultRow:
                 data[name] = _pick(kind, {**asdict(getattr(cls, name)), **data[name]})
         if "checks" in data:
             data["checks"] = tuple(_pick(CheckOutcome, c) for c in data["checks"])
+        if "fork_start_contexts" in data:
+            data["fork_start_contexts"] = tuple(data["fork_start_contexts"])
         return cls(**data)

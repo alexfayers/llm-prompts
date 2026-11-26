@@ -45,6 +45,7 @@ class Summary:
     chain_wall_s: float | None = None
     chain_runs: int = 0
     median_start_context: float = 0.0
+    median_fork_start_context: float = 0.0
     median_turns: float = 0.0
     median_wall_s: float = 0.0
     failed_test_runs: int = 0
@@ -232,6 +233,9 @@ def _summarise(all_rows: Sequence[ResultRow]) -> Summary:
         median_context=_median([r.context for r in completed]),
         median_cost_usd=median(costs) if costs else None,
         median_start_context=_median([r.start_context for r in completed]),
+        median_fork_start_context=_median(
+            [start for r in completed for start in r.fork_start_contexts]
+        ),
         median_turns=_median([r.turns for r in completed]),
         median_wall_s=_median([r.wall_s for r in completed]),
         failed_test_runs=sum(r.failed_test_runs for r in completed),
