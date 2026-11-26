@@ -348,6 +348,50 @@ describe("landing", () => {
 			assert.notEqual(git(repo, "branch", "--list", tree.branch), "");
 		});
 
+		describe("escalating after the push", () => {
+			const escalated = async (name: string, setup: (tree: Awaited<ReturnType<typeof writer>>, repo: string) => void) => {
+				const { repo, tree } = await pushedFork(name);
+				setup(tree, repo);
+				return { repo, tree, landing: await land({ tree, first: done }) };
+			};
+			const notes = (tree: { path: string }) => (fs.mkdirSync(path.join(tree.path, ".context")), fs.writeFileSync(path.join(tree.path, ".context", "notes.md"), "x"));
+
+			test("removes the worktree and branch when only untracked .context files remain", async () => {
+				const { repo, tree, landing } = await escalated("context-only", notes);
+				assert.equal(landing.state, "escalated");
+				assert.equal(landing.removed, true);
+				assert.ok(!fs.existsSync(tree.path));
+				assert.equal(git(repo, "branch", "--list", tree.branch), "");
+			});
+
+			test("removes them when origin/main holds the same patches", async () => {
+				const { repo, tree, landing } = await escalated("on-main", (tree, repo) => {
+					git(tree.path, "push", "-q", "origin", "--delete", "pr-branch");
+					git(repo, "cherry-pick", tree.branch);
+					git(repo, "push", "-q", "origin", "main");
+					notes(tree);
+				});
+				assert.equal(landing.removed, true);
+				assert.ok(!fs.existsSync(tree.path));
+				assert.equal(git(repo, "branch", "--list", tree.branch), "");
+			});
+
+			test("keeps them when a tracked file changed, another file is untracked, or a commit is not pushed", async () => {
+				const cases: [string, (tree: Awaited<ReturnType<typeof writer>>) => void][] = [
+					["tracked", (tree) => (notes(tree), fs.writeFileSync(path.join(tree.path, "a.txt"), "changed"))],
+					["untracked", (tree) => (notes(tree), fs.writeFileSync(path.join(tree.path, "loose.txt"), "x"))],
+					["unpushed", (tree) => (notes(tree), commit(tree.path, "c.txt", "1", "unpushed work"))],
+				];
+				for (const [name, setup] of cases) {
+					const { repo, tree, landing } = await escalated(`keep-${name}`, setup);
+					assert.equal(landing.state, "escalated", name);
+					assert.equal(landing.removed, false, name);
+					assert.ok(fs.existsSync(tree.path), name);
+					assert.notEqual(git(repo, "branch", "--list", tree.branch), "", name);
+				}
+			});
+		});
+
 		test("escalates when the worktree left the fork branch for a pushed one", async () => {
 			const { repo, tree } = await pushedFork("switched");
 			git(tree.path, "switch", "-q", "-c", "other", "main");

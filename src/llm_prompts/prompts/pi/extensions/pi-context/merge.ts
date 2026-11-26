@@ -171,19 +171,33 @@ async function removeProvided(dir: string): Promise<Ran> {
 
 /** Removes the landed worktree and branch, and says what stayed. The branch is deleted without a merge check when `pushed`, as a remote branch holds its commits. */
 async function cleanup(tree: Worktree, pushed = false): Promise<string | undefined> {
-	const removed = tree.provided ? await removeProvided(tree.path) : await git(tree.repo, "worktree", "remove", tree.path);
+	const removed = tree.provided ? await removeProvided(tree.path) : await git(tree.repo, "worktree", "remove", "--force", tree.path);
 	const deleted = (await hasBranch(tree)) ? await git(tree.repo, "branch", pushed ? "-D" : "-d", tree.branch) : { code: 0, out: "" };
 	const failed = [removed, deleted].filter(({ code }) => code).map(({ out }) => out.trim());
 	return failed.length ? `cleanup left files: ${failed.join("; ")}` : undefined;
 }
 
-/** Removes the worktree and its branch when the fork left no changes and no commits in it. */
+const CONTEXT_FILES = /^\?\? \.context(\/|$)/;
+
+/** Whether every commit of the fork branch is on `PUSH_REMOTE`: on one of its branches, or with its patch in `UPSTREAM`. A failed fetch trusts none. */
+async function onRemote(tree: Worktree): Promise<boolean> {
+	const checkout = checkoutOf(tree);
+	if ((await offBranch(tree)) || (await git(checkout, "fetch", "-q", "--prune", PUSH_REMOTE)).code) return false;
+	const unpushed = await git(checkout, "rev-list", "--count", "HEAD", "--not", `--remotes=${PUSH_REMOTE}`);
+	if (unpushed.code === 0 && unpushed.out.trim() === "0") return true;
+	const cherry = await git(checkout, "cherry", UPSTREAM, "HEAD");
+	return cherry.code === 0 && !/^\+ /m.test(cherry.out);
+}
+
+/** Removes the worktree and its branch when the fork left no changes besides untracked `.context` files, and every commit in it is on the remote. */
 export async function dropIfClean(tree: Worktree): Promise<boolean> {
 	if (!fs.existsSync(tree.path)) return false;
 	const status = await git(checkoutOf(tree), "status", "--porcelain");
 	const ahead = await git(checkoutOf(tree), "rev-list", "--count", `${tree.base}..HEAD`);
-	if (status.code || status.out.trim() || ahead.code || ahead.out.trim() !== "0") return false;
-	return (await cleanup(tree)) === undefined;
+	if (status.code || ahead.code || status.out.split("\n").some((line) => line && !CONTEXT_FILES.test(line))) return false;
+	const committed = ahead.out.trim() !== "0";
+	if (committed && !(await onRemote(tree))) return false;
+	return (await cleanup(tree, committed)) === undefined;
 }
 
 /** Makes the git worktree again on its branch, or on a new branch from its base, when it is gone. */
