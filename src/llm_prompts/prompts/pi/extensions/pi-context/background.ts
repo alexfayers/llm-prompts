@@ -105,6 +105,11 @@ export class Background {
 		this.following.set(runId, ended);
 	}
 
+	/** Settles once the run's delegate, with its cleanup and landing, has ended. */
+	ended(runId: string): Promise<unknown> | undefined {
+		return this.following.get(runId);
+	}
+
 	/** Lets `steer` reach the run's child. */
 	attach(runId: string, child: Steerable): void {
 		this.children.set(runId, child);

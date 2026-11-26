@@ -1075,6 +1075,22 @@ describe("fork tool", () => {
 			assert.equal(git(repo, "branch", "--list", "fork/bigw"), "");
 		});
 
+		test("fork_resume with a task continues a cancelled writer in its kept worktree, with its session", async () => {
+			const life = path.join(agentDir, "life.log");
+			const { tools, appended, ctx } = await start({ task: `STUB_STEER STUB_LIFE:${life}`, role: "writer", name: "stopped" }, repo);
+			const run = () => registryOf().all().find((candidate) => candidate.name === "stopped")!;
+			await eventually(() => fs.existsSync(life));
+			const { worktree, files } = run();
+			await tools.fork_cancel.execute("c", { name: "stopped" }, undefined, undefined, ctx);
+			assert.equal((await tools.fork_resume.execute("r", { name: "stopped", task: `STUB_INSPECT STUB_LIFE:${life}` }, undefined, undefined, ctx)).content[0].text, "continued fork stopped (background)");
+			await eventually(() => appended.length > 0);
+			const seen = JSON.parse((appended.at(-1)![1] as { text: string }).text.replace(/^echo: /, ""));
+			assert.equal(seen.handshake.worktree, worktree);
+			assert.equal(seen.args[seen.args.indexOf("--session") + 1], path.join(files!, "seed.jsonl"));
+			await eventually(() => !isLive(run()));
+			assert.equal(fs.readFileSync(life, "utf8"), "prompt\nexit\nprompt\nexit\n");
+		});
+
 		test("a large writer whose tool call is aborted while its summary is written makes no worktree and starts no run", async () => {
 			let written!: (summary: string) => void;
 			const controller = new AbortController();
