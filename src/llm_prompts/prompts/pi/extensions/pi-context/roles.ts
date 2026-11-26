@@ -5,7 +5,7 @@ import path from "node:path";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext, type ToolCallEvent } from "@earendil-works/pi-coding-agent";
 
 export type Role = {
-	name: "reader" | "writer" | "btw";
+	name: "reader" | "writer";
 	card: string;
 	/** Allowed non-MCP tool names, as globs. */
 	tools: string[];
@@ -49,14 +49,6 @@ export const ROLES: Record<Role["name"], Role> = {
 		mcp: READ_MCP,
 		skills: [],
 		writes: true,
-	},
-	btw: {
-		name: "btw",
-		card: "You answer one side question for the user. Read-only. Answer briefly and do not continue the main task.",
-		tools: READ_TOOLS,
-		mcp: READ_MCP,
-		skills: [],
-		writes: false,
 	},
 };
 

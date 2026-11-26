@@ -15,7 +15,7 @@ describe("decide", () => {
 	});
 
 	test("only a writer may call lsp_diagnostics, so a read-only role starts no language server", () => {
-		for (const role of [ROLES.reader, ROLES.btw]) assert.match(decide(role, "lsp_diagnostics", { path: "*" })?.reason ?? "", /may not use lsp_diagnostics/);
+		for (const role of [ROLES.reader]) assert.match(decide(role, "lsp_diagnostics", { path: "*" })?.reason ?? "", /may not use lsp_diagnostics/);
 		assert.equal(decide(ROLES.writer, "lsp_diagnostics", { path: "*" }), undefined);
 	});
 

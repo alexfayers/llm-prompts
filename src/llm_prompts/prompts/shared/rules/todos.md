@@ -17,6 +17,11 @@ When the user asks to do something that is **not directly related** to the curre
 4. **Add it to the end of the current {{TASK_PROGRESS}} checklist** so it will be picked up after the current task completes.
 5. **Continue** the current task to completion before picking up the side request.
 
+- A user message starting with "btw" is side work.
+  If it is a quick informational question (what, why, status) that does not change the current task, answer it inline.
+  A speculative "can we X?" or "maybe we should X" is not informational.
+  Otherwise MUST track it per steps 3-4 as its own task, which may later feed back into the current work.
+
 **Steps 1-2 are not a substitute for steps 3-4.**
 Acknowledging a side request in prose ("I'll get to that after") without also making the memory write and checklist entry in that same turn is the specific failure this rule exists to prevent -
 a promise in text is not tracked anywhere and reliably gets lost under later tool calls or context compaction.

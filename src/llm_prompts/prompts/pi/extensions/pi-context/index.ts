@@ -4,7 +4,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Background, registerBackgroundHooks } from "./background.ts";
 import { readBridgeConfig, registerChildBridge, trackPrefix, useCacheKey, useLeadPrefix } from "./bridge.ts";
-import { registerBtw } from "./btw.ts";
 import { registerFork, sweepFinished } from "./fork.ts";
 import { registerGhostCommand } from "./ghost/command.ts";
 import { Recorder, registerRecorder } from "./ghost/recorder.ts";
@@ -20,7 +19,7 @@ export default function (pi: ExtensionAPI) {
 	if (handshake) {
 		pi.on("tool_call", childGuard(handshake));
 		const { role, inherited, cacheKey } = readHandshake(handshake) ?? {};
-		registerReply(pi, Boolean(role && role.name !== "btw"));
+		registerReply(pi, Boolean(role));
 		if (!inherited) registerDelegateRules(pi);
 		else useLeadPrefix(pi, handshake);
 		if (cacheKey) useCacheKey(pi, cacheKey);
@@ -37,6 +36,5 @@ export default function (pi: ExtensionAPI) {
 	}
 	registerGhostRun(pi);
 	registerFork(pi, undefined, background);
-	registerBtw(pi);
 	registerLiveView(pi, background.view);
 }
