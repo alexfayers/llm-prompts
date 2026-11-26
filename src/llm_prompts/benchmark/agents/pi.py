@@ -6,6 +6,7 @@ import dataclasses
 import json
 import subprocess
 from collections.abc import Iterable, Iterator, Mapping
+from datetime import datetime
 from importlib import resources
 from pathlib import Path
 
@@ -49,7 +50,14 @@ FEATURE_TOOLS = {"consult": ("consult",), "ghost": ("ghost_run",)}
 FEATURE_EXTENSIONS = ("test-output-fold",)
 FORK_MODE = "warm-fork"
 FEATURE_OFF_ENV = {"shared-tasks": {"PI_CONTEXT_SHARED": "off"}}
-FEATURES = (*FEATURE_TOOLS, *FEATURE_EXTENSIONS, FORK_MODE, *FEATURE_OFF_ENV)
+CACHE_WARMING = "cache-warming"
+FEATURES = (
+    *FEATURE_TOOLS,
+    *FEATURE_EXTENSIONS,
+    FORK_MODE,
+    *FEATURE_OFF_ENV,
+    CACHE_WARMING,
+)
 WORKER_TIER = "bench"
 PERMISSION_CONFIG = Path(".pi/agent/extensions/pi-permission-system/config.json")
 PATH_EDIT_TOOLS = ("edit", "write", "path_write")
@@ -76,8 +84,30 @@ def _cost(usage: object) -> float | None:
     return None
 
 
-def _fork_messages(files: Path, since: float) -> Iterator[Mapping[str, object]]:
-    """Yield the messages a fork wrote to its sessions in ``files`` since ``since``, without the entries it was seeded with, or the session it continues for a cold worker."""
+def _add_usage(
+    totals: list[int], call_usage: object, cost_usd: float | None
+) -> float | None:
+    """Add the tokens of ``call_usage`` to ``totals`` and return ``cost_usd`` plus its cost."""
+    for i, key in enumerate(USAGE_KEYS):
+        totals[i] += count(call_usage, key)
+    if (total := _cost(call_usage)) is not None:
+        return (cost_usd or 0.0) + total
+    return cost_usd
+
+
+def _written_at(entry: Mapping[str, object]) -> float:
+    """Return the epoch seconds a session entry was written, or 0 when it has no valid time."""
+    message = entry.get("message")
+    if isinstance(message, dict):
+        return count(message, "timestamp") / 1000
+    try:
+        return datetime.fromisoformat(str(entry.get("timestamp"))).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _fork_entries(files: Path, since: float) -> Iterator[Mapping[str, object]]:
+    """Yield the messages and usage entries a fork wrote to its sessions in ``files`` since ``since``, without the entries it was seeded with, or the session it continues for a cold worker."""
     handshake = read_json(files / "handshake.json", strict=False)
     inherited = handshake.get("inherited") or handshake.get("billedFrom")
     for session in (*files.glob("seed.jsonl"), *files.glob("session/**/*.jsonl")):
@@ -86,13 +116,11 @@ def _fork_messages(files: Path, since: float) -> Iterator[Mapping[str, object]]:
         ]
         ids = [entry.get("id") for entry in entries]
         for entry in entries[ids.index(inherited) + 1 if inherited in ids else 0 :]:
-            message = entry.get("message")
             if (
-                entry.get("type") == "message"
-                and isinstance(message, dict)
-                and count(message, "timestamp") >= since * 1000
+                entry.get("type") in ("message", "usage")
+                and _written_at(entry) >= since
             ):
-                yield message
+                yield entry
 
 
 def _prefix_read(files: Path) -> PrefixRead | None:
@@ -182,8 +210,12 @@ class PiAdapter:
         )
 
     def install_features(self, home: Path, features: Mapping[str, bool]) -> None:
-        """Drop the extensions of the features that ``features`` turns off, and run every fork warm or cold as ``features`` sets the warm fork, and name the model of the cold workers when it measures shared tasks."""
+        """Drop the extensions of the features that ``features`` turns off, turn cache warming off when it turns that off, and run every fork warm or cold as ``features`` sets the warm fork, and name the model of the cold workers when it measures shared tasks."""
         agent_dir = home / ".pi" / "agent"
+        if features.get(CACHE_WARMING, True) is False:
+            settings = read_json(agent_dir / "settings.json")
+            settings["cacheWarming"] = "off"
+            write_json(agent_dir / "settings.json", settings)
         if "shared-tasks" in features:
             settings = read_json(agent_dir / "settings.json")
             provider = settings.get("defaultProvider", BEDROCK_PROVIDER)
@@ -297,7 +329,13 @@ class PiAdapter:
             if (prefix := _prefix_read(handshake.parent)) is not None:
                 prefix_reads.append(prefix)
             calls = []
-            for message in _fork_messages(handshake.parent, since):
+            for entry in _fork_entries(handshake.parent, since):
+                if entry.get("type") == "usage":
+                    cost_usd = _add_usage(usage, entry.get("usage"), cost_usd)
+                    continue
+                message = entry.get("message")
+                if not isinstance(message, dict):
+                    continue
                 match message.get("role"):
                     case "toolResult":
                         log.end(
@@ -307,16 +345,13 @@ class PiAdapter:
                         )
                     case "assistant":
                         call_usage = message.get("usage")
-                        for i, key in enumerate(USAGE_KEYS):
-                            usage[i] += count(call_usage, key)
+                        cost_usd = _add_usage(usage, call_usage, cost_usd)
                         calls.append(
                             (
                                 count(message, "timestamp"),
                                 sum(count(call_usage, key) for key in CONTEXT_KEYS),
                             )
                         )
-                        if (total := _cost(call_usage)) is not None:
-                            cost_usd = (cost_usd or 0.0) + total
                         content = message.get("content")
                         for block in content if isinstance(content, list) else []:
                             if (
@@ -424,6 +459,11 @@ class PiAdapter:
                         if stop_reason in FAILED_STOP_REASONS
                         else ""
                     )
+                case "entry_appended" if (
+                    isinstance(event.get("entry"), dict)
+                    and event["entry"].get("type") == "usage"
+                ):
+                    cost_usd = _add_usage(usage, event["entry"].get("usage"), cost_usd)
                 case "agent_settled":
                     settled = True
         failed = not settled or stop_reason in FAILED_STOP_REASONS

@@ -667,6 +667,7 @@ def test_a_feature_run_measures_pi_only() -> None:
     assert cli("--feature", "consult", "--agents", "pi")[1][0].agents == ("pi",)
     assert cli("--feature", "consult", "--agents", "claude,pi") == (2, [])
     assert cli("--feature", "consult", "--agents", "claude") == (2, [])
+    assert cli("--feature", "cache-warming")[1][0].features == ("cache-warming",)
 
 
 def test_a_feature_run_refuses_tool_pins_for_b_alone() -> None:

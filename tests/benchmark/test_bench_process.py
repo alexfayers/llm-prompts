@@ -249,6 +249,24 @@ def test_pi_forks_add_their_own_usage_and_calls_to_the_cell(
     assert trace.turns == 1
 
 
+def test_pi_fork_cache_warming_requests_add_their_cost_to_the_cell(
+    tmp_path: Path,
+) -> None:
+    warm = {"type": "usage", "id": "w", "usage": {"input": 1, "cost": {"total": 0.5}}}
+    _fork_files(
+        tmp_path,
+        "seed",
+        {"type": "message", "id": "seed", "message": _reply(0.5)},
+        {**warm, "timestamp": "2100-01-01T00:00:00Z"},
+        {**warm, "id": "old", "timestamp": "1970-01-01T00:00:00Z"},
+        {**warm, "id": "bad", "timestamp": "never"},
+    )
+
+    trace = PiAdapter().add_delegates(make_trace(cost_usd=1.0), tmp_path, 1)
+
+    assert (trace.cost_usd, trace.tokens.input) == (1.5, 1)
+
+
 def test_fork_calls_are_merged_into_the_lead_calls_by_time(tmp_path: Path) -> None:
     at = LATER_MS / 1000
     _fork_files(
