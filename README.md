@@ -172,7 +172,7 @@
 | tests/test\_install\_claude\_permissions.py                                   |      267 |        1 |     99% |       312 |
 | tests/test\_install\_codex.py                                                 |      273 |        0 |    100% |           |
 | tests/test\_install\_opencode.py                                              |       66 |        0 |    100% |           |
-| tests/test\_install\_pi.py                                                    |     1728 |        1 |     99% |      2449 |
+| tests/test\_install\_pi.py                                                    |     1729 |        1 |     99% |      2450 |
 | tests/test\_jsonfile.py                                                       |       23 |        0 |    100% |           |
 | tests/test\_main\_sync.py                                                     |      318 |        0 |    100% |           |
 | tests/test\_manifest.py                                                       |       83 |        0 |    100% |           |
@@ -210,7 +210,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       84 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **36928** |  **842** | **98%** |           |
+| **TOTAL**                                                                     | **36929** |  **842** | **98%** |           |
 
 
 ## Setup coverage badge
