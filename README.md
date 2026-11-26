@@ -51,7 +51,7 @@
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/config\_edit.py                                              |       58 |        1 |     98% |        74 |
 | src/llm\_prompts/console.py                                                   |       18 |        1 |     94% |        48 |
-| src/llm\_prompts/contribute.py                                                |     1278 |       62 |     95% |116, 220, 247-248, 289-290, 322-323, 467, 611-612, 645, 818, 821, 878, 889, 999-1000, 1045, 1149, 1195-1196, 1209, 1625-1628, 1816, 1818, 1832-1833, 1842-1843, 1862, 1873-1874, 1945, 2001-2006, 2010, 2130, 2173-2174, 2230, 2235-2236, 2255, 2311-2333, 2436, 2552, 2575 |
+| src/llm\_prompts/contribute.py                                                |     1283 |       62 |     95% |116, 220, 247-248, 289-290, 322-323, 472, 616-617, 650, 823, 826, 883, 894, 1004-1005, 1050, 1154, 1200-1201, 1214, 1630-1633, 1821, 1823, 1837-1838, 1847-1848, 1867, 1878-1879, 1950, 2006-2011, 2015, 2135, 2178-2179, 2235, 2240-2241, 2260, 2316-2338, 2441, 2557, 2580 |
 | src/llm\_prompts/exit\_reason.py                                              |        9 |        0 |    100% |           |
 | src/llm\_prompts/extension\_factories.py                                      |       12 |        0 |    100% |           |
 | src/llm\_prompts/git\_snapshot.py                                             |      158 |        7 |     96% |123, 167, 200, 213, 217, 231, 296 |
@@ -153,7 +153,7 @@
 | tests/test\_commit\_guard.py                                                  |      310 |        2 |     99% |   441-442 |
 | tests/test\_config\_edit.py                                                   |       99 |        0 |    100% |           |
 | tests/test\_conftest.py                                                       |       94 |        4 |     96% |194-196, 209 |
-| tests/test\_contribute.py                                                     |      401 |        0 |    100% |           |
+| tests/test\_contribute.py                                                     |      406 |        0 |    100% |           |
 | tests/test\_contribute\_worktrees.py                                          |     2377 |        0 |    100% |           |
 | tests/test\_e2e\_git.py                                                       |      240 |        0 |    100% |           |
 | tests/test\_extension\_factories.py                                           |       29 |        0 |    100% |           |
@@ -210,7 +210,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       84 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **37231** |  **836** | **98%** |           |
+| **TOTAL**                                                                     | **37241** |  **836** | **98%** |           |
 
 
 ## Setup coverage badge

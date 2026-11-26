@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">401 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">401<span class="text"> run</span></button>
+            <span class="text">406 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">406<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_a44f0ac069e85531_test_contribute_worktrees_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
-            created at 2026-11-26 17:38 +0000
+            created at 2026-11-26 17:48 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -1052,6 +1052,18 @@
     <p class="run"><span class="n"><a id="t970" href="#t970">970</a></span><span class="t">    <span class="nam">body</span><span class="op">.</span><span class="nam">write_text</span><span class="op">(</span><span class="str">&quot;## What\n\n&lt;!-- x --&gt;\n&quot;</span><span class="op">,</span> <span class="nam">encoding</span><span class="op">=</span><span class="str">&quot;utf-8&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t971" href="#t971">971</a></span><span class="t">    <span class="key">assert</span> <span class="nam">contribute</span><span class="op">.</span><span class="nam">check_body</span><span class="op">(</span><span class="nam">body</span><span class="op">,</span> <span class="nam">tmp_path</span><span class="op">)</span> <span class="op">==</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t972" href="#t972">972</a></span><span class="t">    <span class="key">assert</span> <span class="str">&quot;leftover placeholder comment&quot;</span> <span class="key">in</span> <span class="nam">capsys</span><span class="op">.</span><span class="nam">readouterr</span><span class="op">(</span><span class="op">)</span><span class="op">.</span><span class="nam">err</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t973" href="#t973">973</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t974" href="#t974">974</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t975" href="#t975">975</a></span><span class="t"><span class="op">@</span><span class="nam">pytest</span><span class="op">.</span><span class="nam">mark</span><span class="op">.</span><span class="nam">parametrize</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t976" href="#t976">976</a></span><span class="t">    <span class="op">(</span><span class="str">&quot;name&quot;</span><span class="op">,</span> <span class="str">&quot;reason&quot;</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t977" href="#t977">977</a></span><span class="t">    <span class="op">[</span><span class="op">(</span><span class="str">&quot;missing.md&quot;</span><span class="op">,</span> <span class="str">&quot;No such file or directory&quot;</span><span class="op">)</span><span class="op">,</span> <span class="op">(</span><span class="str">&quot;.&quot;</span><span class="op">,</span> <span class="str">&quot;Is a directory&quot;</span><span class="op">)</span><span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t978" href="#t978">978</a></span><span class="t"><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t979" href="#t979">979</a></span><span class="t"><span class="key">def</span> <span class="nam">test_check_body_command_names_an_unreadable_body_file</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t980" href="#t980">980</a></span><span class="t">    <span class="nam">tmp_path</span><span class="op">:</span> <span class="nam">Path</span><span class="op">,</span> <span class="nam">capsys</span><span class="op">:</span> <span class="nam">pytest</span><span class="op">.</span><span class="nam">CaptureFixture</span><span class="op">[</span><span class="nam">str</span><span class="op">]</span><span class="op">,</span> <span class="nam">name</span><span class="op">:</span> <span class="nam">str</span><span class="op">,</span> <span class="nam">reason</span><span class="op">:</span> <span class="nam">str</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t981" href="#t981">981</a></span><span class="t"><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t982" href="#t982">982</a></span><span class="t">    <span class="nam">body</span> <span class="op">=</span> <span class="nam">tmp_path</span> <span class="op">/</span> <span class="nam">name</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t983" href="#t983">983</a></span><span class="t">    <span class="key">assert</span> <span class="nam">contribute</span><span class="op">.</span><span class="nam">check_body</span><span class="op">(</span><span class="nam">body</span><span class="op">,</span> <span class="nam">tmp_path</span><span class="op">)</span> <span class="op">==</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t984" href="#t984">984</a></span><span class="t">    <span class="key">assert</span> <span class="nam">capsys</span><span class="op">.</span><span class="nam">readouterr</span><span class="op">(</span><span class="op">)</span><span class="op">.</span><span class="nam">err</span> <span class="op">==</span> <span class="fst">f&quot;</span><span class="fst">PR body: </span><span class="op">{</span><span class="nam">body</span><span class="op">}</span><span class="fst">: </span><span class="op">{</span><span class="nam">reason</span><span class="op">}</span><span class="fst">\n</span><span class="fst">&quot;</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -1061,7 +1073,7 @@
             <a class="nav" href="z_a44f0ac069e85531_test_contribute_worktrees_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
-            created at 2026-11-26 17:38 +0000
+            created at 2026-11-26 17:48 +0000
         </p>
     </div>
 </footer>
