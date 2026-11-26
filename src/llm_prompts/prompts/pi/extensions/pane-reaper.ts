@@ -9,6 +9,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { EXEC_MAX_BUFFER_BYTES } from "./pi-context/merge.ts";
 import { forkRegistry } from "./pi-context/registry.ts";
 
 const execFileAsync = promisify(execFile);
@@ -171,7 +172,7 @@ function isUsedByLiveFork(checkout: Checkout): boolean {
 }
 
 async function isProcessInside(checkout: Checkout): Promise<boolean> {
-	const { stdout } = await execFileAsync("lsof", LSOF_CWD_ARGS, { timeout: PS_TIMEOUT_MS });
+	const { stdout } = await execFileAsync("lsof", LSOF_CWD_ARGS, { timeout: PS_TIMEOUT_MS, maxBuffer: EXEC_MAX_BUFFER_BYTES });
 	return stdout.split("\n").some((line) => line.startsWith(LSOF_NAME_PREFIX) && isInside(line.slice(LSOF_NAME_PREFIX.length), checkout.path));
 }
 
@@ -289,7 +290,7 @@ export function selectOrphans(procs: Proc[], markers: Record<number, Marker>, li
 }
 
 async function runPs(args: string[]): Promise<string> {
-	return (await execFileAsync("ps", args, { timeout: PS_TIMEOUT_MS, env: { ...process.env, LC_ALL: "C" } })).stdout;
+	return (await execFileAsync("ps", args, { timeout: PS_TIMEOUT_MS, maxBuffer: EXEC_MAX_BUFFER_BYTES, env: { ...process.env, LC_ALL: "C" } })).stdout;
 }
 
 async function listProcesses(): Promise<Proc[]> {
