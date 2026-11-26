@@ -103,12 +103,13 @@ export class Registry {
 		return () => void this.listeners.delete(listener);
 	}
 
-	/** Replaces the runs with saved records, where the last record of a run wins. Returns the runs that were still live in them, now lost. */
-	restore(records: Run[]): Run[] {
+	/** Replaces the runs with the saved records that `keep` accepts once the live ones are lost, where the last record of a run wins. Returns the runs that were still live in them, now lost. */
+	restore(records: Run[], keep: (run: Run) => boolean = () => true): Run[] {
 		this.runs.clear();
 		for (const record of records) this.runs.set(record.id, { ...record });
 		const lost = this.live();
 		for (const run of lost) run.state = "lost";
+		for (const run of this.all()) if (!keep(run)) this.runs.delete(run.id);
 		return lost;
 	}
 
