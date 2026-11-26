@@ -300,7 +300,7 @@ describe("session start", () => {
 		});
 	}
 
-	test("removes a candidate once and reports the kept worktrees once per change of the kept set", async () => {
+	test("removes a candidate once and reports the kept worktrees once per session", async () => {
 		setEnv();
 		addWorktree("wip", { merged: false });
 		const settling = addWorktree("settling", { fresh: true });
