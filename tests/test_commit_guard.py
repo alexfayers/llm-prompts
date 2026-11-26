@@ -131,6 +131,27 @@ class TestCommitGuard:
         ran(hook, f"cd {repo} && timeout 600 just", parent_tool_call_id="outer")
         assert hook("PreShell", command="git commit -m x") is None
 
+    def test_a_just_run_with_a_uv_run_override_counts(
+        self, hook: RunHook, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ran(hook, "just --set uv_run 'uv run' lint")
+        ran(hook, "just --set uv_run")
+        ran(hook, "just --set uv_run true")
+        ran(hook, "just --set uv_run 'uv run true'")
+        ran(hook, "just --set uv_run 'uv run --help'")
+        ran(hook, "just --set uv_run 'uv run -q;#'")
+        ran(hook, "just --set other x")
+        ran(hook, "just --set uv_run 'uv run' --set other x")
+        assert hook("PreShell", command="git commit -m x") is not None
+
+        monkeypatch.setenv("PI_CONTEXT_TEST_CMD", "just test")
+        ran(hook, "just --set uv_run 'uv run' test")
+        assert hook("PreShell", command="git commit -m x") is not None
+
+        monkeypatch.delenv("PI_CONTEXT_TEST_CMD")
+        ran(hook, "just --set uv_run 'uv run --frozen' > j.log 2>&1")
+        assert hook("PreShell", command="git commit -m x") is None
+
     @pytest.mark.parametrize("command", ["just > /tmp/j.log", "just > j.log 2>&1"])
     def test_a_redirected_run_counts_only_when_it_passes_alone(
         self, hook: RunHook, command: str

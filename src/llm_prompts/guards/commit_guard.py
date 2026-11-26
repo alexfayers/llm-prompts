@@ -31,6 +31,7 @@ TEST_COMMAND_ENV = "PI_CONTEXT_TEST_CMD"
 _PROMPTS = Path(__file__).parent.parent / "prompts"
 _UNCHAINED = re.compile(r";|\||\n|(?<![&<>])&(?![&>])")
 _READ_ONLY_AFTER_TEST = frozenset({"echo", "printf", "true", "pwd", "ls", "cat"})
+_UV_RUN_OPTIONS = frozenset({"--frozen", "--locked", "--offline", "--no-sync"})
 _LOCKFILE_TOOLS = {
     "uv.lock": ("uv",),
     "pnpm-lock.yaml": ("pnpm", "node"),
@@ -95,7 +96,9 @@ class _TestRun:
     def matches(self, words: list[str]) -> bool:
         """Report whether the words are the command, or match a pattern in full."""
         if self.command is not None:
-            return words == self.command
+            return words == self.command or (
+                self.command == ["just"] and _just_with_uv_run(words)
+            )
         return any(regex.fullmatch(shlex.join(words)) for regex in self.patterns)
 
 
@@ -193,6 +196,14 @@ def _gate_words(words: list[str]) -> list[str]:
     if words[0] == "timeout":
         return [word for word in words[1:] if not word.startswith("-")][1:]
     return words
+
+
+def _just_with_uv_run(words: list[str]) -> bool:
+    """Report whether the words are `just --set uv_run <value>` with a value of `uv run` and only lockfile or sync options."""
+    if len(words) != 4 or words[:3] != ["just", "--set", "uv_run"]:
+        return False
+    value = words[3].split()
+    return value[:2] == ["uv", "run"] and _UV_RUN_OPTIONS.issuperset(value[2:])
 
 
 def _dirty(toplevel: Path) -> bool:
