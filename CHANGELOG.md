@@ -1,5 +1,80 @@
 # Changelog
 
+## [0.9.0](https://github.com/alexfayers/llm-prompts/compare/v0.8.0...v0.9.0) (2026-11-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **contribute:** stop stacking same-repo PRs and keep hand edits across syncs ([#497](https://github.com/alexfayers/llm-prompts/issues/497))
+
+### Features
+
+* **ask-codex:** review through a GPT fork on pi ([#617](https://github.com/alexfayers/llm-prompts/issues/617)) ([1f02acc](https://github.com/alexfayers/llm-prompts/commit/1f02acc7b2370be45c8d6424e28b682cfb5f03af))
+* **benchmark:** measure a pi feature on and off with --feature ([#728](https://github.com/alexfayers/llm-prompts/issues/728)) ([fc42d7c](https://github.com/alexfayers/llm-prompts/commit/fc42d7cd90d269ac2a43111a506450c19dbbf69f))
+* **checkpoint:** end a rewind fold with a reminder to keep using checkpoints ([#688](https://github.com/alexfayers/llm-prompts/issues/688)) ([f81fa3c](https://github.com/alexfayers/llm-prompts/commit/f81fa3c5f9dccfd092de208eed0adc548f4e7120))
+* **checkpoint:** suggest a rewind when folding a long run costs less than carrying it ([#692](https://github.com/alexfayers/llm-prompts/issues/692)) ([790ecb8](https://github.com/alexfayers/llm-prompts/commit/790ecb85446aa2ac27efc31772cf1a4eaad56217))
+* **claude-code:** set CLAUDE_CODE_ENABLE_TODO_TOOLS in Claude Code settings on install ([#740](https://github.com/alexfayers/llm-prompts/issues/740)) ([6ff33ea](https://github.com/alexfayers/llm-prompts/commit/6ff33eab71dba87b0cc26953dbe1d3a0f4048696))
+* **commit-guard:** skip a test run when the files and tool versions already passed ([#695](https://github.com/alexfayers/llm-prompts/issues/695)) ([ff8486e](https://github.com/alexfayers/llm-prompts/commit/ff8486e93ed77cf303dc9e6e8fab63724717d533))
+* **contribute:** check a PR body against the template before it is pushed ([#711](https://github.com/alexfayers/llm-prompts/issues/711)) ([70303f0](https://github.com/alexfayers/llm-prompts/commit/70303f0ac7c537c4c16058c11287abb754cf3499))
+* **contribute:** link a dependency on a PR in any repo with --depends-on ([#545](https://github.com/alexfayers/llm-prompts/issues/545)) ([a61fc61](https://github.com/alexfayers/llm-prompts/commit/a61fc618707e980dfdfebee11ce8d61ead15e5e3))
+* **contribute:** mark a PR ready with owner-reviewed and auto-merge in one step ([#725](https://github.com/alexfayers/llm-prompts/issues/725)) ([9eb6f86](https://github.com/alexfayers/llm-prompts/commit/9eb6f86d2a3a3cdc91da56c61f5a69664bef6cc5))
+* **contribute:** stop stacking same-repo PRs and keep hand edits across syncs ([#497](https://github.com/alexfayers/llm-prompts/issues/497)) ([c98129b](https://github.com/alexfayers/llm-prompts/commit/c98129b52a9547a703fec6ef40fb5041c50eb352))
+* **delegation:** reuse a warm fork before starting a cold one ([#690](https://github.com/alexfayers/llm-prompts/issues/690)) ([d2c3756](https://github.com/alexfayers/llm-prompts/commit/d2c3756a5a9e88d0fdd95a10252703136b55b78a))
+* fail prompt sources with a prose line over 200 characters ([#546](https://github.com/alexfayers/llm-prompts/issues/546)) ([9bc318b](https://github.com/alexfayers/llm-prompts/commit/9bc318bfcf1b124bfdd87df7d8a85c1bf77e4144))
+* **guards:** drop -e from set calls instead of blocking them ([#752](https://github.com/alexfayers/llm-prompts/issues/752)) ([89ee612](https://github.com/alexfayers/llm-prompts/commit/89ee6124ee7a70834e52797188831b5284cc2b1f))
+* **install:** join Claude Code rules into one file in a fixed order ([#745](https://github.com/alexfayers/llm-prompts/issues/745)) ([738a27c](https://github.com/alexfayers/llm-prompts/commit/738a27cab9e2a12d4fbd34b31841cb2aae12c82b))
+* keep few reviews in flight at once ([#578](https://github.com/alexfayers/llm-prompts/issues/578)) ([98e5964](https://github.com/alexfayers/llm-prompts/commit/98e5964faaa1c5b817eb7bc64d52562404bc189c))
+* let a rule load only when its load_when condition holds or a paths file is read (+1 more) ([#571](https://github.com/alexfayers/llm-prompts/issues/571)) ([a6fa9dc](https://github.com/alexfayers/llm-prompts/commit/a6fa9dcf9a14e9f893b4c429314980a118ef9820))
+* **pi-context:** cap each fork's memory and CPU in a systemd scope ([#718](https://github.com/alexfayers/llm-prompts/issues/718)) ([6e562de](https://github.com/alexfayers/llm-prompts/commit/6e562de22a1b927c14824d65b1812201dba9e4b3))
+* **pi-context:** copy only history after the last compaction in warm forks ([#705](https://github.com/alexfayers/llm-prompts/issues/705)) ([f23431a](https://github.com/alexfayers/llm-prompts/commit/f23431a2be2104cce7be466eac2958edbb6d9878))
+* **pi-context:** fork from a finished fork's session ([#625](https://github.com/alexfayers/llm-prompts/issues/625)) ([a6dff65](https://github.com/alexfayers/llm-prompts/commit/a6dff656a111fbb605e2613380ef7904246bf681))
+* **pi-context:** keep 600 characters of a fork's summary in its result ([#666](https://github.com/alexfayers/llm-prompts/issues/666)) ([2e02dcf](https://github.com/alexfayers/llm-prompts/commit/2e02dcf301a1f22fbd23214835ee95d9ac11c251))
+* **pi-context:** queue a fork over a configurable live limit ([#674](https://github.com/alexfayers/llm-prompts/issues/674)) ([d271d34](https://github.com/alexfayers/llm-prompts/commit/d271d34d8facec6b75eddc8979c8a96f4ccd0a01))
+* **pi-context:** resume a finished fork when fork_steer names it ([#673](https://github.com/alexfayers/llm-prompts/issues/673)) ([1bdff01](https://github.com/alexfayers/llm-prompts/commit/1bdff01d8ad0776a73e9c1b75abeae49345a3fc4))
+* **pi-context:** run every fork in the background ([#676](https://github.com/alexfayers/llm-prompts/issues/676)) ([cc2c01d](https://github.com/alexfayers/llm-prompts/commit/cc2c01d9b054b6c0b47c3e859552fcea0d21fd2d))
+* **pi-context:** start a fork over 150k tokens of context cold with a summary ([#710](https://github.com/alexfayers/llm-prompts/issues/710)) ([3c35ec5](https://github.com/alexfayers/llm-prompts/commit/3c35ec5731feb40fcf255b27a6030dd83b6e4c0e))
+* **pi-context:** start no language server in a read-only fork ([#708](https://github.com/alexfayers/llm-prompts/issues/708)) ([7d620e4](https://github.com/alexfayers/llm-prompts/commit/7d620e4ac6a179fb8348f6975a2ee4d1545f9c0c))
+* **pi:** delegates end with a typed reply tool ([#749](https://github.com/alexfayers/llm-prompts/issues/749)) ([1fecdd8](https://github.com/alexfayers/llm-prompts/commit/1fecdd8683063a7ef4c77b88763e971f29237fd7))
+* **pi:** move the pi.dev curl install to the npm install on update ([#685](https://github.com/alexfayers/llm-prompts/issues/685)) ([8b4c408](https://github.com/alexfayers/llm-prompts/commit/8b4c40892b8284041391de3431696e130c410a7f))
+* **plugins:** install agents shipped by plugin checkouts ([#748](https://github.com/alexfayers/llm-prompts/issues/748)) ([624ac2c](https://github.com/alexfayers/llm-prompts/commit/624ac2cbd17d68071870520af931cf9ae0633106))
+* **pr-review:** add a review loop guide with a stop rule ([#626](https://github.com/alexfayers/llm-prompts/issues/626)) ([a2b0b98](https://github.com/alexfayers/llm-prompts/commit/a2b0b98c5188e2d963fd63ab83a85a3bfd92cd96))
+* **pr-review:** narrow re-review rounds to the fix and its regressions ([#707](https://github.com/alexfayers/llm-prompts/issues/707)) ([ba41e8e](https://github.com/alexfayers/llm-prompts/commit/ba41e8ec59622c8c92d361cda321392adbb7acec))
+* **pr-review:** shrink your own diff before pushing ([#580](https://github.com/alexfayers/llm-prompts/issues/580)) ([3c78ee5](https://github.com/alexfayers/llm-prompts/commit/3c78ee51033525f411f442d29df445f0015a4659))
+* **pr:** add a pr command that checks size, rebases and readies a PR ([#727](https://github.com/alexfayers/llm-prompts/issues/727)) ([349d522](https://github.com/alexfayers/llm-prompts/commit/349d5223ad9491656442ac1d2e454a915bb2feca))
+* **prompts:** require jq to parse JSON instead of inline scripts ([#747](https://github.com/alexfayers/llm-prompts/issues/747)) ([509a5d6](https://github.com/alexfayers/llm-prompts/commit/509a5d6fbe9534b2f4626e1c40c5208afa461750))
+* **pr:** review and fix a PR through pi or claude before marking it ready ([#733](https://github.com/alexfayers/llm-prompts/issues/733)) ([ff0f76c](https://github.com/alexfayers/llm-prompts/commit/ff0f76cecec255a7a363b8c22fe407a9f3dd7151))
+* **size-guard:** name the amount to cut in a prompt-size block ([#684](https://github.com/alexfayers/llm-prompts/issues/684)) ([000c088](https://github.com/alexfayers/llm-prompts/commit/000c088683a9ac9bdbcfc4a62fe057f9322c55ae))
+* **watch:** gh-pr follows every open PR of an author ([#714](https://github.com/alexfayers/llm-prompts/issues/714)) ([b1fb84d](https://github.com/alexfayers/llm-prompts/commit/b1fb84d5e2fee7dd3af2a70a98f03cbd8978b4db))
+
+
+### Bug Fixes
+
+* **contribute:** leave merge commits out of the PR What list ([#621](https://github.com/alexfayers/llm-prompts/issues/621)) ([4d3952a](https://github.com/alexfayers/llm-prompts/commit/4d3952a2365e2ce8013bb053d42e90547ff4a138))
+* **install:** read the pi that sessions run for the version drift check ([#679](https://github.com/alexfayers/llm-prompts/issues/679)) ([f992295](https://github.com/alexfayers/llm-prompts/commit/f9922951f88ebfcf5c80e572900bfb2194e089dd))
+* **pi-context:** accept an OUTCOME line that opens with an emoji ([#627](https://github.com/alexfayers/llm-prompts/issues/627)) ([327afc9](https://github.com/alexfayers/llm-prompts/commit/327afc915d746be769e81f6ead8b54bc72686ce7))
+* **pi-context:** clear handled forks from the background forks widget and show their source ([#691](https://github.com/alexfayers/llm-prompts/issues/691)) ([568c172](https://github.com/alexfayers/llm-prompts/commit/568c1728ca4fc9dcfa2a05b996f270259a80b417))
+* **pi-context:** keep the bridge socket path short ([#629](https://github.com/alexfayers/llm-prompts/issues/629)) ([080337d](https://github.com/alexfayers/llm-prompts/commit/080337de258dfe539e50671d69afc0ccc5c06cb7))
+* **pi-context:** land a writer on the remote branch it already pushed to ([#667](https://github.com/alexfayers/llm-prompts/issues/667)) ([78014af](https://github.com/alexfayers/llm-prompts/commit/78014af8ea109c016a09665a8bd3794f35df07a8))
+* **pi-context:** land a writer that folded a fixup into a PR branch commit ([#669](https://github.com/alexfayers/llm-prompts/issues/669)) ([31ffb45](https://github.com/alexfayers/llm-prompts/commit/31ffb4520ae660adf353784ad98f80f57bae802a))
+* **pi:** show live fork count and context tokens in the context-total status bar ([#734](https://github.com/alexfayers/llm-prompts/issues/734)) ([e45df99](https://github.com/alexfayers/llm-prompts/commit/e45df99c05441e7f1f23981c622c402917aba544))
+* **setup:** reinstall a tool when its configured source changes ([#670](https://github.com/alexfayers/llm-prompts/issues/670)) ([9727749](https://github.com/alexfayers/llm-prompts/commit/97277492e52686769047eec78dbf51f92f8500e1))
+* **tower-do-slim:** stop board notes in forks and note each revision once ([#703](https://github.com/alexfayers/llm-prompts/issues/703)) ([a669e2e](https://github.com/alexfayers/llm-prompts/commit/a669e2ebe32133f5ce7a34da72dc65fad1549af1))
+* **watch:** gh-pr ignores cancelled checks when deciding ci=fail ([#723](https://github.com/alexfayers/llm-prompts/issues/723)) ([499d9d5](https://github.com/alexfayers/llm-prompts/commit/499d9d5c88226f58e4cdb0a6fbaca2ba6118d618))
+* **watch:** gh-pr matches a check across rerun attempts ([#738](https://github.com/alexfayers/llm-prompts/issues/738)) ([03f61d7](https://github.com/alexfayers/llm-prompts/commit/03f61d79c253f7687c0f5d80a785c0096a5a6d31))
+
+
+### Performance Improvements
+
+* answer contribute sync history reads from one snapshot ([#724](https://github.com/alexfayers/llm-prompts/issues/724)) ([97a4132](https://github.com/alexfayers/llm-prompts/commit/97a41325060cbf000a698789c5a0995a963b6a4c))
+* cut git spawns in contribute sync ([#719](https://github.com/alexfayers/llm-prompts/issues/719)) ([107769c](https://github.com/alexfayers/llm-prompts/commit/107769c11ffddb0dd17dade07164ffae20251809))
+* **tower-do:** fold the task board file only when it changes ([#726](https://github.com/alexfayers/llm-prompts/issues/726)) ([bdfc08f](https://github.com/alexfayers/llm-prompts/commit/bdfc08ffa739a4f905ee471e2fdb13e0465c244c))
+
+
+### Miscellaneous Chores
+
+* **deps:** update all non-major dependencies ([#628](https://github.com/alexfayers/llm-prompts/issues/628)) ([df54a9a](https://github.com/alexfayers/llm-prompts/commit/df54a9a2e1a809b56e4c4a88697181b7afac0109))
+* sync shared files from llm-prompts-ci ([#624](https://github.com/alexfayers/llm-prompts/issues/624)) ([0202fcb](https://github.com/alexfayers/llm-prompts/commit/0202fcbd1424c14022aa41026e0d10ce19b6ddc1))
+
 ## [0.8.0](https://github.com/alexfayers/llm-prompts/compare/v0.7.0...v0.8.0) (2026-11-25)
 
 
