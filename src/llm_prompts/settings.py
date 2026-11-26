@@ -89,15 +89,20 @@ def _benchmark_errors(config: dict[str, Any]) -> list[str]:
     return []
 
 
+def config_problems(config: dict[str, Any]) -> list[str]:
+    """Return every problem in a parsed config that the settings command reports."""
+    return config_errors(config) + _benchmark_errors(config)
+
+
 def _has_terminal() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
 def run(*, check: bool) -> None:
-    """Print the config and its errors, first checking for the editor's extra in a terminal.
+    """Open the settings editor in a terminal, or print the config and its errors.
 
     Args:
-        check: Skip the extra check in a terminal.
+        check: Print the config even in a terminal.
 
     Raises:
         ExitReason: ``config_invalid`` when the config has errors or is not
@@ -108,9 +113,14 @@ def run(*, check: bool) -> None:
             importlib.import_module("textual")
         except ImportError:
             raise ExitReason("other", _MISSING_EXTRA) from None
+        from .config_edit import load_doc
+        from .settings_app import SettingsApp
+
+        SettingsApp(load_doc()).run()
+        return
     config = read_config()
     print("\n".join(report(config)))
-    errors = config_errors(config) + _benchmark_errors(config)
+    errors = config_problems(config)
     if errors:
         print("\n".join(errors), file=sys.stderr)
         raise ExitReason("config_invalid")

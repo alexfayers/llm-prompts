@@ -413,6 +413,7 @@ dev = [
     { name = "pytest-xdist" },
     { name = "pyyaml" },
     { name = "ruff" },
+    { name = "textual" },
     { name = "types-pyyaml" },
 ]
 
@@ -436,6 +437,7 @@ dev = [
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "ruff", specifier = ">=0.11.0" },
+    { name = "textual", specifier = ">=8.2.8" },
     { name = "types-pyyaml", specifier = ">=6.0.12" },
 ]
 
