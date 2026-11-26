@@ -1,0 +1,15 @@
+id = "feature-test-output-fold"
+level = "heavy"
+agents = ["pi"]
+workspace = "tiny-py-bugs"
+project = "demo"
+timeout_s = 600
+prompt = "the tests in test_cart.py fail. Fix cart.py, one failing test at a time: run python3 -m pytest -q, fix the first failure, and run it again, until all tests pass. Change only cart.py. No commit needed."
+
+[[check]]
+kind = "command_exit"
+command = "python3 -m pytest -q"
+
+[[check]]
+kind = "files_unchanged"
+path = "test_cart.py"

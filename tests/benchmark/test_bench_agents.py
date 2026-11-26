@@ -56,6 +56,20 @@ def test_pi_drops_the_language_server_package_only_when_the_feature_is_off(
     assert json.loads(settings.read_text())["packages"] == packages[1:]
 
 
+def test_pi_drops_the_test_output_fold_extension_only_when_the_feature_is_off(
+    tmp_path: Path,
+) -> None:
+    extension = tmp_path / ".pi/agent/extensions/test-output-fold.ts"
+    extension.parent.mkdir(parents=True)
+    extension.write_text("")
+
+    AGENTS["pi"].install_features(tmp_path, {"test-output-fold": True})
+    assert extension.exists()
+
+    AGENTS["pi"].install_features(tmp_path, {"test-output-fold": False})
+    assert not extension.exists()
+
+
 def test_pi_models_come_from_the_pi_settings() -> None:
     assert AGENTS["pi"].default_model == "test-model"
     assert AGENTS["pi"].judge_model == "test-model"
