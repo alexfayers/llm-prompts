@@ -50,7 +50,7 @@ async function setup(options: { withUi: boolean }) {
 	const reply = (text: string) => (context: unknown) => (requests.push(JSON.stringify(context)), fauxAssistantMessage(text));
 	const gate = (name: string) => join(dir, name);
 	const open = (name: string) => writeFileSync(gate(name), "");
-	const forks = (...names: string[]) => names.map((name) => fauxToolCall("fork", { task: `STUB_GATE:${gate(name)}`, name, background: true }));
+	const forks = (...names: string[]) => names.map((name) => fauxToolCall("fork", { task: `STUB_GATE:${gate(name)}`, name }));
 	const finished = (name: string) => registryOf().all().find((run) => run.name === name)?.state === "done";
 	const end = async () => {
 		await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });

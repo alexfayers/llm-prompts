@@ -10,7 +10,6 @@ export type Run = {
 	id: string;
 	name: string;
 	role: string;
-	background: boolean;
 	state: RunState;
 	task: string;
 	outcome?: string;
@@ -79,7 +78,7 @@ export function sessionFileOf(files: string, cold: boolean): string | undefined 
 export const reloadRequested = (): boolean => Boolean((globalThis as any)[Symbol.for("llm-prompts.reload-now.requested")]);
 
 /** Whether a lost run's session is still there to continue, or it never started. */
-export const canResume = (run: Run): boolean => !run.stub && run.state === "lost" && run.background && Boolean(run.queued || (run.files && sessionFileOf(run.files, Boolean(run.model))));
+export const canResume = (run: Run): boolean => !run.stub && run.state === "lost" && Boolean(run.queued || (run.files && sessionFileOf(run.files, Boolean(run.model))));
 
 const MAIN_TOOLS = Symbol.for("llm-prompts.pi-context.main-tools");
 type ToolContext = ExtensionToolContext;

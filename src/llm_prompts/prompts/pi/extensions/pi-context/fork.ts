@@ -619,7 +619,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 	type ForkTask = { name: string; task: string };
 	const failTask = (ctx: ExtensionContext, role: string | undefined, { name, task }: ForkTask, error: unknown) => {
 		const id = newRunId();
-		registry.start({ id, name, role: role ?? "reader", background: true, state: "running", task, cwd: ctx.cwd, startedAt: Date.now() });
+		registry.start({ id, name, role: role ?? "reader", state: "running", task, cwd: ctx.cwd, startedAt: Date.now() });
 		background.finish(ctx, id, { state: "failed" }, error instanceof Error ? error.message : String(error));
 	};
 
@@ -731,7 +731,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 				}
 				const placed = { worktree: tree?.path, branch: tree?.branch, tree };
 				if (tooLarge) registry.update(runId, placed);
-				else registry.start({ id: runId, name, role: role.name, ...(source && { from: source.from ?? source.name, cacheKey: cacheKeyOf(files) }), ...((params as { [STUB_BUILD]?: true })[STUB_BUILD] && { stub: true }), model, background: true, state: "running", task: params.task!, ...placed, target, cwd: ctx.cwd, startedAt: Date.now() });
+				else registry.start({ id: runId, name, role: role.name, ...(source && { from: source.from ?? source.name, cacheKey: cacheKeyOf(files) }), ...((params as { [STUB_BUILD]?: true })[STUB_BUILD] && { stub: true }), model, state: "running", task: params.task!, ...placed, target, cwd: ctx.cwd, startedAt: Date.now() });
 				const message = `${worktreeLine(tree, role.writes ? home : undefined)}${summary ? `Summary of the session you fork from:\n${summary}\n\n` : ""}Task: ${params.task}`;
 				const immediate = skipsQueue(source?.id);
 				const queued = slots.full && !immediate;
@@ -740,14 +740,14 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			};
 			if (tooLarge) {
 				signal?.throwIfAborted();
-				registry.start({ id: runId, name, role: role.name, model, background: true, state: "running", task: params.task, target, cwd: ctx.cwd, startedAt: Date.now() });
+				registry.start({ id: runId, name, role: role.name, model, state: "running", task: params.task, target, cwd: ctx.cwd, startedAt: Date.now() });
 				const cancelled = background.track(runId);
 				const cancelOnAbort = () => void background.cancelRun(runId);
 				signal?.addEventListener("abort", cancelOnAbort, { once: true });
 				const onFail = (error: unknown) => !cancelled.aborted && background.finish(ctx, runId, { state: "failed" }, error instanceof Error ? error.message : String(error));
 				void summaryOf(ctx, entries).then((summary) => launch(summary, cancelled)).catch(onFail).finally(() => signal?.removeEventListener("abort", cancelOnAbort));
 			} else queued = await launch();
-			return { content: [{ type: "text", text: withHint(`${queued ? "queued" : "started"} ${cold ?? `fork ${name}`} (background)${queued ? ": starts when a running fork finishes" : ""}`) }], details: { name, runId, background: true } };
+			return { content: [{ type: "text", text: withHint(`${queued ? "queued" : "started"} ${cold ?? `fork ${name}`} (background)${queued ? ": starts when a running fork finishes" : ""}`) }], details: { name, runId } };
 		},
 	});
 	/** Starts a cold worker as a copy of the stub shared by the cold workers of its model, effort, role, directory and prompt files. The first worker without one builds it under a lock file, and the others, in any session, wait for it to be published. */
@@ -763,9 +763,9 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			const lock = `${dir}.lock`;
 			const child = { name: params.name ?? `fork-${randomUUID().slice(0, 6)}`, task: params.task };
 			const common = { role: params.role, target: params.target };
-			const source: Run = { id: hash, name: stub, role: role.name, background: true, state: "done", task: "", model, files: dir, cwd: ctx.cwd, startedAt: 0 };
+			const source: Run = { id: hash, name: stub, role: role.name, state: "done", task: "", model, files: dir, cwd: ctx.cwd, startedAt: 0 };
 			const startChild = (task: ForkTask) => forkTool.execute(toolCallId, { ...common, ...task, [STUB_SOURCE]: source } as Static<typeof forkParams>, signal, onUpdate, ctx);
-			const labelled = (text: string) => ({ content: [{ type: "text" as const, text: text.replace(/^[^\n]*/, `started ${coldLabel(child.name, params.model!, model)} (background)`) }], details: { name: child.name, background: true } });
+			const labelled = (text: string) => ({ content: [{ type: "text" as const, text: text.replace(/^[^\n]*/, `started ${coldLabel(child.name, params.model!, model)} (background)`) }], details: { name: child.name } });
 			sweepFinished();
 			if (fs.existsSync(dir)) return labelled(textOf(await startChild(child)));
 			let started = "";
@@ -825,10 +825,10 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			registry.update(run.id, { state: run.state });
 			throw error;
 		});
-		registry.update(run.id, { state: "running", task, background: true, tree, worktree: tree?.path, branch: tree?.branch, startedAt: Date.now(), endedAt: undefined, endedBy: undefined, outcome: undefined, notify: undefined, next: undefined });
+		registry.update(run.id, { state: "running", task, tree, worktree: tree?.path, branch: tree?.branch, startedAt: Date.now(), endedAt: undefined, endedBy: undefined, outcome: undefined, notify: undefined, next: undefined });
 		const message = `${worktreeLine(tree)}Task: ${task}`;
 		startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${toolCallId}`, role: ROLES[run.role as Role["name"]], tree, target: run.target ?? run.cwd, model: run.model, files: run.files }, { message, resume: true });
-		return { content: [{ type: "text" as const, text: `continued fork ${run.name} (background)` }], details: { name: run.name, runId: run.id, background: true } };
+		return { content: [{ type: "text" as const, text: `continued fork ${run.name} (background)` }], details: { name: run.name, runId: run.id } };
 	}
 
 	pi.registerTool({
@@ -840,7 +840,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			recordMainTools(ctx);
 			assertMayFork();
-			const queued = registry.live().find((live) => live.background && !live.stub && live.name === params.name && live.next !== undefined);
+			const queued = registry.live().find((live) => !live.stub && live.name === params.name && live.next !== undefined);
 			if (queued) {
 				const { next } = queued;
 				registry.update(queued.id, { next: undefined });
@@ -867,7 +867,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			recordMainTools(ctx);
 			assertMayFork();
-			const running = params.task !== undefined && registry.live().find((live) => live.background && !live.stub && live.name === params.name);
+			const running = params.task !== undefined && registry.live().find((live) => !live.stub && live.name === params.name);
 			if (running && params.task !== undefined) {
 				if (running.next !== undefined) throw new Error(`a task is already queued for fork ${running.name}: ${running.next}. Drop it with fork_cancel first`);
 				registry.update(running.id, { next: params.task });
@@ -878,7 +878,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			const run = resumable.filter((candidate) => candidate.name === params.name).at(-1);
 			if (!run?.files) throw new Error(`no lost fork ${params.name} to resume. Resumable: ${resumable.map((candidate) => candidate.name).join(", ") || "none"}`);
 			await resumeRun(ctx, { ...run, files: run.files }, toolCallId);
-			return { content: [{ type: "text", text: `resumed fork ${run.name} (background)` }], details: { name: run.name, runId: run.id, background: true } };
+			return { content: [{ type: "text", text: `resumed fork ${run.name} (background)` }], details: { name: run.name, runId: run.id } };
 		},
 	});
 	pi.registerTool({
@@ -890,7 +890,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			recordMainTools(ctx);
 			assertMayFork();
-			const isLiveFork = registry.live().some((run) => run.background && !run.stub && run.name === params.name);
+			const isLiveFork = registry.live().some((run) => !run.stub && run.name === params.name);
 			if (!isLiveFork && registry.all().some((run) => run.name === params.name && canContinue(run))) return continueRun(ctx, params.name, params.message, toolCallId);
 			await background.steer(params.name, params.message);
 			background.resolveForkAsks(ctx, params.name);

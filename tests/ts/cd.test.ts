@@ -31,7 +31,7 @@ test("change_dir moves after the turn and continues", async () => {
 
 test("/cd refuses to move while a background fork is live", async () => {
 	const key = Symbol.for("pi-context.registry");
-	(globalThis as any)[key] = { live: () => [{ name: "a", background: true }, { name: "fg", background: false }] };
+	(globalThis as any)[key] = { live: () => [{ name: "a" }] };
 	try {
 		const ext = await load();
 		await ext.runCommand("cd", "/");

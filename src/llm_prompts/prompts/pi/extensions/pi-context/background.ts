@@ -125,7 +125,7 @@ export class Background {
 
 	/** Sends a steering message to a live background run by name. */
 	async steer(name: string, message: string): Promise<void> {
-		const live = this.registry.live().filter((run) => run.background && !run.stub);
+		const live = this.registry.live().filter((run) => !run.stub);
 		const run = live.find((candidate) => candidate.name === name);
 		const child = run && this.children.get(run.id);
 		if (!child) throw new Error(`no live background fork ${name}. Live forks: ${live.map((candidate) => candidate.name).join(", ") || "none"}`);
@@ -157,12 +157,12 @@ export class Background {
 
 	/** Stops a live background run by name. */
 	cancel(name: string): Run | undefined {
-		return this.cancelRun(this.registry.live().find((live) => live.background && !live.stub && live.name === name)?.id);
+		return this.cancelRun(this.registry.live().find((live) => !live.stub && live.name === name)?.id);
 	}
 
 	/** Stops a live background run by id. */
 	cancelRun(runId: string | undefined): Run | undefined {
-		const run = runId && this.registry.live().find((live) => live.background && live.id === runId);
+		const run = runId && this.registry.live().find((live) => live.id === runId);
 		if (!run) return undefined;
 		this.controllers.get(run.id)?.abort();
 		this.controllers.delete(run.id);
@@ -180,7 +180,7 @@ export class Background {
 		const pins = this.pinned.splice(0);
 		this.announced.push(...pins);
 		if (pins.length) lines.push(`Pinned: ${pins.join(", ")}. They clear at the end of this turn unless you put them to the user with ask_user.`);
-		const live = this.registry.live().filter((run) => run.background).length;
+		const live = this.registry.live().length;
 		lines.push(`${live} fork${live === 1 ? "" : "s"} still running.${this.slotsNote(live)}`);
 		return lines.join("\n");
 	}
@@ -194,7 +194,7 @@ export class Background {
 
 	/** One line per live fork that ran `intervalMs` since it started or was last noted, with its turns and last tool call. A fork with an `llm-prompts watch` call still running is skipped. Undefined when none. */
 	checkIns(intervalMs: number, now = Date.now()): string | undefined {
-		const live = this.registry.live().filter((run) => run.background);
+		const live = this.registry.live();
 		for (const id of this.checkedInAt.keys()) if (!live.some((run) => run.id === id)) this.checkedInAt.delete(id);
 		const lines = live.flatMap((run) => {
 			const { turns, lastCall, watching } = this.view?.progress(run.id) ?? { turns: 0, watching: false };
@@ -264,7 +264,6 @@ export class Background {
 	/** Stops every live background run and marks it lost, so the next session reports it, releases the wait of `hold`, and resolves once every run has ended. */
 	async shutdown(): Promise<void> {
 		for (const run of this.registry.live()) {
-			if (!run.background) continue;
 			this.controllers.get(run.id)?.abort();
 			this.controllers.delete(run.id);
 			this.children.delete(run.id);
@@ -307,13 +306,12 @@ const lostNote = ({ endedBy, worktree, task, files, name }: Run) =>
 
 /** Whether a restored run is still needed: unread, asking, or with files a `fork_resume` continues from. */
 const isRetained = (run: Run, askIds: string[]): boolean =>
-	run.background && (isLive(run) || Boolean(run.unread || run.queued) || askIds.some((id) => id.startsWith(askPrefix(run))) || Boolean(run.files && sessionFileOf(run.files, Boolean(run.model))));
+	isLive(run) || Boolean(run.unread || run.queued) || askIds.some((id) => id.startsWith(askPrefix(run))) || Boolean(run.files && sessionFileOf(run.files, Boolean(run.model)));
 
 /** Hooks that deliver the digest, hold a session without a UI, and save and restore the runs across sessions. */
 export function registerBackgroundHooks(pi: ExtensionAPI, background: Background, registry: Registry = registryOf()) {
 	let stopSaving: (() => void) | undefined;
 	const save = (run: Run) => {
-		if (!run.background) return;
 		try {
 			pi.appendEntry(RUN_TYPE, { ...run });
 		} catch {
@@ -338,7 +336,7 @@ export function registerBackgroundHooks(pi: ExtensionAPI, background: Background
 	});
 
 	pi.on("session_shutdown", async ({ reason }) => {
-		for (const run of registry.live()) if (run.background) registry.update(run.id, { endedBy: reason });
+		for (const run of registry.live()) registry.update(run.id, { endedBy: reason });
 		stopSaving?.();
 		stopSaving = undefined;
 		const stopped = background.shutdown();
