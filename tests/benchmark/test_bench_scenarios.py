@@ -194,6 +194,20 @@ def test_fresh_follow_up_of_a_follow_up_takes_its_settings_through_the_chain(
     assert later.root == root
 
 
+def test_a_follow_up_waits_after_its_base_and_other_scenarios_do_not(
+    data_dir: Path,
+) -> None:
+    add(data_dir, "root")
+    follow_up = add(
+        data_dir,
+        "next",
+        FOLLOW_UP.replace('base = "root"', 'base = "root"\nwait_s = 330'),
+    )
+
+    assert scenarios.parse(follow_up).wait_s == 330
+    assert scenarios.parse(data_dir / "root.toml").wait_s == 0
+
+
 @pytest.mark.parametrize(
     "follow_up",
     [
@@ -202,6 +216,8 @@ def test_fresh_follow_up_of_a_follow_up_takes_its_settings_through_the_chain(
         FOLLOW_UP.replace('"root"', '"chained"'),
         FOLLOW_UP.replace('base = "root"', "fresh = true"),
         FOLLOW_UP.replace('base = "root"', 'base = "root"\nfresh = 1'),
+        FOLLOW_UP.replace('base = "root"', 'base = "root"\nwait_s = -1'),
+        REQUIRED.replace('"light"', '"light"\nwait_s = 5'),
     ],
     ids=[
         "own-workspace",
@@ -209,6 +225,8 @@ def test_fresh_follow_up_of_a_follow_up_takes_its_settings_through_the_chain(
         "nested-base",
         "fresh-without-base",
         "fresh-not-a-bool",
+        "negative-wait",
+        "wait-without-base",
     ],
 )
 def test_follow_up_rejects_violation(data_dir: Path, follow_up: str) -> None:

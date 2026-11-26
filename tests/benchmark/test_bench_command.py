@@ -612,17 +612,21 @@ def test_a_feature_runs_without_it_in_a_and_with_it_in_b_and_names_it_in_the_rep
     } == {"a": {"consult": False}, "b": {"consult": True}}
 
 
-def test_shared_tasks_are_switched_off_in_a_by_the_environment_of_its_agents(
-    builds: Builds, add: Any, fake_agent: FakeAgent
+@pytest.mark.parametrize(
+    ("feature", "variable"),
+    [("shared-tasks", "PI_CONTEXT_SHARED"), ("context-fold", "CONTEXT_FOLD")],
+)
+def test_a_feature_is_switched_off_in_a_by_the_environment_of_its_agents(
+    builds: Builds, add: Any, fake_agent: FakeAgent, feature: str, variable: str
 ) -> None:
     fake_agent.script("s1", trace=trace(tool_calls=OK))
 
-    run(features=("shared-tasks",))
+    run(features=(feature,))
 
-    assert {
-        p.cell.variant.label: p.env.get("PI_CONTEXT_SHARED")
-        for p in fake_agent.executed
-    } == {"a": "off", "b": None}
+    assert {p.cell.variant.label: p.env.get(variable) for p in fake_agent.executed} == {
+        "a": "off",
+        "b": None,
+    }
 
 
 def test_the_delegate_checkpoint_nudge_is_switched_off_in_a_by_the_environment(

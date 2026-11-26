@@ -184,6 +184,11 @@ def parse(path: Path, parents: tuple[str, ...] = ()) -> Scenario:
     timeout_s = _get(path, data, "timeout_s", int, DEFAULT_TIMEOUT_S)
     if timeout_s < 1:
         raise ScenarioError(path, f"timeout_s must be at least 1: {timeout_s}")
+    wait_s = _get(path, data, "wait_s", int, 0)
+    if wait_s < 0 or (wait_s and base is None):
+        raise ScenarioError(
+            path, f"wait_s must be at least 0 and needs a base: {wait_s}"
+        )
     checks = _tables(path, data, "check")
     if not checks:
         raise ScenarioError(path, "at least one [[check]] is required")
@@ -208,6 +213,7 @@ def parse(path: Path, parents: tuple[str, ...] = ()) -> Scenario:
         setup=base.setup if base else _strings(path, data, "setup", []),
         delegation=delegation,
         covers=_strings(path, data, "covers", []),
+        wait_s=wait_s,
     )
 
 
