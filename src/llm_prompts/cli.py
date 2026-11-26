@@ -19,8 +19,6 @@ from typing import TYPE_CHECKING, Any, NamedTuple, Self
 from urllib.parse import urlparse
 
 from . import github_api, telemetry
-from .attic.cli import add_parser as add_attic_parser
-from .attic.cli import run as run_attic
 from .console import log
 from .exit_reason import ExitReason
 from .home import set_root
@@ -1450,7 +1448,6 @@ def _run_command(
         help="Base revision's prompts directory to compare against.",
     )
     _add_watch_parser(subparsers)
-    add_attic_parser(subparsers)
 
     benchmark_parser = subparsers.add_parser(
         "benchmark",
@@ -1482,7 +1479,7 @@ def _run_command(
         "--feature",
         action="append",
         metavar="NAME",
-        help="Measure a pi feature (attic, consult, ghost or lsp): A runs without it and B with it. Repeatable.",
+        help="Measure a pi feature (consult, ghost or lsp): A runs without it and B with it. Repeatable.",
     )
     add(
         "--no-reuse",
@@ -1995,8 +1992,6 @@ def _run_command(
             require_all=args.all,
             follow=args.follow,
         )
-    elif args.command == "attic":
-        return run_attic(args)
     elif args.command == "benchmark":
         from .benchmark.command import RunOptions
         from .benchmark.command import run as run_benchmark

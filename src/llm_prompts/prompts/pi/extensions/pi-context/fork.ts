@@ -23,7 +23,7 @@ import { retainSession } from "./usage-sessions.ts";
 const holdsCall = (entry: SessionEntry, toolCallId: string) =>
 	entry.type === "message" && entry.message.role === "assistant" && entry.message.content.some((block) => block.type === "toolCall" && block.id === toolCallId);
 
-const SAVED_STATE = new Set(["hide-tools", "attic", "attic-unlock", "pending-asks"]);
+const SAVED_STATE = new Set(["hide-tools", "pending-asks"]);
 
 /** The entries before the assistant message holding the call, from the last compaction's first kept entry: what the lead's model saw in the last request. The saved state the extensions read from before it stays, chained ahead of them: tool visibility, pending asks, and each capped result a kept entry names. */
 export function seedEntries(branch: SessionEntry[], toolCallId: string): SessionEntry[] {
