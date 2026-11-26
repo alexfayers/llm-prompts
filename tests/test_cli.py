@@ -2857,6 +2857,27 @@ class TestContributeSubcommand:
         assert exc_info.value.code == 2
         assert "Pass only one of" in capsys.readouterr().err
 
+    @pytest.mark.parametrize(
+        "argv", [["--ready", "feat/x"], ["--rescan"]], ids=["edit", "rescan"]
+    )
+    def test_only_with_a_record_edit_or_rescan_errors(
+        self,
+        fake_subprocess: FakeSubprocess,
+        argv: list[str],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        with (
+            patch(
+                "sys.argv",
+                ["llm-prompts", "contribute", "sync", "--tool", "a", "--only", "feat/y"]
+                + argv,
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            main()
+        assert exc_info.value.code == 2
+        assert "--only cannot be used with" in capsys.readouterr().err
+
     @pytest.mark.parametrize("flag", ["--depends-on", "--no-depends-on"])
     def test_link_edits_without_tool_error(self, flag: str) -> None:
         with (

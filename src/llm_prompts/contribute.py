@@ -760,6 +760,7 @@ class SyncOptions(NamedTuple):
     no_depends_on: tuple[str, str] | None = None
     why: tuple[str, str] | None = None
     title: tuple[str, str] | None = None
+    only: str | None = None
 
     @property
     def record_edits(self) -> int:
@@ -1696,8 +1697,10 @@ class _RepoSync:
         tool: str = "NAME",
         label: str = "",
         ready_only: bool = False,
+        selected: str | None = None,
     ) -> None:
         _refs_moved()
+        self.selected = selected
         self.tool = tool
         self.ready_only = ready_only
         self.label = label
@@ -1717,6 +1720,10 @@ class _RepoSync:
         self._remote: tuple[str, bool] | None = None
         self.landed: list[str] = []
         self.cleanup: list[tuple[WorktreeEntry, str, Callable[[], None]]] = []
+
+    def chosen(self, entry: WorktreeEntry) -> bool:
+        """Return whether the run may act on ``entry``: every entry, or only the selected branch."""
+        return self.selected in (None, entry.branch)
 
     def track(self) -> None:
         _track(self.repo, self.entries, (self.base, self.main_base))
@@ -1772,7 +1779,11 @@ class _RepoSync:
 
     def observe(self) -> None:
         self.observe_prs()
-        pushed = [e for e in self.entries if e.pr is not None or e.remote_head]
+        pushed = [
+            e
+            for e in self.entries
+            if self.chosen(e) and (e.pr is not None or e.remote_head)
+        ]
         if pushed:
             remote, _ = self.remote()
             refs = [f"refs/heads/{self.remote_name(e)}" for e in pushed]
@@ -1793,7 +1804,7 @@ class _RepoSync:
         if numbers:
             self.prs = pr_states(self.repo, numbers)
             for entry in list(self.entries):
-                if (pr := self.prs.get(entry.pr or 0)) is not None:
+                if self.chosen(entry) and (pr := self.prs.get(entry.pr or 0)):
                     self.update(entry, pr_state=pr.state)
 
     def relation(self, entry: WorktreeEntry) -> str:
@@ -1852,7 +1863,7 @@ class _RepoSync:
         return None
 
     def remove_merged(self) -> None:
-        for entry in list(self.entries):
+        for entry in list(filter(self.chosen, self.entries)):
             if not self.merged(entry) or not Path(entry.path).exists():
                 continue
             if reason := self.blocker(entry, self.tip(entry)):
@@ -1911,7 +1922,7 @@ class _RepoSync:
         A merged entry with a branch to delete goes once main is rebuilt, and one with a copy on main stays.
         """
         checked_out = {c.branch: c.path for c in checkouts(self.repo)}
-        for entry in list(self.entries):
+        for entry in list(filter(self.chosen, self.entries)):
             if entry.branch in checked_out:
                 self.update(entry, path=str(checked_out[entry.branch]))
                 continue
@@ -1946,14 +1957,14 @@ class _RepoSync:
         self.refresh_upstream()
         if (stale := stale_main_warning(self.repo, self.main_base)) is not None:
             _print_warning(stale)
-        for entry in list(self.entries):
+        for entry in list(filter(self.chosen, self.entries)):
             if entry.ready and entry.pr is None:
                 self.adopt(entry)
         self.observe()
         self.landed = self.landed_copies()
         self.forget_gone()
         self.remove_merged()
-        for entry in self.open_entries():
+        for entry in filter(self.chosen, self.open_entries()):
             if (
                 self.skip_reason(entry, f"refs/heads/{entry.branch}") is None
                 and self.relation(entry) == "pull"
@@ -1968,7 +1979,7 @@ class _RepoSync:
         """Return the identity of each copy whose PR merged and whose squash is on the base main follows."""
         return [
             entry.copied
-            for entry in self.entries
+            for entry in filter(self.chosen, self.entries)
             if entry.copied
             and entry.pr is not None
             and self.merged(entry)
@@ -2028,12 +2039,15 @@ class _RepoSync:
 
     def copy_into_main(self, fail_stopped: bool = False) -> bool:
         """Return whether main is up to date, so merged entries may go. A conflict waiting for its hand resolution counts as a failure when ``fail_stopped``."""
-        tips = _tips(
-            self.repo,
-            self.base,
-            [e for e in self.open_entries() if e.ready or not self.ready_only],
-        )
-        for tip in tips:
+        tips = [
+            tip if self.chosen(tip.entry) else tip._replace(skipped="not selected")
+            for tip in _tips(
+                self.repo,
+                self.base,
+                [e for e in self.open_entries() if e.ready or not self.ready_only],
+            )
+        ]
+        for tip in filter(lambda tip: self.chosen(tip.entry), tips):
             if tip.skipped is not None:
                 self.say(tip.entry, f"skipped: {tip.skipped}")
         usable = [tip for tip in tips if tip.skipped is None]
@@ -2041,6 +2055,7 @@ class _RepoSync:
             e.copied: e.branch for e in self.entries if e.copied and self.merged(e)
         }
         try:
+            self.check_unselected_copies()
             swaps, drops, copies, adds, merged, earlier = _main_changes(
                 self.repo,
                 self.main_base,
@@ -2067,7 +2082,7 @@ class _RepoSync:
                 {
                     e.copied
                     for e in self.entries
-                    if e.copied and e.repo == _repo_key(self.repo)
+                    if e.copied and e.repo == _repo_key(self.repo) and self.chosen(e)
                 },
             ),
         }
@@ -2120,8 +2135,24 @@ class _RepoSync:
                 )
         return True
 
-    def publish(self) -> None:
+    def check_unselected_copies(self) -> None:
+        """Raise AmbiguousCopy when an open unselected entry's saved identity matches several main commits.
+
+        Raises:
+            AmbiguousCopy: Several main commits have an open unselected entry's saved identity.
+        """
+        owned = Counter(
+            "\t".join(row[1:]) for row in _main_rows(self.repo, self.main_base)
+        )
         for entry in self.open_entries():
+            if not self.chosen(entry) and entry.copied and owned[entry.copied] > 1:
+                raise AmbiguousCopy(
+                    f"cannot tell which main commit is {entry.branch}'s copy;"
+                    " run sync without --only"
+                )
+
+    def publish(self) -> None:
+        for entry in filter(self.chosen, self.open_entries()):
             tip = self.tip(entry)
             if entry.ready and self.skip_reason(entry, tip) is None:
                 self.publish_one(entry, tip)
@@ -2331,9 +2362,10 @@ def _sync_repo(
     login: str,
     others: Sequence[WorktreeEntry] = (),
     tool: str = "NAME",
+    selected: str | None = None,
 ) -> tuple[int, list[WorktreeEntry]]:
-    """Sync one repo's recorded worktrees and return the status and the updated entries."""
-    return _RepoSync(repo, entries, apply, login, others, tool).run()
+    """Sync one repo's recorded worktrees, or only the ``selected`` branch, and return the status and the updated entries."""
+    return _RepoSync(repo, entries, apply, login, others, tool, selected=selected).run()
 
 
 def copy_recorded(
@@ -2543,6 +2575,15 @@ def _sync_locked(
         entries = []
     editing = options.edits_record
     status = 0
+    if options.only:
+        targets = [t for t in targets if _find(entries, _repo_key(t[1]), options.only)]
+        if len(targets) != 1:
+            print(
+                f"{options.only}: recorded in several tools; name the tool with --tool"
+                if targets
+                else f"{options.only}: not recorded"
+            )
+            return 1
     if not (editing or options.rescan):
         targets = _dependencies_first(targets, entries)
     for tool, repo, _ in targets:
@@ -2562,7 +2603,7 @@ def _sync_locked(
         mine = [e for e in entries if e.repo == key]
         others = [e for e in entries if e.repo != key]
         repo_status, updated = _sync_repo(
-            repo, mine, options.apply, login, others, tool
+            repo, mine, options.apply, login, others, tool, options.only
         )
         status = max(status, repo_status)
         entries = [e for e in entries if e.repo != key] + updated
