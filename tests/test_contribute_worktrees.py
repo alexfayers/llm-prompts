@@ -3913,3 +3913,210 @@ def test_an_open_pr_body_with_a_leftover_comment_is_left_alone_and_named(
     assert "body left as it is, it has a leftover placeholder comment" in (
         capsys.readouterr().out
     )
+
+
+def test_only_syncs_the_tool_that_records_the_branch(
+    project: Project, two_tools: Path
+) -> None:
+    other_main = git(two_tools, "rev-parse", "main")
+    before = project.entries_of(two_tools)
+
+    assert project.run(only="feat/a", apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a"]
+    assert git(two_tools, "rev-parse", "main") == other_main
+    assert project.entries_of(two_tools) == before
+
+
+def test_only_an_unrecorded_branch_fails(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    before = project.entries()
+
+    assert project.run(only="feat/zzz", apply=True) == 1
+
+    assert "feat/zzz: not recorded" in capsys.readouterr().out
+    assert project.main_subjects() == []
+    assert project.entries() == before
+
+
+def test_only_a_branch_recorded_in_two_tools_needs_the_tool(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    other = project.add_tool("other")
+    project.worktree("feat/a", "feat: a")
+    project.worktree("feat/a", "feat: a2", repo=other)
+    project.run(branch="feat/a")
+    project.run("other", branch="feat/a")
+    before = project.entries()
+
+    assert project.run(only="feat/a", apply=True) == 1
+
+    assert "feat/a: recorded in several tools; name the tool with --tool" in (
+        capsys.readouterr().out
+    )
+    assert project.main_subjects() == []
+    assert project.entries() == before
+
+    assert project.run("other", only="feat/a", apply=True) == 0
+
+    assert project.main_subjects() == []
+    assert git(other, "log", "-1", "--format=%s", "main") == "feat: a2"
+
+
+def _record(project: Project, *branches: str) -> None:
+    """Add a worktree with one commit for each branch and record it, local only."""
+    for branch in branches:
+        project.worktree(branch, f"feat: {branch[-1]}")
+        project.run(branch=branch)
+
+
+def test_only_pushes_nothing_for_another_ready_branch(project: Project) -> None:
+    _record(project, "feat/a", "feat/b")
+    project.run(apply=True)
+    project.run(ready="feat/a")
+    project.run(ready="feat/b")
+    [before] = [e for e in project.entries() if e.branch == "feat/b"]
+
+    assert project.run(only="feat/a", apply=True) == 0
+
+    assert project.remote_branches() == [_remote("feat/a")]
+    assert [e for e in project.entries() if e.branch == "feat/b"] == [before]
+
+
+def test_only_keeps_another_entry_whose_worktree_is_gone(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _record(project, "feat/a", "feat/b")
+    git(
+        project.repo,
+        "worktree",
+        "remove",
+        "--force",
+        str(project.root / "wt" / "feat-b"),
+    )
+    git(project.repo, "branch", "-D", "feat/b")
+    [before] = [e for e in project.entries() if e.branch == "feat/b"]
+    capsys.readouterr()
+
+    assert project.run(only="feat/a", apply=True) == 0
+
+    assert "feat/b" not in capsys.readouterr().out
+    assert [e for e in project.entries() if e.branch == "feat/b"] == [before]
+
+
+def _entry(project: Project, branch: str) -> str:
+    """Return ``branch``'s record entry as it is saved."""
+    [entry] = [
+        e
+        for e in json.loads(project.record.read_text())["entries"]
+        if e["branch"] == branch
+    ]
+    return json.dumps(entry)
+
+
+def _main_copy(project: Project, subject: str) -> str:
+    """Return the patch id of the main commit titled ``subject``."""
+    sha = git(project.repo, "log", "--format=%H", f"--grep=^{subject}$", "main")
+    return subprocess.run(
+        ["git", "-C", str(project.repo), "patch-id", "--stable"],
+        input=git(project.repo, "show", sha),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()[0]
+
+
+def test_only_keeps_another_branchs_main_copy_and_record(
+    project: Project,
+) -> None:
+    _record(project, "feat/a", "feat/b")
+    project.run(apply=True)
+    _amend(project, project.root / "wt" / "feat-a", "feat: a")
+    _amend_extra(project.root / "wt" / "feat-b")
+    b_copy, b_entry = _main_copy(project, "feat: b"), _entry(project, "feat/b")
+
+    assert project.run(only="feat/a", apply=True) == 0
+
+    assert project.main_subjects() == ["feat: a", "feat: b"]
+    assert git(project.repo, "show", "main~1:more.txt") == "feat: a"
+    assert _main_copy(project, "feat: b") == b_copy
+    assert _entry(project, "feat/b") == b_entry
+
+
+def test_only_dry_run_names_only_the_selected_branch(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _record(project, "feat/a", "feat/b")
+    capsys.readouterr()
+
+    assert project.run(only="feat/a") == 0
+
+    assert capsys.readouterr().out.splitlines() == ["feat/a: would copy into main"]
+
+
+def test_only_stops_when_another_branchs_copy_matches_two_main_commits(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _record(project, "feat/a", "feat/b")
+    project.run(apply=True)
+    at = git(project.repo, "log", "-1", "--format=%at", "main")
+    _commit_at(project.repo, "other.txt", "feat: b", at)
+    main = git(project.repo, "rev-parse", "main")
+    _amend(project, project.root / "wt" / "feat-a", "feat: a")
+    before = project.entries()
+    capsys.readouterr()
+
+    assert project.run(only="feat/a", apply=True) == 1
+
+    assert (
+        "main not updated: cannot tell which main commit is feat/b's copy;"
+        " run sync without --only" in capsys.readouterr().out
+    )
+    assert git(project.repo, "rev-parse", "main") == main
+    assert project.entries() == before
+
+
+def test_only_ignores_a_merged_branchs_copy_that_matches_two_main_commits(
+    project: Project,
+) -> None:
+    _record(project, "feat/a", "feat/b")
+    project.run(apply=True)
+    at = git(project.repo, "log", "-1", "--format=%at", "main")
+    _commit_at(project.repo, "other.txt", "feat: b", at)
+    project.add_pr(
+        8, "feat/b", state="MERGED", headRefOid=git(project.repo, "rev-parse", "feat/b")
+    )
+    worktrees.save_entries(
+        project.record,
+        [
+            e._replace(pr=8, pr_state="MERGED") if e.branch == "feat/b" else e
+            for e in project.entries()
+        ],
+    )
+    _amend(project, project.root / "wt" / "feat-a", "feat: a")
+    [before] = [e for e in project.entries() if e.branch == "feat/b"]
+
+    assert project.run(only="feat/a", apply=True) == 0
+
+    assert git(project.repo, "show", "main~2:more.txt") == "feat: a"
+    assert [e for e in project.entries() if e.branch == "feat/b"] == [before]
+
+
+def test_only_keeps_another_merged_branchs_landed_copy(
+    project: Project, pushed: Path
+) -> None:
+    project.worktree("feat/b", "feat: b", start="origin/main")
+    project.run(branch="feat/b")
+    project.run(apply=True)
+    _merge(project, 100, git(pushed, "rev-parse", "HEAD"), land=True)
+    a_entry = _entry(project, "feat/a")
+
+    assert project.run(only="feat/b", apply=True) == 0
+
+    assert pushed.exists()
+    assert _entry(project, "feat/a") == a_entry
+    assert project.main_subjects() == ["feat: b"]
+    assert git(project.repo, "show", "main:feat-a-7.txt") == "feat: a"

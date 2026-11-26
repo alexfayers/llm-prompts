@@ -1238,6 +1238,7 @@ def _sync_options(args: argparse.Namespace) -> SyncOptions:
         tuple(args.no_depends_on) if args.no_depends_on else None,
         tuple(args.why) if args.why else None,
         tuple(args.title) if args.title else None,
+        args.only,
     )
 
 
@@ -1630,6 +1631,12 @@ def _run_command(
         action="store_true",
         help="Record your open PRs whose branch is checked out in a worktree.",
     )
+    sync_parser.add_argument(
+        "--only",
+        metavar="BRANCH",
+        help="Sync only this recorded branch. Main copies of other branches above "
+        "its replaced copy keep their content but may get new commit SHAs.",
+    )
 
     check_body_parser = contribute_sub.add_parser(
         "check-body",
@@ -1701,6 +1708,14 @@ def _run_command(
             "Pass only one of --branch, --forget, --ready, --local, "
             "--depends-on, --no-depends-on, --why, --title and --rescan."
         )
+
+    if (
+        args.command == "contribute"
+        and args.contribute_command == "sync"
+        and args.only
+        and (_sync_options(args).edits_record or args.rescan)
+    ):
+        sync_parser.error("--only cannot be used with a record edit or --rescan.")
 
     if (
         args.command == "contribute"
