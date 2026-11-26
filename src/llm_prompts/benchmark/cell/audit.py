@@ -21,7 +21,7 @@ from llm_prompts.benchmark.types import Trace
 
 DEFAULT_PORT = 3000
 PORT_HOSTS = ("localhost", "127.0.0.1")
-THIRD_PARTY_DIRS = frozenset({"node_modules", "_cacache"})
+THIRD_PARTY_DIRS = frozenset({"node_modules", "_cacache", "_logs"})
 SESSION_DIRS = (Path(".pi/agent/sessions"), Path(".claude/projects"))
 WRITE_BITS = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
 CELL_PATH = re.compile(
