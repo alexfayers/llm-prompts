@@ -45,7 +45,7 @@ export const ROLES: Record<Role["name"], Role> = {
 	writer: {
 		name: "writer",
 		card: `${WARM_OPENING} You work in your own git worktree. Commit your work there. Do not touch other paths or memory. ${OUTCOME}`,
-		tools: [...READ_TOOLS, "lsp_diagnostics", "edit", "write", "process"],
+		tools: [...READ_TOOLS, "edit", "write", "process"],
 		mcp: READ_MCP,
 		skills: [],
 		writes: true,

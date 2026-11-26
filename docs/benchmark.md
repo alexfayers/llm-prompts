@@ -16,7 +16,7 @@ Run it from an llm-prompts checkout. Any commit, branch or `:worktree` works for
 | `--a-tool NAME=SOURCE`, `--b-tool NAME=SOURCE` | Use this source for a configured tool (such as `mcp-memory`) in that ref only. Repeatable. A remote source must end in `@<40 character commit sha>`, or that side's runs are not reused. |
 | `--b-env NAME=VALUE` | Set this environment variable for the agents of ref B only. Repeatable. |
 | `--b-drop RULE` | Leave this shared rule (a `shared/rules/RULE.md` source) out of ref B's build. A pinned rule is refused. Repeatable. |
-| `--feature NAME` | Measure a pi feature: `consult`, `ghost`, `lsp` or `test-output-fold`. A runs without it and B with it, so give both the same ref. Both sides use the tools pinned by `--a-tool`, and `--b-tool` is refused. Only pi runs, and `--agents` must be `pi`. Repeatable. The `feature-fork` scenario keeps the fork tools on for both sides, so it compares two refs, such as one before and one after #676 made every fork run in the background. |
+| `--feature NAME` | Measure a pi feature: `consult`, `ghost` or `test-output-fold`. A runs without it and B with it, so give both the same ref. Both sides use the tools pinned by `--a-tool`, and `--b-tool` is refused. Only pi runs, and `--agents` must be `pi`. Repeatable. The `feature-fork` scenario keeps the fork tools on for both sides, so it compares two refs, such as one before and one after #676 made every fork run in the background. |
 | `--no-reuse` | Run A and B again instead of reusing finished runs. |
 | `--level LEVEL` | `light`, `medium` or `heavy` (default: `light`). A level includes all lower levels. |
 | `--agents LIST` | Comma separated agents (default: `claude,pi`). |

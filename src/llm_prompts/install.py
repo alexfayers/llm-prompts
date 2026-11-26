@@ -3927,6 +3927,7 @@ _RETIRED_PI_PACKAGES = {
     "pi-herdsman",
     "@henryqw/pi-herdr-tools",
     "@henryqw/pi-task-models",
+    "pi-lsp-extension",
 }
 
 

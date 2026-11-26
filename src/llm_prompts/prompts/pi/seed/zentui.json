@@ -15,8 +15,7 @@
             "tree_cost": "llm-prompts/context-total:cost"
           },
           "extensionStatuses": {
-            "placements": { "lsp": "left" },
-            "colorModes": { "lsp": "zentui", "context-total": "zentui" }
+            "colorModes": { "context-total": "zentui" }
           }
         }
       }
