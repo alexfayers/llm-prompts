@@ -70,6 +70,21 @@ def test_pi_installs_the_fork_mode_extension_only_when_the_warm_fork_is_measured
     assert (agent_dir / "extensions/bench-fork-mode.ts").read_text().startswith("//")
 
 
+def test_pi_removes_the_checkpoint_extension_only_when_the_feature_is_off(
+    tmp_path: Path,
+) -> None:
+    extension = tmp_path / ".pi/agent/extensions/checkpoint.ts"
+    extension.parent.mkdir(parents=True)
+    extension.write_text("export default () => {}\n")
+
+    AGENTS["pi"].install_features(tmp_path, {"checkpoint": True})
+    assert extension.exists()
+
+    AGENTS["pi"].install_features(tmp_path, {"checkpoint": False})
+    assert not extension.exists()
+    AGENTS["pi"].install_features(tmp_path, {"checkpoint": False})
+
+
 def test_pi_models_come_from_the_pi_settings() -> None:
     assert AGENTS["pi"].default_model == "test-model"
     assert AGENTS["pi"].judge_model == "test-model"

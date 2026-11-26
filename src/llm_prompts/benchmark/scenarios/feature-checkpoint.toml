@@ -1,0 +1,71 @@
+id = "feature-checkpoint"
+level = "heavy"
+agents = ["pi"]
+workspace = "tiny-py"
+project = "demo"
+timeout_s = 600
+prompt = "the crash reports in reports/ (one file per crash, each with a timestamp in its header) were all caused by a bad setting. read the reports, find the setting named in the root cause of the earliest crash, and write its name as the only line of cause.txt. then make fetch() in fetch.py raise a DemoError when the url does not start with http:// or https://, add the tests for it to test_fetch.py, and stop once the tests pass. no commit needed"
+setup = [
+  '''
+python3 - <<'PY'
+import os, random
+
+rng = random.Random(663)
+SETTINGS = ["pool_timeout_ms", "retry_backoff", "cache_ttl", "region_override", "max_inflight", "tls_profile", "queue_depth", "shard_count", "probe_interval", "drain_grace", "batch_window", "log_sampling"]
+EARLIEST = "region_override"
+MODULES = ["gateway.router", "gateway.auth", "orders.service", "orders.store", "billing.ledger", "billing.client", "inventory.sync", "common.http", "common.retry", "common.config"]
+order = list(range(len(SETTINGS)))
+rng.shuffle(order)
+os.makedirs("reports")
+for number, index in enumerate(order, 1):
+    setting = SETTINGS[index]
+    second = 40000 + (0 if setting == EARLIEST else rng.randrange(60, 20000))
+    stamp = f"2026-03-02T{second // 3600:02d}:{second % 3600 // 60:02d}:{second % 60:02d}Z"
+
+    def frames(count):
+        out = []
+        for _ in range(count):
+            module = rng.choice(MODULES)
+            out.append(f'  File "/srv/app/{module.replace(".", "/")}.py", line {rng.randrange(10, 900)}, in {rng.choice(("handle", "dispatch", "run", "call", "wrap", "invoke", "execute"))}')
+            out.append(f"    {rng.choice(('return self._next(request, ctx)', 'result = await self.client.send(payload)', 'value = self.settings[key]', 'raise_for_status(response)', 'yield from self.step(state)'))}")
+        return out
+
+    lines = [f"crash report {number:02d}", f"time: {stamp}", f"host: node-{rng.randrange(1, 7)}", "", "Traceback (most recent call last):"]
+    lines += frames(34)
+    lines += [f"ConfigError: bad value for '{setting}'", "", "The above exception was the direct cause of the following exception:", "", "Traceback (most recent call last):"]
+    lines += frames(30)
+    lines += ["RetryExhausted: gave up after 4 attempts", "", "The above exception was the direct cause of the following exception:", "", "Traceback (most recent call last):"]
+    lines += frames(10)
+    lines += ["ServiceError: request failed"]
+    with open(f"reports/crash-{number:02d}.txt", "w") as file:
+        file.write("\n".join(lines) + "\n")
+PY
+''',
+]
+
+[[check]]
+kind = "file_regex"
+path = "cause.txt"
+regex = "\\Aregion_override\\s*\\Z"
+
+[[check]]
+kind = "file_regex"
+path = "test_fetch.py"
+regex = "DemoError"
+
+[[check]]
+kind = "command_exit"
+command = '''
+python3 - <<'PY' && python3 -m pytest -q
+from errors import DemoError
+from fetch import fetch
+
+assert fetch("http://x") == "body of http://x"
+try:
+    fetch("ftp://x")
+except DemoError:
+    pass
+else:
+    raise SystemExit("no DemoError")
+PY
+'''

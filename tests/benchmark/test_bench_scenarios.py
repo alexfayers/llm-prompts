@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import replace
@@ -387,6 +388,28 @@ def test_the_ghost_scenario_saves_the_ghost_it_asks_the_agent_to_replay(
     )
     assert [step["tool"] for step in ghost["steps"]] == ["bash"] * 3
     assert (ghost["piVersion"], len(ghost["approvedHash"])) == ("1.6.0", 64)
+
+
+@pytest.mark.real_io
+def test_the_checkpoint_scenario_reports_blame_region_override_in_the_earliest_crash(
+    tmp_path: Path,
+) -> None:
+    (scenario,) = (
+        s for s in scenarios.load("heavy", ("pi",)) if s.id == "feature-checkpoint"
+    )
+    shutil.copytree(scenario.workspace, tmp_path / "w")
+
+    for command in scenario.setup:
+        subprocess.run(["sh", "-c", command], cwd=tmp_path / "w", check=True)
+
+    crashes = []
+    for report in (tmp_path / "w" / "reports").glob("crash-*.txt"):
+        text = report.read_text()
+        (time,) = re.findall(r"^time: (\S+)$", text, re.MULTILINE)
+        (setting,) = re.findall(r"ConfigError: bad value for '(\w+)'", text)
+        crashes.append((time, setting))
+    assert len(crashes) == 12
+    assert min(crashes)[1] == "region_override"
 
 
 def test_shipped_scenarios_cover_only_unpinned_shared_rules() -> None:
