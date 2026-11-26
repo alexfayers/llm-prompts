@@ -1395,6 +1395,15 @@ def _run_command(
     setup_parser.add_argument(
         "tool", nargs="?", help="Install only this tool (by name from config)."
     )
+    settings_parser = subparsers.add_parser(
+        "settings",
+        help="Print the config file's tools, plugins and settings, and its errors.",
+    )
+    settings_parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Print the config even in a terminal, without the tui extra.",
+    )
     update_parser = subparsers.add_parser(
         "update",
         help="Check for and list updates, then update all installed agents and restart services.",
@@ -1952,6 +1961,10 @@ def _run_command(
         if install_failure:
             run.outcome = install_failure
             sys.exit(1)
+    elif args.command == "settings":
+        from .settings import run as run_settings
+
+        run_settings(check=args.check)
     elif args.command == "uninstall":
         from .install import uninstall
 

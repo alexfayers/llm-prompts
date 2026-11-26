@@ -18,6 +18,7 @@ llm-prompts setup                              # install the tools in config.tom
 llm-prompts setup <tool>                       # reinstall the shared environment from scratch
 llm-prompts setup --dry-run                    # show the commands without running them
 llm-prompts setup --init                       # create the starter config
+llm-prompts settings --check                   # print config.toml's tools, plugins and settings with their defaults, and exit 1 on errors. In a terminal, `settings` without `--check` needs the `llm-prompts[tui]` extra
 llm-prompts benchmark                          # compare two llm-prompts refs by running agents through scenarios
 llm-prompts attic build [--tool NAME]... [--dry-run]  # list the unused skills, and the `--tool` tools, the usage ledger shows as unused, in `attic.json` next to the ledger
 llm-prompts check                              # check prompt sizes and pi extension headers

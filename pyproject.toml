@@ -33,6 +33,11 @@ llm-prompts-primary-checkout-guard = "llm_prompts.guards.commit_guard:PrimaryChe
 llm-prompts-shell-rules = "llm_prompts.guards.shell_rules:ShellRules"
 llm-prompts-review-limit = "llm_prompts.guards.review_limit:ReviewLimitGuard"
 
+[project.optional-dependencies]
+tui = [
+    "textual>=8.2.8",
+]
+
 [tool.ruff.lint]
 ignore = [
     "BLE001",  # blind exception - intentional for resilient install

@@ -1007,6 +1007,18 @@ def read_config() -> dict[str, Any]:
     return config
 
 
+_URL_USERINFO = re.compile(r"(?<=://)[^/@\s]+(?=@)")
+_URL_QUERY = re.compile(r"(://[^\s?#]*\?)[^\s#]*")
+
+
+def redact_credentials(text: str) -> str:
+    """Return ``text`` with the query and the user info, other than ``git``, of every URL in it redacted."""
+    text = _URL_QUERY.sub(r"\1<redacted>", text)
+    return _URL_USERINFO.sub(
+        lambda match: match[0] if match[0] == "git" else "<redacted>", text
+    )
+
+
 _NO_TOOLS_ERROR = "Config must contain at least one [[tools]] entry."
 
 
@@ -1062,7 +1074,7 @@ def _entry_shape_errors(entries: Any, table: str) -> list[str]:
             for key in ("name", "source")
             if not isinstance(entry.get(key), str) or not entry[key].strip()
         )
-    return errors
+    return [redact_credentials(error) for error in errors]
 
 
 def _validate_paths(tools: list[dict[str, Any]]) -> list[str]:
@@ -1078,7 +1090,7 @@ def _validate_paths(tools: list[dict[str, Any]]) -> list[str]:
                 f"[{tool.get('name')}] Source must be a local path or git URL "
                 f"(PyPI sources are not currently supported): {source}"
             )
-    return errors
+    return [redact_credentials(error) for error in errors]
 
 
 def init_config() -> None:
