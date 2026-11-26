@@ -60,6 +60,12 @@ def main(argv: list[str]) -> int:
             pr = state["prs"].get(number)
             aliases[f"pr{number}"] = view(number, pr) if pr else None
         print(json.dumps({"data": {"repository": aliases}}))
+    elif argv[:4] == ["api", "-X", "GET", "user"]:
+        print(state.get("login", ""))
+    elif argv[:3] == ["api", "-X", "GET"] and "/pulls?" in argv[3]:
+        for pr in state["prs"].values():
+            if pr["state"] == "OPEN":
+                print(pr.get("author", state.get("login", "")))
     elif argv[:2] == ["pr", "create"]:
         head = option(argv, "--head").split(":")[-1]
         if any(

@@ -1764,6 +1764,53 @@ def test_a_ready_worktree_is_pushed_and_opens_a_draft_pr(
     assert pr["headRefName"] == "tester/contribute/feat/a"
 
 
+def test_sync_opens_no_new_pr_at_the_review_limit(
+    project: Project, isolated_config_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (isolated_config_dir / "config.toml").write_text("[reviews]\nmax_in_flight = 1\n")
+    project.state["login"] = "tester"
+    project.save_state()
+    project.add_pr(7, "other")
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+    capsys.readouterr()
+
+    assert project.run() != 0
+    out = capsys.readouterr().out
+    assert "would push" not in out
+    assert "1 of your reviews in o/repo are open" in out
+
+    assert project.run(apply=True) != 0
+
+    assert project.gh_calls("pr", "create") == []
+    assert project.remote_branches() == []
+    out = capsys.readouterr().out
+    assert (
+        "not opened, 1 of your reviews in o/repo are open, at the limit of 1"
+        " (`max_in_flight` under `[reviews]`)" in out
+    )
+    assert "MUST NOT" not in out
+
+
+def test_sync_adopts_an_existing_pr_at_the_review_limit(
+    project: Project, isolated_config_dir: Path
+) -> None:
+    (isolated_config_dir / "config.toml").write_text("[reviews]\nmax_in_flight = 1\n")
+    project.state["login"] = "tester"
+    project.save_state()
+    project.worktree("feat/a", "feat: a")
+    git(project.repo, "push", "-q", "origin", f"feat/a:{_remote('feat/a')}")
+    project.add_pr(7, _remote("feat/a"))
+    project.run(branch="feat/a")
+    project.run(ready="feat/a")
+
+    assert project.run(apply=True) == 0
+
+    assert project.gh_calls("pr", "create") == []
+    assert [e.pr for e in project.entries()] == [7]
+
+
 def test_a_recorded_why_fills_the_pr_body_sync_opens(project: Project) -> None:
     project.worktree("feat/a", "feat: a")
     project.run(branch="feat/a")
