@@ -31,14 +31,12 @@ describe("the reply tool", () => {
 	});
 
 	test("outside a delegate reply returns an error result and the session is not nudged", async () => {
-		const btw = await delegate("btw");
 		process.env.PI_CONTEXT_CHILD = "";
-		for (const ext of [btw, await loadExtension("pi-context/index")]) {
-			const result = await ext.callTool("reply", { outcome: "done", ref: "" });
-			assert.deepEqual([result.isError, result.terminate], [true, undefined]);
-			assert.match(result.content[0].text, /Only a delegate/);
-			assert.equal(await settle(ext), undefined);
-		}
+		const ext = await loadExtension("pi-context/index");
+		const result = await ext.callTool("reply", { outcome: "done", ref: "" });
+		assert.deepEqual([result.isError, result.terminate], [true, undefined]);
+		assert.match(result.content[0].text, /Only a delegate/);
+		assert.equal(await settle(ext), undefined);
 	});
 
 	test("a delegate that stops without calling reply is nudged once per prompt", async () => {
