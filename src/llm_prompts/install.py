@@ -55,7 +55,6 @@ from .render_template import (
     _read_text,
     _scoped_paths,
     clear_read_cache,
-    find_unreplaced_variables,
     frontmatter_list,
     load_vars,
     normalize_whitespace,
@@ -635,9 +634,6 @@ def _install_rendered(
         log("error", f"Failed to render {label}: {e}")
         return
 
-    for var in find_unreplaced_variables(output):
-        log("warn", f"Unreplaced variable '{{{{{var}}}}}' in {label}")
-
     _write_if_changed(dest, output, label, group)
 
 
@@ -875,8 +871,6 @@ class _CodexAgent(_Agent):
             return kept
 
         output = normalize_whitespace("\n\n".join(rules.values()))
-        for var in find_unreplaced_variables(output):
-            log("warn", f"Unreplaced variable '{{{{{var}}}}}' in {self.AGENTS_MD}")
 
         dest_dir.mkdir(parents=True, exist_ok=True)
         _write_if_changed(dest, output, self.AGENTS_MD, "rules")
@@ -1859,8 +1853,6 @@ def _materialize_builtin_skill(
     except TemplateError as e:
         log("error", f"Failed to render skill '{source.name}': {e}")
         return
-    for var in find_unreplaced_variables(substituted):
-        log("warn", f"Unreplaced variable '{{{{{var}}}}}' in skill '{source.name}'")
     _materialize_skill_dir(
         layers or [source],
         dest,
@@ -2451,10 +2443,6 @@ class _RuleSources:
         except Exception as e:
             log("error", f"Failed to render included rule '{name}': {e}")
             return None
-        for var in find_unreplaced_variables(content):
-            log(
-                "warn", f"Unreplaced variable '{{{{{var}}}}}' in included rule '{name}'"
-            )
         split = split_frontmatter(content)
         return (split[1] if split else content).strip("\n")
 
@@ -3524,8 +3512,6 @@ def _install_pi_lead_rules(agent: _Agent, bundle: _PiRuleBundle) -> set[str]:
         (_PiAgent.READER_AGENTS_MD, True, True),
     ):
         output = bundle.lead_text(delegate=delegate, reader=reader)
-        for var in find_unreplaced_variables(output):
-            log("warn", f"Unreplaced variable '{{{{{var}}}}}' in {filename}")
         _write_if_changed(dest_dir / filename, output, filename, "rules")
     write_rendered_rules(agent.name, bundle.texts)
     installed = {
@@ -5327,7 +5313,7 @@ def main(
             log(
                 "warn",
                 "Installing anyway as these changed in this update; run "
-                "`llm-prompts check` once they are compressed.",
+                "`llm-prompts check` once they pass.",
             )
         for line in parked_state_lines(size_result.artifacts):
             log("debug", line)

@@ -92,6 +92,9 @@ _BLOCK_START = re.compile(r"[#|><]|\{[%#]|([-*_])(?:[ \t]*\1){2,}[ \t]*$")
 _FIXES = {
     NO_LONG_LINES: "wrap the line",
     NO_LAZY_CONTINUATIONS: "indent the line under its list item",
+    NO_UNSUBSTITUTED_PLACEHOLDERS: "replace or escape the variable",
+    FRONTMATTER_VALID: "fix the frontmatter",
+    TEMPLATE_RENDERS: "fix the template syntax",
 }
 
 
@@ -109,6 +112,7 @@ class Artifact:
         allowance: Declared per-artifact ceiling from the owning root's
             `size_allowances.json`, or None if undeclared.
         lines: Line numbers the value was measured at.
+        names: Unreplaced variable names a placeholder check found.
     """
 
     metric: str
@@ -118,6 +122,7 @@ class Artifact:
     source: Path
     allowance: int | None = None
     lines: tuple[int, ...] = ()
+    names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -136,6 +141,7 @@ class Violation:
     source: Path
     lines: tuple[int, ...] = ()
     cut_to: int | None = None
+    names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -314,12 +320,16 @@ def _common_artifacts(
         FRONTMATTER_VALID, metric_prefix_target, dest_name, frontmatter_valid, source
     )
     yield from _line_artifacts(metric_prefix_target, dest_name, source)
-    yield Artifact(
-        NO_UNSUBSTITUTED_PLACEHOLDERS,
-        metric_prefix_target,
-        dest_name,
-        not find_unreplaced_variables(content),
-        source,
+    yield _placeholder_artifact(content, metric_prefix_target, dest_name, source)
+
+
+def _placeholder_artifact(
+    content: str, target: str, dest_name: str, source: Path
+) -> Artifact:
+    """Measure whether rendered content has no unreplaced `{{VAR}}` left."""
+    names = tuple(dict.fromkeys(find_unreplaced_variables(content)))
+    return Artifact(
+        NO_UNSUBSTITUTED_PLACEHOLDERS, target, dest_name, not names, source, names=names
     )
 
 
@@ -546,13 +556,7 @@ def _iter_part_artifacts(
         part,
         allowances.get(SKILL_BODY_BYTES, {}).get(dest_name),
     )
-    yield Artifact(
-        NO_UNSUBSTITUTED_PLACEHOLDERS,
-        target,
-        dest_name,
-        not find_unreplaced_variables(content),
-        part,
-    )
+    yield _placeholder_artifact(content, target, dest_name, part)
     yield from _line_artifacts(target, dest_name, part)
 
 
@@ -780,6 +784,7 @@ def evaluate(artifacts: Iterable[Artifact]) -> list[Violation]:
                         True,
                         artifact.source,
                         artifact.lines,
+                        names=artifact.names,
                     )
                 )
             continue
@@ -923,9 +928,10 @@ def format_report(violations: list[Violation], errors: list[str] | None = None) 
 
     Returns:
         Declaration errors first under their own header, then a report line
-        per violation naming the file, metric, actual value, threshold, and
-        the compress-not-split remedy with the amount to cut; a pass message
-        if both are empty.
+        per size violation naming the file, metric, actual value, threshold,
+        and the compress-not-split remedy with the amount to cut, and one line
+        per failed pass/fail check and source listing its targets and any
+        unreplaced variables. A pass message if both are empty.
     """
     errors = errors or []
     if not violations and not errors:
@@ -936,7 +942,16 @@ def format_report(violations: list[Violation], errors: list[str] | None = None) 
         lines.extend(f"  {e}" for e in errors)
     if violations:
         lines.append("Prompt-size guard failed:")
+        groups: dict[object, list[Violation]] = {}
         for v in violations:
+            key = (
+                v
+                if v.metric in FINALS
+                else (v.metric, v.dest_name, v.source, v.names, v.lines)
+            )
+            groups.setdefault(key, []).append(v)
+        for group in groups.values():
+            v = group[0]
             unit = UNITS.get(v.metric, "")
             at_line = (
                 f" at line{'s' * (len(v.lines) > 1)} {', '.join(map(str, v.lines))}"
@@ -944,11 +959,18 @@ def format_report(violations: list[Violation], errors: list[str] | None = None) 
                 else ""
             )
             fix = _FIXES.get(v.metric, "compress, don't split")
-            if v.metric in FINALS and v.metric not in _FIXES:
-                fix = f"cut {v.actual - (v.cut_to or v.threshold)} {unit}, {fix}"
+            if v.metric in FINALS:
+                detail = f"actual {v.actual} > threshold {v.threshold} {unit}"
+                if v.metric not in _FIXES:
+                    fix = f"cut {v.actual - (v.cut_to or v.threshold)} {unit}, {fix}"
+            elif v.names:
+                detail = "unreplaced " + ", ".join(f"{{{{{n}}}}}" for n in v.names)
+            else:
+                detail = "check failed"
+            targets = ", ".join(dict.fromkeys(g.target for g in group))
             lines.append(
-                f"  [{v.metric}] {v.dest_name} ({v.target}): actual {v.actual} > "
-                f"threshold {v.threshold} {unit}{at_line} ({v.source}) - {fix}."
+                f"  [{v.metric}] {v.dest_name} ({targets}): {detail}{at_line} "
+                f"({v.source}) - {fix}."
             )
     return "\n".join(lines)
 

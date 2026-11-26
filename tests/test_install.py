@@ -816,6 +816,16 @@ class TestMaterializeBuiltinSkill:
         assert "mark done." in content
         assert "{{TOOL_COMPLETE}}" not in content
 
+    def test_unreplaced_variable_left_to_the_size_guard(self, tmp_path: Path) -> None:
+        src = self._make_skill(tmp_path / "src", "leaky", "# Leaky\n\n{{MISSING}}.\n")
+        dest = tmp_path / "dest" / "leaky"
+        vars_path = self._write_vars(tmp_path, {})
+
+        with patch("llm_prompts.install.log") as mock_log:
+            _materialize_builtin_skill(src, dest, vars_path, set())
+
+        assert not any("MISSING" in str(call.args) for call in mock_log.call_args_list)
+
     def test_frontmatter_intact_after_substitution(self, tmp_path: Path) -> None:
         src = self._make_skill(
             tmp_path / "src",
@@ -2286,6 +2296,18 @@ class TestRenderedAndLinkedContentEquivalence:
         assert dest.read_text(encoding="utf-8") == _rendered_content(
             src, vars_path, "claude-code"
         )
+
+    def test_unreplaced_variable_left_to_the_size_guard(self, tmp_path: Path) -> None:
+        src = _make_rule(tmp_path / "src", "rule.md", "# Rule\n\n{{MISSING}}.\n")
+        vars_path = tmp_path / "vars.json"
+        vars_path.write_text("{}", encoding="utf-8")
+
+        with patch("llm_prompts.install.log") as mock_log:
+            _install_rendered(
+                src, tmp_path / "rule.md", vars_path, "claude-code", "rule"
+            )
+
+        assert not any("MISSING" in str(call.args) for call in mock_log.call_args_list)
 
     def test_failed_write_keeps_old_bytes_mode_and_leaves_no_scratch(
         self, tmp_path: Path
