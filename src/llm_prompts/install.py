@@ -5268,8 +5268,8 @@ def main(
         log(
             "warn",
             f"Not running as the installed llm-prompts (python at {sys.prefix}). "
-            "Skipped stale-file cleanup. "
-            "Run the installed llm-prompts to remove stale files.",
+            "Skipped stale-file and package cleanup. "
+            "Run the installed llm-prompts to remove them.",
         )
 
     from .manifest import read_manifest
@@ -5466,19 +5466,31 @@ def main(
             ]
             pi_entries = _pi_packages(pi_fragments)
             pi_packages = list(pi_entries)
+            previous_packages = previous_manifest.get("pi", {}).get("packages", [])
             wanted_names = _npm_names(pi_packages)
+            held_packages = (
+                []
+                if trusted
+                else [
+                    s
+                    for s in previous_packages
+                    if not _npm_names([s]) & wanted_names and s not in pi_entries
+                ]
+            )
+            wanted_names |= _npm_names(held_packages)
             previous_owned = set(
                 previous_manifest.get("pi", {}).get("pi_installed_packages", [])
             )
             retained = _remove_owned_pi_packages(previous_owned, wanted_names)
             added = _sync_pi_packages(
                 pi_entries,
-                previous_manifest.get("pi", {}).get("packages", []),
+                [s for s in previous_packages if s not in held_packages],
                 _pi_defaults(pi_fragments),
             )
             pi_failed_sources, newly_owned = _install_pi_packages(pi_packages, added)
             _migrate_curl_pi()
             _warn_pi_version_drift(pi_packages)
+            pi_packages += held_packages
             pi_installed_packages = sorted(
                 (previous_owned & wanted_names) | newly_owned | retained
             )

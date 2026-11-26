@@ -517,8 +517,37 @@ class TestPiPackages:
         _install(home, manifest, [_overlay(overlay, ["npm:overlay-pkg"])])
         assert "npm:overlay-pkg" in _settings(home)["packages"]
 
-        _install(home, manifest, [_overlay(overlay, [])])
+        _install(home, manifest, [_overlay(overlay, [])], trusted=True)
         assert _settings(home)["packages"] == _core_packages()
+
+    def test_undeclared_overlay_packages_stay_until_the_installed_tool_runs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        manifest = tmp_path / "installed.json"
+        overlay = _overlay(tmp_path / "overlay", ["npm:overlay-pkg"])
+        _install(home, manifest, [overlay], trusted=True)
+
+        _install(home, manifest)
+        assert "npm:overlay-pkg" in _settings(home)["packages"]
+
+        _install(home, manifest, trusted=True)
+        assert _settings(home)["packages"] == _core_packages()
+
+    def test_old_version_of_a_declared_package_is_not_held(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        manifest = tmp_path / "installed.json"
+        overlay = tmp_path / "overlay"
+        _install(home, manifest, [_overlay(overlay, ["npm:acme@1.0.0"])], trusted=True)
+
+        _install(home, manifest, [_overlay(overlay, ["npm:acme@2.0.0"])])
+
+        recorded = json.loads(manifest.read_text(encoding="utf-8"))["agents"]["pi"]
+        assert "npm:acme@1.0.0" not in recorded["packages"]
 
     def test_frozen_install_keeps_the_managed_records(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2961,7 +2990,12 @@ class TestPiHooksInstallFailure:
 
 class TestPiPackageRemoval:
     def _install(
-        self, tmp_path: Path, packages: list[str], *, broken: str = ""
+        self,
+        tmp_path: Path,
+        packages: list[str],
+        *,
+        broken: str = "",
+        trusted: bool = True,
     ) -> list[list[str]]:
         """Install the given overlay packages with a fake pi whose `broken` command fails, returning the pi commands run."""
         home = tmp_path / "home"
@@ -2989,8 +3023,20 @@ class TestPiPackageRemoval:
                 tmp_path / "installed.json",
                 [_overlay(tmp_path / "overlay", packages)],
                 pi="/usr/bin/pi",
+                trusted=trusted,
             )
         return calls
+
+    def test_dropped_owned_package_stays_until_the_installed_tool_runs(
+        self, tmp_path: Path
+    ) -> None:
+        self._install(tmp_path, ["npm:acme-ext"])
+
+        untrusted = self._install(tmp_path, [], trusted=False)
+        trusted = self._install(tmp_path, [])
+
+        assert not [c for c in untrusted if c[1] == "remove"]
+        assert ["/usr/bin/pi", "remove", "npm:acme-ext"] in trusted
 
     def test_dropped_owned_package_is_removed_until_gone(self, tmp_path: Path) -> None:
         self._install(tmp_path, ["npm:acme-ext"])
