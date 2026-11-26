@@ -467,7 +467,7 @@ def discover_skills(checkout: Path, subset: list[str] | None) -> list[tuple[str,
     for component in _IGNORED_COMPONENTS:
         if (checkout / component).exists():
             log(
-                "warn",
+                "debug",
                 f"{checkout.name} contains '{component}', which is not yet supported",
             )
 
