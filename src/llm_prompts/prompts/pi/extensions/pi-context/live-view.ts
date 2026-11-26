@@ -168,7 +168,7 @@ export class LiveView {
 				const activity = this.activity.get(run.id);
 				const turns = activity?.turns ?? 0;
 				const glyph = run.state === "landing" ? paint.fg("success", "↳") : paint.fg("accent", frame);
-				const meta = paint.fg("dim", `${elapsed(now - run.startedAt)} · ${turns} turn${turns === 1 ? "" : "s"}${targetText(run)}${sourceText(run, shown)}`) + usageText(activity?.usage, windowFor(run, this.modelRegistry, this.window), paint) + (run.state === "landing" ? paint.fg("dim", " · landing") : "");
+				const meta = paint.fg("dim", `${elapsed(now - run.startedAt)} · ${turns} turn${turns === 1 ? "" : "s"}${targetText(run)}${sourceText(run, shown)}`) + usageText(activity?.usage, windowFor(run, this.modelRegistry, this.window), paint) + (run.state === "landing" ? paint.fg("dim", " · landing") : "") + (run.next ? paint.fg("dim", ` · next: ${run.next}`) : "");
 				const last = activity?.last ? `  ${paint.fg("muted", activity.last)}` : "";
 				return fit(`${glyph} ${paint.fg("accent", paint.bold(run.name))} ${roleTag(run, paint)} ${meta}${last}`);
 			}),
