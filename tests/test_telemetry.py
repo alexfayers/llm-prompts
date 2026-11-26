@@ -505,6 +505,11 @@ def test_a_failed_command_also_sends_an_exception_event_without_paths(
     assert raised["properties"]["command"] == "update"
     assert raised["properties"]["llm_prompts_commit"]["commit"] == A
     assert raised["properties"]["llm_prompts_commit"]["base"] == A
+    command = next(e for e in _events(telemetry_popen) if e["event"] == "command_run")
+    assert raised["properties"]["versions"] == command["properties"]["to"]
+    assert {"llm-prompts", "cline-hooks", "mcp-memory"} <= set(
+        raised["properties"]["versions"]
+    )
     sent = json.dumps(_events(telemetry_popen))
     assert home not in sent
     assert "secret.md" not in sent
