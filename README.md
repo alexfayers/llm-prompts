@@ -51,7 +51,7 @@
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/config\_edit.py                                              |       58 |        1 |     98% |        74 |
 | src/llm\_prompts/console.py                                                   |       18 |        1 |     94% |        48 |
-| src/llm\_prompts/contribute.py                                                |     1253 |       62 |     95% |116, 220, 247-248, 289-290, 322-323, 467, 611-612, 645, 817, 820, 877, 888, 998-999, 1044, 1148, 1194-1195, 1208, 1614-1617, 1795, 1797, 1811-1812, 1821-1822, 1841, 1852-1853, 1924, 1980-1985, 1989, 2105, 2132-2133, 2185, 2190-2191, 2210, 2266-2288, 2390, 2506, 2529 |
+| src/llm\_prompts/contribute.py                                                |     1263 |       62 |     95% |116, 220, 247-248, 289-290, 322-323, 467, 611-612, 645, 817, 820, 877, 888, 998-999, 1044, 1148, 1194-1195, 1208, 1624-1627, 1805, 1807, 1821-1822, 1831-1832, 1851, 1862-1863, 1934, 1990-1995, 1999, 2115, 2142-2143, 2199, 2204-2205, 2224, 2280-2302, 2404, 2520, 2543 |
 | src/llm\_prompts/exit\_reason.py                                              |        9 |        0 |    100% |           |
 | src/llm\_prompts/extension\_factories.py                                      |       12 |        0 |    100% |           |
 | src/llm\_prompts/git\_snapshot.py                                             |      158 |        7 |     96% |123, 167, 200, 213, 217, 231, 296 |
@@ -60,7 +60,7 @@
 | src/llm\_prompts/guards/commit\_guard.py                                      |      237 |        6 |     97% |66-67, 162, 399, 436, 455 |
 | src/llm\_prompts/guards/gate.py                                               |        5 |        0 |    100% |           |
 | src/llm\_prompts/guards/receipts.py                                           |       74 |        4 |     95% |71, 79, 102-103 |
-| src/llm\_prompts/guards/review\_limit.py                                      |       57 |        8 |     86% |42-43, 53, 100, 108-109, 128-129 |
+| src/llm\_prompts/guards/review\_limit.py                                      |       68 |        8 |     88% |42-43, 73-74, 95, 129, 137-138 |
 | src/llm\_prompts/guards/shell\_rules.py                                       |       90 |        2 |     98% |   99, 157 |
 | src/llm\_prompts/handoff\_block.py                                            |       13 |        1 |     92% |        20 |
 | src/llm\_prompts/home.py                                                      |       85 |        2 |     98% |  171, 176 |
@@ -154,7 +154,7 @@
 | tests/test\_config\_edit.py                                                   |       99 |        0 |    100% |           |
 | tests/test\_conftest.py                                                       |       94 |        4 |     96% |194-196, 209 |
 | tests/test\_contribute.py                                                     |      401 |        0 |    100% |           |
-| tests/test\_contribute\_worktrees.py                                          |     2237 |        0 |    100% |           |
+| tests/test\_contribute\_worktrees.py                                          |     2268 |        0 |    100% |           |
 | tests/test\_e2e\_git.py                                                       |      240 |        0 |    100% |           |
 | tests/test\_extension\_factories.py                                           |       29 |        0 |    100% |           |
 | tests/test\_filter\_findings\_script.py                                       |       73 |        0 |    100% |           |
@@ -210,7 +210,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       84 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **36983** |  **837** | **98%** |           |
+| **TOTAL**                                                                     | **37035** |  **837** | **98%** |           |
 
 
 ## Setup coverage badge
