@@ -1,4 +1,4 @@
-"""Answer questions about a repo's recent history from two git reads instead of one process per question."""
+"""Answer questions about a repo's recent history from a few batched git reads instead of one process per question."""
 
 from __future__ import annotations
 
@@ -16,6 +16,14 @@ _REF_PATTERNS = (
     "refs/remotes/upstream/main",
 )
 _FULL_SHA = re.compile(r"[0-9a-f]{40}")
+_HEADER = re.compile(rb"[0-9a-f]{40}")
+
+
+class Diff(NamedTuple):
+    """The stable patch id of a diff, empty when the diff is, and the files it changes."""
+
+    patch_id: str
+    paths: frozenset[str]
 
 
 class SnapshotCommit(NamedTuple):
@@ -50,6 +58,32 @@ def read_refs(repo: Path) -> dict[str, str]:
     return {name: sha for sha, name in (row.split(" ", 1) for row in rows)}
 
 
+def read_reflogs(repo: Path, refs: Collection[str]) -> dict[str, list[str]]:
+    """Return the commits of each ref's reflog, newest first, from one ``git log -g``."""
+    if not refs:
+        return {}
+    entries: dict[str, list[tuple[int, str]]] = {}
+    for row in subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "log",
+            "--no-show-signature",
+            "-g",
+            "--format=%gD %H",
+            *refs,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines():
+        selector, sha = row.split()
+        ref, _, index = selector.removesuffix("}").rpartition("@{")
+        entries.setdefault(ref, []).append((int(index), sha))
+    return {ref: [sha for _, sha in sorted(entries.get(ref, ()))] for ref in refs}
+
+
 def resolve_ref(refs: Mapping[str, str], name: str) -> str | None:
     """Return the sha of a full ref name, a branch or a remote branch such as ``origin/main``, if ``refs`` holds it."""
     for full in (name, f"refs/heads/{name}", f"refs/remotes/{name}"):
@@ -66,34 +100,53 @@ class Snapshot:
     """
 
     def __init__(
-        self, repo: Path, refs: Mapping[str, str], floor: str, heads: Collection[str]
+        self,
+        repo: Path,
+        refs: Mapping[str, str],
+        floor: str,
+        heads: Collection[str],
+        optional: Collection[str] = (),
     ) -> None:
+        """Read the commits of ``heads`` above ``floor``, and those of the ``optional`` shas when git has them all."""
         self.refs = refs
         self.floor = self._resolve(floor)
         self.commits: dict[str, SnapshotCommit] = {}
+        self.logged: set[str] = set()
         tips = {sha for head in heads if (sha := self._resolve(head)) is not None}
         if self.floor is not None and tips:
-            log = subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repo),
-                    "log",
-                    "--no-show-signature",
-                    f"--format={_LOG_FORMAT}",
-                    *sorted(tips),
-                    "--not",
-                    self.floor,
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-            ).stdout
+            extra = {sha for name in optional if (sha := self._resolve(name))} - tips
+            self.logged = tips | extra
+            try:
+                log = self._log(repo, self.logged)
+            except subprocess.CalledProcessError:
+                if not extra:
+                    raise
+                self.logged = tips
+                log = self._log(repo, tips)
             for row in log.splitlines():
                 sha, parents, authored_at, subject = row.split("\x00", 3)
                 self.commits[sha] = SnapshotCommit(
                     sha, tuple(parents.split()), authored_at, subject
                 )
+
+    def _log(self, repo: Path, tips: Collection[str]) -> str:
+        """Return the log of ``tips`` above the floor."""
+        return subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo),
+                "log",
+                "--no-show-signature",
+                f"--format={_LOG_FORMAT}",
+                *sorted(tips),
+                "--not",
+                str(self.floor),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
 
     def _resolve(self, name: str) -> str | None:
         """Return the commit a ref name or full sha names, if the snapshot knows it."""
@@ -120,8 +173,21 @@ class Snapshot:
                     below.add(parent)
         return held, below
 
+    def reachable(self, *tips: str) -> set[str]:
+        """Return the snapshot commits that ``tips`` have, as ``git rev-list <tips> --not <floor>`` lists them."""
+        found: set[str] = set()
+        pending = [sha for tip in tips if (sha := self._resolve(tip)) is not None]
+        while pending:
+            if (commit := self.commits.get(pending.pop())) and commit.sha not in found:
+                found.add(commit.sha)
+                pending.extend(commit.parents)
+        return found
+
     def chain(self, floor: str, ref: str) -> list[SnapshotCommit] | None:
-        """Return the commits of ``floor..ref``, newest first, or None unless they form one line of history."""
+        """Return the commits of ``floor..ref``, newest first, or None unless they form one line of history.
+
+        A ``ref`` that was read and is not among the commits is below the floor, so it has none.
+        """
         tip, base = self._resolve(ref), self._resolve(floor)
         if self.floor is None or base != self.floor or tip is None:
             return None
@@ -133,7 +199,7 @@ class Snapshot:
             if not commit.parents:
                 break
             tip = commit.parents[0]
-        return found if found or start == self.floor else None
+        return found if found or start == self.floor or start in self.logged else None
 
     def shas(self, floor: str, ref: str) -> list[str] | None:
         """Return the commits of ``floor..ref``, oldest first, as ``git rev-list --reverse`` does."""
@@ -178,6 +244,88 @@ class Snapshot:
         return self.commits.get(self._resolve(sha) or "")
 
     def is_commit(self, sha: str) -> bool | None:
-        """Return True when ``sha`` is the floor or a snapshot commit, else None."""
+        """Return True when ``sha`` is the floor, a snapshot commit or a commit the snapshot read below the floor, else None."""
         found = self._resolve(sha)
-        return True if found == self.floor or found in self.commits else None
+        return (
+            True
+            if found == self.floor or found in self.commits or found in self.logged
+            else None
+        )
+
+
+def read_diffs(
+    repo: Path, requests: Collection[tuple[str, str]]
+) -> dict[tuple[str, str], Diff]:
+    """Return the diff of each ``(floor, sha)`` from one ``diff-tree`` and one ``patch-id``.
+
+    The diff is the changes of commit ``sha`` when ``floor`` is empty, else those from ``floor`` to ``sha``.
+    """
+    # A line naming a floor replaces that commit's parents for the lines after it, so the lines of single commits come first.
+    wanted = sorted(dict.fromkeys(requests), key=lambda request: bool(request[0]))
+    if not wanted:
+        return {}
+    lines = [f"{sha} {floor}".strip() for floor, sha in wanted]
+    tree = subprocess.run(
+        [
+            "git",
+            "-c",
+            "core.quotePath=false",
+            "-C",
+            str(repo),
+            "diff-tree",
+            "--stdin",
+            "--always",
+            "--root",
+            "--cc",
+            "--raw",
+            "-p",
+            "-U0",
+            "--no-renames",
+        ],
+        input="\n".join(lines).encode() + b"\n",
+        capture_output=True,
+        check=True,
+    ).stdout
+    entries: list[list[bytes]] = []
+    for line in tree.split(b"\n"):
+        if _HEADER.match(line):
+            entries.append([])
+        elif entries:
+            entries[-1].append(line)
+    if len(entries) != len(wanted):
+        raise RuntimeError(
+            f"git diff-tree listed {len(entries)} of {len(wanted)} diffs"
+        )
+    paths: list[frozenset[str]] = []
+    patches = []
+    for index, entry in enumerate(entries):
+        raw = [row for row in entry if row.startswith(b":")]
+        paths.append(
+            frozenset(
+                name.decode(errors="replace")
+                for row in raw
+                for name in row.split(b"\t")[1:]
+            )
+        )
+        start = next(
+            (i for i, row in enumerate(entry) if row.startswith(b"diff ")), None
+        )
+        patches.append(
+            b""
+            if start is None
+            else f"commit {index:040x}\n".encode() + b"\n".join(entry[start:]) + b"\n"
+        )
+    ids = subprocess.run(
+        ["git", "patch-id", "--stable"],
+        cwd=repo,
+        input=b"".join(patches),
+        capture_output=True,
+        check=True,
+    ).stdout.decode()
+    patch_ids = {
+        int(commit, 16): patch for patch, commit in map(str.split, ids.splitlines())
+    }
+    return {
+        request: Diff(patch_ids.get(index, ""), paths[index])
+        for index, request in enumerate(wanted)
+    }

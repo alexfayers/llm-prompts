@@ -185,21 +185,12 @@ def sync_diverged(repo: Path, upstream: str = "@{u}") -> SyncResult:
             detail += f"; the state before the last sync is saved as {PRE_SYNC_REF}"
         return SyncResult("failed", detail=detail)
     identical = run_git(repo, "diff", "--quiet", "HEAD", upstream).returncode == 0
-    saved = run_git(
-        repo,
-        "update-ref",
-        "--create-reflog",
-        "-m",
-        "llm-prompts: pre-sync",
-        PRE_SYNC_REF,
-        "HEAD",
-    )
-    if saved.returncode != 0:
-        return SyncResult("failed", detail=saved.stderr.strip())
     try:
-        _remember_main(repo, "HEAD")
+        saved = _save_refs(repo, _earlier_main(repo, "HEAD"))
     except _Bail as bail:
         return SyncResult("failed", detail=f"main left untouched: {bail}")
+    if saved.returncode != 0:
+        return SyncResult("failed", detail=saved.stderr.strip())
     if identical:
         reset = run_git(repo, "reset", "--soft", upstream)
         if reset.returncode != 0:
@@ -285,15 +276,29 @@ def empty_merged_copies(repo: Path, base: str, copied: Collection[str]) -> set[s
 def _empty_merged_copies(repo: Path, base: str, copied: Collection[str]) -> set[str]:
     merge_base = _read(repo, "merge-base", "HEAD", base).strip()
     empty: dict[str, str] = {}
-    for line in _read(
-        repo, "log", "--format=%H %T %P%x09%at%x09%s", f"{merge_base}..HEAD"
-    ).splitlines():
-        ids, _, identity = line.partition("\t")
+    rows = [
+        line.partition("\t")
+        for line in _read(
+            repo,
+            "log",
+            "--format=%H %T %P%x09%at%x09%s",
+            "HEAD",
+            "--not",
+            f"{merge_base}^@",
+        ).splitlines()
+    ]
+    trees = {ids.split()[0]: ids.split()[1] for ids, _, _ in rows}
+    for ids, _, identity in rows:
         sha, tree, *parents = ids.split()
         if (
-            identity in copied
+            sha != merge_base
+            and identity in copied
             and len(parents) == 1
-            and tree == _read(repo, "rev-parse", f"{parents[0]}^{{tree}}").strip()
+            and tree
+            == (
+                trees.get(parents[0])
+                or _read(repo, "rev-parse", f"{parents[0]}^{{tree}}").strip()
+            )
         ):
             empty[sha] = identity.partition("\t")[2]
     if not empty:
@@ -836,15 +841,15 @@ def _squash_sync(repo: Path, upstream: str) -> SyncResult:
         return SyncResult("failed", detail=f"squash sync stopped: {bail}")
 
 
-def _remember_main(repo: Path, head: str) -> None:
-    """Keep ``head`` and every earlier main reachable from ``EARLIER_MAINS_REF``."""
+def _earlier_main(repo: Path, head: str) -> str:
+    """Return a commit that keeps ``head`` and every earlier main reachable from ``EARLIER_MAINS_REF``."""
     earlier = run_git(repo, "rev-parse", "--verify", "--quiet", EARLIER_MAINS_REF)
     parents = [
         "-p",
         head,
         *(["-p", EARLIER_MAINS_REF] if earlier.returncode == 0 else []),
     ]
-    kept = _read(
+    return _read(
         repo,
         "commit-tree",
         f"{head}^{{tree}}",
@@ -853,7 +858,19 @@ def _remember_main(repo: Path, head: str) -> None:
         "llm-prompts: earlier main",
         env=_EARLIER_MAINS_IDENTITY,
     ).strip()
-    _read(repo, "update-ref", EARLIER_MAINS_REF, kept)
+
+
+def _save_refs(repo: Path, earlier_main: str) -> subprocess.CompletedProcess[str]:
+    """Save HEAD as ``PRE_SYNC_REF`` and ``earlier_main`` as ``EARLIER_MAINS_REF`` in one transaction."""
+    return run_git(
+        repo,
+        "update-ref",
+        "--create-reflog",
+        "-m",
+        "llm-prompts: pre-sync",
+        "--stdin",
+        input=f"update {PRE_SYNC_REF} HEAD\nupdate {EARLIER_MAINS_REF} {earlier_main}\n",
+    )
 
 
 def _changed_paths(repo: Path, old: str, new: str) -> list[str]:
@@ -1102,18 +1119,9 @@ def rebuild_local(
         if tip == head:
             _drop_resolve_worktree(repo, keep, tip)
             return SyncResult("rebuilt", copied=tuple(copied))
-        saved = run_git(
-            repo,
-            "update-ref",
-            "--create-reflog",
-            "-m",
-            "llm-prompts: pre-sync",
-            PRE_SYNC_REF,
-            "HEAD",
-        )
+        saved = _save_refs(repo, _earlier_main(repo, head))
         if saved.returncode != 0:
             return SyncResult("failed", detail=saved.stderr.strip())
-        _remember_main(repo, head)
         reset = run_git(repo, "reset", "--keep", tip)
     except _Stopped as stopped:
         return SyncResult("stopped", detail=f"main left untouched: {stopped}")

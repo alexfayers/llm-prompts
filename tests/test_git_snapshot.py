@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from llm_prompts.git_snapshot import Snapshot, read_refs
+from llm_prompts.git_snapshot import Snapshot, read_diffs, read_refs
 
 pytestmark = pytest.mark.real_io
 
@@ -227,3 +227,79 @@ def test_a_signed_commit_is_read_while_git_log_shows_signatures(
 
     assert "Good signature" in repo.git("log", "-1", "--format=%H", "feat")
     assert repo.snapshot("feat").shas("floor", "feat") == [signed]
+
+
+def _patch_id_of(repo: Repo, *diff_args: str) -> str:
+    shown = subprocess.run(
+        ["git", "-C", str(repo.path), *diff_args],
+        capture_output=True,
+        check=True,
+        env={**os.environ, **_ENV},
+    ).stdout
+    done = subprocess.run(
+        ["git", "patch-id", "--stable"],
+        cwd=repo.path,
+        input=shown,
+        capture_output=True,
+        check=True,
+    ).stdout.decode()
+    return done.split()[0] if done else ""
+
+
+def test_diffs_read_in_one_pass_match_what_show_and_diff_print(repo: Repo) -> None:
+    floor = repo.git("rev-parse", "floor")
+    repo.git("switch", "-q", "-c", "feat")
+    changes = []
+    for name, content in [
+        ("a.txt", b"one\ntwo\n"),
+        ("dir/b d.txt", "caf\xe9\n".encode("latin-1")),
+        ("a.txt", b"one\nthree\n"),
+    ]:
+        (repo.path / name).parent.mkdir(exist_ok=True)
+        (repo.path / name).write_bytes(content)
+        repo.git("add", name)
+        changes.append(repo.commit(f"feat: {name}"))
+    empty = repo.commit("feat: empty")
+    tip = repo.git("rev-parse", "HEAD")
+
+    found = read_diffs(
+        repo.path,
+        [(floor, tip), (floor, changes[0]), *(("", sha) for sha in (*changes, empty))],
+    )
+
+    for sha in (*changes, empty):
+        diff = found["", sha]
+        assert diff.patch_id == _patch_id_of(repo, "show", "-U0", sha)
+        assert diff.paths == set(
+            repo.git("show", "--format=", "--name-only", sha).splitlines()
+        )
+    squash = found[floor, tip]
+    assert squash.patch_id == _patch_id_of(repo, "diff", "-U0", floor, tip)
+    assert squash.paths == {"a.txt", "dir/b d.txt"}
+    assert found[floor, changes[0]].patch_id == found["", changes[0]].patch_id
+    assert found["", empty].patch_id == ""
+    assert found["", empty].paths == set()
+
+
+def test_an_empty_root_commit_has_an_empty_diff(repo: Repo) -> None:
+    root = repo.git("rev-list", "--max-parents=0", "floor")
+
+    assert read_diffs(repo.path, [("", root)])["", root].patch_id == ""
+    assert read_diffs(repo.path, []) == {}
+
+
+def test_a_head_below_the_floor_is_answered_as_holding_no_commits(repo: Repo) -> None:
+    old = repo.git("rev-parse", "HEAD")
+    repo.commit("chore: floor moves on")
+    repo.git("switch", "-q", "-c", "feat")
+    tip = repo.commit("feat: a")
+    repo.git("switch", "-q", "floor")
+    snapshot = Snapshot(repo.path, read_refs(repo.path), "floor", ["feat"], [old])
+
+    assert snapshot.shas("floor", old) == []
+    assert snapshot.is_commit(old) is True
+    assert snapshot.shas("floor", tip) == [tip]
+    assert (
+        Snapshot(repo.path, read_refs(repo.path), "floor", ["feat"]).shas("floor", old)
+        is None
+    )

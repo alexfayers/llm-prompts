@@ -27,7 +27,7 @@ GIT_MARKERS = (
     "CHERRY_PICK_HEAD",
     "REVERT_HEAD",
 )
-SAVE_POINT = f"update-ref --create-reflog -m llm-prompts: pre-sync {PRE_SYNC_REF} HEAD"
+SAVE_POINT = "update-ref --create-reflog -m llm-prompts: pre-sync --stdin"
 
 
 def _in_progress(repo: Path, fake: FakeSubprocess, marker: str) -> None:

@@ -3725,15 +3725,12 @@ def test_main_is_left_unchanged_when_a_changed_branch_drops_a_hand_resolved_line
     assert git(project.repo, "rev-parse", "main") == main
 
 
-SYNC_GIT_SPAWN_BUDGET = 100
+SYNC_GIT_SPAWN_BUDGET = 15
 
 
-def test_a_sync_pass_over_three_worktrees_stays_within_the_git_spawn_budget(
-    project: Project, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    for name in ("feat/a", "feat/b", "feat/c"):
-        project.worktree(name, f"feat: {name}-1", f"feat: {name}-2")
-        project.run(branch=name)
+@pytest.fixture
+def git_spawns(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Return the list that collects each git command the test spawns."""
     spawned: list[str] = []
     start = subprocess.Popen.__init__
 
@@ -3743,11 +3740,116 @@ def test_a_sync_pass_over_three_worktrees_stays_within_the_git_spawn_budget(
         start(self, args, *rest, **kw)
 
     monkeypatch.setattr(subprocess.Popen, "__init__", counting)
+    return spawned
 
+
+def add_synced_worktrees(project: Project, *names: str) -> list[Path]:
+    paths = [
+        project.worktree(
+            name, f"feat: {name}-1", f"feat: {name}-2", start="origin/main"
+        )
+        for name in names
+    ]
+    for name in names:
+        project.run(branch=name)
     assert project.run(apply=True) == 0
+    return paths
+
+
+def start_fresh_process() -> None:
+    """Forget every git read the module kept, as a new process has none."""
+    contribute._refs_moved()
+    contribute._diffs.clear()
+    contribute._logged_identity.cache_clear()
+
+
+def count_noop_sync_spawns(project: Project, git_spawns: list[str]) -> int:
+    start_fresh_process()
+    git_spawns.clear()
+    assert project.run(apply=True) == 0
+    return len(git_spawns)
+
+
+def test_a_sync_pass_over_three_worktrees_stays_within_the_git_spawn_budget(
+    project: Project, git_spawns: list[str]
+) -> None:
+    add_synced_worktrees(project, "feat/a", "feat/b", "feat/c")
+
+    assert count_noop_sync_spawns(project, git_spawns) <= SYNC_GIT_SPAWN_BUDGET, (
+        git_spawns
+    )
+
+
+def test_a_fresh_sync_pass_makes_as_many_git_spawns_over_six_worktrees_as_over_three(
+    project: Project, git_spawns: list[str]
+) -> None:
+    add_synced_worktrees(project, "feat/a", "feat/b", "feat/c")
+    three = count_noop_sync_spawns(project, git_spawns)
+    add_synced_worktrees(project, "feat/d", "feat/e", "feat/f")
+
+    assert count_noop_sync_spawns(project, git_spawns) == three, git_spawns
+
+
+def test_a_fresh_sync_pass_over_amended_worktrees_makes_as_many_git_spawns_as_over_untouched_ones(
+    project: Project, git_spawns: list[str]
+) -> None:
+    paths = add_synced_worktrees(project, "feat/a", "feat/b", "feat/c")
+    untouched = count_noop_sync_spawns(project, git_spawns)
+    for path in paths:
+        for round_ in ("amended", "amended again"):
+            (path / f"{path.name}-more.txt").write_text(round_, encoding="utf-8")
+            git(path, "add", ".")
+            git(path, "commit", "-q", "--amend", "--no-edit")
+            assert project.run(apply=True) == 0
+
+    assert count_noop_sync_spawns(project, git_spawns) == untouched, git_spawns
+
+
+def advance_origin_main(project: Project, name: str) -> None:
+    other = project.root / f"other-{name}"
+    subprocess.run(["git", "clone", "-q", str(project.origin), str(other)], check=True)
+    project.commit(other, f"{name}.txt", "upstream\n", f"chore: {name}")
+    git(other, "push", "-q", "origin", "main")
+    git(project.repo, "fetch", "-q", "origin")
+
+
+def add_worktrees_on_staggered_bases(project: Project, *names: str) -> None:
+    for name in names:
+        project.worktree(name, f"feat: {name}-1", start="origin/main")
+        project.run(branch=name)
+        assert project.run(apply=True) == 0
+        advance_origin_main(project, name.replace("/", "-"))
     assert project.run(apply=True) == 0
 
-    assert len(spawned) <= SYNC_GIT_SPAWN_BUDGET, spawned
+
+def test_a_fresh_sync_pass_over_worktrees_on_older_upstream_bases_makes_as_many_git_spawns_as_over_fewer(
+    project: Project, git_spawns: list[str]
+) -> None:
+    add_worktrees_on_staggered_bases(project, "feat/a", "feat/b", "feat/c")
+    three = count_noop_sync_spawns(project, git_spawns)
+    add_worktrees_on_staggered_bases(project, "feat/d", "feat/e", "feat/f")
+
+    assert count_noop_sync_spawns(project, git_spawns) == three, git_spawns
+
+
+def test_a_branch_whose_recorded_head_is_ahead_of_its_local_branch_has_no_earlier_version_copy(
+    project: Project,
+) -> None:
+    path = add_synced_worktrees(project, "feat/a")[0]
+    local = git(path, "rev-parse", "HEAD")
+    head = git(path, "commit-tree", f"{local}^{{tree}}", "-p", local, "-m", "ahead")
+    entries = [e._replace(remote_head=head) for e in project.entries()]
+    base = contribute.base_ref(project.repo)
+    start_fresh_process()
+    contribute._track(project.repo, entries, (base,))
+
+    tips = contribute._tips(project.repo, base, entries)
+
+    assert tips[0].commits[-1] == head
+    assert contribute._held_by_earlier_versions(project.repo, base, tips) == {
+        "feat/a": set()
+    }
+    assert contribute._rewritten_copies(project.repo, base, tips, ()) == set()
 
 
 def test_an_open_pr_body_with_a_leftover_comment_is_left_alone_and_named(
