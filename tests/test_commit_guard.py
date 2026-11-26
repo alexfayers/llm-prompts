@@ -470,6 +470,18 @@ class TestPrimaryCheckoutGuard:
         assert primary("gh pr create --draft") is not None
         assert primary("git stash pop") is not None
 
+    def test_allows_help_calls(self, primary: RunHook) -> None:
+        for command in ["gh pr create --help", "gh pr create -h", "git commit --help"]:
+            assert primary(command) is None, command
+
+    def test_blocks_a_help_flag_used_as_an_option_value(self, primary: RunHook) -> None:
+        for command in [
+            "gh pr create --title -h",
+            "git commit -m -h",
+            "gh pr create --body --help",
+        ]:
+            assert primary(command) is not None, command
+
     def test_blocks_a_forced_branch_move_but_not_a_branch_delete(
         self, primary: RunHook
     ) -> None:

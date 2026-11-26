@@ -386,10 +386,13 @@ _PRIMARY_MESSAGE = (
 def _primary_verb(cmd: ParsedCommand) -> str | None:
     """Return the verb of a git or gh call that changes a checkout's branch, else None."""
     if cmd.name == "gh":
-        return "pr create" if cmd.words[:2] == ["pr", "create"] else None
+        creates = cmd.words[:2] == ["pr", "create"] and not _asks_help(cmd.words, 2)
+        return "pr create" if creates else None
     if cmd.name != "git" or is_read_only_git(cmd):
         return None
     verb = next((word for word in cmd.words if word in _PRIMARY_BLOCKED), None)
+    if verb is not None and _asks_help(cmd.words, cmd.words.index(verb) + 1):
+        return None
     if verb in _FF_ONLY and "--ff-only" in cmd.words:
         return None
     if verb == "stash" and not {"pop", "apply"} & set(cmd.words):
@@ -397,6 +400,11 @@ def _primary_verb(cmd: ParsedCommand) -> str | None:
     if verb is None and cmd.words[:1] == ["branch"] and _forces(cmd.words[1:]):
         return "branch --force"
     return verb
+
+
+def _asks_help(words: list[str], position: int) -> bool:
+    """Whether the word at the position, right after the verb, asks for help."""
+    return words[position : position + 1] in (["--help"], ["-h"])
 
 
 def _forces(words: list[str]) -> bool:
