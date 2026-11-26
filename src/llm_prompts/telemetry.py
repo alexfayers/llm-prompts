@@ -71,7 +71,6 @@ def send_session(stats: dict[str, Any]) -> None:
 def _exception_event(
     exc: BaseException,
     properties: dict[str, Any],
-    commit: dict[str, str],
     config: dict[str, Any],
 ) -> dict[str, Any]:
     """Build a PostHog exception event for `exc` and its causes."""
@@ -80,7 +79,8 @@ def _exception_event(
         config,
         {
             **{k: properties[k] for k in _EXCEPTION_CONTEXT},
-            "llm_prompts_commit": commit,
+            "llm_prompts_commit": properties["to"]["llm-prompts"],
+            "versions": properties["to"],
         },
     )
     calls = [
@@ -221,8 +221,6 @@ class Run(AbstractContextManager["Run"]):
         )
         if self.outcome.startswith("error:") and exc and telemetry_core.reportable(exc):
             telemetry_core.send(
-                _exception_event(
-                    exc, properties, properties["to"]["llm-prompts"], config
-                ),
+                _exception_event(exc, properties, config),
                 install_id,
             )
