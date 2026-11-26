@@ -947,6 +947,7 @@ _KEPT_EXTENSIONS = {
         "mcp-hints.ts",
         "net-guard.ts",
         "prompt-cache-stabilizer.ts",
+        "session-telemetry.ts",
         "tower-do-patch.ts",
         "tower-do-slim.ts",
         "tower-widget.ts",

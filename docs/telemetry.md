@@ -15,6 +15,15 @@ The session start check (`startup-check`) sends the same event, plus `auto_updat
 
 A failure sends a second event with the exception type, up to three chained exception types, and the file, function, module and line of the llm-prompts, cline-hooks and mcp-memory frames, plus `github` or `mcp` when the failure came from that service. Only exceptions defined in llm-prompts and cline-hooks send their message, scrubbed of local values, paths, URLs, hosts, emails, IPs and long opaque strings and cut to 200 characters. Every other exception, including mcp-memory ones, sends its type and `<message withheld>`. A failed command sends only its exit status. Exits and Ctrl-C send no failure event.
 
+Each pi session, lead or fork, sends one `pi_session` event when it ends, if it made a model call. It follows the same opt-out and install id, and sends nothing unless an llm-prompts command recorded the opt-out choice in the last 24 hours. It has:
+
+- `role`: `main`, `reader`, `writer` or `other`, and `model_tier`: `opus`, `sonnet`, `haiku` or `other`, from the last model used
+- `calls`, `cost`, `cost_per_call`, `context_avg` and `context_peak` (tokens per model call), `cache_read_share` (cache-read tokens over all input tokens), `compactions` and `wall_s`
+- `llm_prompts`: the llm-prompts version entry, as in a command's `to`
+- OS, Python version and schema version
+
+A fork's event carries its role and model tier, so fork count, runtime and cost by role and tier are counts and sums over fork events.
+
 Each llm-prompts command run with agents installed and without `--root` writes `telemetry.json` next to `config.toml`. It holds your opt-out choice, when you made it, and the install id. mcp-memory reads this file, so it follows the same opt-out and sends its events under the same install id. The file itself is never sent.
 
 Never sent: paths, usernames, hostnames, repo names, names of overlays not installed from github.com, prompt or config contents.

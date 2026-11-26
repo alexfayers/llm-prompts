@@ -1437,6 +1437,13 @@ def _run_command(
         "check",
         help="Check prompt sizes against size_limits.py's thresholds and pi extensions for default factories and summary headers.",
     )
+    session_telemetry_parser = subparsers.add_parser(
+        "session-telemetry",
+        help="Send one pi session's anonymous numbers. The session-telemetry pi extension runs it.",
+    )
+    session_telemetry_parser.add_argument(
+        "stats", type=json.loads, help="The session's totals as JSON."
+    )
     size_report_parser = subparsers.add_parser(
         "size-report",
         help="Print a markdown report of prompt size changes against a base.",
@@ -1708,6 +1715,10 @@ def _run_command(
 
     if args.command == "install" and args.root:
         set_root(args.root)
+
+    if args.command == "session-telemetry":
+        telemetry.send_session(args.stats)
+        return None
 
     if args.command:
         run.begin(
