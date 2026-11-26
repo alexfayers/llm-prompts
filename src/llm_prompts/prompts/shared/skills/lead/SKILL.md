@@ -35,10 +35,8 @@ description: Run a pipeline of delegates that write, review and merge many PRs o
 - MUST run one background watch over all the user's open PRs or reviews across the repos, with the watch command the rules name, in follow mode.
 - MUST NOT start one watch per change, nor poll in the foreground.
 - On each merge, MUST record it in memory and resolve its task.
-- MUST restart the watches after a reload.
+- MUST restart the watch after a reload.
 
 ## Staffing
 
-- SHOULD keep the delegate count near the configured cap, and refill it after every result.
-- SHOULD pick the cheapest model tier that fits: warm forks for judgment, cold workers for mechanical work.
-- SHOULD compact at clean points.
+- SHOULD keep the delegate count near the configured cap, and refill it after every result, within the in-flight review limit.
