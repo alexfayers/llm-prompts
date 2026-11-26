@@ -19,6 +19,7 @@ Feature requests and ideas: `{{SKILL_DIR}}/request.md`.
 - Title: short, plain, no `type:` prefix.
 - Body: a few short paragraphs. What happens literally, what was expected, how to reproduce if known.
 - MUST carry exactly ONE ask. Several problems -> one issue each.
+- MUST follow `{{SKILL_DIR}}/issue-rules.md` for content, label and success criteria. Search for related issues first and link them.
 - MUST NOT paste secrets, tokens, private paths or other private info.
 
 ## Open
@@ -26,5 +27,6 @@ Feature requests and ideas: `{{SKILL_DIR}}/request.md`.
 - MUST show the user the target repo, title and body, and ask the user for approval.
 - MUST NOT run `gh issue create` before the user approves. Edits requested -> redraft, show again.
 - On approval (github.com): `gh issue create -R <owner/name> --title "<title>" --body-file -`, adding `--label bug` only if the repo has it (`gh label list -R <owner/name>`).
+- MUST then set blocked-by and sub-issue links and the issue status, per `{{SKILL_DIR}}/issue-rules.md`. Set `Todo` when picked for now, else `Backlog`.
 - MUST report the issue URL.
 - MUST NOT push, open a PR, or comment on other issues.

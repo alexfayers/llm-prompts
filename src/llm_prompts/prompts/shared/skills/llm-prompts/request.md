@@ -19,6 +19,7 @@ Bugs and annoyances: `{{SKILL_DIR}}/report-issue.md`.
 - Title: short, plain, no `type:` prefix.
 - Body: a few short paragraphs. Open with the need, then the proposal as a hedged question. Cover the current behaviour only where it explains the need.
 - MUST carry exactly ONE ask. Several ideas -> one issue each.
+- MUST follow `{{SKILL_DIR}}/issue-rules.md` for content, label and success criteria. Search for related issues first and link them.
 - MUST NOT paste secrets, tokens, private paths or other private info.
 
 ## Open
@@ -26,5 +27,6 @@ Bugs and annoyances: `{{SKILL_DIR}}/report-issue.md`.
 - MUST show the user the target repo, title and body, and ask the user for approval.
 - MUST NOT run `gh issue create` before the user approves. Edits requested -> redraft, show again.
 - On approval (github.com): `gh issue create -R <owner/name> --title "<title>" --body-file -`, adding `--label enhancement` only if the repo has it (`gh label list -R <owner/name>`).
+- MUST then set blocked-by and sub-issue links and the issue status, per `{{SKILL_DIR}}/issue-rules.md`. Set `Backlog` for a new idea or parked work, `Todo` when picked for now.
 - MUST report the issue URL.
 - MUST NOT push, open a PR, or comment on other issues.
