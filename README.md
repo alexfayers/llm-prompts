@@ -75,7 +75,7 @@
 | src/llm\_prompts/network.py                                                   |       46 |        0 |    100% |           |
 | src/llm\_prompts/overlay\_merge.py                                            |       52 |        2 |     96% |   71, 109 |
 | src/llm\_prompts/plugins.py                                                   |      194 |       15 |     92% |46, 133-134, 138-139, 163-167, 183, 213, 242, 290, 300, 408, 464, 468 |
-| src/llm\_prompts/pr.py                                                        |       30 |        3 |     90% |     52-54 |
+| src/llm\_prompts/pr.py                                                        |      133 |        9 |     93% |96-112, 139, 277-278 |
 | src/llm\_prompts/prompts/claude-code/skills/retrospective/extract\_signals.py |      181 |       97 |     46% |44-49, 54-69, 80-124, 186, 197, 200, 209, 254-264, 269-286, 297-332, 336 |
 | src/llm\_prompts/prompts/shared/skills/eagle-vision/focus.py                  |      689 |       10 |     99% |108, 159, 271, 676, 690, 1214-1217, 1311 |
 | src/llm\_prompts/prompts/shared/skills/git-usage/check\_repos.py              |       67 |       12 |     82% |41-42, 44, 63, 73-75, 95-96, 124-125, 159 |
@@ -176,7 +176,7 @@
 | tests/test\_pi\_context\_rules.py                                             |       19 |        0 |    100% |           |
 | tests/test\_pi\_extension\_factories.py                                       |        8 |        0 |    100% |           |
 | tests/test\_plugins.py                                                        |      377 |        0 |    100% |           |
-| tests/test\_pr.py                                                             |       47 |        0 |    100% |           |
+| tests/test\_pr.py                                                             |      146 |        0 |    100% |           |
 | tests/test\_prompt\_checks\_entry\_points.py                                  |       13 |        0 |    100% |           |
 | tests/test\_prompt\_sizes.py                                                  |      803 |        0 |    100% |           |
 | tests/test\_removed\_agents\_notice.py                                        |       29 |        0 |    100% |           |
@@ -200,7 +200,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       70 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **33861** |  **805** | **98%** |           |
+| **TOTAL**                                                                     | **34063** |  **811** | **98%** |           |
 
 
 ## Setup coverage badge
