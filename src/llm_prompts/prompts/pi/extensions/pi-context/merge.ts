@@ -38,12 +38,14 @@ export interface Worktree {
 	/** A worktree provider made the worktree, and removes it. */
 	provided?: boolean;
 	branch: string;
-	/** The writer's own branch, started from a base ref the caller named: its work lands only by being pushed. */
-	own?: boolean;
 	/** The branch the main checkout had when the worktree was made, and where the work lands. */
 	base: string;
 	/** The main checkout's state when the worktree was made. */
 	snapshot: string;
+	/** The writer's own branch, started from a base ref the caller named: its work lands only by being pushed. */
+	own?: boolean;
+	/** The commit the base branch was at when the worktree was made. */
+	start?: string;
 }
 
 /** The main checkout's branch and uncommitted changes. */
@@ -89,11 +91,12 @@ export async function createWorktree(cwd: string, root: string, name: string, ow
 		if ((await git(repo, "rev-parse", "--verify", "--quiet", `refs/remotes/${PUSH_REMOTE}/${branch}`)).code === 0) throw new Error(`${branch} already exists on ${PUSH_REMOTE}`);
 	}
 	const snapshot = await mainSnapshot(repo);
+	const start = await gitOut(repo, "rev-parse", base);
 	const provided = await provider()?.create(repo, branch, base);
-	if (provided) return { repo, path: provided.path, checkout: await gitOut(provided.gitDir ?? provided.path, "rev-parse", "--show-toplevel"), provided: true, branch, ...(own?.branch && { own: true }), base, snapshot };
+	if (provided) return { repo, path: provided.path, checkout: await gitOut(provided.gitDir ?? provided.path, "rev-parse", "--show-toplevel"), provided: true, branch, base, snapshot, ...(own?.branch && { own: true }), start };
 	const dir = path.join(root, repoKey(repo), name);
 	await addBranchWorktree(repo, dir, branch, base, Boolean(own?.branch));
-	return { repo, path: dir, branch, ...(own?.branch && { own: true }), base, snapshot };
+	return { repo, path: dir, branch, base, snapshot, ...(own?.branch && { own: true }), start };
 }
 
 /** Reports the worktree's HEAD when it is not the fork's branch. */
@@ -219,7 +222,20 @@ export interface LandOptions {
 	first: Event;
 	/** Regex of private names, besides the home directory path, that must not land. */
 	privateNames?: string;
+	/** Once aborted, nothing more lands. */
+	signal?: AbortSignal;
+	/** Rebases the fork's commits onto the base inside the landing queue when the base moved. A rebase that conflicts is undone. */
+	rebase?: boolean;
 }
+
+/** Rebases the fork's clean worktree onto its base, and leaves it as it was when the base no longer descends from the commit the fork started at, or the rebase conflicts. */
+async function rebaseOntoBase(tree: Worktree): Promise<void> {
+	const checkout = checkoutOf(tree);
+	if (!tree.start || (await git(checkout, "merge-base", "--is-ancestor", tree.start, tree.base)).code || (await offBranch(tree)) || (await gitOut(checkout, "status", "--porcelain")) !== "" || (await landFrom(tree))) return;
+	if ((await git(checkout, "rebase", "-q", tree.base)).code) await git(checkout, "rebase", "--abort");
+}
+
+const CANCELLED = "cancelled before landing";
 
 /** The remote branch other than the base that holds the fork branch's tip, when the worktree is on that branch, clean, and has commits past the base. Only refs of `PUSH_REMOTE` count, and a failed fetch trusts none. */
 async function pushedTo(tree: Worktree): Promise<string | undefined> {
@@ -230,20 +246,25 @@ async function pushedTo(tree: Worktree): Promise<string | undefined> {
 	return contains.out.split("\n").find((name) => name && !name.endsWith("/HEAD") && !name.endsWith(`/${tree.base}`));
 }
 
-async function landNow({ tree, first, privateNames: extraNames }: LandOptions): Promise<Landing> {
+async function landNow({ tree, first, privateNames: extraNames, signal, rebase }: LandOptions): Promise<Landing> {
 	const escalate = async (reason: string): Promise<Landing> => ({ state: "escalated", reason, removed: await dropIfClean(tree) });
+	if (signal?.aborted) return escalate(CANCELLED);
 	if (first.type === "fork-failed") return escalate(`fork failed: ${first.reason}`);
 	if (first.type === "fork-blocked") return escalate(`fork is blocked: ${first.reason}`);
 	const pushed = await pushedTo(tree);
+	if (signal?.aborted) return escalate(CANCELLED);
 	if (pushed) return { state: "landed", sha: await gitOut(checkoutOf(tree), "rev-parse", tree.branch), note: [`landed on ${pushed} by push`, await cleanup(tree, true)].filter(Boolean).join("; ") };
 	if (tree.own) return (await gitOut(checkoutOf(tree), "rev-list", "--count", `${tree.base}..HEAD`)) === "0" ? { state: "landed", note: await cleanup(tree) } : escalate(`${tree.branch} was not pushed`);
+	if (rebase) await rebaseOntoBase(tree);
 	const reason = await refusal(tree, extraNames);
 	if (reason) return escalate(reason);
 	const checkout = checkoutOf(tree);
 	if ((await gitOut(checkout, "rev-list", "--count", `${tree.base}..HEAD`)) === "0") return { state: "landed", note: await cleanup(tree) };
-	const fetched = await git(tree.repo, "fetch", "-q", checkout, "HEAD");
+	if (signal?.aborted) return escalate(CANCELLED);
+	const fetched = await run("git", ["fetch", "-q", checkout, "HEAD"], tree.repo, signal);
 	if (fetched.code) return escalate(`could not fetch ${tree.branch} from ${checkout}: ${fetched.out.trim()}`);
 	const rebased = (await landFrom(tree)) !== tree.base;
+	if (signal?.aborted) return escalate(CANCELLED);
 	const merged = await git(tree.repo, ...(rebased ? ["reset", "-q", "--keep", "FETCH_HEAD"] : ["merge", "--ff-only", "-q", "FETCH_HEAD"]));
 	if (merged.code) return escalate(`${tree.base} moved during the fork; land ${tree.branch} by hand`);
 	return { state: "landed", sha: await gitOut(tree.repo, "rev-parse", "HEAD"), note: await cleanup(tree) };

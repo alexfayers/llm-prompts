@@ -5,7 +5,7 @@ import path from "node:path";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext, type ToolCallEvent } from "@earendil-works/pi-coding-agent";
 
 export type Role = {
-	name: "reader" | "writer";
+	name: "reader" | "writer" | "team";
 	card: string;
 	/** Allowed non-MCP tool names, as globs. */
 	tools: string[];
@@ -25,6 +25,7 @@ const WARM_OPENING = "You are the delegate that the conversation above asked to 
 const COLD_OPENING = "You are a delegate given one self-contained task, so do not call fork.";
 const OUTCOME = "Checkpoint rewind your own finished detours. End by calling `reply` with your outcome, ref and report. Put any question for the user in its `asks` and do not ask the user directly.";
 const READ_TOOLS = ["checkpoint", "read", "grep", "find", "ls", "bash", "codemode", "web_search", "fetch_content", "get_search_content", "result_fetch", "result_query", "transcript", "tower_do_status", "reply"];
+const FORK_TOOLS = ["fork", "fork_resume", "fork_cancel", "fork_steer"];
 const READ_MCP = [
 	"mcp__semble__*",
 	"mcp__memory__read_*",
@@ -32,6 +33,9 @@ const READ_MCP = [
 	"mcp__memory__get_*",
 	"mcp__memory__list_*",
 ];
+
+/** Whether this session is a team coordinator, which forks members and waits for them. */
+export const isTeam = (): boolean => process.env.PI_CONTEXT_ROLE === "team";
 
 export const ROLES: Record<Role["name"], Role> = {
 	reader: {
@@ -46,6 +50,14 @@ export const ROLES: Record<Role["name"], Role> = {
 		name: "writer",
 		card: `${WARM_OPENING} You work in your own git worktree. Commit your work there. Do not touch other paths or memory. ${OUTCOME}`,
 		tools: [...READ_TOOLS, "edit", "write", "process"],
+		mcp: READ_MCP,
+		skills: [],
+		writes: true,
+	},
+	team: {
+		name: "team",
+		card: `You are the team coordinator that was asked for, so do not fork a team. Fork each member with the fork tool as a reader or writer, and give each branch its own writer. A member cannot fork. You work in your own git worktree, and your writers' commits land there. After you fork them, end your turn without polling or sleeping: each result arrives as a message when its member finishes. Then put any ask of theirs in the asks of your own reply, and report once. ${OUTCOME}`,
+		tools: [...READ_TOOLS, "edit", "write", "process", ...FORK_TOOLS],
 		mcp: READ_MCP,
 		skills: [],
 		writes: true,

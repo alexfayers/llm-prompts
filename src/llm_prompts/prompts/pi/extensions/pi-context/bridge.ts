@@ -143,6 +143,9 @@ export function describeMain(pi: ExtensionAPI, ctx: ExtensionContext, role?: Rol
 	};
 }
 
+/** The bridge config cut to the tools `role` may use. */
+export const narrowBridge = (config: BridgeConfig, role: Role): BridgeConfig => ({ ...config, activeTools: config.activeTools.filter((name) => mayUse(role, name)), tools: config.tools.filter(({ name }) => mayUse(role, name)) });
+
 /** The bridge the handshake file describes, or undefined for a delegate that runs its own MCP servers. */
 export function readBridgeConfig(handshakeFile: string): BridgeConfig | undefined {
 	try {

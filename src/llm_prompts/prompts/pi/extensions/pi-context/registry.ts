@@ -19,11 +19,13 @@ export type Run = {
 	worktree?: string;
 	branch?: string;
 	/** A writer's worktree, as the landing needs it. */
-	tree?: { repo: string; path: string; branch: string; own?: boolean; base: string; snapshot: string };
+	tree?: { repo: string; path: string; branch: string; base: string; snapshot: string; own?: boolean; start?: string };
 	/** The git checkout the delegate works in, when it is not the session's directory. */
 	target?: string;
 	/** The session's directory when the run started. */
 	cwd?: string;
+	/** The run id of the team that started it, absent for a run main started. */
+	owner?: string;
 	/** The directory of the delegate's seed, handshake and session files. */
 	files?: string;
 	/** The name of the fork that began the prompt cache group it joined by starting from a finished fork's session. */
@@ -47,6 +49,9 @@ export type Run = {
 };
 
 const LIVE: RunState[] = ["running", "landing"];
+
+/** Whether the session started the run: a team its own members, main its own forks. */
+export const isOwnRun = (run: Run): boolean => run.owner === process.env.PI_CONTEXT_RUN_ID;
 
 export const isLive = (run: Run): boolean => LIVE.includes(run.state);
 
@@ -105,6 +110,7 @@ export class Registry {
 	private listeners = new Set<(run: Run) => void>();
 
 	start(run: Run): Run {
+		if (process.env.PI_CONTEXT_RUN_ID) run.owner = process.env.PI_CONTEXT_RUN_ID;
 		this.runs.set(run.id, run);
 		this.notify(run);
 		return run;
