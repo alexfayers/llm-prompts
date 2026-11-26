@@ -81,8 +81,27 @@ export function coldArgs(role: Role, { model, sessionDir, cardFile, skillsDir, s
 const FINISHED_MARK = "finished";
 /** The most children of a shared fan-out that start over the live limit. */
 export const FANOUT_EXTRA = 2;
-/** The longest file `sharedFiles` inlines into the stub's prompt. */
-export const SHARED_FILE_MAX_CHARS = 100_000;
+/** The longest file `sharedFiles` inlines into the stub's prompt: what one read of pi's read tool returns at most. */
+export const SHARED_FILE_MAX_CHARS = 50 * 1024;
+const READ_CONTINUES = /\n\n\[[^\]]*Use offset=(\d+) to continue\.\]$/;
+
+/** The text of `file` read in pages through the read tool, so its permission rules apply. Fails on an unreadable, non-text, capped, truncated or over-long file. */
+async function readShared(ctx: ExtensionToolContext, name: string, file: string, signal?: AbortSignal): Promise<string> {
+	let text = "";
+	for (let offset: number | undefined = 1; offset !== undefined; ) {
+		const { result, isError } = await ctx.executeTool("read", { path: file, offset }, { signal }).catch((error: unknown) => ({ result: { content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }] }, isError: true }));
+		if (result.content.some((block) => block.type !== "text")) throw new Error(`shared file ${name} is not text`);
+		const page = result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+		if (isError) throw new Error(`cannot read shared file ${name}: ${page}`);
+		if (page.startsWith("[capped:")) throw new Error(`shared file ${name} was capped by the result cap`);
+		if (/^\[Line \d+ is .*exceeds/.test(page)) throw new Error(`shared file ${name} has a line too long to read`);
+		const next = READ_CONTINUES.exec(page);
+		text += `${offset === 1 ? "" : "\n"}${next ? page.slice(0, next.index) : page}`;
+		if (text.length > SHARED_FILE_MAX_CHARS) throw new Error(`shared file ${name} is over ${SHARED_FILE_MAX_CHARS} characters`);
+		offset = next ? Number(next[1]) : undefined;
+	}
+	return text.trimEnd();
+}
 const STUB_SUFFIX = 'That is all the shared context. Once you have read it, call reply with {"outcome":"done","ref":""} and stop. Your specific task arrives next.';
 /** The conversation a queued fork was called with, kept in its files so a resume starts it from that point. */
 const QUEUED_ENTRIES = "queued-entries.json";
@@ -480,7 +499,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		name: "fork",
 		label: "Fork",
 		description:
-			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. With branch, and optionally base (a ref, default the current branch), the writer starts on that new branch from the base. It pushes the branch with git push, and the landing is that push: unpushed work escalates and nothing lands on the current branch. Use it for one PR per writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It returns at once and the result arrives as a message when the delegate calls reply and the work has landed. from runs on a copy of a finished fork's session instead. A session over 150000 tokens of context starts the fork cold on the same model with a summary instead of a copy. shared with tasks and model runs one cold stub that reads shared and the contents of the files in sharedFiles (read with the read tool, at most 100000 characters each) in a single request, then starts one child per task from that stub when it finishes, so they share its prompt cache. Up to 2 children start over the live limit and the rest queue.",
+			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. With branch, and optionally base (a ref, default the current branch), the writer starts on that new branch from the base. It pushes the branch with git push, and the landing is that push: unpushed work escalates and nothing lands on the current branch. Use it for one PR per writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It returns at once and the result arrives as a message when the delegate calls reply and the work has landed. from runs on a copy of a finished fork's session instead. A session over 150000 tokens of context starts the fork cold on the same model with a summary instead of a copy. shared with tasks and model runs one cold stub that reads shared and the contents of the files in sharedFiles (read with the read tool, at most 51200 characters each) in a single request, then starts one child per task from that stub when it finishes, so they share its prompt cache. Up to 2 children start over the live limit and the rest queue.",
 		promptSnippet: "Run a read-only or worktree-writing delegate on a copy of this session in the background",
 		parameters: Type.Object({
 			task: Type.Optional(Type.String({ description: "What the delegate should find out or check" })),
@@ -507,13 +526,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 				if (repeated) throw new Error(`task names must be unique and differ from the stub's: ${repeated}`);
 				const common = { role: params.role, target: params.target };
 				const sharedDir = path.resolve(ctx.cwd, expandHome(params.target ?? "."));
-				const files = await Promise.all((params.sharedFiles ?? []).map(async (file) => {
-					const { result, isError } = await ctx.executeTool("read", { path: path.resolve(sharedDir, expandHome(file)) }, { signal }).catch((error: unknown) => ({ result: { content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }] }, isError: true }));
-					const text = result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
-					if (isError) throw new Error(`cannot read shared file ${file}: ${text}`);
-					if (text.length > SHARED_FILE_MAX_CHARS) throw new Error(`shared file ${file} is over ${SHARED_FILE_MAX_CHARS} characters`);
-					return `File ${file}:\n${text.trimEnd()}`;
-				}));
+				const files = await Promise.all((params.sharedFiles ?? []).map(async (file) => `File ${file}:\n${await readShared(ctx, file, path.resolve(sharedDir, expandHome(file)), signal)}`));
 				const task = [params.shared, ...files, STUB_SUFFIX].join("\n\n");
 				const started = await forkTool.execute(toolCallId, { ...common, name: stub, model: params.model, task }, signal, onUpdate, ctx);
 				const stubId = (started.details as { runId: string }).runId;

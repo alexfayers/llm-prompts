@@ -110,6 +110,15 @@ const forkDirs = () => fs.readdirSync(path.join(agentDir, "pi-context"), { recur
 const MAIN_TOOLS = [{ name: "mcp__semble__search", description: "d", parameters: {}, exposure: "codemode" }, { name: "read", description: "r", parameters: {}, exposure: "direct" }];
 
 const reads: string[] = [];
+/** What pi's read tool returns: at most 2000 lines, from the 1-based `offset`, with a note naming the next offset when it stops early. */
+function readLikePi(text: string, offset = 1, limit?: number): string {
+	const lines = text.split("\n");
+	const count = Math.min(limit ?? Infinity, 2000);
+	const shown = lines.slice(offset - 1, offset - 1 + count);
+	const next = offset + shown.length;
+	if (next > lines.length) return shown.join("\n");
+	return `${shown.join("\n")}\n\n[Showing lines ${offset}-${next - 1} of ${lines.length}. Use offset=${next} to continue.]`;
+}
 let deniedReads: string[] = [];
 const STUB_SUFFIX = 'That is all the shared context. Once you have read it, call reply with {"outcome":"done","ref":""} and stop. Your specific task arrives next.';
 
@@ -153,8 +162,11 @@ async function start(params: Record<string, unknown>, cwd = process.cwd(), main 
 		executeTool: async (name: string, args: any) => {
 			if (name !== "read") return { result: { content: [{ type: "text", text: `ran ${name} ${JSON.stringify(args)}` }], details: {} }, isError: false };
 			reads.push(args.path);
-			const text = deniedReads.some((denied) => args.path.includes(denied)) ? "blocked by permission rules" : fs.readFileSync(args.path, "utf8");
-			return { result: { content: [{ type: "text", text }], details: {} }, isError: deniedReads.some((denied) => args.path.includes(denied)) };
+			if (deniedReads.some((denied) => args.path.includes(denied))) return { result: { content: [{ type: "text", text: "blocked by permission rules" }], details: {} }, isError: true };
+			const text = fs.readFileSync(args.path, "utf8");
+			if (text.startsWith("CAPPED")) return { result: { content: [{ type: "text", text: "[capped: 99999 chars, ref rc-x; result_fetch({ref, offset?, limit?, pattern?})]" }], details: {} }, isError: false };
+			if (text.startsWith("IMAGE")) return { result: { content: [{ type: "image", data: "", mimeType: "image/png" }], details: {} }, isError: false };
+			return { result: { content: [{ type: "text", text: readLikePi(text, args.offset, args.limit) }], details: {} }, isError: false };
 		},
 		model: { provider: "prov", id: leadModel, cost: MODEL_COSTS[leadModel] },
 		modelRegistry: { find: (_provider: string, id: string) => ({ contextWindow: 200_000, cost: MODEL_COSTS[id] }) },
@@ -398,6 +410,27 @@ describe("fork tool", () => {
 			} finally {
 				deniedReads = [];
 			}
+		});
+
+		test("sharedFiles reads a file longer than one read page in full", async () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-shared-pages-"));
+			const body = Array.from({ length: 4500 }, (_, at) => `line ${at + 1}`).join("\n");
+			fs.writeFileSync(path.join(dir, "long.txt"), body);
+			await fork({ shared: "STUB_REPORT", sharedFiles: ["long.txt"], tasks: [{ name: "sg1", task: "STUB_REPORT" }], model: "prov/cheap", name: "sgstub" }, dir);
+			const task = registryOf().all().find((run) => run.name === "sgstub")!.task;
+			assert.ok(task.includes(`File long.txt:\n${body}\n\n`), "the whole file is in the prompt");
+			assert.doesNotMatch(task, /Use offset=/);
+		});
+
+		test("sharedFiles fails on a capped result or an image", async () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-shared-odd-"));
+			fs.writeFileSync(path.join(dir, "capped.txt"), "CAPPED");
+			fs.writeFileSync(path.join(dir, "pic.png"), "IMAGE");
+			for (const [file, message] of [["capped.txt", /shared file capped\.txt was capped/], ["pic.png", /shared file pic\.png is not text/]] as const) {
+				const { tool } = await fork({ shared: "s", sharedFiles: [file], tasks: [{ name: "sh1", task: "x" }], model: "prov/cheap", name: "shstub" }, dir);
+				assert.match(String(tool), message);
+			}
+			assert.equal(registryOf().all().some((run) => run.name === "shstub"), false);
 		});
 
 		test("sharedFiles fails clearly on a file over the size cap", async () => {
