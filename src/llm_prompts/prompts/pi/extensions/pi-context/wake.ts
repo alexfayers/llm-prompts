@@ -21,7 +21,7 @@ export function wakeReason(run: Run): WakeReason | undefined {
 const NEVER_CUT = /^(ASK:|DENIED: ")/;
 
 const ASK = /^ASK:\s*(.*)$/;
-const askPrefix = (run: Pick<Run, "id" | "name">) => `fork-${run.name}-${run.id}-`;
+export const askPrefix = (run: Pick<Run, "id" | "name">) => `fork-${run.name}-${run.id}-`;
 
 /** Pins each ask of a fork's reply call, or else each `ASK:` line of its reply text, as a pending ask, and returns their ids. */
 export function pinForkAsks(pi: Pick<ExtensionAPI, "appendEntry">, ctx: Pick<ExtensionContext, "hasUI" | "ui" | "sessionManager">, run: Pick<Run, "id" | "name">, reply: string | Reply): string[] {

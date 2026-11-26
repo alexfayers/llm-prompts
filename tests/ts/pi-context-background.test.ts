@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, mock, test } from "node:test";
 import { openAsks } from "../../src/llm_prompts/prompts/pi/extensions/pending-asks.ts";
 import { Background, registerBackgroundHooks } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/background.ts";
@@ -144,6 +147,22 @@ describe("hooks", () => {
 		assert.deepEqual(appended.map(([type, data]) => [type, data.id, data.state]), [["pi-context-run", "a", "running"], ["pi-context-run", "a", "landing"]]);
 	});
 
+	test("a new session restores only runs that are unread, have an open ask or can be continued", () => {
+		const files = fs.mkdtempSync(path.join(os.tmpdir(), "bound-"));
+		fs.writeFileSync(path.join(files, "seed.jsonl"), "");
+		const asked = { type: "custom", customType: "pending-asks", data: { action: "add", id: "fork-asked-asked-1", text: "asked: q?" } };
+		const sessionWith = (...runs: Run[]) => ({ ...session(...runs), sessionManager: { getEntries: () => [...session(...runs).sessionManager.getEntries(), asked] } });
+		handlers.session_start({ reason: "startup" }, sessionWith(
+			run("old", { state: "done" }),
+			run("unread", { state: "done", unread: "u" }),
+			run("asked", { state: "done" }),
+			run("warm", { state: "done", files, lastRequestAt: Date.now() }),
+			run("local", { state: "done", background: false }),
+		));
+		fs.rmSync(files, { recursive: true });
+		assert.deepEqual(registry.all().map((r) => r.id), ["unread", "asked", "warm"]);
+	});
+
 	test("a session whose pi is stale stops saving and does not break the registry", () => {
 		const pi = { on: (event: string, handler: any) => (handlers[event] = handler), appendEntry: () => { throw new Error("stale"); } };
 		registerBackgroundHooks(pi as any, background, registry);
@@ -153,8 +172,8 @@ describe("hooks", () => {
 	});
 
 	test("a new session rebuilds the runs and tells main once about those that were still live", () => {
-		handlers.session_start({ reason: "startup" }, session(run("x"), run("y", { state: "done" }), run("x", { state: "landing" })));
-		assert.deepEqual(registry.all().map((r) => [r.id, r.state]), [["x", "lost"], ["y", "done"]]);
+		handlers.session_start({ reason: "startup" }, session(run("x"), run("y", { state: "done", unread: "u" }), run("x", { state: "landing" })));
+		assert.deepEqual(registry.all().map((r) => [r.id, r.state]), [["y", "done"]]);
 		assert.deepEqual(appended.map(([, data]) => [data.id, data.state]), [["x", "lost"]]);
 		assert.deepEqual(sent.map(([message, options]) => [message.content, options]), [["[fork x lost] its session ended before it finished. Task: t", { deliverAs: "nextTurn" }]]);
 	});

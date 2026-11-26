@@ -1,11 +1,11 @@
 // Tracks background fork runs: wakes the main session when one finishes, delivers results that arrive during a run when it settles, holds a session without a UI until they finish and notes a fork that runs long.
 // Config: llmPrompts.forks.checkInMinutes in pi settings (minutes a fork runs before the next tool result names it, default 5; 0 turns the note off)
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { isLive, registryOf, type Registry, type Run } from "./registry.ts";
+import { isLive, registryOf, sessionFileOf, type Registry, type Run } from "./registry.ts";
 import type { LiveView, Watchable } from "./live-view.ts";
 import { openAsks, resolveAsk } from "../pending-asks.ts";
 import type { Reply } from "./reply.ts";
-import { askUserUnanswered, digestLine, openForkAsks, pinForkAsks, wakeReason } from "./wake.ts";
+import { askPrefix, askUserUnanswered, digestLine, openForkAsks, pinForkAsks, wakeReason } from "./wake.ts";
 
 export const RESULTS_TYPE = "pi-context-results";
 
@@ -237,6 +237,10 @@ const RUN_TYPE = "pi-context-run";
 const lostNote = ({ endedBy, worktree, task, files, name }: Run) =>
 	`${endedBy === "reload" ? "a /reload ended it" : "its session ended"} before it finished.${worktree ? ` Its worktree ${worktree} is kept.` : ""}${files ? ` fork_resume ${name} continues it.` : ""} Task: ${task}`;
 
+/** Whether a restored run is still needed: unread, asking, or with files a `fork_resume` continues from. */
+const isRetained = (run: Run, askIds: string[]): boolean =>
+	run.background && (isLive(run) || Boolean(run.unread || run.queued) || askIds.some((id) => id.startsWith(askPrefix(run))) || Boolean(run.files && sessionFileOf(run.files, Boolean(run.model))));
+
 /** Hooks that deliver the digest, hold a session without a UI, and save and restore the runs across sessions. */
 export function registerBackgroundHooks(pi: ExtensionAPI, background: Background, registry: Registry = registryOf()) {
 	let stopSaving: (() => void) | undefined;
@@ -252,8 +256,12 @@ export function registerBackgroundHooks(pi: ExtensionAPI, background: Background
 
 	pi.on("session_start", (_event, ctx) => {
 		stopSaving?.();
-		const saved = ctx.sessionManager.getEntries().flatMap((entry) => (entry.type === "custom" && entry.customType === RUN_TYPE ? [entry.data as Run] : []));
-		for (const run of registry.restore(saved)) {
+		const entries = ctx.sessionManager.getEntries();
+		const latest = new Map<string, Run>();
+		for (const entry of entries) if (entry.type === "custom" && entry.customType === RUN_TYPE) latest.set((entry.data as Run).id, entry.data as Run);
+		const askIds = openAsks(entries as Parameters<typeof openAsks>[0]).map((ask) => ask.id);
+		const lost = registry.restore([...latest.values()], (run) => isRetained(run, askIds));
+		for (const run of lost) {
 			save(run);
 			pi.sendMessage({ customType: RESULTS_TYPE, content: digestLine(run, lostNote(run)), display: true }, { deliverAs: "nextTurn" });
 		}
