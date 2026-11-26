@@ -15,6 +15,7 @@ from pathlib import Path
 
 from llm_prompts import tool_paths
 from llm_prompts.benchmark import paths
+from llm_prompts.benchmark.agents.adapter import GUARD_ARGV
 from llm_prompts.benchmark.cell.home_dirs import declared_home_dirs
 from llm_prompts.benchmark.paths import live_home
 from llm_prompts.benchmark.types import Trace
@@ -28,6 +29,7 @@ CELL_PATH = re.compile(
     rf"(?:{re.escape(paths.SHARED_ROOT_PREFIX)}|{re.escape(paths.CELL_ROOT_PREFIX)})\d+-"
     rf"|{re.escape(paths.CELL_MOUNT_NAME)}".encode()
 )
+GUARD_PYTHON = GUARD_ARGV[0]
 HOOK_BINARY = re.compile(rb"(?<![\w.~-])/[^\s\"'`]*/cline-hook(?![\w-])")
 
 
@@ -139,7 +141,7 @@ def audit(
         elif path.is_file() and THIRD_PARTY_DIRS.isdisjoint(
             path.relative_to(root).parts
         ):
-            content = path.read_bytes()
+            content = path.read_bytes().replace(GUARD_PYTHON.encode(), b"")
         else:
             continue
         hits.extend(
