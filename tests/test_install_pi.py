@@ -420,20 +420,51 @@ class TestPiPackages:
         )
         version_file = agent_dir / "install" / "current-version"
         version_file.write_text("1.6.0", encoding="utf-8")
-        _install(home, tmp_path / "installed.json")
+        launcher = agent_dir / "bin" / "pi"
+        launcher.parent.mkdir()
+        launcher.touch()
+        _install(home, tmp_path / "installed.json", pi=str(launcher))
         settings = _settings(home)
         assert settings["showCacheMissNotices"] is False
         assert "notices" not in settings
         settings_path.write_text(
             json.dumps({**settings, "showCacheMissNotices": True}), encoding="utf-8"
         )
-        _install(home, tmp_path / "installed.json")
+        _install(home, tmp_path / "installed.json", pi=str(launcher))
         assert "notices" not in _settings(home)
         version_file.write_text("1.6.1", encoding="utf-8")
-        _install(home, tmp_path / "installed.json")
+        _install(home, tmp_path / "installed.json", pi=str(launcher))
         settings = _settings(home)
         assert "showCacheMissNotices" not in settings
         assert settings["notices"]["cacheMisses"] is True
+
+    def test_legacy_cache_miss_setting_follows_the_pi_on_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        home = tmp_path / "home"
+        agent_dir = home / ".pi" / "agent"
+        (agent_dir / "install").mkdir(parents=True)
+        (agent_dir / "install" / "current-version").write_text(
+            "1.6.0", encoding="utf-8"
+        )
+        package = (
+            agent_dir / "npm" / "node_modules" / "@earendil-works" / "pi-coding-agent"
+        )
+        package.mkdir(parents=True)
+        (package / "package.json").write_text(
+            json.dumps({"name": "@earendil-works/pi-coding-agent", "version": "1.6.1"}),
+            encoding="utf-8",
+        )
+        launcher = agent_dir / "bin" / "pi"
+        launcher.parent.mkdir()
+        launcher.touch()
+        settings_path = agent_dir / "settings.json"
+        settings_path.write_text(
+            json.dumps({"showCacheMissNotices": False}), encoding="utf-8"
+        )
+        _install(home, tmp_path / "installed.json", pi=str(launcher))
+        assert _settings(home)["showCacheMissNotices"] is False
 
     def test_user_settings_and_packages_are_preserved(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
