@@ -72,6 +72,7 @@
 | src/llm\_prompts/mcp.py                                                       |       85 |        1 |     99% |        91 |
 | src/llm\_prompts/network.py                                                   |       46 |        0 |    100% |           |
 | src/llm\_prompts/overlay\_merge.py                                            |       52 |        2 |     96% |   71, 109 |
+| src/llm\_prompts/path\_migration.py                                           |       72 |        2 |     97% |  107, 112 |
 | src/llm\_prompts/plugins.py                                                   |      194 |       15 |     92% |47, 134-135, 139-140, 164-168, 184, 214, 243, 291, 301, 409, 465, 469 |
 | src/llm\_prompts/pr.py                                                        |      133 |        9 |     93% |96-112, 139, 277-278 |
 | src/llm\_prompts/prompts/claude-code/skills/retrospective/extract\_signals.py |      181 |       97 |     46% |44-49, 54-69, 80-124, 186, 197, 200, 209, 254-264, 269-286, 297-332, 336 |
@@ -94,6 +95,7 @@
 | src/llm\_prompts/squash\_subject.py                                           |        6 |        0 |    100% |           |
 | src/llm\_prompts/telemetry.py                                                 |       82 |        2 |     98% |   152-153 |
 | src/llm\_prompts/telemetry\_core.py                                           |      224 |        5 |     98% |72-73, 186-187, 423 |
+| src/llm\_prompts/tool\_paths.py                                               |       14 |        0 |    100% |           |
 | src/llm\_prompts/watch/\_\_init\_\_.py                                        |        0 |        0 |    100% |           |
 | src/llm\_prompts/watch/core/\_\_init\_\_.py                                   |        0 |        0 |    100% |           |
 | src/llm\_prompts/watch/core/condition.py                                      |       25 |        3 |     88% | 33, 49-50 |
@@ -137,7 +139,7 @@
 | tests/benchmark/test\_bench\_types.py                                         |        5 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_variant.py                                       |      275 |        0 |    100% |           |
 | tests/benchmark/traces.py                                                     |        3 |        0 |    100% |           |
-| tests/conftest.py                                                             |      472 |       24 |     95% |161, 295-296, 299, 302, 305, 310, 365, 444-455, 460-462, 480-481, 495, 567-571, 661, 848, 888, 896 |
+| tests/conftest.py                                                             |      473 |       24 |     95% |168, 302-303, 306, 309, 312, 317, 372, 451-462, 467-469, 487-488, 502, 574-578, 668, 856, 896, 904 |
 | tests/test\_auto\_update.py                                                   |      216 |        0 |    100% |           |
 | tests/test\_build\_wave.py                                                    |      282 |        1 |     99% |       112 |
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
@@ -174,6 +176,7 @@
 | tests/test\_mcp.py                                                            |       27 |        2 |     93% |     43-44 |
 | tests/test\_network.py                                                        |       33 |        0 |    100% |           |
 | tests/test\_overlay\_merge.py                                                 |       19 |        0 |    100% |           |
+| tests/test\_path\_migration.py                                                |      110 |        0 |    100% |           |
 | tests/test\_pi\_context\_rules.py                                             |       19 |        0 |    100% |           |
 | tests/test\_pi\_extension\_factories.py                                       |        8 |        0 |    100% |           |
 | tests/test\_plugins.py                                                        |      377 |        0 |    100% |           |
@@ -196,13 +199,14 @@
 | tests/test\_telemetry.py                                                      |      384 |        0 |    100% |           |
 | tests/test\_telemetry\_core.py                                                |      164 |        1 |     99% |       126 |
 | tests/test\_todos\_script.py                                                  |       88 |        0 |    100% |           |
+| tests/test\_tool\_paths.py                                                    |       27 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      119 |        0 |    100% |           |
 | tests/test\_worktrees.py                                                      |       82 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_pr.py                                       |      201 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       70 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **35429** |  **822** | **98%** |           |
+| **TOTAL**                                                                     | **35653** |  **824** | **98%** |           |
 
 
 ## Setup coverage badge
