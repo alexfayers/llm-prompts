@@ -237,6 +237,16 @@ describe("landing", () => {
 			assert.equal(git(tree.path, "log", "-1", "--format=%s"), "unpushed");
 		});
 
+		test("a worktree restored on a new branch pushes with a plain git push", async () => {
+			const repo = originRepo("restore-new");
+			const tree = await own(repo, "own-restore-new");
+			assert.equal((await land({ tree, first: { type: "fork-blocked", reason: "needs input" } })).removed, true);
+			await restoreWorktree(tree);
+			commit(tree.path, "a.txt", "1", "pr work");
+			git(tree.path, "-c", "push.default=simple", "push", "-q");
+			assert.equal(git(repo, "rev-parse", "origin/feature/own"), git(tree.path, "rev-parse", "HEAD"));
+		});
+
 		test("rejects a base without a branch", async () => {
 			await assert.rejects(createWorktree(originRepo("nobranch"), path.join(scratch, "worktrees"), "own-nobranch", { base: "origin/main" }), /branch/);
 		});

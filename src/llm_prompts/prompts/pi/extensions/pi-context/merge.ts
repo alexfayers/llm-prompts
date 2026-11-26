@@ -68,6 +68,14 @@ const PUSH_REMOTE = "origin";
 /** The git checkout the fork commits in. */
 const checkoutOf = (tree: Worktree) => tree.checkout ?? tree.path;
 
+/** Adds a worktree on the new branch `branch` from `from`. An own branch gets the push remote branch of the same name as its upstream, so a plain `git push` works. */
+async function addBranchWorktree(repo: string, dir: string, branch: string, from: string, own: boolean): Promise<void> {
+	await gitOut(repo, "worktree", "add", "--no-track", "-b", branch, dir, from);
+	if (!own) return;
+	await gitOut(repo, "config", `branch.${branch}.remote`, PUSH_REMOTE);
+	await gitOut(repo, "config", `branch.${branch}.merge`, `refs/heads/${branch}`);
+}
+
 /** Makes a worktree on `fork/<name>` from the branch of the repository at `cwd`: the worktree provider's, or else a git worktree under `root`. With `own`, the worktree is on the new branch `own.branch` from the ref `own.base`, and lands only by a push of that branch. */
 export async function createWorktree(cwd: string, root: string, name: string, own?: { base?: string; branch?: string }): Promise<Worktree> {
 	if (own?.base && !own.branch) throw new Error("base needs a branch name for the new branch");
@@ -84,11 +92,7 @@ export async function createWorktree(cwd: string, root: string, name: string, ow
 	const provided = await provider()?.create(repo, branch, base);
 	if (provided) return { repo, path: provided.path, checkout: await gitOut(provided.gitDir ?? provided.path, "rev-parse", "--show-toplevel"), provided: true, branch, ...(own?.branch && { own: true }), base, snapshot };
 	const dir = path.join(root, repoKey(repo), name);
-	await gitOut(repo, "worktree", "add", "--no-track", "-b", branch, dir, base);
-	if (own?.branch) {
-		await gitOut(repo, "config", `branch.${branch}.remote`, PUSH_REMOTE);
-		await gitOut(repo, "config", `branch.${branch}.merge`, `refs/heads/${branch}`);
-	}
+	await addBranchWorktree(repo, dir, branch, base, Boolean(own?.branch));
 	return { repo, path: dir, branch, ...(own?.branch && { own: true }), base, snapshot };
 }
 
@@ -187,7 +191,8 @@ export async function restoreWorktree(tree: Worktree): Promise<void> {
 	if (tree.own) await git(tree.repo, "fetch", "-q", PUSH_REMOTE);
 	const remote = `refs/remotes/${PUSH_REMOTE}/${tree.branch}`;
 	const from = tree.own && (await git(tree.repo, "rev-parse", "--verify", "--quiet", remote)).code === 0 ? remote : tree.base;
-	await gitOut(tree.repo, "worktree", "add", ...((await hasBranch(tree)) ? [tree.path, tree.branch] : ["-b", tree.branch, tree.path, from]));
+	if (await hasBranch(tree)) await gitOut(tree.repo, "worktree", "add", tree.path, tree.branch);
+	else await addBranchWorktree(tree.repo, tree.path, tree.branch, from, Boolean(tree.own));
 }
 
 /** The worktree a continued run works in: the kept one, or a new one when it is gone. */
