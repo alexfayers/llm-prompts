@@ -9,12 +9,15 @@ const MS_PER_SECOND = 1000;
 const AGED_SECONDS = 1_577_836_800;
 const WORKSPACE = "w1";
 const HOUR_MS = 60 * 60 * 1000;
-const GH_LIST = "pr list --state merged --author @me --limit 200 --json headRefName";
-const mergedFor = (...branches: string[]) => JSON.stringify(branches.map((headRefName) => ({ headRefName })));
+const GH_LIST = "pr list --state merged --author @me --limit 200 --json headRefName,headRefOid";
+const mergedFor = (...branches: string[]) => JSON.stringify(branches.map((headRefName) => ({ headRefName, headRefOid: `head-${headRefName.split("/").at(-1)}` })));
 
 type Json = Record<string, any>;
 type Worktree = { path: string; branch: string; head: string; dirty: boolean; reflog: number; merged: boolean; tip: number };
-type World = { panes: Json[]; workspaces: Json[]; worktrees: Worktree[]; mainLine: string; remote?: string; gh?: string; herdr: string[]; ghCalls: string[] };
+type World = { panes: Json[]; workspaces: Json[]; worktrees: Worktree[]; mainLine: string; remote?: string; gh?: string; herdr: string[]; ghCalls: string[]; gitCalls: string[]; cwds: string[]; refused?: string };
+
+const REGISTRY = Symbol.for("pi-context.registry");
+const liveForks = (...runs: Json[]) => ((globalThis as any)[REGISTRY] = { live: () => runs });
 
 let world: World;
 const memory = useMemoryFs();
@@ -30,10 +33,17 @@ function run(command: string, args: string[], cwd?: string): string {
 		return "{}";
 	}
 	if (command === "ps") return "";
+	if (command === "lsof") return world.cwds.map((cwd) => `p1\nn${cwd}`).join("\n");
 	if (command === "gh") {
 		world.ghCalls.push(line);
 		if (world.gh === undefined) throw new Error("gh failed");
 		return world.gh;
+	}
+	if (command === "git" && (args[0] === "worktree" && args[1] === "remove" || args[0] === "branch" || args[0] === "update-ref")) {
+		world.gitCalls.push(line);
+		if (world.refused && line.startsWith(world.refused)) throw new Error("refused");
+		if (args[1] === "remove") world.worktrees = world.worktrees.filter((w) => w.path !== args[2]);
+		return "";
 	}
 	const at = (head: string) => world.worktrees.find((worktree) => worktree.head === head || worktree.path === head)!;
 	switch (args[0]) {
@@ -100,7 +110,8 @@ async function command(ext: Awaited<ReturnType<typeof load>>, ...args: string[])
 
 useEnv({ PI_SUBAGENT_CHILD: undefined, HERDR_ENV: undefined });
 beforeEach(() => {
-	world = { panes: [], workspaces: [], worktrees: [], mainLine: "branch refs/heads/main", herdr: [], ghCalls: [] };
+	world = { panes: [], workspaces: [], worktrees: [], mainLine: "branch refs/heads/main", herdr: [], ghCalls: [], gitCalls: [], cwds: [] };
+	delete (globalThis as any)[REGISTRY];
 });
 after(restoreMocks);
 
@@ -119,7 +130,7 @@ describe("sweepWorktrees", () => {
 		["branch has an unmerged commit", { merged: false }, "branch is not merged into main"],
 		["head is detached", { branch: "" }, "head is detached"],
 		["branch is main", { branch: "main" }, "branch is main"],
-		["branch never had a commit of its own", { reflog: 1 }, "branch has no commits of its own"],
+		["fresh branch with no commit of its own", { reflog: 1, merged: false, fresh: true }, "changed in the last 24 hours"],
 		["tip committed recently", { tip: Math.floor(Date.now() / 1000) - 3600 }, "changed in the last 24 hours"],
 		["directory touched recently", { fresh: true }, "changed in the last 24 hours"],
 	] as const) {
@@ -131,6 +142,13 @@ describe("sweepWorktrees", () => {
 			assert.deepEqual(result.kept.map((w: Json) => [w.path, w.reason]), [[wip.path, reason]]);
 		});
 	}
+
+	test("reports a clean, idle branch with no commit of its own as a candidate", async () => {
+		const empty = addWorktree("empty", { reflog: 1, merged: false });
+		const result = await sweepWorktrees();
+		assert.deepEqual(result.candidates.map((w: Json) => w.path), [empty.path]);
+		assert.deepEqual(result.kept, []);
+	});
 
 	for (const mainLine of ["branch refs/heads/other", "detached"]) {
 		test(`judges the worktree on its own state with main checkout "${mainLine}"`, async () => {
@@ -144,6 +162,9 @@ describe("sweepWorktrees", () => {
 
 	for (const [label, setup, reason] of [
 		["agent cwd is in a subdirectory", (busy: Worktree) => (world.panes = [pane("w1:p2", "w1:t2", { cwd: join(busy.path, "src") })]), "a pane is still inside it"],
+		["a process has it as its working directory", (busy: Worktree) => (world.cwds = ["/elsewhere", join(busy.path, "src")]), "a process is still inside it"],
+		["a live fork targets it", (busy: Worktree) => liveForks({ target: busy.path }), "a live fork uses it"],
+		["a live writer fork works in it", (busy: Worktree) => liveForks({ tree: { path: busy.path } }), "a live fork uses it"],
 		["workspace has a pane elsewhere", (busy: Worktree) => ((world.panes = [pane("w9:p1", "w9:t1", { workspace: "w9", cwd: root })]), declareWorkspace("w9", busy)), "its Herdr workspace is still open"],
 	] as const) {
 		test(`keeps a worktree in use: ${label}`, async () => {
@@ -171,6 +192,24 @@ describe("sweepWorktrees confirms squash merges on GitHub only", () => {
 			assert.deepEqual(world.ghCalls, [GH_LIST]);
 		});
 	}
+
+	test("a pull request headed <login>/contribute/<branch> counts as merged", async () => {
+		world.remote = "https://github.com/owner/repo";
+		world.gh = mergedFor("someone/contribute/feat/squashed");
+		const branch = squashed();
+		const result = await sweepWorktrees();
+		assert.deepEqual(result.candidates.map((w: Json) => w.path), [branch.path]);
+	});
+
+	test("a branch that moved on after its merged pull request is kept", async () => {
+		world.remote = "https://github.com/owner/repo";
+		world.gh = mergedFor("feat/squashed");
+		const branch = squashed();
+		branch.head = "head-later";
+		const result = await sweepWorktrees();
+		assert.deepEqual(result.candidates, []);
+		assert.deepEqual(result.kept.map((w: Json) => w.reason), ["branch is not merged into main"]);
+	});
 
 	for (const remote of [undefined, "https://example.com/github.com/owner/repo", "https://notgithub.com/owner/repo"]) {
 		test(`other remote ${remote} never calls gh and the branch is kept unmerged`, async () => {
@@ -261,7 +300,7 @@ describe("session start", () => {
 		});
 	}
 
-	test("reports a candidate once and the kept worktrees once per change of the kept set", async () => {
+	test("removes a candidate once and reports the kept worktrees once per change of the kept set", async () => {
 		setEnv();
 		addWorktree("wip", { merged: false });
 		const settling = addWorktree("settling", { fresh: true });
@@ -272,7 +311,7 @@ describe("session start", () => {
 		await start(ext, 2);
 		assert.deepEqual(notices(ext).map(([text]) => text), [
 			"pane-reaper kept 2 worktrees (see /pane-reaper)",
-			`pane-reaper: worktree ${settling.path} (feat/settling): merged into main and clean. Safe to remove`,
+			`pane-reaper removed worktree ${settling.path} (feat/settling): merged into main and clean`,
 			"pane-reaper kept 1 worktree (see /pane-reaper)",
 		]);
 	});
@@ -283,14 +322,39 @@ describe("/pane-reaper", () => {
 		assert.deepEqual(await command(await load(), ""), [["pane-reaper: nothing to report", "info"]]);
 	});
 
-	test("check now reports candidate and kept worktrees", async () => {
+	test("check now removes a finished worktree and its branch, and lists the kept ones", async () => {
 		const done = addWorktree("done");
 		const wip = addWorktree("wip", { merged: false });
 		declareWorkspace("w9", done);
 		const result = await command(await load(), "");
+		assert.deepEqual(world.gitCalls, [`worktree remove ${done.path}`, "branch -d feat/done"]);
 		assert.deepEqual(result.map(([, level]) => level), ["info", "info"]);
-		assert.match(result[0][0], new RegExp(`${done.path}.*Safe to remove`));
+		assert.equal(result[0][0], `pane-reaper removed worktree ${done.path} (feat/done): merged into main and clean`);
 		assert.match(result[1][0], new RegExp(`${wip.path}.*not merged`));
+	});
+
+	test("check now reports a worktree git refuses to remove", async () => {
+		const done = addWorktree("done");
+		world.refused = "worktree remove";
+		const result = await command(await load(), "");
+		assert.deepEqual(world.gitCalls, [`worktree remove ${done.path}`]);
+		assert.deepEqual(result, [[`pane-reaper could not remove worktree ${done.path} (feat/done): Error: refused`, "warning"]]);
+	});
+
+	test("check now deletes a squash-merged branch only at its merged pull request head", async () => {
+		world.remote = "https://github.com/owner/repo";
+		world.gh = mergedFor("feat/squashed");
+		const squashed = addWorktree("squashed", { merged: false });
+		const result = await command(await load(), "");
+		assert.deepEqual(world.gitCalls, [`worktree remove ${squashed.path}`, "update-ref -d refs/heads/feat/squashed head-squashed"]);
+		assert.deepEqual(result, [[`pane-reaper removed worktree ${squashed.path} (feat/squashed): merged into main and clean`, "info"]]);
+	});
+
+	test("check now reports the branch git refuses to delete", async () => {
+		const done = addWorktree("done");
+		world.refused = "branch -d";
+		const result = await command(await load(), "");
+		assert.deepEqual(result, [[`pane-reaper removed worktree ${done.path} (feat/done): merged into main and clean. Kept the branch: Error: refused`, "warning"]]);
 	});
 
 	test("on and off rewrite the config keeping other keys", async () => {
