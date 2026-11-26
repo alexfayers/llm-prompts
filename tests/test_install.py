@@ -2984,6 +2984,39 @@ class TestInstallRoot:
         run.assert_not_called()
         assert not failed and not installed
 
+    @pytest.mark.parametrize(
+        ("returncode", "level", "result"),
+        [(0, "debug", "success"), (1, "warn", "error")],
+    )
+    def test_npm_output_is_shown_only_with_verbose_or_on_failure(
+        self,
+        returncode: int,
+        level: str,
+        result: str | None,
+        tmp_path: Path,
+        fake_subprocess: FakeSubprocess,
+    ) -> None:
+        fake_subprocess.on(
+            "pi",
+            "install",
+            stdout="added 1 package\n",
+            stderr="npm notice New minor version\n",
+            returncode=returncode,
+        )
+        with (
+            patch("llm_prompts.install.shutil.which", return_value="pi"),
+            patch("llm_prompts.install.log") as mock_log,
+        ):
+            set_root(tmp_path)
+            _install_pi_packages(["npm:demo@1.0.0"], set())
+
+        logged = [(call.args[0], call.args[1]) for call in mock_log.call_args_list]
+        assert logged[:2] == [
+            (level, "added 1 package"),
+            (level, "npm notice New minor version"),
+        ]
+        assert logged[2][0] == result and "npm:demo@1.0.0" in logged[2][1]
+
 
 class TestPiVersionDrift:
     @pytest.fixture(autouse=True)
