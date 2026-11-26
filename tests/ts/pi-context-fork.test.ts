@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
+import { getCurrentTools } from "@earendil-works/pi-ai";
 import { loadExtension, useEnv } from "./helpers.ts";
 import { projectResult } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/outcome.ts";
 import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
@@ -51,6 +52,15 @@ describe("seedEntries after a compaction", () => {
 		const seed = seedEntries(branch as any, "c1") as any[];
 		assert.deepEqual(seed.map((entry) => entry.id), ["h1", "t1", "p1", "r1", "u2", "k1"]);
 		assert.deepEqual(seed.map((entry) => entry.parentId), [null, "h1", "t1", "p1", "r1", "u2"]);
+	});
+
+	test("the lead's tool loadout from before the compaction stays in the chain, so the fork restores the same tools", () => {
+		const system = (id: string, tools: string[]) => ({ type: "message", id, message: { role: "system", content: "", toolsAdded: tools.map((name) => ({ name })) } });
+		const branch = [system("s1", ["read", "bash"]), user("u1"), user("u2"), { type: "compaction", id: "k1", firstKeptEntryId: "u2", summary: "k1" }, system("s2", ["fork_resume"]), assistantCalling("a1", "c1")];
+		const seed = seedEntries(branch as any, "c1") as any[];
+		assert.deepEqual(seed.map((entry) => entry.id), ["s1", "u2", "k1", "s2"]);
+		const systemMessages = seed.flatMap((entry) => (entry.type === "message" && entry.message.role === "system" ? [entry.message] : []));
+		assert.deepEqual(getCurrentTools(systemMessages).map((tool) => tool.name), ["read", "bash", "fork_resume"]);
 	});
 });
 
