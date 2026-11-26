@@ -452,13 +452,14 @@ def _run(options: RunOptions) -> int:
         require_judge(options.judge)
         if missing := setup.missing_tools():
             variants.install_tools(missing)
-        chosen = _build_plan(options)
-        if not chosen.cells:
-            print("No cells planned for the chosen agents", file=sys.stderr)
-            return EXIT_STOPPED
-        run_dir = paths.run_dir(paths.new_run_id())
-        run_dir.mkdir(parents=True)
-        rows = _execute(options, chosen, run_dir)
+        with variants.in_use():
+            chosen = _build_plan(options)
+            if not chosen.cells:
+                print("No cells planned for the chosen agents", file=sys.stderr)
+                return EXIT_STOPPED
+            run_dir = paths.run_dir(paths.new_run_id())
+            run_dir.mkdir(parents=True)
+            rows = _execute(options, chosen, run_dir)
         variants.prune(chosen.built)
         report = _build_report(
             options, chosen.built, chosen.scenarios, rows, run_dir.name

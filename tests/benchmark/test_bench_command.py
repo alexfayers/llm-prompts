@@ -1,3 +1,4 @@
+import fcntl
 import json
 import shutil
 import signal
@@ -15,7 +16,7 @@ from conftest import FakeSubprocess, run_capturing_exit
 from benchmark.conftest import BenchDirs, FakeAgent, FakeSandbox, pi_settings_path
 from benchmark.traces import make_trace
 from llm_prompts import setup
-from llm_prompts.benchmark import command, paths
+from llm_prompts.benchmark import command, paths, scheduler
 from llm_prompts.benchmark.agents import DEFAULT_MODELS
 from llm_prompts.benchmark.agents.adapter import VariantBuildError
 from llm_prompts.benchmark.cell import variants
@@ -710,6 +711,32 @@ def test_a_finished_run_prunes_cached_builds_that_are_not_the_newest_of_a_ref(
     run()
 
     assert not stale.exists()
+
+
+def _held(name: str) -> bool:
+    with (paths.variants_dir() / name).open("a") as lock_file:
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        return False
+
+
+def test_a_run_holds_the_variant_cache_in_use_while_its_cells_run(
+    builds: Builds, add: Any, fake_agent: FakeAgent, monkeypatch: pytest.MonkeyPatch
+) -> None:  # fmt: skip
+    fake_agent.script("s1", trace=trace(tool_calls=OK))
+    held: list[bool] = []
+    run_cells = scheduler.run
+
+    def recording_run_cells(*args: Any, **kwargs: Any) -> Any:
+        held.append(_held(variants.IN_USE_LOCK))
+        return run_cells(*args, **kwargs)
+
+    monkeypatch.setattr(command, "run_cells", recording_run_cells)
+
+    assert run() == 0
+    assert held and all(held)
 
 
 def test_a_run_deletes_the_roots_of_dead_runs(
