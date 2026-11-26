@@ -9,6 +9,7 @@ on:
 
 jobs:
   lint:
+    if: github.head_ref != 'release-please--branches--main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -21,6 +22,7 @@ jobs:
       - run: just check
 
   type-check:
+    if: github.head_ref != 'release-please--branches--main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -43,6 +45,7 @@ jobs:
     uses: alexfayers/llm-prompts-ci/.github/workflows/blocked.yml@main
 
   test:
+    if: github.head_ref != 'release-please--branches--main'
     needs: unblocked
     runs-on: ubuntu-latest
     permissions:
@@ -62,6 +65,7 @@ jobs:
           ANNOTATE_MISSING_LINES: true
 
   test-ts:
+    if: github.head_ref != 'release-please--branches--main'
     needs: unblocked
     runs-on: ubuntu-latest
     permissions:
@@ -78,6 +82,7 @@ jobs:
       - run: just test-ts
 
   test-macos:
+    if: github.head_ref != 'release-please--branches--main'
     needs: unblocked
     runs-on: macos-latest
     permissions:
@@ -92,6 +97,7 @@ jobs:
       - run: just test
 
   test-ts-macos:
+    if: github.head_ref != 'release-please--branches--main'
     needs: unblocked
     runs-on: macos-latest
     permissions:
@@ -108,7 +114,7 @@ jobs:
       - run: just test-ts
 
   pi-pins:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.head_ref != 'release-please--branches--main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -138,7 +144,7 @@ jobs:
         run: uv run node .github/scripts/check-pi-pins.js
 
   size-report:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.head_ref != 'release-please--branches--main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
