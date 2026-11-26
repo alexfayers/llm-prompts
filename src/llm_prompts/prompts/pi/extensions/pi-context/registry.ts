@@ -32,6 +32,8 @@ export type Run = {
 	from?: string;
 	/** The prompt cache key its requests send when it joined such a group. */
 	cacheKey?: string;
+	/** An automatic cold stub, which no `from`, `fork_resume` or `fork_steer` can continue. */
+	stub?: boolean;
 	/** The model of a cold worker. */
 	model?: string;
 	startedAt: number;
@@ -77,7 +79,7 @@ export function sessionFileOf(files: string, cold: boolean): string | undefined 
 export const reloadRequested = (): boolean => Boolean((globalThis as any)[Symbol.for("llm-prompts.reload-now.requested")]);
 
 /** Whether a lost run's session is still there to continue, or it never started. */
-export const canResume = (run: Run): boolean => run.state === "lost" && run.background && Boolean(run.queued || (run.files && sessionFileOf(run.files, Boolean(run.model))));
+export const canResume = (run: Run): boolean => !run.stub && run.state === "lost" && run.background && Boolean(run.queued || (run.files && sessionFileOf(run.files, Boolean(run.model))));
 
 const MAIN_TOOLS = Symbol.for("llm-prompts.pi-context.main-tools");
 type ToolContext = ExtensionToolContext;

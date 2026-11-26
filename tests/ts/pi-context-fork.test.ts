@@ -194,7 +194,10 @@ async function fork(...args: Parameters<typeof start>) {
 }
 
 describe("fork tool", () => {
-	beforeEach(() => void registryOf().restore([]));
+	beforeEach(() => {
+		registryOf().restore([]);
+		fs.rmSync(path.join(agentDir, "pi-context", "stubs"), { recursive: true, force: true });
+	});
 
 	test("writes the valid entries of the readMcp setting into the handshake", async () => {
 		const good = { tool: "mcp__demo__exec", argsMatch: { command: "read .*" } };
@@ -391,7 +394,7 @@ describe("fork tool", () => {
 	test("records the delegate's files directory and model in the registry", async () => {
 		const seen = JSON.parse((await fork({ task: "STUB_INSPECT", name: "recorded", model: "prov/cheap" })).tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
 		const run = registryOf().all().find((run) => run.name === "recorded")!;
-		assert.deepEqual([run.files, run.model], [path.dirname(seen.args[seen.args.indexOf("--session-dir") + 1]), "prov/cheap"]);
+		assert.deepEqual([run.files, run.model], [path.dirname(path.dirname(seen.args[seen.args.indexOf("--session") + 1])), "prov/cheap"]);
 	});
 
 	test("a setup failure leaves no files and no bridge socket behind", async () => {
@@ -536,7 +539,7 @@ describe("fork tool", () => {
 		});
 
 		test("a cold source's session is copied into each child's own files, which continue it on the source's model and effort", async () => {
-			const { tools, ctx } = await fork({ task: "STUB_REPORT", name: "csrc", model: "prov/cheap:low" });
+			const { tools, ctx } = await fork({ shared: "STUB_REPORT notes", tasks: [{ name: "c0", task: "STUB_REPORT" }], name: "csrc", model: "prov/cheap:low" });
 			const source = registryOf().all().find((run) => run.name === "csrc")!;
 			const children = await Promise.all(["c1", "c2"].map(async (name) => inspect(await tools.fork.execute("call-2", { task: "STUB_INSPECT", name, from: "csrc" }, undefined, undefined, ctx))));
 			const files = ["c1", "c2"].map((name) => registryOf().all().find((run) => run.name === name)!.files!);
@@ -555,6 +558,134 @@ describe("fork tool", () => {
 			assert.equal(grandchild.handshake.cacheKey, header.id);
 			const runs = ["csrc", "c1", "c2", "c3"].map((name) => registryOf().all().find((run) => run.name === name)!);
 			assert.deepEqual(runs.map((entry) => [entry.from, entry.cacheKey]), [[undefined, undefined], ...Array(3).fill(["csrc", header.id])]);
+		});
+
+		test("cold forks on one model and effort start from one stub, built once even when they start together", async () => {
+			const { tools, ctx } = await start({ task: "STUB_REPORT", name: "warm" });
+			const cold = (name: string, model: string) => tools.fork.execute("call-2", { task: "STUB_REPORT", name, model }, undefined, undefined, ctx);
+			await Promise.all([cold("cs1", "prov/cheap:low"), cold("cs2", "prov/cheap:low"), cold("cs3", "prov/cheap:low"), cold("cs4", "prov/cheap:high")]);
+			const runs = registryOf().all();
+			const stubs = runs.filter((run) => run.name.startsWith("stub-")).sort((a, b) => a.model!.localeCompare(b.model!));
+			assert.deepEqual(stubs.map((stub) => stub.model), ["prov/cheap:high", "prov/cheap:low"]);
+			assert.deepEqual(["cs1", "cs2", "cs3", "cs4"].map((name) => runs.find((run) => run.name === name)?.from), [stubs[1].name, stubs[1].name, stubs[1].name, stubs[0].name]);
+		});
+
+		test("cold forks of two sessions that start together share one published stub", async () => {
+			const sessions = await Promise.all(["s1", "s2"].map((name) => start({ task: "STUB_REPORT", name, model: "prov/cheap" })));
+			await eventually(() => ["s1", "s2"].every((name) => registryOf().all().find((run) => run.name === name)?.state === "done"));
+			const runs = registryOf().all();
+			const stubs = runs.filter((run) => run.name.startsWith("stub-"));
+			assert.equal(stubs.length, 1);
+			assert.deepEqual(["s1", "s2"].map((name) => runs.find((run) => run.name === name)?.from), [stubs[0].name, stubs[0].name]);
+			assert.deepEqual(fs.readdirSync(path.join(agentDir, "pi-context", "stubs")), [stubs[0].name.slice("stub-".length)]);
+			assert.equal(sessions.length, 2);
+		});
+
+		test("a stale lock of a dead build is replaced, and a live one makes the fork wait for the stub", async () => {
+			const stubs = path.join(agentDir, "pi-context", "stubs");
+			await fork({ task: "STUB_REPORT", name: "l1", model: "prov/cheap" });
+			const [published] = fs.readdirSync(stubs);
+			fs.rmSync(path.join(stubs, published), { recursive: true });
+			const lock = path.join(stubs, `${published}.lock`);
+			fs.writeFileSync(lock, "");
+			const old = new Date(Date.now() - 10 * 60_000);
+			fs.utimesSync(lock, old, old);
+			await fork({ task: "STUB_REPORT", name: "l2", model: "prov/cheap" });
+			assert.deepEqual(fs.readdirSync(stubs), [published]);
+			assert.equal(registryOf().all().filter((run) => run.name.startsWith("stub-")).length, 2);
+		});
+
+		test("a changed rules file, ancestor AGENTS.md or SYSTEM.md builds a new stub", async () => {
+			const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-prompt-")));
+			after(() => fs.rmSync(root, { recursive: true }));
+			const cwd = path.join(root, "a", "b");
+			fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
+			const rules = path.join(agentDir, "AGENTS.delegate.md");
+			fs.writeFileSync(path.join(agentDir, "AGENTS.md"), "main rules");
+			after(() => [rules, path.join(agentDir, "AGENTS.md")].forEach((file) => fs.rmSync(file)));
+			const from = (name: string) => registryOf().all().find((run) => run.name === name)?.from;
+			const changes = [() => undefined, () => fs.writeFileSync(rules, "a new rule"), () => fs.writeFileSync(path.join(root, "AGENTS.md"), "ancestor rule"), () => fs.writeFileSync(path.join(cwd, ".pi", "SYSTEM.md"), "system prompt")];
+			for (const [at, change] of changes.entries()) {
+				change();
+				await fork({ task: "STUB_REPORT", name: `p${at}`, model: "prov/cheap" }, cwd);
+			}
+			assert.equal(new Set(changes.map((_, at) => from(`p${at}`))).size, changes.length);
+		});
+
+		test("a changed skill description of the role builds a new stub", async () => {
+			const role = ROLES.reader;
+			const skills = role.skills;
+			role.skills = ["demo"];
+			const skill = path.join(agentDir, "skills", "demo");
+			fs.mkdirSync(skill, { recursive: true });
+			after(() => fs.rmSync(skill, { recursive: true }));
+			try {
+				for (const description of ["first", "second"]) {
+					fs.writeFileSync(path.join(skill, "SKILL.md"), `---\nname: demo\ndescription: ${description}\n---\nBody`);
+					await fork({ task: "STUB_REPORT", name: `k-${description}`, model: "prov/cheap" });
+				}
+			} finally {
+				role.skills = skills;
+			}
+			const from = (name: string) => registryOf().all().find((run) => run.name === name)?.from;
+			assert.notEqual(from("k-first"), from("k-second"));
+		});
+
+		test("a stub published while a build waits for the lock is used, not built again", async () => {
+			const stubs = path.join(agentDir, "pi-context", "stubs");
+			await fork({ task: "STUB_REPORT", name: "w1", model: "prov/cheap" });
+			const [published] = fs.readdirSync(stubs);
+			const aside = path.join(agentDir, "stub-aside");
+			fs.renameSync(path.join(stubs, published), aside);
+			const open = fs.openSync;
+			fs.openSync = ((file: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode) => {
+				fs.openSync = open;
+				if (String(file).endsWith(".lock")) fs.renameSync(aside, path.join(stubs, published));
+				return open(file, flags, mode);
+			}) as typeof fs.openSync;
+			try {
+				await fork({ task: "STUB_REPORT", name: "w2", model: "prov/cheap" });
+			} finally {
+				fs.openSync = open;
+			}
+			assert.equal(registryOf().all().filter((run) => run.name.startsWith("stub-")).length, 1);
+			assert.equal(fs.existsSync(path.join(stubs, `${published}.lock`)), false);
+			assert.equal(registryOf().all().find((run) => run.name === "w2")?.state, "done");
+		});
+
+		test("a stub that is still building cannot be steered, cancelled, resumed or forked from by name", async () => {
+			process.env.STUB_LOG = path.join(agentDir, "building.log");
+			try {
+				const { tools, ctx } = await start({ task: "STUB_REPORT", name: "q1", model: "prov/cheap" });
+				const stub = registryOf().all().find((run) => run.name.startsWith("stub-"))!;
+				assert.equal(isLive(stub), true);
+				const calls = [
+					() => tools.fork_steer.execute("s", { name: stub.name, message: "x" }, undefined, undefined, ctx),
+					() => tools.fork_cancel.execute("c", { name: stub.name }, undefined, undefined, ctx),
+					() => tools.fork_resume.execute("r", { name: stub.name }, undefined, undefined, ctx),
+					() => tools.fork_resume.execute("r", { name: stub.name, task: "x" }, undefined, undefined, ctx),
+					() => tools.fork.execute("f", { task: "x", from: stub.name }, undefined, undefined, ctx),
+				];
+				for (const call of calls) await assert.rejects(call(), /no (live background|lost|finished) fork/);
+				assert.equal(registryOf().get(stub.id)!.next, undefined);
+				assert.equal(isLive(registryOf().get(stub.id)!), true);
+				await eventually(() => registryOf().all().find((run) => run.name === "q1")?.state === "done");
+			} finally {
+				delete process.env.STUB_LOG;
+			}
+		});
+
+		test("the stub is private and immutable: no from or resume reaches it, and children copy it", async () => {
+			const { tools, ctx } = await fork({ task: "STUB_REPORT", name: "h1", model: "prov/cheap" });
+			const stub = registryOf().all().find((run) => run.name.startsWith("stub-"))!;
+			const published = path.join(agentDir, "pi-context", "stubs", stub.name.slice("stub-".length), "session", "session.jsonl");
+			const before = fs.readFileSync(published, "utf8");
+			assert.equal(stub.stub, true);
+			await assert.rejects(tools.fork.execute("call-2", { task: "x", from: stub.name }, undefined, undefined, ctx), /no finished fork/);
+			await assert.rejects(tools.fork_resume.execute("r", { name: stub.name, task: "x" }, undefined, undefined, ctx));
+			await tools.fork.execute("call-3", { task: "STUB_REPORT", name: "h2", model: "prov/cheap" }, undefined, undefined, ctx);
+			assert.equal(fs.readFileSync(published, "utf8"), before);
+			assert.notEqual(registryOf().all().find((run) => run.name === "h2")?.files, stub.files);
 		});
 
 		test("a follow-up from a writer defaults to the source's target", async () => {
@@ -581,6 +712,30 @@ describe("fork tool", () => {
 			assert.deepEqual(appended, [["result-cap", { ref: "rc-fork-bg-call-id", text: "OUTCOME done ref:rc-fork-x\nbody line" }]]);
 		});
 
+		test("a stub that finishes sends no message, wakes nobody and adds nothing to the digest", async () => {
+			const { sent, appended, background } = await start({ task: "STUB_REPORT", name: "quiet", model: "prov/cheap" });
+			await eventually(() => sent.length > 0);
+			const stub = registryOf().all().find((run) => run.name.startsWith("stub-"))!;
+			assert.equal(stub.state, "done");
+			assert.deepEqual(sent.map(([message]) => (message as { content: string }).content.split(" ")[1]), ["quiet"]);
+			assert.deepEqual(appended.map(([, entry]) => (entry as { ref: string }).ref), ["rc-fork-quiet-call-id"]);
+			assert.doesNotMatch(background.digest() ?? "", /stub-/);
+		});
+
+		test("a stub that fails reports its diagnostic under a saved ref", async () => {
+			process.env.STUB_BAD_STUB = "1";
+			try {
+				const { sent, appended } = await start({ task: "STUB_REPORT", name: "unlucky", model: "prov/cheap" });
+				await eventually(() => sent.some(([message]) => /^\[fork stub-/.test((message as { content: string }).content)));
+				const stub = registryOf().all().find((run) => run.name.startsWith("stub-"))!;
+				assert.equal(stub.state, "failed");
+				assert.match((sent.find(([message]) => /^\[fork stub-/.test((message as { content: string }).content))![0] as { content: string }).content, new RegExp(`ref ${stub.ref}`));
+				assert.ok(appended.some(([, entry]) => (entry as { ref: string }).ref === stub.ref));
+			} finally {
+				delete process.env.STUB_BAD_STUB;
+			}
+		});
+
 		test("a run whose result cannot be saved is still finished and wakes main", async () => {
 			const { sent } = await start({ task: "STUB_REPORT", name: "nosave" }, process.cwd(), undefined, () => {
 				throw new Error("stale");
@@ -598,16 +753,19 @@ describe("fork tool", () => {
 			assert.deepEqual(unhandled, []);
 		});
 
-		test("a second cold worker with the same prefix sends its prompt only after the first worker's first reply", async () => {
+		test("cold workers started together send their prompts only after the stub's first reply", async () => {
 			const log = path.join(agentDir, "warmup.log");
 			process.env.STUB_LOG = log;
-			const forks = await Promise.all(["lead", "follow"].map((name) => start({ task: "STUB_REPORT", name, model: "prov/cheap" })));
-			await eventually(() => forks.every(({ sent }) => sent.length > 0));
+			const { tools, ctx } = await start({ task: "STUB_REPORT", name: "lead", model: "prov/cheap" });
+			await tools.fork.execute("call-2", { task: "STUB_REPORT", name: "follow", model: "prov/cheap" }, undefined, undefined, ctx);
+			await eventually(() => ["lead", "follow"].every((name) => registryOf().all().find((run) => run.name === name)?.state === "done"));
 			delete process.env.STUB_LOG;
 			const ids = Object.fromEntries(registryOf().all().map((run) => [run.name, run.id]));
+			const stub = registryOf().all().filter((run) => run.name.startsWith("stub-"));
 			const lines = fs.readFileSync(log, "utf8").trim().split("\n").slice(0, 3);
-			const [first, second] = lines[0]?.startsWith(ids.follow) ? [ids.follow, ids.lead] : [ids.lead, ids.follow];
-			assert.deepEqual(lines, [`${first} prompt`, `${first} message_end`, `${second} prompt`]);
+			assert.equal(stub.length, 1);
+			assert.deepEqual(lines.slice(0, 2), [`${stub[0].id} prompt`, `${stub[0].id} message_end`]);
+			assert.match(lines[2], new RegExp(`^(${ids.lead}|${ids.follow}) prompt$`));
 		});
 
 		test("shared with tasks returns at once and starts each task's child once the stub has finished", async () => {
@@ -835,11 +993,12 @@ describe("fork tool", () => {
 		test("a tier fork records its resolved model, and fork_resume reuses it", async () => {
 			fs.writeFileSync(path.join(agentDir, "pi-context", "models.json"), JSON.stringify({ cheap: "prov/cheap" }));
 			const { tool, tools, appended, ctx } = await start({ task: "STUB_REPORT", name: "tier", model: "cheap:low" });
-			assert.match(tool.content[0].text, /^started cold worker tier on cheap:low = prov\/cheap:low \(no shared context\) \(background\)/);
-			await eventually(() => appended.length > 0);
+			assert.match(tool.content[0].text, /^started cold worker tier on cheap:low = prov\/cheap:low \(no shared context\) \(background\)\ntier starts when stub-\w+ finishes$/);
+			await eventually(() => registryOf().all().find((run) => run.name === "tier")?.state === "done");
 			assert.equal(registryOf().all().find((run) => run.name === "tier")!.model, "prov/cheap:low");
+			const before = appended.length;
 			await tools.fork_resume.execute("r", { name: "tier", task: "STUB_INSPECT" }, undefined, undefined, ctx);
-			await eventually(() => appended.length > 2);
+			await eventually(() => appended.length > before);
 			const seen = JSON.parse((appended.at(-1)![1] as { text: string }).text.replace(/^echo: /, ""));
 			assert.deepEqual(seen.args.slice(4, 6), ["--model", "prov/cheap:low"]);
 		});
@@ -859,6 +1018,7 @@ describe("fork tool", () => {
 		test("fork_resume with a task on a running fork queues it, lists it, and starts it after the fork replies", async () => {
 			const gate = path.join(agentDir, `gate-queue-${randomUUID()}`);
 			const { tools, appended, ctx } = await start({ task: `STUB_GATE:${gate}`, name: "busy", model: "prov/cheap" });
+			await eventually(() => registryOf().all().some((run) => run.name === "busy" && isLive(run)));
 			const queued = await tools.fork_resume.execute("r", { name: "busy", task: "STUB_INSPECT" }, undefined, undefined, ctx);
 			assert.equal(queued.content[0].text, "queued for fork busy (background): STUB_INSPECT starts after it replies");
 			assert.equal(registryOf().all().find((run) => run.name === "busy")?.next, "STUB_INSPECT");
@@ -872,6 +1032,7 @@ describe("fork tool", () => {
 		test("a queued task stays queued when the fork ends blocked, and the result says so", async () => {
 			const gate = path.join(agentDir, `gate-blocked-${randomUUID()}`);
 			const { tools, ctx } = await start({ task: `STUB_GATE:${gate} STUB_REPLY:{"outcome":"blocked-on-user","ref":""}`, name: "stuck", model: "prov/cheap" });
+			await eventually(() => registryOf().all().some((run) => run.name === "stuck" && isLive(run)));
 			await tools.fork_resume.execute("r", { name: "stuck", task: "STUB_INSPECT" }, undefined, undefined, ctx);
 			fs.writeFileSync(gate, "");
 			await eventually(() => registryOf().all().find((run) => run.name === "stuck")?.state === "blocked");
@@ -882,6 +1043,7 @@ describe("fork tool", () => {
 
 		test("a second fork_resume task on a running fork is rejected and names the queued one", async () => {
 			const { tools, ctx } = await start({ task: "STUB_HANG", name: "twice", model: "prov/cheap" });
+			await eventually(() => registryOf().all().some((run) => run.name === "twice" && isLive(run)));
 			await tools.fork_resume.execute("r", { name: "twice", task: "STUB_INSPECT" }, undefined, undefined, ctx);
 			await assert.rejects(tools.fork_resume.execute("r", { name: "twice", task: "other" }, undefined, undefined, ctx), /already queued for fork twice: STUB_INSPECT/);
 			assert.equal(registryOf().all().find((run) => run.name === "twice")?.next, "STUB_INSPECT");
@@ -891,6 +1053,7 @@ describe("fork tool", () => {
 
 		test("fork_cancel drops a queued task before it stops the fork", async () => {
 			const { tools, ctx } = await start({ task: "STUB_HANG", name: "hung", model: "prov/cheap" });
+			await eventually(() => registryOf().all().some((run) => run.name === "hung" && isLive(run)));
 			await tools.fork_resume.execute("r", { name: "hung", task: "STUB_INSPECT" }, undefined, undefined, ctx);
 			const dropped = await tools.fork_cancel.execute("c", { name: "hung" }, undefined, undefined, ctx);
 			assert.equal(dropped.content[0].text, "dropped the queued task of fork hung: STUB_INSPECT");
@@ -942,7 +1105,7 @@ describe("fork tool", () => {
 		test("the warm-fork hint prices a cold start at the selected model's rates", async () => {
 			await fork({ task: "STUB_REPORT", name: "lead" });
 			const cheap = await start({ task: "STUB_REPORT", name: "cheapcold", model: "prov/cheap" });
-			assert.equal(cheap.tool.content[0].text, "started cold worker cheapcold on prov/cheap (no shared context) (background)");
+			assert.match(cheap.tool.content[0].text, /^started cold worker cheapcold on prov\/cheap \(no shared context\) \(background\)\ncheapcold starts when stub-\w+ finishes$/);
 			const dear = await start({ task: "STUB_REPORT", name: "dearcold", model: "prov/dear" });
 			assert.match(dear.tool.content[0].text, /\nfork lead: 216 ctx, cache \d+m\n/);
 		});
@@ -1227,7 +1390,7 @@ describe("fork tool", () => {
 
 		test("a cold writer starts in its worktree and lands through the same queue", async () => {
 			const { tool, appended } = await fork({ task: "STUB_WRITE", role: "writer", name: "cold", model: "prov/cheap" }, repo);
-			const text = (appended[0][1] as { text: string }).text;
+			const text = (appended.find(([, entry]) => (entry as { ref: string }).ref === "rc-fork-cold-call-id")![1] as { text: string }).text;
 			assert.equal(text.split("\ncwd ")[1], JSON.parse(text.split("\n")[1]).worktree);
 			assert.match(tool.details.digest, /\[merge: landed [0-9a-f]{9}\]/);
 		});
