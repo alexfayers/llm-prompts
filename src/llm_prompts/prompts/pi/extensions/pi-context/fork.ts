@@ -12,7 +12,7 @@ import { replyText } from "./reply.ts";
 import { Background, Slots } from "./background.ts";
 import { describeMain, LEAD_PREFIX_FILE, serveBridge, writeLeadPrefix, type BridgeOptions } from "./bridge.ts";
 import { createWorktree, dropIfClean, gitOut, land, mainSnapshot, restoreWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
-import { checkReadMcp, coldCard, expandHome, readHandshake, ROLES, withReadMcp, type ReadMcp, type Role } from "./roles.ts";
+import { checkReadMcp, coldCard, expandHome, readHandshake, ROLES, toolAllowlist, withReadMcp, type ReadMcp, type Role } from "./roles.ts";
 import { findModel, tokens } from "./live-view.ts";
 import { cacheLeftMs, cacheText, FINISHED, isLive, registryOf, sessionFileOf, type Run, type RunState } from "./registry.ts";
 import type { ForkLimits } from "./cap.ts";
@@ -72,10 +72,10 @@ export function coldLabel(name: string, model: string, resolved: string): string
 
 export type ColdOptions = { model: string; sessionDir: string; cardFile: string; skillsDir: string; session?: string };
 
-/** The arguments of a cold worker: a fresh session, or `session` to continue, on its own model with only the role's skills, the role card in its system prompt and no MCP servers of its own. */
+/** The arguments of a cold worker: a fresh session, or `session` to continue, on its own model with only the role's skills, the role card in its system prompt, no MCP servers of its own and, for a role that does not write, only the role's tools. */
 export function coldArgs(role: Role, { model, sessionDir, cardFile, skillsDir, session }: ColdOptions): string[] {
 	const skills = role.skills.flatMap((skill) => ["--skill", path.join(skillsDir, skill)]);
-	return ["--mode", "rpc", ...(session ? ["--session", session] : ["--session-dir", sessionDir]), "--model", model, "--no-skills", ...skills, "--append-system-prompt", cardFile, "--no-mcp"];
+	return ["--mode", "rpc", ...(session ? ["--session", session] : ["--session-dir", sessionDir]), "--model", model, "--no-skills", ...skills, "--append-system-prompt", cardFile, "--no-mcp", ...(role.writes ? [] : ["--tools", toolAllowlist(role).join(",")])];
 }
 
 const FINISHED_MARK = "finished";
@@ -243,7 +243,7 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 			limits: { memoryMax, cpuQuota },
 			cwd: childCwd,
 			args: model
-				? coldArgs(role, { model, sessionDir, cardFile, skillsDir: path.join(agentDir, "skills"), session })
+				? coldArgs(allowed, { model, sessionDir, cardFile, skillsDir: path.join(agentDir, "skills"), session })
 				: ["--mode", "rpc", "--session", seed, "--model", warm.model, "--thinking", warm.thinking, ...(bridge ? ["--no-mcp"] : [])],
 			env: { ...process.env, PI_CONTEXT_CHILD: handshake, PI_CONTEXT_ROLE: role.name, PI_CONTEXT_RUN_ID: runId, PI_CONTEXT_WORKTREE: worktree },
 			signal,

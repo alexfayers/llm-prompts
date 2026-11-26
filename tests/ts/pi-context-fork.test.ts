@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
 import { loadExtension, useEnv } from "./helpers.ts";
 import { projectResult } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/outcome.ts";
-import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
+import { ROLES, withReadMcp } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
 import { trackPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
 import { isLive, registryOf } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 import { Background } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/background.ts";
@@ -82,7 +82,15 @@ describe("coldArgs", () => {
 			"--mode", "rpc", "--session-dir", "/s", "--model", "prov/mod:low",
 			"--no-skills", "--skill", "/skills/alpha", "--skill", "/skills/beta",
 			"--append-system-prompt", "/c.md", "--no-mcp",
+			"--tools", [...ROLES.reader.tools, ...ROLES.reader.mcp].join(","),
 		]);
+	});
+
+	test("limits a reader to its tools, MCP tools and read-only MCP tool entries, and leaves a writer's tools alone", () => {
+		const options = { model: "m", sessionDir: "/s", cardFile: "/c.md", skillsDir: "/skills" };
+		const reader = coldArgs(withReadMcp(ROLES.reader, [{ tool: "mcp__demo__exec" }]), options);
+		assert.equal(reader[reader.indexOf("--tools") + 1].split(",").at(-1), "mcp__demo__exec");
+		assert.equal(coldArgs(ROLES.writer, options).includes("--tools"), false);
 	});
 });
 

@@ -55,6 +55,9 @@ export const ROLES: Record<Role["name"], Role> = {
 /** The role card for a worker that has no conversation above it. */
 export const coldCard = ({ card }: Role): string => card.replace(WARM_OPENING, COLD_OPENING);
 
+/** The tool names and globs a read-only role starts with, `--tools` style. */
+export const toolAllowlist = ({ tools, mcp, readMcp = [] }: Role): string[] => [...tools, ...mcp, ...readMcp.map(({ tool }) => tool)];
+
 const globRegExp = (pattern: string) => new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`);
 const matches = (globs: string[], name: string) => globs.some((glob) => globRegExp(glob).test(name));
 
