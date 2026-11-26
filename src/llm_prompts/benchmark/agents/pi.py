@@ -296,7 +296,7 @@ class PiAdapter:
         for handshake in sorted((home / FORK_FILES).glob("*/handshake.json")):
             if (prefix := _prefix_read(handshake.parent)) is not None:
                 prefix_reads.append(prefix)
-            meter = ContextMeter()
+            calls = []
             for message in _fork_messages(handshake.parent, since):
                 match message.get("role"):
                     case "toolResult":
@@ -309,7 +309,12 @@ class PiAdapter:
                         call_usage = message.get("usage")
                         for i, key in enumerate(USAGE_KEYS):
                             usage[i] += count(call_usage, key)
-                        meter.add(sum(count(call_usage, key) for key in CONTEXT_KEYS))
+                        calls.append(
+                            (
+                                count(message, "timestamp"),
+                                sum(count(call_usage, key) for key in CONTEXT_KEYS),
+                            )
+                        )
                         if (total := _cost(call_usage)) is not None:
                             cost_usd = (cost_usd or 0.0) + total
                         content = message.get("content")
@@ -325,8 +330,8 @@ class PiAdapter:
                                     count(message, "timestamp") / 1000,
                                     subagent=True,
                                 )
-            if meter.start:
-                start_contexts.append(meter.start)
+            if calls:
+                start_contexts.append(min(calls)[1])
         return dataclasses.replace(
             trace,
             tool_calls=tuple(

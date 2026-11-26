@@ -13,7 +13,7 @@ Agent = Literal["claude", "pi"]
 
 DEFAULT_FAIL_FAST_AFTER = 3
 WORKTREE = ":worktree"
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 CheckArg = str | int | bool | tuple[str, ...]
 JsonValue = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
@@ -290,4 +290,6 @@ class ResultRow:
                 data[name] = _pick(kind, {**asdict(getattr(cls, name)), **data[name]})
         if "checks" in data:
             data["checks"] = tuple(_pick(CheckOutcome, c) for c in data["checks"])
+        if "fork_start_contexts" in data:
+            data["fork_start_contexts"] = tuple(data["fork_start_contexts"])
         return cls(**data)
