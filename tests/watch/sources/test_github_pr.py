@@ -207,6 +207,73 @@ def test_gh_pr_ci_does_not_let_a_job_hide_another_job_with_the_same_name(
     assert GithubPrSource("o/r", 7, None).poll()["ci"] == ci
 
 
+def rerun_pr(
+    github: FakeGithub, job_attempts: list[tuple[int, int | str | None]]
+) -> None:
+    """A failed then a successful run of job `test`, whose jobs are (id, run_attempt)."""
+    github.pr(
+        [
+            {
+                "id": 6,
+                "name": "test",
+                "external_id": "first",
+                "details_url": "https://github.com/o/r/actions/runs/5/job/6",
+                "status": "completed",
+                "conclusion": "failure",
+            },
+            {
+                "id": 7,
+                "name": "test",
+                "external_id": "second",
+                "details_url": "https://github.com/o/r/actions/runs/5/job/7",
+                "status": "completed",
+                "conclusion": "success",
+            },
+        ]
+    )
+    github.bodies["repos/o/r/actions/runs/5/jobs?filter=all&per_page=100"] = {
+        "jobs": [
+            {"id": job, "name": "test"}
+            | ({} if attempt == "missing" else {"run_attempt": attempt})
+            for job, attempt in job_attempts
+        ]
+    }
+
+
+def test_gh_pr_ci_matches_a_rerun_attempt_whose_external_id_changed(
+    github: FakeGithub,
+) -> None:
+    rerun_pr(github, [(6, 1), (7, 2)])
+
+    assert GithubPrSource("o/r", 7, None).poll()["ci"] == "pass"
+
+
+def test_gh_pr_ci_does_not_match_attempts_when_two_jobs_share_a_name(
+    github: FakeGithub,
+) -> None:
+    rerun_pr(github, [(6, 1), (7, 2), (8, 2)])
+
+    assert GithubPrSource("o/r", 7, None).poll()["ci"] == "fail"
+
+
+@pytest.mark.parametrize("attempt", ["missing", None, 0, "2"])
+def test_gh_pr_ci_does_not_match_attempts_when_one_has_no_valid_attempt_number(
+    github: FakeGithub, attempt: int | str | None
+) -> None:
+    rerun_pr(github, [(6, 1), (7, attempt), (8, "missing")])
+
+    assert GithubPrSource("o/r", 7, None).poll()["ci"] == "fail"
+
+
+def test_gh_pr_ci_does_not_match_attempts_when_the_jobs_lookup_fails(
+    github: FakeGithub,
+) -> None:
+    rerun_pr(github, [(6, 1), (7, 2)])
+    del github.bodies["repos/o/r/actions/runs/5/jobs?filter=all&per_page=100"]
+
+    assert GithubPrSource("o/r", 7, None).poll()["ci"] == "fail"
+
+
 def test_gh_pr_lists_every_check_run_attempt(github: FakeGithub) -> None:
     github.pr()
 
