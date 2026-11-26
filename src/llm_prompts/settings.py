@@ -99,18 +99,16 @@ def _has_terminal() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
-_APPLY_COMMANDS = (("tools", "setup"), ("plugins", "update"))
-
-
 def _apply(changed_tables: set[str]) -> None:
-    """Run ``setup`` for changed tools and ``update`` for changed plugins.
+    """Run ``setup`` for changed tools, then ``update`` for changed tools or plugins.
 
     Raises:
         ExitReason: ``other`` when a command fails.
     """
-    for table, command in _APPLY_COMMANDS:
-        if table not in changed_tables:
-            continue
+    commands = ["setup"] if "tools" in changed_tables else []
+    if changed_tables:
+        commands.append("update")
+    for command in commands:
         if subprocess.run([sys.argv[0], command], check=False).returncode:
             raise ExitReason("other", f"`llm-prompts {command}` failed.")
         print(f"Ran `llm-prompts {command}`.")

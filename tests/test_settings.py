@@ -207,7 +207,7 @@ def test_in_a_terminal_invalid_toml_exits_without_the_editor(
 @pytest.mark.parametrize(
     ("changed", "commands"),
     [
-        ({"tools"}, [["llm-prompts", "setup"]]),
+        ({"tools"}, [["llm-prompts", "setup"], ["llm-prompts", "update"]]),
         ({"plugins"}, [["llm-prompts", "update"]]),
         ({"tools", "plugins"}, [["llm-prompts", "setup"], ["llm-prompts", "update"]]),
     ],
