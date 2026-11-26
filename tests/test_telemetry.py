@@ -10,6 +10,7 @@ import platform
 import re
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -879,3 +880,77 @@ def test_an_opted_out_run_skips_the_network_modules() -> None:
         env=env,
     )
     assert completed.stdout.strip() == "[]"
+
+
+SESSION = {
+    "role": "writer",
+    "model": "acme-proxy/claude-opus-4-1",
+    "calls": 4,
+    "cost": 0.5,
+    "context": 40000,
+    "peak": 16000,
+    "cacheRead": 30000,
+    "compactions": 1,
+    "wallMs": 90500,
+}
+
+
+def _fresh_record(isolated_config_dir: Path) -> None:
+    record = {"install_id": "synthetic-id", "opted_out": False, "at": time.time()}
+    (isolated_config_dir / "telemetry.json").write_text(json.dumps(record))
+
+
+@pytest.mark.parametrize(
+    ("role", "model", "tier"),
+    [
+        ("writer", "acme-proxy/claude-opus-4-1", "opus"),
+        ("main", "anthropic/claude-sonnet-4-5", "sonnet"),
+        ("acme-team-role", "acme-internal/secret-model", "other"),
+    ],
+)
+def test_a_pi_session_sends_only_its_numbers_role_tier_and_version(
+    telemetry_popen: MagicMock,
+    isolated_config_dir: Path,
+    role: str,
+    model: str,
+    tier: str,
+) -> None:
+    _fresh_record(isolated_config_dir)
+
+    _main("session-telemetry", json.dumps({**SESSION, "role": role, "model": model}))
+
+    [event] = _events(telemetry_popen)
+    properties = event["properties"]
+    assert event["event"] == "pi_session"
+    assert set(properties) == {
+        *("role", "model_tier", "calls", "cost", "cost_per_call", "context_avg"),
+        *("context_peak", "cache_read_share", "compactions", "wall_s"),
+        *("llm_prompts", "os", "python", "schema", "$process_person_profile"),
+    }
+    assert properties["role"] == (role if role != "acme-team-role" else "other")
+    assert properties["model_tier"] == tier
+    assert (properties["calls"], properties["cost"]) == (4, 0.5)
+    assert (properties["cost_per_call"], properties["context_avg"]) == (0.125, 10000)
+    assert (properties["context_peak"], properties["cache_read_share"]) == (16000, 0.75)
+    assert (properties["compactions"], properties["wall_s"]) == (1, 90.5)
+    assert set(properties["llm_prompts"]) >= {"commit", "release"}
+    assert "acme" not in json.dumps(properties)
+
+
+@pytest.mark.parametrize("opt_out", ["DO_NOT_TRACK", "stale"])
+def test_an_opted_out_pi_session_sends_nothing(
+    telemetry_popen: MagicMock,
+    isolated_config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    opt_out: str,
+) -> None:
+    if opt_out == "stale":
+        record = {"install_id": "synthetic-id", "opted_out": False, "at": 0}
+        (isolated_config_dir / "telemetry.json").write_text(json.dumps(record))
+    else:
+        _fresh_record(isolated_config_dir)
+        monkeypatch.setenv(opt_out, "1")
+
+    _main("session-telemetry", json.dumps(SESSION))
+
+    assert not telemetry_popen.called

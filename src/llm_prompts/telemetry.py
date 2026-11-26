@@ -32,6 +32,41 @@ _NOTICE = (
     "See the README for what is sent."
 )
 
+_SESSION_ROLES = ("main", "reader", "writer")
+_MODEL_TIERS = ("opus", "sonnet", "haiku")
+
+
+def send_session(stats: dict[str, Any]) -> None:
+    """Send one pi session's numbers, its role and model tier, unless telemetry is off.
+
+    Args:
+        stats: The session's role, model and totals, as the session-telemetry pi extension sends them.
+    """
+    install_id = telemetry_core.active_install_id()
+    if install_id is None:
+        return
+    calls = int(stats["calls"])
+    cost = float(stats["cost"])
+    context = int(stats["context"])
+    model = str(stats["model"])
+    properties = {
+        "role": stats["role"] if stats["role"] in _SESSION_ROLES else "other",
+        "model_tier": next((t for t in _MODEL_TIERS if t in model), "other"),
+        "calls": calls,
+        "cost": round(cost, 4),
+        "cost_per_call": round(cost / calls, 4) if calls else None,
+        "context_avg": round(context / calls) if calls else None,
+        "context_peak": int(stats["peak"]),
+        "cache_read_share": round(int(stats["cacheRead"]) / context, 3)
+        if context
+        else None,
+        "compactions": int(stats["compactions"]),
+        "wall_s": round(float(stats["wallMs"]) / 1000, 1),
+        "llm_prompts": telemetry_core.versions(read_config())["llm-prompts"],
+        **telemetry_core.context(2),
+    }
+    telemetry_core.send({"event": "pi_session", "properties": properties}, install_id)
+
 
 def _exception_event(
     exc: BaseException,
