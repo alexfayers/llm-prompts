@@ -173,3 +173,32 @@ def test_check_rejects_benchmark_jobs_below_one(
     assert _run(monkeypatch, "--check") == 1
 
     assert "benchmark.jobs must be at least 1, got" in capsys.readouterr().err
+
+
+def test_in_a_terminal_it_opens_the_editor(
+    isolated_config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from llm_prompts.settings_app import SettingsApp
+
+    opened: list[SettingsApp] = []
+    monkeypatch.setattr("llm_prompts.settings._has_terminal", lambda: True)
+    monkeypatch.setattr(SettingsApp, "run", lambda app: opened.append(app))
+
+    assert _run(monkeypatch) in (None, 0)
+
+    assert len(opened) == 1
+    assert capsys.readouterr().out == ""
+
+
+def test_in_a_terminal_invalid_toml_exits_without_the_editor(
+    isolated_config_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_config(isolated_config_dir, "[tools")
+    monkeypatch.setattr("llm_prompts.settings._has_terminal", lambda: True)
+
+    result = _run(monkeypatch)
+
+    assert isinstance(result, str)
+    assert "is not valid TOML" in result
