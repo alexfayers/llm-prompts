@@ -88,6 +88,15 @@ def test_audit_trace_flags_calls_naming_the_real_home_only(
     assert audit_trace(trace) == [AuditHit(Path("Bash"), tool)]
 
 
+def test_audit_allows_a_template_naming_its_variant_venv(
+    tmp_path: Path, live: Path
+) -> None:
+    root = tmp_path / "template"
+    write(root / "settings.json", f"{paths.cache_dir()}/variants/abc/.venv/bin/hook")
+
+    assert audit(root) == []
+
+
 def test_audit_trace_flags_paths_that_only_look_like_the_cache(live: Path) -> None:
     cache = paths.cache_dir()
     other = f"{cache}-other/bin/tool"

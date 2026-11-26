@@ -90,7 +90,7 @@ def live_markers() -> tuple[str, ...]:
         str(home / ".claude"),
         str(home / ".claude.json"),
         str(home / ".pi"),
-        str(tool_paths.root()),
+        str(tool_paths.tool_dir("llm-prompts", "config")),
         str(db_path),
         *(f"{host}:{port}" for host in PORT_HOSTS),
     )

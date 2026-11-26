@@ -99,6 +99,8 @@ class Home:
         copies: list[tuple[Path, Path]] = []
         try:
             copies = self._old_paths(base, old_home)
+            # shortcut: a run from outside the installed tool uses the new empty folders, and its first
+            # write marks them ready, so the old files are never copied. Copy here too if that is reported.
             if not unready_kinds(tool_root, copies) or not _running_as_installed_tool():
                 return
             failures = migrate(tool_root, copies)
