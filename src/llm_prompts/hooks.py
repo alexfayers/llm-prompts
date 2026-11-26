@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterator
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, contextmanager, suppress
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -154,6 +154,19 @@ def _format_user_text(stripped_message: str) -> str:
     )
 
 
+def _moved_stamp(stamp_name: str) -> Path:
+    """Return the stamp path in the cline-hooks data dir, first moving its files there from the old folder."""
+    from cline_hooks.state.paths import get_data_dir
+    from platformdirs import user_data_dir
+
+    old, new = Path(user_data_dir("cline-hooks")), get_data_dir()
+    if old != new:
+        for suffix in ("", ".notice", ".shown"):
+            with suppress(OSError):
+                os.replace(old / f"{stamp_name}{suffix}", new / f"{stamp_name}{suffix}")
+    return new / stamp_name
+
+
 class _ReinstallDebouncer:
     """Tracks the last reinstall time via a stamp file to debounce across process invocations."""
 
@@ -164,9 +177,7 @@ class _ReinstallDebouncer:
         stamp_name: str = ".llm-prompts-update-check-stamp",
     ) -> None:
         if stamp_path is None:
-            from platformdirs import user_data_dir
-
-            stamp_path = Path(user_data_dir("cline-hooks")) / stamp_name
+            stamp_path = _moved_stamp(stamp_name)
         self._stamp = stamp_path
         self._notice_cache = stamp_path.with_name(stamp_path.name + ".notice")
         self._lock = stamp_path.with_name(stamp_path.name + ".lock")

@@ -747,6 +747,36 @@ class TestUpdateCheckOnTaskStart:
         assert note.user_text == _format_user_text("[pkg] update available")
         assert (tmp_path / "update-stamp").exists()
 
+    @pytest.fixture
+    def data_dirs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> tuple[Path, Path]:
+        old, new = tmp_path / "old", tmp_path / "new"
+        monkeypatch.setenv("XDG_DATA_HOME", str(old))
+        monkeypatch.setenv("CLINE_HOOKS_DATA_DIR", str(new))
+        return old / "cline-hooks", new
+
+    def test_task_start_writes_its_stamp_to_the_cline_hooks_data_dir(
+        self, data_dirs: tuple[Path, Path], background: list[list[str]]
+    ) -> None:
+        old, new = data_dirs
+        with patch("llm_prompts.cli._collect_update_messages", return_value=[]):
+            self._check(AutoReinstallPlugin(), background)
+        assert (new / ".llm-prompts-update-check-stamp").exists()
+        assert not old.exists()
+
+    def test_task_start_reads_a_fresh_stamp_from_the_old_folder_once(
+        self, data_dirs: tuple[Path, Path], background: list[list[str]]
+    ) -> None:
+        old, new = data_dirs
+        old.mkdir(parents=True)
+        (old / ".llm-prompts-update-check-stamp").write_text(str(time.time()))
+        with patch("llm_prompts.cli._collect_update_messages") as collect:
+            self._check(AutoReinstallPlugin(), background)
+        collect.assert_not_called()
+        assert not (old / ".llm-prompts-update-check-stamp").exists()
+        assert (new / ".llm-prompts-update-check-stamp").exists()
+
     def test_task_start_updates_in_the_background(
         self, tmp_path: Path, background: list[list[str]]
     ) -> None:
