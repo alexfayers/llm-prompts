@@ -28,7 +28,7 @@ const boardHooks = registerHooks({
 after(() => boardHooks.deregister());
 
 const ext = await loadExtension("tower-do-patch");
-const { mergeTasks, applyPatch } = ext.module;
+const { mergeTasks, applyPatch, readyTasks } = ext.module;
 
 /** Fake patch dependencies: readBoard answers the boards in turn (the last repeats), write records its arguments and answers the outcomes in turn. */
 function fakeDeps(boards: unknown[], outcomes: Outcome[]) {
@@ -44,6 +44,20 @@ function fakeDeps(boards: unknown[], outcomes: Outcome[]) {
 		},
 	};
 }
+
+describe("readyTasks", () => {
+	test("keeps pending unowned tasks whose dependencies are all completed, in board order", () => {
+		const tasks = [
+			{ key: "done", status: "completed", dependsOn: [] },
+			{ key: "open", status: "blocked", dependsOn: [] },
+			{ key: "ready", status: "pending", dependsOn: ["done"] },
+			{ key: "owned", status: "pending", owner: "x", dependsOn: [] },
+			{ key: "waiting", status: "pending", dependsOn: ["open"] },
+			{ key: "bare", status: "pending" },
+		];
+		assert.deepEqual(readyTasks({ revision: 1, tasks }), ["ready", "bare"]);
+	});
+});
 
 describe("mergeTasks", () => {
 	test("upserts lead and every other current key is sent bare", () => {

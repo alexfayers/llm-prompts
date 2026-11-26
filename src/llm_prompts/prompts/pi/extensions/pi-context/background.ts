@@ -7,6 +7,7 @@ import { openAsks, resolveAsk } from "../pending-asks.ts";
 import type { Reply } from "./reply.ts";
 import { isTeam } from "./roles.ts";
 import { askPrefix, askUserUnanswered, digestLine, openForkAsks, pinForkAsks, wakeReason } from "./wake.ts";
+import { foldBoard, readyTasks } from "../tower-do-patch.ts";
 
 export const RESULTS_TYPE = "pi-context-results";
 
@@ -15,6 +16,10 @@ type Steerable = Watchable & { steer(text: string): Promise<string | undefined> 
 const MAX_HOLD_MS = 2 * 60 * 60 * 1000;
 const MINUTE_MS = 60_000;
 const DEFAULT_CHECK_IN_MINUTES = 5;
+const MAX_READY_SHOWN = 5;
+
+/** The fork limit and the board tasks ready to start, for the digest's slots note, with `refresh`, which a finished run awaits before it wakes main, to read them again. */
+export type Capacity = { limit: () => number; ready: () => string[]; refresh?: () => Promise<void> };
 
 /** Lets at most `limit()` jobs run at once: the rest wait in order and start as a running one ends. */
 export class Slots {
@@ -86,6 +91,8 @@ export class Background {
 	private registry: Registry;
 	/** Shows the run's activity in the UI once its child is attached. */
 	view: LiveView | undefined;
+	/** Adds the free fork slots and ready board tasks to the digest's live count, when set. */
+	capacity: Capacity | undefined;
 
 	constructor(pi: Pick<ExtensionAPI, "sendMessage" | "appendEntry">, registry: Registry = registryOf()) {
 		this.pi = pi;
@@ -141,7 +148,11 @@ export class Background {
 		const run = this.registry.update(runId, { ...ended, unread: [current.unread, digestLine(ended, text, note)].filter(Boolean).join("\n") });
 		if (!run) return;
 		this.pinned.push(...pinForkAsks(this.pi, ctx, run, text));
-		if (wakeReason(run) && !held && ctx.isIdle()) this.wake();
+		const refreshed = this.capacity?.refresh?.();
+		if (!wakeReason(run) || held) return;
+		if (!refreshed) {
+			if (ctx.isIdle()) this.wake();
+		} else void refreshed.then(() => ctx.isIdle() && this.wake());
 	}
 
 	/** Stops a live background run by name. */
@@ -170,8 +181,15 @@ export class Background {
 		this.announced.push(...pins);
 		if (pins.length) lines.push(`Pinned: ${pins.join(", ")}. They clear at the end of this turn unless you put them to the user with ask_user.`);
 		const live = this.registry.live().filter((run) => run.background).length;
-		lines.push(`${live} fork${live === 1 ? "" : "s"} still running.`);
+		lines.push(`${live} fork${live === 1 ? "" : "s"} still running.${this.slotsNote(live)}`);
 		return lines.join("\n");
+	}
+
+	/** ` [slots: N free | ready: a, b]`, without the ready part when no task is ready, or "" with no capacity. */
+	private slotsNote(live: number): string {
+		if (!this.capacity) return "";
+		const ready = this.capacity.ready().slice(0, MAX_READY_SHOWN);
+		return ` [slots: ${Math.max(0, this.capacity.limit() - live)} free${ready.length ? ` | ready: ${ready.join(", ")}` : ""}]`;
 	}
 
 	/** One line per live fork that ran `intervalMs` since it started or was last noted, with its turns and last tool call. A fork with an `llm-prompts watch` call still running is skipped. Undefined when none. */
@@ -261,6 +279,25 @@ export class Background {
 		const content = this.digest();
 		if (content) this.pi.sendMessage({ customType: RESULTS_TYPE, content, display: true }, { deliverAs: "steer", triggerTurn: true });
 	}
+}
+
+const BOARD_TOOLS = new Set(["tower_do", "tower_do_patch", "tower_do_status"]);
+
+/** Gives the digest the fork `limit` and the ready tasks of the session directory's tower_do board, folded when the session starts, before a board tool's result returns, and when a run finishes. */
+export function useBoardCapacity(pi: Pick<ExtensionAPI, "on">, background: Background, limit: () => number, fold = async (cwd: string) => readyTasks(await foldBoard(cwd))) {
+	let ready: string[] = [];
+	let cwd: string | undefined;
+	const refresh = async () => {
+		if (cwd) ready = await fold(cwd).catch(() => []);
+	};
+	background.capacity = { limit, ready: () => ready, refresh };
+	pi.on("session_start", (_event, ctx) => {
+		cwd = ctx.cwd;
+		void refresh();
+	});
+	pi.on("tool_result", async (event) => {
+		if (BOARD_TOOLS.has(event.toolName)) await refresh();
+	});
 }
 
 const RUN_TYPE = "pi-context-run";

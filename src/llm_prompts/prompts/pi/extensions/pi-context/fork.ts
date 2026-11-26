@@ -112,7 +112,7 @@ type ForkSettings = { mcpProxy?: boolean; privateNames?: string; readMcp?: unkno
 const rawForkSettings = (pi: ExtensionAPI) => ((pi.getSettings?.() as { llmPrompts?: { forks?: object } } | undefined)?.llmPrompts?.forks ?? {}) as ForkSettings;
 
 /** The most forks that run at once: `maxLive` of the installed `pi-context/forks.json` when it is a positive integer, else the default. */
-const maxLive = (agentDir = getAgentDir()) => {
+export const maxLive = (agentDir = getAgentDir()) => {
 	let limit: unknown;
 	try {
 		limit = JSON.parse(fs.readFileSync(path.join(agentDir, "pi-context", "forks.json"), "utf8")).maxLive;

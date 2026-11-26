@@ -10,7 +10,7 @@ import { Type } from "typebox";
 export const loadTowerDo = <T>(file: string): Promise<T> =>
 	import(pathToFileURL(join(getAgentDir(), "npm", "node_modules", "tower-do", file)).href);
 
-type BoardView = { revision: number; tasks: { key: string; subject?: string; status: string; owner?: string }[] };
+type BoardView = { revision: number; tasks: { key: string; subject?: string; status: string; owner?: string; dependsOn?: string[] }[] };
 type BoardModule = { TowerBoard: new (file: string) => { fold(): Promise<BoardView> } };
 type PathsModule = { boardFileFor: (cwd: string) => string };
 
@@ -29,6 +29,12 @@ export async function foldBoard(cwd: string): Promise<BoardView> {
 	const view = await new TowerBoard(file).fold();
 	if (stamp !== undefined) foldedBoards.set(file, { stamp, view });
 	return view;
+}
+
+/** The keys of the pending tasks with no owner whose dependencies are all completed, in board order. */
+export function readyTasks({ tasks }: BoardView): string[] {
+	const completed = new Set(tasks.filter((task) => task.status === "completed").map((task) => task.key));
+	return tasks.filter((task) => task.status === "pending" && !task.owner && (task.dependsOn ?? []).every((key) => completed.has(key))).map((task) => task.key);
 }
 
 export type TaskRow = { key: string; [field: string]: unknown };
