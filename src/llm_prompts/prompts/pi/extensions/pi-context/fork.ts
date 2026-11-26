@@ -12,7 +12,7 @@ import { replyText } from "./reply.ts";
 import { Background, RESULTS_TYPE, Slots } from "./background.ts";
 import { describeMain, LEAD_PREFIX_FILE, narrowBridge, readBridgeConfig, serveBridge, writeLeadPrefix, type BridgeConfig, type BridgeOptions } from "./bridge.ts";
 import { createWorktree, dropIfClean, gitOut, land, restoreWorktree, resumeWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
-import { checkReadMcp, coldCard, expandHome, isTeam, readHandshake, ROLES, withReadMcp, type ReadMcp, type Role } from "./roles.ts";
+import { checkReadMcp, coldCard, expandHome, isTeam, readHandshake, readOnlyMcp, ROLES, withReadMcp, type ReadMcp, type Role } from "./roles.ts";
 import { findModel, tokens } from "./live-view.ts";
 import { cacheLeftMs, cacheText, canResume, FINISHED, isLive, isOwnRun, mainToolsContext, recordMainTools, registryOf, reloadRequested, sessionFileOf, type Run, type RunState } from "./registry.ts";
 import type { ForkLimits } from "./cap.ts";
@@ -251,7 +251,9 @@ export async function runDelegate(pi: ExtensionAPI, ctx: ExtensionContext, { rol
 	try {
 		fs.mkdirSync(files, { recursive: true, mode: 0o700 });
 		fs.rmSync(path.join(files, FINISHED_MARK), { force: true });
-		const { readMcp, memoryMax, cpuQuota } = forkSettings(pi, ctx);
+		const settings = forkSettings(pi, ctx);
+		const { memoryMax, cpuQuota } = settings;
+		const readMcp = [...settings.readMcp, ...readOnlyMcp(withReadMcp(role, settings.readMcp), pi.getAllTools())];
 		const allowed = withReadMcp(role, readMcp);
 		bridge = mcp && (await serveBridge({ role: allowed, execute: mcp }));
 		const main = bridge && describeMain(pi, ctx, model ? allowed : undefined);

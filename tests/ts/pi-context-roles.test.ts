@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
 import { loadExtension, useEnv } from "./helpers.ts";
-import { ROLES, checkReadMcp, decide, rewriteForWorktree, withReadMcp } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
+import { ROLES, checkReadMcp, decide, readOnlyMcp, rewriteForWorktree, withReadMcp } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
 
 describe("decide", () => {
 	test("a reader reads but may not edit, write or fork", () => {
@@ -27,6 +27,24 @@ describe("decide", () => {
 		assert.equal(decide(ROLES.reader, "mcp__memory__search_nodes", {}), undefined);
 		assert.match(decide(ROLES.writer, "mcp__memory__create_entities", {})?.reason ?? "", /may not use mcp__memory__create_entities/);
 		assert.match(decide(ROLES.reader, "tower_do", {})?.reason ?? "", /may not use tower_do/);
+	});
+
+	test("readOnlyMcp adds the read-only tools of MCP servers that no glob names", () => {
+		const tools = [
+			{ name: "mcp__analytics__exec", annotations: { readOnlyHint: true } },
+			{ name: "mcp__chat__post", annotations: { readOnlyHint: false } },
+			{ name: "mcp__chat__list_channels" },
+			{ name: "mcp__chat__get_x", annotations: { readOnlyHint: false } },
+			{ name: "mcp__chat__delete" },
+			{ name: "mcp__memory__create_entities", annotations: { readOnlyHint: true } },
+			{ name: "mcp__named__run", annotations: { readOnlyHint: true } },
+			{ name: "read" },
+		];
+		const role = withReadMcp(ROLES.reader, [{ tool: "mcp__named__list_*" }]);
+		assert.deepEqual(readOnlyMcp(role, tools), [{ tool: "mcp__analytics__exec" }, { tool: "mcp__chat__list_channels" }]);
+		const reader = withReadMcp(ROLES.reader, readOnlyMcp(ROLES.reader, tools));
+		assert.equal(decide(reader, "mcp__analytics__exec", {}), undefined);
+		assert.match(decide(reader, "mcp__chat__post", {})?.reason ?? "", /may not use mcp__chat__post/);
 	});
 
 	test("the readMcp setting adds MCP tools whose argsMatch passes", () => {
