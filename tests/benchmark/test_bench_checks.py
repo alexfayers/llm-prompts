@@ -16,6 +16,7 @@ from llm_prompts.benchmark.types import (
     CheckOutcome,
     CheckSpec,
     MemoryEntity,
+    PrefixRead,
     ToolCall,
 )
 
@@ -466,6 +467,24 @@ def test_max_time_fails_a_cell_that_ran_too_long(wall_s: float, passed: bool) ->
     ctx = CheckContext(make_trace(wall_s=wall_s), Path("ws"), (), ())
 
     (outcome,) = evaluate([CheckSpec("max_time", {"seconds": 60})], ctx)
+
+    assert outcome.passed is passed
+
+
+@pytest.mark.parametrize(
+    ("reads", "passed"),
+    [
+        ((), True),
+        ((PrefixRead(needed=100, read=100), PrefixRead(needed=100, read=120)), True),
+        ((PrefixRead(needed=100, read=100), PrefixRead(needed=100, read=6)), False),
+    ],
+)
+def test_prefix_read_fails_a_run_whose_child_missed_the_stub_prefix(
+    reads: tuple[PrefixRead, ...], passed: bool
+) -> None:
+    ctx = CheckContext(make_trace(prefix_reads=reads), Path("ws"), (), ())
+
+    (outcome,) = evaluate([CheckSpec("prefix_read", {})], ctx)
 
     assert outcome.passed is passed
 

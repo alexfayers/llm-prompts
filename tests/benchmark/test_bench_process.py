@@ -267,6 +267,48 @@ def test_fork_calls_are_merged_into_the_lead_calls_by_time(tmp_path: Path) -> No
     assert [c.name for c in trace.tool_calls] == ["Read", "Edit", "Bash", "Write"]
 
 
+def test_a_cold_worker_continuing_a_session_is_billed_only_for_its_own_turns(
+    tmp_path: Path,
+) -> None:
+    _fork_files(
+        tmp_path,
+        None,
+        {"type": "message", "id": "stub", "message": _reply(0.5)},
+        {"type": "message", "id": "child", "message": _reply(0.25)},
+        session="session/--ws--/x.jsonl",
+    ).joinpath("handshake.json").write_text(json.dumps({"billedFrom": "stub"}))
+
+    trace = PiAdapter().add_delegates(make_trace(cost_usd=0.0), tmp_path, 0)
+
+    assert trace.cost_usd == 0.25
+
+
+def _cached(read: int, write: int) -> dict[str, Any]:
+    return {**_reply(0.0), "usage": {"cacheRead": read, "cacheWrite": write}}
+
+
+def test_each_shared_tasks_child_reports_whether_it_read_the_stub_prefix(
+    tmp_path: Path,
+) -> None:
+    for first_read in (500, 1):
+        _fork_files(
+            tmp_path,
+            None,
+            {"type": "message", "id": "s1", "message": _cached(10, 90)},
+            {"type": "message", "id": "s2", "message": _cached(200, 300)},
+            {"type": "message", "id": "c1", "message": _cached(first_read, 40)},
+            {"type": "message", "id": "c2", "message": _cached(900, 0)},
+            session="session/--ws--/x.jsonl",
+        ).joinpath("handshake.json").write_text(json.dumps({"billedFrom": "s2"}))
+
+    trace = PiAdapter().add_delegates(make_trace(), tmp_path, 0)
+
+    assert sorted((r.needed, r.read, r.ok) for r in trace.prefix_reads) == [
+        (500, 1, False),
+        (500, 500, True),
+    ]
+
+
 def test_on_reply_fires_once_at_the_first_assistant_line(
     popen: FakePopen, cell: tuple[PreparedCell, Scenario]
 ) -> None:

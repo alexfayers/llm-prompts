@@ -70,6 +70,21 @@ def test_pi_installs_the_fork_mode_extension_only_when_the_warm_fork_is_measured
     assert (agent_dir / "extensions/bench-fork-mode.ts").read_text().startswith("//")
 
 
+def test_pi_names_the_model_of_the_cold_workers_only_when_measuring_shared_tasks(
+    tmp_path: Path,
+) -> None:
+    agent_dir = tmp_path / ".pi/agent"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "settings.json").write_text(json.dumps({"defaultProvider": "prov"}))
+    tiers = agent_dir / "pi-context/models.json"
+
+    AGENTS["pi"].install_features(tmp_path, {"consult": True})
+    assert not tiers.exists()
+
+    AGENTS["pi"].install_features(tmp_path, {"shared-tasks": False})
+    assert json.loads(tiers.read_text()) == {"bench": "prov/test-model"}
+
+
 def test_pi_models_come_from_the_pi_settings() -> None:
     assert AGENTS["pi"].default_model == "test-model"
     assert AGENTS["pi"].judge_model == "test-model"

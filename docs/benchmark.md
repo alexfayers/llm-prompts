@@ -16,7 +16,7 @@ Run it from an llm-prompts checkout. Any commit, branch or `:worktree` works for
 | `--a-tool NAME=SOURCE`, `--b-tool NAME=SOURCE` | Use this source for a configured tool (such as `mcp-memory`) in that ref only. Repeatable. A remote source must end in `@<40 character commit sha>`, or that side's runs are not reused. |
 | `--b-env NAME=VALUE` | Set this environment variable for the agents of ref B only. Repeatable. |
 | `--b-drop RULE` | Leave this shared rule (a `shared/rules/RULE.md` source) out of ref B's build. A pinned rule is refused. Repeatable. |
-| `--feature NAME` | Measure a pi feature: `consult`, `ghost`, `test-output-fold` or `warm-fork`. A runs without it and B with it, so give both the same ref. Both sides use the tools pinned by `--a-tool`, and `--b-tool` is refused. Only pi runs, and `--agents` must be `pi`. Repeatable. The `feature-fork` scenario keeps the fork tools on for both sides, so it compares two refs, such as one before and one after #676 made every fork run in the background. `warm-fork` runs every plain `fork` call as a cold worker on A and as a warm fork on B, both on the model and thinking level of the session. The `feature-warm-fork` scenario measures it. |
+| `--feature NAME` | Measure a pi feature: `consult`, `ghost`, `test-output-fold`, `warm-fork` or `shared-tasks` (the `shared` and `tasks` parameters of `fork`, left out of A by `PI_CONTEXT_SHARED=off`). A runs without it and B with it, so give both the same ref. Both sides use the tools pinned by `--a-tool`, and `--b-tool` is refused. Only pi runs, and `--agents` must be `pi`. Repeatable. The `feature-fork` scenario keeps the fork tools on for both sides, so it compares two refs, such as one before and one after #676 made every fork run in the background. `warm-fork` runs every plain `fork` call as a cold worker on A and as a warm fork on B, both on the model and thinking level of the session. The `feature-warm-fork` scenario measures it. |
 | `--no-reuse` | Run A and B again instead of reusing finished runs. |
 | `--level LEVEL` | `light`, `medium` or `heavy` (default: `light`). A level includes all lower levels. |
 | `--agents LIST` | Comma separated agents (default: `claude,pi`). |
@@ -154,6 +154,7 @@ rubric = "The retries use exponential backoff."
 | `files_unchanged` | `path` (one or a list) | The paths still match the first commit. |
 | `files_changed` | `path` | Any path differs from the first commit. |
 | `byte_size` | `path`, `max_growth_pct` (default 0) | The file is at most `max_growth_pct` percent larger than in the first commit. |
+| `prefix_read` | none | Every shared-tasks child's first request read at least the stub's last cache read plus cache write. Passes with no child. |
 | `judge` | `rubric`, `path`, `name`, `args_regex`, `memory`, `failed`, `model` | A minimal judge answers PASS. |
 
 ### Judge

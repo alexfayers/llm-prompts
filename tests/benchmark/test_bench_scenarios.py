@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import replace
@@ -387,6 +388,29 @@ def test_the_ghost_scenario_saves_the_ghost_it_asks_the_agent_to_replay(
     )
     assert [step["tool"] for step in ghost["steps"]] == ["bash"] * 3
     assert (ghost["piVersion"], len(ghost["approvedHash"])) == ("1.6.0", 64)
+
+
+@pytest.mark.real_io
+def test_the_shared_tasks_scenario_writes_a_handbook_that_gives_the_numbers_its_judge_expects(
+    tmp_path: Path,
+) -> None:
+    (scenario,) = (
+        s for s in scenarios.load("heavy", ("pi",)) if s.id == "feature-shared-tasks"
+    )
+
+    for command in scenario.setup:
+        subprocess.run(["sh", "-c", command], cwd=tmp_path, check=True)
+
+    handbook = (tmp_path / "handbook.md").read_text()
+    limits = {
+        desk: re.search(rf"The {desk} desk allows at most (\d+) open", handbook)
+        for desk in ("ledger", "beacon", "pylon")
+    }
+    assert {desk: m and m.group(1) for desk, m in limits.items()} == {
+        "ledger": "40",
+        "beacon": "44",
+        "pylon": "88",
+    }
 
 
 def test_shipped_scenarios_cover_only_unpinned_shared_rules() -> None:

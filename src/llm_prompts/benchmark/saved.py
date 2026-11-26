@@ -9,7 +9,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from llm_prompts.benchmark.types import MemoryEntity, Tokens, ToolCall, Trace
+from llm_prompts.benchmark.types import (
+    MemoryEntity,
+    PrefixRead,
+    Tokens,
+    ToolCall,
+    Trace,
+)
 
 TRACE = "trace.json"
 MEMORY = "memory.json"
@@ -88,6 +94,9 @@ def load(cell_dir: Path) -> Saved:
             **raw,
             "tool_calls": tuple(ToolCall(**call) for call in raw["tool_calls"]),
             "tokens": Tokens(**raw["tokens"]),
+            "prefix_reads": tuple(
+                PrefixRead(**read) for read in raw.get("prefix_reads", ())
+            ),
         }
     )
     return Saved(

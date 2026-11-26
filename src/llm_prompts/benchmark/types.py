@@ -172,6 +172,19 @@ class Tokens:
         return self.input + self.output + self.cache_read + self.cache_write
 
 
+@dataclass(frozen=True)
+class PrefixRead:
+    """A shared-tasks child's first cache read against the stub's cached prefix it needs."""
+
+    needed: int
+    read: int
+
+    @property
+    def ok(self) -> bool:
+        """Whether the child read the whole prefix the stub cached."""
+        return self.read >= self.needed
+
+
 @dataclass(frozen=True, kw_only=True)
 class Trace:
     tool_calls: tuple[ToolCall, ...] = ()
@@ -186,6 +199,7 @@ class Trace:
     start_context: int = 0
     cost_usd: float | None = None
     turns: int = 0
+    prefix_reads: tuple[PrefixRead, ...] = ()
 
 
 @dataclass(frozen=True)

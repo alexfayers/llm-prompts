@@ -25,7 +25,14 @@ from llm_prompts.benchmark.runner.events import (
     mcp_name,
     parse_line,
 )
-from llm_prompts.benchmark.types import PreparedCell, Scenario, Session, Tokens, Trace
+from llm_prompts.benchmark.types import (
+    PrefixRead,
+    PreparedCell,
+    Scenario,
+    Session,
+    Tokens,
+    Trace,
+)
 
 BUILTIN_TOOLS = {
     "bash": "Bash",
@@ -41,7 +48,9 @@ DELEGATION_TOOLS = ("fork", "fork_resume", "fork_steer", "fork_cancel")
 FEATURE_TOOLS = {"consult": ("consult",), "ghost": ("ghost_run",)}
 FEATURE_EXTENSIONS = ("test-output-fold",)
 FORK_MODE = "warm-fork"
-FEATURES = (*FEATURE_TOOLS, *FEATURE_EXTENSIONS, FORK_MODE)
+FEATURE_OFF_ENV = {"shared-tasks": {"PI_CONTEXT_SHARED": "off"}}
+FEATURES = (*FEATURE_TOOLS, *FEATURE_EXTENSIONS, FORK_MODE, *FEATURE_OFF_ENV)
+WORKER_TIER = "bench"
 PERMISSION_CONFIG = Path(".pi/agent/extensions/pi-permission-system/config.json")
 PATH_EDIT_TOOLS = ("edit", "write", "path_write")
 FORK_FILES = Path(".pi/agent/pi-context")
@@ -67,8 +76,9 @@ def _cost(usage: object) -> float | None:
 
 
 def _fork_messages(files: Path, since: float) -> Iterator[Mapping[str, object]]:
-    """Yield the messages a fork wrote to its sessions in ``files`` since ``since``, without the lead's entries it was seeded with."""
-    inherited = read_json(files / "handshake.json", strict=False).get("inherited")
+    """Yield the messages a fork wrote to its sessions in ``files`` since ``since``, without the entries it was seeded with, or the session it continues for a cold worker."""
+    handshake = read_json(files / "handshake.json", strict=False)
+    inherited = handshake.get("inherited") or handshake.get("billedFrom")
     for session in (*files.glob("seed.jsonl"), *files.glob("session/**/*.jsonl")):
         entries = [
             e for line in session.read_text().splitlines() if (e := parse_line(line))
@@ -82,6 +92,36 @@ def _fork_messages(files: Path, since: float) -> Iterator[Mapping[str, object]]:
                 and count(message, "timestamp") >= since * 1000
             ):
                 yield message
+
+
+def _prefix_read(files: Path) -> PrefixRead | None:
+    """Return how much of the stub's cached prefix the first request of the cold worker in ``files`` read, or None unless it continues a stub's session."""
+    boundary = read_json(files / "handshake.json", strict=False).get("billedFrom")
+    for session in files.glob("session/**/*.jsonl"):
+        entries = [
+            e for line in session.read_text().splitlines() if (e := parse_line(line))
+        ]
+        ids = [entry.get("id") for entry in entries]
+        if boundary not in ids:
+            continue
+        at = ids.index(boundary) + 1
+        usages = [
+            [
+                entry["message"].get("usage")
+                for entry in part
+                if entry.get("type") == "message"
+                and isinstance(entry.get("message"), dict)
+                and entry["message"].get("role") == "assistant"
+            ]
+            for part in (entries[:at], entries[at:])
+        ]
+        if usages[0] and usages[1]:
+            stub, child = usages[0][-1], usages[1][0]
+            return PrefixRead(
+                count(stub, "cacheRead") + count(stub, "cacheWrite"),
+                count(child, "cacheRead"),
+            )
+    return None
 
 
 BEDROCK_PROVIDER = "amazon-bedrock"
@@ -141,8 +181,15 @@ class PiAdapter:
         )
 
     def install_features(self, home: Path, features: Mapping[str, bool]) -> None:
-        """Drop the extensions of the features that ``features`` turns off, and run every fork warm or cold as ``features`` sets the warm fork."""
+        """Drop the extensions of the features that ``features`` turns off, and run every fork warm or cold as ``features`` sets the warm fork, and name the model of the cold workers when it measures shared tasks."""
         agent_dir = home / ".pi" / "agent"
+        if "shared-tasks" in features:
+            settings = read_json(agent_dir / "settings.json")
+            provider = settings.get("defaultProvider", BEDROCK_PROVIDER)
+            tiers_path = agent_dir / "pi-context" / "models.json"
+            tiers = read_json(tiers_path, strict=False)
+            tiers[WORKER_TIER] = f"{provider}/{_pi_default_model()}"
+            write_json(tiers_path, tiers)
         for name in FEATURE_EXTENSIONS:
             if features.get(name, True) is False:
                 (agent_dir / "extensions" / f"{name}.ts").unlink(missing_ok=True)
@@ -243,7 +290,10 @@ class PiAdapter:
         log = CallLog(BUILTIN_TOOLS)
         usage = list(dataclasses.astuple(trace.tokens))
         cost_usd = trace.cost_usd
+        prefix_reads = []
         for handshake in sorted((home / FORK_FILES).glob("*/handshake.json")):
+            if (prefix := _prefix_read(handshake.parent)) is not None:
+                prefix_reads.append(prefix)
             for message in _fork_messages(handshake.parent, since):
                 match message.get("role"):
                     case "toolResult":
@@ -278,6 +328,7 @@ class PiAdapter:
             ),
             tokens=Tokens(*usage),
             cost_usd=cost_usd,
+            prefix_reads=tuple(prefix_reads),
         )
 
     def replied(self, line: str) -> bool:

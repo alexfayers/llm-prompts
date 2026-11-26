@@ -611,6 +611,19 @@ def test_a_feature_runs_without_it_in_a_and_with_it_in_b_and_names_it_in_the_rep
     } == {"a": {"consult": False}, "b": {"consult": True}}
 
 
+def test_shared_tasks_are_switched_off_in_a_by_the_environment_of_its_agents(
+    builds: Builds, add: Any, fake_agent: FakeAgent
+) -> None:
+    fake_agent.script("s1", trace=trace(tool_calls=OK))
+
+    run(features=("shared-tasks",))
+
+    assert {
+        p.cell.variant.label: p.env.get("PI_CONTEXT_SHARED")
+        for p in fake_agent.executed
+    } == {"a": "off", "b": None}
+
+
 def test_a_cell_is_not_reused_after_the_measured_features_change(
     builds: Builds, add: Any, fake_agent: FakeAgent, run_ids: None
 ) -> None:

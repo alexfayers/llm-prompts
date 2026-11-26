@@ -1,0 +1,49 @@
+id = "feature-shared-tasks"
+level = "heavy"
+agents = ["pi"]
+workspace = "tiny-py"
+project = "demo"
+delegation = true
+prompt = "handbook.md is a long operations handbook, and you must not read it yourself. Ask three delegates on the model tier bench, one for each question, to answer from it: how many open tickets the ledger desk, the beacon desk and the pylon desk each allow at once. Each delegate must read the whole handbook before it answers, not search it. Keep the cost of that reading as low as you can. Then give me the three numbers as three bullets. dont change any files"
+setup = [
+  '''
+python3 - <<'PY'
+import random
+
+names = "harbor ledger quarry orchard lantern bridge meadow anchor copper timber garden falcon summit canyon beacon willow marble thistle compass glacier harvest meridian cobalt saddle voyage prairie lagoon ember cinder fjord tundra bazaar mosaic pylon relay signal vertex wharf zenith atlas bramble".split()
+openers = [
+    "Staff must log every handover before the shift ends.",
+    "Requests arrive through the shared queue and wait their turn.",
+    "Spare parts are kept in the locked cabinet by the east door.",
+    "A supervisor signs off every change to the weekly rota.",
+    "Visitors collect a badge at the front desk and return it on leaving.",
+    "Late deliveries are recorded in the incident book.",
+    "Each team reviews its checklist at the start of the week.",
+    "Old paperwork moves to the archive room after ninety days.",
+]
+
+def section(i):
+    rng = random.Random(i)
+    lines = [f"## {names[i].capitalize()} desk", ""]
+    for _ in range(4):
+        lines += [" ".join(rng.sample(openers, 4)) + f" The {names[i]} team follows the same steps every time, and notes anything unusual in the {rng.choice(names)} log.", ""]
+    lines.append(f"The {names[i]} desk allows at most {rng.randint(11, 97)} open tickets at once.")
+    return "\n".join(lines) + "\n"
+
+with open("handbook.md", "w") as file:
+    file.write("# Operations handbook\n\n" + "\n".join(section(i) for i in range(len(names))))
+PY
+''',
+]
+
+[[check]]
+kind = "tool_called"
+name = "fork"
+by = "lead"
+
+[[check]]
+kind = "prefix_read"
+
+[[check]]
+kind = "judge"
+rubric = "The evidence is the agent's final answer. PASS only if it gives three bullets and the numbers are 40 for the ledger desk, 44 for the beacon desk and 88 for the pylon desk. FAIL if any number is missing or different, or if it gives no bullets."
