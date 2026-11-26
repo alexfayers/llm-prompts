@@ -26,14 +26,19 @@ export class Slots {
 		this.limit = limit;
 	}
 
+	/** The jobs that run now. */
+	get live(): number {
+		return this.active;
+	}
+
 	/** Whether a job started now would have to wait. */
 	get full(): boolean {
 		return this.active >= this.limit();
 	}
 
-	/** Runs `job` once a slot is free. A `signal` that aborts while the job waits rejects it without starting it. */
-	async run<T>(job: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-		if (this.full) {
+	/** Runs `job` once a slot is free, or at once with `immediate`, which still takes a slot so later jobs wait for it. A `signal` that aborts while the job waits rejects it without starting it. */
+	async run<T>(job: () => Promise<T>, signal?: AbortSignal, immediate = false): Promise<T> {
+		if (this.full && !immediate) {
 			await new Promise<void>((resolve, reject) => {
 				const start = () => {
 					signal?.removeEventListener("abort", leave);

@@ -11,7 +11,7 @@ import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/ro
 import { trackPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
 import { isLive, MAIN_TOOLS_WAIT, registryOf } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 import { Background } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/background.ts";
-import { coldArgs, coldLabel, KEEP_FINISHED_MS, registerFork, WARM_FORK_MAX_TOKENS, resolveModel, seedEntries, sweepFinished } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
+import { coldArgs, coldLabel, FANOUT_EXTRA, KEEP_FINISHED_MS, SHARED_FILE_MAX_CHARS, registerFork, WARM_FORK_MAX_TOKENS, resolveModel, seedEntries, sweepFinished } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
 import { LONG_CACHE_MS } from "../../src/llm_prompts/prompts/pi/extensions/context-fold.ts";
 
 const user = (id: string) => ({ type: "message", id, message: { role: "user", content: id } });
@@ -109,6 +109,19 @@ const forkDirs = () => fs.readdirSync(path.join(agentDir, "pi-context"), { recur
 
 const MAIN_TOOLS = [{ name: "mcp__semble__search", description: "d", parameters: {}, exposure: "codemode" }, { name: "read", description: "r", parameters: {}, exposure: "direct" }];
 
+const reads: string[] = [];
+/** What pi's read tool returns: at most 2000 lines, from the 1-based `offset`, with a note naming the next offset when it stops early. */
+function readLikePi(text: string, offset = 1, limit?: number): string {
+	const lines = text.split("\n");
+	const count = Math.min(limit ?? Infinity, 2000);
+	const shown = lines.slice(offset - 1, offset - 1 + count);
+	const next = offset + shown.length;
+	if (next > lines.length) return shown.join("\n");
+	return `${shown.join("\n")}\n\n[Showing lines ${offset}-${next - 1} of ${lines.length}. Use offset=${next} to continue.]`;
+}
+let deniedReads: string[] = [];
+const STUB_SUFFIX = 'That is all the shared context. Once you have read it, call reply with {"outcome":"done","ref":""} and stop. Your specific task arrives next.';
+
 const eventually = async (done: () => boolean) => {
 	for (let attempt = 0; attempt < 500 && !done(); attempt++) await new Promise((resolve) => setTimeout(resolve, 10));
 };
@@ -146,7 +159,15 @@ async function start(params: Record<string, unknown>, cwd = process.cwd(), main 
 		cwd,
 		isIdle: () => true,
 		getSystemPrompt: () => "<mcp_servers>\nsemble (codemode)\n</mcp_servers>",
-		executeTool: async (name: string, args: unknown) => ({ result: { content: [{ type: "text", text: `ran ${name} ${JSON.stringify(args)}` }], details: {} }, isError: false }),
+		executeTool: async (name: string, args: any) => {
+			if (name !== "read") return { result: { content: [{ type: "text", text: `ran ${name} ${JSON.stringify(args)}` }], details: {} }, isError: false };
+			reads.push(args.path);
+			if (deniedReads.some((denied) => args.path.includes(denied))) return { result: { content: [{ type: "text", text: "blocked by permission rules" }], details: {} }, isError: true };
+			const text = fs.readFileSync(args.path, "utf8");
+			if (text.startsWith("CAPPED")) return { result: { content: [{ type: "text", text: "[capped: 99999 chars, ref rc-x; result_fetch({ref, offset?, limit?, pattern?})]" }], details: {} }, isError: false };
+			if (text.startsWith("IMAGE")) return { result: { content: [{ type: "image", data: "", mimeType: "image/png" }], details: {} }, isError: false };
+			return { result: { content: [{ type: "text", text: readLikePi(text, args.offset, args.limit) }], details: {} }, isError: false };
+		},
 		model: { provider: "prov", id: leadModel, cost: MODEL_COSTS[leadModel] },
 		modelRegistry: { find: (_provider: string, id: string) => ({ contextWindow: 200_000, cost: MODEL_COSTS[id] }) },
 		getContextUsage: () => ({ tokens: contextTokens ?? mainContext, contextWindow: 200_000, percent: 0 }),
@@ -354,11 +375,70 @@ describe("fork tool", () => {
 		test("shared with tasks runs one cold stub on the shared text, then one child per task on a copy of its session", async () => {
 			const { tool } = await fork({ shared: "STUB_REPORT notes", tasks: [{ name: "t1", task: "STUB_INSPECT" }, { name: "t2", task: "STUB_INSPECT" }], model: "prov/cheap:low", name: "stub" });
 			const run = (name: string) => registryOf().all().find((candidate) => candidate.name === name)!;
-			assert.equal(run("stub").task, 'STUB_REPORT notes\n\nYour specific task arrives next, so call reply with {"outcome":"done","ref":""} and stop.');
+			assert.equal(run("stub").task, `STUB_REPORT notes\n\n${STUB_SUFFIX}`);
 			assert.equal(tool.content[0].text, "OUTCOME done ref:rc-fork-x\nbody line");
 			for (const name of ["t1", "t2"]) assert.equal(JSON.parse(fs.readFileSync(path.join(run(name).files!, "session", "session.jsonl"), "utf8").split("\n")[0]).piContextFork.parentSessionId, run("stub").id);
 			assert.equal(fs.existsSync(path.join(run("stub").files!, "finished")), true);
 			assert.match(String((await fork({ shared: "s", tasks: [{ name: "t3", task: "x" }] })).tool), /shared needs tasks and model, without task or from/);
+		});
+
+		test("sharedFiles puts each file's contents into the stub's prompt, relative to the working directory", async () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-shared-files-"));
+			fs.mkdirSync(path.join(dir, "sub"));
+			fs.writeFileSync(path.join(dir, "a.txt"), "ALPHA\n");
+			fs.writeFileSync(path.join(dir, "sub", "b.txt"), "BETA\n");
+			await fork({ shared: "STUB_REPORT notes", sharedFiles: ["a.txt", "sub/b.txt"], tasks: [{ name: "sf1", task: "STUB_REPORT" }], model: "prov/cheap", name: "sfstub" }, dir);
+			assert.equal(registryOf().all().find((run) => run.name === "sfstub")!.task, `STUB_REPORT notes\n\nFile a.txt:\nALPHA\n\nFile sub/b.txt:\nBETA\n\n${STUB_SUFFIX}`);
+		});
+
+		test("sharedFiles names a file that cannot be read before anything starts", async () => {
+			const { tool } = await fork({ shared: "s", sharedFiles: ["missing.txt"], tasks: [{ name: "sf2", task: "x" }], model: "prov/cheap", name: "sfmiss" });
+			assert.match(String(tool), /cannot read shared file missing\.txt/);
+			assert.equal(registryOf().all().some((run) => run.name === "sfmiss"), false);
+		});
+
+		test("sharedFiles are read through the read tool, so its permission rules apply", async () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-shared-perm-"));
+			fs.writeFileSync(path.join(dir, "secret.txt"), "TOPSECRET");
+			reads.length = 0;
+			deniedReads = ["secret.txt"];
+			try {
+				const { tool } = await fork({ shared: "s", sharedFiles: ["secret.txt"], tasks: [{ name: "sp1", task: "x" }], model: "prov/cheap", name: "spstub" }, dir);
+				assert.deepEqual(reads, [path.join(dir, "secret.txt")]);
+				assert.match(String(tool), /cannot read shared file secret\.txt: blocked by permission rules/);
+				assert.equal(registryOf().all().some((run) => run.name === "spstub"), false);
+			} finally {
+				deniedReads = [];
+			}
+		});
+
+		test("sharedFiles reads a file longer than one read page in full", async () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-shared-pages-"));
+			const body = Array.from({ length: 4500 }, (_, at) => `line ${at + 1}`).join("\n");
+			fs.writeFileSync(path.join(dir, "long.txt"), body);
+			await fork({ shared: "STUB_REPORT", sharedFiles: ["long.txt"], tasks: [{ name: "sg1", task: "STUB_REPORT" }], model: "prov/cheap", name: "sgstub" }, dir);
+			const task = registryOf().all().find((run) => run.name === "sgstub")!.task;
+			assert.ok(task.includes(`File long.txt:\n${body}\n\n`), "the whole file is in the prompt");
+			assert.doesNotMatch(task, /Use offset=/);
+		});
+
+		test("sharedFiles fails on a capped result or an image", async () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-shared-odd-"));
+			fs.writeFileSync(path.join(dir, "capped.txt"), "CAPPED");
+			fs.writeFileSync(path.join(dir, "pic.png"), "IMAGE");
+			for (const [file, message] of [["capped.txt", /shared file capped\.txt was capped/], ["pic.png", /shared file pic\.png is not text/]] as const) {
+				const { tool } = await fork({ shared: "s", sharedFiles: [file], tasks: [{ name: "sh1", task: "x" }], model: "prov/cheap", name: "shstub" }, dir);
+				assert.match(String(tool), message);
+			}
+			assert.equal(registryOf().all().some((run) => run.name === "shstub"), false);
+		});
+
+		test("sharedFiles fails clearly on a file over the size cap", async () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-shared-big-"));
+			fs.writeFileSync(path.join(dir, "big.txt"), "x".repeat(SHARED_FILE_MAX_CHARS + 1));
+			const { tool } = await fork({ shared: "s", sharedFiles: ["big.txt"], tasks: [{ name: "sb1", task: "x" }], model: "prov/cheap", name: "sbstub" }, dir);
+			assert.match(String(tool), new RegExp(`shared file big\\.txt is over ${SHARED_FILE_MAX_CHARS} characters`));
+			assert.equal(registryOf().all().some((run) => run.name === "sbstub"), false);
 		});
 
 		test("a stub that replies exactly as its prompt asks lets the tasks start", async () => {
@@ -503,6 +583,28 @@ describe("fork tool", () => {
 			assert.match(tool.content[0].text, /^started cold worker qstub/);
 			await eventually(() => sent.length === 3);
 			assert.deepEqual(sent.map(([message]) => message.content.split("]")[0]).sort(), ["[fork q1 done", "[fork q2 done", "[fork qstub done"]);
+		});
+
+		test("shared with tasks starts every child at once when the stub finishes, however low the limit", async () => {
+			limit(1);
+			const gates = ["u1", "u2"].map((name) => path.join(agentDir, `gate-${name}`));
+			const { sent } = await start({ shared: "STUB_REPORT notes", tasks: gates.map((gate, at) => ({ name: `u${at + 1}`, task: `STUB_GATE:${gate}` })), model: "prov/cheap", name: "ustub" });
+			const run = (name: string) => registryOf().all().find((candidate) => candidate.name === name);
+			await eventually(() => Boolean(run("u1") && run("u2")));
+			assert.deepEqual([run("u1")?.queued, run("u2")?.queued], [undefined, undefined]);
+			gates.forEach((gate) => fs.writeFileSync(gate, ""));
+			await eventually(() => sent.length === 3);
+		});
+
+		test("shared with tasks starts at most FANOUT_EXTRA children over the limit and queues the rest", async () => {
+			limit(1);
+			const gates = Array.from({ length: FANOUT_EXTRA + 3 }, (_, at) => path.join(agentDir, `gate-o${at}`));
+			const { sent } = await start({ shared: "STUB_REPORT notes", tasks: gates.map((gate, at) => ({ name: `o${at}`, task: `STUB_GATE:${gate}` })), model: "prov/cheap", name: "ostub" });
+			const children = () => registryOf().all().filter((run) => /^o\d+$/.test(run.name));
+			await eventually(() => children().length === gates.length);
+			assert.equal(children().filter((run) => !run.queued).length, 1 + FANOUT_EXTRA);
+			gates.forEach((gate) => fs.writeFileSync(gate, ""));
+			await eventually(() => sent.length === gates.length + 1);
 		});
 
 		test("a missing or invalid forks.json leaves the limit at 10", async () => {
