@@ -9,7 +9,7 @@ import { loadExtension, useEnv } from "./helpers.ts";
 import { projectResult } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/outcome.ts";
 import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
 import { trackPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
-import { isLive, registryOf } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
+import { isLive, MAIN_TOOLS_WAIT, registryOf } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 import { Background } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/background.ts";
 import { coldArgs, coldLabel, KEEP_FINISHED_MS, registerFork, WARM_FORK_MAX_TOKENS, resolveModel, seedEntries, sweepFinished } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
 import { LONG_CACHE_MS } from "../../src/llm_prompts/prompts/pi/extensions/context-fold.ts";
@@ -129,7 +129,9 @@ async function start(params: Record<string, unknown>, cwd = process.cwd(), main 
 	const tools: Record<string, any> = {};
 	const appended: unknown[][] = [];
 	const sent: any[][] = [];
+	const handlers: Record<string, (...args: any[]) => unknown> = {};
 	const pi = {
+		on: (event: string, handler: (...args: any[]) => unknown) => (handlers[event] = handler),
 		registerTool: (tool: any) => (tools[tool.name] = tool),
 		appendEntry: appendEntry ?? ((...args: unknown[]) => appended.push(args)),
 		sendMessage: (...args: unknown[]) => sent.push(args),
@@ -152,7 +154,7 @@ async function start(params: Record<string, unknown>, cwd = process.cwd(), main 
 	};
 	const execute = tools.fork.execute;
 	tools.fork = { ...tools.fork, execute: async (...args: unknown[]) => settle(await execute(...args), appended, sent) };
-	return { tool: await execute("call-id", params, signal, undefined, ctx).catch((error: Error) => error), appended, sent, tools, background, ctx, launch: (more: Record<string, unknown>) => execute(`call-${randomUUID()}`, more, undefined, undefined, ctx) };
+	return { tool: await execute("call-id", params, signal, undefined, ctx).catch((error: Error) => error), appended, sent, tools, background, ctx, handlers, launch: (more: Record<string, unknown>) => execute(`call-${randomUUID()}`, more, undefined, undefined, ctx) };
 }
 
 async function fork(...args: Parameters<typeof start>) {
@@ -568,6 +570,68 @@ describe("fork tool", () => {
 			assert.match(JSON.stringify(appended), /echo: Your session stopped before you finished/);
 			await eventually(() => fs.existsSync(path.join(run()!.files!, "finished")));
 			assert.equal(fs.existsSync(path.join(run()!.files!, "finished")), true);
+		});
+
+		test("a reload that reload_now requested resumes the forks it ended, and a user reload leaves them lost", async () => {
+			const { sent, background, ctx, handlers } = await start({ task: "STUB_HANG", name: "cut" });
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			background.shutdown();
+			const run = () => registryOf().all().find((candidate) => candidate.name === "cut")!;
+			await eventually(() => run().state === "lost");
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			registryOf().update(run().id, { endedBy: "reload" });
+			await handlers.session_start({ reason: "reload" }, ctx);
+			assert.equal(run().state, "lost");
+			const requested = Symbol.for("llm-prompts.reload-now.requested");
+			(globalThis as any)[requested] = true;
+			try {
+				await handlers.session_start({ reason: "reload" }, ctx);
+			} finally {
+				delete (globalThis as any)[requested];
+			}
+			assert.equal(run().state, "running");
+			assert.deepEqual(sent.map(([message, options]) => [message.content, options]), [["resumed forks: cut", { deliverAs: "nextTurn" }]]);
+			background.shutdown();
+		});
+
+		describe("a fork that reload_now's reload resumed", () => {
+			const waitMs = MAIN_TOOLS_WAIT.ms;
+			afterEach(() => void (MAIN_TOOLS_WAIT.ms = waitMs));
+
+			const resumeQueued = async (toolRuns: boolean, lateTool = false) => {
+				settings = PROXY_ON;
+				limit(1);
+				const { tools, sent, background, ctx, handlers, launch } = await start({ task: "STUB_HANG", name: "holder" });
+				await launch({ task: "STUB_BRIDGE", name: "waiting" });
+				background.shutdown();
+				registryOf().update(registryOf().all().find((run) => run.name === "holder")!.id, { state: "cancelled" });
+				const waiting = registryOf().all().find((run) => run.name === "waiting")!;
+				registryOf().update(waiting.id, { endedBy: "reload" });
+				await handlers.session_shutdown({ reason: "reload" });
+				if (toolRuns) await tools.fork_cancel.execute("c", { name: "none" }, undefined, undefined, ctx).catch(() => undefined);
+				(globalThis as any)[Symbol.for("llm-prompts.reload-now.requested")] = true;
+				try {
+					await handlers.session_start({ reason: "reload" }, { ...ctx, executeTool: undefined });
+				} finally {
+					delete (globalThis as any)[Symbol.for("llm-prompts.reload-now.requested")];
+				}
+				if (lateTool) await (await loadExtension("result-cap")).callTool("result_fetch", { ref: "none" }, ctx as any);
+				await eventually(() => sent.some(([message]) => message.content.startsWith("[fork waiting ")));
+				return sent.map(([message]) => message.content).find((content) => content.startsWith("[fork waiting "))!;
+			};
+
+			test("reaches main's MCP tools once main has run a tool", async () => {
+				assert.match(await resumeQueued(true), /echo: ran mcp__semble__search/);
+			});
+
+			test("waits for the first tool that main runs, whichever extension registers it", async () => {
+				assert.match(await resumeQueued(false, true), /echo: ran mcp__semble__search/);
+			});
+
+			test("is told to retry when main runs no tool within the wait", async () => {
+				MAIN_TOOLS_WAIT.ms = 50;
+				assert.match(await resumeQueued(false), /echo: .*retry/);
+			});
 		});
 
 		test("a queued fork that a reload dropped before it started is started by fork_resume", async () => {

@@ -1,5 +1,6 @@
 // Keeps the state of every fork run, shared by the extensions of one pi process.
 import fs from "node:fs";
+import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 import { cacheLifetimeMs } from "../context-fold.ts";
 
@@ -63,6 +64,37 @@ export function sessionFileOf(files: string, cold: boolean): string | undefined 
 	if (!fs.existsSync(sessions)) return undefined;
 	const found = fs.readdirSync(sessions, { recursive: true, encoding: "utf8" }).filter((file) => file.endsWith(".jsonl")).map((file) => path.join(sessions, file));
 	return found.sort((a, b) => fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs).at(-1);
+}
+
+/** Set while a reload that the reload_now tool requested runs. */
+export const reloadRequested = (): boolean => Boolean((globalThis as any)[Symbol.for("llm-prompts.reload-now.requested")]);
+
+/** Whether a lost run's session is still there to continue, or it never started. */
+export const canResume = (run: Run): boolean => run.state === "lost" && run.background && Boolean(run.queued || (run.files && sessionFileOf(run.files, Boolean(run.model))));
+
+const MAIN_TOOLS = Symbol.for("llm-prompts.pi-context.main-tools");
+type ToolContext = ExtensionToolContext;
+const mainTools = (): { ctx?: ToolContext; waiters: Set<(ctx: ToolContext) => void> } => ((globalThis as any)[MAIN_TOOLS] ??= { waiters: new Set() });
+
+/** How long a fork's MCP call waits for main to run its first tool after a reload. */
+export const MAIN_TOOLS_WAIT = { ms: 60_000 };
+
+/** Records the newest tool context of main, which runs the MCP calls of the forks. Call it first in the execute of every tool main registers. */
+export function recordMainTools(ctx: ToolContext | undefined): void {
+	const holder = mainTools();
+	holder.ctx = ctx;
+	if (ctx) for (const resolve of holder.waiters) resolve(ctx);
+}
+
+/** The newest tool context of main, or the next one within `MAIN_TOOLS_WAIT.ms`. */
+export function mainToolsContext(): Promise<ToolContext | undefined> {
+	const { ctx, waiters } = mainTools();
+	if (ctx) return Promise.resolve(ctx);
+	return new Promise((resolve) => {
+		const timer = setTimeout(() => (waiters.delete(done), resolve(undefined)), MAIN_TOOLS_WAIT.ms);
+		const done = (found: ToolContext) => (clearTimeout(timer), waiters.delete(done), resolve(found));
+		waiters.add(done);
+	});
 }
 
 const REGISTRY_VERSION = 1;

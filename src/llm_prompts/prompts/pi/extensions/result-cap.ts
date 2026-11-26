@@ -2,6 +2,7 @@
 // Env: RESULT_CAP_CHARS (longest result kept whole, default 6000)
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { recordMainTools } from "./pi-context/registry.ts";
 
 const DEFAULT_CAP = 6000;
 const HEAD_SHARE = 2 / 3;
@@ -120,6 +121,7 @@ export default function (pi: ExtensionAPI) {
 			pattern: Type.Optional(Type.String()),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			recordMainTools(ctx);
 			const stored = lookup(ctx, params.ref);
 			if (!stored) return reply(`Unknown ref ${params.ref}`, true);
 			let selected: string;
@@ -149,6 +151,7 @@ export default function (pi: ExtensionAPI) {
 			offset: Type.Optional(Type.Integer({ minimum: 0 })),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			recordMainTools(ctx);
 			const stored = lookup(ctx, params.ref);
 			if (!stored) return reply(`Unknown ref ${params.ref}`, true);
 			const list = parseRows(stored.text);

@@ -294,6 +294,23 @@ describe("hooks", () => {
 		assert.deepEqual(sent.map(([message]) => message.content), ["[fork w lost] a /reload ended it before it finished. Its worktree /wt/w is kept. Task: t"]);
 	});
 
+	test("a run that reload_now's reload ended and can resume is not reported as lost", () => {
+		const files = fs.mkdtempSync(path.join(os.tmpdir(), "resume-"));
+		fs.writeFileSync(path.join(files, "seed.jsonl"), "");
+		handlers.session_start({ reason: "startup" }, session());
+		registry.start(run("w", { files }));
+		appended = [];
+		handlers.session_shutdown({ reason: "reload" }, ctx());
+		sent = [];
+		(globalThis as any)[Symbol.for("llm-prompts.reload-now.requested")] = true;
+		try {
+			handlers.session_start({ reason: "reload" }, session(...appended.map(([, data]) => data)));
+		} finally {
+			delete (globalThis as any)[Symbol.for("llm-prompts.reload-now.requested")];
+		}
+		assert.deepEqual(sent, []);
+	});
+
 	test("shutdown marks the live runs lost without saving that, so the next session reports them", () => {
 		handlers.session_start({ reason: "startup" }, session());
 		registry.start(run("a"));

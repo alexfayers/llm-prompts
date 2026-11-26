@@ -1,7 +1,7 @@
 // Tracks background fork runs: wakes the main session when one finishes, delivers results that arrive during a run when it settles, holds a session without a UI until they finish and notes a fork that runs long.
 // Config: llmPrompts.forks.checkInMinutes in pi settings (minutes a fork runs before the next tool result names it, default 5; 0 turns the note off)
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { isLive, registryOf, sessionFileOf, type Registry, type Run } from "./registry.ts";
+import { canResume, isLive, registryOf, reloadRequested, sessionFileOf, type Registry, type Run } from "./registry.ts";
 import type { LiveView, Watchable } from "./live-view.ts";
 import { openAsks, resolveAsk } from "../pending-asks.ts";
 import type { Reply } from "./reply.ts";
@@ -254,7 +254,7 @@ export function registerBackgroundHooks(pi: ExtensionAPI, background: Background
 		}
 	};
 
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", (event, ctx) => {
 		stopSaving?.();
 		const entries = ctx.sessionManager.getEntries();
 		const latest = new Map<string, Run>();
@@ -263,6 +263,7 @@ export function registerBackgroundHooks(pi: ExtensionAPI, background: Background
 		const lost = registry.restore([...latest.values()], (run) => isRetained(run, askIds));
 		for (const run of lost) {
 			save(run);
+			if (event.reason === "reload" && reloadRequested() && run.endedBy === "reload" && canResume(run)) continue;
 			pi.sendMessage({ customType: RESULTS_TYPE, content: digestLine(run, lostNote(run)), display: true }, { deliverAs: "nextTurn" });
 		}
 		stopSaving = registry.onChange(save);

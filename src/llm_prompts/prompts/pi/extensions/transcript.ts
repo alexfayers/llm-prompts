@@ -1,6 +1,7 @@
 // Adds the transcript tool, which reads the session's own branch, including the entries that folds, checkpoint rewinds and compaction took out of context.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { recordMainTools } from "./pi-context/registry.ts";
 
 type Block = { type: string; id?: string; name?: string; text?: string; arguments?: unknown };
 type Message = { role: string; content?: string | Block[]; toolName?: string; customType?: string; details?: { action?: string; target?: string } };
@@ -71,6 +72,7 @@ export default function (pi: ExtensionAPI) {
 			limit: Type.Optional(Type.Integer({ minimum: 1 })),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			recordMainTools(ctx);
 			const branch = ctx.sessionManager.getBranch() as unknown as Entry[];
 			const found = regions(branch, ctx.sessionManager.buildSessionProjection().entries as unknown as Projected[]);
 			let body: string;
