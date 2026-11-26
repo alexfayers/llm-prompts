@@ -26,7 +26,8 @@ description: Run a pipeline of delegates that write, review and merge many PRs o
 ## Results
 
 - `CLEAN` -> MUST mark the PR ready with auto-merge through the repo's own ready or merge command,
-  else mark it ready and enable auto-merge. Add an owner-review label first where the repo needs one. Then rebase the branch on the base.
+  else mark it ready and enable auto-merge. Add an owner-review label first where the repo needs one.
+  MUST NOT rebase it by hand where the repo's automation rebases auto-merge PRs. Otherwise rebase it on the base.
 - Findings -> MUST resume that PR's writer with the findings.
 - Conflicts -> MUST have a writer rebase the branch.
 
