@@ -460,13 +460,13 @@ function freshStartCost(ctx: ExtensionContext, role: Role, task: string, model?:
 	return (tokensRead * (model ? price.input : price.cacheRead)) / PER_MILLION_TOKENS;
 }
 
-/** Lines naming every finished fork `fork_resume` would pick by name, of `role` in `dir`, whose prompt cache is still warm and whose context costs less to read from the cache, at its own model's price, than `freshCost`, newest first, each with its context size and cache time left, or undefined. */
+/** Lines naming every finished fork `fork_resume` would pick by name, of `role` in `dir`, with at most `WARM_FORK_MAX_TOKENS` of context, whose prompt cache is still warm and whose context costs less to read from the cache, at its own model's price, than `freshCost`, newest first, each with its context size and cache time left, or undefined. */
 function cachedHint(runs: Run[], role: string, dir: string, priceOfRun: (run: Run) => Price | undefined, freshCost: number | undefined, now = Date.now()): string | undefined {
 	if (freshCost === undefined) return undefined;
 	const picked = new Map(runs.filter(canContinue).map((run) => [run.name, run]));
 	const cached = [...picked.values()].filter((run) => {
 		const price = priceOfRun(run);
-		return run.role === role && (run.target ?? run.cwd) === dir && (cacheLeftMs(run, now) ?? 0) > 0 && price !== undefined && ((run.context ?? 0) * price.cacheRead) / PER_MILLION_TOKENS < freshCost;
+		return run.role === role && (run.target ?? run.cwd) === dir && (run.context ?? 0) <= WARM_FORK_MAX_TOKENS && (cacheLeftMs(run, now) ?? 0) > 0 && price !== undefined && ((run.context ?? 0) * price.cacheRead) / PER_MILLION_TOKENS < freshCost;
 	});
 	if (!cached.length) return undefined;
 	const lines = cached.sort((a, b) => (b.lastRequestAt ?? 0) - (a.lastRequestAt ?? 0)).map((run) => `fork ${run.name}: ${tokens(run.context ?? 0)} ctx, ${cacheText(cacheLeftMs(run, now) ?? 0)} left`);

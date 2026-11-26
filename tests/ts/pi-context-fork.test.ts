@@ -1144,6 +1144,15 @@ describe("fork tool", () => {
 			assert.match(tool.content[0].text, /^started fork next \(background\)\nfork warmer: 216 ctx, cache \d+m left\nfork warm: 216 ctx, cache \d+m left\nfork_resume\(\{name, task\}\) is cheaper than a fresh fork$/);
 		});
 
+		test("the warm-fork hint leaves out a fork over 150K tokens", async () => {
+			await fork({ task: "STUB_REPORT", name: "warm" });
+			await fork({ task: "STUB_REPORT", name: "huge" });
+			holding("huge", 160_000);
+			mainContext = 140_000;
+			const { tool } = await start({ task: "STUB_REPORT", name: "dearcold", model: "prov/dear" });
+			assert.match(tool.content[0].text, /\(background\)\nfork warm: 216 ctx, cache \d+m left\nfork_resume/);
+		});
+
 		test("the warm-fork hint stays silent when a fresh fork reads less cached context than the finished fork holds", async () => {
 			await fork({ task: "STUB_REPORT", name: "big" });
 			mainContext = 100;
