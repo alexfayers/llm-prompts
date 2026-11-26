@@ -55,6 +55,21 @@ def test_pi_drops_the_test_output_fold_extension_only_when_the_feature_is_off(
     assert not extension.exists()
 
 
+@pytest.mark.parametrize("warm", [True, False])
+def test_pi_installs_the_fork_mode_extension_only_when_the_warm_fork_is_measured(
+    tmp_path: Path, warm: bool
+) -> None:
+    agent_dir = tmp_path / ".pi/agent"
+    mode = agent_dir / "bench-fork-mode.json"
+
+    AGENTS["pi"].install_features(tmp_path, {"test-output-fold": True})
+    assert not mode.exists()
+
+    AGENTS["pi"].install_features(tmp_path, {"warm-fork": warm})
+    assert json.loads(mode.read_text()) == {"warm": warm}
+    assert (agent_dir / "extensions/bench-fork-mode.ts").read_text().startswith("//")
+
+
 def test_pi_models_come_from_the_pi_settings() -> None:
     assert AGENTS["pi"].default_model == "test-model"
     assert AGENTS["pi"].judge_model == "test-model"

@@ -40,7 +40,8 @@ HOOK_MESSAGE_TYPE = "cline-hooks"
 DELEGATION_TOOLS = ("fork", "fork_resume", "fork_steer", "fork_cancel")
 FEATURE_TOOLS = {"consult": ("consult",), "ghost": ("ghost_run",)}
 FEATURE_EXTENSIONS = ("test-output-fold",)
-FEATURES = (*FEATURE_TOOLS, *FEATURE_EXTENSIONS)
+FORK_MODE = "warm-fork"
+FEATURES = (*FEATURE_TOOLS, *FEATURE_EXTENSIONS, FORK_MODE)
 PERMISSION_CONFIG = Path(".pi/agent/extensions/pi-permission-system/config.json")
 PATH_EDIT_TOOLS = ("edit", "write", "path_write")
 FORK_FILES = Path(".pi/agent/pi-context")
@@ -140,11 +141,20 @@ class PiAdapter:
         )
 
     def install_features(self, home: Path, features: Mapping[str, bool]) -> None:
-        """Drop the extensions of the features that ``features`` turns off."""
+        """Drop the extensions of the features that ``features`` turns off, and run every fork warm or cold as ``features`` sets the warm fork."""
         agent_dir = home / ".pi" / "agent"
         for name in FEATURE_EXTENSIONS:
             if features.get(name, True) is False:
                 (agent_dir / "extensions" / f"{name}.ts").unlink(missing_ok=True)
+        if FORK_MODE in features:
+            extension = resources.files("llm_prompts.benchmark.guard") / "fork_mode.ts"
+            (agent_dir / "extensions").mkdir(parents=True, exist_ok=True)
+            (agent_dir / "extensions" / "bench-fork-mode.ts").write_text(
+                extension.read_text()
+            )
+            write_json(
+                agent_dir / "bench-fork-mode.json", {"warm": features[FORK_MODE]}
+            )
 
     def copy_logins(self, home: Path) -> tuple[Path, ...]:
         return run_steps(
