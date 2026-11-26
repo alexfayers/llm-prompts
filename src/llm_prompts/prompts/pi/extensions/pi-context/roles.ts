@@ -114,6 +114,17 @@ export const mayUse = (role: Role, toolName: string): boolean => toolName.starts
 
 export const withReadMcp = (role: Role, readMcp: ReadMcp[] = []): Role => ({ ...role, readMcp });
 
+const serverOf = (name: string) => name.split("__")[1] ?? "";
+const READ_NAMES = READ_MCP.map((glob) => glob.split("__")[2]).filter((name) => name !== "*");
+
+/** The `readMcp` entries for read-only tools of MCP servers that no MCP glob of `role` names: those whose `readOnlyHint` is true or, without one, whose name follows the read-only naming of `READ_MCP`. */
+export function readOnlyMcp(role: Role, tools: { name: string; annotations?: { readOnlyHint?: boolean } }[]): ReadMcp[] {
+	const servers = [...role.mcp, ...(role.readMcp ?? []).map(({ tool }) => tool)].map(serverOf);
+	return tools
+		.filter(({ name, annotations }) => name.startsWith("mcp__") && !servers.some((server) => globRegExp(server).test(serverOf(name))) && (annotations?.readOnlyHint ?? matches(READ_NAMES, name.split("__").slice(2).join("__"))))
+		.map(({ name }) => ({ tool: name }));
+}
+
 const anchored = (pattern: string) => new RegExp(`^(?:${pattern})(?![\\s\\S])`);
 const argsMatch = ({ argsMatch = {} }: ReadMcp, input: Record<string, unknown>) => Object.entries(argsMatch).every(([key, pattern]) => typeof input[key] === "string" && anchored(pattern).test(input[key]));
 
