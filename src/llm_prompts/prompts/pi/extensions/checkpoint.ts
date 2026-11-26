@@ -7,6 +7,7 @@
 import { calculateCost, type Api, type Model, type Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { recordMainTools } from "./pi-context/registry.ts";
 
 type Block = { type: string; id?: string; name?: string; text?: string; arguments?: unknown };
 type Details = { action?: "mark" | "rewind"; name?: string; target?: string; mode?: "summary" | "raw"; summary?: string };
@@ -194,6 +195,7 @@ export default function (pi: ExtensionAPI) {
 			summary: Type.Optional(Type.String()),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			recordMainTools(ctx);
 			const entries = ctx.sessionManager.buildSessionProjection().entries as unknown as Projected[];
 			const visible = visibleMarks(entries).map((mark) => mark.name);
 			const reply = (message: string, details: Details) => ({ content: [{ type: "text" as const, text: message }], details });

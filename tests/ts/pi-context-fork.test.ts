@@ -9,7 +9,7 @@ import { loadExtension, useEnv } from "./helpers.ts";
 import { projectResult } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/outcome.ts";
 import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/roles.ts";
 import { trackPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
-import { isLive, registryOf } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
+import { isLive, MAIN_TOOLS_WAIT, registryOf } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 import { Background } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/background.ts";
 import { coldArgs, coldLabel, KEEP_FINISHED_MS, registerFork, WARM_FORK_MAX_TOKENS, resolveModel, seedEntries, sweepFinished } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
 import { LONG_CACHE_MS } from "../../src/llm_prompts/prompts/pi/extensions/context-fold.ts";
@@ -595,7 +595,10 @@ describe("fork tool", () => {
 		});
 
 		describe("a fork that reload_now's reload resumed", () => {
-			const resumeQueued = async (toolRuns: boolean) => {
+			const waitMs = MAIN_TOOLS_WAIT.ms;
+			afterEach(() => void (MAIN_TOOLS_WAIT.ms = waitMs));
+
+			const resumeQueued = async (toolRuns: boolean, lateTool = false) => {
 				settings = PROXY_ON;
 				limit(1);
 				const { tools, sent, background, ctx, handlers, launch } = await start({ task: "STUB_HANG", name: "holder" });
@@ -612,6 +615,7 @@ describe("fork tool", () => {
 				} finally {
 					delete (globalThis as any)[Symbol.for("llm-prompts.reload-now.requested")];
 				}
+				if (lateTool) await (await loadExtension("result-cap")).callTool("result_fetch", { ref: "none" }, ctx as any);
 				await eventually(() => sent.some(([message]) => message.content.startsWith("[fork waiting ")));
 				return sent.map(([message]) => message.content).find((content) => content.startsWith("[fork waiting "))!;
 			};
@@ -620,7 +624,12 @@ describe("fork tool", () => {
 				assert.match(await resumeQueued(true), /echo: ran mcp__semble__search/);
 			});
 
-			test("is told to retry before main has run a tool", async () => {
+			test("waits for the first tool that main runs, whichever extension registers it", async () => {
+				assert.match(await resumeQueued(false, true), /echo: ran mcp__semble__search/);
+			});
+
+			test("is told to retry when main runs no tool within the wait", async () => {
+				MAIN_TOOLS_WAIT.ms = 50;
 				assert.match(await resumeQueued(false), /echo: .*retry/);
 			});
 		});

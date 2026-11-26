@@ -2,6 +2,7 @@
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { OUTCOME_CODES, parseOutcome } from "./outcome.ts";
+import { recordMainTools } from "./registry.ts";
 
 const replyParameters = Type.Object({
 	outcome: Type.Union([Type.Literal("done"), Type.Literal("found-it"), Type.Literal("blocked-on-user"), Type.Literal("failed")]),
@@ -56,7 +57,8 @@ export function registerReply(pi: ExtensionAPI, delegate: boolean): void {
 	let outcomeInText = false;
 	pi.registerTool({
 		...replyTool,
-		async execute(_toolCallId, params) {
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			recordMainTools(ctx);
 			if (callsInMessage > 1) return errorResult("Call reply alone, in a message with no other tool calls.");
 			return { content: [{ type: "text", text: "reply sent" }], details: params, terminate: true };
 		},
