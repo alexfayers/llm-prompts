@@ -1076,7 +1076,9 @@ class TestMainStaleCleanupGate:
         logged_warn = [
             call.args[1] for call in mock_log.call_args_list if call.args[0] == "warn"
         ]
-        assert any("Skipped stale-file cleanup" in line for line in logged_warn)
+        assert any(
+            "Skipped stale-file and package cleanup" in line for line in logged_warn
+        )
 
     def test_trusted_run_removes_stale_files(self, tmp_path: Path) -> None:
         overlay_only, _ = self._install_with_overlay_only_file(tmp_path, trusted=True)
