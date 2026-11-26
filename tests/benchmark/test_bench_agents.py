@@ -85,6 +85,20 @@ def test_pi_names_the_model_of_the_cold_workers_only_when_measuring_shared_tasks
     assert json.loads(tiers.read_text()) == {"bench": "prov/test-model"}
 
 
+def test_pi_turns_cache_warming_off_only_when_the_feature_is_off(
+    tmp_path: Path,
+) -> None:
+    settings = tmp_path / ".pi/agent/settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({"cacheWarming": "idle"}))
+
+    AGENTS["pi"].install_features(tmp_path, {"cache-warming": True})
+    assert json.loads(settings.read_text())["cacheWarming"] == "idle"
+
+    AGENTS["pi"].install_features(tmp_path, {"cache-warming": False})
+    assert json.loads(settings.read_text())["cacheWarming"] == "off"
+
+
 def test_pi_models_come_from_the_pi_settings() -> None:
     assert AGENTS["pi"].default_model == "test-model"
     assert AGENTS["pi"].judge_model == "test-model"

@@ -85,6 +85,29 @@ def test_pi_counts_the_expert_call_of_a_consult_that_failed() -> None:
     assert (trace.tokens.output, trace.cost_usd) == (7, 0.5)
 
 
+def test_pi_adds_the_cache_warming_requests_to_tokens_and_cost() -> None:
+    usage = {"input": 1, "output": 2, "cacheRead": 3, "cacheWrite": 4}
+    reply = {
+        "type": "message_end",
+        "message": {"role": "assistant", "usage": {**usage, "cost": {"total": 0.25}}},
+    }
+    warm = {
+        "type": "entry_appended",
+        "entry": {
+            "type": "usage",
+            "kind": "cache_warm",
+            "usage": {**usage, "cost": {"total": 0.5}},
+        },
+    }
+    other = {"type": "entry_appended", "entry": {"type": "custom", "usage": usage}}
+
+    trace = PiAdapter().parse(_lines([reply, warm, other]), wall_s=0.0)
+
+    assert (trace.tokens.input, trace.tokens.cache_read) == (2, 6)
+    assert trace.cost_usd == 0.75
+    assert trace.context == 8
+
+
 @pytest.mark.parametrize(
     ("runner", "reply", "other"),
     [

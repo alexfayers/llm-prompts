@@ -1,0 +1,34 @@
+id = "feature-cache-warming"
+level = "heavy"
+agents = ["pi"]
+workspace = "tiny-py"
+project = "demo"
+delegation = true
+timeout_s = 900
+prompt = "fork one reader delegate to run `sleep 330` in the shell with a timeout of 400 seconds, as a stand-in for a slow build. while it runs, run `sleep 290` in the shell yourself with a timeout of 400 seconds, as a stand-in for your own build, then wait for its reply. when both are done, add fetch_all(urls) to fetch.py, with a test, and make sure the tests pass"
+
+[[check]]
+kind = "tool_called"
+name = "Bash"
+args_regex = "sleep 330"
+by = "subagent"
+
+[[check]]
+kind = "tool_called"
+name = "Bash"
+args_regex = "sleep 290"
+by = "lead"
+
+[[check]]
+kind = "file_regex"
+path = "fetch.py"
+regex = "def fetch_all"
+
+[[check]]
+kind = "file_regex"
+path = "test_fetch.py"
+regex = "fetch_all"
+
+[[check]]
+kind = "command_exit"
+command = "python3 -c 'from fetch import fetch_all; assert fetch_all([\"a\", \"b\"]) == [\"body of a\", \"body of b\"]' && python3 -m pytest -q"
