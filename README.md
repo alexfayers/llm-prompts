@@ -200,7 +200,7 @@
 | tests/test\_size\_report.py                                                   |      254 |        0 |    100% |           |
 | tests/test\_skill\_injection.py                                               |       36 |        0 |    100% |           |
 | tests/test\_squash\_subject.py                                                |        7 |        0 |    100% |           |
-| tests/test\_telemetry.py                                                      |      414 |        0 |    100% |           |
+| tests/test\_telemetry.py                                                      |      417 |        0 |    100% |           |
 | tests/test\_telemetry\_core.py                                                |      164 |        1 |     99% |       126 |
 | tests/test\_todos\_script.py                                                  |       88 |        0 |    100% |           |
 | tests/test\_tool\_paths.py                                                    |       27 |        0 |    100% |           |
@@ -210,7 +210,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       84 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **37353** |  **840** | **98%** |           |
+| **TOTAL**                                                                     | **37356** |  **840** | **98%** |           |
 
 
 ## Setup coverage badge
