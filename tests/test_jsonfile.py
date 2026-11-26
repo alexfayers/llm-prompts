@@ -29,3 +29,11 @@ def test_write_through_a_symlink_updates_its_target(tmp_path: Path) -> None:
     assert link.is_symlink()
     assert json.loads(target.read_text(encoding="utf-8")) == {"a": 1}
     assert sorted(p.name for p in target.parent.iterdir()) == ["data.json"]
+
+
+def test_new_file_is_owner_only(tmp_path: Path) -> None:
+    path = tmp_path / "data.json"
+
+    write_json_atomic(path, {})
+
+    assert path.stat().st_mode & 0o777 == 0o600
