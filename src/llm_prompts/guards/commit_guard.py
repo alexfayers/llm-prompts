@@ -41,6 +41,11 @@ _LOCKFILE_TOOLS = {
 _SKIPPED_RUN = (
     "echo 'Skipped: the tests already passed on these exact files and tool versions.'"
 )
+_HEREDOC_BODY = re.compile(
+    r"(<<-?\s*(['\"]?)(\w+)\2[^\n]*\n).*?^\t*\3$", re.DOTALL | re.MULTILINE
+)
+_UNPARSED_RUN = "\0unparsed"
+_UNPARSED_NOTE = "The test run was not counted: the shell line did not parse (for example, a heredoc). Run the test command alone."
 _IN_PROGRESS = ("rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD")
 
 
@@ -270,19 +275,25 @@ class CommitGuard(HooksPlugin):
             and kwargs.get("tool_name") == CanonicalTool.SHELL
             and kwargs.get("success")
         ):
-            self._record(
+            return self._record(
                 cast("dict[str, str]", kwargs.get("parameters") or {}),
                 cast("list[str]", kwargs.get("workspace_roots") or []),
             )
         return None
 
-    def _record(self, parameters: dict[str, str], workspace_roots: list[str]) -> None:
+    def _record(
+        self, parameters: dict[str, str], workspace_roots: list[str]
+    ) -> HookResult | None:
         """Store a receipt where a passing call's result shows the repo's test command passed: it ran last, or every step was joined by `&&` and only read-only steps that write no file follow it."""
         line = parameters.get("command", "")
-        commands = _parse(line) if "action" not in parameters else None
-        steps = [index for index, cmd in enumerate(commands or []) if cmd.name != "cd"]
-        if commands is None or not steps:
-            return
+        if "action" in parameters:
+            return None
+        commands = _parse(line)
+        if commands is None:
+            return self._unparsed(line, workspace_roots)
+        steps = [index for index, cmd in enumerate(commands) if cmd.name != "cd"]
+        if not steps:
+            return None
         decided = steps if not _UNCHAINED.search(line) else steps[-1:]
         for index in decided:
             cmd = commands[index]
@@ -310,7 +321,22 @@ class CommitGuard(HooksPlugin):
                     _run_fingerprint(repo[0]),
                     _run_key(repo[0], directory, words),
                 )
-                return
+                return None
+        return None
+
+    def _unparsed(self, line: str, workspace_roots: list[str]) -> HookResult | None:
+        """Mark the repo's current files and return a note where an unparsed line names the repo's test command."""
+        repo = _repo(workspace_roots[0] if workspace_roots else os.getcwd())
+        gate = repo and _test_gate(repo[0])
+        if not repo or not gate or not gate.command:
+            return None
+        named = r"\s+".join(map(re.escape, gate.command))
+        if not re.search(
+            rf"(?<![\w-]){named}(?![\w-])", _HEREDOC_BODY.sub(r"\1", line)
+        ):
+            return None
+        ReceiptStore().record(repo[0], tree_fingerprint(repo[0]), _UNPARSED_RUN)
+        return HookResult(notes=[_UNPARSED_NOTE])
 
     def _skip(self, command: str, workspace_roots: list[str]) -> HookResult | None:
         """Return a replacement command that skips a test run by itself where the same command last passed on the same files and tool versions."""
@@ -364,9 +390,15 @@ class CommitGuard(HooksPlugin):
                 )
             if gate.error:
                 return HookResult(block=gate.error)
-            if not ReceiptStore().fresh(repo[0], tree_fingerprint(repo[0])):
+            receipts, fingerprint = ReceiptStore(), tree_fingerprint(repo[0])
+            if not receipts.fresh(repo[0], fingerprint):
+                unparsed = (
+                    " A test run on these files was not counted: its shell line did not parse."
+                    if receipts.fresh(repo[0], fingerprint, _UNPARSED_RUN)
+                    else ""
+                )
                 return HookResult(
-                    block=f"MUST run {gate.label} and see it pass on the current files before git {verb}. A run counts with a prefix such as `cd <dir> &&` or `timeout`, or redirected to a file. It doesn't count when piped, or when anything follows it except `&& echo`, `printf`, `true`, `pwd`, `ls` or `cat` writing to no file except /dev/null."
+                    block=f"MUST run {gate.label} and see it pass on the current files before git {verb}. A run counts with a prefix such as `cd <dir> &&` or `timeout`, or redirected to a file. It doesn't count when piped, or when anything follows it except `&& echo`, `printf`, `true`, `pwd`, `ls` or `cat` writing to no file except /dev/null.{unparsed}"
                 )
         return None
 

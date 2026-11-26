@@ -152,6 +152,52 @@ class TestCommitGuard:
         ran(hook, "just --set uv_run 'uv run --frozen' > j.log 2>&1")
         assert hook("PreShell", command="git commit -m x") is None
 
+    def test_a_test_run_in_a_line_that_does_not_parse_says_it_was_not_counted(
+        self, hook: RunHook, repo: Path
+    ) -> None:
+        noted = hook(
+            "PostToolUse",
+            tool_name="execute_command",
+            parameters={"command": f"cd {repo} && python3 - <<'EOF'\nx\nEOF\njust"},
+            success=True,
+        )
+        assert noted is not None and noted.notes == [
+            "The test run was not counted: the shell line did not parse (for example, a heredoc). Run the test command alone."
+        ]
+        blocked = hook("PreShell", command="git commit -m x")
+        assert blocked is not None and blocked.block is not None
+        assert "did not parse" in blocked.block
+
+        ran(hook, "just")
+        assert hook("PreShell", command="git commit -m x") is None
+
+    @pytest.mark.parametrize(
+        ("gate", "command"),
+        [
+            ("", "cat <<'EOF' > notes.md\nrun just\nEOF\n("),
+            ("uv run pytest", "uv run python - <<'EOF'\nx\nEOF\n("),
+        ],
+    )
+    def test_an_unparsed_line_without_the_test_command_outside_a_heredoc_gets_no_note(
+        self,
+        hook: RunHook,
+        monkeypatch: pytest.MonkeyPatch,
+        gate: str,
+        command: str,
+    ) -> None:
+        if gate:
+            monkeypatch.setenv("PI_CONTEXT_TEST_CMD", gate)
+        noted = hook(
+            "PostToolUse",
+            tool_name="execute_command",
+            parameters={"command": command},
+            success=True,
+        )
+        assert noted is None
+        blocked = hook("PreShell", command="git commit -m x")
+        assert blocked is not None and blocked.block is not None
+        assert "did not parse" not in blocked.block
+
     @pytest.mark.parametrize("command", ["just > /tmp/j.log", "just > j.log 2>&1"])
     def test_a_redirected_run_counts_only_when_it_passes_alone(
         self, hook: RunHook, command: str
