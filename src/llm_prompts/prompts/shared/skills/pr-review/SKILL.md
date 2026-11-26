@@ -26,7 +26,7 @@ description: "Review pending changes against the repo's review instructions, and
 ## Report
 
 - MUST give each finding a `severity`, a `likelihood` (`likely`, `rare`), `path:line`, and the rule file cited. A general finding cites no rule file.
-- MUST NOT pass a `rare` finding that loses no data and exposes no secret through the script. MUST list it as a note.
+- MUST NOT pass a `rare` finding that loses no data and exposes no secret through the script. MUST list it on the `DEFERRED:` line, tagged `rare`.
 - MUST run `python3 "{{SKILL_DIR}}/filter_findings.py" --help` for the severity scale.
 - MUST pipe the findings as a JSON array through the script, and report only its output:
 

@@ -8,7 +8,7 @@ Pass this to the reviewer with the content to review.
 - MUST NOT report style nits.
 - MUST rate each finding's likelihood in real use (likely, rare) as well as its severity.
 - MUST block only on a finding that is likely in real use, or that loses data or exposes a secret in a normal setup.
-  A rare edge case (a hostile setup, a crash at one exact step, a narrow race) MUST NOT be a numbered finding.
+  A rare edge case (a hostile setup, a crash at one exact step, a narrow race) that loses no data and exposes no secret MUST NOT be a numbered finding.
   The reviewer MUST list it on the `DEFERRED:` line, tagged `rare`. The fixer MAY leave it as a `shortcut:` comment.
 - A reviewer delegate MUST load the repo's `.github/instructions/review.instructions.md`, where present, and hold to its Severity bar.
 
