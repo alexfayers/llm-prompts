@@ -24,7 +24,7 @@
 | src/llm\_prompts/benchmark/cell/prepare.py                                    |      111 |        4 |     96% |     66-69 |
 | src/llm\_prompts/benchmark/cell/shared.py                                     |       94 |        5 |     95% |64-65, 128-130 |
 | src/llm\_prompts/benchmark/cell/variants.py                                   |      252 |       13 |     95% |58-59, 172, 198-199, 228, 382-383, 435-438, 440 |
-| src/llm\_prompts/benchmark/command.py                                         |      221 |        1 |     99% |        91 |
+| src/llm\_prompts/benchmark/command.py                                         |      221 |        1 |     99% |        92 |
 | src/llm\_prompts/benchmark/fail\_fast.py                                      |       55 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/guard/\_\_init\_\_.py                              |        0 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/guard/claude.py                                    |       26 |        1 |     96% |        64 |
@@ -49,7 +49,7 @@
 | src/llm\_prompts/benchmark/transient.py                                       |       41 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/types.py                                           |      206 |        0 |    100% |           |
 | src/llm\_prompts/claude\_models.py                                            |       23 |        0 |    100% |           |
-| src/llm\_prompts/cli.py                                                       |      905 |       65 |     93% |109-110, 136-137, 144-157, 263-264, 279-284, 426, 704, 707, 730, 757, 795, 826, 958, 1166-1168, 1181-1184, 1254-1263, 1776-1778, 1781-1787, 1799-1801, 1812-1818, 1828, 1833, 1845, 2006, 2034-2035, 2040 |
+| src/llm\_prompts/cli.py                                                       |      910 |       65 |     93% |109-110, 136-137, 144-157, 263-264, 279-284, 426, 704, 707, 730, 757, 795, 826, 958, 1166-1168, 1181-1184, 1254-1263, 1785-1787, 1790-1796, 1808-1810, 1821-1827, 1837, 1842, 1854, 2019, 2047-2048, 2053 |
 | src/llm\_prompts/collection\_size.py                                          |      133 |        3 |     98% |295-296, 500 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/config\_edit.py                                              |       58 |        1 |     98% |        74 |
@@ -75,7 +75,7 @@
 | src/llm\_prompts/mcp.py                                                       |       85 |        1 |     99% |        91 |
 | src/llm\_prompts/network.py                                                   |       46 |        0 |    100% |           |
 | src/llm\_prompts/overlay\_merge.py                                            |       52 |        2 |     96% |   71, 109 |
-| src/llm\_prompts/plugins.py                                                   |      194 |       15 |     92% |46, 133-134, 138-139, 163-167, 183, 213, 242, 290, 300, 408, 464, 468 |
+| src/llm\_prompts/plugins.py                                                   |      194 |       15 |     92% |47, 134-135, 139-140, 164-168, 184, 214, 243, 291, 301, 409, 465, 469 |
 | src/llm\_prompts/pr.py                                                        |      133 |        9 |     93% |96-112, 139, 277-278 |
 | src/llm\_prompts/prompts/claude-code/skills/retrospective/extract\_signals.py |      181 |       97 |     46% |44-49, 54-69, 80-124, 186, 197, 200, 209, 254-264, 269-286, 297-332, 336 |
 | src/llm\_prompts/prompts/shared/skills/eagle-vision/focus.py                  |      689 |       10 |     99% |108, 159, 271, 676, 690, 1214-1217, 1311 |
@@ -88,7 +88,8 @@
 | src/llm\_prompts/prompts/shared/skills/todos/find\_todos.py                   |       44 |        7 |     84% |96-98, 103-105, 109 |
 | src/llm\_prompts/removed\_agents\_notice.py                                   |       14 |        0 |    100% |           |
 | src/llm\_prompts/render\_template.py                                          |      170 |       14 |     92% |147, 433-434, 443-460, 472-476, 480 |
-| src/llm\_prompts/setup.py                                                     |      512 |       30 |     94% |230, 328-332, 343-347, 352, 361-368, 413, 464, 485-486, 532-533, 815-816, 957-958, 1089-1092, 1122-1123, 1126, 1183-1184 |
+| src/llm\_prompts/settings.py                                                  |       59 |        2 |     97% |    84, 89 |
+| src/llm\_prompts/setup.py                                                     |      517 |       30 |     94% |230, 328-332, 343-347, 352, 361-368, 413, 464, 485-486, 532-533, 815-816, 957-958, 1101-1104, 1134-1135, 1138, 1195-1196 |
 | src/llm\_prompts/size\_guard.py                                               |      435 |       10 |     98% |353-354, 595-597, 632, 654, 658-660 |
 | src/llm\_prompts/size\_limits.py                                              |       67 |        1 |     99% |       155 |
 | src/llm\_prompts/size\_report.py                                              |      207 |        2 |     99% |  207, 209 |
@@ -187,6 +188,7 @@
 | tests/test\_review\_limit.py                                                  |       66 |        0 |    100% |           |
 | tests/test\_rewrite\_range\_script.py                                         |       96 |        0 |    100% |           |
 | tests/test\_session\_start\_checklist.py                                      |       38 |        0 |    100% |           |
+| tests/test\_settings.py                                                       |       59 |        0 |    100% |           |
 | tests/test\_setup.py                                                          |      432 |        0 |    100% |           |
 | tests/test\_shell\_rules.py                                                   |       39 |        0 |    100% |           |
 | tests/test\_size\_guard.py                                                    |      168 |        0 |    100% |           |
@@ -202,7 +204,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       70 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **34643** |  **814** | **98%** |           |
+| **TOTAL**                                                                     | **34771** |  **816** | **98%** |           |
 
 
 ## Setup coverage badge
