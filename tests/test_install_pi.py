@@ -397,18 +397,24 @@ class TestPiPackages:
         assert settings["theme"] == "dark"
         assert settings["packages"] == [user_entry, *_core_packages()]
 
+    @pytest.mark.parametrize("recorded", [None, ["npm:pi-lsp-extension@1.4.0"]])
     def test_retired_packages_are_removed(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        recorded: list[str] | None,
     ) -> None:
         monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
         home = tmp_path / "home"
+        manifest = tmp_path / "installed.json"
+        if recorded:
+            manifest.write_text(json.dumps({"pi": {"packages": recorded}}))
         settings_path = home / ".pi" / "agent" / "settings.json"
         settings_path.parent.mkdir(parents=True)
-        settings_path.write_text(
-            json.dumps({"packages": ["npm:pi-herdsman@0.47.1"]}), encoding="utf-8"
-        )
+        packages = ["npm:pi-herdsman@0.47.1", "npm:pi-lsp-extension@1.3.0"]
+        settings_path.write_text(json.dumps({"packages": packages}), encoding="utf-8")
 
-        _install(home, tmp_path / "installed.json")
+        _install(home, manifest)
 
         assert _settings(home)["packages"] == _core_packages()
 
@@ -1269,9 +1275,6 @@ class TestPiAgents:
         path = pi_home / ".pi" / "agent" / "agents" / "Explore.md"
         explore = _frontmatter(path)
         assert "bash" not in explore["tools"]
-        assert {"lsp_symbols", "lsp_definition", "lsp_references"} <= set(
-            explore["tools"]
-        )
         assert explore["inheritProjectContext"] is False
         assert explore["model"] == "haiku"
         assert "thinking: off\n" in path.read_text(encoding="utf-8")

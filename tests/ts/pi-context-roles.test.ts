@@ -14,11 +14,6 @@ describe("decide", () => {
 		assert.match(decide(ROLES.reader, "fork", {})?.reason ?? "", /may not use fork/);
 	});
 
-	test("only a writer may call lsp_diagnostics, so a read-only role starts no language server", () => {
-		for (const role of [ROLES.reader]) assert.match(decide(role, "lsp_diagnostics", { path: "*" })?.reason ?? "", /may not use lsp_diagnostics/);
-		assert.equal(decide(ROLES.writer, "lsp_diagnostics", { path: "*" }), undefined);
-	});
-
 	test("MCP tools follow the role's allowlist, including nested calls", () => {
 		assert.equal(decide(ROLES.reader, "mcp__memory__search_nodes", {}), undefined);
 		assert.match(decide(ROLES.writer, "mcp__memory__create_entities", {})?.reason ?? "", /may not use mcp__memory__create_entities/);

@@ -13,11 +13,6 @@ async function startSession(tools: string[], mode: string, savedHidden?: string[
 	return { tools: ext.pi.activeTools, appended: ext.pi.appended };
 }
 
-test("session start hides only the unused tools", async () => {
-	const tools = ["lsp_hover", "ast_search", "lsp_diagnostics", "read", "bash"];
-	assert.deepEqual((await startSession(tools, "tui")).tools, ["lsp_diagnostics", "read", "bash"]);
-});
-
 test("a new headless session also hides the interactive tools and saves them", async () => {
 	const result = await startSession(["read", ...HEADLESS_ONLY, "bash"], "print");
 	assert.deepEqual(result.tools, ["read", "bash"]);
@@ -28,7 +23,7 @@ test("session start turns back on core tools a resumed session lost", async () =
 	const handshake = process.env.PI_CONTEXT_CHILD;
 	delete process.env.PI_CONTEXT_CHILD;
 	try {
-		const registered = ["read", "bash", "edit", "write", "lsp_hover", "codemode"];
+		const registered = ["read", "bash", "edit", "write", "codemode"];
 		assert.deepEqual((await startSession(["codemode"], "tui", undefined, registered)).tools, ["codemode", "read", "bash", "edit", "write"]);
 	} finally {
 		if (handshake !== undefined) process.env.PI_CONTEXT_CHILD = handshake;

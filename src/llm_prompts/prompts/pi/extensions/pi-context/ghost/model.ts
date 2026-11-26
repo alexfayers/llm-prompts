@@ -24,7 +24,7 @@ export interface Ghost {
 }
 
 /** Tools whose calls only read, so a ghost made of them needs no approval. */
-export const READ_ONLY = new Set(["read", "grep", "find", "ls", "lsp_diagnostics"]);
+export const READ_ONLY = new Set(["read", "grep", "find", "ls"]);
 /** What a parameter value may be, so that it cannot carry shell syntax. */
 export const PARAM_VALUE = /^[A-Za-z0-9._/@:+-]{1,200}$/;
 const PLACEHOLDER = /\{\{(\w+)\}\}/g;

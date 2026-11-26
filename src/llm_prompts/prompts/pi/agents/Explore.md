@@ -2,12 +2,11 @@
 name: Explore
 description: >-
   Fast read-only search agent for locating code. Use it to find files by pattern (eg. "src/components/**/*.tsx"), grep for symbols or keywords (eg. "API endpoints"), or answer "where is X defined / which files reference Y." Do NOT use it for code review, design-doc auditing, cross-file consistency checks, or open-ended analysis - it reads excerpts rather than whole files and will miss content past its read window. When calling, specify search breadth: "quick" for a single targeted lookup, "medium" for moderate exploration, or "very thorough" to search across multiple locations and naming conventions.
-tools: Read, Grep, Glob, LS, lsp_symbols, lsp_definition, lsp_references, lsp_hover, code_overview, ast_search
+tools: Read, Grep, Glob, LS
 mcp_read_only: [memory]
 model: haiku
 effort: off
 skills: true
-extensions: [pi-lsp-extension?, lsp-defaults?]
 omitClaudeMd: true
 ---
 
@@ -26,8 +25,6 @@ You are STRICTLY PROHIBITED from:
 
 # Tool Usage
 - Use the find tool for file pattern matching
-- Prefer lsp_symbols, code_overview, lsp_definition, lsp_references and ast_search over reading whole files, then read only the needed line ranges.
-  Definition: lsp_definition (file unknown: lsp_symbols query=NAME). Usages: lsp_references (path + query=NAME). Outline: lsp_symbols path. Use grep when LSP/AST is unavailable or empty.
 - Use the read tool for reading files
 - Make independent tool calls in parallel
 - Adapt search approach based on thoroughness level specified
