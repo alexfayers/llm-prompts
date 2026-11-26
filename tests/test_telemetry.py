@@ -930,7 +930,8 @@ def test_a_pi_session_sends_only_its_numbers_role_tier_and_version(
     assert set(properties) == {
         *("role", "model_tier", "calls", "cost", "cost_per_call", "context_avg"),
         *("context_peak", "cache_read_share", "compactions", "wall_s"),
-        *("llm_prompts", "os", "python", "schema", "$process_person_profile"),
+        *("llm_prompts", "cline_hooks", "mcp_memory"),
+        *("os", "python", "schema", "$process_person_profile"),
     }
     assert properties["role"] == (role if role != "acme-team-role" else "other")
     assert properties["model_tier"] == tier
@@ -938,7 +939,8 @@ def test_a_pi_session_sends_only_its_numbers_role_tier_and_version(
     assert (properties["cost_per_call"], properties["context_avg"]) == (0.125, 10000)
     assert (properties["context_peak"], properties["cache_read_share"]) == (16000, 0.75)
     assert (properties["compactions"], properties["wall_s"]) == (1, 90.5)
-    assert set(properties["llm_prompts"]) >= {"commit", "release"}
+    for tool in ("llm_prompts", "cline_hooks", "mcp_memory"):
+        assert set(properties[tool]) >= {"commit", "release"}
     assert "acme" not in json.dumps(properties)
 
 
