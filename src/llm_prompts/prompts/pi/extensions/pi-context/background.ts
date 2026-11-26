@@ -199,8 +199,8 @@ export class Background {
 		this.runFailed = ["error", "aborted"].includes(messages.filter((message) => message.role === "assistant").at(-1)?.stopReason ?? "");
 	}
 
-	/** Once the main run settles, marks the results it received as read and resolves the pins announced in it, unless it was aborted or failed, when the next digest announces them again. A pin also stays while an `ask_user` call went unanswered. */
-	settle(ctx: AskContext, aborted: boolean): void {
+	/** Once the main run settles, marks the results it received as read and resolves the pins announced in it, unless it was aborted or failed, when the next digest announces them again. A pin also stays while an `ask_user` call went unanswered. Returns whether the run was aborted or failed. */
+	settle(ctx: AskContext, aborted: boolean): boolean {
 		const ids = this.announced.splice(0);
 		const failed = aborted || this.runFailed;
 		const keep = failed || this.askUnanswered;
@@ -209,9 +209,10 @@ export class Background {
 		this.delivered.clear();
 		this.view?.refresh();
 		if (failed) this.pinned.unshift(...ids);
-		if (keep) return;
+		if (keep) return failed;
 		const open = new Set(openAsks(ctx.sessionManager.getBranch() as Parameters<typeof openAsks>[0]).map((ask) => ask.id));
 		for (const id of ids) if (open.has(id)) resolveAsk(this.pi, ctx, id);
+		return false;
 	}
 
 	/** Resolves a fork's open pins, once main resumes or steers it with the answer. */
@@ -326,7 +327,7 @@ export function registerBackgroundHooks(pi: ExtensionAPI, background: Background
 	pi.on("agent_end", (event) => background.noteRun(event.messages));
 
 	pi.on("agent_settled", (event, ctx) => {
-		background.settle(ctx, event.aborted);
+		if (!background.settle(ctx, event.aborted)) background.wake();
 	});
 
 	pi.on("agent_before_settle", async (event, ctx) => {

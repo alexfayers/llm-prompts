@@ -148,6 +148,26 @@ describe("hooks", () => {
 		assert.equal(handlers.before_agent_start({}, ctx())?.message.content, "[fork a done] ref rc\n1 fork still running.");
 	});
 
+	test("a run that finishes after main's last turn ended, before it settles, wakes main once when it settles", () => {
+		const main = { ...ctx(false), hasUI: true, sessionManager: { getBranch: () => [] } };
+		handlers.turn_end({ message: { role: "assistant", stopReason: "stop" } }, main);
+		background.finish(main, "a", done(), "OUTCOME done ref:rc");
+		handlers.agent_end({ messages: [{ role: "assistant", stopReason: "stop" }] }, main);
+		handlers.agent_settled({ aborted: false }, main);
+		assert.deepEqual(sent, [[{ customType: "pi-context-results", content: "[fork a done] ref rc\n1 fork still running.", display: true }, { deliverAs: "steer", triggerTurn: true }]]);
+		handlers.agent_settled({ aborted: false }, main);
+		assert.equal(sent.length, 1);
+	});
+
+	test("a run that finishes after main's last turn ended in an error does not wake main when it settles", () => {
+		const main = { ...ctx(false), hasUI: true, sessionManager: { getBranch: () => [] } };
+		handlers.turn_end({ message: { role: "assistant", stopReason: "error" } }, main);
+		background.finish(main, "a", done(), "OUTCOME done ref:rc");
+		handlers.agent_end({ messages: [{ role: "assistant", stopReason: "error" }] }, main);
+		handlers.agent_settled({ aborted: false }, main);
+		assert.deepEqual(sent, []);
+	});
+
 	test("a session appends the digest when it settles and continues with it", async () => {
 		finishHeld(ctx(), "a", done(), "OUTCOME done ref:rc");
 		const settled = await handlers.agent_before_settle({ entries: [] }, { ...ctx(), hasUI: true });
