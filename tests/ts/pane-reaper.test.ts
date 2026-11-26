@@ -311,8 +311,7 @@ describe("session start", () => {
 		await start(ext, 2);
 		assert.deepEqual(notices(ext).map(([text]) => text), [
 			"pane-reaper kept 2 worktrees (see /pane-reaper)",
-			`pane-reaper removed worktree ${settling.path} (feat/settling): merged into main and clean`,
-			"pane-reaper kept 1 worktree (see /pane-reaper)",
+			"pane-reaper removed 1 worktree, kept 1 (see /pane-reaper)",
 		]);
 	});
 });
@@ -327,7 +326,7 @@ describe("/pane-reaper", () => {
 		const wip = addWorktree("wip", { merged: false });
 		declareWorkspace("w9", done);
 		const result = await command(await load(), "");
-		assert.deepEqual(world.gitCalls, [`worktree remove ${done.path}`, "branch -d feat/done"]);
+		assert.deepEqual(world.gitCalls, [`worktree remove ${done.path}`, "update-ref -d refs/heads/feat/done head-done"]);
 		assert.deepEqual(result.map(([, level]) => level), ["info", "info"]);
 		assert.equal(result[0][0], `pane-reaper removed worktree ${done.path} (feat/done): merged into main and clean`);
 		assert.match(result[1][0], new RegExp(`${wip.path}.*not merged`));
@@ -350,9 +349,24 @@ describe("/pane-reaper", () => {
 		assert.deepEqual(result, [[`pane-reaper removed worktree ${squashed.path} (feat/squashed): merged into main and clean`, "info"]]);
 	});
 
+	test("a sweep that removes several worktrees adds one notice and /pane-reaper lists the details", async () => {
+		setEnv();
+		const first = addWorktree("first");
+		addWorktree("second");
+		addWorktree("wip", { merged: false });
+		world.refused = "update-ref -d refs/heads/feat/second";
+		const ext = await load();
+		await start(ext);
+		assert.deepEqual(notices(ext).map(([text]) => text), ["pane-reaper removed 2 worktrees, kept 1 (see /pane-reaper)"]);
+		const details = (await command(ext, "")).map(([text]) => text);
+		assert.equal(details[0], `pane-reaper removed worktree ${first.path} (feat/first): merged into main and clean`);
+		assert.match(details[1], /Kept the branch: Error: refused/);
+		assert.equal(details.length, 3);
+	});
+
 	test("check now reports the branch git refuses to delete", async () => {
 		const done = addWorktree("done");
-		world.refused = "branch -d";
+		world.refused = "update-ref";
 		const result = await command(await load(), "");
 		assert.deepEqual(result, [[`pane-reaper removed worktree ${done.path} (feat/done): merged into main and clean. Kept the branch: Error: refused`, "warning"]]);
 	});
