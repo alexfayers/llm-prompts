@@ -11,7 +11,7 @@
 | src/llm\_prompts/benchmark/agents/adapter.py                                  |       34 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/agents/claude.py                                   |      158 |        3 |     98% |57, 133-134 |
 | src/llm\_prompts/benchmark/agents/files.py                                    |       53 |        1 |     98% |        32 |
-| src/llm\_prompts/benchmark/agents/pi.py                                       |      188 |        1 |     99% |       176 |
+| src/llm\_prompts/benchmark/agents/pi.py                                       |      192 |        1 |     99% |       180 |
 | src/llm\_prompts/benchmark/cell/\_\_init\_\_.py                               |        0 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/cell/audit.py                                      |       97 |        3 |     97% |     59-61 |
 | src/llm\_prompts/benchmark/cell/env.py                                        |       24 |        0 |    100% |           |
@@ -112,7 +112,7 @@
 | src/llm\_prompts/worktrees.py                                                 |       89 |        3 |     97% |121, 150-151 |
 | tests/benchmark/\_\_init\_\_.py                                               |        0 |        0 |    100% |           |
 | tests/benchmark/conftest.py                                                   |      192 |        0 |    100% |           |
-| tests/benchmark/test\_bench\_agents.py                                        |       44 |        0 |    100% |           |
+| tests/benchmark/test\_bench\_agents.py                                        |       52 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_audit.py                                         |       63 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_cell.py                                          |      233 |        4 |     98% |169, 292, 297, 409 |
 | tests/benchmark/test\_bench\_check\_sandbox.py                                |       59 |        0 |    100% |           |
@@ -208,7 +208,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       70 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **35936** |  **832** | **98%** |           |
+| **TOTAL**                                                                     | **35948** |  **832** | **98%** |           |
 
 
 ## Setup coverage badge
