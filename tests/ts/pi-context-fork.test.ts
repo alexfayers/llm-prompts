@@ -11,7 +11,7 @@ import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/ro
 import { trackPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
 import { isLive, MAIN_TOOLS_WAIT, registryOf, type Run } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 import { Background } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/background.ts";
-import { coldArgs, coldLabel, FANOUT_EXTRA, KEEP_FINISHED_MS, SHARED_FILE_MAX_CHARS, registerFork, WARM_FORK_MAX_TOKENS, resolveModel, seedEntries, summarizeSession, sweepFinished } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
+import { briefReason, coldArgs, coldLabel, FANOUT_EXTRA, KEEP_FINISHED_MS, SHARED_FILE_MAX_CHARS, registerFork, WARM_FORK_MAX_TOKENS, resolveModel, seedEntries, summarizeSession, sweepFinished } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
 import { LONG_CACHE_MS } from "../../src/llm_prompts/prompts/pi/extensions/context-fold.ts";
 
 const user = (id: string) => ({ type: "message", id, message: { role: "user", content: id } });
@@ -51,6 +51,12 @@ describe("seedEntries after a compaction", () => {
 		const seed = seedEntries(branch as any, "c1") as any[];
 		assert.deepEqual(seed.map((entry) => entry.id), ["h1", "t1", "p1", "r1", "u2", "k1"]);
 		assert.deepEqual(seed.map((entry) => entry.parentId), [null, "h1", "t1", "p1", "r1", "u2"]);
+	});
+});
+
+describe("briefReason", () => {
+	test("stops at the first word that would pass the length limit", () => {
+		assert.equal(briefReason("the branch averyveryveryverylongbranchname was not pushed"), "the branch");
 	});
 });
 
@@ -1092,7 +1098,7 @@ describe("fork tool", () => {
 			await fork({ task: "STUB_REPORT", name: "warm" });
 			await fork({ task: "STUB_REPORT", name: "warmer" });
 			const { tool } = await start({ task: "STUB_REPORT", name: "next" });
-			assert.match(tool.content[0].text, /^started fork next \(background\)\nfork warmer: 216 ctx, cache \d+m\nfork warm: 216 ctx, cache \d+m\nfork_resume\(\{name, task\}\) is cheaper than a fresh fork$/);
+			assert.match(tool.content[0].text, /^started fork next \(background\)\nfork warmer: 216 ctx, cache \d+m left\nfork warm: 216 ctx, cache \d+m left\nfork_resume\(\{name, task\}\) is cheaper than a fresh fork$/);
 		});
 
 		test("the warm-fork hint stays silent when a fresh fork reads less cached context than the finished fork holds", async () => {
@@ -1107,7 +1113,7 @@ describe("fork tool", () => {
 			const cheap = await start({ task: "STUB_REPORT", name: "cheapcold", model: "prov/cheap" });
 			assert.match(cheap.tool.content[0].text, /^started cold worker cheapcold on prov\/cheap \(no shared context\) \(background\)\ncheapcold starts when stub-\w+ finishes$/);
 			const dear = await start({ task: "STUB_REPORT", name: "dearcold", model: "prov/dear" });
-			assert.match(dear.tool.content[0].text, /\nfork lead: 216 ctx, cache \d+m\n/);
+			assert.match(dear.tool.content[0].text, /\nfork lead: 216 ctx, cache \d+m left\n/);
 		});
 
 		test("the warm-fork hint prices a finished cold worker at its own model's rates", async () => {
