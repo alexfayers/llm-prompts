@@ -85,7 +85,10 @@ export async function createWorktree(cwd: string, root: string, name: string, ow
 	if (provided) return { repo, path: provided.path, checkout: await gitOut(provided.gitDir ?? provided.path, "rev-parse", "--show-toplevel"), provided: true, branch, ...(own?.branch && { own: true }), base, snapshot };
 	const dir = path.join(root, repoKey(repo), name);
 	await gitOut(repo, "worktree", "add", "--no-track", "-b", branch, dir, base);
-	if (own?.branch) await Promise.all([gitOut(repo, "config", `branch.${branch}.remote`, PUSH_REMOTE), gitOut(repo, "config", `branch.${branch}.merge`, `refs/heads/${branch}`)]);
+	if (own?.branch) {
+		await gitOut(repo, "config", `branch.${branch}.remote`, PUSH_REMOTE);
+		await gitOut(repo, "config", `branch.${branch}.merge`, `refs/heads/${branch}`);
+	}
 	return { repo, path: dir, branch, ...(own?.branch && { own: true }), base, snapshot };
 }
 
@@ -185,6 +188,15 @@ export async function restoreWorktree(tree: Worktree): Promise<void> {
 	const remote = `refs/remotes/${PUSH_REMOTE}/${tree.branch}`;
 	const from = tree.own && (await git(tree.repo, "rev-parse", "--verify", "--quiet", remote)).code === 0 ? remote : tree.base;
 	await gitOut(tree.repo, "worktree", "add", ...((await hasBranch(tree)) ? [tree.path, tree.branch] : ["-b", tree.branch, tree.path, from]));
+}
+
+/** The worktree a continued run works in: the kept one, or a new one when it is gone. */
+export async function resumeWorktree(tree: Worktree, root: string, name: string): Promise<Worktree> {
+	if (tree.own) {
+		await restoreWorktree(tree);
+		return { ...tree, snapshot: await mainSnapshot(tree.repo) };
+	}
+	return fs.existsSync(tree.path) ? { ...tree, snapshot: await mainSnapshot(tree.repo) } : createWorktree(tree.repo, root, name);
 }
 
 export interface Landing {

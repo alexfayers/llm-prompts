@@ -11,7 +11,7 @@ import { parseOutcome, projectResult } from "./outcome.ts";
 import { replyText } from "./reply.ts";
 import { Background, Slots } from "./background.ts";
 import { describeMain, LEAD_PREFIX_FILE, serveBridge, writeLeadPrefix, type BridgeOptions } from "./bridge.ts";
-import { createWorktree, dropIfClean, gitOut, land, mainSnapshot, restoreWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
+import { createWorktree, dropIfClean, gitOut, land, restoreWorktree, resumeWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
 import { checkReadMcp, coldCard, expandHome, readHandshake, ROLES, withReadMcp, type ReadMcp, type Role } from "./roles.ts";
 import { findModel, tokens } from "./live-view.ts";
 import { cacheLeftMs, cacheText, FINISHED, isLive, registryOf, sessionFileOf, type Run, type RunState } from "./registry.ts";
@@ -582,7 +582,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		sweepFinished();
 		const run = finishedRun(registry.all(), name);
 		background.resolveForkAsks(ctx, run.name);
-		const tree = run.tree && (fs.existsSync(run.tree.path) ? { ...run.tree, snapshot: await mainSnapshot(run.tree.repo) } : await createWorktree(run.tree.repo, path.join(getAgentDir(), "pi-context", WORKTREES), run.name, run.tree.own ? run.tree : undefined));
+		const tree = run.tree && (await resumeWorktree(run.tree, path.join(getAgentDir(), "pi-context", WORKTREES), run.name));
 		registry.update(run.id, { state: "running", task, background: true, tree, worktree: tree?.path, branch: tree?.branch, startedAt: Date.now(), endedAt: undefined, endedBy: undefined, outcome: undefined, notify: undefined });
 		const message = `${worktreeLine(tree)}Task: ${task}`;
 		startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${toolCallId}`, role: ROLES[run.role as Role["name"]], tree, target: run.target ?? run.cwd, model: run.model, files: run.files }, { message, resume: true });

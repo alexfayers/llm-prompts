@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
-import { type Event, type WorktreeProvider, WORKTREE_PROVIDER, createWorktree, land, restoreWorktree } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/merge.ts";
+import { type Event, type WorktreeProvider, WORKTREE_PROVIDER, createWorktree, land, restoreWorktree, resumeWorktree } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/merge.ts";
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-merge-"));
 after(() => fs.rmSync(scratch, { recursive: true }));
@@ -209,6 +209,32 @@ describe("landing", () => {
 			assert.equal((await land({ tree, first: done })).state, "landed");
 			await restoreWorktree(tree);
 			assert.equal(git(tree.path, "rev-parse", "HEAD"), git(repo, "rev-parse", "origin/feature/own"));
+		});
+
+		test("a continued run resumes on the pushed branch and pushes again as a fast-forward", async () => {
+			const repo = originRepo("resume");
+			const root = path.join(scratch, "worktrees");
+			const first = await own(repo, "own-resume");
+			commit(first.path, "a.txt", "1", "first round");
+			git(first.path, "push", "-q");
+			assert.equal((await land({ tree: first, first: done })).state, "landed");
+			assert.ok(!fs.existsSync(first.path));
+			const tree = await resumeWorktree(first, root, "own-resume");
+			assert.equal(git(tree.path, "rev-parse", "HEAD"), git(repo, "rev-parse", "origin/feature/own"));
+			commit(tree.path, "b.txt", "1", "fix round");
+			git(tree.path, "push", "-q");
+			assert.equal(git(repo, "rev-parse", "origin/feature/own"), git(tree.path, "rev-parse", "HEAD"));
+			assert.equal((await land({ tree, first: done })).state, "landed");
+		});
+
+		test("a continued run keeps the unpushed commits of a kept worktree", async () => {
+			const repo = originRepo("kept");
+			const first = await own(repo, "own-kept");
+			commit(first.path, "a.txt", "1", "unpushed");
+			assert.equal((await land({ tree: first, first: done })).state, "escalated");
+			const tree = await resumeWorktree(first, path.join(scratch, "worktrees"), "own-kept");
+			assert.equal(tree.path, first.path);
+			assert.equal(git(tree.path, "log", "-1", "--format=%s"), "unpushed");
 		});
 
 		test("rejects a base without a branch", async () => {
