@@ -36,10 +36,42 @@ function archiveSession(data: Buffer, agentDir: string): string {
 			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
 			regular(file);
 			if (!fs.readFileSync(file).equals(data)) throw new Error(`Archive mismatch: ${file}`);
+			fs.utimesSync(file, new Date(), new Date());
 		}
 		syncDirectory(dir);
 	} finally { if (fs.existsSync(temp)) fs.unlinkSync(temp); }
 	return file;
+}
+
+/** How long an archive stays once no usage session touched in that time needs it. */
+export const KEPT_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
+const PRUNE_INTERVAL_MS = 24 * 60 * 60_000;
+const PRUNE_MARK = ".kept-pruned";
+
+/** Deletes archives older than `KEPT_MAX_AGE_MS` that no recently written usage session names as its source, at most once per `PRUNE_INTERVAL_MS`. Returns whether it ran. */
+export function pruneKept(agentDir: string, now = Date.now()): boolean {
+	const root = path.join(agentDir, "pi-context");
+	const kept = path.join(root, "kept");
+	if (!fs.existsSync(kept)) return false;
+	const mark = path.join(root, PRUNE_MARK);
+	const last = fs.statSync(mark, { throwIfNoEntry: false });
+	if (last && now - last.mtimeMs < PRUNE_INTERVAL_MS) return false;
+	fs.writeFileSync(mark, "");
+	fs.utimesSync(mark, new Date(now), new Date(now));
+	const sessions = path.join(agentDir, "sessions", "pi-context");
+	const needed = new Set<string>();
+	for (const name of fs.existsSync(sessions) ? fs.readdirSync(sessions) : []) {
+		const file = path.join(sessions, name);
+		const stat = fs.lstatSync(file);
+		if (!name.endsWith(".jsonl") || !stat.isFile() || now - stat.mtimeMs > KEPT_MAX_AGE_MS) continue;
+		try { needed.add(`${JSON.parse(fs.readFileSync(file, "utf8").split("\n", 1)[0]).piContextUsage?.sourceHash}.jsonl`); } catch { needed.add(name); }
+	}
+	for (const name of fs.readdirSync(kept)) {
+		const file = path.join(kept, name);
+		const stat = fs.lstatSync(file);
+		if (name.endsWith(".jsonl") && stat.isFile() && now - stat.mtimeMs > KEPT_MAX_AGE_MS && !needed.has(name)) fs.unlinkSync(file);
+	}
+	return true;
 }
 
 function projection(entries: Entry[], sourceHash: string, inherited?: string): string {

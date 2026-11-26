@@ -32,7 +32,7 @@ Each rule is also its own file under `rules/`, and the global `AGENTS.md` holds 
 
 ## Fork usage accounting
 
-Full fork snapshots stay byte-for-byte in `<agent dir>/pi-context/kept/`. Usage tools read only child entries from `<agent dir>/sessions/pi-context/`. If retention fails, the full run files remain without an expiry marker and the delegate's reply is preserved.
+Full fork snapshots stay byte-for-byte in `<agent dir>/pi-context/kept/`. At session start, at most once a day, snapshots older than 30 days are deleted unless a usage session written in the last 30 days names them as its source. Usage tools read only child entries from `<agent dir>/sessions/pi-context/`. If retention fails, the full run files remain without an expiry marker and the delegate's reply is preserved.
 
 Preview historical repairs with a Node version that runs TypeScript files:
 

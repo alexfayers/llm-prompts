@@ -1,7 +1,7 @@
 // Runs delegated pi sessions as cache-sharing forks and workers, restricts a delegate to its role, gives a cold worker AGENTS.delegate.md in place of AGENTS.md, and records and replays ghosts.
 // Commands: /ghost save <name> [param=value ...], /ghost list
 // Env: PI_CONTEXT_CHILD (path of the handshake JSON `{role, worktree?, bridge?}`; set only in a delegated session), PI_CONTEXT_ROLE (`team` in a coordinator, the only delegate that forks)
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Background, registerBackgroundHooks, useBoardCapacity } from "./background.ts";
 import { readBridgeConfig, registerChildBridge, trackPrefix, useCacheKey, useLeadPrefix } from "./bridge.ts";
 import { maxLive, registerFork, sweepFinished } from "./fork.ts";
@@ -10,6 +10,7 @@ import { Recorder, registerRecorder } from "./ghost/recorder.ts";
 import { registerGhostRun } from "./ghost/run.ts";
 import { LiveView, registerLiveView } from "./live-view.ts";
 import { registerReply } from "./reply.ts";
+import { pruneKept } from "./usage-sessions.ts";
 import { childGuard, isTeam, readHandshake, registerDelegateRules } from "./roles.ts";
 
 export default function (pi: ExtensionAPI) {
@@ -34,7 +35,10 @@ export default function (pi: ExtensionAPI) {
 		trackPrefix(pi);
 		registerBackgroundHooks(pi, background);
 		useBoardCapacity(pi, background, () => maxLive());
-		pi.on("session_start", () => sweepFinished());
+		pi.on("session_start", () => {
+			sweepFinished();
+			pruneKept(getAgentDir());
+		});
 	}
 	registerGhostRun(pi);
 	registerFork(pi, undefined, background);
