@@ -13,8 +13,10 @@ from typing import Any
 def write_text_atomic(path: Path, text: str) -> None:
     """Write ``text`` to ``path`` through a scratch file and a rename.
 
+    A symlink is followed, so the scratch file sits beside its target and the link stays.
     An existing file keeps its mode, and stays untouched when the write fails.
     """
+    path = Path(os.path.realpath(path))
     path.parent.mkdir(parents=True, exist_ok=True)
     scratch = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:

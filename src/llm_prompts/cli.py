@@ -1755,6 +1755,7 @@ def _run_command(
         if "claude-code" in agent_names:
             from .install import (
                 try_allow_update_claude_code,
+                try_enable_task_tools_claude_code,
                 try_install_hooks_claude_code,
                 try_install_memory_claude_code,
             )
@@ -1763,6 +1764,7 @@ def _run_command(
                 try_install_hooks_claude_code()
                 try_install_memory_claude_code()
             try_allow_update_claude_code()
+            try_enable_task_tools_claude_code()
 
         if "codex" in agent_names and not args.root:
             from .install import try_install_memory_codex
@@ -1932,6 +1934,10 @@ def _run_command(
         memory_changed = _MEMORY_TOOL in changed_sources
         if changed_sources:
             _reconfigure_agents(manifest, memory_changed=memory_changed)
+        if "claude-code" in manifest:
+            from .install import try_enable_task_tools_claude_code
+
+            try_enable_task_tools_claude_code()
         if memory_changed:
             _flush_memory_telemetry()
             _auto_migrate_memory_db()
