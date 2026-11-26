@@ -237,6 +237,30 @@ describe("checkpoint nudge", () => {
 	});
 });
 
+const nudgedOnce = async () => {
+	const ext = await loadExtension("checkpoint", { pi: { getSettings: () => ({ llmPrompts: { checkpoint: { nudgeTokens: 1000 } } }) } });
+	await ext.fire("agent_start");
+	return nudged(await ext.fire("tool_result", sized(1000)));
+};
+
+describe("checkpoint nudge in a delegate", () => {
+	useEnv({ PI_CONTEXT_CHILD: "/handshake.json", PI_CONTEXT_CHECKPOINT_NUDGE: undefined });
+
+	test("a delegate is nudged", async () => assert.equal(await nudgedOnce(), true));
+});
+
+describe("checkpoint nudge switched off", () => {
+	useEnv({ PI_CONTEXT_CHILD: "/handshake.json", PI_CONTEXT_CHECKPOINT_NUDGE: "off" });
+
+	test("PI_CONTEXT_CHECKPOINT_NUDGE=off stops a delegate's nudge", async () => assert.equal(await nudgedOnce(), false));
+});
+
+describe("checkpoint nudge switched off in the main session", () => {
+	useEnv({ PI_CONTEXT_CHILD: undefined, PI_CONTEXT_CHECKPOINT_NUDGE: "off" });
+
+	test("PI_CONTEXT_CHECKPOINT_NUDGE=off keeps the main session's nudge", async () => assert.equal(await nudgedOnce(), true));
+});
+
 describe("checkpoint rewind nudge", () => {
 	useEnv({ PI_CONTEXT_CHILD: undefined, PI_HERDSMAN_MAILBOX: undefined, PI_CACHE_RETENTION: undefined, AWS_BEDROCK_FORCE_CACHE: undefined });
 
