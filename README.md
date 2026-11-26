@@ -70,7 +70,7 @@
 | src/llm\_prompts/main\_sync.py                                                |      529 |       19 |     96% |190-191, 272-273, 358, 591, 666, 693-694, 892, 911-912, 930, 947, 960, 964, 1000, 1065, 1131 |
 | src/llm\_prompts/manifest.py                                                  |       89 |        3 |     97% |69-70, 107 |
 | src/llm\_prompts/mcp.py                                                       |       85 |        1 |     99% |        91 |
-| src/llm\_prompts/network.py                                                   |       46 |        0 |    100% |           |
+| src/llm\_prompts/network.py                                                   |       50 |        0 |    100% |           |
 | src/llm\_prompts/overlay\_merge.py                                            |       52 |        2 |     96% |   71, 109 |
 | src/llm\_prompts/path\_migration.py                                           |       94 |        2 |     98% |    24, 54 |
 | src/llm\_prompts/plugins.py                                                   |      194 |       15 |     92% |47, 134-135, 139-140, 164-168, 184, 214, 243, 291, 301, 409, 465, 469 |
@@ -177,7 +177,7 @@
 | tests/test\_main\_sync.py                                                     |      318 |        0 |    100% |           |
 | tests/test\_manifest.py                                                       |       83 |        0 |    100% |           |
 | tests/test\_mcp.py                                                            |       27 |        2 |     93% |     43-44 |
-| tests/test\_network.py                                                        |       33 |        0 |    100% |           |
+| tests/test\_network.py                                                        |       42 |        0 |    100% |           |
 | tests/test\_overlay\_merge.py                                                 |       19 |        0 |    100% |           |
 | tests/test\_path\_migration.py                                                |      151 |        0 |    100% |           |
 | tests/test\_pi\_context\_rules.py                                             |       19 |        0 |    100% |           |
@@ -210,7 +210,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       84 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **36904** |  **842** | **98%** |           |
+| **TOTAL**                                                                     | **36917** |  **842** | **98%** |           |
 
 
 ## Setup coverage badge
