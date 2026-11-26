@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, mock, test } from "node:test";
 import { useEnv } from "./helpers.ts";
 import { openAsks } from "../../src/llm_prompts/prompts/pi/extensions/pending-asks.ts";
-import { Background, registerBackgroundHooks } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/background.ts";
+import { Background, registerBackgroundHooks, useBoardCapacity } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/background.ts";
 import { LiveView } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/live-view.ts";
 import { Registry, type Run } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 
@@ -66,6 +66,15 @@ describe("Background", () => {
 		assert.equal(background.digest(), undefined);
 	});
 
+	test("with a capacity, the digest names the free fork slots and up to five ready board tasks", () => {
+		background.capacity = { limit: () => 4, ready: () => ["t1", "t2", "t3", "t4", "t5", "t6"] };
+		finishHeld(ctx(), "a", done(), "OUTCOME done ref:rc");
+		assert.equal(background.digest(), "[fork a done] ref rc\n1 fork still running. [slots: 3 free | ready: t1, t2, t3, t4, t5]");
+		background.capacity = { limit: () => 1, ready: () => [] };
+		finishHeld(ctx(), "b", done(), "OUTCOME done ref:rc");
+		assert.equal(background.digest(), "[fork b done] ref rc\n0 forks still running. [slots: 1 free]");
+	});
+
 	test("cancel aborts the run, and a later finish of it is ignored", () => {
 		const signal = background.track("a");
 		assert.equal(background.cancel("a")?.state, "cancelled");
@@ -122,6 +131,71 @@ describe("hooks", () => {
 		boot();
 	});
 	const session = (...data: Run[]) => ({ ...ctx(), hasUI: true, sessionManager: { getEntries: () => data.map((run) => ({ type: "custom", customType: "pi-context-run", data: run })) } });
+
+	test("board capacity folds the board of the session's directory at start and again when a run ends", async () => {
+		const on: Record<string, (event: any, ctx: any) => any> = {};
+		const folds: string[] = [];
+		const boards = [["early"], ["t1", "t2"]];
+		useBoardCapacity({ on: (event: string, handler: any) => (on[event] = handler) } as any, background, () => 5, async (cwd) => (folds.push(cwd), boards[folds.length - 1]));
+		on.session_start({}, { cwd: "/repo" });
+		await new Promise(setImmediate);
+		background.finish(ctx(false), "a", done(), "OUTCOME done ref:rc");
+		await new Promise(setImmediate);
+		assert.deepEqual(folds, ["/repo", "/repo"]);
+		assert.equal(background.digest(), "[fork a done] ref rc\n1 fork still running. [slots: 4 free | ready: t1, t2]");
+	});
+
+	test("board capacity folds the board again before a board tool's result returns, and only once per run end", async () => {
+		const on: Record<string, (event: any, ctx: any) => any> = {};
+		const boards = [["t1", "t2"], ["t2"], ["x"]];
+		let folds = 0;
+		useBoardCapacity({ on: (event: string, handler: any) => (on[event] = handler) } as any, background, () => 5, async () => boards[folds++]);
+		on.session_start({}, { cwd: "/repo" });
+		await new Promise(setImmediate);
+		await on.tool_result({ toolName: "read" }, {});
+		assert.equal(folds, 1);
+		await on.tool_result({ toolName: "tower_do_patch" }, {});
+		assert.equal(folds, 2);
+		background.finish(ctx(false), "a", done(), "OUTCOME done ref:rc");
+		assert.equal(background.digest(), "[fork a done] ref rc\n1 fork still running. [slots: 4 free | ready: t2]");
+		await new Promise(setImmediate);
+		registry.update("a", { unread: undefined });
+		await new Promise(setImmediate);
+		assert.equal(folds, 3);
+	});
+
+	test("an idle main woken by a fork that finished its board task gets the ready list folded after the fork ended", async () => {
+		const on: Record<string, (event: any, ctx: any) => any> = {};
+		const boards = [["t1", "t2"], ["t2"]];
+		let folds = 0;
+		useBoardCapacity({ on: (event: string, handler: any) => (on[event] = handler) } as any, background, () => 5, async () => boards[folds++]);
+		on.session_start({}, { cwd: "/repo" });
+		await new Promise(setImmediate);
+		background.finish(ctx(), "a", done(), "OUTCOME done ref:rc");
+		await new Promise(setImmediate);
+		assert.deepEqual(sent.map(([message]) => message.content), ["[fork a done] ref rc\n1 fork still running. [slots: 4 free | ready: t2]"]);
+	});
+
+	test("a main that turns busy while the board folds gets no wake, and its next run starts with the digest", async () => {
+		const on: Record<string, (event: any, ctx: any) => any> = {};
+		useBoardCapacity({ on: (event: string, handler: any) => (on[event] = handler) } as any, background, () => 5, async () => ["t2"]);
+		on.session_start({}, { cwd: "/repo" });
+		let idle = true;
+		background.finish({ isIdle: () => idle } as any, "a", done(), "OUTCOME done ref:rc");
+		idle = false;
+		await new Promise(setImmediate);
+		assert.deepEqual(sent, []);
+		assert.equal(handlers.before_agent_start({}, ctx()).message.content, "[fork a done] ref rc\n1 fork still running. [slots: 4 free | ready: t2]");
+	});
+
+	test("board capacity folds the board again before a tower_do_status result returns", async () => {
+		const on: Record<string, (event: any, ctx: any) => any> = {};
+		let folds = 0;
+		useBoardCapacity({ on: (event: string, handler: any) => (on[event] = handler) } as any, background, () => 5, async () => (folds++, []));
+		on.session_start({}, { cwd: "/repo" });
+		await on.tool_result({ toolName: "tower_do_status" }, {});
+		assert.equal(folds, 2);
+	});
 
 	test("the next run starts with the digest of results that did not wake main, once", () => {
 		finishHeld(ctx(), "a", done(), "OUTCOME done ref:rc");

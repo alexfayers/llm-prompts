@@ -2,9 +2,9 @@
 // Commands: /ghost save <name> [param=value ...], /ghost list
 // Env: PI_CONTEXT_CHILD (path of the handshake JSON `{role, worktree?, bridge?}`; set only in a delegated session), PI_CONTEXT_ROLE (`team` in a coordinator, the only delegate that forks)
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Background, registerBackgroundHooks } from "./background.ts";
+import { Background, registerBackgroundHooks, useBoardCapacity } from "./background.ts";
 import { readBridgeConfig, registerChildBridge, trackPrefix, useCacheKey, useLeadPrefix } from "./bridge.ts";
-import { registerFork, sweepFinished } from "./fork.ts";
+import { maxLive, registerFork, sweepFinished } from "./fork.ts";
 import { registerGhostCommand } from "./ghost/command.ts";
 import { Recorder, registerRecorder } from "./ghost/recorder.ts";
 import { registerGhostRun } from "./ghost/run.ts";
@@ -33,6 +33,7 @@ export default function (pi: ExtensionAPI) {
 		registerGhostCommand(pi, recorder);
 		trackPrefix(pi);
 		registerBackgroundHooks(pi, background);
+		useBoardCapacity(pi, background, () => maxLive());
 		pi.on("session_start", () => sweepFinished());
 	}
 	registerGhostRun(pi);
