@@ -11,7 +11,7 @@ import { parseOutcome, projectResult } from "./outcome.ts";
 import { replyText } from "./reply.ts";
 import { Background, Slots } from "./background.ts";
 import { describeMain, LEAD_PREFIX_FILE, serveBridge, writeLeadPrefix, type BridgeOptions } from "./bridge.ts";
-import { createWorktree, dropIfClean, gitOut, land, mainSnapshot, restoreWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
+import { createWorktree, dropIfClean, gitOut, land, restoreWorktree, resumeWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
 import { checkReadMcp, coldCard, expandHome, readHandshake, ROLES, withReadMcp, type ReadMcp, type Role } from "./roles.ts";
 import { findModel, tokens } from "./live-view.ts";
 import { cacheLeftMs, cacheText, FINISHED, isLive, registryOf, sessionFileOf, type Run, type RunState } from "./registry.ts";
@@ -376,7 +376,7 @@ const treeNote = async (tree?: Worktree) => (!tree ? "" : (await dropIfClean(tre
 
 /** Tells a writer where its commits land and that it must not name its own checkout or other worktrees, or that it writes in place in `dir`, which is not a git checkout. Empty for a reader. */
 const worktreeLine = (tree?: Worktree, dir?: string) =>
-	tree ? `Your worktree: ${tree.path}. Your commits land on ${tree.branch} in ${tree.repo} when you finish. Do not name ${tree.repo} or other worktrees in commands.\n` : dir ? `${dir} is not a git checkout, so you have no worktree: write in place there. Nothing lands.\n` : "";
+	tree ? `Your worktree: ${tree.path}. ${tree.own ? `Your branch is ${tree.branch}, from ${tree.base}. Push it with git push when you finish: that is the landing.` : `Your commits land on ${tree.branch} in ${tree.repo} when you finish.`} Do not name ${tree.repo} or other worktrees in commands.\n` : dir ? `${dir} is not a git checkout, so you have no worktree: write in place there. Nothing lands.\n` : "";
 
 /** The delegate's reply: its reply call's arguments in the OUTCOME format, or else its last text. */
 const replyOf = (turn: Turn): string => (turn.reply ? replyText(turn.reply) : turn.text);
@@ -473,13 +473,15 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		name: "fork",
 		label: "Fork",
 		description:
-			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It returns at once and the result arrives as a message when the delegate calls reply and the work has landed. from runs on a copy of a finished fork's session instead. A session over 150000 tokens of context starts the fork cold on the same model with a summary instead of a copy. shared with tasks and model runs one cold stub that reads shared, then starts one child per task from that stub when it finishes, so they share its prompt cache.",
+			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. With branch, and optionally base (a ref, default the current branch), the writer starts on that new branch from the base. It pushes the branch with git push, and the landing is that push: unpushed work escalates and nothing lands on the current branch. Use it for one PR per writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It returns at once and the result arrives as a message when the delegate calls reply and the work has landed. from runs on a copy of a finished fork's session instead. A session over 150000 tokens of context starts the fork cold on the same model with a summary instead of a copy. shared with tasks and model runs one cold stub that reads shared, then starts one child per task from that stub when it finishes, so they share its prompt cache.",
 		promptSnippet: "Run a read-only or worktree-writing delegate on a copy of this session in the background",
 		parameters: Type.Object({
 			task: Type.Optional(Type.String({ description: "What the delegate should find out or check" })),
 			role: Type.Optional(Type.Union([Type.Literal("reader"), Type.Literal("writer")], { description: "reader (default) reads only, writer commits in its own worktree" })),
 			name: Type.Optional(Type.String({ pattern: "^[a-z0-9-]{1,24}$", description: "Short name for the delegate" })),
 			target: Type.Optional(Type.String({ description: "Path of another directory, git checkout or worktree to read or land in, instead of this session's" })),
+			base: Type.Optional(Type.String({ description: "Writer only, with branch: the ref its new branch starts from, such as origin/main. Default: the current branch" })),
+			branch: Type.Optional(Type.String({ description: "Writer only: a new branch for its worktree to start on, which it pushes instead of landing on the current branch" })),
 			shared: Type.Optional(Type.String({ description: "Text a cold stub on model reads once before the tasks start from copies of its session" })),
 			tasks: Type.Optional(Type.Array(Type.Object({ name: Type.String({ pattern: "^[a-z0-9-]{1,24}$" }), task: Type.String() }), { description: "With shared: one child per task, each on a copy of the stub's session" })),
 			from: Type.Optional(Type.String({ pattern: "^[a-z0-9-]{1,24}$", description: "Name of a finished fork: run on a new copy of its session, at its model and effort, instead of on this session" })),
@@ -546,7 +548,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 				if (cancelled?.aborted) return false;
 				const files = path.join(getAgentDir(), "pi-context", randomUUID());
 				if (source) copySession(source.files, files, Boolean(source.model));
-				const tree = role.writes && checkout ? await createWorktree(home, path.join(getAgentDir(), "pi-context", WORKTREES), name).catch((error: unknown) => {
+				const tree = role.writes && checkout ? await createWorktree(home, path.join(getAgentDir(), "pi-context", WORKTREES), name, params).catch((error: unknown) => {
 					fs.rmSync(files, { recursive: true, force: true });
 					throw error;
 				}) : undefined;
@@ -580,7 +582,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		sweepFinished();
 		const run = finishedRun(registry.all(), name);
 		background.resolveForkAsks(ctx, run.name);
-		const tree = run.tree && (fs.existsSync(run.tree.path) ? { ...run.tree, snapshot: await mainSnapshot(run.tree.repo) } : await createWorktree(run.tree.repo, path.join(getAgentDir(), "pi-context", WORKTREES), run.name));
+		const tree = run.tree && (await resumeWorktree(run.tree, path.join(getAgentDir(), "pi-context", WORKTREES), run.name));
 		registry.update(run.id, { state: "running", task, background: true, tree, worktree: tree?.path, branch: tree?.branch, startedAt: Date.now(), endedAt: undefined, endedBy: undefined, outcome: undefined, notify: undefined });
 		const message = `${worktreeLine(tree)}Task: ${task}`;
 		startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${toolCallId}`, role: ROLES[run.role as Role["name"]], tree, target: run.target ?? run.cwd, model: run.model, files: run.files }, { message, resume: true });

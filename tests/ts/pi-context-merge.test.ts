@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
-import { type Event, type WorktreeProvider, WORKTREE_PROVIDER, createWorktree, land, restoreWorktree } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/merge.ts";
+import { type Event, type WorktreeProvider, WORKTREE_PROVIDER, createWorktree, land, restoreWorktree, resumeWorktree } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/merge.ts";
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-merge-"));
 after(() => fs.rmSync(scratch, { recursive: true }));
@@ -134,6 +134,122 @@ describe("landing", () => {
 			const landing = await land({ tree, first: done });
 			assert.equal(landing.state === "landed", landed, `${name}: ${landing.reason}`);
 		}
+	});
+
+	describe("a writer that starts its own branch from a base ref", () => {
+		function originRepo(name: string) {
+			const repo = newRepo();
+			const remote = path.join(scratch, `${name}.git`);
+			git(scratch, "init", "-q", "--bare", remote);
+			git(repo, "remote", "add", "origin", remote);
+			git(repo, "push", "-q", "origin", "main");
+			git(repo, "fetch", "-q", "origin");
+			commit(repo, "local.txt", "1", "local only");
+			return repo;
+		}
+		const own = (repo: string, name: string) => createWorktree(repo, path.join(scratch, "worktrees"), name, { base: "origin/main", branch: "feature/own" });
+
+		test("starts on the named branch from the base, not the current branch", async () => {
+			const repo = originRepo("start");
+			const tree = await own(repo, "own-start");
+			assert.equal(tree.branch, "feature/own");
+			assert.equal(git(tree.path, "symbolic-ref", "--short", "HEAD"), "feature/own");
+			assert.equal(git(tree.path, "rev-parse", "HEAD"), git(repo, "rev-parse", "origin/main"));
+		});
+
+		test("lands by the branch push without escalating", async () => {
+			const repo = originRepo("pushed");
+			const tree = await own(repo, "own-pushed");
+			commit(tree.path, "a.txt", "1", "pr work");
+			git(tree.path, "push", "-q", "origin", "HEAD");
+			const before = git(repo, "rev-parse", "HEAD");
+			const landing = await land({ tree, first: done });
+			assert.equal(landing.state, "landed");
+			assert.match(landing.note ?? "", /landed on origin\/feature\/own by push/);
+			assert.equal(git(repo, "rev-parse", "HEAD"), before);
+		});
+
+		test("escalates and keeps the work when the branch was not pushed", async () => {
+			const repo = originRepo("unpushed");
+			const tree = await own(repo, "own-unpushed");
+			commit(tree.path, "a.txt", "1", "pr work");
+			const before = git(repo, "rev-parse", "HEAD");
+			const landing = await land({ tree, first: done });
+			assert.equal(landing.state, "escalated");
+			assert.match(landing.reason ?? "", /feature\/own was not pushed/);
+			assert.equal(git(repo, "rev-parse", "HEAD"), before);
+			assert.ok(fs.existsSync(tree.path));
+		});
+
+		test("pushes with a plain git push", async () => {
+			const repo = originRepo("plain");
+			const tree = await own(repo, "own-plain");
+			commit(tree.path, "a.txt", "1", "pr work");
+			git(tree.path, "-c", "push.default=simple", "push", "-q");
+			assert.equal(git(repo, "rev-parse", "origin/feature/own"), git(tree.path, "rev-parse", "HEAD"));
+		});
+
+		test("fetches the base and refuses a branch that exists on origin", async () => {
+			const repo = originRepo("fetch");
+			const other = path.join(scratch, "fetch-other");
+			git(scratch, "clone", "-q", "-b", "main", path.join(scratch, "fetch.git"), other);
+			commit(other, "up.txt", "1", "upstream moved");
+			git(other, "push", "-q", "origin", "HEAD:main");
+			const tree = await own(repo, "own-fetch");
+			assert.equal(git(tree.path, "rev-parse", "HEAD"), git(other, "rev-parse", "HEAD"));
+			git(other, "push", "-q", "origin", "HEAD:feature/taken");
+			await assert.rejects(createWorktree(repo, path.join(scratch, "worktrees"), "own-taken", { base: "origin/main", branch: "feature/taken" }), /feature\/taken/);
+		});
+
+		test("a restored worktree continues from the pushed branch", async () => {
+			const repo = originRepo("restore");
+			const tree = await own(repo, "own-restore");
+			commit(tree.path, "a.txt", "1", "pr work");
+			git(tree.path, "push", "-q");
+			assert.equal((await land({ tree, first: done })).state, "landed");
+			await restoreWorktree(tree);
+			assert.equal(git(tree.path, "rev-parse", "HEAD"), git(repo, "rev-parse", "origin/feature/own"));
+		});
+
+		test("a continued run resumes on the pushed branch and pushes again as a fast-forward", async () => {
+			const repo = originRepo("resume");
+			const root = path.join(scratch, "worktrees");
+			const first = await own(repo, "own-resume");
+			commit(first.path, "a.txt", "1", "first round");
+			git(first.path, "push", "-q");
+			assert.equal((await land({ tree: first, first: done })).state, "landed");
+			assert.ok(!fs.existsSync(first.path));
+			const tree = await resumeWorktree(first, root, "own-resume");
+			assert.equal(git(tree.path, "rev-parse", "HEAD"), git(repo, "rev-parse", "origin/feature/own"));
+			commit(tree.path, "b.txt", "1", "fix round");
+			git(tree.path, "push", "-q");
+			assert.equal(git(repo, "rev-parse", "origin/feature/own"), git(tree.path, "rev-parse", "HEAD"));
+			assert.equal((await land({ tree, first: done })).state, "landed");
+		});
+
+		test("a continued run keeps the unpushed commits of a kept worktree", async () => {
+			const repo = originRepo("kept");
+			const first = await own(repo, "own-kept");
+			commit(first.path, "a.txt", "1", "unpushed");
+			assert.equal((await land({ tree: first, first: done })).state, "escalated");
+			const tree = await resumeWorktree(first, path.join(scratch, "worktrees"), "own-kept");
+			assert.equal(tree.path, first.path);
+			assert.equal(git(tree.path, "log", "-1", "--format=%s"), "unpushed");
+		});
+
+		test("a worktree restored on a new branch pushes with a plain git push", async () => {
+			const repo = originRepo("restore-new");
+			const tree = await own(repo, "own-restore-new");
+			assert.equal((await land({ tree, first: { type: "fork-blocked", reason: "needs input" } })).removed, true);
+			await restoreWorktree(tree);
+			commit(tree.path, "a.txt", "1", "pr work");
+			git(tree.path, "-c", "push.default=simple", "push", "-q");
+			assert.equal(git(repo, "rev-parse", "origin/feature/own"), git(tree.path, "rev-parse", "HEAD"));
+		});
+
+		test("rejects a base without a branch", async () => {
+			await assert.rejects(createWorktree(originRepo("nobranch"), path.join(scratch, "worktrees"), "own-nobranch", { base: "origin/main" }), /branch/);
+		});
 	});
 
 	describe("a fork whose commits were pushed to another remote branch", () => {
