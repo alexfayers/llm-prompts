@@ -1479,7 +1479,7 @@ def _run_command(
         "--feature",
         action="append",
         metavar="NAME",
-        help="Measure a pi feature (consult, ghost or warm-fork): A runs without it and B with it. Repeatable.",
+        help="Measure a pi feature (consult, ghost, test-output-fold or warm-fork): A runs without it and B with it. Repeatable.",
     )
     add(
         "--no-reuse",
