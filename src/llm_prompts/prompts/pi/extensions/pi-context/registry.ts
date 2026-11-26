@@ -37,6 +37,8 @@ export type Run = {
 	lastRequestAt?: number;
 	/** The context size of the delegate's last request, in tokens. */
 	context?: number;
+	/** What a fork waiting for a free slot starts with, so `fork_resume` can start it after a reload. */
+	queued?: { message: string; resume: boolean };
 	/** The digest lines of its results that main has not read yet, one per line. */
 	unread?: string;
 	/** Why the session that ran it ended while it was live. */

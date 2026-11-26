@@ -1,5 +1,6 @@
 // Adds the fork tool, which runs a delegate on a copy of this session that shares its prompt cache, or a cold worker on a cheaper model. A writer works in a git worktree and lands its commits through the merge queue.
 // Config: llmPrompts.forks in pi settings: mcpProxy (true: a fork uses main's MCP servers), privateNames (regex of names a writer's commits may not land with), memoryMax and cpuQuota (systemd limits of one fork and its processes, defaulting to a quarter of the host's memory and half its cores), readMcp (array of {tool, argsMatch?}: extra MCP tools, as globs, a delegate may call when each argsMatch regex matches the whole of that string argument)
+// Config: pi-context/forks.json in the pi agent directory, written by llm-prompts install from `max_live` under `[forks]` in config.toml (most forks that run at once, default 10: more wait in a queue)
 // Env: PI_CONTEXT_CHILD (set in a delegate, which cannot fork), PI_CONTEXT_ROLE and PI_CONTEXT_RUN_ID (set for a delegate), PI_CONTEXT_WORKTREE (set for a writer: its worktree, for hooks that resolve the session repo), PI_CODING_AGENT_DIR (set for a reader: a copy of the agent directory without the language server extension)
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -8,7 +9,7 @@ import { buildSessionContext, defineTool, generateSummary, getAgentDir, type Age
 import { Type } from "typebox";
 import { parseOutcome, projectResult } from "./outcome.ts";
 import { replyText } from "./reply.ts";
-import { Background } from "./background.ts";
+import { Background, Slots } from "./background.ts";
 import { describeMain, LEAD_PREFIX_FILE, serveBridge, writeLeadPrefix, type BridgeOptions } from "./bridge.ts";
 import { createWorktree, dropIfClean, gitOut, land, mainSnapshot, restoreWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
 import { checkReadMcp, coldCard, expandHome, readHandshake, ROLES, withReadMcp, type ReadMcp, type Role } from "./roles.ts";
@@ -79,10 +80,27 @@ export function coldArgs(role: Role, { model, sessionDir, cardFile, skillsDir, s
 }
 
 const FINISHED_MARK = "finished";
+/** The conversation a queued fork was called with, kept in its files so a resume starts it from that point. */
+const QUEUED_ENTRIES = "queued-entries.json";
+
+const DEFAULT_MAX_LIVE = 10;
+
+type ForkSettings = { mcpProxy?: boolean; privateNames?: string; readMcp?: unknown } & ForkLimits;
 
 /** The `llmPrompts.forks` object of pi's settings. */
+const rawForkSettings = (pi: ExtensionAPI) => ((pi.getSettings?.() as { llmPrompts?: { forks?: object } } | undefined)?.llmPrompts?.forks ?? {}) as ForkSettings;
+
+/** The most forks that run at once: `maxLive` of the installed `pi-context/forks.json` when it is a positive integer, else the default. */
+const maxLive = (agentDir = getAgentDir()) => {
+	let limit: unknown;
+	try {
+		limit = JSON.parse(fs.readFileSync(path.join(agentDir, "pi-context", "forks.json"), "utf8")).maxLive;
+	} catch {}
+	return Number.isInteger(limit) && (limit as number) > 0 ? (limit as number) : DEFAULT_MAX_LIVE;
+};
+
 function forkSettings(pi: ExtensionAPI, ctx?: ExtensionContext): { mcpProxy?: boolean; privateNames?: string; readMcp: ReadMcp[] } & ForkLimits {
-	const forks = ((pi.getSettings?.() as { llmPrompts?: { forks?: object } } | undefined)?.llmPrompts?.forks ?? {}) as { mcpProxy?: boolean; privateNames?: string; readMcp?: unknown } & ForkLimits;
+	const forks = rawForkSettings(pi);
 	const { valid, dropped } = checkReadMcp(forks.readMcp);
 	const warning = `pi-context: dropped invalid llmPrompts.forks.readMcp entries: ${JSON.stringify(dropped)}`;
 	if (dropped.length && ctx?.hasUI) ctx.ui.notify(warning, "warning");
@@ -273,8 +291,8 @@ const isPrimaryCheckout = async (dir: string) => {
 
 const sameDir = (a: string, b: string) => fs.realpathSync(a) === fs.realpathSync(b);
 
-/** Whether a lost run's session is still there to continue. */
-export const canResume = (run: Run): boolean => run.state === "lost" && run.background && Boolean(run.files && sessionFileOf(run.files, Boolean(run.model)));
+/** Whether a lost run's session is still there to continue, or it never started. */
+export const canResume = (run: Run): boolean => run.state === "lost" && run.background && Boolean(run.queued || (run.files && sessionFileOf(run.files, Boolean(run.model))));
 
 /** Whether a finished run's session is still there to continue with a new task. */
 export const canContinue = (run: Run): boolean => FINISHED.includes(run.state) && Boolean(run.files && sessionFileOf(run.files, Boolean(run.model)));
@@ -417,6 +435,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		summaries.set(key, running);
 		return running;
 	}
+	const slots = new Slots(maxLive);
 
 	/** Starts the delegate of a registered run in the background, which reports its end to `background`. */
 	function startRun(ctx: ExtensionToolContext, run: { id: string; name: string; ref: string; role: Role; tree?: Worktree; target?: string; model?: string; files: string }, delegate: Pick<DelegateOptions, "entries" | "message" | "resume">) {
@@ -433,7 +452,12 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			return { content: result.content, details: result.details, structuredContent: result.structuredContent, isError };
 		} : undefined;
 		const keep = () => registry.get(runId)?.state === "lost";
-		const running = runDelegate(pi, ctx, { role: run.role, name, ...delegate, signal: runSignal, command, runId, model: run.model, mcp, worktree: tree?.path ?? (run.role.writes ? (run.target ?? ctx.cwd) : undefined), repo: tree?.repo, cwd: run.target, files: run.files, keep, continuable: true, onChild: (child) => background.attach(runId, child), onWarmup: (waiting) => background.view?.note(runId, waiting ? "waiting for cache" : undefined), onTurn });
+		if (slots.full) {
+			fs.mkdirSync(run.files, { recursive: true, mode: 0o700 });
+			fs.writeFileSync(path.join(run.files, QUEUED_ENTRIES), JSON.stringify(delegate.entries ?? []), { mode: 0o600 });
+			registry.update(runId, { files: run.files, queued: { message: delegate.message, resume: Boolean(delegate.resume) } });
+		}
+		const running = slots.run(() => (registry.get(runId)?.queued && (registry.update(runId, { queued: undefined }), fs.rmSync(path.join(run.files, QUEUED_ENTRIES), { force: true })), runDelegate(pi, ctx, { role: run.role, name, ...delegate, signal: runSignal, command, runId, model: run.model, mcp, worktree: tree?.path ?? (run.role.writes ? (run.target ?? ctx.cwd) : undefined), repo: tree?.repo, cwd: run.target, files: run.files, keep, continuable: true, onChild: (child) => background.attach(runId, child), onWarmup: (waiting) => background.view?.note(runId, waiting ? "waiting for cache" : undefined), onTurn })), runSignal);
 		const onEnd = async (turn: Awaited<typeof running>) => {
 			const current = registry.get(runId);
 			if (!current || !isLive(current) || runSignal.aborted) return;
@@ -444,6 +468,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			pi.appendEntry("result-cap", { ref: end.ref, text });
 		};
 		const onFail = async (error: unknown) => {
+			if (registry.get(runId)?.state === "cancelled") fs.rmSync(path.join(run.files, QUEUED_ENTRIES), { force: true });
 			if (registry.get(runId)?.state === "lost" || runSignal.aborted) return;
 			const removed = tree && (await dropIfClean(tree));
 			background.finish(ctx, runId, { state: "failed" }, error instanceof Error ? error.message : String(error), removed ? "[merge: worktree removed: clean]" : undefined);
@@ -525,8 +550,9 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			const cold = tooLarge ? `fork ${name} cold on ${model} with a summary: context over ${WARM_FORK_MAX_TOKENS} tokens` : params.model && model ? coldLabel(name, params.model, model) : undefined;
 			const hint = source ? undefined : cachedHint(registry.all(), role.name, target ?? ctx.cwd, (run) => savedPrice(ctx, run), freshStartCost(ctx, role, params.task, model));
 			const withHint = (text: string) => (hint ? `${text}\n${hint}` : text);
+			let queued = false;
 			const launch = async (summary?: string, cancelled?: AbortSignal) => {
-				if (cancelled?.aborted) return;
+				if (cancelled?.aborted) return false;
 				const files = path.join(getAgentDir(), "pi-context", randomUUID());
 				if (source) copySession(source.files, files, Boolean(source.model));
 				const tree = role.writes && checkout ? await createWorktree(home, path.join(getAgentDir(), "pi-context", WORKTREES), name).catch((error: unknown) => {
@@ -535,13 +561,15 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 				}) : undefined;
 				if (cancelled?.aborted) {
 					if (tree) await dropIfClean(tree);
-					return;
+					return false;
 				}
 				const placed = { worktree: tree?.path, branch: tree?.branch, tree };
 				if (tooLarge) registry.update(runId, placed);
 				else registry.start({ id: runId, name, role: role.name, ...(source && { from: source.from ?? source.name, cacheKey: cacheKeyOf(files) }), model, background: true, state: "running", task: params.task!, ...placed, target, cwd: ctx.cwd, startedAt: Date.now() });
 				const message = `${worktreeLine(tree, role.writes ? home : undefined)}${summary ? `Summary of the session you fork from:\n${summary}\n\n` : ""}Task: ${params.task}`;
+				const queued = slots.full;
 				startRun(ctx, { id: runId, name, ref, role, tree, target, model, files }, { entries, message, resume: Boolean(source) });
+				return queued;
 			};
 			if (tooLarge) {
 				signal?.throwIfAborted();
@@ -551,8 +579,8 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 				signal?.addEventListener("abort", cancelOnAbort, { once: true });
 				const onFail = (error: unknown) => !cancelled.aborted && background.finish(ctx, runId, { state: "failed" }, error instanceof Error ? error.message : String(error));
 				void summaryOf(ctx, entries).then((summary) => launch(summary, cancelled)).catch(onFail).finally(() => signal?.removeEventListener("abort", cancelOnAbort));
-			} else await launch();
-			return { content: [{ type: "text", text: withHint(`started ${cold ?? `fork ${name}`} (background)`) }], details: { name, runId, background: true } };
+			} else queued = await launch();
+			return { content: [{ type: "text", text: withHint(`${queued ? "queued" : "started"} ${cold ?? `fork ${name}`} (background)${queued ? ": starts when a running fork finishes" : ""}`) }], details: { name, runId, background: true } };
 		},
 	});
 	pi.registerTool(forkTool);
@@ -602,9 +630,11 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			if (!run?.files) throw new Error(`no lost fork ${params.name} to resume. Resumable: ${resumable.map((candidate) => candidate.name).join(", ") || "none"}`);
 			background.resolveForkAsks(ctx, run.name);
 			if (run.tree) await restoreWorktree(run.tree);
-			registry.update(run.id, { state: "running", endedAt: undefined, endedBy: undefined });
-			const message = `${worktreeLine(run.tree)}Your session stopped before you finished. Continue the task from where you left off, and end by calling reply.`;
-			startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${toolCallId}`, role: ROLES[run.role as Role["name"]], tree: run.tree, target: run.target, model: run.model, files: run.files }, { message, resume: true });
+			const { queued } = run;
+			registry.update(run.id, { state: "running", endedAt: undefined, endedBy: undefined, queued: undefined });
+			const message = queued?.message ?? `${worktreeLine(run.tree)}Your session stopped before you finished. Continue the task from where you left off, and end by calling reply.`;
+			const delegate = queued ? { entries: JSON.parse(readText(path.join(run.files, QUEUED_ENTRIES)) ?? "[]") as SessionEntry[], message, resume: queued.resume } : { message, resume: true };
+			startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${toolCallId}`, role: ROLES[run.role as Role["name"]], tree: run.tree, target: run.target, model: run.model, files: run.files }, delegate);
 			return { content: [{ type: "text", text: `resumed fork ${run.name} (background)` }], details: { name: run.name, runId: run.id, background: true } };
 		},
 	});

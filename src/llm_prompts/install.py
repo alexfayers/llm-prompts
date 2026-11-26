@@ -75,6 +75,7 @@ from .setup import (
     _load_config,
     _uv_tools_dir,
     package_name,
+    read_config,
 )
 
 if TYPE_CHECKING:
@@ -3202,6 +3203,18 @@ def _write_pi_fork_tiers(path: Path, root_dir: Path, overlay_dirs: list[Path]) -
     _write_if_changed(path, json.dumps(tiers, indent=2) + "\n", path.name, "agents")
 
 
+def _write_pi_fork_limits(path: Path) -> None:
+    """Write the ``[forks]`` limits of ``config.toml`` for pi-context's fork tool.
+
+    Args:
+        path: Destination ``forks.json``.
+    """
+    limit = read_config().get("forks", {}).get("max_live")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = json.dumps({} if limit is None else {"maxLive": limit}) + "\n"
+    _write_if_changed(path, content, path.name, "agents")
+
+
 def _pi_agent_dialect(
     root_dir: Path, overlay_dirs: Sequence[Path], strict_skills: bool = True
 ) -> _AgentDialect:
@@ -5247,6 +5260,9 @@ def main(
                 if not pi_failed_sources:
                     _write_pi_fork_tiers(tiers_path, root_dir, overlay_dirs)
                 installed_files["pi"].append(str(tiers_path))
+                limits_path = tiers_path.with_name("forks.json")
+                _write_pi_fork_limits(limits_path)
+                installed_files["pi"].append(str(limits_path))
             if agents_target == "pi" and (pi_bundle_held or pi_failed_sources):
                 if pi_failed_sources:
                     log(

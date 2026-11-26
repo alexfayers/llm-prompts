@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -99,6 +100,9 @@ afterEach(() => {
 	mainContext = 1000;
 	leadModel = "mod";
 });
+const FORKS_FILE = path.join(agentDir, "pi-context", "forks.json");
+const limit = (maxLive: unknown) => (fs.mkdirSync(path.dirname(FORKS_FILE), { recursive: true }), fs.writeFileSync(FORKS_FILE, JSON.stringify({ maxLive })));
+afterEach(() => fs.rmSync(FORKS_FILE, { force: true }));
 
 const branch = [user("u1"), assistantCalling("a1", "c1"), result("r1", "c1"), assistantCalling("a2", "call-id")];
 const forkDirs = () => fs.readdirSync(path.join(agentDir, "pi-context"), { recursive: true });
@@ -148,7 +152,7 @@ async function start(params: Record<string, unknown>, cwd = process.cwd(), main 
 	};
 	const execute = tools.fork.execute;
 	tools.fork = { ...tools.fork, execute: async (...args: unknown[]) => settle(await execute(...args), appended, sent) };
-	return { tool: await execute("call-id", params, signal, undefined, ctx).catch((error: Error) => error), appended, sent, tools, background, ctx };
+	return { tool: await execute("call-id", params, signal, undefined, ctx).catch((error: Error) => error), appended, sent, tools, background, ctx, launch: (more: Record<string, unknown>) => execute(`call-${randomUUID()}`, more, undefined, undefined, ctx) };
 }
 
 async function fork(...args: Parameters<typeof start>) {
@@ -478,6 +482,56 @@ describe("fork tool", () => {
 			assert.equal(registryOf().all().some((run) => run.name === "n1" && run.state === "failed"), true);
 		});
 
+		test("a fork over the installed maxLive returns a queued receipt and starts when a running one finishes", async () => {
+			limit(1);
+			const gate = path.join(agentDir, "gate-queue");
+			const { sent, launch } = await start({ task: `STUB_GATE:${gate}`, name: "first" });
+			const queued = await launch({ task: "STUB_REPORT", name: "second" });
+			assert.equal(queued.content[0].text, "queued fork second (background): starts when a running fork finishes");
+			await new Promise((resolve) => setTimeout(resolve, 150));
+			assert.equal(sent.length, 0);
+			fs.writeFileSync(gate, "");
+			await eventually(() => sent.length === 2);
+			assert.deepEqual(sent.map(([message]) => message.content.split("]")[0]), ["[fork first done", "[fork second done"]);
+		});
+
+		test("shared with tasks over the limit starts the queued children as the stub and each other finish", async () => {
+			limit(1);
+			const { tool, sent } = await start({ shared: "STUB_REPORT notes", tasks: [{ name: "q1", task: "STUB_REPORT" }, { name: "q2", task: "STUB_REPORT" }], model: "prov/cheap", name: "qstub" });
+			assert.match(tool.content[0].text, /^started cold worker qstub/);
+			await eventually(() => sent.length === 3);
+			assert.deepEqual(sent.map(([message]) => message.content.split("]")[0]).sort(), ["[fork q1 done", "[fork q2 done", "[fork qstub done"]);
+		});
+
+		test("a missing or invalid forks.json leaves the limit at 10", async () => {
+			for (const value of [undefined, 0, -1, 1.5, "2"]) {
+				value === undefined ? fs.rmSync(FORKS_FILE, { force: true }) : limit(value);
+				const gate = path.join(agentDir, `gate-default-${String(value)}`);
+				const names = Array.from({ length: 11 }, (_, at) => `d${at}`);
+				const { launch } = await start({ task: `STUB_GATE:${gate}`, name: names[0] });
+				const receipts = [];
+				for (const name of names.slice(1)) receipts.push((await launch({ task: `STUB_GATE:${gate}`, name })).content[0].text);
+				assert.deepEqual(receipts.map((text) => text.split(" ")[0]), [...Array(9).fill("started"), "queued"]);
+				fs.writeFileSync(gate, "");
+				await eventually(() => registryOf().live().length === 0);
+				registryOf().restore([]);
+			}
+		});
+
+		test("fork_cancel stops a queued fork before it starts", async () => {
+			limit(1);
+			const { tools, sent, launch } = await start({ task: "STUB_HANG", name: "busy" });
+			await launch({ task: "STUB_REPORT", name: "waiting" });
+			const snapshot = path.join(registryOf().all().find((run) => run.name === "waiting")!.files!, "queued-entries.json");
+			assert.equal(fs.existsSync(snapshot), true);
+			await tools.fork_cancel.execute("c", { name: "waiting" }, undefined, undefined, {});
+			await tools.fork_cancel.execute("c", { name: "busy" }, undefined, undefined, {});
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			assert.deepEqual(sent, []);
+			assert.equal(registryOf().all().find((run) => run.name === "waiting")?.state, "cancelled");
+			assert.equal(fs.existsSync(snapshot), false);
+		});
+
 		test("fork_cancel stops a live run without waking main", async () => {
 			const { tools, sent } = await start({ task: "STUB_HANG", name: "slow" });
 			const cancelled = await tools.fork_cancel.execute("c", { name: "slow" }, undefined, undefined, {});
@@ -514,6 +568,26 @@ describe("fork tool", () => {
 			assert.match(JSON.stringify(appended), /echo: Your session stopped before you finished/);
 			await eventually(() => fs.existsSync(path.join(run()!.files!, "finished")));
 			assert.equal(fs.existsSync(path.join(run()!.files!, "finished")), true);
+		});
+
+		test("a queued fork that a reload dropped before it started is started by fork_resume", async () => {
+			limit(1);
+			const { tools, sent, appended, background, launch, ctx } = await start({ task: "STUB_HANG", name: "holder" });
+			await launch({ task: "STUB_INSPECT", name: "waiting" });
+			background.shutdown();
+			const run = () => registryOf().all().find((candidate) => candidate.name === "waiting");
+			await eventually(() => run()?.state === "lost");
+			assert.deepEqual(run()?.queued, { message: "Task: STUB_INSPECT", resume: false });
+			const before = JSON.parse(fs.readFileSync(path.join(run()!.files!, "queued-entries.json"), "utf8"));
+			assert.deepEqual(before.map((entry: any) => entry.id), ["u1", "a1", "r1", "a2"]);
+			branch.push(user("later"), assistantCalling("a3", "c3"));
+			assert.equal((await tools.fork_resume.execute("r", { name: "waiting" }, undefined, undefined, ctx)).content[0].text, "resumed fork waiting (background)");
+			await eventually(() => sent.length > 0);
+			assert.match(sent[0][0].content, /^\[fork waiting /);
+			const seed = JSON.parse(String((appended.find(([type, entry]) => type === "result-cap" && (entry as any).ref === run()!.ref)?.[1] as any).text).split("\n")[0].replace(/^echo: /, "")).seed;
+			assert.deepEqual(seed.slice(1).map((entry: any) => entry.id), before.map((entry: any) => entry.id));
+			assert.equal(run()?.queued, undefined);
+			branch.length = 4;
 		});
 
 		test("fork_resume of a warm fork whose handshake lost its boundary fails and keeps the handshake", async () => {
