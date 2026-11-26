@@ -1,3 +1,4 @@
+import fcntl
 import importlib
 import itertools
 import json
@@ -516,3 +517,42 @@ def test_a_build_whose_hooks_run_a_binary_outside_the_variant_fails(
 
     with pytest.raises(VariantBuildError, match="hook binary /home/u/.local/bin"):
         _build(repo)
+
+
+def test_prune_keeps_the_builds_of_a_run_that_still_uses_them(repo: Path) -> None:
+    running = _build(repo, "main", tool_sources={"mcp-memory": "/m/1"})
+    os.utime(running.venv.parent / variants.REF_MARKER, (time.time() - 30,) * 2)
+    finished = _build(repo, "main", tool_sources={"mcp-memory": "/m/2"})
+
+    with variants.in_use():
+        variants.prune([finished])
+        shutil.copytree(running.templates["pi"], repo / "cell")
+
+    variants.prune([finished])
+    assert not running.venv.parent.exists()
+
+
+def _held(name: str) -> bool:
+    with (paths.variants_dir() / name).open("a") as lock_file:
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        return False
+
+
+def test_build_prepares_the_source_under_the_build_lock(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    held: list[bool] = []
+    source = variants.source
+
+    def recording_source(*args: Any) -> tuple[str, Path]:
+        held.append(_held(variants.BUILD_LOCK))
+        return source(*args)
+
+    monkeypatch.setattr(variants, "source", recording_source)
+
+    _build(repo)
+
+    assert held == [True]

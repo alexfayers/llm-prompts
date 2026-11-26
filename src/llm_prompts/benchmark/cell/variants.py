@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -30,6 +32,8 @@ from llm_prompts.install import prompts_dir
 SRC_COMPLETE = ".src-complete"
 BUILD_COMPLETE = ".complete"
 REF_MARKER = ".ref"
+IN_USE_LOCK = ".in-use.lock"
+BUILD_LOCK = ".build.lock"
 PLACEHOLDER_MEMORY_URL = "http://127.0.0.1:1/mcp"
 REQUIRED_TOOLS = ("cline-hooks", "mcp-memory")
 CORE_TOOLS = ("llm-prompts", *REQUIRED_TOOLS)
@@ -401,11 +405,35 @@ def overlay_prompts(variant: Variant) -> list[Path]:
     return [Path(path) for path in json.loads(output)]
 
 
-def prune(current: Iterable[Variant]) -> None:
-    """Delete every cached build and source except the newest build of each ref and the ``current`` variants."""
+@contextlib.contextmanager
+def _locked(name: str, operation: int) -> Iterator[bool]:
+    """Yield whether this process got ``operation`` on the lock file ``name`` of the variant cache."""
     root = paths.variants_dir()
-    if not root.is_dir():
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / name).open("a") as lock_file:
+        try:
+            fcntl.flock(lock_file, operation)
+        except BlockingIOError:
+            yield False
+        else:
+            yield True
+
+
+def in_use() -> contextlib.AbstractContextManager[bool]:
+    """Hold a shared lock on the variant cache, so no other run's ``prune`` deletes a build this run uses."""
+    return _locked(IN_USE_LOCK, fcntl.LOCK_SH)
+
+
+def prune(current: Iterable[Variant]) -> None:
+    """Delete every cached build and source except the newest build of each ref and the ``current`` variants. Skip it while another run uses the cache."""
+    if not paths.variants_dir().is_dir():
         return
+    with _locked(IN_USE_LOCK, fcntl.LOCK_EX | fcntl.LOCK_NB) as held:
+        if held:
+            _prune(paths.variants_dir(), current)
+
+
+def _prune(root: Path, current: Iterable[Variant]) -> None:
     kept = {variant.venv.parent for variant in current}
     newest: dict[str, Path] = {}
     for marker in sorted(root.glob(f"*/{REF_MARKER}"), key=lambda m: m.stat().st_mtime):
@@ -413,7 +441,11 @@ def prune(current: Iterable[Variant]) -> None:
     kept |= set(newest.values())
     kept_keys = {build.name.rsplit("-", 2)[0] for build in kept}
     for directory in root.iterdir():
-        if directory not in kept and directory.name not in kept_keys:
+        if (
+            directory.is_dir()
+            and directory not in kept
+            and directory.name not in kept_keys
+        ):
             shutil.rmtree(directory, ignore_errors=True)
 
 
@@ -440,63 +472,68 @@ def build(
         raise VariantBuildError(
             ref, f"{repo} is not an llm-prompts checkout. {NOT_IN_CHECKOUT}"
         )
-    key, src = source(ref, repo, drop)
-    config = setup.read_config()
-    overlays = tuple(dict.fromkeys((*overlays, *provider_overlays(config, agents))))
-    if label == "a" if origin_tools is None else origin_tools:
-        config = _with_origin_tools(config, overlays, ref, tool_sources or {})
-    config = _with_tool_sources(config, tool_sources or {})
-    build_id = f"{key}-{_cache_suffix(config, overlays, ref)}"
-    cache = paths.variant_dir(build_id)
-    templates: dict[Agent, Path] = {
-        agent: cache / "templates" / agent for agent in agents
-    }
-    variant = Variant(
-        label,
-        ref,
-        key,
-        src,
-        cache / "venv",
-        templates,
-    )
-    pins = _pin_summary(config, overlays, ref)
-    if not (
-        (cache / BUILD_COMPLETE).exists()
-        and all(
-            path.is_dir() and not cell_paths(path) and not foreign_hooks(path, cache)
-            for path in templates.values()
+    with _locked(BUILD_LOCK, fcntl.LOCK_EX):
+        key, src = source(ref, repo, drop)
+        config = setup.read_config()
+        overlays = tuple(dict.fromkeys((*overlays, *provider_overlays(config, agents))))
+        if label == "a" if origin_tools is None else origin_tools:
+            config = _with_origin_tools(config, overlays, ref, tool_sources or {})
+        config = _with_tool_sources(config, tool_sources or {})
+        build_id = f"{key}-{_cache_suffix(config, overlays, ref)}"
+        cache = paths.variant_dir(build_id)
+        templates: dict[Agent, Path] = {
+            agent: cache / "templates" / agent for agent in agents
+        }
+        variant = Variant(
+            label,
+            ref,
+            key,
+            src,
+            cache / "venv",
+            templates,
         )
-    ):
-        print(f"benchmark: building {label} {ref}{pins}", file=sys.stderr)
-        shutil.rmtree(cache, ignore_errors=True)
-        venv(src, variant.venv, config, overlays, ref)
-        for agent, template_dir in templates.items():
-            template(variant.venv, agent, template_dir)
-            AGENTS[agent].install_guard(template_dir)
-            if hits := audit(template_dir):
-                raise VariantBuildError(
-                    ref, f"live path {hits[0].marker} in {hits[0].path}"
-                )
-            if hits := cell_paths(template_dir):
-                raise VariantBuildError(
-                    ref, f"cell home path {hits[0].marker} in {hits[0].path}"
-                )
-            if hits := foreign_hooks(template_dir, cache):
-                raise VariantBuildError(
-                    ref,
-                    f"hook binary {hits[0].marker} outside {cache} in {hits[0].path}",
-                )
-        (cache / BUILD_COMPLETE).touch()
-        print(f"benchmark: built {label} {ref}{pins}", file=sys.stderr)
-    else:
-        print(f"benchmark: using cached build of {label} {ref}{pins}", file=sys.stderr)
-    (cache / REF_MARKER).write_text(ref)
-    if not _is_pinned(config, overlays, ref):
-        return variant
-    return replace(
-        variant,
-        build={
-            agent: _content_digest(cache, template_dir)
-            for agent, template_dir in templates.items()
-        },
-    )
+        pins = _pin_summary(config, overlays, ref)
+        if not (
+            (cache / BUILD_COMPLETE).exists()
+            and all(
+                path.is_dir()
+                and not cell_paths(path)
+                and not foreign_hooks(path, cache)
+                for path in templates.values()
+            )
+        ):
+            print(f"benchmark: building {label} {ref}{pins}", file=sys.stderr)
+            shutil.rmtree(cache, ignore_errors=True)
+            venv(src, variant.venv, config, overlays, ref)
+            for agent, template_dir in templates.items():
+                template(variant.venv, agent, template_dir)
+                AGENTS[agent].install_guard(template_dir)
+                if hits := audit(template_dir):
+                    raise VariantBuildError(
+                        ref, f"live path {hits[0].marker} in {hits[0].path}"
+                    )
+                if hits := cell_paths(template_dir):
+                    raise VariantBuildError(
+                        ref, f"cell home path {hits[0].marker} in {hits[0].path}"
+                    )
+                if hits := foreign_hooks(template_dir, cache):
+                    raise VariantBuildError(
+                        ref,
+                        f"hook binary {hits[0].marker} outside {cache} in {hits[0].path}",
+                    )
+            (cache / BUILD_COMPLETE).touch()
+            print(f"benchmark: built {label} {ref}{pins}", file=sys.stderr)
+        else:
+            print(
+                f"benchmark: using cached build of {label} {ref}{pins}", file=sys.stderr
+            )
+        (cache / REF_MARKER).write_text(ref)
+        if not _is_pinned(config, overlays, ref):
+            return variant
+        return replace(
+            variant,
+            build={
+                agent: _content_digest(cache, template_dir)
+                for agent, template_dir in templates.items()
+            },
+        )
