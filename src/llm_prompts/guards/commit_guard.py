@@ -454,7 +454,7 @@ class PrimaryCheckoutGuard(HooksPlugin):
             toplevel = _is_primary(_git_directory(commands, index, roots))
             if toplevel is None:
                 continue
-            retries = ReceiptStore(home.config_dir() / "primary-blocks.json")
+            retries = ReceiptStore(home.state_dir("primary-blocks.json"))
             if retries.fresh(toplevel, command):
                 retries.record(toplevel, "")
                 return None

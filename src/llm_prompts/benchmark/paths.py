@@ -1,4 +1,4 @@
-"""Directories the benchmark reads and writes, always under the real home."""
+"""Directories the benchmark reads and writes, always under the real home and shared root."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import secrets
 import tempfile
 from datetime import datetime
 from pathlib import Path
+
+from llm_prompts import home
 
 CELL_ROOT_PREFIX = "llm-prompts-bench-"
 SHARED_ROOT_PREFIX = "llm-prompts-bench-shared-"
@@ -23,12 +25,12 @@ def live_home() -> Path:
 
 def state_dir() -> Path:
     """Return the directory holding benchmark run output."""
-    return live_home() / ".local" / "state" / "llm-prompts" / "benchmark"
+    return home.live_dir("state", "benchmark")
 
 
 def cache_dir() -> Path:
     """Return the directory holding cached variants."""
-    return live_home() / ".cache" / "llm-prompts" / "benchmark"
+    return home.live_dir("cache", "benchmark")
 
 
 def runs_dir() -> Path:

@@ -42,7 +42,6 @@ from llm_prompts.install import (
     _passes_gate,
     _pi_definitions,
     _rendered_content,
-    _running_as_installed_tool,
     _targets_agent,
     _warn_pi_version_drift,
     get_source_for_managed_file,
@@ -64,6 +63,7 @@ from llm_prompts.render_template import (
     split_frontmatter,
     strip_gating_keys,
 )
+from llm_prompts.setup import _running_as_installed_tool
 from llm_prompts.size_guard import Violation
 from llm_prompts.size_limits import AGENT_DESCRIPTION_CHARS, FINALS
 
@@ -2904,7 +2904,9 @@ class TestInstallRoot:
         ):
             install_main([agent], root=tmp_path / "root")
 
-        assert (tmp_path / "root/.config/llm-prompts/installed.json").exists()
+        assert (
+            tmp_path / "root/.local/share/llm-prompts/llm-prompts/config/installed.json"
+        ).exists()
         assert not real_home.exists() and not any(isolated_config_dir.iterdir())
 
     def test_pi_runs_against_the_root(

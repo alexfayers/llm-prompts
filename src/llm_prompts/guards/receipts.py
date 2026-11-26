@@ -90,7 +90,7 @@ class ReceiptStore:
     """Remembers the tree fingerprint at each repo's last passing test run."""
 
     def __init__(self, path: Path | None = None) -> None:
-        self._path = path or home.config_dir() / "receipts.json"
+        self._path = path or home.data_dir("receipts.json")
 
     def _read(self) -> dict[str, str]:
         if not self._path.exists():

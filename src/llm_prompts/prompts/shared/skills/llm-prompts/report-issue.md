@@ -9,7 +9,7 @@ Feature requests and ideas: `{{SKILL_DIR}}/request.md`.
   - `cline-hooks` - hook plugins, hook-emitted blocks and notes.
   - `mcp-memory` - memory server, memory tools, memory CLI.
 - MUST get the repo's GitHub `owner/name` from its checkout, never guess it: `llm-prompts source {{AGENT}}` gives the path, then `git -C <path> remote get-url origin`.
-- Another overlay's repo is in scope. Its source is the `source` of its `[[tools]]` entry in `~/.config/llm-prompts/config.toml`.
+- Another overlay's repo is in scope. Its source is the `source` of its `[[tools]]` entry in `$LLM_PROMPTS_HOME/llm-prompts/config/config.toml` (default `~/.local/share/llm-prompts`).
 - MUST detect the remote host from that source (or `git remote get-url origin` of its checkout), never from its name.
 - Host is not github.com -> MUST NOT use `gh`. File with that host's own issue tooling only if its docs or `--help` confirm how. Otherwise MUST ask the user how to file there.
 - On github.com, MUST search first: `gh issue list -R <owner/name> --search "<keywords>" --state all`. A match -> point the user at it, MUST NOT file a duplicate.

@@ -441,9 +441,7 @@ def _read_pyproject(tool: dict[str, Any]) -> dict[str, Any] | None:
 
 def _pyproject_stamp_path() -> Path:
     """Return the path of the local-tool pyproject hash stamp file."""
-    from platformdirs import user_data_dir
-
-    return Path(user_data_dir("llm-prompts")) / ".llm-prompts-pyproject-stamp"
+    return home.live_dir("state", ".llm-prompts-pyproject-stamp")
 
 
 def _hash_local_pyprojects() -> dict[str, str]:
@@ -901,6 +899,11 @@ def _script_names(tool: dict[str, Any]) -> list[str]:
 def _uv_tools_dir() -> Path:
     """Return the directory holding one uv tool env per installed tool."""
     return _query_uv_tools_dir() or _default_uv_tools_dir()
+
+
+def _running_as_installed_tool() -> bool:
+    """Return whether this process runs from the uv tool env that setup installs."""
+    return Path(sys.prefix).resolve().is_relative_to(_uv_tools_dir().resolve())
 
 
 def _query_uv_tools_dir() -> Path | None:

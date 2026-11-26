@@ -33,7 +33,7 @@ Run it from an llm-prompts checkout. Any commit, branch or `:worktree` works for
 | `--judge HARNESS` | `auto`, `pi` or `claude` (default: `auto`: pi when on PATH, else claude). |
 
 ```toml
-# ~/.config/llm-prompts/config.toml
+# ~/.local/share/llm-prompts/llm-prompts/config/config.toml
 [benchmark]
 jobs = 6
 ```
@@ -50,7 +50,7 @@ Runs need `sandbox-exec` (macOS) or `bwrap` (Linux) unless `--no-os-sandbox` is 
 
 The end of a run shows a table comparing A and B per scenario and agent: pass rate, start->peak context, cost, time, model turns and failed test runs. The last two lines are the paths of the reports.
 
-The run folder under `~/.local/state/llm-prompts/benchmark/runs/` holds:
+The run folder under `~/.local/share/llm-prompts/llm-prompts/state/benchmark/runs/` holds:
 
 - `results.jsonl`: one row per run.
 - `report.md` and `report.json`: the comparison, with the gate result and the actual token use.

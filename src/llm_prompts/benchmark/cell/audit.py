@@ -13,6 +13,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from llm_prompts import tool_paths
 from llm_prompts.benchmark import paths
 from llm_prompts.benchmark.cell.home_dirs import declared_home_dirs
 from llm_prompts.benchmark.paths import live_home
@@ -89,7 +90,7 @@ def live_markers() -> tuple[str, ...]:
         str(home / ".claude"),
         str(home / ".claude.json"),
         str(home / ".pi"),
-        str(home / ".config" / "llm-prompts"),
+        str(tool_paths.tool_dir("llm-prompts", "config")),
         str(db_path),
         *(f"{host}:{port}" for host in PORT_HOSTS),
     )

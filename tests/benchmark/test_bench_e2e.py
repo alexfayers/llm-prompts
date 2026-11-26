@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from llm_prompts import tool_paths
 from llm_prompts.benchmark import paths
 from llm_prompts.benchmark.cell.audit import live_memory
 
@@ -24,8 +25,6 @@ _LIVE_FILES = (
     Path(".claude") / "settings.json",
     Path(".pi") / "agent" / "settings.json",
     Path(".pi") / "agent" / "mcp.json",
-    Path(".config") / "llm-prompts" / "installed.json",
-    Path(".config") / "llm-prompts" / "config.toml",
 )
 _DEMO_ENTITIES = (
     "SELECT e.id, e.name, e.status, o.content FROM entities e"
@@ -37,11 +36,14 @@ _DEMO_ENTITIES = (
 
 def _file_hashes() -> dict[Path, str | None]:
     home = Path.home()
+    config = tool_paths.tool_dir("llm-prompts", "config")
     return {
-        path: hashlib.sha256((home / path).read_bytes()).hexdigest()
-        if (home / path).exists()
-        else None
-        for path in _LIVE_FILES
+        path: hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+        for path in (
+            *(home / file for file in _LIVE_FILES),
+            config / "installed.json",
+            config / "config.toml",
+        )
     }
 
 

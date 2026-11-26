@@ -74,6 +74,7 @@ from .setup import (
     _extract_git_url,
     _is_local_path,
     _load_config,
+    _running_as_installed_tool,
     _uv_tools_dir,
     package_name,
     read_config,
@@ -562,11 +563,6 @@ def prompts_dir(module: str) -> Path:
         if checkout := _dist_prompts_dir(distribution(dist_name), module):
             return checkout
     return Path(str(files(module) / "prompts"))
-
-
-def _running_as_installed_tool() -> bool:
-    """Return whether this process runs from the uv tool env that setup installs."""
-    return Path(sys.prefix).resolve().is_relative_to(_uv_tools_dir().resolve())
 
 
 def _discover_overlay_paths(*, quiet: bool = False) -> list[Path]:

@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from conftest import FakeSubprocess
 
+from llm_prompts.home import live_dir
 from llm_prompts.watch.core.runner import watch
 from llm_prompts.watch.core.store import Persisted
 from llm_prompts.watch.sources.github_pr import GithubPrDiscovery, GithubPrSource
@@ -430,11 +431,18 @@ def test_gh_pr_follow_exits_on_a_merged_or_closed_pr(
     assert capsys.readouterr().out.startswith("gh-pr o/r#7: ")
 
 
+def _block_cache() -> Path:
+    blocker = live_dir("cache")
+    blocker.parent.mkdir(parents=True, exist_ok=True)
+    blocker.write_text("")
+    return blocker
+
+
 def test_gh_pr_watch_goes_on_when_the_cache_cannot_be_written(
-    github: FakeGithub, isolated_home: Path
+    github: FakeGithub,
 ) -> None:
     github.pr()
-    (isolated_home / ".cache").write_text("")
+    _block_cache()
 
     assert (
         watch([GithubPrSource("o/r", 7, None)], ["state=OPEN"], interval=0, timeout=5)
@@ -444,11 +452,11 @@ def test_gh_pr_watch_goes_on_when_the_cache_cannot_be_written(
 
 @pytest.mark.parametrize("stored", ["[]", '{"repos/o/r/pulls/7": null}'])
 def test_gh_pr_watch_ignores_stored_state_of_the_wrong_shape(
-    github: FakeGithub, isolated_home: Path, stored: str
+    github: FakeGithub, stored: str
 ) -> None:
     github.pr()
     watch([GithubPrSource("o/r", 7, None)], ["state=OPEN"], interval=0, timeout=5)
-    for file in (isolated_home / ".cache" / "llm-prompts" / "watch").glob("*.json"):
+    for file in (live_dir("cache") / "watch").glob("*.json"):
         file.write_text(stored)
 
     assert (
@@ -457,23 +465,19 @@ def test_gh_pr_watch_ignores_stored_state_of_the_wrong_shape(
     )
 
 
-def test_gh_pr_cache_file_is_private_to_the_user(
-    github: FakeGithub, isolated_home: Path
-) -> None:
+def test_gh_pr_cache_file_is_private_to_the_user(github: FakeGithub) -> None:
     github.pr()
 
     watch([GithubPrSource("o/r", 7, None)], ["state=OPEN"], interval=0, timeout=5)
 
-    (cache,) = (isolated_home / ".cache" / "llm-prompts" / "watch").glob("*.json")
+    (cache,) = (live_dir("cache") / "watch").glob("*.json")
     assert cache.stat().st_mode & 0o777 == 0o600
 
 
-def test_gh_pr_loose_cache_file_is_made_private(
-    github: FakeGithub, isolated_home: Path
-) -> None:
+def test_gh_pr_loose_cache_file_is_made_private(github: FakeGithub) -> None:
     github.pr()
     watch([GithubPrSource("o/r", 7, None)], ["state=OPEN"], interval=0, timeout=5)
-    (cache,) = (isolated_home / ".cache" / "llm-prompts" / "watch").glob("*.json")
+    (cache,) = (live_dir("cache") / "watch").glob("*.json")
     cache.chmod(0o644)
 
     Persisted(GithubPrSource("o/r", 7, None))
@@ -481,29 +485,27 @@ def test_gh_pr_loose_cache_file_is_made_private(
     assert cache.stat().st_mode & 0o777 == 0o600
 
 
-def test_gh_pr_cache_write_is_retried_after_a_failure(
-    github: FakeGithub, isolated_home: Path
-) -> None:
+def test_gh_pr_cache_write_is_retried_after_a_failure(github: FakeGithub) -> None:
     github.pr()
-    (isolated_home / ".cache").write_text("")
+    blocker = _block_cache()
     source = Persisted(GithubPrSource("o/r", 7, None))
     source.poll()
-    (isolated_home / ".cache").unlink()
+    blocker.unlink()
 
     source.poll()
 
-    assert list((isolated_home / ".cache" / "llm-prompts" / "watch").glob("*.json"))
+    assert list((live_dir("cache") / "watch").glob("*.json"))
 
 
 def test_gh_pr_failed_cache_replace_leaves_no_temporary_file_and_is_retried(
-    github: FakeGithub, isolated_home: Path, monkeypatch: pytest.MonkeyPatch
+    github: FakeGithub, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     github.pr()
     source = Persisted(GithubPrSource("o/r", 7, None))
     with monkeypatch.context() as patch:
         patch.setattr(Path, "replace", _fail_replace)
         source.poll()
-    directory = isolated_home / ".cache" / "llm-prompts" / "watch"
+    directory = live_dir("cache") / "watch"
     assert list(directory.iterdir()) == []
 
     source.poll()

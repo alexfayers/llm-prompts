@@ -12,6 +12,7 @@ import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+from ...home import live_dir
 from .source import Fields, Stateful
 
 
@@ -23,13 +24,7 @@ class Persisted:
         self._source = source
         label = re.sub(r"[^\w.-]", "_", source.state_key)
         digest = hashlib.sha256(source.state_key.encode()).hexdigest()[:16]
-        self._file = (
-            Path.home()
-            / ".cache"
-            / "llm-prompts"
-            / "watch"
-            / f"{source.name}-{label}-{digest}.json"
-        )
+        self._file = live_dir("cache", "watch") / f"{source.name}-{label}-{digest}.json"
         self._saved = ""
         try:
             saved = self._file.read_text(encoding="utf-8")

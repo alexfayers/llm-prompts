@@ -106,7 +106,7 @@ def test_no_config_blocks() -> None:
 def test_a_failed_run_blocks_a_rerun_until_the_versions_move(
     tmp_path: Path, isolated_config_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(auto_update, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(auto_update, "state_dir", lambda: tmp_path)
     _config(isolated_config_dir, Path("git+https://example.invalid/x.git"))
     auto_update.record_failure("v1", "could not fetch")
     assert auto_update.blocker("v1") == "failed"
@@ -136,7 +136,7 @@ def _is_update(argv: list[str]) -> bool:
 @pytest.fixture
 def unblocked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point the state at tmp_path, leave nothing blocking a run, and report the versions as v2 after it."""
-    monkeypatch.setattr(auto_update, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(auto_update, "state_dir", lambda: tmp_path)
     monkeypatch.setattr(auto_update, "blocker", lambda fingerprint: None)
     monkeypatch.setattr(auto_update, "_fingerprint", lambda: "v2")
     return tmp_path
@@ -236,8 +236,8 @@ def test_a_successful_run_clears_an_old_failure(
 @contextmanager
 def _held_by_another_process() -> Iterator[None]:
     """Hold the update lock the way a separate process would: its own open file, no handed-over fd."""
-    auto_update.STATE_DIR.mkdir(parents=True, exist_ok=True)
-    with (auto_update.STATE_DIR / "auto-update.lock").open("a") as lock_file:
+    auto_update.state_dir().mkdir(parents=True, exist_ok=True)
+    with (auto_update.state_dir() / "auto-update.lock").open("a") as lock_file:
         fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
         yield
 
@@ -254,7 +254,7 @@ def test_a_run_while_another_process_holds_the_lock_skips_the_update(
 def test_a_run_rechecks_what_blocks_it_after_taking_the_lock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_subprocess: FakeSubprocess
 ) -> None:
-    monkeypatch.setattr(auto_update, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(auto_update, "state_dir", lambda: tmp_path)
     monkeypatch.setattr(auto_update, "blocker", lambda fingerprint: "off")
     fake_subprocess.on_match(_is_update)
     auto_update.run("v1")
@@ -310,7 +310,7 @@ def test_a_live_session_holding_a_configured_checkout_blocks(
 def test_a_command_that_installs_refuses_while_another_holds_the_lock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, argv: list[str]
 ) -> None:
-    monkeypatch.setattr(auto_update, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(auto_update, "state_dir", lambda: tmp_path)
     with _held_by_another_process(), patch("sys.argv", ["llm-prompts", *argv]):
         assert "Another llm-prompts update is running" in str(
             run_capturing_exit(cli.main)
@@ -379,7 +379,7 @@ _CHILD_TAKES_LOCK = (
     "from llm_prompts import auto_update\n"
     "from pathlib import Path\n"
     "import sys\n"
-    "auto_update.STATE_DIR = Path(sys.argv[1])\n"
+    "auto_update.state_dir = lambda: Path(sys.argv[1])\n"
     "with auto_update.lock() as held:\n"
     "    print(held)\n"
 )
@@ -392,7 +392,7 @@ _CHILD_TAKES_LOCK = (
 def test_a_child_keeps_the_lock_only_when_handed_its_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, handed_over: bool, expected: str
 ) -> None:
-    monkeypatch.setattr(auto_update, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(auto_update, "state_dir", lambda: tmp_path)
     with auto_update.lock() as held:
         assert held
         fd = int(os.environ[auto_update.LOCK_FD_ENV])
@@ -410,7 +410,7 @@ def test_a_child_keeps_the_lock_only_when_handed_its_file(
 def test_the_lock_file_survives_a_restart_in_place(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(auto_update, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(auto_update, "state_dir", lambda: tmp_path)
     with auto_update.lock():
         assert os.get_inheritable(int(os.environ[auto_update.LOCK_FD_ENV]))
 
@@ -419,7 +419,7 @@ def test_the_lock_file_survives_a_restart_in_place(
 def test_install_hands_the_lock_to_its_no_update_child(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(auto_update, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(auto_update, "state_dir", lambda: tmp_path)
     child = tmp_path / "llm-prompts"
     child.write_text(
         f"#!{sys.executable}\n"

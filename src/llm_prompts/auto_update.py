@@ -16,26 +16,29 @@ from pathlib import Path
 
 from cline_hooks.plugins.checkout_lock import LOCK_TTL_SECONDS
 from cline_hooks.state.paths import get_data_dir
-from platformdirs import user_data_dir
 
-from . import telemetry
+from . import home, telemetry
 from .main_sync import UPSTREAM, run_git, unreleased
 from .plugins import _checkout_dir
 from .setup import _expand, _is_local_path, config_path, read_config
 
-STATE_DIR = Path(user_data_dir("llm-prompts"))
 _CHECKOUT_LOCKS = get_data_dir() / "checkout-locks.json"
 LOCK_FD_ENV = "LLM_PROMPTS_UPDATE_LOCK_FD"
 UPDATE_RUNNING = "Another llm-prompts update is running. Rerun once it finishes."
 
 
+def state_dir() -> Path:
+    """Return the folder holding the update lock, log and failure record."""
+    return home.live_dir("state", "auto-update.lock").parent
+
+
 def _failure_file() -> Path:
-    return STATE_DIR / "auto-update-failed.json"
+    return state_dir() / "auto-update-failed.json"
 
 
 def record_failure(fingerprint: str, reason: str) -> None:
     """Remember that the automatic update failed at these installed versions."""
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    state_dir().mkdir(parents=True, exist_ok=True)
     _failure_file().write_text(
         json.dumps({"fingerprint": fingerprint, "reason": reason}), encoding="utf-8"
     )
@@ -155,8 +158,8 @@ def lock() -> Iterator[bool]:
     through ``LOCK_FD_ENV``, so a restart in place or an ``update --auto`` child
     keeps the lock its parent took.
     """
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    lock_path = STATE_DIR / "auto-update.lock"
+    state_dir().mkdir(parents=True, exist_ok=True)
+    lock_path = state_dir() / "auto-update.lock"
     if _handed_over_lock(lock_path):
         yield True
         return
@@ -197,7 +200,7 @@ def run(fingerprint: str) -> None:
             report.begin("update", ["--auto"])
             report.outcome, report.auto_update = "blocked", blocked
             return
-        log = STATE_DIR / "auto-update.log"
+        log = state_dir() / "auto-update.log"
         started = f"Started at {datetime.now(tz=UTC).isoformat()}\n"
         log.write_text(started, encoding="utf-8")
         result = subprocess.run(
