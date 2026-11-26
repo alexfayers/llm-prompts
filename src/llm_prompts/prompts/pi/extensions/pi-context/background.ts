@@ -140,6 +140,7 @@ export class Background {
 		if (!unread.length) return undefined;
 		const lines = unread.map((run) => run.unread!);
 		for (const run of unread) this.delivered.set(run.id, run.unread!);
+		this.view?.refresh();
 		const pins = this.pinned.splice(0);
 		this.announced.push(...pins);
 		if (pins.length) lines.push(`Pinned: ${pins.join(", ")}. They clear at the end of this turn unless you put them to the user with ask_user.`);
@@ -160,6 +161,11 @@ export class Background {
 		return lines.length ? lines.join("\n") : undefined;
 	}
 
+	/** Whether main has received the run's current unread lines. */
+	received(run: Run): boolean {
+		return Boolean(run.unread) && this.delivered.get(run.id) === run.unread;
+	}
+
 	/** Notes whether an `ask_user` call of a main run went unanswered, and whether the run ended in an error. */
 	noteRun(messages: (Parameters<typeof askUserUnanswered>[0][number] & { stopReason?: string })[]): void {
 		this.askUnanswered ||= askUserUnanswered(messages);
@@ -174,6 +180,7 @@ export class Background {
 		this.askUnanswered = false;
 		for (const [id, line] of this.delivered) if (!failed && this.registry.get(id)?.unread === line) this.registry.update(id, { unread: undefined });
 		this.delivered.clear();
+		this.view?.refresh();
 		if (failed) this.pinned.unshift(...ids);
 		if (keep) return;
 		const open = new Set(openAsks(ctx.sessionManager.getBranch() as Parameters<typeof openAsks>[0]).map((ask) => ask.id));

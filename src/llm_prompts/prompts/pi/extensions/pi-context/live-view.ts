@@ -94,6 +94,21 @@ const shortModel = (model: string): string => {
 const roleTag = (run: Run, paint: Paint): string => paint.fg(run.model ? COLD_COLOR : (ROLE_COLORS[run.role] ?? COLD_COLOR), `[${run.model ? `cold ${shortModel(run.model)}` : run.role}]`);
 /** The theme color for a finished run's status glyph. */
 const FINISH_COLOR: Record<string, string> = { done: "success", "found-it": "success", blocked: "warning", failed: "error", lost: "error" };
+/** The finished runs as one row, such as `✓ 3 done · 1 blocked · cache 2-5m left`, each count in its outcome's color. */
+const summaryRow = (runs: Run[], now: number, paint: Paint): string => {
+	const counts = FINISHED.flatMap((state) => {
+		const count = runs.filter((run) => run.state === state).length;
+		return count ? [paint.fg(FINISH_COLOR[state], `${count} ${state}`)] : [];
+	});
+	const minutes = runs.flatMap((run) => {
+		const left = cacheLeftMs(run, now);
+		return left ? [Math.ceil(left / 60_000)] : [];
+	});
+	const low = Math.min(...minutes);
+	const high = Math.max(...minutes);
+	const cache = minutes.length ? ` · cache ${low === high ? low : `${low}-${high}`}m left` : runs.some((run) => run.lastRequestAt !== undefined) ? ` · ${cacheText(0)}` : "";
+	return `${paint.fg("dim", "✓ ")}${counts.join(paint.fg("dim", " · "))}${paint.fg("dim", cache)}`;
+};
 const elapsed = (ms: number): string => {
 	const seconds = Math.max(0, Math.round(ms / 1000));
 	return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`;
@@ -110,8 +125,12 @@ export class LiveView {
 	/** The context window shown against each fork's context size, for a run sharing main's model. */
 	window: number | undefined;
 
-	constructor(registry: Registry = registryOf()) {
+	/** Whether main has received the run's unread result. */
+	private received: (run: Run) => boolean;
+
+	constructor(registry: Registry = registryOf(), received: (run: Run) => boolean = () => false) {
 		this.registry = registry;
+		this.received = received;
 	}
 
 	/** Follows a background fork's child events until the run ends. */
@@ -134,9 +153,11 @@ export class LiveView {
 	/** The widget lines, or undefined when no background fork is live or still cached. */
 	lines(now = Date.now(), paint: Paint = PLAIN, width = Number.POSITIVE_INFINITY, entries: Parameters<typeof hasOpenAsks>[0] = []): string[] | undefined {
 		const live = this.registry.live().filter((run) => run.background);
-		const pending = this.registry.all().filter((run) => run.background && FINISHED.includes(run.state) && (run.unread || hasOpenAsks(entries, run)));
-		if (!live.length && !pending.length) return undefined;
-		const shown = [...live, ...pending];
+		const finished = this.registry.all().filter((run) => run.background && FINISHED.includes(run.state));
+		const asking = finished.filter((run) => hasOpenAsks(entries, run));
+		const unread = finished.filter((run) => run.unread && !this.received(run) && !asking.includes(run));
+		if (!live.length && !asking.length && !unread.length) return undefined;
+		const shown = [...live, ...asking];
 		const frame = SPINNER[Math.floor(now / CLOCK_MS) % SPINNER.length];
 		const fit = (line: string) => (Number.isFinite(width) ? truncateToWidth(line, width) : line);
 		return [
@@ -149,7 +170,8 @@ export class LiveView {
 				const last = activity?.last ? `  ${paint.fg("muted", activity.last)}` : "";
 				return fit(`${glyph} ${paint.fg("accent", paint.bold(run.name))} ${roleTag(run, paint)} ${meta}${last}`);
 			}),
-			...pending.map((run) => fit(`${paint.fg(FINISH_COLOR[run.state] ?? "dim", "●")} ${paint.fg("accent", run.name)} ${roleTag(run, paint)} ${paint.fg("dim", `${run.state}${cacheNote(run, now)}${sourceText(run, shown)}`)}`)),
+			...asking.map((run) => fit(`${paint.fg(FINISH_COLOR[run.state] ?? "dim", "●")} ${paint.fg("accent", run.name)} ${roleTag(run, paint)} ${paint.fg("dim", `${run.state}${cacheNote(run, now)}${sourceText(run, shown)}`)}`)),
+			...(unread.length ? [fit(summaryRow(unread, now, paint))] : []),
 		];
 	}
 
@@ -167,6 +189,11 @@ export class LiveView {
 		this.unbind?.();
 		this.unbind = this.registry.onChange(() => this.render?.());
 		this.render();
+	}
+
+	/** Renders the widget again, such as once main has received results. */
+	refresh(): void {
+		this.render?.();
 	}
 
 	/** Stops rendering into a session that has ended. */

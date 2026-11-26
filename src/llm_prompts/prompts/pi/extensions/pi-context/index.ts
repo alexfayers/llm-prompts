@@ -14,7 +14,7 @@ import { childGuard, readHandshake, registerDelegateRules } from "./roles.ts";
 
 export default function (pi: ExtensionAPI) {
 	const background = new Background(pi);
-	background.view = new LiveView();
+	background.view = new LiveView(undefined, (run) => background.received(run));
 	const handshake = process.env.PI_CONTEXT_CHILD;
 	if (handshake) {
 		pi.on("tool_call", childGuard(handshake));
