@@ -9,12 +9,13 @@ const MS_PER_SECOND = 1000;
 const AGED_SECONDS = 1_577_836_800;
 const WORKSPACE = "w1";
 const HOUR_MS = 60 * 60 * 1000;
+const NODE_DEFAULT_MAX_BUFFER = 1024 * 1024;
 const GH_LIST = "pr list --state merged --author @me --limit 200 --json headRefName,headRefOid";
 const mergedFor = (...branches: string[]) => JSON.stringify(branches.map((headRefName) => ({ headRefName, headRefOid: `head-${headRefName.split("/").at(-1)}` })));
 
 type Json = Record<string, any>;
 type Worktree = { path: string; branch: string; head: string; dirty: boolean; reflog: number; merged: boolean; tip: number };
-type World = { panes: Json[]; workspaces: Json[]; worktrees: Worktree[]; mainLine: string; remote?: string; gh?: string; herdr: string[]; ghCalls: string[]; gitCalls: string[]; cwds: string[]; refused?: string };
+type World = { panes: Json[]; workspaces: Json[]; worktrees: Worktree[]; mainLine: string; remote?: string; gh?: string; ps?: string; herdr: string[]; ghCalls: string[]; gitCalls: string[]; cwds: string[]; refused?: string };
 
 const REGISTRY = Symbol.for("pi-context.registry");
 const liveForks = (...runs: Json[]) => ((globalThis as any)[REGISTRY] = { live: () => runs });
@@ -32,7 +33,7 @@ function run(command: string, args: string[], cwd?: string): string {
 		if (line === "workspace list") return JSON.stringify({ result: { workspaces: world.workspaces } });
 		return "{}";
 	}
-	if (command === "ps") return "";
+	if (command === "ps") return world.ps ?? "";
 	if (command === "lsof") return world.cwds.map((cwd) => `p1\nn${cwd}`).join("\n");
 	if (command === "gh") {
 		world.ghCalls.push(line);
@@ -65,7 +66,11 @@ function run(command: string, args: string[], cwd?: string): string {
 }
 
 const execFile = Object.assign(() => {}, {
-	[promisify.custom]: async (command: string, args: string[], options: { cwd?: string }) => ({ stdout: run(command, args, options.cwd), stderr: "" }),
+	[promisify.custom]: async (command: string, args: string[], options: { cwd?: string; maxBuffer?: number }) => {
+		const stdout = run(command, args, options.cwd);
+		if (stdout.length > (options.maxBuffer ?? NODE_DEFAULT_MAX_BUFFER)) throw new RangeError("stdout maxBuffer length exceeded");
+		return { stdout, stderr: "" };
+	},
 });
 
 const load = () => loadExtension("pane-reaper", { agentDir: join(root, "agent"), mocks: { "node:child_process": { execFile } } });
@@ -400,4 +405,12 @@ test("a marked agent process whose pane is dead in this workspace is killed", as
 	};
 	const result = await (await load()).module.sweepOrphans({ selfPids: [9000], uid: 501, workspaceId: WORKSPACE }, deps);
 	assert.deepEqual(result.killed.map((killed: Json) => killed.proc.pid), [445]);
+});
+
+test("a process list larger than the default exec buffer is still read", async () => {
+	world.panes = [pane("p1", "t1")];
+	const line = "  445   999     1   445 Ss    0.0 0:00.01 Mon Jan  1 00:00:00 2024 node idle\n";
+	world.ps = line.repeat(Math.ceil(NODE_DEFAULT_MAX_BUFFER / line.length) + 1);
+	const result = await (await load()).module.sweepOrphans({ selfPids: [9000], uid: 501, workspaceId: WORKSPACE });
+	assert.deepEqual(result.killed, []);
 });

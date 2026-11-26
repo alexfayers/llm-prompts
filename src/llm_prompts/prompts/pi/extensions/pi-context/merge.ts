@@ -9,6 +9,9 @@ import path from "node:path";
 /** What the fork's reply amounts to. */
 export type Event = { type: "fork-done" } | { type: "fork-failed"; reason: string } | { type: "fork-blocked"; reason: string };
 
+/** Output ceiling for child processes whose output can exceed the 1 MiB Node default. */
+export const EXEC_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+
 interface Ran {
 	code: number;
 	out: string;
@@ -16,7 +19,7 @@ interface Ran {
 
 const run = (command: string, args: string[], cwd: string, signal?: AbortSignal, env?: NodeJS.ProcessEnv) =>
 	new Promise<Ran>((resolve) => {
-		execFile(command, args, { cwd, signal, env, maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => {
+		execFile(command, args, { cwd, signal, env, maxBuffer: EXEC_MAX_BUFFER_BYTES }, (error, stdout, stderr) => {
 			const code = error ? (typeof error.code === "number" ? error.code : 1) : 0;
 			resolve({ code, out: stdout + stderr + (error && typeof error.code !== "number" ? error.message : "") });
 		});
