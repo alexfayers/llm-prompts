@@ -452,7 +452,12 @@ def check_body(body_file: Path, repo: Path) -> int:
         if template_file.is_file()
         else _FALLBACK_TEMPLATE
     )
-    problems = body_problems(template, body_file.read_text(encoding="utf-8"))
+    try:
+        body = body_file.read_text(encoding="utf-8")
+    except OSError as error:
+        print(f"PR body: {body_file}: {error.strerror}", file=sys.stderr)
+        return 1
+    problems = body_problems(template, body)
     for problem in problems:
         print(f"PR body: {problem}", file=sys.stderr)
     return int(bool(problems))
