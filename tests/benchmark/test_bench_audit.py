@@ -62,6 +62,16 @@ def test_audit_reports_live_paths_ports_and_symlinks(
     ]
 
 
+def test_audit_ignores_npm_debug_logs_but_flags_a_live_path_beside_them(
+    tmp_path: Path, live: Path
+) -> None:
+    root = tmp_path / "root"
+    write(root / ".npm" / "_logs" / "run-debug-0.log", f"cwd {live}/.pi")
+    real = write(root / "settings.json", f"{live}/.pi")
+
+    assert audit(root) == [AuditHit(real, str(live / ".pi"))]
+
+
 def test_audit_flags_a_relative_link_into_the_live_home(
     tmp_path: Path, live: Path
 ) -> None:
