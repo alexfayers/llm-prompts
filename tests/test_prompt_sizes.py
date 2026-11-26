@@ -360,6 +360,7 @@ class TestIterArtifactsDispatch:
                 "agent-only.md",
                 False,
                 leaked[0].source,
+                names=("AGENT",),
             )
         ]
 
@@ -1410,6 +1411,28 @@ class TestCheckSource:
             result = check_source(source, content, targets=("claude-code",))
 
         assert any(v.metric == NO_UNSUBSTITUTED_PLACEHOLDERS for v in result.violations)
+
+    def test_placeholder_report_names_variable_once_per_source(
+        self, tmp_path: Path
+    ) -> None:
+        targets = ("claude-code", "kiro")
+        for target in targets:
+            _write(tmp_path / target / "vars.json", json.dumps({}))
+        source = tmp_path / "shared" / "rules" / "leaky.md"
+        content = "# Leaky\n\nUses {{UNDEFINED_VAR}} here.\n"
+
+        with patch("llm_prompts.size_guard._own_root_dir", return_value=tmp_path):
+            result = check_source(source, content, targets=targets)
+
+        [line] = [
+            line
+            for line in result.report.splitlines()
+            if NO_UNSUBSTITUTED_PLACEHOLDERS in line
+        ]
+        assert "unreplaced {{UNDEFINED_VAR}}" in line
+        assert "claude-code, kiro" in line
+        assert "replace or escape the variable" in line
+        assert "threshold" not in line
 
     def test_malformed_frontmatter_is_a_violation(self, tmp_path: Path) -> None:
         # Agent-specific rules are linked, not rendered, so their frontmatter
