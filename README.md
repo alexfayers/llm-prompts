@@ -11,7 +11,7 @@
 | src/llm\_prompts/benchmark/agents/adapter.py                                  |       34 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/agents/claude.py                                   |      158 |        3 |     98% |57, 133-134 |
 | src/llm\_prompts/benchmark/agents/files.py                                    |       53 |        1 |     98% |        32 |
-| src/llm\_prompts/benchmark/agents/pi.py                                       |      187 |        1 |     99% |       169 |
+| src/llm\_prompts/benchmark/agents/pi.py                                       |      193 |        1 |     99% |       179 |
 | src/llm\_prompts/benchmark/cell/\_\_init\_\_.py                               |        0 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/cell/audit.py                                      |       98 |        3 |     97% |     60-62 |
 | src/llm\_prompts/benchmark/cell/env.py                                        |       26 |        0 |    100% |           |
@@ -112,15 +112,16 @@
 | src/llm\_prompts/worktrees.py                                                 |       89 |        3 |     97% |119, 148-149 |
 | tests/benchmark/\_\_init\_\_.py                                               |        0 |        0 |    100% |           |
 | tests/benchmark/conftest.py                                                   |      192 |        0 |    100% |           |
-| tests/benchmark/test\_bench\_agents.py                                        |       43 |        0 |    100% |           |
+| tests/benchmark/test\_bench\_agents.py                                        |       52 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_audit.py                                         |       67 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_cell.py                                          |      233 |        4 |     98% |169, 292, 297, 409 |
 | tests/benchmark/test\_bench\_check\_sandbox.py                                |       59 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_checks.py                                        |      186 |        0 |    100% |           |
-| tests/benchmark/test\_bench\_command.py                                       |      419 |        0 |    100% |           |
+| tests/benchmark/test\_bench\_command.py                                       |      421 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_e2e.py                                           |       56 |       32 |     43% |38-40, 51-57, 61, 69-115 |
 | tests/benchmark/test\_bench\_env.py                                           |       58 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_fail\_fast.py                                    |       42 |        0 |    100% |           |
+| tests/benchmark/test\_bench\_fork\_mode.py                                    |       36 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_guard\_pi.py                                     |       41 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_guard\_rules.py                                  |       17 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_live\_view.py                                    |       83 |        0 |    100% |           |
@@ -209,7 +210,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       70 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **36252** |  **835** | **98%** |           |
+| **TOTAL**                                                                     | **36305** |  **835** | **98%** |           |
 
 
 ## Setup coverage badge
