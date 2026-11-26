@@ -267,6 +267,22 @@ def test_fork_calls_are_merged_into_the_lead_calls_by_time(tmp_path: Path) -> No
     assert [c.name for c in trace.tool_calls] == ["Read", "Edit", "Bash", "Write"]
 
 
+def test_a_cold_worker_continuing_a_session_is_billed_only_for_its_own_turns(
+    tmp_path: Path,
+) -> None:
+    _fork_files(
+        tmp_path,
+        None,
+        {"type": "message", "id": "stub", "message": _reply(0.5)},
+        {"type": "message", "id": "child", "message": _reply(0.25)},
+        session="session/--ws--/x.jsonl",
+    ).joinpath("handshake.json").write_text(json.dumps({"billedFrom": "stub"}))
+
+    trace = PiAdapter().add_delegates(make_trace(cost_usd=0.0), tmp_path, 0)
+
+    assert trace.cost_usd == 0.25
+
+
 def test_on_reply_fires_once_at_the_first_assistant_line(
     popen: FakePopen, cell: tuple[PreparedCell, Scenario]
 ) -> None:

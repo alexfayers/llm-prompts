@@ -1,7 +1,7 @@
 // Adds the fork tool, which runs a delegate on a copy of this session that shares its prompt cache, or a cold worker on a cheaper model. A writer works in a git worktree and lands its commits through the merge queue.
 // Config: llmPrompts.forks in pi settings: mcpProxy (true: a fork uses main's MCP servers), privateNames (regex of names a writer's commits may not land with), memoryMax and cpuQuota (systemd limits of one fork and its processes, defaulting to a quarter of the host's memory and half its cores), readMcp (array of {tool, argsMatch?}: extra MCP tools, as globs, a delegate may call when each argsMatch regex matches the whole of that string argument), checkInMinutes (see background.ts)
 // Config: pi-context/forks.json in the pi agent directory, written by llm-prompts install from `max_live` under `[forks]` in config.toml (most forks that run at once, default 10: more wait in a queue)
-// Env: PI_CONTEXT_CHILD (set in a delegate, which cannot fork unless its role is team), PI_CONTEXT_ROLE and PI_CONTEXT_RUN_ID (set for a delegate), PI_CONTEXT_WORKTREE (set for a writer: its worktree, for hooks that resolve the session repo)
+// Env: PI_CONTEXT_CHILD (set in a delegate, which cannot fork unless its role is team), PI_CONTEXT_ROLE and PI_CONTEXT_RUN_ID (set for a delegate), PI_CONTEXT_WORKTREE (set for a writer: its worktree, for hooks that resolve the session repo), PI_CONTEXT_SHARED (off: the fork tool has no shared, sharedFiles and tasks)
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -519,11 +519,17 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 	}
 
 	const textOf = (result: AgentToolResult<unknown>) => result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+	const sharedTasks = process.env.PI_CONTEXT_SHARED !== "off";
+	const sharedParameters = {
+		shared: Type.Optional(Type.String({ description: "Text a cold stub on model reads once before the tasks start from copies of its session" })),
+		sharedFiles: Type.Optional(Type.Array(Type.String(), { description: "With shared: paths of files, relative to this session's directory or target, whose contents go into the stub's prompt after the shared text" })),
+		tasks: Type.Optional(Type.Array(Type.Object({ name: Type.String({ pattern: "^[a-z0-9-]{1,24}$" }), task: Type.String() }), { description: "With shared: one child per task, each on a copy of the stub's session" })),
+	};
 	const forkTool = defineTool({
 		name: "fork",
 		label: "Fork",
 		description:
-			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. With branch, and optionally base (a ref, default the current branch), the writer starts on that new branch from the base. It pushes the branch with git push, and the landing is that push: unpushed work escalates and nothing lands on the current branch. Use it for one PR per writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It returns at once and the result arrives as a message when the delegate calls reply and the work has landed. from runs on a copy of a finished fork's session instead. A session over 150000 tokens of context starts the fork cold on the same model with a summary instead of a copy. shared with tasks and model runs one cold stub that reads shared and the contents of the files in sharedFiles (read with the read tool, at most 51200 characters each) in a single request, then starts one child per task from that stub when it finishes, so they share its prompt cache. Up to 2 children start over the live limit and the rest queue.",
+			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. With branch, and optionally base (a ref, default the current branch), the writer starts on that new branch from the base. It pushes the branch with git push, and the landing is that push: unpushed work escalates and nothing lands on the current branch. Use it for one PR per writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It returns at once and the result arrives as a message when the delegate calls reply and the work has landed. from runs on a copy of a finished fork's session instead. A session over 150000 tokens of context starts the fork cold on the same model with a summary instead of a copy." + (sharedTasks ? " shared with tasks and model runs one cold stub that reads shared and the contents of the files in sharedFiles (read with the read tool, at most 51200 characters each) in a single request, then starts one child per task from that stub when it finishes, so they share its prompt cache. Up to 2 children start over the live limit and the rest queue." : ""),
 		promptSnippet: "Run a read-only or worktree-writing delegate on a copy of this session in the background",
 		parameters: Type.Object({
 			task: Type.Optional(Type.String({ description: "What the delegate should find out or check" })),
@@ -532,9 +538,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			target: Type.Optional(Type.String({ description: "Path of another directory, git checkout or worktree to read or land in, instead of this session's" })),
 			base: Type.Optional(Type.String({ description: "Writer only, with branch: the ref its new branch starts from, such as origin/main. Default: the current branch" })),
 			branch: Type.Optional(Type.String({ description: "Writer only: a new branch for its worktree to start on, which it pushes instead of landing on the current branch" })),
-			shared: Type.Optional(Type.String({ description: "Text a cold stub on model reads once before the tasks start from copies of its session" })),
-			sharedFiles: Type.Optional(Type.Array(Type.String(), { description: "With shared: paths of files, relative to this session's directory or target, whose contents go into the stub's prompt after the shared text" })),
-			tasks: Type.Optional(Type.Array(Type.Object({ name: Type.String({ pattern: "^[a-z0-9-]{1,24}$" }), task: Type.String() }), { description: "With shared: one child per task, each on a copy of the stub's session" })),
+			...(sharedTasks ? sharedParameters : ({} as typeof sharedParameters)),
 			from: Type.Optional(Type.String({ pattern: "^[a-z0-9-]{1,24}$", description: "Name of a finished fork: run on a new copy of its session, at its model and effort, instead of on this session" })),
 			model: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9][\\w./:@-]*$", description: "Run as a cold worker on this model: provider/id (optionally :thinking) or a tier name such as sol or opus. Any model starts an empty session with no context and no prompt cache from you, so the task must be self-contained" })),
 		}),
@@ -543,7 +547,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			assertMayFork();
 			if (!ctx.model) throw new Error("Cannot fork without a model.");
 			if (isTeam() && (params.branch !== undefined || params.base !== undefined)) throw new Error("branch and base are not allowed in a team: its writers land in the team's worktree.");
-			if (params.shared !== undefined || params.sharedFiles !== undefined || params.tasks !== undefined) {
+			if (sharedTasks && (params.shared !== undefined || params.sharedFiles !== undefined || params.tasks !== undefined)) {
 				if (params.shared === undefined || !params.tasks?.length || params.model === undefined || params.task !== undefined || params.from !== undefined) throw new Error("shared needs tasks and model, without task or from");
 				const stub = params.name ?? `stub-${randomUUID().slice(0, 6)}`;
 				const names = [stub, ...params.tasks.map(({ name }) => name)];

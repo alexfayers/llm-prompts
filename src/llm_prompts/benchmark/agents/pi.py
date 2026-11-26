@@ -41,7 +41,9 @@ DELEGATION_TOOLS = ("fork", "fork_resume", "fork_steer", "fork_cancel")
 FEATURE_TOOLS = {"consult": ("consult",), "ghost": ("ghost_run",)}
 FEATURE_EXTENSIONS = ("test-output-fold",)
 FORK_MODE = "warm-fork"
-FEATURES = (*FEATURE_TOOLS, *FEATURE_EXTENSIONS, FORK_MODE)
+FEATURE_OFF_ENV = {"shared-tasks": {"PI_CONTEXT_SHARED": "off"}}
+FEATURES = (*FEATURE_TOOLS, *FEATURE_EXTENSIONS, FORK_MODE, *FEATURE_OFF_ENV)
+WORKER_TIER = "bench"
 PERMISSION_CONFIG = Path(".pi/agent/extensions/pi-permission-system/config.json")
 PATH_EDIT_TOOLS = ("edit", "write", "path_write")
 FORK_FILES = Path(".pi/agent/pi-context")
@@ -67,8 +69,9 @@ def _cost(usage: object) -> float | None:
 
 
 def _fork_messages(files: Path, since: float) -> Iterator[Mapping[str, object]]:
-    """Yield the messages a fork wrote to its sessions in ``files`` since ``since``, without the lead's entries it was seeded with."""
-    inherited = read_json(files / "handshake.json", strict=False).get("inherited")
+    """Yield the messages a fork wrote to its sessions in ``files`` since ``since``, without the entries it was seeded with, or the session it continues for a cold worker."""
+    handshake = read_json(files / "handshake.json", strict=False)
+    inherited = handshake.get("inherited") or handshake.get("billedFrom")
     for session in (*files.glob("seed.jsonl"), *files.glob("session/**/*.jsonl")):
         entries = [
             e for line in session.read_text().splitlines() if (e := parse_line(line))
@@ -141,8 +144,15 @@ class PiAdapter:
         )
 
     def install_features(self, home: Path, features: Mapping[str, bool]) -> None:
-        """Drop the extensions of the features that ``features`` turns off, and run every fork warm or cold as ``features`` sets the warm fork."""
+        """Drop the extensions of the features that ``features`` turns off, and run every fork warm or cold as ``features`` sets the warm fork, and name the model of the cold workers when it measures shared tasks."""
         agent_dir = home / ".pi" / "agent"
+        if "shared-tasks" in features:
+            settings = read_json(agent_dir / "settings.json")
+            provider = settings.get("defaultProvider", BEDROCK_PROVIDER)
+            tiers_path = agent_dir / "pi-context" / "models.json"
+            tiers = read_json(tiers_path, strict=False)
+            tiers[WORKER_TIER] = f"{provider}/{_pi_default_model()}"
+            write_json(tiers_path, tiers)
         for name in FEATURE_EXTENSIONS:
             if features.get(name, True) is False:
                 (agent_dir / "extensions" / f"{name}.ts").unlink(missing_ok=True)

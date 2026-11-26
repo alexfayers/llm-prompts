@@ -15,7 +15,7 @@ from llm_prompts import setup, size_report
 from llm_prompts.benchmark import paths, reuse
 from llm_prompts.benchmark.agents import AGENTS, DEFAULT_MODELS
 from llm_prompts.benchmark.agents.adapter import VariantBuildError
-from llm_prompts.benchmark.agents.pi import FEATURES
+from llm_prompts.benchmark.agents.pi import FEATURE_OFF_ENV, FEATURES
 from llm_prompts.benchmark.cell import memory, variants
 from llm_prompts.benchmark.cell.prepare import IsolationBreach
 from llm_prompts.benchmark.cell.shared import remove_stale_roots
@@ -280,6 +280,11 @@ def _build_plan(options: RunOptions) -> _Plan:
             variants.build(
                 "a", options.a, options.agents, options.overlays, options.a_tools
             ),
+            env={
+                key: value
+                for feature in options.features
+                for key, value in FEATURE_OFF_ENV.get(feature, {}).items()
+            },
             features=dict.fromkeys(options.features, False),
         )
     ]

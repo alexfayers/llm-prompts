@@ -479,6 +479,19 @@ describe("fork tool", () => {
 			assert.equal(registryOf().all().some((run) => run.name === "sbstub"), false);
 		});
 
+		test("PI_CONTEXT_SHARED=off leaves shared and tasks out of the fork tool and refuses them", async () => {
+			const offered = async () => (await start({})).tools.fork;
+			assert.deepEqual([Object.keys((await offered()).parameters.properties).filter((key) => ["shared", "tasks"].includes(key)), /shared with tasks/.test((await offered()).description)], [["shared", "tasks"], true]);
+			process.env.PI_CONTEXT_SHARED = "off";
+			try {
+				const tool = await offered();
+				assert.deepEqual([Object.keys(tool.parameters.properties).filter((key) => ["shared", "tasks"].includes(key)), /shared with tasks/.test(tool.description)], [[], false]);
+				assert.match(String((await fork({ shared: "s", tasks: [{ name: "t1", task: "x" }], model: "prov/cheap" })).tool), /fork needs task/);
+			} finally {
+				delete process.env.PI_CONTEXT_SHARED;
+			}
+		});
+
 		test("a stub that replies exactly as its prompt asks lets the tasks start", async () => {
 			const { tool } = await fork({ shared: "STUB_COMPLY notes", tasks: [{ name: "k1", task: "STUB_REPORT" }], model: "prov/cheap", name: "kstub" });
 			assert.equal(tool.content[0].text, "OUTCOME done ref:");
