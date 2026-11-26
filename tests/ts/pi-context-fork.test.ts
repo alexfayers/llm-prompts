@@ -38,7 +38,7 @@ describe("seedEntries after a compaction", () => {
 		const kept = { type: "message", id: "u2", message: { role: "toolResult", content: "[capped: 9 chars, ref rc-c9; result_fetch]" } };
 		const branch = [
 			link(null, saved("h1", "hide-tools")),
-			link("h1", saved("t1", "attic")),
+			link("h1", saved("t1", "hide-tools")),
 			link("t1", saved("p1", "pending-asks", { action: "add", id: "a1", text: "still open" })),
 			link("p1", saved("r1", "result-cap", { ref: "rc-c9", text: "kept result" })),
 			link("r1", saved("r2", "result-cap", { ref: "rc-c1", text: "compacted result" })),

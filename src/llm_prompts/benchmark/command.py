@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import cast, get_args
 
 from llm_prompts import setup, size_report
-from llm_prompts.attic.pinned import PINNED_RULES
 from llm_prompts.benchmark import paths, reuse
 from llm_prompts.benchmark.agents import AGENTS, DEFAULT_MODELS
 from llm_prompts.benchmark.agents.adapter import VariantBuildError
@@ -85,6 +84,9 @@ def at_least_one(name: str, value: int) -> int:
     if not isinstance(value, int) or value < 1:
         raise ValueError(f"{name} must be at least 1, got {value}")
     return value
+
+
+PINNED_RULES = frozenset({"stop-on-fail"})
 
 
 def _unpinned_rules(names: Sequence[str] | None) -> tuple[str, ...]:

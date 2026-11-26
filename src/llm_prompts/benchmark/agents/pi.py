@@ -6,11 +6,9 @@ import dataclasses
 import json
 import subprocess
 from collections.abc import Iterable, Iterator, Mapping
-from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
 
-from llm_prompts.attic.manifest import build_manifest, skill_stubs
 from llm_prompts.benchmark.agents.adapter import GUARD_ARGV, ModelNotSet
 from llm_prompts.benchmark.agents.files import (
     copy_login,
@@ -41,7 +39,7 @@ FAILED_STOP_REASONS = {"error", "aborted"}
 HOOK_MESSAGE_TYPE = "cline-hooks"
 DELEGATION_TOOLS = ("fork", "fork_resume", "fork_steer", "fork_cancel")
 FEATURE_TOOLS = {"consult": ("consult",), "ghost": ("ghost_run",)}
-FEATURES = (*FEATURE_TOOLS, "attic", "lsp")
+FEATURES = (*FEATURE_TOOLS, "lsp")
 LSP_PACKAGE = "npm:pi-lsp-extension@"
 PERMISSION_CONFIG = Path(".pi/agent/extensions/pi-permission-system/config.json")
 PATH_EDIT_TOOLS = ("edit", "write", "path_write")
@@ -142,7 +140,7 @@ class PiAdapter:
         )
 
     def install_features(self, home: Path, features: Mapping[str, bool]) -> None:
-        """Hide every unpinned skill behind the attic when ``features`` turns it on, and drop the language server package when it turns that off."""
+        """Drop the language server package when ``features`` turns it off."""
         agent_dir = home / ".pi" / "agent"
         if features.get("lsp", True) is False:
             settings = read_json(agent_dir / "settings.json")
@@ -154,15 +152,6 @@ class PiAdapter:
                 ).startswith(LSP_PACKAGE)
             ]
             write_json(agent_dir / "settings.json", settings)
-        if features.get("attic"):
-            manifest = build_manifest(
-                [],
-                skill_stubs(agent_dir / "skills"),
-                {},
-                now=datetime.now(UTC),
-                min_days=0,
-            )
-            write_json(agent_dir / "attic.json", manifest.to_json())
 
     def copy_logins(self, home: Path) -> tuple[Path, ...]:
         return run_steps(
