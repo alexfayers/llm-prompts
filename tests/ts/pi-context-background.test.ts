@@ -48,10 +48,10 @@ describe("Background", () => {
 		assert.equal(background.digest(), undefined);
 	});
 
-	test("a run that finishes while main is busy is steered into its turn once, with the live fork count", () => {
+	test("a run that finishes while main is busy or compacting starts no turn and waits in the digest", () => {
 		background.finish(ctx(false), "a", done(), "OUTCOME done ref:rc");
-		assert.deepEqual(sent, [[{ customType: "pi-context-results", content: "[fork a done] ref rc\n1 fork still running.", display: true }, { deliverAs: "steer", triggerTurn: true }]]);
-		assert.equal(background.digest(), undefined);
+		assert.deepEqual(sent, []);
+		assert.equal(background.digest(), "[fork a done] ref rc\n1 fork still running.");
 	});
 
 	test("a run that needs main wakes it at once and the digest keeps what it asks", () => {
@@ -127,6 +127,25 @@ describe("hooks", () => {
 		finishHeld(ctx(), "a", done(), "OUTCOME done ref:rc");
 		assert.deepEqual(handlers.before_agent_start({}, ctx()), { message: { customType: "pi-context-results", content: "[fork a done] ref rc\n1 fork still running.", display: true } });
 		assert.equal(handlers.before_agent_start({}, ctx()), undefined);
+	});
+
+	test("runs that finish during one turn of a busy main reach it in one message at the turn's end, with the live fork count", () => {
+		background.finish(ctx(false), "a", done(), "OUTCOME done ref:rc");
+		background.finish(ctx(false), "b", done(), "OUTCOME done ref:rc");
+		handlers.turn_end({ message: { role: "assistant", stopReason: "toolUse" } }, ctx(false));
+		assert.deepEqual(sent, [[{ customType: "pi-context-results", content: "[fork a done] ref rc\n[fork b done] ref rc\n0 forks still running.", display: true }, { deliverAs: "steer", triggerTurn: true }]]);
+		handlers.turn_end({ message: { role: "assistant", stopReason: "toolUse" } }, ctx(false));
+		assert.equal(sent.length, 1);
+	});
+
+	test("a result of a turn that ends aborted is not queued to steer, so the next run gets it once", () => {
+		const main = { ...ctx(false), hasUI: true, sessionManager: { getBranch: () => [] } };
+		background.finish(main, "a", done(), "OUTCOME done ref:rc");
+		handlers.turn_end({ message: { role: "assistant", stopReason: "aborted" } }, main);
+		handlers.agent_end({ messages: [{ role: "assistant", stopReason: "aborted" }] }, main);
+		handlers.agent_settled({ aborted: true }, main);
+		assert.deepEqual(sent, []);
+		assert.equal(handlers.before_agent_start({}, ctx())?.message.content, "[fork a done] ref rc\n1 fork still running.");
 	});
 
 	test("a session appends the digest when it settles and continues with it", async () => {

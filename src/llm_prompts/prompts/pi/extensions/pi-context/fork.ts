@@ -676,11 +676,17 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 	/** Gives a finished run a new task on its own session, model and role, in the background. */
 	async function continueRun(ctx: ExtensionToolContext, name: string, task: string, toolCallId: string) {
 		sweepFinished();
-		await background.ended(finishedRun(registry.all(), name).id);
 		const run = finishedRun(registry.all(), name);
 		assertMayStart(ROLES[run.role as Role["name"]]);
+		registry.update(run.id, { state: "running" });
 		background.resolveForkAsks(ctx, run.name);
-		const tree = run.tree && (await resumeWorktree(run.tree, path.join(getAgentDir(), "pi-context", WORKTREES), run.name));
+		const tree = await (async () => {
+			await background.ended(run.id);
+			return run.tree && (await resumeWorktree(run.tree, path.join(getAgentDir(), "pi-context", WORKTREES), run.name));
+		})().catch((error: unknown) => {
+			registry.update(run.id, { state: run.state });
+			throw error;
+		});
 		registry.update(run.id, { state: "running", task, background: true, tree, worktree: tree?.path, branch: tree?.branch, startedAt: Date.now(), endedAt: undefined, endedBy: undefined, outcome: undefined, notify: undefined, next: undefined });
 		const message = `${worktreeLine(tree)}Task: ${task}`;
 		startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${toolCallId}`, role: ROLES[run.role as Role["name"]], tree, target: run.target ?? run.cwd, model: run.model, files: run.files }, { message, resume: true });

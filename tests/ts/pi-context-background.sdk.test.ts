@@ -106,9 +106,9 @@ describe("background forks in a session", () => {
 		await end();
 	});
 
-	test("with a UI a result that arrives while the session is busy is delivered after its run, in one request", async () => {
+	test("with a UI a result that arrives while the session is busy is delivered at the end of its turn, in one request", async () => {
 		const { faux, session, requests, reply, open, forks, finished, release, end } = await setup({ withUi: true });
-		faux.setResponses([fauxAssistantMessage([...forks("ba", "bb"), fauxToolCall("pause", {})]), reply("one"), reply("two")]);
+		faux.setResponses([fauxAssistantMessage([...forks("ba", "bb"), fauxToolCall("pause", {})]), reply("one")]);
 		const prompting = session.prompt("go");
 		await eventually(() => registryOf().live().length === 2);
 		open("ba");
@@ -120,8 +120,8 @@ describe("background forks in a session", () => {
 		release();
 		await prompting;
 		await session.waitForIdle();
-		assert.equal(requests.length, 2);
-		assert.match(requests[1], /\[fork ba done\][\s\S]*\[fork bb done\]/);
+		assert.equal(requests.length, 1);
+		assert.match(requests[0], /\[fork ba done\][^"]*\[fork bb done\][^"]*0 forks still running\./);
 		assert.deepEqual(unhandled, []);
 		await end();
 	});
