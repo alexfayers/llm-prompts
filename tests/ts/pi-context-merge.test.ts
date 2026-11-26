@@ -46,6 +46,25 @@ describe("landing", () => {
 		assert.equal(git(clean.path, "symbolic-ref", "--short", "HEAD"), "fork/clean");
 	});
 
+	test("a resume whose worktree is gone but whose fork branch is left starts from the current branch when the fork branch holds nothing unmerged", async () => {
+		const repo = newRepo();
+		const tree = await writer(repo, "stale-branch");
+		git(repo, "worktree", "remove", tree.path);
+		commit(repo, "moved.txt", "1", "main moved");
+		const resumed = await resumeWorktree(tree, path.join(scratch, "worktrees"), "stale-branch");
+		assert.equal(git(resumed.path, "rev-parse", "HEAD"), git(repo, "rev-parse", "HEAD"));
+	});
+
+	test("a resume whose worktree is gone reuses a fork branch that holds unmerged commits", async () => {
+		const repo = newRepo();
+		const tree = await writer(repo, "kept-branch");
+		commit(tree.path, "k.txt", "1", "kept work");
+		git(repo, "worktree", "remove", tree.path);
+		commit(repo, "moved.txt", "1", "main moved");
+		const resumed = await resumeWorktree(tree, path.join(scratch, "worktrees"), "kept-branch");
+		assert.equal(git(resumed.path, "log", "-1", "--format=%s"), "kept work");
+	});
+
 	test("a cancelled fork lands nothing and keeps its commits", async () => {
 		const repo = newRepo();
 		const tree = await writer(repo, "cancelled");
@@ -392,17 +411,44 @@ describe("landing", () => {
 			});
 		});
 
-		test("escalates when the worktree left the fork branch for a pushed one", async () => {
-			const { repo, tree } = await pushedFork("switched");
+		test("escalates, keeping the worktree and its fork branch, when it pushed a branch it switched to but left fork commits unpushed", async () => {
+			const { tree } = await pushedFork("switched");
 			git(tree.path, "switch", "-q", "-c", "other", "main");
 			commit(tree.path, "c.txt", "1", "other work");
 			git(tree.path, "push", "-q", "origin", "HEAD:other-pr");
 			git(tree.path, "push", "-q", "origin", "--delete", "pr-branch");
 			const landing = await land({ tree, first: done });
 			assert.equal(landing.state, "escalated");
-			assert.match(landing.reason ?? "", /left fork\/switched/);
+			assert.match(landing.reason ?? "", /pushed origin\/other-pr but kept fork\/switched with unpushed commits/);
 			assert.ok(fs.existsSync(tree.path));
-			assert.notEqual(git(repo, "branch", "--list", tree.branch), "");
+		});
+
+		test("lands by push when it pushed a branch it switched to, and a resume starts from the current branch", async () => {
+			const { repo, tree } = await pushedFork("switched-clean");
+			git(tree.path, "switch", "-q", "-c", "other-clean", "main");
+			commit(tree.path, "c.txt", "1", "other work");
+			git(tree.path, "push", "-q", "origin", "HEAD:other-clean-pr");
+			const landing = await land({ tree, first: done });
+			assert.equal(landing.state, "landed");
+			assert.match(landing.note ?? "", /^landed on origin\/other-clean-pr by push$/);
+			assert.equal(landing.sha, git(repo, "rev-parse", "other-clean"));
+			assert.ok(!fs.existsSync(tree.path));
+			assert.equal(git(repo, "branch", "--list", tree.branch), "");
+			const resumed = await resumeWorktree(tree, path.join(scratch, "worktrees"), "switched-clean");
+			assert.equal(git(resumed.path, "rev-parse", "HEAD"), git(repo, "rev-parse", "main"));
+		});
+
+		test("escalates when it switched to an already pushed branch and pushed nothing new", async () => {
+			const { repo, tree } = await pushedFork("switched-idle");
+			git(repo, "switch", "-q", "-c", "existing");
+			commit(repo, "e.txt", "1", "existing work");
+			git(repo, "push", "-q", "origin", "existing");
+			git(repo, "switch", "-q", "main");
+			git(tree.path, "fetch", "-q", "origin");
+			git(tree.path, "switch", "-q", "-c", "existing-copy", "origin/existing");
+			const landing = await land({ tree, first: done });
+			assert.equal(landing.state, "escalated");
+			assert.match(landing.reason ?? "", /left fork\/switched-idle/);
 		});
 	});
 
