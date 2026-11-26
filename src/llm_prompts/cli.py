@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 
 from . import github_api, telemetry
 from .console import log
-from .exit_reason import ExitReason
+from .exit_reason import ExitReason, Reason
 from .home import set_root
 from .install import AGENT_CLASSES, REMOVED_AGENTS, prompts_dir, user_binary
 from .network import run_with_retries, stderr_text
@@ -636,7 +636,7 @@ class _PullOutcome(NamedTuple):
     name: str
     changed: bool
     messages: list[str]
-    failed: bool = False
+    failed: Reason | None = None
 
 
 def _source_test_warnings(name: str, repo: Path, test: str) -> list[str]:
@@ -710,7 +710,9 @@ def _pull_one_local_source(
     )
     fetch_failed = fetch.returncode != 0
     fetch_error = f"[{name}] could not fetch: {fetch.stderr.strip()}"
-    fetch_failure = _PullOutcome(name, False, [fetch_error], failed=True)
+    fetch_failure = _PullOutcome(
+        name, False, [fetch_error], failed="source_fetch_failed"
+    )
     if not point_upstream(repo, ref):
         return fetch_failure if fetch_failed else unchanged
     result = run_git(repo, "rev-list", "--count", f"HEAD..{UPSTREAM}")
@@ -729,7 +731,7 @@ def _pull_one_local_source(
                 name,
                 False,
                 [f"[{name}] could not move to release {release}", f"  {synced.detail}"],
-                failed=True,
+                failed="source_release_failed",
             )
         moved = [
             f"[{name}] moved to release {release}; left {len(drops)} unreleased commit(s); undo with: git reset --keep {PRE_SYNC_REF}"
@@ -756,7 +758,7 @@ def _pull_one_local_source(
                 name,
                 False,
                 [f"[{name}] could not drop empty commits", f"  {synced.detail}"],
-                failed=True,
+                failed="source_cleanup_failed",
             )
         dropped = f"[{name}] dropped {len(empty)} empty copies of merged commits; undo with: git reset --keep {PRE_SYNC_REF}"
         return _PullOutcome(name, True, [dropped])
@@ -775,7 +777,7 @@ def _pull_one_local_source(
                 f"[{name}] {count} new commit(s) available but sync failed",
                 f"  {synced.detail}",
             ],
-            failed=True,
+            failed="source_merge_failed",
         )
     if synced.mode == "reset":
         message = (
@@ -793,7 +795,9 @@ def _pull_one_local_source(
         messages.append(fetch_error)
     if test and (synced.replayed or synced.mode == "rebased"):
         messages += _source_test_warnings(name, repo, test)
-    return _PullOutcome(name, True, messages, failed=fetch_failed)
+    return _PullOutcome(
+        name, True, messages, failed="source_fetch_failed" if fetch_failed else None
+    )
 
 
 def _recorded_sources(
@@ -880,16 +884,14 @@ def _copy_recorded_into(
 def _pull_and_copy(
     tools: list[dict[str, Any]],
     entries: list[WorktreeEntry],
-    failed: set[str],
-    copy_failed: set[str],
+    failed: dict[str, Reason],
 ) -> tuple[set[str], list[WorktreeEntry]]:
     """Pull every local source, then copy ready worktrees into each main that pulled cleanly.
 
     Args:
         tools: The configured tool sources.
         entries: The recorded worktrees.
-        failed: Collects the names of the sources that could not be pulled or copied.
-        copy_failed: Collects the names of the sources that could not be copied.
+        failed: Collects why each source that could not be pulled or copied failed, by name.
 
     Returns:
         The names of the sources that moved and the updated record entries.
@@ -921,27 +923,23 @@ def _pull_and_copy(
         if outcome.changed:
             changed.add(outcome.name)
         if outcome.failed:
-            failed.add(outcome.name)
+            failed[outcome.name] = outcome.failed
         elif outcome.name in recorded:
             moved, copied_failed, entries = _copy_recorded_into(
                 outcome.name, recorded[outcome.name], entries, tests[outcome.name]
             )
             if copied_failed:
-                failed.add(outcome.name)
-                copy_failed.add(outcome.name)
+                failed[outcome.name] = "copy_failed"
             if moved:
                 changed.add(outcome.name)
     return changed, entries
 
 
-def _pull_local_sources(
-    failed: set[str] | None = None, copy_failed: set[str] | None = None
-) -> set[str]:
+def _pull_local_sources(failed: dict[str, Reason] | None = None) -> set[str]:
     """Pull upstream changes for all local-path tool sources, then copy ready worktrees into each main.
 
     Args:
-        failed: Collects the names of the tool sources that could not be pulled or copied.
-        copy_failed: Collects the names of the tool sources that could not be copied.
+        failed: Collects why each tool source that could not be pulled or copied failed, by name.
 
     Returns:
         The names of the tool sources that actually moved.
@@ -962,8 +960,7 @@ def _pull_local_sources(
             changed, updated = _pull_and_copy(
                 _load_config(),
                 entries,
-                failed if failed is not None else set(),
-                copy_failed if copy_failed is not None else set(),
+                failed if failed is not None else {},
             )
             if updated != entries:
                 worktrees.save_entries(path, updated)
@@ -1924,19 +1921,19 @@ def _run_command(
 
             _print_update_status()
             size_baseline = snapshot_sources(_size_guard_roots())
-            failed_sources: set[str] = set()
-            copy_failed_sources: set[str] = set()
-            changed_sources = _pull_local_sources(failed_sources, copy_failed_sources)
+            failed_sources: dict[str, Reason] = {}
+            changed_sources = _pull_local_sources(failed_sources)
             if failed_sources:
                 print(
                     f"Update stopped: {', '.join(sorted(failed_sources))} "
                     "could not be updated, so the installed versions would not match. "
                     "Fix the errors above, then rerun `llm-prompts update`."
                 )
-                if failed_sources == copy_failed_sources:
+                reasons = [failed_sources[name] for name in sorted(failed_sources)]
+                if set(reasons) == {"copy_failed"}:
                     raise ExitReason("copy_failed")
                 run.outcome = "source_sync_failed"
-                sys.exit(1)
+                raise ExitReason(next(r for r in reasons if r != "copy_failed"))
 
             from .plugins import pull_plugin_sources
 

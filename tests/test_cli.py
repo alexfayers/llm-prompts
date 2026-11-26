@@ -40,6 +40,7 @@ from llm_prompts.cli import (
     main,
 )
 from llm_prompts.contribute import SyncOptions
+from llm_prompts.exit_reason import Reason
 from llm_prompts.hooks import _ReinstallDebouncer
 from llm_prompts.main_sync import RESOLVE_WORKTREE, SyncResult
 from llm_prompts.setup import (
@@ -522,7 +523,7 @@ class TestPullLocalSources:
             "--ff-only",
             side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=30),
         )
-        failed: set[str] = set()
+        failed: dict[str, Reason] = {}
 
         config = [{"name": "core", "source": str(clone)}]
         with patch("llm_prompts.setup.config_path") as mock_config:
@@ -530,7 +531,7 @@ class TestPullLocalSources:
             with patch("llm_prompts.setup._load_config", return_value=config):
                 _pull_local_sources(failed)
 
-        assert failed == {"core"}
+        assert failed == {"core": "source_merge_failed"}
 
     def test_source_that_cannot_be_fetched_is_reported_as_failed(
         self, tmp_path: Path, fake_subprocess: FakeSubprocess
@@ -1414,7 +1415,7 @@ class TestUpdateCommandPullsPlugins:
             mock_config.return_value.exists.return_value = False
             main()
 
-        assert order.mock_calls == [call.status(), call.pull(set(), set())]
+        assert order.mock_calls == [call.status(), call.pull({})]
 
     def test_update_skips_agents_no_longer_supported(self) -> None:
         with (

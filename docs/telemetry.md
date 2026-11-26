@@ -9,6 +9,7 @@ Each event has:
 - tool versions before and after: the installed `commit` of a remote source, `base` (the newest `origin/main` commit the install contains), `release` (the newest stable `vX.Y.Z` tag a local checkout contains, or a remote source's installed package version with a `v` prefix), and for local checkouts `local`, `dirty` and `ahead`. A local commit not on `origin/main` is never sent
 - outcome, duration, OS, Python version and schema version
 - for an early exit, one code from a fixed list, never the message
+- for an update that stops with outcome `source_sync_failed`, the cause of the first failed source: `source_fetch_failed` (fetch failed), `source_release_failed` (could not move to the release), `source_cleanup_failed` (could not drop empty copies of merged commits) or `source_merge_failed` (could not fast-forward or rebase onto upstream)
 - a random run id (shared by one command's events) and a random install id
 
 The session start check (`startup-check`) sends the same event, plus `auto_update`: `started`, or why the automatic update did not start (`off`, `failed`, `session`, `local-changes`, `no-update`, or `error` when starting it crashed). When the background update finds a blocker after it takes the update lock, it sends an `update --auto` event with outcome `blocked` and that `auto_update` kind. When another update holds the lock, it sends outcome `stopped` with exit reason `update_running`.
