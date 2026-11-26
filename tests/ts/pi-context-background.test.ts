@@ -18,6 +18,10 @@ let appended: { type: string; customType: string; data: any }[];
 let registry: Registry;
 let background: Background;
 const ctx = (idle = true) => ({ isIdle: () => idle }) as any;
+const finishHeld = (...args: Parameters<Background["finish"]>) => {
+	void background.hold();
+	background.finish(...args);
+};
 beforeEach(() => {
 	sent = [];
 	appended = [];
@@ -38,27 +42,27 @@ describe("Background", () => {
 
 	test("each finished run wakes an idle main at once, while another run is still live", () => {
 		background.finish(ctx(), "a", done(), "OUTCOME done ref:rc");
-		assert.deepEqual(sent, [[{ customType: "pi-context-results", content: "[fork a done] ref rc", display: true }, { triggerTurn: true }]]);
+		assert.deepEqual(sent, [[{ customType: "pi-context-results", content: "[fork a done] ref rc\n1 fork still running.", display: true }, { deliverAs: "steer", triggerTurn: true }]]);
 		background.finish(ctx(), "b", done(), "OUTCOME done ref:rc\nASK: keep it?");
-		assert.equal(sent[1][0].content, "[fork b done] ASK: keep it? ref rc\nPinned: fork-b-b-1. They clear at the end of this turn unless you put them to the user with ask_user.");
+		assert.equal(sent[1][0].content, "[fork b done] ASK: keep it? ref rc\nPinned: fork-b-b-1. They clear at the end of this turn unless you put them to the user with ask_user.\n0 forks still running.");
 		assert.equal(background.digest(), undefined);
 	});
 
-	test("a run that finishes while main is busy waits in the digest", () => {
+	test("a run that finishes while main is busy is steered into its turn once, with the live fork count", () => {
 		background.finish(ctx(false), "a", done(), "OUTCOME done ref:rc");
-		assert.deepEqual(sent, []);
-		assert.equal(background.digest(), "[fork a done] ref rc");
+		assert.deepEqual(sent, [[{ customType: "pi-context-results", content: "[fork a done] ref rc\n1 fork still running.", display: true }, { deliverAs: "steer", triggerTurn: true }]]);
+		assert.equal(background.digest(), undefined);
 	});
 
 	test("a run that needs main wakes it at once and the digest keeps what it asks", () => {
 		background.finish(ctx(), "a", { state: "blocked", outcome: "blocked-on-user", ref: "rc" }, "OUTCOME blocked-on-user ref:rc\nASK: A or B?");
 		assert.equal(sent.length, 1);
-		assert.equal(sent[0][0].content, "[fork a blocked-on-user] ASK: A or B? ref rc\nPinned: fork-a-a-1. They clear at the end of this turn unless you put them to the user with ask_user.");
+		assert.equal(sent[0][0].content, "[fork a blocked-on-user] ASK: A or B? ref rc\nPinned: fork-a-a-1. They clear at the end of this turn unless you put them to the user with ask_user.\n1 fork still running.");
 	});
 
 	test("a digest not yet sent is handed over once", () => {
-		background.finish(ctx(false), "a", done(), "OUTCOME done ref:rc", "[merge: landed abc]");
-		assert.equal(background.digest(), "[fork a done] [merge: landed abc] ref rc");
+		finishHeld(ctx(), "a", done(), "OUTCOME done ref:rc", "[merge: landed abc]");
+		assert.equal(background.digest(), "[fork a done] [merge: landed abc] ref rc\n1 fork still running.");
 		assert.equal(background.digest(), undefined);
 	});
 
@@ -77,7 +81,7 @@ describe("Background", () => {
 		background.finish(ctx(), "a", done(), "OUTCOME done ref:rc");
 		await hold;
 		assert.deepEqual(sent, []);
-		assert.equal(background.digest(), "[fork a done] ref rc");
+		assert.equal(background.digest(), "[fork a done] ref rc\n1 fork still running.");
 		assert.equal((background as any).holding, false);
 	});
 
@@ -120,15 +124,15 @@ describe("hooks", () => {
 	const session = (...data: Run[]) => ({ ...ctx(), hasUI: true, sessionManager: { getEntries: () => data.map((run) => ({ type: "custom", customType: "pi-context-run", data: run })) } });
 
 	test("the next run starts with the digest of results that did not wake main, once", () => {
-		background.finish(ctx(false), "a", done(), "OUTCOME done ref:rc");
-		assert.deepEqual(handlers.before_agent_start({}, ctx()), { message: { customType: "pi-context-results", content: "[fork a done] ref rc", display: true } });
+		finishHeld(ctx(), "a", done(), "OUTCOME done ref:rc");
+		assert.deepEqual(handlers.before_agent_start({}, ctx()), { message: { customType: "pi-context-results", content: "[fork a done] ref rc\n1 fork still running.", display: true } });
 		assert.equal(handlers.before_agent_start({}, ctx()), undefined);
 	});
 
 	test("a session appends the digest when it settles and continues with it", async () => {
-		background.finish(ctx(false), "a", done(), "OUTCOME done ref:rc");
+		finishHeld(ctx(), "a", done(), "OUTCOME done ref:rc");
 		const settled = await handlers.agent_before_settle({ entries: [] }, { ...ctx(), hasUI: true });
-		assert.deepEqual(settled, { entries: [{ type: "custom_message", customType: "pi-context-results", content: "[fork a done] ref rc", display: true }], continue: true });
+		assert.deepEqual(settled, { entries: [{ type: "custom_message", customType: "pi-context-results", content: "[fork a done] ref rc\n1 fork still running.", display: true }], continue: true });
 		assert.equal(await handlers.agent_before_settle({ entries: [] }, { ...ctx(), hasUI: true }), undefined);
 	});
 
@@ -137,7 +141,7 @@ describe("hooks", () => {
 		background.finish(ctx(), "a", done(), "OUTCOME done ref:rc");
 		const settled = await settling;
 		assert.equal(settled.continue, true);
-		assert.equal(settled.entries[0].content, "[fork a done] ref rc");
+		assert.equal(settled.entries[0].content, "[fork a done] ref rc\n1 fork still running.");
 		assert.deepEqual(sent, []);
 	});
 
@@ -147,7 +151,7 @@ describe("hooks", () => {
 		test("a session with a UI waits for a live member to finish when it settles", async () => {
 			const settling = handlers.agent_before_settle({ entries: [] }, { ...ctx(), hasUI: true });
 			background.finish(ctx(), "a", done(), "OUTCOME done ref:rc");
-			assert.equal((await settling).entries[0].content, "[fork a done] ref rc");
+			assert.equal((await settling).entries[0].content, "[fork a done] ref rc\n1 fork still running.");
 		});
 
 		test("a shutdown stops every member, waits for each to end and releases the wait, so a cancelled team leaves none running", async () => {
@@ -257,7 +261,7 @@ describe("hooks", () => {
 		const wakeWith = (name: string, messages: unknown[]) => {
 			registry.start(run(name));
 			background.finish(main, name, { state: "blocked", outcome: "blocked-on-user", ref: "rc" }, "OUTCOME blocked-on-user ref:rc\nASK: A or B?");
-			assert.match(sent.at(-1)![0].content, new RegExp(`\nPinned: fork-${name}-${name}-1\\. They clear at the end of this turn unless you put them to the user with ask_user\\.$`));
+			assert.match(sent.at(-1)![0].content, new RegExp(`\nPinned: fork-${name}-${name}-1\\. They clear at the end of this turn unless you put them to the user with ask_user\\.\n2 forks still running\\.$`));
 			handlers.agent_end({ messages }, main);
 			handlers.agent_settled({ aborted: false }, main);
 		};
@@ -267,10 +271,10 @@ describe("hooks", () => {
 	});
 
 	test("a result stays unread until a turn that delivered it settles, so an aborted or failed turn loses none", () => {
-		const main = { ...ctx(false), hasUI: false, sessionManager: { getBranch: () => [] } };
-		background.finish(main, "a", done(), "OUTCOME done ref:rc");
+		const main = { ...ctx(), hasUI: false, sessionManager: { getBranch: () => [] } };
+		finishHeld(main, "a", done(), "OUTCOME done ref:rc");
 		const settle = (aborted: boolean, ...messages: unknown[]) => {
-			assert.equal(background.digest(), registry.get("a")?.unread);
+			assert.equal(background.digest(), `${registry.get("a")?.unread}\n1 fork still running.`);
 			handlers.agent_end({ messages }, main);
 			handlers.agent_settled({ aborted }, main);
 		};
@@ -283,8 +287,8 @@ describe("hooks", () => {
 
 	test("the pins of a result whose turn failed are announced again with it, and clear once a later turn settles", () => {
 		const branch = () => appended.map(([customType, data]) => ({ type: "custom", customType, data }));
-		const main = { ...ctx(false), hasUI: false, sessionManager: { getBranch: branch } };
-		background.finish(main, "a", { state: "blocked", outcome: "blocked-on-user", ref: "rc" }, "OUTCOME blocked-on-user ref:rc\nASK: A or B?");
+		const main = { ...ctx(), hasUI: false, sessionManager: { getBranch: branch } };
+		finishHeld(main, "a", { state: "blocked", outcome: "blocked-on-user", ref: "rc" }, "OUTCOME blocked-on-user ref:rc\nASK: A or B?");
 		const pinned = /Pinned: fork-a-a-1\./;
 		const turn = (stopReason: string) => {
 			const content = handlers.before_agent_start({}, main)?.message.content;
@@ -307,7 +311,7 @@ describe("hooks", () => {
 		registry = new Registry();
 		boot();
 		handlers.session_start({ reason: "resume" }, session(...appended.map(([, data]) => data)));
-		assert.match(handlers.before_agent_start({}, ctx())?.message.content ?? "", /^\[fork late done\] ref rc$/);
+		assert.match(handlers.before_agent_start({}, ctx())?.message.content ?? "", /^\[fork late done\] ref rc\n0 forks still running\.$/);
 		assert.equal(handlers.before_agent_start({}, ctx()), undefined);
 	});
 

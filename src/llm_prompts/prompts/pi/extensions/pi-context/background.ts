@@ -127,7 +127,7 @@ export class Background {
 	}
 
 	/** Records how a background run ended, pins what it asks, and wakes main. A cancelled run is ignored. */
-	finish(ctx: Pick<ExtensionContext, "isIdle"> & AskContext, runId: string, patch: Partial<Run>, text: string | Reply, note?: string): void {
+	finish(ctx: AskContext, runId: string, patch: Partial<Run>, text: string | Reply, note?: string): void {
 		this.controllers.delete(runId);
 		this.children.delete(runId);
 		const current = this.registry.get(runId);
@@ -137,7 +137,7 @@ export class Background {
 		const run = this.registry.update(runId, { ...ended, unread: [current.unread, digestLine(ended, text, note)].filter(Boolean).join("\n") });
 		if (!run) return;
 		this.pinned.push(...pinForkAsks(this.pi, ctx, run, text));
-		if (wakeReason(run) && !held) this.wake(ctx);
+		if (wakeReason(run) && !held) this.wake();
 	}
 
 	/** Stops a live background run by name. */
@@ -155,7 +155,7 @@ export class Background {
 		return this.registry.update(run.id, { state: "cancelled", endedAt: Date.now() });
 	}
 
-	/** The digest lines of the runs that finished since main last received them, with the pins they made, or undefined. A line stays unread until the run that received it settles. */
+	/** The digest lines of the runs that finished since main last received them, with the pins they made and the live fork count, or undefined. A line stays unread until the run that received it settles. */
 	digest(): string | undefined {
 		const unread = this.registry.all().filter((run) => run.unread && this.delivered.get(run.id) !== run.unread).sort((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0));
 		if (!unread.length) return undefined;
@@ -165,6 +165,8 @@ export class Background {
 		const pins = this.pinned.splice(0);
 		this.announced.push(...pins);
 		if (pins.length) lines.push(`Pinned: ${pins.join(", ")}. They clear at the end of this turn unless you put them to the user with ask_user.`);
+		const live = this.registry.live().filter((run) => run.background).length;
+		lines.push(`${live} fork${live === 1 ? "" : "s"} still running.`);
 		return lines.join("\n");
 	}
 
@@ -249,11 +251,10 @@ export class Background {
 		await Promise.all(this.following.values());
 	}
 
-	/** Starts a turn with the digest when main is idle. A busy main gets it when its run settles. */
-	private wake(ctx: Pick<ExtensionContext, "isIdle">) {
-		if (!ctx.isIdle()) return;
+	/** Steers the digest into main's turn, or starts a turn with it when main is idle. */
+	private wake() {
 		const content = this.digest();
-		if (content) this.pi.sendMessage({ customType: RESULTS_TYPE, content, display: true }, { triggerTurn: true });
+		if (content) this.pi.sendMessage({ customType: RESULTS_TYPE, content, display: true }, { deliverAs: "steer", triggerTurn: true });
 	}
 }
 

@@ -322,7 +322,7 @@ describe("fork tool", () => {
 		const { tool, appended } = await fork({ task: "STUB_REPORT", name: "x" });
 		assert.deepEqual(appended, [["result-cap", { ref: "rc-fork-x-call-id", text: "OUTCOME done ref:rc-fork-x\nbody line" }]]);
 		assert.equal(tool.details.outcome, "done");
-		assert.equal(tool.details.digest, "[fork x done] body line ref rc-fork-x-call-id");
+		assert.equal(tool.details.digest, "[fork x done] body line ref rc-fork-x-call-id\n0 forks still running.");
 	});
 
 	test("a reply call's arguments decide the outcome and the kept reply, whatever the text says", async () => {
@@ -576,7 +576,7 @@ describe("fork tool", () => {
 			assert.equal(tool.content[0].text, "started fork bg (background)");
 			assert.equal(registryOf().all().find((run) => run.name === "bg")?.background, true);
 			await eventually(() => sent.length > 0);
-			assert.deepEqual(sent, [[{ customType: "pi-context-results", content: "[fork bg done] body line ref rc-fork-bg-call-id", display: true }, { triggerTurn: true }]]);
+			assert.deepEqual(sent, [[{ customType: "pi-context-results", content: "[fork bg done] body line ref rc-fork-bg-call-id\n0 forks still running.", display: true }, { deliverAs: "steer", triggerTurn: true }]]);
 			assert.equal(registryOf().all().find((run) => run.name === "bg")?.state, "done");
 			assert.deepEqual(appended, [["result-cap", { ref: "rc-fork-bg-call-id", text: "OUTCOME done ref:rc-fork-x\nbody line" }]]);
 		});
@@ -857,14 +857,14 @@ describe("fork tool", () => {
 		});
 
 		test("fork_steer on a finished fork continues it with the message", async () => {
-			const { tools, appended, background, ctx } = await start({ task: "STUB_REPORT", name: "done", model: "prov/cheap" });
+			const { tools, appended, sent, ctx } = await start({ task: "STUB_REPORT", name: "done", model: "prov/cheap" });
 			ctx.isIdle = () => false;
 			await eventually(() => registryOf().all().find((run) => run.name === "done")?.state === "done");
 			const steered = await tools.fork_steer.execute("s", { name: "done", message: "STUB_INSPECT" }, undefined, undefined, ctx);
 			assert.equal(steered.content[0].text, "continued fork done (background)");
 			await eventually(() => registryOf().all().find((run) => run.name === "done")?.state === "failed");
 			assert.equal(JSON.parse((appended.at(-1)![1] as { text: string }).text.replace(/^echo: /, "")).prompt, "Task: STUB_INSPECT");
-			assert.equal(background.digest()?.match(/^\[fork done /gm)?.length, 2);
+			assert.equal(sent.filter(([message]) => message.content.startsWith("[fork done ")).length, 2);
 		});
 
 		test("a warm fork gets main's latest prefix, and fork_resume with a task keeps the one it started with", async () => {
