@@ -19,10 +19,10 @@ All three repos' prompts trees go through `llm-prompts contribute` (`list`, `syn
 - `sync --tool NAME --why B "TEXT"` records the Why for B's PR, local only. MUST record it before `--ready`. `sync` skips a PR (nonzero exit) while a required template section is empty.
 - `sync --tool NAME --ready B` lets `sync --apply` push B as `<login>/contribute/B` and open a draft PR (no reviewers), body per the repo's template,
   then refresh its What, and its title only while it is still the one sync wrote. `--local B` reverses it. `--forget B` drops it.
-- `sync --rescan` records your open PRs checked out in worktrees, local only.
+- `sync --rescan` records your open PRs in worktrees, local only. `--only B` syncs B alone.
 - `sync` is a dry run until `--apply`. It force-pushes only a draft PR whose remote branch is unchanged since the last sync. Once the PR merges, `sync --apply` removes the worktree and branch.
-- `list` shows each recorded worktree's state, offline.
-- `update --apply` - rebases your open PRs behind `main`.
+- `list` shows each worktree's state, offline.
+- `update --apply` rebases your open PRs behind `main`.
 - MUST NOT edit local `main` by hand. `update` copies ready worktrees into it, then installs. On a conflict that prints a worktree, MUST resolve its files, `git add`, rerun.
 
 ## Everything else
