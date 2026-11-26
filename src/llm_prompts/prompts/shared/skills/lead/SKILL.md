@@ -15,6 +15,7 @@ description: Run a pipeline of delegates that write, review and merge many PRs o
 ## Writers
 
 - MUST start one writer delegate per issue or change, each in its own worktree or the repo's isolated workspace mechanism.
+  Where the delegate tool takes `branch` and `base` (e.g. `fork`), MUST pass them so the writer makes its own PR branch, and MUST NOT make a landing checkout.
 - Each writer task MUST be self-contained: the issue, the branch, the repo's test command,
   the leak scan for a public remote, and opening a draft PR or review.
 
@@ -26,7 +27,8 @@ description: Run a pipeline of delegates that write, review and merge many PRs o
 ## Results
 
 - `CLEAN` -> MUST mark the PR ready with auto-merge through the repo's own ready or merge command,
-  else mark it ready and enable auto-merge. Add an owner-review label first where the repo needs one. Then rebase the branch on the base.
+  else mark it ready and enable auto-merge. Add an owner-review label first where the repo needs one.
+  MUST NOT rebase it by hand where the repo's automation rebases auto-merge PRs. Otherwise rebase it on the base.
 - Findings -> MUST resume that PR's writer with the findings.
 - Conflicts -> MUST have a writer rebase the branch.
 
