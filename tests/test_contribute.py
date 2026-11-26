@@ -970,3 +970,15 @@ def test_check_body_command_rejects_a_bad_body_file(
     body.write_text("## What\n\n<!-- x -->\n", encoding="utf-8")
     assert contribute.check_body(body, tmp_path) == 1
     assert "leftover placeholder comment" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("name", "reason"),
+    [("missing.md", "No such file or directory"), (".", "Is a directory")],
+)
+def test_check_body_command_names_an_unreadable_body_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], name: str, reason: str
+) -> None:
+    body = tmp_path / name
+    assert contribute.check_body(body, tmp_path) == 1
+    assert capsys.readouterr().err == f"PR body: {body}: {reason}\n"
