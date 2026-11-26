@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import threading
@@ -56,7 +57,14 @@ def with_retries[T](call: Callable[[], T]) -> T:
 def run_with_retries(
     argv: list[str], *, check: bool = False, **kwargs: Any
 ) -> subprocess.CompletedProcess[str]:
-    """Run a network command like ``subprocess.run``, retrying transient failures with backoff."""
+    """Run a network command like ``subprocess.run``, retrying transient failures with backoff.
+
+    The command never waits on a terminal credential prompt: git gets ``GIT_TERMINAL_PROMPT=0``, and stdin is
+    ``/dev/null`` unless ``input`` is given.
+    """
+    kwargs["env"] = {**(kwargs.get("env") or os.environ), "GIT_TERMINAL_PROMPT": "0"}
+    if kwargs.get("input") is None:
+        kwargs.setdefault("stdin", subprocess.DEVNULL)
     fast = _failing_fast.is_set() and not _FAIL_FAST_COMMANDS.isdisjoint(argv)
     if fast:
         kwargs["timeout"] = FAIL_FAST_TIMEOUT

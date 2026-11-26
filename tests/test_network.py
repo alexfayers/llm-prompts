@@ -78,3 +78,16 @@ def test_fail_fast_limits_only_ls_remote_fetch_and_clone(
         network.FAIL_FAST_TIMEOUT,
         GIT_TIMEOUT,
     ]
+
+
+def test_run_with_retries_never_waits_on_a_terminal_prompt(
+    fake_subprocess: FakeSubprocess,
+) -> None:
+    network.run_with_retries(["git", "fetch"], env={"KEEP": "1"})
+    network.run_with_retries(["git", "fetch"], input="data")
+    (_, plain), (_, with_input) = fake_subprocess.calls
+    assert plain["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert plain["env"]["KEEP"] == "1"
+    assert plain["stdin"] == subprocess.DEVNULL
+    assert with_input["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert "stdin" not in with_input
