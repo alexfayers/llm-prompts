@@ -738,23 +738,25 @@ describe("fork tool", () => {
 		const repo = path.join(primary, "lead");
 		after(() => fs.rmSync(primary, { recursive: true }));
 
-		test("refuses at once when the session is a primary checkout and no target is given", async () => {
+		test("makes its own worktree when the session is a primary checkout and no target is given", async () => {
 			git(primary, "init", "-b", "main");
 			git(primary, "config", "user.email", "t@example.com");
 			git(primary, "config", "user.name", "t");
 			git(primary, "commit", "--allow-empty", "-m", "start");
 			git(primary, "worktree", "add", "-q", "-b", "lead", repo);
-			const { tool } = await fork({ task: "STUB_WRITE", role: "writer", name: "primary" }, primary);
-			assert.ok(tool instanceof Error);
-			assert.match(tool.message, /change_dir to a worktree first/);
-			assert.equal(git(primary, "branch", "--list", "fork/primary"), "");
+			const { tool, appended } = await fork({ task: "STUB_WRITE", role: "writer", name: "primary" }, primary);
+			const handshake = JSON.parse((appended[0][1] as { text: string }).text.split("\n")[1]);
+			assert.ok(handshake.worktree.startsWith(path.join(agentDir, "pi-context", "worktrees")));
+			assert.match(tool.details.digest, /\[merge: landed [0-9a-f]{9}\]/);
+			assert.equal(git(primary, "log", "-1", "--format=%s", "main"), "write");
 		});
 
-		test("a writer from a reader that ran in a primary checkout refuses without its own target", async () => {
+		test("a writer from a reader that ran in a primary checkout makes its own worktree", async () => {
 			await fork({ task: "STUB_REPORT", name: "psrc" }, primary);
-			const { tool } = await fork({ task: "STUB_WRITE", role: "writer", name: "pkid", from: "psrc" }, repo);
-			assert.ok(tool instanceof Error);
-			assert.match(tool.message, /change_dir to a worktree first/);
+			const { tool, appended } = await fork({ task: "STUB_WRITE", role: "writer", name: "pkid", from: "psrc" }, repo);
+			const handshake = JSON.parse((appended[0][1] as { text: string }).text.split("\n")[1]);
+			assert.ok(handshake.worktree.startsWith(path.join(agentDir, "pi-context", "worktrees")));
+			assert.match(JSON.stringify(tool.details), /\[merge: landed [0-9a-f]{9}\]/);
 		});
 
 		test("a large writer cancelled while its summary is written makes no worktree", async () => {
