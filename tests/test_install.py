@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.resources
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -3086,19 +3087,22 @@ class TestPiVersionDrift:
         launcher = tmp_path / ".pi" / "agent" / "bin" / "pi"
         launcher.parent.mkdir()
         launcher.write_text("", encoding="utf-8")
-        package = self._write_npm_install(tmp_path, "1.2.0")
+        self._write_npm_install(tmp_path, "1.2.0")
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
         monkeypatch.setattr(
             "llm_prompts.install.shutil.which",
             lambda command: str(launcher) if command == "pi" else None,
         )
 
-        _warn_pi_version_drift(["npm:@earendil-works/pi-coding-agent@1.2.0"])
+        _warn_pi_version_drift(["npm:@earendil-works/pi-coding-agent@1.2.1"])
 
         err = capsys.readouterr().err
-        assert f"pi on PATH ({launcher}, 1.0.0)" in err
-        assert f"the npm one ({package}, 1.2.0)" in err
-        assert "#677" in err
-        assert "behind" not in err
+        assert err == (
+            "[-] [pi] ~/.pi/agent/bin/pi (1.0.0) runs instead of the managed pi "
+            "(1.2.0, wants 1.2.1). Put ~/.pi/agent/npm/node_modules/.bin first "
+            "on PATH, then rerun llm-prompts update.\n"
+        )
+        assert not re.search(r"#\d", err)
 
     def test_reports_no_version_when_no_pi_is_on_path(
         self,
@@ -3279,7 +3283,7 @@ class TestMigrateCurlPi:
         _migrate_curl_pi()
 
         assert all(path.exists() for path in curl_paths)
-        assert "keeping it" in capsys.readouterr().err
+        assert capsys.readouterr().err == ""
 
     def test_reports_pi_node_without_removing_it(
         self, home: Path, capsys: pytest.CaptureFixture[str]
