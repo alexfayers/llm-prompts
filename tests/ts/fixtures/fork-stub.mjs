@@ -1,4 +1,4 @@
-// Stands in for `pi --mode rpc` as a fork child: the task text picks the reply, STUB_STEER waits for a steer command and exits slowly once its input closes, a resumed fork replies slowly, STUB_INSPECT reports how the child was started, STUB_LOG names a file that logs each prompt and its slow first reply, and STUB_COMPLY calls reply with the arguments its prompt asks for, STUB_REPLY:<json> calls reply with those arguments, and a cold worker, or a fork told STUB_TURN, writes one assistant entry per prompt into its session.
+// Stands in for `pi --mode rpc` as a fork child: the task text picks the reply, STUB_STEER waits for a steer command and exits slowly once its input closes, a resumed fork replies slowly, STUB_INSPECT reports how the child was started, STUB_LOG names a file that logs each prompt and its slow first reply, STUB_LIFE:<file> logs the prompt and the child's exit to that file, and STUB_COMPLY calls reply with the arguments its prompt asks for, STUB_REPLY:<json> calls reply with those arguments, and a cold worker, or a fork told STUB_TURN, writes one assistant entry per prompt into its session.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import net from "node:net";
@@ -16,6 +16,7 @@ if (process.argv.includes("--session-dir")) {
 	mkdirSync(flag("--session-dir"), { recursive: true });
 	writeFileSync(coldSession, `${JSON.stringify({ type: "session", version: 3, id: process.env.PI_CONTEXT_RUN_ID })}\n`);
 }
+let life;
 let reply = "";
 let exitDelayMs = 0;
 let body = "";
@@ -72,6 +73,8 @@ async function replyTo(text) {
 for await (const line of createInterface({ input: process.stdin })) {
 	const command = JSON.parse(line);
 	const respond = (data) => out({ id: command.id, type: "response", command: command.type, success: true, data });
+	life ??= command.type === "prompt" ? /STUB_LIFE:(\S+)/.exec(command.message)?.[1] : undefined;
+	if (life && command.type === "prompt") appendFileSync(life, "prompt\n");
 	if (command.type === "prompt" && command.message.includes("STUB_STEER")) {
 		exitDelayMs = 300;
 		respond({ disposition: "started" });
@@ -98,3 +101,4 @@ for await (const line of createInterface({ input: process.stdin })) {
 	} else if (command.type === "get_last_assistant_text") respond({ text: reply });
 }
 await new Promise((resolve) => setTimeout(resolve, exitDelayMs));
+if (life) appendFileSync(life, "exit\n");

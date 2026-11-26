@@ -328,7 +328,7 @@ const checkoutOf = (dir: string) => gitOut(dir, "rev-parse", "--show-toplevel").
 const sameDir = (a: string, b: string) => fs.realpathSync(a) === fs.realpathSync(b);
 
 /** Whether a finished run's session is still there to continue with a new task. */
-export const canContinue = (run: Run): boolean => FINISHED.includes(run.state) && Boolean(run.files && sessionFileOf(run.files, Boolean(run.model)));
+export const canContinue = (run: Run): boolean => [...FINISHED, "cancelled"].includes(run.state) && Boolean(run.files && sessionFileOf(run.files, Boolean(run.model)));
 
 /** The latest finished run named `name` whose session is still there. */
 export function finishedRun(runs: Run[], name: string): Run & { files: string } {
@@ -587,6 +587,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			sweepFinished();
 			if (params.from !== undefined && params.model !== undefined) throw new Error("from runs at the source's model and effort: drop model");
 			const source = params.from === undefined ? undefined : finishedRun(registry.all(), params.from);
+			if (source) await background.ended(source.id);
 			const role: Role = ROLES[params.role ?? (source?.role as Role["name"] | undefined) ?? "reader"];
 			assertMayStart(role);
 			const base = homeOf(ctx);
@@ -656,6 +657,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 	/** Gives a finished run a new task on its own session, model and role, in the background. */
 	async function continueRun(ctx: ExtensionToolContext, name: string, task: string, toolCallId: string) {
 		sweepFinished();
+		await background.ended(finishedRun(registry.all(), name).id);
 		const run = finishedRun(registry.all(), name);
 		assertMayStart(ROLES[run.role as Role["name"]]);
 		background.resolveForkAsks(ctx, run.name);
@@ -684,7 +686,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		name: "fork_resume",
 		label: "Fork resume",
 		description:
-			"Without task, restart a background fork that a reload, a crash or the end of the session stopped, on its own session and worktree. With task, give a finished fork (done, found-it, blocked or failed), warm or cold, a new task on its own session, model and role: a reader works in its old directory, a writer in a new worktree from the current branch of its checkout, or its kept one. Both run in the background.",
+			"Without task, restart a background fork that a reload, a crash or the end of the session stopped, on its own session and worktree. With task, give a finished fork (done, found-it, blocked, failed or cancelled), warm or cold, a new task on its own session, model and role: a reader works in its old directory, a writer in a new worktree from the current branch of its checkout, or its kept one. Both run in the background.",
 		promptSnippet: "Resume a lost background fork, or give a finished fork a new task",
 		promptGuidelines: [
 			"Use fork_resume with task instead of fork when a finished fork of the same role and directory already holds the context the task needs, and its prompt cache is still warm: the fork tool's result names such a fork.",
