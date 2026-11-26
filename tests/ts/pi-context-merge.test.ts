@@ -136,6 +136,56 @@ describe("landing", () => {
 		}
 	});
 
+	describe("a writer that starts its own branch from a base ref", () => {
+		function originRepo(name: string) {
+			const repo = newRepo();
+			const remote = path.join(scratch, `${name}.git`);
+			git(scratch, "init", "-q", "--bare", remote);
+			git(repo, "remote", "add", "origin", remote);
+			git(repo, "push", "-q", "origin", "main");
+			git(repo, "fetch", "-q", "origin");
+			commit(repo, "local.txt", "1", "local only");
+			return repo;
+		}
+		const own = (repo: string, name: string) => createWorktree(repo, path.join(scratch, "worktrees"), name, { base: "origin/main", branch: "feature/own" });
+
+		test("starts on the named branch from the base, not the current branch", async () => {
+			const repo = originRepo("start");
+			const tree = await own(repo, "own-start");
+			assert.equal(tree.branch, "feature/own");
+			assert.equal(git(tree.path, "symbolic-ref", "--short", "HEAD"), "feature/own");
+			assert.equal(git(tree.path, "rev-parse", "HEAD"), git(repo, "rev-parse", "origin/main"));
+		});
+
+		test("lands by the branch push without escalating", async () => {
+			const repo = originRepo("pushed");
+			const tree = await own(repo, "own-pushed");
+			commit(tree.path, "a.txt", "1", "pr work");
+			git(tree.path, "push", "-q", "origin", "HEAD");
+			const before = git(repo, "rev-parse", "HEAD");
+			const landing = await land({ tree, first: done });
+			assert.equal(landing.state, "landed");
+			assert.match(landing.note ?? "", /landed on origin\/feature\/own by push/);
+			assert.equal(git(repo, "rev-parse", "HEAD"), before);
+		});
+
+		test("escalates and keeps the work when the branch was not pushed", async () => {
+			const repo = originRepo("unpushed");
+			const tree = await own(repo, "own-unpushed");
+			commit(tree.path, "a.txt", "1", "pr work");
+			const before = git(repo, "rev-parse", "HEAD");
+			const landing = await land({ tree, first: done });
+			assert.equal(landing.state, "escalated");
+			assert.match(landing.reason ?? "", /feature\/own was not pushed/);
+			assert.equal(git(repo, "rev-parse", "HEAD"), before);
+			assert.ok(fs.existsSync(tree.path));
+		});
+
+		test("rejects a base without a branch", async () => {
+			await assert.rejects(createWorktree(originRepo("nobranch"), path.join(scratch, "worktrees"), "own-nobranch", { base: "origin/main" }), /branch/);
+		});
+	});
+
 	describe("a fork whose commits were pushed to another remote branch", () => {
 		let remoteCount = 0;
 		async function pushedFork(name: string) {

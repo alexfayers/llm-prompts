@@ -38,6 +38,8 @@ export interface Worktree {
 	/** A worktree provider made the worktree, and removes it. */
 	provided?: boolean;
 	branch: string;
+	/** The writer's own branch, started from a base ref the caller named: its work lands only by being pushed. */
+	own?: boolean;
 	/** The branch the main checkout had when the worktree was made, and where the work lands. */
 	base: string;
 	/** The main checkout's state when the worktree was made. */
@@ -64,18 +66,20 @@ const provider = () => (globalThis as { [WORKTREE_PROVIDER]?: WorktreeProvider }
 /** The git checkout the fork commits in. */
 const checkoutOf = (tree: Worktree) => tree.checkout ?? tree.path;
 
-/** Makes a worktree on `fork/<name>` from the branch of the repository at `cwd`: the worktree provider's, or else a git worktree under `root`. */
-export async function createWorktree(cwd: string, root: string, name: string): Promise<Worktree> {
+/** Makes a worktree on `fork/<name>` from the branch of the repository at `cwd`: the worktree provider's, or else a git worktree under `root`. With `own`, the worktree is on the new branch `own.branch` from the ref `own.base`, and lands only by a push of that branch. */
+export async function createWorktree(cwd: string, root: string, name: string, own?: { base?: string; branch?: string }): Promise<Worktree> {
+	if (own?.base && !own.branch) throw new Error("base needs a branch name for the new branch");
 	const repo = await gitOut(cwd, "rev-parse", "--show-toplevel");
 	if (fs.realpathSync(repo) !== fs.realpathSync(cwd)) throw new Error(`Writers need the repository root as the directory, not ${cwd}.`);
-	const base = await gitOut(repo, "symbolic-ref", "--short", "HEAD");
-	const branch = `fork/${name}`;
+	const base = own?.base ?? (await gitOut(repo, "symbolic-ref", "--short", "HEAD"));
+	const branch = own?.branch ?? `fork/${name}`;
+	if (own?.branch) await gitOut(repo, "check-ref-format", "--branch", branch);
 	const snapshot = await mainSnapshot(repo);
 	const provided = await provider()?.create(repo, branch, base);
-	if (provided) return { repo, path: provided.path, checkout: await gitOut(provided.gitDir ?? provided.path, "rev-parse", "--show-toplevel"), provided: true, branch, base, snapshot };
+	if (provided) return { repo, path: provided.path, checkout: await gitOut(provided.gitDir ?? provided.path, "rev-parse", "--show-toplevel"), provided: true, branch, ...(own?.branch && { own: true }), base, snapshot };
 	const dir = path.join(root, repoKey(repo), name);
-	await gitOut(repo, "worktree", "add", "-b", branch, dir, base);
-	return { repo, path: dir, branch, base, snapshot };
+	await gitOut(repo, "worktree", "add", "--no-track", "-b", branch, dir, base);
+	return { repo, path: dir, branch, ...(own?.branch && { own: true }), base, snapshot };
 }
 
 /** Reports the worktree's HEAD when it is not the fork's branch. */
@@ -207,6 +211,7 @@ async function landNow({ tree, first, privateNames: extraNames }: LandOptions): 
 	if (first.type === "fork-blocked") return escalate(`fork is blocked: ${first.reason}`);
 	const pushed = await pushedTo(tree);
 	if (pushed) return { state: "landed", sha: await gitOut(checkoutOf(tree), "rev-parse", tree.branch), note: [`landed on ${pushed} by push`, await cleanup(tree, true)].filter(Boolean).join("; ") };
+	if (tree.own) return (await gitOut(checkoutOf(tree), "rev-list", "--count", `${tree.base}..HEAD`)) === "0" ? { state: "landed", note: await cleanup(tree) } : escalate(`${tree.branch} was not pushed`);
 	const reason = await refusal(tree, extraNames);
 	if (reason) return escalate(reason);
 	const checkout = checkoutOf(tree);

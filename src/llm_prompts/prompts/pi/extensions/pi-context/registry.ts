@@ -18,7 +18,7 @@ export type Run = {
 	worktree?: string;
 	branch?: string;
 	/** A writer's worktree, as the landing needs it. */
-	tree?: { repo: string; path: string; branch: string; base: string; snapshot: string };
+	tree?: { repo: string; path: string; branch: string; own?: boolean; base: string; snapshot: string };
 	/** The git checkout the delegate works in, when it is not the session's directory. */
 	target?: string;
 	/** The session's directory when the run started. */
