@@ -45,7 +45,7 @@
 | src/llm\_prompts/benchmark/transient.py                                       |       41 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/types.py                                           |      218 |        0 |    100% |           |
 | src/llm\_prompts/claude\_models.py                                            |       23 |        0 |    100% |           |
-| src/llm\_prompts/cli.py                                                       |      913 |       65 |     93% |107-108, 134-135, 142-155, 261-262, 277-282, 424, 702, 705, 728, 755, 793, 824, 956, 1164-1166, 1179-1182, 1253-1262, 1808-1810, 1813-1819, 1831-1833, 1844-1850, 1860, 1865, 1877, 2040, 2068-2069, 2074 |
+| src/llm\_prompts/cli.py                                                       |      912 |       65 |     93% |107-108, 134-135, 142-155, 261-262, 277-282, 424, 702, 705, 730, 757, 795, 828, 954, 1161-1163, 1176-1179, 1250-1259, 1805-1807, 1810-1816, 1828-1830, 1841-1847, 1857, 1862, 1874, 2037, 2065-2066, 2071 |
 | src/llm\_prompts/clones.py                                                    |      145 |       12 |     92% |75, 93-94, 127-129, 182-184, 248, 266-267 |
 | src/llm\_prompts/collection\_size.py                                          |      133 |        3 |     98% |295-296, 500 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
@@ -147,7 +147,7 @@
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
 | tests/test\_check\_repos\_script.py                                           |       67 |        0 |    100% |           |
 | tests/test\_claude\_models.py                                                 |       25 |        0 |    100% |           |
-| tests/test\_cli.py                                                            |     1225 |        1 |     99% |      1549 |
+| tests/test\_cli.py                                                            |     1226 |        1 |     99% |      1550 |
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
 | tests/test\_clones.py                                                         |      251 |        0 |    100% |           |
 | tests/test\_commit\_guard.py                                                  |      310 |        2 |     99% |   441-442 |
@@ -200,7 +200,7 @@
 | tests/test\_size\_report.py                                                   |      254 |        0 |    100% |           |
 | tests/test\_skill\_injection.py                                               |       36 |        0 |    100% |           |
 | tests/test\_squash\_subject.py                                                |        7 |        0 |    100% |           |
-| tests/test\_telemetry.py                                                      |      418 |        0 |    100% |           |
+| tests/test\_telemetry.py                                                      |      436 |        0 |    100% |           |
 | tests/test\_telemetry\_core.py                                                |      164 |        1 |     99% |       126 |
 | tests/test\_todos\_script.py                                                  |       88 |        0 |    100% |           |
 | tests/test\_tool\_paths.py                                                    |       27 |        0 |    100% |           |
@@ -210,7 +210,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       84 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **37357** |  **840** | **98%** |           |
+| **TOTAL**                                                                     | **37375** |  **840** | **98%** |           |
 
 
 ## Setup coverage badge
