@@ -463,7 +463,7 @@ function cachedHint(runs: Run[], role: string, dir: string, priceOfRun: (run: Ru
 		return run.role === role && (run.target ?? run.cwd) === dir && (cacheLeftMs(run, now) ?? 0) > 0 && price !== undefined && ((run.context ?? 0) * price.cacheRead) / PER_MILLION_TOKENS < freshCost;
 	});
 	if (!cached.length) return undefined;
-	const lines = cached.sort((a, b) => (b.lastRequestAt ?? 0) - (a.lastRequestAt ?? 0)).map((run) => `fork ${run.name}: ${tokens(run.context ?? 0)} ctx, ${cacheText(cacheLeftMs(run, now) ?? 0)}`);
+	const lines = cached.sort((a, b) => (b.lastRequestAt ?? 0) - (a.lastRequestAt ?? 0)).map((run) => `fork ${run.name}: ${tokens(run.context ?? 0)} ctx, ${cacheText(cacheLeftMs(run, now) ?? 0)} left`);
 	return [...lines, "fork_resume({name, task}) is cheaper than a fresh fork"].join("\n");
 }
 
@@ -487,10 +487,15 @@ const readText = (file: string) => {
 const BRIEF_CHARS = 40;
 
 /** A landing's escalation reason in a few whole words without paths, such as `fork switched branch`. */
-const briefReason = (reason = ""): string => {
+export const briefReason = (reason = ""): string => {
 	if (/^the worktree left /.test(reason)) return "fork switched branch";
 	const words = reason.split(/[:;]/)[0].split(/\s+/).filter((word) => word && !word.includes("/"));
-	return words.reduce((text, word) => (`${text} ${word}`.trim().length <= BRIEF_CHARS ? `${text} ${word}`.trim() : text), "");
+	let text = "";
+	for (const word of words) {
+		if (`${text} ${word}`.trim().length > BRIEF_CHARS) break;
+		text = `${text} ${word}`.trim();
+	}
+	return text;
 };
 
 /** A landing as one short phrase, or with the worktree path and the full reason when `full`. */
