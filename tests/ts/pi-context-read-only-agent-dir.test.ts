@@ -81,7 +81,11 @@ test("a rebuild waits for another fork that holds the lock of the same directory
 	const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-dir-root-"));
 	const { dir } = readOnlyAgentDir(root, tempRoot);
 	fs.writeFileSync(path.join(dir, "settings.json"), "stale");
-	const holder = spawn(process.execPath, ["-e", `const fs = require("node:fs"); fs.mkdirSync(${JSON.stringify(`${dir}.lock`)}); console.log("held"); setTimeout(() => fs.rmdirSync(${JSON.stringify(`${dir}.lock`)}), 400);`]);
+	const holder = spawn(process.execPath, [
+		"-e",
+		'const fs = require("node:fs"); const lock = process.argv[1]; fs.mkdirSync(lock); console.log("held"); setTimeout(() => fs.rmdirSync(lock), 400);',
+		`${dir}.lock`,
+	]);
 	await once(holder.stdout, "data");
 	const started = Date.now();
 	assert.equal(readOnlyAgentDir(root, tempRoot).dir, dir);
