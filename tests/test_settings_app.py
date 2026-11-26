@@ -303,14 +303,16 @@ def test_tools_can_be_edited_added_moved_and_removed(
     )
 
 
+_PLUGIN = (
+    '[[plugins]]\nname = "p"\nsource = "https://github.com/example/p.git"\n'
+    '[plugins.frontmatter_overrides.s]\nkey = "v"\n'
+)
+
+
 def test_plugin_skills_are_saved_as_a_list_and_overrides_are_kept(
     isolated_config_dir: Path,
 ) -> None:
-    plugin = (
-        '[[plugins]]\nname = "p"\nsource = "https://github.com/example/p.git"\n'
-        '[plugins.frontmatter_overrides.s]\nkey = "v"\n'
-    )
-    path = _write_config(isolated_config_dir, f"{_TOOL}\n{plugin}")
+    path = _write_config(isolated_config_dir, f"{_TOOL}\n{_PLUGIN}")
 
     screen = _edit_entries("plugins", ("type", "#plugins-0-skills=s, t"))
 
@@ -319,6 +321,38 @@ def test_plugin_skills_are_saved_as_a_list_and_overrides_are_kept(
         f'{_TOOL}\n[[plugins]]\nname = "p"\nsource = "https://github.com/example/p.git"\n'
         'skills = ["s", "t"]\n\n[plugins.frontmatter_overrides.s]\nkey = "v"\n'
     )
+
+
+def test_plugin_overrides_are_edited_as_toml_pairs_without_showing_values(
+    isolated_config_dir: Path,
+) -> None:
+    path = _write_config(isolated_config_dir, f"{_TOOL}\n{_PLUGIN}")
+
+    screen = _edit_entries(
+        "plugins",
+        ("type", '#plugins-0-frontmatter_overrides=s = {key = "hunter2, x", n = 1}'),
+    )
+
+    assert "[[plugins]] = p\np: frontmatter_overrides changed" in screen
+    assert "hunter2" not in screen
+    assert path.read_text(encoding="utf-8") == (
+        f'{_TOOL}\n[[plugins]]\nname = "p"\nsource = "https://github.com/example/p.git"\n'
+        '[plugins.frontmatter_overrides.s]\nkey = "hunter2, x"\nn = 1\n'
+    )
+
+
+def test_plugin_overrides_that_are_not_toml_stay_on_the_editor(
+    isolated_config_dir: Path,
+) -> None:
+    path = _write_config(isolated_config_dir, f"{_TOOL}\n{_PLUGIN}")
+
+    screen = _edit_entries(
+        "plugins", ("type", "#plugins-0-frontmatter_overrides=s = hunter2")
+    )
+
+    assert "frontmatter_overrides must be TOML key = value pairs" in screen
+    assert "hunter2" not in screen
+    assert path.read_text(encoding="utf-8") == f"{_TOOL}\n{_PLUGIN}"
 
 
 def test_a_new_entry_without_a_source_blocks_the_save(

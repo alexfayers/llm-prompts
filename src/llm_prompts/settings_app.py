@@ -40,6 +40,7 @@ class Field(NamedTuple):
     key: str
     hint: str
     is_list: bool = False
+    is_table: bool = False
 
 
 ENTRY_FIELDS = {
@@ -54,6 +55,7 @@ ENTRY_FIELDS = {
         Field("source", "git URL"),
         Field("ref", "default branch (default)"),
         Field("skills", "all skills (default)", is_list=True),
+        Field("frontmatter_overrides", 'skill = {key = "value"}', is_table=True),
     ),
 }
 Row = tuple[int | None, dict[str, str]]
@@ -66,6 +68,10 @@ def _field_text(entry: dict[str, Any], field: Field) -> str:
         return ""
     if field.is_list and isinstance(value, list):
         return ", ".join(map(str, value))
+    if field.is_table and isinstance(value, dict):
+        table = tomlkit.inline_table()
+        table.update(tomlkit.item(value).unwrap())
+        return table.as_string()[1:-1].strip()
     return str(value)
 
 
@@ -100,6 +106,13 @@ def _apply_rows(doc: TOMLDocument, table: str, rows: list[Row]) -> None:
                 entry.pop(field.key, None)
             elif field.is_list:
                 entry[field.key] = [s.strip() for s in text.split(",") if s.strip()]
+            elif field.is_table:
+                try:
+                    entry[field.key] = tomlkit.parse(f"v = {{{text}}}")["v"].unwrap()
+                except ValueError:
+                    raise ValueError(
+                        f"{field.key} must be TOML key = value pairs"
+                    ) from None
             else:
                 entry[field.key] = text
         if origin is None:
