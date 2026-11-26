@@ -39,7 +39,15 @@ test("dispose removes the directory once, and the exit handler is gone afterward
 });
 
 test("a failed setup removes the directory it made", () => {
-	const before = fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith("pi-context-agent-"));
-	assert.throws(() => readOnlyAgentDir(path.join(os.tmpdir(), "missing-agent-dir-x")));
-	assert.deepEqual(fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith("pi-context-agent-")), before);
+	const ownTmp = fs.mkdtempSync(path.join(os.tmpdir(), "agent-dir-tmp-"));
+	const originalTmp = process.env.TMPDIR;
+	process.env.TMPDIR = ownTmp;
+	try {
+		assert.throws(() => readOnlyAgentDir(path.join(ownTmp, "missing-agent-dir-x")));
+		assert.deepEqual(fs.readdirSync(ownTmp), []);
+	} finally {
+		if (originalTmp === undefined) delete process.env.TMPDIR;
+		else process.env.TMPDIR = originalTmp;
+		fs.rmSync(ownTmp, { recursive: true });
+	}
 });
