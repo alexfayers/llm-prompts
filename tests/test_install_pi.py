@@ -34,7 +34,7 @@ from llm_prompts.install import (
     uninstall,
 )
 from llm_prompts.install import main as install_main
-from llm_prompts.render_template import strip_gating_keys
+from llm_prompts.render_template import clear_read_cache, strip_gating_keys
 from llm_prompts.size_guard import CheckResult, Violation, check
 from llm_prompts.size_limits import PI_ROLE_PROMPT_BYTES, RULE_BYTES
 
@@ -433,6 +433,7 @@ class TestPiPackages:
         _install(home, tmp_path / "installed.json", pi=str(launcher))
         assert "notices" not in _settings(home)
         version_file.write_text("1.6.1", encoding="utf-8")
+        clear_read_cache()
         _install(home, tmp_path / "installed.json", pi=str(launcher))
         settings = _settings(home)
         assert "showCacheMissNotices" not in settings
