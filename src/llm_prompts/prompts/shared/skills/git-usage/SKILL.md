@@ -22,7 +22,7 @@ These rules MUST override others.
   MUST stage only your hunks with `git add -p <path>`, confirm with `git -P diff --cached <path>`.
   If a foreign hunk already reached an unpushed commit, MUST `git reset --soft HEAD~1` then re-stage with `-p`.
 - An unpushed commit (`git -P log --oneline @{u}..HEAD`) is not final - MAY amend, reword, squash, reorder, or drop.
-- New work that is the same logical change as an unpushed commit MUST fold into it, never a new standalone commit: `--fixup=<sha>`/`--squash=<sha>` + autosquash per `<base-dir>/tidy.md`,
+- New work that is the same logical change as an unpushed commit MUST fold into it, never a new standalone commit: `--fixup=<sha>`/`--squash=<sha>` + autosquash per `{{SKILL_DIR}}/tidy.md`,
   never `--amend`; autosquash only if every commit above the target is yours. Exception: the overlap is coincidental.
 - Same logical change also covers same-topic-different-angle, not just a bug fix - MUST fold it immediately: `--squash=<target>` when directly correcting (keeps both messages),
   `--fixup=<target>` for another angle (keeps the better message).
@@ -48,7 +48,7 @@ Before making a commit, MUST tell the user: "I am following the predefined git r
 
 ## Amending non-HEAD commits
 
-To squash, fixup, reorder, reword, or drop unpushed commits, MUST read and follow `<base-dir>/tidy.md`.
+To squash, fixup, reorder, reword, or drop unpushed commits, MUST read and follow `{{SKILL_DIR}}/tidy.md`.
 
 ## Checking for uncommitted/unpushed changes across repos
 
@@ -56,7 +56,7 @@ The co-located `check_repos.py` sweeps every named workspace root for uncommitte
 MAY use it to check outstanding changes or confirm a repo is clean before ending a session:
 
 ```bash
-python3 "<base-dir>/check_repos.py" [--workspace <path>]
+python3 "{{SKILL_DIR}}/check_repos.py" [--workspace <path>]
 ```
 
 MUST pass `--workspace` once per extra touched repo root (default: cwd). It auto-adds prompt/skill source repos (via `llm-prompts source <agent>`).

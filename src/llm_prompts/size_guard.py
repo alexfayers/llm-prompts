@@ -49,6 +49,7 @@ from .install import (
     prompts_dir,
 )
 from .render_template import (
+    MEASURED_SKILL_DIR,
     _read_text,
     find_unreplaced_variables,
     parse_frontmatter,
@@ -453,7 +454,10 @@ def _iter_skill_artifacts(
             package's own.
     """
     candidate_dirs = [root / "shared" / "skills", root / target / "skills"]
-    variables = _builtin_skill_vars(_own_vars_path(target, vars_root))
+    variables = {
+        **_builtin_skill_vars(_own_vars_path(target, vars_root)),
+        "SKILL_DIR": MEASURED_SKILL_DIR,
+    }
 
     def gate(skill_dir: Path) -> bool:
         skill_md = skill_dir / "SKILL.md"

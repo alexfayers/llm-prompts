@@ -14,7 +14,7 @@ Run the co-located scanner against the target directory (default: the current
 workspace root):
 
 ```bash
-python3 "<base-dir>/find_todos.py" [root]
+python3 "{{SKILL_DIR}}/find_todos.py" [root]
 ```
 
 It prints JSON:

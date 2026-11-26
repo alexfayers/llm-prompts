@@ -244,6 +244,10 @@ def substitute_variables(content: str, variables: dict[str, str]) -> str:
     return _compile_template(content).render(variables)
 
 
+MEASURED_SKILL_DIR = "<skill-dir>"
+"""Stand-in for ``{{SKILL_DIR}}`` when measuring a skill, whose installed path varies."""
+
+
 def render_skill_part(part: str, variables: dict[str, str]) -> str:
     """Render a skill part, keeping its final newline.
 

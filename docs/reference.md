@@ -40,7 +40,7 @@ llm-prompts contribute list|sync|update|ready  # keep each worktree branch in sy
 - Skills are directories with a `SKILL.md` the agent reads before a specific kind of task. They are symlinked, so source edits show up immediately. A skill with `inject_at_start: true` in its `metadata` frontmatter is injected as a `Startup block` by the cline-hooks `SkillStartupBlocks` plugin at the start of a main session.
 - Agents are subagent definitions: markdown files with YAML frontmatter. Files in `shared/agents/` go to Claude Code and Pi, files in `claude-code/agents/` go to Claude Code, with template variables substituted.
 
-Shared files are Jinja2 templates, with variables from each agent's `vars.json`. For example `{{RULE_FILES}}` becomes "steering files" for Kiro and "AGENTS.md" for Codex. Text can vary per agent with `{% if AGENT == "pi" %}`, and `has_command("herdr")` is true where that command is on PATH at install time. Put each block tag on its own line. A placeholder with no value is left as `{{NAME}}` and reported as unreplaced. A template with invalid syntax is skipped by `install` and fails `check`.
+Shared files are Jinja2 templates, with variables from each agent's `vars.json`. For example `{{RULE_FILES}}` becomes "steering files" for Kiro and "AGENTS.md" for Codex. Text can vary per agent with `{% if AGENT == "pi" %}`, and `has_command("herdr")` is true where that command is on PATH at install time. In a skill, `{{SKILL_DIR}}` becomes the skill's installed directory. Put each block tag on its own line. A placeholder with no value is left as `{{NAME}}` and reported as unreplaced. A template with invalid syntax is skipped by `install` and fails `check`.
 
 Pi also gets extensions, seeded config and per-role rules. See [pi.md](pi.md).
 

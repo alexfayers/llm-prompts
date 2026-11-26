@@ -12,7 +12,7 @@
 1. **Run the safety gate**:
 
    ```bash
-   python3 "<base-dir>/inspect_range.py" [base]
+   python3 "{{SKILL_DIR}}/inspect_range.py" [base]
    ```
 
    `base` optional (default: upstream `@{u}`, falling back to `--root` with no upstream).
@@ -32,7 +32,7 @@
    - **Reorder, drop, or combine folding with reordering**: `--autosquash` cannot reorder or drop, use the plan-driven script instead:
 
      ```bash
-     python3 "<base-dir>/rewrite_range.py" <plan.json> [base | --root]
+     python3 "{{SKILL_DIR}}/rewrite_range.py" <plan.json> [base | --root]
      ```
 
      Plan is a JSON array, oldest-first, final top-to-bottom rebase order: `[{"sha": "...", "verb": "pick"}, {"sha": "...", "verb": "squash", "message": "final subject"}, ...]`.

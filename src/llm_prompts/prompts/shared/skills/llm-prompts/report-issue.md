@@ -1,6 +1,6 @@
 # Reporting an issue
 
-Feature requests and ideas: `<base-dir>/request.md`.
+Feature requests and ideas: `{{SKILL_DIR}}/request.md`.
 
 ## Target repo
 

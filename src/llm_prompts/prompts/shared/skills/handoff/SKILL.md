@@ -5,7 +5,7 @@ description: Write a handoff doc for a fresh session to resume work. Use when en
 
 # handoff
 
-If the invocation names a part (a sibling `<part>.md`, e.g. `live`), MUST read `<base-dir>/<part>.md` first.
+If the invocation names a part (a sibling `<part>.md`, e.g. `live`), MUST read `{{SKILL_DIR}}/<part>.md` first.
 
 Write one self-contained, minimal handoff doc a new session can resume from with no prior context.
 Then stop the work it hands over, unless the doc compacts the context or goes to an explicitly parallel session.
@@ -22,7 +22,7 @@ When starting a new session, {% if has_command("herdr") %}MUST follow the next p
 
 {% endif %}
 {% if has_command("herdr") %}
-Inside Herdr (`test "${HERDR_ENV:-}" = 1`),{% if AGENT == "pi" %} when starting a new session,{% endif %} MUST send the doc live per `<base-dir>/live.md` and omit Step 0,
+Inside Herdr (`test "${HERDR_ENV:-}" = 1`),{% if AGENT == "pi" %} when starting a new session,{% endif %} MUST send the doc live per `{{SKILL_DIR}}/live.md` and omit Step 0,
 unless the user asks for a disk handoff or has opted out.{% if AGENT != "pi" %} Otherwise:{% endif %}
 
 {% endif %}

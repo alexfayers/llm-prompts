@@ -38,6 +38,7 @@ from .install import (
     content_subdirs,
 )
 from .render_template import (
+    MEASURED_SKILL_DIR,
     _read_text,
     parse_frontmatter,
     render_skill_part,
@@ -159,7 +160,10 @@ def _counted_files(
             yield name, src, LoadedBytes.of(content)
         return
 
-    variables = _builtin_skill_vars(vars_path)
+    variables = {
+        **_builtin_skill_vars(vars_path),
+        "SKILL_DIR": MEASURED_SKILL_DIR,
+    }
 
     def gate(skill_dir: Path) -> bool:
         skill_md = skill_dir / "SKILL.md"

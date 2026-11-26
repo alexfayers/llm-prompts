@@ -31,7 +31,7 @@ For any score below 10, MUST note how to improve it.
 MUST run the scoring script with your scores and evidence. MUST pipe the JSON via stdin, not as a shell argument:
 
 ```bash
-python3 "<base-dir>/score.py" <<'JSON'
+python3 "{{SKILL_DIR}}/score.py" <<'JSON'
 <json>
 JSON
 ```

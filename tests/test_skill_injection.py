@@ -67,7 +67,7 @@ class TestSkillStartupBlocks:
         assert blocks[0].replaces == "load the `alpha` skill"
         assert blocks[0].order == 10
 
-    def test_base_dir_placeholder_becomes_the_skill_directory(
+    def test_base_dir_placeholder_in_an_unrendered_skill_becomes_the_skill_directory(
         self, tmp_path: Path, install: Callable[[list[Path]], None]
     ) -> None:
         flagged = "metadata:\n  inject_at_start: true\n"

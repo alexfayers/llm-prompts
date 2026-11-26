@@ -1,6 +1,6 @@
 # Requesting a feature
 
-Bugs and annoyances: `<base-dir>/report-issue.md`.
+Bugs and annoyances: `{{SKILL_DIR}}/report-issue.md`.
 
 ## Target repo
 

@@ -5,7 +5,7 @@ description: Edit, install or configure llm-prompts, or open a PR, report a bug 
 
 # llm-prompts
 
-MUST read and follow only the part the task needs, from `<base-dir>` (this skill's directory). If invoked with text naming a part (e.g. `setup`), read that part's file before anything else.
+MUST read and follow only the part the task needs, from `{{SKILL_DIR}}` (this skill's directory). If invoked with text naming a part (e.g. `setup`), read that part's file before anything else.
 Otherwise pick the part matching the task.
 
 - `edit.md` - create, edit or delete a rule, skill, workflow or agent source under `src/llm_prompts/prompts/`.
