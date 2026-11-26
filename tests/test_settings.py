@@ -202,3 +202,24 @@ def test_in_a_terminal_invalid_toml_exits_without_the_editor(
 
     assert isinstance(result, str)
     assert "is not valid TOML" in result
+
+
+def test_saving_changed_tools_or_plugins_says_how_to_install_them(
+    isolated_config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from llm_prompts.settings_app import SettingsApp
+
+    def saved(app: SettingsApp) -> bool:
+        app.entries_changed = True
+        return True
+
+    monkeypatch.setattr("llm_prompts.settings._has_terminal", lambda: True)
+    monkeypatch.setattr(SettingsApp, "run", saved)
+
+    assert _run(monkeypatch) in (None, 0)
+
+    assert capsys.readouterr().out == (
+        "Run `llm-prompts install <agent>` to install the changed tools and plugins.\n"
+    )

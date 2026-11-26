@@ -18,7 +18,7 @@ llm-prompts setup                              # install the tools in config.tom
 llm-prompts setup <tool>                       # reinstall the shared environment from scratch
 llm-prompts setup --dry-run                    # show the commands without running them
 llm-prompts setup --init                       # create the starter config
-llm-prompts settings                           # edit config.toml's settings in a terminal, review the changed settings and save them with a backup. Needs the `llm-prompts[tui]` extra
+llm-prompts settings                           # edit config.toml's settings, per-repo review limits, tools and plugins in a terminal, review the changes and save them with a backup. Needs the `llm-prompts[tui]` extra
 llm-prompts settings --check                   # print config.toml's tools, plugins and settings with their defaults, and exit 1 on errors
 llm-prompts benchmark                          # compare two llm-prompts refs by running agents through scenarios
 llm-prompts check                              # check prompt sizes and pi extension headers

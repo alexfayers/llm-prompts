@@ -199,3 +199,134 @@ def test_keys_open_the_review_and_save(isolated_config_dir: Path) -> None:
     assert (
         path.read_text(encoding="utf-8") == f"{_TOOL}\n[telemetry]\nenabled = false\n"
     )
+
+
+def _save(*steps: tuple[str, str]) -> None:
+    """Run the editor, type ``steps`` of (widget id, text), then review and save."""
+
+    async def edit() -> None:
+        app = SettingsApp(load_doc())
+        async with app.run_test() as pilot:
+            for widget_id, text in steps:
+                app.query_one(widget_id, Input).value = text
+            await pilot.press("ctrl+s", "ctrl+s")
+        assert app.return_value is True
+
+    asyncio.run(edit())
+
+
+def test_editing_the_per_repo_review_limits_keeps_the_other_keys(
+    isolated_config_dir: Path,
+) -> None:
+    path = _write_config(
+        isolated_config_dir,
+        f'{_TOOL}[reviews]\nmax_in_flight = 3\n[reviews.repos]\n"o/a" = 1\n"o/b" = 2\n',
+    )
+
+    assert "reviews.repos = o/a=4, o/c=2" in _review(("#reviews-repos", "o/a=4, o/c=2"))
+    _save(("#reviews-repos", "o/a=4, o/c=2"))
+
+    assert path.read_text(encoding="utf-8") == (
+        f'{_TOOL}[reviews]\nmax_in_flight = 3\n[reviews.repos]\n"o/a" = 4\n"o/c" = 2\n'
+    )
+
+
+def test_a_per_repo_limit_that_is_not_a_number_stays_on_the_editor(
+    isolated_config_dir: Path,
+) -> None:
+    _write_config(isolated_config_dir, _TOOL)
+
+    screen = _review(("#reviews-repos", "o/a=x"))
+
+    assert "reviews.repos must be scope=number pairs" in screen
+    assert "save disabled" not in screen
+
+
+_TWO_TOOLS = (
+    '[[tools]]\nname = "a"  # first\nsource = "https://github.com/example/a.git"\n\n'
+    '[[tools]]\nname = "b"\nsource = "https://github.com/example/b.git"\n'
+    'token = "hunter2"\n\n[update]\nauto = true\n'
+)
+
+
+def _edit_entries(table: str, *steps: tuple[str, str]) -> str:
+    """Open the ``table`` screen, run ``steps`` and open the review.
+
+    Each step is ("type", "<widget id>=<text>") or ("click", "<widget id>").
+    Returns the review's text.
+    """
+
+    async def edit() -> str:
+        app = SettingsApp(load_doc())
+        async with app.run_test(size=(160, 50)) as pilot:
+            await pilot.click(f"#{table}")
+            for action, arg in steps:
+                if action == "click":
+                    await pilot.click(arg)
+                else:
+                    widget_id, _, text = arg.partition("=")
+                    app.screen.query_one(widget_id, Input).value = text
+                await pilot.pause()
+            await pilot.press("escape")
+            await pilot.click("#review")
+            await pilot.pause()
+            text = "\n".join(str(s.render()) for s in app.screen.query(Static))
+            await pilot.press("ctrl+s")
+        return text
+
+    return asyncio.run(edit())
+
+
+def test_tools_can_be_edited_added_moved_and_removed(
+    isolated_config_dir: Path,
+) -> None:
+    path = _write_config(isolated_config_dir, _TWO_TOOLS)
+
+    screen = _edit_entries(
+        "tools",
+        ("type", "#tools-1-ref=v1.2.0"),
+        ("click", "#up-1"),
+        ("click", "#add"),
+        ("type", "#tools-2-name=c"),
+        ("type", "#tools-2-source=https://github.com/example/c.git"),
+        ("click", "#remove-1"),
+    )
+
+    assert "[[tools]] = b, c\nb: ref changed\nc: added" in screen
+    assert "hunter2" not in screen
+    assert "github.com" not in screen
+    assert path.read_text(encoding="utf-8") == (
+        '[[tools]]\nname = "b"\nsource = "https://github.com/example/b.git"\n'
+        'token = "hunter2"\nref = "v1.2.0"\n\n\n'
+        '[[tools]]\nname = "c"\nsource = "https://github.com/example/c.git"\n\n'
+        "[update]\nauto = true\n"
+    )
+
+
+def test_plugin_skills_are_saved_as_a_list_and_overrides_are_kept(
+    isolated_config_dir: Path,
+) -> None:
+    plugin = (
+        '[[plugins]]\nname = "p"\nsource = "https://github.com/example/p.git"\n'
+        '[plugins.frontmatter_overrides.s]\nkey = "v"\n'
+    )
+    path = _write_config(isolated_config_dir, f"{_TOOL}\n{plugin}")
+
+    screen = _edit_entries("plugins", ("type", "#plugins-0-skills=s, t"))
+
+    assert "[[plugins]] = p\np: skills changed" in screen
+    assert path.read_text(encoding="utf-8") == (
+        f'{_TOOL}\n[[plugins]]\nname = "p"\nsource = "https://github.com/example/p.git"\n'
+        'skills = ["s", "t"]\n\n[plugins.frontmatter_overrides.s]\nkey = "v"\n'
+    )
+
+
+def test_a_new_entry_without_a_source_blocks_the_save(
+    isolated_config_dir: Path,
+) -> None:
+    path = _write_config(isolated_config_dir, _TOOL)
+
+    screen = _edit_entries("plugins", ("click", "#add"), ("type", "#plugins-0-name=p"))
+
+    assert "[[plugins]] entry 1: source is invalid" in screen
+    assert path.read_text(encoding="utf-8") == _TOOL

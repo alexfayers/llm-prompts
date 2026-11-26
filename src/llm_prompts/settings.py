@@ -116,7 +116,11 @@ def run(*, check: bool) -> None:
         from .config_edit import load_doc
         from .settings_app import SettingsApp
 
-        SettingsApp(load_doc()).run()
+        app = SettingsApp(load_doc())
+        if app.run() and app.entries_changed:
+            print(
+                "Run `llm-prompts install <agent>` to install the changed tools and plugins."
+            )
         return
     config = read_config()
     print("\n".join(report(config)))
