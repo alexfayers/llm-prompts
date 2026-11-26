@@ -378,7 +378,6 @@ export default function (pi: ExtensionAPI) {
 	const configPath = path.join(getAgentDir(), CONFIG_FILE);
 	let timer: ReturnType<typeof setInterval> | undefined;
 	const told = new Set<string>();
-	let keptSignature = "";
 	let unreported: { message: string; level: "info" | "warning" }[] = [];
 
 	function tellOnce(ui: ExtensionContext["ui"], key: string, message: string, level: "info" | "warning"): void {
@@ -388,14 +387,9 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	function tellKept(ui: ExtensionContext["ui"], kept: Worktree[], listAll: boolean): void {
-		const signature = kept.map(describeWorktree).sort().join("\n");
-		if (!kept.length || (!listAll && signature === keptSignature)) {
-			keptSignature = signature;
-			return;
-		}
-		keptSignature = signature;
-		const message = listAll ? `pane-reaper kept worktrees: ${kept.map(describeWorktree).join("; ")}` : `pane-reaper kept ${kept.length} ${kept.length === 1 ? "worktree" : "worktrees"} (see /pane-reaper)`;
-		ui.notify(message, "info");
+		if (!kept.length) return;
+		if (listAll) ui.notify(`pane-reaper kept worktrees: ${kept.map(describeWorktree).join("; ")}`, "info");
+		else tellOnce(ui, "kept", `pane-reaper kept ${kept.length} ${kept.length === 1 ? "worktree" : "worktrees"} (see /pane-reaper)`, "info");
 	}
 
 	async function check(ui: ExtensionContext["ui"], listAll = false): Promise<number> {
@@ -415,7 +409,6 @@ export default function (pi: ExtensionAPI) {
 		}
 		unreported.push(...removals);
 		if (removals.length) {
-			keptSignature = kept.map(describeWorktree).sort().join("\n");
 			ui.notify(`pane-reaper removed ${removals.length} ${removals.length === 1 ? "worktree" : "worktrees"}, kept ${kept.length} (see /pane-reaper)`, removals.some(({ level }) => level === "warning") ? "warning" : "info");
 		} else tellKept(ui, kept, listAll);
 		return orphans.killed.length + candidates.length + kept.length;

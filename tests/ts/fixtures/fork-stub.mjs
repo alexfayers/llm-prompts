@@ -47,6 +47,12 @@ async function replyTo(text) {
 		return `OUTCOME done ref:rc-fork-${gate.split("/").pop()}`;
 	}
 	if (text.includes("STUB_REPORT")) return "OUTCOME done ref:rc-fork-x\nbody line";
+	if (text.includes("STUB_SWITCH")) {
+		const { worktree } = JSON.parse(readFileSync(handshake, "utf8"));
+		writeFileSync(`${worktree}/switched.txt`, "left behind");
+		execFileSync("git", ["-C", worktree, "switch", "-c", "elsewhere"]);
+		return "OUTCOME done ref:rc-fork-s";
+	}
 	if (text.includes("STUB_WRITE")) {
 		const { worktree } = JSON.parse(readFileSync(handshake, "utf8"));
 		body = `${readFileSync(handshake, "utf8")}\n${text}\nworktreeEnv ${process.env.PI_CONTEXT_WORKTREE}\ncwd ${process.cwd()}`;

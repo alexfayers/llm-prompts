@@ -26,12 +26,14 @@ test("the widget follows a background fork's events and clears when it ends", ()
 	const rendered = (widgets.at(-1) as any)(undefined, paint).render(200);
 	assert.equal(rendered[0], "<dim>Background forks");
 	background.view.window = 1_000_000;
-	assert.equal(background.view.lines(66_000, paint)?.[1], "<accent>◑ <accent>*scout* <success>[reader] <dim>1m05s · 1 turn · feature-branch<dim> · ctx 43k/1M · <dim>cache 95%  <muted>bash: git diff --stat");
+	assert.equal(background.view.lines(66_000, paint)?.[1], "<accent>◑ <accent>*scout* <success>[reader] <dim>1m05s · 1 turn · feature-branch  <muted>bash: git diff --stat");
 	listeners.forEach((listener) => listener({ type: "message_end", message: { role: "assistant", content: [], usage: { input: 30_000, cacheRead: 10_000 } } }));
-	assert.match(background.view.lines(66_000, paint)?.[1] ?? "", /<error>cache 25%/);
+	assert.match(background.view.lines(66_000, paint)?.[1] ?? "", /<error> · cache 25%/);
+	listeners.forEach((listener) => listener({ type: "message_end", message: { role: "assistant", content: [], usage: { input: 100_000, cacheRead: 500_000 } } }));
+	assert.match(background.view.lines(66_000, paint)?.[1] ?? "", /<warning> · ctx 600k\/1M/);
 	assert.ok(background.view.lines(66_000, paint, 20)?.every((line) => line.length < 40));
 	registry.start(run({ id: "r2", name: "cold-one", model: "prov/anthropic.claude-opus-5-5:medium" }));
-	assert.match(background.view.lines(66_000, paint)?.[2] ?? "", /<muted>\[cold claude-opus-5-5:medium\]/);
+	assert.match(background.view.lines(66_000, paint)?.[2] ?? "", /<muted>\[opus\]/);
 	registry.update("r2", { state: "done" });
 	registry.update("r1", { state: "done" });
 	assert.equal(widgets.at(-1), undefined);
@@ -46,9 +48,9 @@ test("finished forks fold into one summary row, each count in its outcome's colo
 	states.forEach((state, index) => registry.start(run({ id: `f${index}`, name: `f${index}`, state, lastRequestAt: 1_000 + index * 10_000, unread: "r" })));
 	const lines = view.lines(62_000) ?? [];
 	assert.equal(lines.length, 5);
-	assert.equal(lines[4], "\u2713 8 done \u00b7 2 found-it \u00b7 1 blocked \u00b7 1 failed \u00b7 cache 4-6m left");
+	assert.equal(lines[4], "\u2713 8 done \u00b7 2 found-it \u00b7 1 blocked \u00b7 1 failed \u00b7 cache 4-6m");
 	const paint = { fg: (color: string, text: string) => `<${color}>${text}`, bold: (text: string) => `*${text}*` };
-	assert.equal(view.lines(62_000, paint)?.[4], "<dim>\u2713 <success>8 done<dim> \u00b7 <success>2 found-it<dim> \u00b7 <warning>1 blocked<dim> \u00b7 <error>1 failed<dim> \u00b7 cache 4-6m left");
+	assert.equal(view.lines(62_000, paint)?.[4], "<dim>\u2713 <success>8 done<dim> \u00b7 <success>2 found-it<dim> \u00b7 <warning>1 blocked<dim> \u00b7 <error>1 failed<dim> \u00b7 cache 4-6m");
 });
 
 test("a widget whose session ended stops listening, so a reload's stale context cannot break the next fork", () => {
@@ -72,7 +74,7 @@ test("a read blocked fork leaves the widget once its asks are answered, but stay
 	assert.deepEqual(view.lines(2_000, paint, Number.POSITIVE_INFINITY, asks)?.slice(1).map((line) => line.split(" ")[1]), ["pending"]);
 	registry.update("b2", { unread: "r" });
 	registry.start(run({ id: "d1", name: "unasked", state: "done", lastRequestAt: 1_000, unread: "r" }));
-	assert.deepEqual(view.lines(2_000, paint, Number.POSITIVE_INFINITY, asks)?.slice(1), ["\u25cf pending [reader] blocked \u00b7 cache 5m left", "\u2713 1 done \u00b7 cache 5m left"]);
+	assert.deepEqual(view.lines(2_000, paint, Number.POSITIVE_INFINITY, asks)?.slice(1), ["\u25cf pending [reader] blocked \u00b7 cache 5m", "\u2713 1 done \u00b7 cache 5m"]);
 });
 
 test("a fork leaves the widget once its result reaches main, whatever its outcome, and returns while an aborted run re-announces it", () => {
@@ -112,10 +114,10 @@ test("forks started from the same source show it, and a fork with none shows not
 	fork({ id: "e", name: "review", state: "done", model: undefined, from: undefined, lastRequestAt: 60_000, unread: "r" });
 	assert.deepEqual(view.lines(125_000), [
 		"Background forks",
-		"◓ api-scan [cold cheap:low] 1m45s · 0 turns · from stub-ab12",
-		"◓ docs-scan [cold cheap:low] 1m45s · 0 turns · from stub-ab12",
+		"◓ api-scan [cheap:low] 1m45s · 0 turns · from stub-ab12",
+		"◓ docs-scan [cheap:low] 1m45s · 0 turns · from stub-ab12",
 		"◓ fix-widget [writer] 2m00s · 0 turns · fix-widget",
-		"\u2713 1 done \u00b7 1 failed \u00b7 cache 4m left",
+		"\u2713 1 done \u00b7 1 failed \u00b7 cache 4m",
 	]);
 });
 
@@ -147,4 +149,18 @@ test("the widget scans the session for open asks once per branch change, not per
 	view.refresh();
 	assert.equal(scans, 2);
 	view.release();
+});
+
+test("a fork row with a long command fits in 100 columns and shows the tool with a 40 character command", () => {
+	const registry = new Registry();
+	const view = new LiveView(registry);
+	const listeners: ((record: any) => void)[] = [];
+	const background = new Background({ sendMessage: () => undefined } as any, registry);
+	background.view = view;
+	registry.start(run({ id: "w", name: "w-795", model: "global.anthropic.claude-sonnet-5-5", target: "/repo/worktrees/audit-npm-log" }));
+	background.attach("w", { steer: async () => undefined, watch: (listener) => (listeners.push(listener), () => undefined) });
+	listeners.forEach((listener) => listener({ type: "tool_execution_start", toolName: "bash", args: { command: "git switch -c alexfayers/audit-npm-log -q && git add -A && git commit -m x" } }));
+	const row = view.lines(276_000)?.[1] ?? "";
+	assert.equal(row, "◐ w-795 [sonnet] 4m35s · 0 turns · audit-npm-log  bash: git switch -c alexfayers/audit-npm-lo...");
+	assert.ok(row.length <= 100);
 });

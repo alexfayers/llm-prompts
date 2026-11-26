@@ -409,8 +409,21 @@ const readText = (file: string) => {
 	}
 };
 
-function describeLanding(landing: Landing, tree: Worktree): string {
-	if (landing.state === "escalated") return `escalated: ${landing.reason}\n${landing.removed ? "worktree removed: clean" : `worktree kept at ${tree.path} on branch ${tree.branch}`}`;
+const BRIEF_CHARS = 40;
+
+/** A landing's escalation reason in a few whole words without paths, such as `fork switched branch`. */
+const briefReason = (reason = ""): string => {
+	if (/^the worktree left /.test(reason)) return "fork switched branch";
+	const words = reason.split(/[:;]/)[0].split(/\s+/).filter((word) => word && !word.includes("/"));
+	return words.reduce((text, word) => (`${text} ${word}`.trim().length <= BRIEF_CHARS ? `${text} ${word}`.trim() : text), "");
+};
+
+/** A landing as one short phrase, or with the worktree path and the full reason when `full`. */
+function describeLanding(landing: Landing, tree: Worktree, full = false): string {
+	if (landing.state === "escalated") {
+		if (landing.removed) return full ? `escalated: ${landing.reason}\nworktree removed: clean` : "worktree removed: clean";
+		return full ? `escalated: ${landing.reason}\nworktree kept at ${tree.path} on branch ${tree.branch}` : `kept worktree: ${briefReason(landing.reason)}`;
+	}
 	return [landing.sha ? `landed ${landing.sha.slice(0, 9)}` : "nothing to land", landing.note].filter(Boolean).join("; ");
 }
 
@@ -510,7 +523,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			const merge = merged.landing && tree ? `[merge: ${describeLanding(merged.landing, tree)}]` : tree && (await dropIfClean(tree)) ? "[merge: worktree removed: clean]" : undefined;
 			const note = [merge, next !== undefined && !proceeds ? `[queued task kept: ${next}]` : undefined].filter(Boolean).join(" ") || undefined;
 			background.finish(ctx, runId, end, turn.error ?? turn.reply ?? text, note);
-			pi.appendEntry("result-cap", { ref: end.ref, text });
+			pi.appendEntry("result-cap", { ref: end.ref, text: merged.landing?.state === "escalated" && tree ? `${text}\n[merge: ${describeLanding(merged.landing, tree, true)}]` : text });
 			if (next !== undefined && proceeds) await continueRun(ctx, name, next, `next-${newRunId()}`);
 		};
 		const onFail = async (error: unknown) => {

@@ -929,7 +929,7 @@ describe("fork tool", () => {
 			await fork({ task: "STUB_REPORT", name: "warm" });
 			await fork({ task: "STUB_REPORT", name: "warmer" });
 			const { tool } = await start({ task: "STUB_REPORT", name: "next" });
-			assert.match(tool.content[0].text, /^started fork next \(background\)\nfork warmer: 216 ctx, cache \d+m left\nfork warm: 216 ctx, cache \d+m left\nfork_resume\(\{name, task\}\) is cheaper than a fresh fork$/);
+			assert.match(tool.content[0].text, /^started fork next \(background\)\nfork warmer: 216 ctx, cache \d+m\nfork warm: 216 ctx, cache \d+m\nfork_resume\(\{name, task\}\) is cheaper than a fresh fork$/);
 		});
 
 		test("the warm-fork hint stays silent when a fresh fork reads less cached context than the finished fork holds", async () => {
@@ -944,7 +944,7 @@ describe("fork tool", () => {
 			const cheap = await start({ task: "STUB_REPORT", name: "cheapcold", model: "prov/cheap" });
 			assert.equal(cheap.tool.content[0].text, "started cold worker cheapcold on prov/cheap (no shared context) (background)");
 			const dear = await start({ task: "STUB_REPORT", name: "dearcold", model: "prov/dear" });
-			assert.match(dear.tool.content[0].text, /\nfork lead: 216 ctx, cache \d+m left\n/);
+			assert.match(dear.tool.content[0].text, /\nfork lead: 216 ctx, cache \d+m\n/);
 		});
 
 		test("the warm-fork hint prices a finished cold worker at its own model's rates", async () => {
@@ -1127,7 +1127,7 @@ describe("fork tool", () => {
 			await tools.fork_cancel.execute("c", { name: "stopped" }, undefined, undefined, ctx);
 			assert.equal((await tools.fork_resume.execute("r", { name: "stopped", task: `STUB_INSPECT STUB_LIFE:${life}` }, undefined, undefined, ctx)).content[0].text, "continued fork stopped (background)");
 			await eventually(() => appended.length > 0);
-			const seen = JSON.parse((appended.at(-1)![1] as { text: string }).text.replace(/^echo: /, ""));
+			const seen = JSON.parse((appended.at(-1)![1] as { text: string }).text.split("\n")[0].replace(/^echo: /, ""));
 			assert.equal(seen.handshake.worktree, worktree);
 			assert.equal(seen.args[seen.args.indexOf("--session") + 1], path.join(files!, "seed.jsonl"));
 			await eventually(() => !isLive(run()));
@@ -1201,6 +1201,14 @@ describe("fork tool", () => {
 			const { tool } = await fork({ task: "STUB_WRITE", role: "writer", name: "badtier", model: "nosuch" }, repo);
 			assert.match(String(tool), /unknown model tier nosuch/);
 			assert.equal(forkDirs().some((dir) => String(dir).includes("badtier")), false);
+		});
+
+		test("a writer that switches branch keeps its worktree, with a short digest phrase and the full reason in the stored result", async () => {
+			const { tool, appended } = await fork({ task: "STUB_SWITCH", role: "writer", name: "switcher" }, repo);
+			assert.match(tool.details.digest, /\[merge: kept worktree: fork switched branch\]/);
+			assert.doesNotMatch(tool.details.digest, /worktrees\//);
+			const stored = (appended.find(([type]) => type === "result-cap")?.[1] as { text: string }).text;
+			assert.match(stored, /escalated: the worktree left fork\/switcher for refs\/heads\/elsewhere\nworktree kept at \S+switcher on branch fork\/switcher/);
 		});
 
 		test("a cold writer starts in its worktree and lands through the same queue", async () => {
