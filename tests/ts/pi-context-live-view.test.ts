@@ -7,7 +7,7 @@ import { Registry, type Run } from "../../src/llm_prompts/prompts/pi/extensions/
 delete process.env.PI_CONTEXT_CHILD;
 delete process.env.PI_CACHE_RETENTION;
 
-const run = (patch: Partial<Run> = {}): Run => ({ id: "r1", name: "scout", role: "reader", background: true, state: "running", task: "t", startedAt: 1_000, ...patch });
+const run = (patch: Partial<Run> = {}): Run => ({ id: "r1", name: "scout", role: "reader", state: "running", task: "t", startedAt: 1_000, ...patch });
 
 test("the widget follows a background fork's events and clears when it ends", () => {
 	const registry = new Registry();

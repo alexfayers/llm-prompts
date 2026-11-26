@@ -15,7 +15,7 @@ const PARAMETERS = Type.Object({
 const CONTINUE_MESSAGE = "Directory changed. Continue the task.";
 // Returns the reason the session cannot move to target, or undefined where it can.
 function checkTarget(ctx: ExtensionContext, target: string): string | undefined {
-	const forks = (forkRegistry()?.live() ?? []).filter((run) => run.background).map((run) => run.name);
+	const forks = (forkRegistry()?.live() ?? []).map((run) => run.name);
 	if (forks.length > 0) return `Cannot move while background forks ${forks.join(", ")} are still running. Wait for them to finish, or stop them with fork_cancel.`;
 	if (!ctx.sessionManager.getSessionFile()) return "The session is not saved, so it cannot move.";
 	if (target === ctx.cwd) return `Already in ${target}`;

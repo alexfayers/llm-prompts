@@ -3,7 +3,7 @@ import { describe, test } from "node:test";
 import { type Run } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 import { digestLine, pinForkAsks, wakeReason } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/wake.ts";
 
-const run = (patch: Partial<Run> = {}): Run => ({ id: "a", name: "scan", role: "reader", background: true, state: "done", task: "t", outcome: "done", ref: "rc-fork-scan", startedAt: 1, ...patch });
+const run = (patch: Partial<Run> = {}): Run => ({ id: "a", name: "scan", role: "reader", state: "done", task: "t", outcome: "done", ref: "rc-fork-scan", startedAt: 1, ...patch });
 
 describe("wakeReason", () => {
 	test("every finished run wakes main, while a live or cancelled run does not", () => {

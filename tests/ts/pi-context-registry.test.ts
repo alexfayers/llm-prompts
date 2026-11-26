@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { Registry, registryOf, type Run } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 
-const run = (id: string, patch: Partial<Run> = {}): Run => ({ id, name: id, role: "reader", background: true, state: "running", task: "t", startedAt: 1, ...patch });
+const run = (id: string, patch: Partial<Run> = {}): Run => ({ id, name: id, role: "reader", state: "running", task: "t", startedAt: 1, ...patch });
 
 describe("Registry", () => {
 	test("tracks runs, lists the live ones and tells listeners about each change", () => {

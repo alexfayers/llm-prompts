@@ -154,8 +154,8 @@ export class LiveView {
 
 	/** The widget lines, or undefined when no background fork is live or still cached. */
 	lines(now = Date.now(), paint: Paint = PLAIN, width = Number.POSITIVE_INFINITY, openIds: string[] = []): string[] | undefined {
-		const live = this.registry.live().filter((run) => run.background);
-		const finished = this.registry.all().filter((run) => run.background && FINISHED.includes(run.state));
+		const live = this.registry.live();
+		const finished = this.registry.all().filter((run) => FINISHED.includes(run.state));
 		const prefixes = askPrefixes(openIds);
 		const asking = finished.filter((run) => forkAsking(prefixes, run));
 		const unread = finished.filter((run) => run.unread && !this.received(run) && !asking.includes(run));
@@ -202,7 +202,7 @@ export class LiveView {
 						}
 					: undefined,
 			);
-			this.tick(this.registry.live().some((run) => run.background));
+			this.tick(this.registry.live().length > 0);
 		};
 		this.unbind?.();
 		this.unbind = this.registry.onChange(() => this.render?.());

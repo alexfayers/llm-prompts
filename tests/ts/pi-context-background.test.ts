@@ -9,7 +9,7 @@ import { Background, registerBackgroundHooks, useBoardCapacity } from "../../src
 import { LiveView } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/live-view.ts";
 import { Registry, type Run } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 
-const run = (id: string, patch: Partial<Run> = {}): Run => ({ id, name: id, role: "reader", background: true, state: "running", task: "t", startedAt: 1, ...patch });
+const run = (id: string, patch: Partial<Run> = {}): Run => ({ id, name: id, role: "reader", state: "running", task: "t", startedAt: 1, ...patch });
 const done = (code = "done") => ({ state: "done" as const, outcome: code, ref: "rc" });
 
 useEnv({ PI_CONTEXT_RUN_ID: undefined, PI_CONTEXT_ROLE: undefined });
@@ -284,9 +284,8 @@ describe("hooks", () => {
 		});
 	});
 
-	test("a background run's every change is saved as an entry, and only a background run's", () => {
+	test("a run's every change is saved as an entry", () => {
 		handlers.session_start({ reason: "startup" }, session());
-		registry.start(run("c", { background: false }));
 		registry.start(run("a"));
 		registry.update("a", { state: "landing" });
 		assert.deepEqual(appended.map(([type, data]) => [type, data.id, data.state]), [["pi-context-run", "a", "running"], ["pi-context-run", "a", "landing"]]);
@@ -302,7 +301,6 @@ describe("hooks", () => {
 			run("unread", { state: "done", unread: "u" }),
 			run("asked", { state: "done" }),
 			run("warm", { state: "done", files, lastRequestAt: Date.now() }),
-			run("local", { state: "done", background: false }),
 		));
 		fs.rmSync(files, { recursive: true });
 		assert.deepEqual(registry.all().map((r) => r.id), ["unread", "asked", "warm"]);

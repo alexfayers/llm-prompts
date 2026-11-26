@@ -292,7 +292,6 @@ describe("fork tool", () => {
 		const pending = new Promise<string>((resolve) => (written = resolve));
 		const summarize = () => (calls++, pending);
 		const { tool, tools, ctx, appended, sent } = await start({ task: "STUB_INSPECT", name: "big1" }, process.cwd(), undefined, undefined, WARM_FORK_MAX_TOKENS + 1, summarize);
-		assert.equal(tool.details.background, true);
 		assert.equal(registryOf().all().find((run) => run.name === "big1")?.state, "running");
 		const second = tools.fork.execute("call-id", { task: "STUB_INSPECT", name: "big2" }, undefined, undefined, ctx);
 		await new Promise((resolve) => setTimeout(resolve, 50));
@@ -711,7 +710,6 @@ describe("fork tool", () => {
 		test("returns at once and wakes main with the result when the run ends", async () => {
 			const { tool, sent, appended } = await start({ task: "STUB_REPORT", name: "bg" });
 			assert.equal(tool.content[0].text, "started fork bg (background)");
-			assert.equal(registryOf().all().find((run) => run.name === "bg")?.background, true);
 			await eventually(() => sent.length > 0);
 			assert.deepEqual(sent, [[{ customType: "pi-context-results", content: "[fork bg done] body line ref rc-fork-bg-call-id\n0 forks still running.", display: true }, { deliverAs: "steer", triggerTurn: true }]]);
 			assert.equal(registryOf().all().find((run) => run.name === "bg")?.state, "done");
@@ -1235,7 +1233,7 @@ describe("fork tool", () => {
 				const files = fs.mkdtempSync(path.join(agentDir, "reload-"));
 				const previous = process.env.PI_CONTEXT_RUN_ID;
 				process.env.PI_CONTEXT_RUN_ID = "team1";
-				const lost = { role: "reader", background: true, state: "lost", task: "t", files, startedAt: 1, endedBy: "reload", queued: { message: "again", resume: false } } satisfies Omit<Run, "id" | "name">;
+				const lost = { role: "reader", state: "lost", task: "t", files, startedAt: 1, endedBy: "reload", queued: { message: "again", resume: false } } satisfies Omit<Run, "id" | "name">;
 				registryOf().start({ ...lost, id: "mine1", name: "mine" });
 				registryOf().start({ ...lost, id: "theirs1", name: "theirs" });
 				registryOf().update("theirs1", { owner: "other" });
@@ -1255,7 +1253,7 @@ describe("fork tool", () => {
 			test("a team cannot resume or continue a team", async () => {
 				const files = fs.mkdtempSync(path.join(agentDir, "nested-"));
 				fs.writeFileSync(path.join(files, "seed.jsonl"), "{}\n");
-				registryOf().start({ id: "nested1", name: "nested", role: "team", background: true, state: "done", task: "t", files, startedAt: 1 });
+				registryOf().start({ id: "nested1", name: "nested", role: "team", state: "done", task: "t", files, startedAt: 1 });
 				const { tools, ctx } = await start({ task: "STUB_INSPECT", name: "unused" }, root);
 				await assert.rejects(tools.fork_resume.execute("c", { name: "nested", task: "again" }, undefined, undefined, ctx), /A team cannot start a team/);
 			});
