@@ -1007,6 +1007,9 @@ def read_config() -> dict[str, Any]:
     return config
 
 
+_NO_TOOLS_ERROR = "Config must contain at least one [[tools]] entry."
+
+
 def _load_config(config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Load and return the tools list from config, or from an already-read config."""
     if not config_path().exists():
@@ -1018,9 +1021,48 @@ def _load_config(config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         raise ExitReason("config_missing")
     tools = (read_config() if config is None else config).get("tools", [])
     if not isinstance(tools, list) or not tools:
-        print("Config must contain at least one [[tools]] entry.", file=sys.stderr)
+        print(_NO_TOOLS_ERROR, file=sys.stderr)
         raise ExitReason("config_no_tools")
     return tools
+
+
+def config_errors(config: dict[str, Any]) -> list[str]:
+    """Return every problem in a parsed config's tools and plugins.
+
+    Args:
+        config: The parsed config file.
+
+    Returns:
+        Human-readable error strings; an empty list means the config is valid.
+    """
+    from .plugins import _validate_plugins
+
+    tools = config.get("tools", [])
+    plugins = config.get("plugins", [])
+    shape_errors = _entry_shape_errors(tools, "tools") + _entry_shape_errors(
+        plugins, "plugins"
+    )
+    if shape_errors:
+        return shape_errors
+    errors = _validate_paths(tools) if tools else [_NO_TOOLS_ERROR]
+    return errors + _validate_plugins(plugins)
+
+
+def _entry_shape_errors(entries: Any, table: str) -> list[str]:
+    """Return the problems with an array of tables that needs a name and source in each."""
+    if not isinstance(entries, list):
+        return [f"[[{table}]] must be a list of tables"]
+    errors: list[str] = []
+    for number, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            errors.append(f"[[{table}]] entry {number} must be a table: {entry!r}")
+            continue
+        errors.extend(
+            f"[[{table}]] entry {number} needs a {key} string"
+            for key in ("name", "source")
+            if not isinstance(entry.get(key), str) or not entry[key].strip()
+        )
+    return errors
 
 
 def _validate_paths(tools: list[dict[str, Any]]) -> list[str]:

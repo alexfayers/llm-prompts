@@ -9,6 +9,7 @@ dependencies = [
     "jinja2>=3.1.6",
     "platformdirs>=4.11.7",
     "rich>=15.0.0",
+    "tomlkit>=0.15.3",
     "truststore>=0.10.5",
 ]
 

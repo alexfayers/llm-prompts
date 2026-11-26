@@ -17,6 +17,7 @@ Reason = Literal[
     "uv_missing",
     "config_missing",
     "config_invalid",
+    "config_changed",
     "config_no_tools",
     "config_exists",
     "invalid_tool_paths",
