@@ -13,7 +13,7 @@ All three repos' prompts trees go through `llm-prompts contribute` (`list`, `syn
 - MUST work in a `git worktree` on your own branch with its commits ahead of `origin/main`. Any number is allowed.
   `list` flags a worktree whose combined diff is over the line guideline in `yappy_limits.json`.
 - MUST start the worktree from `origin/main`. A change that needs another unmerged change in the same repo MUST go in that change's worktree and PR, never a stacked PR.
-  `sync` skips a branch holding another worktree's commits or other local `main` commits (`skipped: holds commits of <branch>`).
+  `sync` skips a branch holding another worktree's commits or other local `main` commits.
 - `sync --tool NAME --branch B` records the worktree, local only.
   `sync` copies it into local `main` as one squashed commit and pulls remote changes, never pushing or touching a PR.
 - `sync --tool NAME --why B "TEXT"` records the Why for B's PR, local only. MUST record it before `--ready`. `sync` skips a PR (nonzero exit) while a required template section is empty.
@@ -28,8 +28,8 @@ All three repos' prompts trees go through `llm-prompts contribute` (`list`, `syn
 ## Everything else
 
 - `llm-prompts contribute` works without gh given GH_TOKEN or GITHUB_TOKEN.
-- MUST keep each repo's primary checkout on `main`. MUST work in a `git worktree` on your own branch. MUST NOT use a fresh clone.
-- PRs come from worktrees via `llm-prompts contribute`. Every PR SHOULD target `main`. Link PRs across repos only with `sync --depends-on` (`TOOL:BRANCH` or `owner/repo#N`).
+- MUST keep each repo's primary checkout on `main`, work in a `git worktree` on your own branch, and never use a fresh clone.
+- Every PR SHOULD target `main`. Link PRs across repos only with `sync --depends-on` (`TOOL:BRANCH` or `owner/repo#N`).
   Sync writes the `Depends on` lines. MUST NOT copy another PR's commits, or add rebase notes.
 - Shared CI logic MUST live in llm-prompts. Other repos MUST import it, never copy it.
 - Check push access with `gh repo view --json viewerPermission`.
@@ -40,6 +40,7 @@ All three repos' prompts trees go through `llm-prompts contribute` (`list`, `syn
 
 ## Before opening
 
+- MUST set the issue's status per `{{SKILL_DIR}}/issue-rules.md`: `In progress` when a writer starts.
 - Run the target repo's `just`.
 - Changed rule/skill/workflow/agent files MUST stay within their prompt size budget. In llm-prompts, SHOULD link the user to CI's size-report comment after opening.
 - Before each push, MUST pass the repo's gate, then run the leak scan in a separate tool call. Manual PR branches MUST contain exactly one commit in `origin/main..HEAD`.

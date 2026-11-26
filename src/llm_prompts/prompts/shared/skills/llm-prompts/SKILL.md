@@ -11,5 +11,6 @@ Otherwise pick the part matching the task.
 - `edit.md` - create, edit or delete a rule, skill, workflow or agent source under `src/llm_prompts/prompts/`.
 - `setup.md` - run `llm-prompts setup`, `update` or `install`, change its config, or add an overlay, mcp-memory or cline-hooks.
 - `contribute.md` - open or update a PR in llm-prompts, cline-hooks or mcp-memory.
+- `issue-rules.md` - content, links and status rules for any issue. Read it with `report-issue.md`, `request.md` or when working an issue.
 - `report-issue.md` - report a bug in one of them as a GitHub issue.
 - `request.md` - request a feature in one of them as a GitHub issue.
