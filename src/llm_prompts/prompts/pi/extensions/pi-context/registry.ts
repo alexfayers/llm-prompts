@@ -65,6 +65,12 @@ export function sessionFileOf(files: string, cold: boolean): string | undefined 
 	return found.sort((a, b) => fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs).at(-1);
 }
 
+/** Set while a reload that the reload_now tool requested runs. */
+export const reloadRequested = (): boolean => Boolean((globalThis as any)[Symbol.for("llm-prompts.reload-now.requested")]);
+
+/** Whether a lost run's session is still there to continue, or it never started. */
+export const canResume = (run: Run): boolean => run.state === "lost" && run.background && Boolean(run.queued || (run.files && sessionFileOf(run.files, Boolean(run.model))));
+
 const REGISTRY_VERSION = 1;
 
 export class Registry {

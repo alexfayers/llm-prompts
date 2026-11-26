@@ -9,12 +9,12 @@ import { buildSessionContext, defineTool, generateSummary, getAgentDir, type Age
 import { Type } from "typebox";
 import { parseOutcome, projectResult } from "./outcome.ts";
 import { replyText } from "./reply.ts";
-import { Background, Slots } from "./background.ts";
+import { Background, RESULTS_TYPE, Slots } from "./background.ts";
 import { describeMain, LEAD_PREFIX_FILE, serveBridge, writeLeadPrefix, type BridgeOptions } from "./bridge.ts";
 import { createWorktree, dropIfClean, gitOut, land, restoreWorktree, resumeWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
 import { checkReadMcp, coldCard, expandHome, readHandshake, ROLES, withReadMcp, type ReadMcp, type Role } from "./roles.ts";
 import { findModel, tokens } from "./live-view.ts";
-import { cacheLeftMs, cacheText, FINISHED, isLive, registryOf, sessionFileOf, type Run, type RunState } from "./registry.ts";
+import { cacheLeftMs, cacheText, canResume, FINISHED, isLive, registryOf, reloadRequested, sessionFileOf, type Run, type RunState } from "./registry.ts";
 import type { ForkLimits } from "./cap.ts";
 import { RpcChild, type Turn, type UiAnswer, type UiRequest } from "./runner.ts";
 import { retainSession } from "./usage-sessions.ts";
@@ -283,9 +283,6 @@ const checkoutOf = (dir: string) => gitOut(dir, "rev-parse", "--show-toplevel").
 
 const sameDir = (a: string, b: string) => fs.realpathSync(a) === fs.realpathSync(b);
 
-/** Whether a lost run's session is still there to continue, or it never started. */
-export const canResume = (run: Run): boolean => run.state === "lost" && run.background && Boolean(run.queued || (run.files && sessionFileOf(run.files, Boolean(run.model))));
-
 /** Whether a finished run's session is still there to continue with a new task. */
 export const canContinue = (run: Run): boolean => FINISHED.includes(run.state) && Boolean(run.files && sessionFileOf(run.files, Boolean(run.model)));
 
@@ -428,6 +425,8 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		return running;
 	}
 	const slots = new Slots(maxLive);
+	/** The newest tool context of main, which runs the MCP calls of every fork. Shortcut: only the fork tools record it, upgrade when pi gives a session_start context an executeTool. */
+	let mainTools: ExtensionToolContext | undefined;
 
 	/** Starts the delegate of a registered run in the background, which reports its end to `background`. */
 	function startRun(ctx: ExtensionToolContext, run: { id: string; name: string; ref: string; role: Role; tree?: Worktree; target?: string; model?: string; files: string }, delegate: Pick<DelegateOptions, "entries" | "message" | "resume">) {
@@ -440,7 +439,8 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			merged.landing = await land({ tree, first: replyEvent(turn), privateNames: forkSettings(pi).privateNames });
 		});
 		const mcp = run.model || forkSettings(pi).mcpProxy === true ? async (tool: string, args: unknown) => {
-			const { result, isError } = await ctx.executeTool(tool, args, { signal: runSignal });
+			if (!mainTools) return { content: [{ type: "text" as const, text: "Main has not run a fork tool since its reload, so it cannot run this MCP call yet, so retry in a minute." }], isError: true };
+			const { result, isError } = await mainTools.executeTool(tool, args, { signal: runSignal });
 			return { content: result.content, details: result.details, structuredContent: result.structuredContent, isError };
 		} : undefined;
 		const keep = () => registry.get(runId)?.state === "lost";
@@ -488,6 +488,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			model: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9][\\w./:@-]*$", description: "Run as a cold worker on this model: provider/id (optionally :thinking) or a tier name such as sol or opus. Any model starts an empty session with no context and no prompt cache from you, so the task must be self-contained" })),
 		}),
 		async execute(toolCallId, params, signal, onUpdate, ctx): Promise<AgentToolResult<unknown>> {
+			mainTools = ctx;
 			if (process.env.PI_CONTEXT_CHILD) throw new Error("Only the top-level session can fork.");
 			if (!ctx.model) throw new Error("Cannot fork without a model.");
 			if (params.shared !== undefined || params.tasks !== undefined) {
@@ -577,6 +578,17 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		},
 	});
 	pi.registerTool(forkTool);
+	/** Restarts a lost run on its own session and worktree. */
+	async function resumeRun(ctx: ExtensionToolContext, run: Run & { files: string }, callId: string) {
+		background.resolveForkAsks(ctx, run.name);
+		if (run.tree) await restoreWorktree(run.tree);
+		const { queued } = run;
+		registry.update(run.id, { state: "running", endedAt: undefined, endedBy: undefined, queued: undefined });
+		const message = queued?.message ?? `${worktreeLine(run.tree)}Your session stopped before you finished. Continue the task from where you left off, and end by calling reply.`;
+		const delegate = queued ? { entries: JSON.parse(readText(path.join(run.files, QUEUED_ENTRIES)) ?? "[]") as SessionEntry[], message, resume: queued.resume } : { message, resume: true };
+		startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${callId}`, role: ROLES[run.role as Role["name"]], tree: run.tree, target: run.target, model: run.model, files: run.files }, delegate);
+	}
+
 	/** Gives a finished run a new task on its own session, model and role, in the background. */
 	async function continueRun(ctx: ExtensionToolContext, name: string, task: string, toolCallId: string) {
 		sweepFinished();
@@ -595,7 +607,8 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		description: "Stop a live background fork by name. A writer's worktree stays where it is.",
 		promptSnippet: "Stop a live background fork",
 		parameters: Type.Object({ name: Type.String({ description: "Name of the background fork" }) }),
-		async execute(_toolCallId, params) {
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			mainTools = ctx;
 			if (process.env.PI_CONTEXT_CHILD) throw new Error("Only the top-level session can fork.");
 			const run = background.cancel(params.name);
 			if (!run) throw new Error(`no live background fork ${params.name}`);
@@ -616,18 +629,13 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			task: Type.Optional(Type.String({ description: "A new task for a finished fork. Without it, a lost fork continues its own task" })),
 		}),
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+			mainTools = ctx;
 			if (process.env.PI_CONTEXT_CHILD) throw new Error("Only the top-level session can resume a fork.");
 			if (params.task !== undefined) return continueRun(ctx, params.name, params.task, toolCallId);
 			const resumable = registry.all().filter(canResume);
 			const run = resumable.filter((candidate) => candidate.name === params.name).at(-1);
 			if (!run?.files) throw new Error(`no lost fork ${params.name} to resume. Resumable: ${resumable.map((candidate) => candidate.name).join(", ") || "none"}`);
-			background.resolveForkAsks(ctx, run.name);
-			if (run.tree) await restoreWorktree(run.tree);
-			const { queued } = run;
-			registry.update(run.id, { state: "running", endedAt: undefined, endedBy: undefined, queued: undefined });
-			const message = queued?.message ?? `${worktreeLine(run.tree)}Your session stopped before you finished. Continue the task from where you left off, and end by calling reply.`;
-			const delegate = queued ? { entries: JSON.parse(readText(path.join(run.files, QUEUED_ENTRIES)) ?? "[]") as SessionEntry[], message, resume: queued.resume } : { message, resume: true };
-			startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${toolCallId}`, role: ROLES[run.role as Role["name"]], tree: run.tree, target: run.target, model: run.model, files: run.files }, delegate);
+			await resumeRun(ctx, { ...run, files: run.files }, toolCallId);
 			return { content: [{ type: "text", text: `resumed fork ${run.name} (background)` }], details: { name: run.name, runId: run.id, background: true } };
 		},
 	});
@@ -638,6 +646,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		promptSnippet: "Steer a live background fork, or resume a finished one",
 		parameters: Type.Object({ name: Type.String({ description: "Name of the background fork" }), message: Type.String({ description: "What the fork should do differently or also do" }) }),
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+			mainTools = ctx;
 			if (process.env.PI_CONTEXT_CHILD) throw new Error("Only the top-level session can steer a fork.");
 			const isLiveFork = registry.live().some((run) => run.background && run.name === params.name);
 			if (!isLiveFork && registry.all().some((run) => run.name === params.name && canContinue(run))) return continueRun(ctx, params.name, params.message, toolCallId);
@@ -645,5 +654,16 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			background.resolveForkAsks(ctx, params.name);
 			return { content: [{ type: "text", text: `steered fork ${params.name}` }], details: { name: params.name } };
 		},
+	});
+
+	pi.on("session_shutdown", () => void (mainTools = undefined));
+	pi.on("session_start", async (event, ctx) => {
+		if (process.env.PI_CONTEXT_CHILD || event.reason !== "reload" || !reloadRequested()) return;
+		const resumed: string[] = [];
+		for (const run of registry.all().filter((candidate) => candidate.endedBy === "reload" && canResume(candidate))) {
+			await resumeRun(ctx as ExtensionToolContext, { ...run, files: run.files! }, `reload-${run.id}`);
+			resumed.push(run.name);
+		}
+		if (resumed.length) pi.sendMessage({ customType: RESULTS_TYPE, content: `resumed forks: ${resumed.join(", ")}`, display: true }, { deliverAs: "nextTurn" });
 	});
 }

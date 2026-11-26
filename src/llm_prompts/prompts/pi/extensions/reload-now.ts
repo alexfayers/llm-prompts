@@ -8,6 +8,8 @@ const CONTINUE_MESSAGE = "Reload finished. Continue the task. If nothing is open
 const MANAGED_MESSAGE = "A delegate cannot reload. Report the change to your lead instead.";
 const RESUMES = Symbol.for("llm-prompts.reload-now");
 
+const REQUESTED = Symbol.for("llm-prompts.reload-now.requested");
+
 const resumes = ((globalThis as any)[RESUMES] ??= new Map<string, () => void>()) as Map<string, () => void>;
 
 export default function (pi: ExtensionAPI) {
@@ -55,7 +57,12 @@ export default function (pi: ExtensionAPI) {
 			}
 			const id = ctx.sessionManager.getSessionId();
 			resumes.delete(id);
-			await ctx.reload();
+			(globalThis as any)[REQUESTED] = true;
+			try {
+				await ctx.reload();
+			} finally {
+				delete (globalThis as any)[REQUESTED];
+			}
 			resumes.get(id)?.();
 			resumes.delete(id);
 		},

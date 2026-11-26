@@ -45,6 +45,15 @@ describe("reload_now", () => {
 		assert.equal(reloads, 0);
 	});
 
+	test("the command marks the reload as requested while it runs", async () => {
+		const ext = await loadExtension("reload-now");
+		const requested = Symbol.for("llm-prompts.reload-now.requested");
+		let during: unknown;
+		await ext.runCommand("reload-now", "", ext.makeCtx({ isIdle: () => true, reload: async () => void (during = (globalThis as any)[requested]) }));
+		assert.equal(during, true);
+		assert.equal((globalThis as any)[requested], undefined);
+	});
+
 	test("the command reloads, then the new copy continues the task", async () => {
 		const ext = await loadExtension("reload-now");
 		const { copies: [copy] } = await runCommand(ext, true);
