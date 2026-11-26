@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { migrateUsageSessions, retainSession } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/usage-sessions.ts";
+import { KEPT_MAX_AGE_MS, migrateUsageSessions, pruneKept, retainSession } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/usage-sessions.ts";
 
 const jsonl = (entries: unknown[]) => entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n";
 const header = (id: string) => ({ type: "session", version: 3, id });
@@ -218,5 +218,29 @@ test("legacy migration is dry-run first, keeps originals and bills colliding IDs
 		fs.writeFileSync(file, jsonl([header("partial"), inherited, message("partial-own", "same-id")]));
 		assert.match((await migrateUsageSessions(dir)).blocked[0].reason, /no identifiable boundary/);
 		await assert.rejects(() => migrateUsageSessions(dir, true), /Migration blocked/);
+	} finally { fs.rmSync(dir, { recursive: true }); }
+});
+
+test("pruneKept drops old archives except those a recent usage session needs, and runs once a day", async () => {
+	const dir = root();
+	try {
+		const source = path.join(dir, "seed.jsonl");
+		const age = (file: string, ms: number) => fs.utimesSync(file, new Date(Date.now() - ms), new Date(Date.now() - ms));
+		const old = KEPT_MAX_AGE_MS + 1000;
+		fs.writeFileSync(source, jsonl([header("stale"), message("a", null)]));
+		const stale = await retainSession(source, "stale-run.jsonl", undefined, dir);
+		fs.writeFileSync(source, jsonl([header("busy"), message("b", null)]));
+		const first = await retainSession(source, "busy-run.jsonl", undefined, dir);
+		fs.writeFileSync(source, jsonl([header("busy"), message("b", null), message("c", "b")]));
+		const current = await retainSession(source, "busy-run.jsonl", undefined, dir);
+		for (const file of [stale.archive, first.archive, current.archive, stale.usage]) age(file, old);
+		const unreferenced = path.join(dir, "pi-context", "kept", `${"0".repeat(64)}.jsonl`);
+		fs.writeFileSync(unreferenced, "x");
+		age(unreferenced, old);
+		assert.equal(pruneKept(dir), true);
+		assert.deepEqual(fs.readdirSync(path.dirname(stale.archive)), [path.basename(current.archive)]);
+		assert.equal(fs.existsSync(stale.usage), true);
+		assert.equal(pruneKept(dir), false);
+		assert.equal(pruneKept(dir, Date.now() + 25 * 60 * 60_000), true);
 	} finally { fs.rmSync(dir, { recursive: true }); }
 });
