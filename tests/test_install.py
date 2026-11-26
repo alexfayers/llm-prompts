@@ -1082,6 +1082,30 @@ class TestMainStaleCleanupGate:
 
         assert not overlay_only.exists()
 
+    @pytest.mark.parametrize(("folder", "listed"), [("rules", False), ("agents", True)])
+    def test_rule_now_joined_is_removed_without_summary(
+        self, tmp_path: Path, folder: str, listed: bool
+    ) -> None:
+        from llm_prompts.manifest import write_manifest
+
+        home = tmp_path / "home"
+        legacy = home / ".claude" / folder / "synthetic-rule.md"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text("old rule", encoding="utf-8")
+        write_manifest("claude-code", [str(legacy)])
+        with (
+            patch("llm_prompts.install.Path.home", return_value=home),
+            patch("llm_prompts.install._discover_overlay_paths", return_value=[]),
+            patch("llm_prompts.install._running_as_installed_tool", return_value=True),
+            patch("llm_prompts.install.log") as mock_log,
+        ):
+            install_main(["claude-code"])
+
+        assert not legacy.exists()
+        assert listed == any(
+            "Removed stale files" in call.args[1] for call in mock_log.call_args_list
+        )
+
 
 class TestMainChangeSummary:
     def _run(self, tmp_path: Path, agents: list[str]) -> list[tuple[str, str]]:

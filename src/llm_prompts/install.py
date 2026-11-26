@@ -4854,11 +4854,17 @@ def _cleanup_stale(
 ) -> None:
     """Remove files that were previously installed but are no longer managed.
 
+    Rules now joined into the agent's single rules file are left out of the
+    change summary.
+
     Args:
         agent_name: Agent whose stale files to remove.
         current_files: Currently installed file paths for this agent.
         previous_manifest: The manifest from the previous installation.
     """
+    from .manifest import read_rendered_rule
+
+    rules_dir = _get_dirs().get(agent_name, {}).get("rules")
     previous_entry = previous_manifest.get(agent_name, {})
     previous_files = set(previous_entry.get("files", []))
     current_set = set(current_files)
@@ -4869,7 +4875,11 @@ def _cleanup_stale(
         if path.is_symlink() or path.is_file():
             path.unlink()
             log("debug", f"[{agent_name}] Removed stale file: {path.name}")
-            _record_change("Removed", "stale files", path.name)
+            if (
+                path.parent != rules_dir
+                or read_rendered_rule(agent_name, path.name) is None
+            ):
+                _record_change("Removed", "stale files", path.name)
         elif path.is_dir():
             shutil.rmtree(path)
             log("debug", f"[{agent_name}] Removed stale directory: {path.name}")

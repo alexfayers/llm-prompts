@@ -184,6 +184,15 @@ class TestDiscoverSkills:
         assert result == [("tdd", checkout / "skills" / "a" / "tdd")]
         assert "Duplicate skill name 'tdd'" in capsys.readouterr().err
 
+    def test_unsupported_component_is_not_shown_by_default(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        checkout = tmp_path / "repo"
+        _make_skill(checkout / "skills" / "tdd")
+        (checkout / "hooks").mkdir()
+        plugins.discover_skills(checkout, None)
+        assert "not yet supported" not in capsys.readouterr().err
+
     def test_skill_outside_skills_dir_is_ignored(self, tmp_path: Path) -> None:
         checkout = tmp_path / "repo"
         _make_skill(checkout / "skills" / "tdd")
