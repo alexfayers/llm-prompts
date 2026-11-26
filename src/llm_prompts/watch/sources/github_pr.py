@@ -149,6 +149,7 @@ class GithubPrSource:
         "merged": ["merged=true"],
         "ci": ["ci=pass", "ci=fail"],
         "update": ["changed:reviews"],
+        "conflicts": ["conflicts=true"],
     }
     terminal: ClassVar[Sequence[str]] = ["merged=true", "state=CLOSED"]
 
@@ -318,4 +319,5 @@ class GithubPrSource:
             "reviews": ",".join(sorted(f"{r['id']}:{r['state']}" for r in reviews)),
             "ci": ci,
             "labels": ",".join(sorted(label["name"] for label in pull["labels"])),
+            "conflicts": str(pull.get("mergeable") is False).lower(),
         }
