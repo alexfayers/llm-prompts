@@ -4,7 +4,8 @@ import os from "node:os";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { cacheLeftMs, cacheText, FINISHED, isLive, registryOf, type Registry, type Run } from "./registry.ts";
-import { hasOpenAsks } from "./wake.ts";
+import { openAsks } from "../pending-asks.ts";
+import { askPrefixes, forkAsking } from "./wake.ts";
 
 type Event = { [key: string]: any };
 export type Watchable = { watch(listener: (record: Event) => void): () => void };
@@ -151,10 +152,11 @@ export class LiveView {
 	}
 
 	/** The widget lines, or undefined when no background fork is live or still cached. */
-	lines(now = Date.now(), paint: Paint = PLAIN, width = Number.POSITIVE_INFINITY, entries: Parameters<typeof hasOpenAsks>[0] = []): string[] | undefined {
+	lines(now = Date.now(), paint: Paint = PLAIN, width = Number.POSITIVE_INFINITY, openIds: string[] = []): string[] | undefined {
 		const live = this.registry.live().filter((run) => run.background);
 		const finished = this.registry.all().filter((run) => run.background && FINISHED.includes(run.state));
-		const asking = finished.filter((run) => hasOpenAsks(entries, run));
+		const prefixes = askPrefixes(openIds);
+		const asking = finished.filter((run) => forkAsking(prefixes, run));
 		const unread = finished.filter((run) => run.unread && !this.received(run) && !asking.includes(run));
 		if (!live.length && !asking.length && !unread.length) return undefined;
 		const shown = [...live, ...asking];
@@ -180,11 +182,26 @@ export class LiveView {
 		if (!showsUi(ctx)) return;
 		this.window = ctx.model?.contextWindow;
 		this.modelRegistry = ctx.modelRegistry;
+		let scannedLeaf: string | null | undefined;
+		let openIds: string[] = [];
 		this.render = () => {
-			const entries = (ctx.sessionManager?.getBranch() ?? []) as Parameters<typeof hasOpenAsks>[0];
-			const live = Boolean(this.lines(Date.now(), PLAIN, Number.POSITIVE_INFINITY, entries));
-			ctx.ui.setWidget(WIDGET_KEY, live ? (_tui, theme) => ({ render: (width: number) => this.lines(Date.now(), theme, width, entries) ?? [], invalidate: () => undefined }) : undefined);
-			this.tick(live);
+			const leaf = ctx.sessionManager?.getLeafId?.();
+			if (leaf === undefined || leaf !== scannedLeaf) {
+				scannedLeaf = leaf;
+				openIds = openAsks((ctx.sessionManager?.getBranch() ?? []) as Parameters<typeof openAsks>[0]).map((ask) => ask.id);
+			}
+			const now = Date.now();
+			const shown = Boolean(this.lines(now, PLAIN, Number.POSITIVE_INFINITY, openIds));
+			ctx.ui.setWidget(
+				WIDGET_KEY,
+				shown
+					? (_tui, theme) => {
+							const lines = this.lines(now, theme, Number.POSITIVE_INFINITY, openIds) ?? [];
+							return { render: (width: number) => lines.map((line) => truncateToWidth(line, width)), invalidate: () => undefined };
+						}
+					: undefined,
+			);
+			this.tick(this.registry.live().some((run) => run.background));
 		};
 		this.unbind?.();
 		this.unbind = this.registry.onChange(() => this.render?.());
@@ -204,7 +221,7 @@ export class LiveView {
 		this.tick(false);
 	}
 
-	/** Keeps the elapsed times current while a fork is live. */
+	/** Keeps the elapsed times current while a background fork is live. */
 	private tick(live: boolean): void {
 		if (live && !this.clock) {
 			this.clock = setInterval(() => this.render?.(), CLOCK_MS);
@@ -240,5 +257,6 @@ export class LiveView {
 
 export function registerLiveView(pi: ExtensionAPI, view: LiveView) {
 	pi.on("session_start", (_event, ctx) => view.bind(ctx));
+	pi.on("turn_end", () => view.refresh());
 	pi.on("session_shutdown", () => view.release());
 }

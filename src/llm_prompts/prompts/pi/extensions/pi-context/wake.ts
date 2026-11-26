@@ -37,8 +37,11 @@ export function pinForkAsks(pi: Pick<ExtensionAPI, "appendEntry">, ctx: Pick<Ext
 export const openForkAsks = (entries: Parameters<typeof openAsks>[0], run: Pick<Run, "id" | "name">): string[] =>
 	openAsks(entries).flatMap(({ id }) => (id.startsWith(askPrefix(run)) ? [id] : []));
 
-/** Whether a fork's pinned asks are still open on the branch. */
-export const hasOpenAsks = (entries: Parameters<typeof openAsks>[0], run: Pick<Run, "id" | "name">): boolean => openForkAsks(entries, run).length > 0;
+/** The fork pin prefixes of the open ask ids, to look a fork up in. */
+export const askPrefixes = (openIds: string[]): Set<string> => new Set(openIds.map((id) => id.replace(/\d+$/, "")));
+
+/** Whether one of the open asks, by their prefixes, is a pin of the fork. */
+export const forkAsking = (prefixes: Set<string>, run: Pick<Run, "id" | "name">): boolean => prefixes.has(askPrefix(run));
 
 /** Whether an `ask_user` call among the messages ended without the user's answer: cancelled, timed out or failed. */
 export const askUserUnanswered = (messages: { role: string; toolName?: string; isError?: boolean; details?: unknown }[]): boolean =>

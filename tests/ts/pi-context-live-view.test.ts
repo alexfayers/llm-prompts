@@ -68,11 +68,11 @@ test("a read blocked fork leaves the widget once its asks are answered, but stay
 	const paint = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
 	registry.start(run({ id: "b1", name: "answered", state: "blocked", lastRequestAt: 1_000 }));
 	registry.start(run({ id: "b2", name: "pending", state: "blocked", lastRequestAt: 1_000 }));
-	const entries = [{ type: "custom", customType: "pending-asks", data: { action: "add" as const, id: "fork-pending-b2-1", text: "which one?" } }];
-	assert.deepEqual(view.lines(2_000, paint, Number.POSITIVE_INFINITY, entries)?.slice(1).map((line) => line.split(" ")[1]), ["pending"]);
+	const asks = ["fork-pending-b2-1"];
+	assert.deepEqual(view.lines(2_000, paint, Number.POSITIVE_INFINITY, asks)?.slice(1).map((line) => line.split(" ")[1]), ["pending"]);
 	registry.update("b2", { unread: "r" });
 	registry.start(run({ id: "d1", name: "unasked", state: "done", lastRequestAt: 1_000, unread: "r" }));
-	assert.deepEqual(view.lines(2_000, paint, Number.POSITIVE_INFINITY, entries)?.slice(1), ["\u25cf pending [reader] blocked \u00b7 cache 5m left", "\u2713 1 done \u00b7 cache 5m left"]);
+	assert.deepEqual(view.lines(2_000, paint, Number.POSITIVE_INFINITY, asks)?.slice(1), ["\u25cf pending [reader] blocked \u00b7 cache 5m left", "\u2713 1 done \u00b7 cache 5m left"]);
 });
 
 test("a fork leaves the widget once its result reaches main, whatever its outcome, and returns while an aborted run re-announces it", () => {
@@ -99,8 +99,7 @@ test("a read failed fork stays while one of its asks is open, with no request to
 	const registry = new Registry();
 	const view = new LiveView(registry);
 	registry.start(run({ id: "x1", name: "broken", state: "failed" }));
-	const entries = [{ type: "custom", customType: "pending-asks", data: { action: "add" as const, id: "fork-broken-x1-1", text: "retry?" } }];
-	assert.deepEqual(view.lines(2_000, undefined, Number.POSITIVE_INFINITY, entries)?.slice(1).map((line) => line.split(" ")[1]), ["broken"]);
+	assert.deepEqual(view.lines(2_000, undefined, Number.POSITIVE_INFINITY, ["fork-broken-x1-1"])?.slice(1).map((line) => line.split(" ")[1]), ["broken"]);
 	assert.equal(view.lines(2_000), undefined);
 });
 
@@ -128,4 +127,26 @@ test("two sources that share a name are told apart by their cache key", () => {
 	for (const [id, key] of [["a", "3f9a2c11"], ["b", "3f9a2c11"], ["c", "77b0de42"]]) registry.start(run({ id, name: `kid-${id}`, from: "stub", cacheKey: key }));
 	registry.start(run({ id: "d", name: "kid-d", from: "other", cacheKey: "0000aa" }));
 	assert.deepEqual(view.lines(2_000)?.slice(1).map((line) => line.split(" · ").at(-1)), ["from stub#3f9a2c", "from stub#3f9a2c", "from stub#77b0de", "from other"]);
+});
+
+test("the widget scans the session for open asks once per branch change, not per run or per frame", () => {
+	const registry = new Registry();
+	const view = new LiveView(registry);
+	for (let index = 0; index < 20; index++) registry.start(run({ id: `f${index}`, name: `f${index}`, state: "done", lastRequestAt: Date.now(), unread: "r" }));
+	let scans = 0;
+	let leaf = "a";
+	const entries = [{ type: "custom", customType: "pending-asks", data: { action: "add", id: "fork-f0-f0-1", text: "which?" } }];
+	const widgets: any[] = [];
+	view.bind({ hasUI: true, ui: { setWidget: (_key: string, widget?: unknown) => widgets.push(widget) }, sessionManager: { getLeafId: () => leaf, getBranch: () => (scans++, entries) } } as any);
+	const paint = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
+	const frames = () => Array.from({ length: 5 }, () => widgets.at(-1)(undefined, paint).render(200)).at(-1);
+	assert.deepEqual(frames().slice(1).map((line: string) => line.split(" ")[1]), ["f0", "19"]);
+	assert.equal(scans, 1);
+	registry.update("f1", { unread: "r2" });
+	frames();
+	assert.equal(scans, 1);
+	leaf = "b";
+	view.refresh();
+	assert.equal(scans, 2);
+	view.release();
 });
