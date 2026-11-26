@@ -26,6 +26,11 @@ export class Slots {
 		this.limit = limit;
 	}
 
+	/** The jobs that run now. */
+	get live(): number {
+		return this.active;
+	}
+
 	/** Whether a job started now would have to wait. */
 	get full(): boolean {
 		return this.active >= this.limit();

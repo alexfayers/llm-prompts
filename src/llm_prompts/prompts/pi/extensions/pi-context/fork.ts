@@ -79,6 +79,10 @@ export function coldArgs(role: Role, { model, sessionDir, cardFile, skillsDir, s
 }
 
 const FINISHED_MARK = "finished";
+/** The most children of a shared fan-out that start over the live limit. */
+export const FANOUT_EXTRA = 2;
+/** The longest file `sharedFiles` inlines into the stub's prompt. */
+export const SHARED_FILE_MAX_CHARS = 100_000;
 const STUB_SUFFIX = 'That is all the shared context. Once you have read it, call reply with {"outcome":"done","ref":""} and stop. Your specific task arrives next.';
 /** The conversation a queued fork was called with, kept in its files so a resume starts it from that point. */
 const QUEUED_ENTRIES = "queued-entries.json";
@@ -426,11 +430,12 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		return running;
 	}
 	const slots = new Slots(maxLive);
-	/** Names of the children of a shared fan-out, which start at once instead of queueing so they read the stub's prompt cache before it expires. */
+	/** Run ids of the stubs whose children are starting: up to `FANOUT_EXTRA` of them start over the live limit so they read the stub's prompt cache before it expires. */
 	const fanOut = new Set<string>();
+	const skipsQueue = (stubId?: string) => stubId !== undefined && fanOut.has(stubId) && slots.live < maxLive() + FANOUT_EXTRA;
 
 	/** Starts the delegate of a registered run in the background, which reports its end to `background`. */
-	function startRun(ctx: ExtensionToolContext, run: { id: string; name: string; ref: string; role: Role; tree?: Worktree; target?: string; model?: string; files: string }, delegate: Pick<DelegateOptions, "entries" | "message" | "resume">) {
+	function startRun(ctx: ExtensionToolContext, run: { id: string; name: string; ref: string; role: Role; tree?: Worktree; target?: string; model?: string; files: string }, delegate: Pick<DelegateOptions, "entries" | "message" | "resume">, immediate = false) {
 		const { id: runId, name, ref, tree } = run;
 		const merged: { landing?: Landing } = {};
 		const runSignal = background.track(runId);
@@ -446,7 +451,6 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			return { content: result.content, details: result.details, structuredContent: result.structuredContent, isError };
 		} : undefined;
 		const keep = () => registry.get(runId)?.state === "lost";
-		const immediate = fanOut.has(name);
 		if (slots.full && !immediate) {
 			fs.mkdirSync(run.files, { recursive: true, mode: 0o700 });
 			fs.writeFileSync(path.join(run.files, QUEUED_ENTRIES), JSON.stringify(delegate.entries ?? []), { mode: 0o600 });
@@ -476,7 +480,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		name: "fork",
 		label: "Fork",
 		description:
-			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. With branch, and optionally base (a ref, default the current branch), the writer starts on that new branch from the base. It pushes the branch with git push, and the landing is that push: unpushed work escalates and nothing lands on the current branch. Use it for one PR per writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It returns at once and the result arrives as a message when the delegate calls reply and the work has landed. from runs on a copy of a finished fork's session instead. A session over 150000 tokens of context starts the fork cold on the same model with a summary instead of a copy. shared with tasks and model runs one cold stub that reads shared and the contents of the files in sharedFiles in a single request, then starts one child per task from that stub when it finishes, so they share its prompt cache. The children start at once, even over the live limit.",
+			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. With branch, and optionally base (a ref, default the current branch), the writer starts on that new branch from the base. It pushes the branch with git push, and the landing is that push: unpushed work escalates and nothing lands on the current branch. Use it for one PR per writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It returns at once and the result arrives as a message when the delegate calls reply and the work has landed. from runs on a copy of a finished fork's session instead. A session over 150000 tokens of context starts the fork cold on the same model with a summary instead of a copy. shared with tasks and model runs one cold stub that reads shared and the contents of the files in sharedFiles (read with the read tool, at most 100000 characters each) in a single request, then starts one child per task from that stub when it finishes, so they share its prompt cache. Up to 2 children start over the live limit and the rest queue.",
 		promptSnippet: "Run a read-only or worktree-writing delegate on a copy of this session in the background",
 		parameters: Type.Object({
 			task: Type.Optional(Type.String({ description: "What the delegate should find out or check" })),
@@ -503,13 +507,13 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 				if (repeated) throw new Error(`task names must be unique and differ from the stub's: ${repeated}`);
 				const common = { role: params.role, target: params.target };
 				const sharedDir = path.resolve(ctx.cwd, expandHome(params.target ?? "."));
-				const files = (params.sharedFiles ?? []).map((file) => {
-					try {
-						return `File ${file}:\n${fs.readFileSync(path.resolve(sharedDir, expandHome(file)), "utf8").trimEnd()}`;
-					} catch (error) {
-						throw new Error(`cannot read shared file ${file}: ${error instanceof Error ? error.message : String(error)}`);
-					}
-				});
+				const files = await Promise.all((params.sharedFiles ?? []).map(async (file) => {
+					const { result, isError } = await ctx.executeTool("read", { path: path.resolve(sharedDir, expandHome(file)) }, { signal }).catch((error: unknown) => ({ result: { content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }] }, isError: true }));
+					const text = result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+					if (isError) throw new Error(`cannot read shared file ${file}: ${text}`);
+					if (text.length > SHARED_FILE_MAX_CHARS) throw new Error(`shared file ${file} is over ${SHARED_FILE_MAX_CHARS} characters`);
+					return `File ${file}:\n${text.trimEnd()}`;
+				}));
 				const task = [params.shared, ...files, STUB_SUFFIX].join("\n\n");
 				const started = await forkTool.execute(toolCallId, { ...common, name: stub, model: params.model, task }, signal, onUpdate, ctx);
 				const stubId = (started.details as { runId: string }).runId;
@@ -523,12 +527,12 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 					if (source.state !== "done") throw new Error(`stub ${stub} ended ${source.state}: its task did not start`);
 					const mark = path.join(source.files, FINISHED_MARK);
 					const held = fs.existsSync(mark) && (fs.rmSync(mark), true);
-					params.tasks!.forEach(({ name }) => fanOut.add(name));
+					fanOut.add(source.id);
 					try {
 						const children = await Promise.allSettled(params.tasks!.map((child) => forkTool.execute(toolCallId, { ...common, name: child.name, task: child.task, from: stub }, signal, onUpdate, ctx)));
 						children.forEach((child, at) => child.status === "rejected" && failTask(params.tasks![at], child.reason));
 					} finally {
-						params.tasks!.forEach(({ name }) => fanOut.delete(name));
+						fanOut.delete(source.id);
 						if (held) fs.writeFileSync(mark, "");
 					}
 				};
@@ -576,8 +580,9 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 				if (tooLarge) registry.update(runId, placed);
 				else registry.start({ id: runId, name, role: role.name, ...(source && { from: source.from ?? source.name, cacheKey: cacheKeyOf(files) }), model, background: true, state: "running", task: params.task!, ...placed, target, cwd: ctx.cwd, startedAt: Date.now() });
 				const message = `${worktreeLine(tree, role.writes ? home : undefined)}${summary ? `Summary of the session you fork from:\n${summary}\n\n` : ""}Task: ${params.task}`;
-				const queued = slots.full && !fanOut.has(name);
-				startRun(ctx, { id: runId, name, ref, role, tree, target, model, files }, { entries, message, resume: Boolean(source) });
+				const immediate = skipsQueue(source?.id);
+				const queued = slots.full && !immediate;
+				startRun(ctx, { id: runId, name, ref, role, tree, target, model, files }, { entries, message, resume: Boolean(source) }, immediate);
 				return queued;
 			};
 			if (tooLarge) {

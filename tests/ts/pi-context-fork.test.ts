@@ -11,7 +11,7 @@ import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/ro
 import { trackPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
 import { isLive, MAIN_TOOLS_WAIT, registryOf } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 import { Background } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/background.ts";
-import { coldArgs, coldLabel, KEEP_FINISHED_MS, registerFork, WARM_FORK_MAX_TOKENS, resolveModel, seedEntries, sweepFinished } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
+import { coldArgs, coldLabel, FANOUT_EXTRA, KEEP_FINISHED_MS, SHARED_FILE_MAX_CHARS, registerFork, WARM_FORK_MAX_TOKENS, resolveModel, seedEntries, sweepFinished } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
 import { LONG_CACHE_MS } from "../../src/llm_prompts/prompts/pi/extensions/context-fold.ts";
 
 const user = (id: string) => ({ type: "message", id, message: { role: "user", content: id } });
@@ -109,6 +109,8 @@ const forkDirs = () => fs.readdirSync(path.join(agentDir, "pi-context"), { recur
 
 const MAIN_TOOLS = [{ name: "mcp__semble__search", description: "d", parameters: {}, exposure: "codemode" }, { name: "read", description: "r", parameters: {}, exposure: "direct" }];
 
+const reads: string[] = [];
+let deniedReads: string[] = [];
 const STUB_SUFFIX = 'That is all the shared context. Once you have read it, call reply with {"outcome":"done","ref":""} and stop. Your specific task arrives next.';
 
 const eventually = async (done: () => boolean) => {
@@ -148,7 +150,12 @@ async function start(params: Record<string, unknown>, cwd = process.cwd(), main 
 		cwd,
 		isIdle: () => true,
 		getSystemPrompt: () => "<mcp_servers>\nsemble (codemode)\n</mcp_servers>",
-		executeTool: async (name: string, args: unknown) => ({ result: { content: [{ type: "text", text: `ran ${name} ${JSON.stringify(args)}` }], details: {} }, isError: false }),
+		executeTool: async (name: string, args: any) => {
+			if (name !== "read") return { result: { content: [{ type: "text", text: `ran ${name} ${JSON.stringify(args)}` }], details: {} }, isError: false };
+			reads.push(args.path);
+			const text = deniedReads.some((denied) => args.path.includes(denied)) ? "blocked by permission rules" : fs.readFileSync(args.path, "utf8");
+			return { result: { content: [{ type: "text", text }], details: {} }, isError: deniedReads.some((denied) => args.path.includes(denied)) };
+		},
 		model: { provider: "prov", id: leadModel, cost: MODEL_COSTS[leadModel] },
 		modelRegistry: { find: (_provider: string, id: string) => ({ contextWindow: 200_000, cost: MODEL_COSTS[id] }) },
 		getContextUsage: () => ({ tokens: contextTokens ?? mainContext, contextWindow: 200_000, percent: 0 }),
@@ -378,6 +385,29 @@ describe("fork tool", () => {
 			assert.equal(registryOf().all().some((run) => run.name === "sfmiss"), false);
 		});
 
+		test("sharedFiles are read through the read tool, so its permission rules apply", async () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-shared-perm-"));
+			fs.writeFileSync(path.join(dir, "secret.txt"), "TOPSECRET");
+			reads.length = 0;
+			deniedReads = ["secret.txt"];
+			try {
+				const { tool } = await fork({ shared: "s", sharedFiles: ["secret.txt"], tasks: [{ name: "sp1", task: "x" }], model: "prov/cheap", name: "spstub" }, dir);
+				assert.deepEqual(reads, [path.join(dir, "secret.txt")]);
+				assert.match(String(tool), /cannot read shared file secret\.txt: blocked by permission rules/);
+				assert.equal(registryOf().all().some((run) => run.name === "spstub"), false);
+			} finally {
+				deniedReads = [];
+			}
+		});
+
+		test("sharedFiles fails clearly on a file over the size cap", async () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-shared-big-"));
+			fs.writeFileSync(path.join(dir, "big.txt"), "x".repeat(SHARED_FILE_MAX_CHARS + 1));
+			const { tool } = await fork({ shared: "s", sharedFiles: ["big.txt"], tasks: [{ name: "sb1", task: "x" }], model: "prov/cheap", name: "sbstub" }, dir);
+			assert.match(String(tool), new RegExp(`shared file big\\.txt is over ${SHARED_FILE_MAX_CHARS} characters`));
+			assert.equal(registryOf().all().some((run) => run.name === "sbstub"), false);
+		});
+
 		test("a stub that replies exactly as its prompt asks lets the tasks start", async () => {
 			const { tool } = await fork({ shared: "STUB_COMPLY notes", tasks: [{ name: "k1", task: "STUB_REPORT" }], model: "prov/cheap", name: "kstub" });
 			assert.equal(tool.content[0].text, "OUTCOME done ref:");
@@ -531,6 +561,17 @@ describe("fork tool", () => {
 			assert.deepEqual([run("u1")?.queued, run("u2")?.queued], [undefined, undefined]);
 			gates.forEach((gate) => fs.writeFileSync(gate, ""));
 			await eventually(() => sent.length === 3);
+		});
+
+		test("shared with tasks starts at most FANOUT_EXTRA children over the limit and queues the rest", async () => {
+			limit(1);
+			const gates = Array.from({ length: FANOUT_EXTRA + 3 }, (_, at) => path.join(agentDir, `gate-o${at}`));
+			const { sent } = await start({ shared: "STUB_REPORT notes", tasks: gates.map((gate, at) => ({ name: `o${at}`, task: `STUB_GATE:${gate}` })), model: "prov/cheap", name: "ostub" });
+			const children = () => registryOf().all().filter((run) => /^o\d+$/.test(run.name));
+			await eventually(() => children().length === gates.length);
+			assert.equal(children().filter((run) => !run.queued).length, 1 + FANOUT_EXTRA);
+			gates.forEach((gate) => fs.writeFileSync(gate, ""));
+			await eventually(() => sent.length === gates.length + 1);
 		});
 
 		test("a missing or invalid forks.json leaves the limit at 10", async () => {
