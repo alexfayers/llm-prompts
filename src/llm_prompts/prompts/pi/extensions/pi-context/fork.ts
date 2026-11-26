@@ -61,9 +61,7 @@ export type Summarize = (ctx: ExtensionContext, entries: SessionEntry[]) => Prom
 export const summarizeSession: Summarize = async (ctx, entries) => {
 	const { model } = ctx;
 	if (!model) throw new Error("Cannot summarize without a model.");
-	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-	if (!auth.ok) throw new Error(auth.error);
-	return generateSummary(buildSessionContext(entries).messages, model, undefined, auth.apiKey, Object.fromEntries(Object.entries(auth.headers ?? {}).filter((header): header is [string, string] => header[1] !== null)), undefined, undefined, undefined, undefined, undefined, auth.env);
+	return generateSummary(buildSessionContext(entries).messages, model, undefined, undefined, undefined, undefined, undefined, undefined, undefined, (model, context, options) => ctx.modelRegistry.streamSimple(model, context, options));
 };
 
 export function coldLabel(name: string, model: string, resolved: string): string {
