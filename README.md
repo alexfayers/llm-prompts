@@ -106,7 +106,7 @@
 | src/llm\_prompts/watch/core/store.py                                          |       61 |        1 |     98% |        43 |
 | src/llm\_prompts/watch/sources/\_\_init\_\_.py                                |        0 |        0 |    100% |           |
 | src/llm\_prompts/watch/sources/command.py                                     |       36 |        1 |     97% |        55 |
-| src/llm\_prompts/watch/sources/github\_pr.py                                  |      164 |       11 |     93% |78-83, 102, 173-177, 182 |
+| src/llm\_prompts/watch/sources/github\_pr.py                                  |      171 |       11 |     94% |83-88, 108, 190-194, 199 |
 | src/llm\_prompts/watch/sources/github\_triage.py                              |      104 |        6 |     94% |122, 150, 168, 227, 238-239 |
 | src/llm\_prompts/watch/sources/rest.py                                        |       20 |        2 |     90% |     27-28 |
 | src/llm\_prompts/worktrees.py                                                 |       89 |        3 |     97% |119, 148-149 |
@@ -206,11 +206,11 @@
 | tests/test\_tool\_paths.py                                                    |       27 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      119 |        0 |    100% |           |
 | tests/test\_worktrees.py                                                      |       82 |        0 |    100% |           |
-| tests/watch/sources/test\_github\_pr.py                                       |      207 |        0 |    100% |           |
+| tests/watch/sources/test\_github\_pr.py                                       |      225 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       70 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **36612** |  **842** | **98%** |           |
+| **TOTAL**                                                                     | **36637** |  **842** | **98%** |           |
 
 
 ## Setup coverage badge
