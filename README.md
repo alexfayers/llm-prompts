@@ -19,8 +19,8 @@
 | src/llm\_prompts/benchmark/cell/memory.py                                     |      121 |        3 |     98% |   151-153 |
 | src/llm\_prompts/benchmark/cell/prepare.py                                    |      111 |        4 |     96% |     66-69 |
 | src/llm\_prompts/benchmark/cell/shared.py                                     |       94 |        5 |     95% |64-65, 128-130 |
-| src/llm\_prompts/benchmark/cell/variants.py                                   |      252 |       13 |     95% |58-59, 172, 198-199, 228, 382-383, 435-438, 440 |
-| src/llm\_prompts/benchmark/command.py                                         |      221 |        1 |     99% |        94 |
+| src/llm\_prompts/benchmark/cell/variants.py                                   |      272 |       14 |     95% |62-63, 176, 202-203, 232, 386-387, 430, 467-470, 472 |
+| src/llm\_prompts/benchmark/command.py                                         |      222 |        1 |     99% |        94 |
 | src/llm\_prompts/benchmark/fail\_fast.py                                      |       55 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/guard/\_\_init\_\_.py                              |        0 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/guard/claude.py                                    |       26 |        1 |     96% |        64 |
@@ -117,7 +117,7 @@
 | tests/benchmark/test\_bench\_cell.py                                          |      233 |        4 |     98% |169, 292, 297, 409 |
 | tests/benchmark/test\_bench\_check\_sandbox.py                                |       59 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_checks.py                                        |      191 |        0 |    100% |           |
-| tests/benchmark/test\_bench\_command.py                                       |      425 |        0 |    100% |           |
+| tests/benchmark/test\_bench\_command.py                                       |      443 |        1 |     99% |       722 |
 | tests/benchmark/test\_bench\_e2e.py                                           |       56 |       32 |     43% |38-40, 51-57, 61, 69-115 |
 | tests/benchmark/test\_bench\_env.py                                           |       58 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_fail\_fast.py                                    |       42 |        0 |    100% |           |
@@ -139,7 +139,7 @@
 | tests/benchmark/test\_bench\_scheduler.py                                     |      332 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_tool\_dirs.py                                    |       36 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_types.py                                         |       15 |        0 |    100% |           |
-| tests/benchmark/test\_bench\_variant.py                                       |      275 |        0 |    100% |           |
+| tests/benchmark/test\_bench\_variant.py                                       |      301 |        1 |     99% |       541 |
 | tests/benchmark/traces.py                                                     |        3 |        0 |    100% |           |
 | tests/conftest.py                                                             |      475 |       24 |     95% |168, 302-303, 306, 309, 312, 317, 372, 451-462, 467-469, 487-488, 502, 574-578, 670, 858, 898, 906 |
 | tests/test\_auto\_update.py                                                   |      216 |        0 |    100% |           |
@@ -210,7 +210,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       84 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **37241** |  **836** | **98%** |           |
+| **TOTAL**                                                                     | **37306** |  **839** | **98%** |           |
 
 
 ## Setup coverage badge
