@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import time
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, Self
 
@@ -17,6 +18,10 @@ FAILED_CONCLUSIONS = frozenset(
 ADVISORY_CHECK = "automate / rebase-queue"
 ADVISORY_WORKFLOW = ".github/workflows/project-automation.yml"
 PAGE = "?per_page=100"
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 def _job(run: dict[str, Any]) -> tuple[object, ...] | None:
@@ -84,13 +89,14 @@ def _parse_target(text: str) -> tuple[str, int]:
 
 
 class GithubPrDiscovery:
-    """Lists the open pull requests an author has in each repo, through conditional REST requests."""
+    """Lists the open pull requests an author has in each repo, and those closed since the last call, through conditional REST requests."""
 
     def __init__(self, author: str, repos: Sequence[str], head: str | None) -> None:
         """List pull requests by author (``@me`` is the signed-in user) in repos."""
         self._author = author
         self._repos = repos
         self._head = head
+        self._since = _now()
         self._cache: dict[str, tuple[str, Any, str | None]] = {}
 
     def _get(self, path: str) -> tuple[Any, str | None]:
@@ -106,10 +112,11 @@ class GithubPrDiscovery:
         return data, self._cache[path][2]
 
     def __call__(self) -> list[GithubPrSource]:
-        """Return a source for each open pull request found now."""
+        """Return a source for each open pull request found now and each one closed since the last call."""
         author = (
             self._get("user")[0]["login"] if self._author == "@me" else self._author
         )
+        since, self._since = self._since, _now()
         found = []
         for repo in self._repos:
             next_path: str | None = f"repos/{repo}/pulls?state=open&per_page=100"
@@ -120,6 +127,16 @@ class GithubPrDiscovery:
                     for pull in pulls
                     if pull["user"]["login"].lower() == author.lower()
                 ]
+            # shortcut: only the 100 most recently updated closed PRs are read, page on if a poll gap can close more.
+            closed, _ = self._get(
+                f"repos/{repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100"
+            )
+            found += [
+                GithubPrSource(repo, pull["number"], self._head)
+                for pull in closed
+                if pull["user"]["login"].lower() == author.lower()
+                and pull["closed_at"] >= since
+            ]
         return found
 
 

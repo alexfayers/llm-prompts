@@ -541,6 +541,9 @@ def test_gh_pr_author_watch_picks_up_a_new_pr_and_drops_a_merged_one(
         ]
     )
     pulls = "repos/o/r/pulls?state=open&per_page=100"
+    github.bodies[
+        "repos/o/r/pulls?state=closed&sort=updated&direction=desc&per_page=100"
+    ] = []
     discovery = GithubPrDiscovery("@me", ["o/r"], None)
 
     def listed() -> list[GithubPrSource]:
@@ -554,3 +557,45 @@ def test_gh_pr_author_watch_picks_up_a_new_pr_and_drops_a_merged_one(
     assert out.count("gh-pr o/r#7: ") == 1
     assert "gh-pr o/r#9: " in out
     assert "o/r#8" not in out
+
+
+def test_gh_pr_author_watch_reports_a_pr_opened_and_merged_between_polls(
+    github: FakeGithub,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    github.pr()
+    github.bodies["repos/o/r/pulls/11"] = {
+        "state": "closed",
+        "merged": True,
+        "head": {"sha": "abc123"},
+    }
+    github.bodies["repos/o/r/pulls/11/reviews?per_page=100"] = []
+    github.bodies["repos/o/r/pulls/12"] = {
+        "state": "closed",
+        "merged": True,
+        "head": {"sha": "abc123"},
+    }
+    github.bodies["repos/o/r/pulls/12/reviews?per_page=100"] = []
+    github.bodies["repos/o/r/pulls?state=open&per_page=100"] = []
+    github.bodies[
+        "repos/o/r/pulls?state=closed&sort=updated&direction=desc&per_page=100"
+    ] = [
+        {"number": 11, "user": {"login": "me"}, "closed_at": "2026-01-01T00:05:00Z"},
+        {"number": 12, "user": {"login": "me"}, "closed_at": "2026-01-01T00:01:00Z"},
+        {"number": 13, "user": {"login": "x"}, "closed_at": "2026-01-01T00:05:00Z"},
+    ]
+    clock = iter(["2026-01-01T00:05:00Z", "2026-01-01T00:10:00Z"])
+    monkeypatch.setattr(
+        "llm_prompts.watch.sources.github_pr._now",
+        lambda: next(clock, "2026-01-01T00:15:00Z"),
+    )
+    discovery = GithubPrDiscovery("me", ["o/r"], None)
+
+    code = watch([], ["ci"], interval=0, timeout=0.2, follow=True, discover=discovery)
+
+    assert code == 124
+    out = capsys.readouterr().out
+    assert out.count("gh-pr o/r#11: ") == 1
+    assert "o/r#12" not in out
+    assert "o/r#13" not in out
