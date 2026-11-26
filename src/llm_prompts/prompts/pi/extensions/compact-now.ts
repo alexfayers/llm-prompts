@@ -1,4 +1,4 @@
-// Adds the compact_now tool, which replaces the session context with a summary after this turn and then continues the task.
+// Adds the compact_now tool, which ends the turn, replaces the session context with a summary and then continues the task.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
@@ -14,6 +14,7 @@ const CONTINUE_MESSAGE =
 export default function (pi: ExtensionAPI) {
 	let pendingSummary: string | undefined;
 	let requested: string | undefined;
+	let callResultEntryId: string | undefined;
 
 	const notify = (ctx: ExtensionContext, message: string, level: "info" | "error" = "info") => {
 		if (ctx.hasUI) ctx.ui.notify(message, level);
@@ -23,19 +24,29 @@ export default function (pi: ExtensionAPI) {
 		const summary = pendingSummary;
 		pendingSummary = undefined;
 		if (summary === undefined || event.customInstructions !== summary) return;
+		const entries = event.branchEntries;
+		const callIndex = entries.findIndex((entry) => entry.id === callResultEntryId);
+		const entryAfterCall = callIndex < 0 ? undefined : entries[callIndex + 1];
+		const isLaterCut =
+			entryAfterCall !== undefined &&
+			!(entryAfterCall.type === "message" && entryAfterCall.message.role === "toolResult") &&
+			entries.findIndex((entry) => entry.id === entryAfterCall.id) >
+				entries.findIndex((entry) => entry.id === event.preparation.firstKeptEntryId);
 		return {
 			compaction: {
 				summary,
-				firstKeptEntryId: event.preparation.firstKeptEntryId,
+				firstKeptEntryId: isLaterCut ? entryAfterCall.id : event.preparation.firstKeptEntryId,
 				tokensBefore: event.preparation.tokensBefore,
 			},
 		};
 	});
 
-	pi.on("agent_settled", (event, ctx) => {
+	pi.on("turn_end", (event, ctx) => {
 		const instructions = requested;
+		const callIndex = event.toolResults.findIndex((result) => result.toolName === "compact_now");
+		if (instructions === undefined || callIndex < 0) return;
 		requested = undefined;
-		if (instructions === undefined || event.aborted) return;
+		callResultEntryId = event.toolResultEntryIds[callIndex];
 		pendingSummary = instructions;
 		notify(ctx, "Compaction started");
 		ctx.compact({
@@ -56,13 +67,13 @@ export default function (pi: ExtensionAPI) {
 		name: "compact_now",
 		label: "Compact now",
 		description:
-			"Compact this session's context after this turn. `instructions` is the summary that replaces the old context. It MUST name the open tasks, asks and decisions. The session continues automatically after compaction.",
+			"Compact this session's context. It ends the turn at once. `instructions` is the summary that replaces the old context. It MUST name the open tasks, asks and decisions. Messages that arrive later stay in context. The session continues automatically after compaction.",
 		promptSnippet: "Compact the session context with a model-written summary",
 		parameters: PARAMETERS,
 		async execute(_toolCallId, params) {
 			requested = params.instructions;
 			return {
-				content: [{ type: "text", text: "Compaction requested. Pi compacts after this turn, then sends a message to continue." }],
+				content: [{ type: "text", text: "Compaction requested. The turn ends and pi compacts now, then sends a message to continue." }],
 				details: {},
 				terminate: true,
 			};
