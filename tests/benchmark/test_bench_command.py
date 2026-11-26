@@ -659,6 +659,10 @@ def test_a_feature_run_refuses_tool_pins_for_b_alone() -> None:
     assert cli("--feature", "consult", "--b-tool", "mcp-memory=/m/b") == (2, [])
 
 
+def test_the_warm_fork_is_a_feature_that_runs_on_pi() -> None:
+    assert cli("--feature", "warm-fork")[1][0].features == ("warm-fork",)
+
+
 def test_an_unknown_feature_is_a_usage_error() -> None:
     assert cli("--feature", "nope") == (2, [])
     assert cli("--feature", "fork") == (2, [])
