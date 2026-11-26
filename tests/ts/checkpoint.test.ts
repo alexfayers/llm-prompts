@@ -238,7 +238,7 @@ describe("checkpoint nudge", () => {
 });
 
 describe("checkpoint rewind nudge", () => {
-	useEnv({ PI_CONTEXT_CHILD: undefined, PI_HERDSMAN_MAILBOX: undefined, PI_CACHE_RETENTION: undefined });
+	useEnv({ PI_CONTEXT_CHILD: undefined, PI_HERDSMAN_MAILBOX: undefined, PI_CACHE_RETENTION: undefined, AWS_BEDROCK_FORCE_CACHE: undefined });
 
 	/** Per-million-token prices: carrying 1000 tokens through 20 requests costs 6 cents more than reading them once, so a 1000-token summary needs a run of about 4125 tokens. */
 	const model = { api: "anthropic-messages", cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } };
@@ -247,7 +247,7 @@ describe("checkpoint rewind nudge", () => {
 	const markResult = { ...sized(0, "checkpoint"), details: { action: "mark", name: "m1" } };
 
 	/** A session where each batch is one assistant message with that many parallel bash calls, whose results fire one by one as `sized(tokens)`. */
-	async function run(batches: number[], tokens: number, opening: "mark" | "call" | "none" = "mark", activeModel: object = model) {
+	async function run(batches: number[], tokens: number, opening: "mark" | "call" | "none" = "mark", activeModel: object = model, providerEnv?: Record<string, string>) {
 		const entries = [entry("u0", { role: "user", content: "go" })];
 		if (opening === "mark") entries.push(call("a0", ["c0", "checkpoint", { action: "mark" }]), mark("r0", "c0", "m1"));
 		if (opening === "call") entries.push(call("a0", ["c0", "read", {}]), result("r0", "c0", "read", "out"));
@@ -264,6 +264,7 @@ describe("checkpoint rewind nudge", () => {
 		const ext = await loadExtension("checkpoint", { pi: { getSettings: () => ({}) } });
 		const ctx = ext.makeCtx({
 			model: activeModel as any,
+			modelRegistry: { getApiKeyAndHeaders: async () => ({ ok: true, env: providerEnv }) } as any,
 			sessionManager: { getBranch: () => visibleEntries, buildSessionProjection: () => ({ entries: visibleEntries.map((e) => ({ sourceEntry: e, messages: [e.message] })) }) } as any,
 		});
 		await ext.fire("agent_start");
@@ -326,6 +327,26 @@ describe("checkpoint rewind nudge", () => {
 		const bedrock = (id: string) => ({ ...model, api: "bedrock-converse-stream", id, name: id });
 		assert.equal(fired((await run([1, 1, 1, 1, 1], 860, "mark", bedrock("amazon.nova-pro-v1:0"))).outs).length, 1);
 		assert.deepEqual(fired((await run([1, 1, 1, 1, 1], 860, "mark", bedrock("anthropic.claude-sonnet-4-5-20250929-v1:0"))).outs), []);
+	});
+
+	test("uses the one hour write rate on a Bedrock model with no Claude name when AWS_BEDROCK_FORCE_CACHE is 1, as pi gives it cache points", async () => {
+		process.env.PI_CACHE_RETENTION = "long";
+		const profile = { ...model, api: "bedrock-converse-stream", id: "arn:aws:bedrock:us-east-1:<account-id>:application-inference-profile/abc", name: "team profile" };
+		const claude3 = { ...profile, id: "anthropic.claude-3-opus-20240229-v1:0", name: "anthropic.claude-3-opus-20240229-v1:0" };
+		assert.equal(fired((await run([1, 1, 1, 1, 1], 860, "mark", profile)).outs).length, 1);
+		process.env.AWS_BEDROCK_FORCE_CACHE = "1";
+		assert.deepEqual(fired((await run([1, 1, 1, 1, 1], 860, "mark", profile)).outs), []);
+		assert.equal(fired((await run([1, 1, 1, 1, 1], 860, "mark", claude3)).outs).length, 1);
+	});
+
+	test("reads AWS_BEDROCK_FORCE_CACHE from the provider's env before the process env", async () => {
+		process.env.PI_CACHE_RETENTION = "long";
+		const profile = { ...model, api: "bedrock-converse-stream", id: "arn:aws:bedrock:us-east-1:<account-id>:application-inference-profile/abc", name: "team profile" };
+		const nudges = async (providerEnv: Record<string, string>) => fired((await run([1, 1, 1, 1, 1], 860, "mark", profile, providerEnv)).outs).length;
+		assert.equal(await nudges({ AWS_BEDROCK_FORCE_CACHE: "1" }), 0);
+		process.env.AWS_BEDROCK_FORCE_CACHE = "1";
+		assert.equal(await nudges({ AWS_BEDROCK_FORCE_CACHE: "0" }), 1);
+		assert.equal(await nudges({}), 0);
 	});
 
 	test("fires once per run and again after a new user message", async () => {
