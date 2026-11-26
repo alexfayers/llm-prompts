@@ -1,4 +1,4 @@
-// Reports merged worktrees and kills orphaned processes left by dead agent panes in Herdr, all within the current workspace.
+// Removes finished worktrees and kills orphaned processes left by dead agent panes in Herdr, all within the current workspace.
 // Commands: /pane-reaper on|off
 // Config: pane-reaper.json keys enabled, intervalSeconds
 // Env: HERDR_ENV (1 when running inside Herdr)
@@ -9,6 +9,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { forkRegistry } from "./pi-context/registry.ts";
 
 const execFileAsync = promisify(execFile);
 const CONFIG_FILE = "pane-reaper.json";
@@ -20,6 +21,8 @@ const HERDR_TIMEOUT_MS = 5000;
 const DEFAULT_INTERVAL_SECONDS = 60;
 const MIN_INTERVAL_SECONDS = 10;
 const PS_TIMEOUT_MS = 5000;
+const LSOF_CWD_ARGS = ["-a", "-d", "cwd", "-Fn"];
+const LSOF_NAME_PREFIX = "n";
 const PS_FIELDS = "pid=,uid=,ppid=,pgid=,stat=,%cpu=,time=,lstart=,command=";
 const INIT_PID = 1;
 const COMMAND_PREVIEW_LENGTH = 80;
@@ -33,19 +36,26 @@ type Pane = {
 };
 export type Worktree = { path: string; branch: string; reason: string };
 export type WorktreeResult = { candidates: Worktree[]; kept: Worktree[] };
+type MergedHead = { headRefName: string; headRefOid: string };
 type Checkout = { path: string; head: string; branch: string };
 type Workspace = { workspace_id: string; worktree?: { checkout_path?: string } };
 
 const CANDIDATE_REASON = "merged into main and clean";
-const NO_COMMITS_REASON = "branch has no commits of its own";
 const BRANCH_PREFIX = "refs/heads/";
 const MAIN_REFS = ["main", "master"].flatMap((name) => [`${BRANCH_PREFIX}${name}`, `refs/remotes/origin/${name}`]);
 const GITHUB_HOST = "github.com";
 const SCP_REMOTE = /^(?:[^@/:]+@)?([^:/]+):(?!\/\/)/;
 const MERGED_PR_LIMIT = 200;
+const CONTRIBUTE_HEAD = /^[^/]+\/contribute\//;
 const mergedBranches = new Set<string>();
 const notMergedCheckedAt = new Map<string, number>();
-let mergedListing: Promise<Set<string> | undefined> | undefined;
+let mergedListing: Promise<MergedHead[] | undefined> | undefined;
+
+function describeWorktree(worktree: Worktree): string {
+	return `${worktree.path} (${worktree.branch}): ${worktree.reason}`;
+}
+
+const firstLine = (error: unknown): string => String(error).split("\n")[0];
 
 async function herdr(args: string[]): Promise<string> {
 	return (await execFileAsync("herdr", args, { timeout: HERDR_TIMEOUT_MS })).stdout;
@@ -113,28 +123,29 @@ async function hasGitHubOrigin(main: Checkout): Promise<boolean> {
 	}
 }
 
-async function listMergedBranches(main: Checkout): Promise<Set<string> | undefined> {
+async function listMergedHeads(main: Checkout): Promise<MergedHead[] | undefined> {
 	try {
-		const { stdout } = await execFileAsync("gh", ["pr", "list", "--state", "merged", "--author", "@me", "--limit", String(MERGED_PR_LIMIT), "--json", "headRefName"], { cwd: main.path, timeout: HERDR_TIMEOUT_MS });
-		return new Set((JSON.parse(stdout) as { headRefName: string }[]).map((pullRequest) => pullRequest.headRefName));
+		const { stdout } = await execFileAsync("gh", ["pr", "list", "--state", "merged", "--author", "@me", "--limit", String(MERGED_PR_LIMIT), "--json", "headRefName,headRefOid"], { cwd: main.path, timeout: HERDR_TIMEOUT_MS });
+		return JSON.parse(stdout) as MergedHead[];
 	} catch {
 		return undefined;
 	}
 }
 
-async function hasMergedPullRequest(main: Checkout, branch: string): Promise<boolean> {
-	if (mergedBranches.has(branch)) return true;
-	const checkedAt = notMergedCheckedAt.get(branch);
+async function hasMergedPullRequest(main: Checkout, checkout: Checkout): Promise<boolean> {
+	const key = `${checkout.branch}@${checkout.head}`;
+	if (mergedBranches.has(key)) return true;
+	const checkedAt = notMergedCheckedAt.get(key);
 	if (checkedAt !== undefined && Date.now() - checkedAt < MS_PER_HOUR) return false;
 	if (!(await hasGitHubOrigin(main))) return false;
-	mergedListing ??= listMergedBranches(main);
+	mergedListing ??= listMergedHeads(main);
 	const merged = await mergedListing;
 	if (!merged) return false;
-	if (!merged.has(branch)) {
-		notMergedCheckedAt.set(branch, Date.now());
+	if (!merged.some((pullRequest) => pullRequest.headRefOid === checkout.head && pullRequest.headRefName.replace(CONTRIBUTE_HEAD, "") === checkout.branch)) {
+		notMergedCheckedAt.set(key, Date.now());
 		return false;
 	}
-	mergedBranches.add(branch);
+	mergedBranches.add(key);
 	return true;
 }
 
@@ -142,14 +153,21 @@ async function gitKeepReason(main: Checkout, checkout: Checkout): Promise<string
 	if (!checkout.branch) return "head is detached";
 	if (MAIN_REFS.includes(`${BRANCH_PREFIX}${checkout.branch}`)) return "branch is main";
 	if ((await git(checkout.path, ["status", "--porcelain"])).trim()) return "has uncommitted or untracked files";
-	if ((await git(main.path, ["reflog", "show", "--format=%H", `${BRANCH_PREFIX}${checkout.branch}`])).trim().split("\n").length === 1) return NO_COMMITS_REASON;
-	const merged = await isAncestor(main, checkout);
-	const squashMerged = !merged && (await hasMergedPullRequest(main, checkout.branch));
-	if (!merged && !squashMerged) return "branch is not merged into main";
+	const hasOwnCommits = (await git(main.path, ["reflog", "show", "--format=%H", `${BRANCH_PREFIX}${checkout.branch}`])).trim().split("\n").length > 1;
+	if (hasOwnCommits && !(await isAncestor(main, checkout)) && !(await hasMergedPullRequest(main, checkout))) return "branch is not merged into main";
 	const tipSeconds = Number((await git(checkout.path, ["log", "-1", "--format=%ct", checkout.head])).trim());
 	const changedMs = Math.max(tipSeconds * MS_PER_SECOND, fs.statSync(checkout.path).mtimeMs);
 	if (Date.now() - changedMs < FRESH_HOURS * MS_PER_HOUR) return `changed in the last ${FRESH_HOURS} hours`;
 	return undefined;
+}
+
+function isUsedByLiveFork(checkout: Checkout): boolean {
+	return (forkRegistry()?.live() ?? []).some((run) => [run.tree?.path, run.worktree, run.target, run.cwd].some((directory) => isInside(directory, checkout.path)));
+}
+
+async function isProcessInside(checkout: Checkout): Promise<boolean> {
+	const { stdout } = await execFileAsync("lsof", LSOF_CWD_ARGS, { timeout: PS_TIMEOUT_MS });
+	return stdout.split("\n").some((line) => line.startsWith(LSOF_NAME_PREFIX) && isInside(line.slice(LSOF_NAME_PREFIX.length), checkout.path));
 }
 
 async function keepReasonUnlessCandidate(main: Checkout, checkout: Checkout): Promise<string | undefined> {
@@ -159,6 +177,8 @@ async function keepReasonUnlessCandidate(main: Checkout, checkout: Checkout): Pr
 	const existing = await workspaceFor(checkout);
 	if (panes.some((pane) => isInside(pane.cwd, checkout.path) || isInside(pane.foreground_cwd, checkout.path))) return "a pane is still inside it";
 	if (existing && panes.some((pane) => pane.workspace_id === existing.workspace_id)) return "its Herdr workspace is still open";
+	if (isUsedByLiveFork(checkout)) return "a live fork uses it";
+	if (await isProcessInside(checkout)) return "a process is still inside it";
 	return undefined;
 }
 
@@ -173,10 +193,25 @@ export async function sweepWorktrees(): Promise<WorktreeResult> {
 			if (kept) result.kept.push({ ...entry, reason: kept });
 			else result.candidates.push({ ...entry, reason: CANDIDATE_REASON });
 		} catch (error) {
-			result.kept.push({ ...entry, reason: `check failed: ${String(error).split("\n")[0]}` });
+			result.kept.push({ ...entry, reason: `check failed: ${firstLine(error)}` });
 		}
 	}
 	return result;
+}
+
+async function removeWorktree(worktree: Worktree): Promise<{ message: string; level: "info" | "warning" }> {
+	try {
+		await git(".", ["worktree", "remove", worktree.path]);
+	} catch (error) {
+		return { message: `pane-reaper could not remove worktree ${worktree.path} (${worktree.branch}): ${firstLine(error)}`, level: "warning" };
+	}
+	const removed = `pane-reaper removed worktree ${describeWorktree(worktree)}`;
+	try {
+		await git(".", ["branch", "-d", worktree.branch]);
+		return { message: removed, level: "info" };
+	} catch (error) {
+		return { message: `${removed}. Kept the branch: ${firstLine(error)}`, level: "warning" };
+	}
 }
 
 export function isTopLevelLead(env: Record<string, string | undefined>): boolean {
@@ -325,9 +360,6 @@ export function writeEnabledSetting(file: string, enabled: boolean): void {
 	fs.writeFileSync(file, `${JSON.stringify({ ...readJson(file), enabled }, null, 2)}\n`);
 }
 
-function describeWorktree(worktree: Worktree): string {
-	return `${worktree.path} (${worktree.branch}): ${worktree.reason}`;
-}
 
 function describeOrphan(orphan: Orphan): string {
 	const leader = orphan.sessionLeader ? ", session leader" : "";
@@ -363,7 +395,10 @@ export default function (pi: ExtensionAPI) {
 		const orphans = await sweepOrphans(orphanOptions(workspaceId));
 		for (const orphan of orphans.killed) ui.notify(`pane-reaper killed ${describeOrphan(orphan)}`, "warning");
 		const { candidates, kept } = await sweepWorktrees();
-		for (const worktree of candidates) tellOnce(ui, `worktree:${worktree.path}`, `pane-reaper: worktree ${describeWorktree(worktree)}. Safe to remove`, "info");
+		for (const worktree of candidates) {
+			const { message, level } = await removeWorktree(worktree);
+			tellOnce(ui, `worktree:${worktree.path}`, message, level);
+		}
 		tellKept(ui, kept, listAll);
 		return orphans.killed.length + candidates.length + kept.length;
 	}
@@ -410,7 +445,7 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.on("session_shutdown", () => stopTimer());
 	pi.registerCommand("pane-reaper", {
-		description: "Kill orphaned processes left behind by dead Herdr agent panes, and report merged clean feature worktrees that are safe to remove. It never removes a worktree or branch. `on|off` toggles the periodic check.",
+		description: "Kill orphaned processes left behind by dead Herdr agent panes, and remove merged clean feature worktrees and their branches that nothing uses, with `git worktree remove` and `git branch -d` and never `--force` or `-D`. `on|off` toggles the periodic check.",
 		handler: runCommand,
 	});
 }
