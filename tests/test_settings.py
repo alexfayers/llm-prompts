@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import run_capturing_exit
+from conftest import FakeSubprocess, run_capturing_exit
 
 from llm_prompts.cli import main
 
@@ -204,15 +204,26 @@ def test_in_a_terminal_invalid_toml_exits_without_the_editor(
     assert "is not valid TOML" in result
 
 
-def test_saving_changed_tools_or_plugins_says_how_to_install_them(
+@pytest.mark.parametrize(
+    ("changed", "commands"),
+    [
+        ({"tools"}, [["llm-prompts", "setup"]]),
+        ({"plugins"}, [["llm-prompts", "update"]]),
+        ({"tools", "plugins"}, [["llm-prompts", "setup"], ["llm-prompts", "update"]]),
+    ],
+)
+def test_saving_changed_tools_or_plugins_installs_them(
     isolated_config_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    fake_subprocess: FakeSubprocess,
+    changed: set[str],
+    commands: list[list[str]],
 ) -> None:
     from llm_prompts.settings_app import SettingsApp
 
     def saved(app: SettingsApp) -> bool:
-        app.entries_changed = True
+        app.changed_tables = changed
         return True
 
     monkeypatch.setattr("llm_prompts.settings._has_terminal", lambda: True)
@@ -220,6 +231,29 @@ def test_saving_changed_tools_or_plugins_says_how_to_install_them(
 
     assert _run(monkeypatch) in (None, 0)
 
-    assert capsys.readouterr().out == (
-        "Run `llm-prompts install <agent>` to install the changed tools and plugins.\n"
+    assert fake_subprocess.commands == commands
+    assert capsys.readouterr().out == "".join(
+        f"Ran `llm-prompts {argv[1]}`.\n" for argv in commands
     )
+
+
+def test_a_failed_install_after_saving_exits_with_an_error(
+    isolated_config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_subprocess: FakeSubprocess,
+) -> None:
+    from llm_prompts.settings_app import SettingsApp
+
+    def saved(app: SettingsApp) -> bool:
+        app.changed_tables = {"tools", "plugins"}
+        return True
+
+    monkeypatch.setattr("llm_prompts.settings._has_terminal", lambda: True)
+    monkeypatch.setattr(SettingsApp, "run", saved)
+    fake_subprocess.on("llm-prompts", "setup", returncode=1)
+
+    result = _run(monkeypatch)
+
+    assert isinstance(result, str)
+    assert "`llm-prompts setup` failed" in result
+    assert fake_subprocess.commands == [["llm-prompts", "setup"]]

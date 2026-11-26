@@ -330,3 +330,14 @@ def test_a_new_entry_without_a_source_blocks_the_save(
 
     assert "[[plugins]] entry 1: source is invalid" in screen
     assert path.read_text(encoding="utf-8") == _TOOL
+
+
+def test_an_inline_tools_array_is_saved_as_tables(isolated_config_dir: Path) -> None:
+    path = _write_config(
+        isolated_config_dir,
+        'tools = [{name = "a", source = "https://github.com/example/a.git"}]\n',
+    )
+
+    _edit_entries("tools", ("type", "#tools-0-ref=main"))
+
+    assert path.read_text(encoding="utf-8") == f'\n{_TOOL}ref = "main"\n'

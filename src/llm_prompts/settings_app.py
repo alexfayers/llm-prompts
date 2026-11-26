@@ -13,6 +13,7 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Input, Label, Static, Switch
 from tomlkit import TOMLDocument
+from tomlkit.items import Table
 
 from .config_edit import LoadedConfig, save_doc
 from .exit_reason import ExitReason
@@ -81,10 +82,16 @@ def _rows(config: dict[str, Any], table: str) -> list[Row] | None:
 
 def _apply_rows(doc: TOMLDocument, table: str, rows: list[Row]) -> None:
     """Replace ``table``'s entries in ``doc`` with ``rows``, writing only changed fields."""
+    # shortcut: an inline-table array (`tools = [{...}]`) is rewritten as [[tools]] tables
+    # on save, losing its layout. Keep that form if users report writing it.
     old = list(doc.get(table, []))
     entries = tomlkit.aot()
     for origin, texts in rows:
-        entry = old[origin] if origin is not None else tomlkit.table()
+        entry = tomlkit.table()
+        if origin is not None and isinstance(old[origin], Table):
+            entry = old[origin]
+        elif origin is not None:
+            entry.update(old[origin])
         for field in ENTRY_FIELDS[table]:
             text = texts[field.key].strip()
             if text == _field_text(entry, field):
@@ -400,7 +407,7 @@ class SettingsApp(App[bool]):
         config = loaded.doc.unwrap()
         self._initial_rows = {table: _rows(config, table) for table in ENTRY_FIELDS}
         self._rows = copy.deepcopy(self._initial_rows)
-        self.entries_changed = False
+        self.changed_tables: set[str] = set()
 
     def compose(self) -> ComposeResult:
         config = self._loaded.doc.unwrap()
@@ -497,7 +504,7 @@ class SettingsApp(App[bool]):
             changes.append(f"reviews.repos = {shown or 'none'}")
         for table, rows in entries.items():
             changes += _describe_rows(table, self._initial_rows[table] or [], rows)
-        self.entries_changed = bool(entries)
+        self.changed_tables = set(entries)
         self.push_screen(ReviewScreen(self._loaded, changes, doc))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

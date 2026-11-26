@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import subprocess
 import sys
 from typing import Any, NamedTuple
 
@@ -98,6 +99,23 @@ def _has_terminal() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
+_APPLY_COMMANDS = (("tools", "setup"), ("plugins", "update"))
+
+
+def _apply(changed_tables: set[str]) -> None:
+    """Run ``setup`` for changed tools and ``update`` for changed plugins.
+
+    Raises:
+        ExitReason: ``other`` when a command fails.
+    """
+    for table, command in _APPLY_COMMANDS:
+        if table not in changed_tables:
+            continue
+        if subprocess.run([sys.argv[0], command], check=False).returncode:
+            raise ExitReason("other", f"`llm-prompts {command}` failed.")
+        print(f"Ran `llm-prompts {command}`.")
+
+
 def run(*, check: bool) -> None:
     """Open the settings editor in a terminal, or print the config and its errors.
 
@@ -117,10 +135,8 @@ def run(*, check: bool) -> None:
         from .settings_app import SettingsApp
 
         app = SettingsApp(load_doc())
-        if app.run() and app.entries_changed:
-            print(
-                "Run `llm-prompts install <agent>` to install the changed tools and plugins."
-            )
+        if app.run():
+            _apply(app.changed_tables)
         return
     config = read_config()
     print("\n".join(report(config)))
