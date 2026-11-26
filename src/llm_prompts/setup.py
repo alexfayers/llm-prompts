@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from importlib import metadata
 from pathlib import Path
@@ -41,7 +41,8 @@ _DEFAULT_CONFIG = """\
 
 # Each [[tools]] entry is a package to install.
 # `source` can be:
-#   - A git URL (e.g. "git+https://github.com/user/repo.git")
+#   - A git URL (e.g. "git+https://github.com/user/repo.git"). `setup` clones it into
+#     ~/.llm-prompts/<name> and replaces `source` with that path.
 #   - A local path (~/git/pkg or /abs/path) - installed from the checkout
 #
 # A git source installs its latest stable release tag (vX.Y.Z), or HEAD if it has
@@ -800,16 +801,17 @@ def _normalize_origin(source: str) -> str:
     return f"{parsed.scheme}://{host}{path}"
 
 
+def _dist_infos(env_name: str, package: str) -> Iterator[Path]:
+    """Yield the dist-info directories of ``package`` in a uv tool env."""
+    for dist_info in (_uv_tools_dir() / env_name).rglob("*.dist-info"):
+        name = dist_info.name.removesuffix(".dist-info").rpartition("-")[0]
+        if _canonical_name(name) == package:
+            yield dist_info
+
+
 def _installed_direct_url(env_name: str, package: str) -> dict[str, Any] | None:
     """Return the parsed direct_url.json a package of a uv tool env was installed with, or None if unreadable."""
-    for dist_info in (_uv_tools_dir() / env_name).rglob("*.dist-info"):
-        if (
-            _canonical_name(
-                dist_info.name.removesuffix(".dist-info").rpartition("-")[0]
-            )
-            != package
-        ):
-            continue
+    for dist_info in _dist_infos(env_name, package):
         try:
             data = json.loads((dist_info / "direct_url.json").read_text("utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -1167,6 +1169,12 @@ def run_setup(
         for err in errors:
             print(err, file=sys.stderr)
         raise ExitReason("invalid_tool_paths")
+
+    from . import clones
+
+    clones.block_on_installed_edits(tools, dry_run=dry_run)
+    if clones.migrate(tools, dry_run=dry_run):
+        tools = _load_config()
 
     _require_uv()
     if tool_filter:

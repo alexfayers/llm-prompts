@@ -67,6 +67,8 @@ source = "git+https://github.com/alexfayers/mcp-memory.git"
 
 A `git+` source installs its highest stable release tag (`vX.Y.Z`), or the default branch tip if it has none. A source that already ends in `@<ref>` is left as it is. A local path checkout moves to its highest stable release tag, or its upstream branch if it has none, with its local commits kept on top. For a new release of either kind, the session-start notice shows the user `update available (v0.32.0 -> v0.33.0)` and, for a GitHub source, a `Changelog:` link. Agents get the CHANGELOG sections in between, or the commit subjects when the CHANGELOG has none.
 
+`setup` and `update` clone each `git+` source without a `ref` or `@<ref>` into `~/.llm-prompts/<name>`, at its highest release tag, and set that entry's `source` to the clone in `config.toml`. They print each clone and each config change. A clone already in that folder is reused with its edits untouched. If the folder holds anything else, or the clone fails, the entry keeps its `git+` source and a warning says why. While any tool's installed copy has edits a reinstall would discard, `setup` and `update` name the edited files and stop before they upgrade or reinstall. `setup --dry-run` prints what it would clone.
+
 `ref` is optional. It makes a `git+` entry follow that branch, tag or commit instead of releases, and a local path follow that branch of its remote:
 
 ```toml
