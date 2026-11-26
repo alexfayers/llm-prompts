@@ -28,7 +28,7 @@ Before you {{TOOL_COMPLETE}} or end a conversation, you **MUST** use the `sessio
 This covers ANY response where you indicate work is finished ("all done", "nothing else outstanding", or similar wrap-up language),
 **and any moment you internally conclude that all work is complete** - even if the user has not asked you to wrap up. MUST load and run the skill BEFORE giving any wrap-up summary.
 
-User signals that trigger session-end: "anything else?", "that's it", "thanks", "we're done", "wrap up", or any question implying the task is finished.
+User signals that trigger session-end: "anything else?", "that's it", "we're done", "wrap up", a "thanks" that closes the work (not mid-task), or any question implying the task is finished.
 On any of these you MUST run the skill FIRST, then respond.
 
 A subagent MUST NOT run `session-end` - it reports to its lead instead.
