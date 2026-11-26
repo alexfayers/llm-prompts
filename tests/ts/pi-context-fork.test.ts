@@ -109,6 +109,8 @@ const forkDirs = () => fs.readdirSync(path.join(agentDir, "pi-context"), { recur
 
 const MAIN_TOOLS = [{ name: "mcp__semble__search", description: "d", parameters: {}, exposure: "codemode" }, { name: "read", description: "r", parameters: {}, exposure: "direct" }];
 
+const STUB_SUFFIX = 'That is all the shared context. Once you have read it, call reply with {"outcome":"done","ref":""} and stop. Your specific task arrives next.';
+
 const eventually = async (done: () => boolean) => {
 	for (let attempt = 0; attempt < 500 && !done(); attempt++) await new Promise((resolve) => setTimeout(resolve, 10));
 };
@@ -354,11 +356,26 @@ describe("fork tool", () => {
 		test("shared with tasks runs one cold stub on the shared text, then one child per task on a copy of its session", async () => {
 			const { tool } = await fork({ shared: "STUB_REPORT notes", tasks: [{ name: "t1", task: "STUB_INSPECT" }, { name: "t2", task: "STUB_INSPECT" }], model: "prov/cheap:low", name: "stub" });
 			const run = (name: string) => registryOf().all().find((candidate) => candidate.name === name)!;
-			assert.equal(run("stub").task, 'STUB_REPORT notes\n\nYour specific task arrives next, so call reply with {"outcome":"done","ref":""} and stop.');
+			assert.equal(run("stub").task, `STUB_REPORT notes\n\n${STUB_SUFFIX}`);
 			assert.equal(tool.content[0].text, "OUTCOME done ref:rc-fork-x\nbody line");
 			for (const name of ["t1", "t2"]) assert.equal(JSON.parse(fs.readFileSync(path.join(run(name).files!, "session", "session.jsonl"), "utf8").split("\n")[0]).piContextFork.parentSessionId, run("stub").id);
 			assert.equal(fs.existsSync(path.join(run("stub").files!, "finished")), true);
 			assert.match(String((await fork({ shared: "s", tasks: [{ name: "t3", task: "x" }] })).tool), /shared needs tasks and model, without task or from/);
+		});
+
+		test("sharedFiles puts each file's contents into the stub's prompt, relative to the working directory", async () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-shared-files-"));
+			fs.mkdirSync(path.join(dir, "sub"));
+			fs.writeFileSync(path.join(dir, "a.txt"), "ALPHA\n");
+			fs.writeFileSync(path.join(dir, "sub", "b.txt"), "BETA\n");
+			await fork({ shared: "STUB_REPORT notes", sharedFiles: ["a.txt", "sub/b.txt"], tasks: [{ name: "sf1", task: "STUB_REPORT" }], model: "prov/cheap", name: "sfstub" }, dir);
+			assert.equal(registryOf().all().find((run) => run.name === "sfstub")!.task, `STUB_REPORT notes\n\nFile a.txt:\nALPHA\n\nFile sub/b.txt:\nBETA\n\n${STUB_SUFFIX}`);
+		});
+
+		test("sharedFiles names a file that cannot be read before anything starts", async () => {
+			const { tool } = await fork({ shared: "s", sharedFiles: ["missing.txt"], tasks: [{ name: "sf2", task: "x" }], model: "prov/cheap", name: "sfmiss" });
+			assert.match(String(tool), /cannot read shared file missing\.txt/);
+			assert.equal(registryOf().all().some((run) => run.name === "sfmiss"), false);
 		});
 
 		test("a stub that replies exactly as its prompt asks lets the tasks start", async () => {

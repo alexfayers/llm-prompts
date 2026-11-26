@@ -79,6 +79,7 @@ export function coldArgs(role: Role, { model, sessionDir, cardFile, skillsDir, s
 }
 
 const FINISHED_MARK = "finished";
+const STUB_SUFFIX = 'That is all the shared context. Once you have read it, call reply with {"outcome":"done","ref":""} and stop. Your specific task arrives next.';
 /** The conversation a queued fork was called with, kept in its files so a resume starts it from that point. */
 const QUEUED_ENTRIES = "queued-entries.json";
 
@@ -425,7 +426,6 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		return running;
 	}
 	const slots = new Slots(maxLive);
-
 	/** Starts the delegate of a registered run in the background, which reports its end to `background`. */
 	function startRun(ctx: ExtensionToolContext, run: { id: string; name: string; ref: string; role: Role; tree?: Worktree; target?: string; model?: string; files: string }, delegate: Pick<DelegateOptions, "entries" | "message" | "resume">) {
 		const { id: runId, name, ref, tree } = run;
@@ -472,7 +472,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		name: "fork",
 		label: "Fork",
 		description:
-			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. With branch, and optionally base (a ref, default the current branch), the writer starts on that new branch from the base. It pushes the branch with git push, and the landing is that push: unpushed work escalates and nothing lands on the current branch. Use it for one PR per writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It returns at once and the result arrives as a message when the delegate calls reply and the work has landed. from runs on a copy of a finished fork's session instead. A session over 150000 tokens of context starts the fork cold on the same model with a summary instead of a copy. shared with tasks and model runs one cold stub that reads shared, then starts one child per task from that stub when it finishes, so they share its prompt cache.",
+			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. With branch, and optionally base (a ref, default the current branch), the writer starts on that new branch from the base. It pushes the branch with git push, and the landing is that push: unpushed work escalates and nothing lands on the current branch. Use it for one PR per writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It returns at once and the result arrives as a message when the delegate calls reply and the work has landed. from runs on a copy of a finished fork's session instead. A session over 150000 tokens of context starts the fork cold on the same model with a summary instead of a copy. shared with tasks and model runs one cold stub that reads shared and the contents of the files in sharedFiles in a single request, then starts one child per task from that stub when it finishes, so they share its prompt cache.",
 		promptSnippet: "Run a read-only or worktree-writing delegate on a copy of this session in the background",
 		parameters: Type.Object({
 			task: Type.Optional(Type.String({ description: "What the delegate should find out or check" })),
@@ -482,6 +482,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			base: Type.Optional(Type.String({ description: "Writer only, with branch: the ref its new branch starts from, such as origin/main. Default: the current branch" })),
 			branch: Type.Optional(Type.String({ description: "Writer only: a new branch for its worktree to start on, which it pushes instead of landing on the current branch" })),
 			shared: Type.Optional(Type.String({ description: "Text a cold stub on model reads once before the tasks start from copies of its session" })),
+			sharedFiles: Type.Optional(Type.Array(Type.String(), { description: "With shared: paths of files, relative to this session's directory or target, whose contents go into the stub's prompt after the shared text" })),
 			tasks: Type.Optional(Type.Array(Type.Object({ name: Type.String({ pattern: "^[a-z0-9-]{1,24}$" }), task: Type.String() }), { description: "With shared: one child per task, each on a copy of the stub's session" })),
 			from: Type.Optional(Type.String({ pattern: "^[a-z0-9-]{1,24}$", description: "Name of a finished fork: run on a new copy of its session, at its model and effort, instead of on this session" })),
 			model: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9][\\w./:@-]*$", description: "Run as a cold worker on this model: provider/id (optionally :thinking) or a tier name such as sol or opus. Any model starts an empty session with no context and no prompt cache from you, so the task must be self-contained" })),
@@ -490,14 +491,23 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			recordMainTools(ctx);
 			if (process.env.PI_CONTEXT_CHILD) throw new Error("Only the top-level session can fork.");
 			if (!ctx.model) throw new Error("Cannot fork without a model.");
-			if (params.shared !== undefined || params.tasks !== undefined) {
+			if (params.shared !== undefined || params.sharedFiles !== undefined || params.tasks !== undefined) {
 				if (params.shared === undefined || !params.tasks?.length || params.model === undefined || params.task !== undefined || params.from !== undefined) throw new Error("shared needs tasks and model, without task or from");
 				const stub = params.name ?? `stub-${randomUUID().slice(0, 6)}`;
 				const names = [stub, ...params.tasks.map(({ name }) => name)];
 				const repeated = names.find((name, at) => names.indexOf(name) !== at);
 				if (repeated) throw new Error(`task names must be unique and differ from the stub's: ${repeated}`);
 				const common = { role: params.role, target: params.target };
-				const started = await forkTool.execute(toolCallId, { ...common, name: stub, model: params.model, task: `${params.shared}\n\nYour specific task arrives next, so call reply with {"outcome":"done","ref":""} and stop.` }, signal, onUpdate, ctx);
+				const sharedDir = path.resolve(ctx.cwd, expandHome(params.target ?? "."));
+				const files = (params.sharedFiles ?? []).map((file) => {
+					try {
+						return `File ${file}:\n${fs.readFileSync(path.resolve(sharedDir, expandHome(file)), "utf8").trimEnd()}`;
+					} catch (error) {
+						throw new Error(`cannot read shared file ${file}: ${error instanceof Error ? error.message : String(error)}`);
+					}
+				});
+				const task = [params.shared, ...files, STUB_SUFFIX].join("\n\n");
+				const started = await forkTool.execute(toolCallId, { ...common, name: stub, model: params.model, task }, signal, onUpdate, ctx);
 				const stubId = (started.details as { runId: string }).runId;
 				const failTask = ({ name, task }: { name: string; task: string }, error: unknown) => {
 					const id = newRunId();
