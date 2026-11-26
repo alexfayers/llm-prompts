@@ -19,13 +19,16 @@ lint-check: _uv
 type-check: _uv
     uv run mypy src/ tests/
 
-type-check-ts:
+@_pnpm:
+    pnpm install --frozen-lockfile
+
+type-check-ts: _pnpm
     pnpm type-check
 
 test: _uv
     uv run pytest -q --nf -n auto --maxprocesses 4 --dist worksteal --cov=. --cov-report=xml
 
-test-ts:
+test-ts: _pnpm
     NODE_OPTIONS=--max-old-space-size={{ts_test_heap_mb}} node tests/ts/run-with-timeout.mjs {{ts_test_timeout_seconds}} node --test --experimental-test-module-mocks tests/ts/*.test.ts
 
 check: _uv
