@@ -39,7 +39,7 @@ function run(command: string, args: string[], cwd?: string): string {
 		if (world.gh === undefined) throw new Error("gh failed");
 		return world.gh;
 	}
-	if (command === "git" && (args[0] === "worktree" && args[1] === "remove" || args[0] === "branch")) {
+	if (command === "git" && (args[0] === "worktree" && args[1] === "remove" || args[0] === "branch" || args[0] === "update-ref")) {
 		world.gitCalls.push(line);
 		if (world.refused && line.startsWith(world.refused)) throw new Error("refused");
 		if (args[1] === "remove") world.worktrees = world.worktrees.filter((w) => w.path !== args[2]);
@@ -339,6 +339,15 @@ describe("/pane-reaper", () => {
 		const result = await command(await load(), "");
 		assert.deepEqual(world.gitCalls, [`worktree remove ${done.path}`]);
 		assert.deepEqual(result, [[`pane-reaper could not remove worktree ${done.path} (feat/done): Error: refused`, "warning"]]);
+	});
+
+	test("check now deletes a squash-merged branch only at its merged pull request head", async () => {
+		world.remote = "https://github.com/owner/repo";
+		world.gh = mergedFor("feat/squashed");
+		const squashed = addWorktree("squashed", { merged: false });
+		const result = await command(await load(), "");
+		assert.deepEqual(world.gitCalls, [`worktree remove ${squashed.path}`, "update-ref -d refs/heads/feat/squashed head-squashed"]);
+		assert.deepEqual(result, [[`pane-reaper removed worktree ${squashed.path} (feat/squashed): merged into main and clean`, "info"]]);
 	});
 
 	test("check now reports the branch git refuses to delete", async () => {

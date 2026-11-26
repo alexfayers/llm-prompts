@@ -34,7 +34,7 @@ type Pane = {
 	cwd?: string;
 	foreground_cwd?: string;
 };
-export type Worktree = { path: string; branch: string; reason: string };
+export type Worktree = { path: string; branch: string; head: string; reason: string };
 export type WorktreeResult = { candidates: Worktree[]; kept: Worktree[] };
 type MergedHead = { headRefName: string; headRefOid: string };
 type Checkout = { path: string; head: string; branch: string };
@@ -132,8 +132,10 @@ async function listMergedHeads(main: Checkout): Promise<MergedHead[] | undefined
 	}
 }
 
+const mergedKey = (checkout: { branch: string; head: string }) => `${checkout.branch}@${checkout.head}`;
+
 async function hasMergedPullRequest(main: Checkout, checkout: Checkout): Promise<boolean> {
-	const key = `${checkout.branch}@${checkout.head}`;
+	const key = mergedKey(checkout);
 	if (mergedBranches.has(key)) return true;
 	const checkedAt = notMergedCheckedAt.get(key);
 	if (checkedAt !== undefined && Date.now() - checkedAt < MS_PER_HOUR) return false;
@@ -161,6 +163,7 @@ async function gitKeepReason(main: Checkout, checkout: Checkout): Promise<string
 	return undefined;
 }
 
+// shortcut: sees only forks of this pi process, so another session's fork working from the primary checkout is missed. Upgrade if such a fork loses a worktree.
 function isUsedByLiveFork(checkout: Checkout): boolean {
 	return (forkRegistry()?.live() ?? []).some((run) => [run.tree?.path, run.worktree, run.target, run.cwd].some((directory) => isInside(directory, checkout.path)));
 }
@@ -187,7 +190,7 @@ export async function sweepWorktrees(): Promise<WorktreeResult> {
 	mergedListing = undefined;
 	const [main, ...linked] = await git(".", ["worktree", "list", "--porcelain"]).then(parseCheckouts, () => []);
 	for (const checkout of linked) {
-		const entry = { path: checkout.path, branch: checkout.branch };
+		const entry = { path: checkout.path, branch: checkout.branch, head: checkout.head };
 		try {
 			const kept = await keepReasonUnlessCandidate(main, checkout);
 			if (kept) result.kept.push({ ...entry, reason: kept });
@@ -201,13 +204,16 @@ export async function sweepWorktrees(): Promise<WorktreeResult> {
 
 async function removeWorktree(worktree: Worktree): Promise<{ message: string; level: "info" | "warning" }> {
 	try {
+		// shortcut: without --force git still deletes ignored files such as overlay.json. Upgrade if one holds work worth keeping.
 		await git(".", ["worktree", "remove", worktree.path]);
 	} catch (error) {
 		return { message: `pane-reaper could not remove worktree ${worktree.path} (${worktree.branch}): ${firstLine(error)}`, level: "warning" };
 	}
 	const removed = `pane-reaper removed worktree ${describeWorktree(worktree)}`;
 	try {
-		await git(".", ["branch", "-d", worktree.branch]);
+		// git branch -d refuses a squash-merged branch, so delete it only while it still points at the merged pull request head.
+		if (mergedBranches.has(mergedKey(worktree))) await git(".", ["update-ref", "-d", `${BRANCH_PREFIX}${worktree.branch}`, worktree.head]);
+		else await git(".", ["branch", "-d", worktree.branch]);
 		return { message: removed, level: "info" };
 	} catch (error) {
 		return { message: `${removed}. Kept the branch: ${firstLine(error)}`, level: "warning" };
@@ -445,7 +451,7 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.on("session_shutdown", () => stopTimer());
 	pi.registerCommand("pane-reaper", {
-		description: "Kill orphaned processes left behind by dead Herdr agent panes, and remove merged clean feature worktrees and their branches that nothing uses, with `git worktree remove` and `git branch -d` and never `--force` or `-D`. `on|off` toggles the periodic check.",
+		description: "Kill orphaned processes left behind by dead Herdr agent panes, and remove merged clean feature worktrees and their branches that nothing uses, with `git worktree remove` and `git branch -d`, deleting a squash-merged branch only while it is at the merged pull request head, and never `--force` or `-D`. `on|off` toggles the periodic check.",
 		handler: runCommand,
 	});
 }
