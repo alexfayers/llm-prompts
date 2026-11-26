@@ -141,7 +141,7 @@
 | tests/benchmark/test\_bench\_types.py                                         |       15 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_variant.py                                       |      301 |        1 |     99% |       541 |
 | tests/benchmark/traces.py                                                     |        3 |        0 |    100% |           |
-| tests/conftest.py                                                             |      475 |       24 |     95% |168, 302-303, 306, 309, 312, 317, 372, 451-462, 467-469, 487-488, 502, 574-578, 670, 858, 898, 906 |
+| tests/conftest.py                                                             |      489 |       26 |     95% |176, 310-311, 314, 317, 320, 325, 380, 459-470, 475-477, 495-496, 510, 582-586, 678, 866, 906, 914, 1079, 1087 |
 | tests/test\_auto\_update.py                                                   |      216 |        0 |    100% |           |
 | tests/test\_build\_wave.py                                                    |      282 |        1 |     99% |       112 |
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
@@ -205,12 +205,14 @@
 | tests/test\_todos\_script.py                                                  |       88 |        0 |    100% |           |
 | tests/test\_tool\_paths.py                                                    |       27 |        0 |    100% |           |
 | tests/test\_uninstall.py                                                      |      119 |        0 |    100% |           |
+| tests/test\_worker\_share.py                                                  |       74 |        0 |    100% |           |
 | tests/test\_worktrees.py                                                      |       82 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_pr.py                                       |      235 |        0 |    100% |           |
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       84 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **37375** |  **840** | **98%** |           |
+| tests/worker\_share.py                                                        |       54 |        1 |     98% |        21 |
+| **TOTAL**                                                                     | **37517** |  **843** | **98%** |           |
 
 
 ## Setup coverage badge
