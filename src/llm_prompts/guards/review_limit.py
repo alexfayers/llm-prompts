@@ -44,6 +44,48 @@ def _gh(cwd: str, endpoint: str, jq: str, host: str = "") -> str | None:
     return ran.stdout.strip() if ran.returncode == 0 else None
 
 
+def open_pr_count(cwd: str, repo: str) -> int | None:
+    """Return the user's open PRs in ``repo`` (``[host/]owner/name``), or None when gh cannot tell."""
+    host, _, owner_repo = (
+        repo.partition("/") if repo.count("/") == 2 else ("", "", repo)
+    )
+    login = _gh(cwd, "user", ".login", host)
+    authors = login and _gh(
+        cwd,
+        f"repos/{owner_repo}/pulls?state=open&per_page=100",
+        ".[].user.login",
+        host,
+    )
+    return authors.split().count(login) if login and authors is not None else None
+
+
+def limit_block(scope: str, count: int, brief: bool = False) -> str | None:
+    """Return why a new review in ``scope`` is refused when ``count`` reviews are open, or None under the limit.
+
+    ``brief`` gives a one-line form for CLI output instead of the agent-facing text.
+    """
+    try:
+        reviews = read_config().get("reviews", {})
+        repos = {key.lower(): value for key, value in reviews.get("repos", {}).items()}
+        limit = int(
+            repos.get(scope.lower(), reviews.get("max_in_flight", DEFAULT_LIMIT))
+        )
+    except (AttributeError, TypeError, ValueError, OSError):
+        limit = DEFAULT_LIMIT
+    if count < limit:
+        return None
+    state = f"{count} of your reviews in {scope} are open, at the limit of {limit}"
+    if brief:
+        return f"{state} (`max_in_flight` under `[reviews]`)"
+    return (
+        f"{state}."
+        " MUST NOT open a new review until some merge or close. Updating an open review is allowed."
+        " Only the user raises the limit, with `max_in_flight` under"
+        f' `[reviews]`, or `"{scope}"` under `[reviews.repos]`, in llm-prompts\' config.toml.'
+        " The limit is best effort, so parallel creates can go over it by a few."
+    )
+
+
 class OpenReviewsSpec:
     """Extension point for commands that open reviews."""
 
@@ -76,21 +118,8 @@ class ReviewLimitGuard(HooksPlugin):
             word.removeprefix("--repo=") for word in words if word.startswith("--repo=")
         ]
         repo = named[0] if named else _gh(cwd, "repos/{owner}/{repo}", ".full_name")
-        host, _, owner_repo = (
-            repo.partition("/") if repo and repo.count("/") == 2 else ("", "", repo)
-        )
-        login = repo and _gh(cwd, "user", ".login", host)
-        authors = login and _gh(
-            cwd,
-            f"repos/{owner_repo}/pulls?state=open&per_page=100",
-            ".[].user.login",
-            host,
-        )
-        return (
-            (repo, authors.split().count(login))
-            if repo and login and authors is not None
-            else None
-        )
+        count = open_pr_count(cwd, repo) if repo else None
+        return (repo, count) if repo and count is not None else None
 
     def on_hook(
         self, hook_name: str, *, logger: logging.Logger, **kwargs: object
@@ -113,28 +142,7 @@ class ReviewLimitGuard(HooksPlugin):
             for scope, count in collect_contributions(
                 OpenReviewsSpec.open_reviews, tuple, command=cmd, cwd=cwd
             ):
-                try:
-                    reviews = read_config().get("reviews", {})
-                    repos = {
-                        key.lower(): value
-                        for key, value in reviews.get("repos", {}).items()
-                    }
-                    limit = int(
-                        repos.get(
-                            scope.lower(),
-                            reviews.get("max_in_flight", DEFAULT_LIMIT),
-                        )
-                    )
-                except (AttributeError, TypeError, ValueError, OSError):
-                    limit = DEFAULT_LIMIT
-                if count >= limit:
-                    return HookResult(
-                        block=(
-                            f"{count} of your reviews in {scope} are open, at the limit of {limit}."
-                            " MUST NOT open a new review until some merge or close. Updating an open review is allowed."
-                            " Only the user raises the limit, with `max_in_flight` under"
-                            f' `[reviews]`, or `"{scope}"` under `[reviews.repos]`, in llm-prompts\' config.toml.'
-                            " The limit is best effort, so parallel creates can go over it by a few."
-                        )
-                    )
+                block = limit_block(scope, count)
+                if block:
+                    return HookResult(block=block)
         return None

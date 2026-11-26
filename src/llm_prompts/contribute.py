@@ -1592,6 +1592,16 @@ def _open_pr_number(repo: Path, branch: str) -> int | None:
         return None
 
 
+def _review_limit_block(repo: Path, branch: str) -> str | None:
+    """Return why no new PR for ``branch`` may open while the user's open PRs in ``repo`` reach the review limit."""
+    from .guards.review_limit import limit_block, open_pr_count
+
+    scope = "/".join(github_api.base_repo(repo))
+    count = open_pr_count(str(repo), scope)
+    block = limit_block(scope, count, brief=True) if count is not None else None
+    return block if block and _open_pr_number(repo, branch) is None else None
+
+
 def _open_pr(
     repo: Path,
     base: str,
@@ -2135,6 +2145,10 @@ class _RepoSync:
             self.say(entry, f"PR #{entry.pr} is not a draft; not force-pushed")
             return
         name = self.remote_name(entry)
+        block = _review_limit_block(self.repo, name) if entry.pr is None else None
+        if block:
+            self.fail(entry, f"not opened, {block}")
+            return
         if entry.pr is None and name not in self.remote_heads:
             action = "push and open a draft PR"
         elif relation in ("push", "force"):
