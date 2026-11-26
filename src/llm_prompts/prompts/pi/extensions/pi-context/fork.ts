@@ -505,9 +505,13 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			if (!current || !isLive(current) || runSignal.aborted) return;
 			const end = { ...endOf(ref, turn, merged.landing), lastRequestAt: turn.lastRequestAt, context: turn.context };
 			const text = turn.error ?? replyOf(turn);
-			const note = merged.landing && tree ? `[merge: ${describeLanding(merged.landing, tree)}]` : tree && (await dropIfClean(tree)) ? "[merge: worktree removed: clean]" : undefined;
+			const { next } = current;
+			const proceeds = end.state === "done" || end.state === "found-it";
+			const merge = merged.landing && tree ? `[merge: ${describeLanding(merged.landing, tree)}]` : tree && (await dropIfClean(tree)) ? "[merge: worktree removed: clean]" : undefined;
+			const note = [merge, next !== undefined && !proceeds ? `[queued task kept: ${next}]` : undefined].filter(Boolean).join(" ") || undefined;
 			background.finish(ctx, runId, end, turn.error ?? turn.reply ?? text, note);
 			pi.appendEntry("result-cap", { ref: end.ref, text });
+			if (next !== undefined && proceeds) await continueRun(ctx, name, next, `next-${newRunId()}`);
 		};
 		const onFail = async (error: unknown) => {
 			if (registry.get(runId)?.state === "cancelled") fs.rmSync(path.join(run.files, QUEUED_ENTRIES), { force: true });
@@ -664,7 +668,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		assertMayStart(ROLES[run.role as Role["name"]]);
 		background.resolveForkAsks(ctx, run.name);
 		const tree = run.tree && (await resumeWorktree(run.tree, path.join(getAgentDir(), "pi-context", WORKTREES), run.name));
-		registry.update(run.id, { state: "running", task, background: true, tree, worktree: tree?.path, branch: tree?.branch, startedAt: Date.now(), endedAt: undefined, endedBy: undefined, outcome: undefined, notify: undefined });
+		registry.update(run.id, { state: "running", task, background: true, tree, worktree: tree?.path, branch: tree?.branch, startedAt: Date.now(), endedAt: undefined, endedBy: undefined, outcome: undefined, notify: undefined, next: undefined });
 		const message = `${worktreeLine(tree)}Task: ${task}`;
 		startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${toolCallId}`, role: ROLES[run.role as Role["name"]], tree, target: run.target ?? run.cwd, model: run.model, files: run.files }, { message, resume: true });
 		return { content: [{ type: "text" as const, text: `continued fork ${run.name} (background)` }], details: { name: run.name, runId: run.id, background: true } };
@@ -673,12 +677,18 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 	pi.registerTool({
 		name: "fork_cancel",
 		label: "Fork cancel",
-		description: "Stop a live background fork by name. A writer's worktree stays where it is.",
+		description: "Stop a live background fork by name, or drop the task fork_resume queued for it first. A writer's worktree stays where it is.",
 		promptSnippet: "Stop a live background fork",
 		parameters: Type.Object({ name: Type.String({ description: "Name of the background fork" }) }),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			recordMainTools(ctx);
 			assertMayFork();
+			const queued = registry.live().find((live) => live.background && live.name === params.name && live.next !== undefined);
+			if (queued) {
+				const { next } = queued;
+				registry.update(queued.id, { next: undefined });
+				return { content: [{ type: "text", text: `dropped the queued task of fork ${queued.name}: ${next}` }], details: { name: queued.name } };
+			}
 			const run = background.cancel(params.name);
 			if (!run) throw new Error(`no live background fork ${params.name}`);
 			return { content: [{ type: "text", text: `cancelled fork ${run.name}${run.worktree ? ` (worktree ${run.worktree} kept)` : ""}` }], details: { name: run.name } };
@@ -688,18 +698,24 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		name: "fork_resume",
 		label: "Fork resume",
 		description:
-			"Without task, restart a background fork that a reload, a crash or the end of the session stopped, on its own session and worktree. With task, give a finished fork (done, found-it, blocked, failed or cancelled), warm or cold, a new task on its own session, model and role: a reader works in its old directory, a writer in a new worktree from the current branch of its checkout, or its kept one. Both run in the background.",
-		promptSnippet: "Resume a lost background fork, or give a finished fork a new task",
+			"Without task, restart a background fork that a reload, a crash or the end of the session stopped, on its own session and worktree. With task, give a finished fork (done, found-it, blocked, failed or cancelled), warm or cold, a new task on its own session, model and role: a reader works in its old directory, a writer in a new worktree from the current branch of its checkout, or its kept one. Both run in the background. With task on a fork that is still running, queue one task, which the fork starts after it replies done or found-it. fork_cancel drops the queued task.",
+		promptSnippet: "Resume a lost background fork, give a finished fork a new task, or queue a task for a running fork",
 		promptGuidelines: [
 			"Use fork_resume with task instead of fork when a finished fork of the same role and directory already holds the context the task needs, and its prompt cache is still warm: the fork tool's result names such a fork.",
 		],
 		parameters: Type.Object({
-			name: Type.String({ description: "Name of the lost or finished fork" }),
-			task: Type.Optional(Type.String({ description: "A new task for a finished fork. Without it, a lost fork continues its own task" })),
+			name: Type.String({ description: "Name of the lost, finished or running fork" }),
+			task: Type.Optional(Type.String({ description: "A new task for a finished fork, or one a running fork starts after it replies. Without it, a lost fork continues its own task" })),
 		}),
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			recordMainTools(ctx);
 			assertMayFork();
+			const running = params.task !== undefined && registry.live().find((live) => live.background && live.name === params.name);
+			if (running && params.task !== undefined) {
+				if (running.next !== undefined) throw new Error(`a task is already queued for fork ${running.name}: ${running.next}. Drop it with fork_cancel first`);
+				registry.update(running.id, { next: params.task });
+				return { content: [{ type: "text", text: `queued for fork ${running.name} (background): ${params.task} starts after it replies` }], details: { name: running.name, runId: running.id, queued: true } };
+			}
 			if (params.task !== undefined) return continueRun(ctx, params.name, params.task, toolCallId);
 			const resumable = registry.all().filter(canResume);
 			const run = resumable.filter((candidate) => candidate.name === params.name).at(-1);

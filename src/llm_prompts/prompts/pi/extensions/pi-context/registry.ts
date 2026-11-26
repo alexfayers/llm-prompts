@@ -42,6 +42,8 @@ export type Run = {
 	context?: number;
 	/** What a fork waiting for a free slot starts with, so `fork_resume` can start it after a reload. */
 	queued?: { message: string; resume: boolean };
+	/** The task `fork_resume` queued while the fork was running, which it starts after it replies. */
+	next?: string;
 	/** The digest lines of its results that main has not read yet, one per line. */
 	unread?: string;
 	/** Why the session that ran it ended while it was live. */
