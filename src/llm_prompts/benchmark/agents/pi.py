@@ -39,7 +39,8 @@ FAILED_STOP_REASONS = {"error", "aborted"}
 HOOK_MESSAGE_TYPE = "cline-hooks"
 DELEGATION_TOOLS = ("fork", "fork_resume", "fork_steer", "fork_cancel")
 FEATURE_TOOLS = {"consult": ("consult",), "ghost": ("ghost_run",)}
-FEATURES = (*FEATURE_TOOLS, "lsp")
+FEATURE_EXTENSIONS = ("test-output-fold",)
+FEATURES = (*FEATURE_TOOLS, "lsp", *FEATURE_EXTENSIONS)
 LSP_PACKAGE = "npm:pi-lsp-extension@"
 PERMISSION_CONFIG = Path(".pi/agent/extensions/pi-permission-system/config.json")
 PATH_EDIT_TOOLS = ("edit", "write", "path_write")
@@ -140,8 +141,11 @@ class PiAdapter:
         )
 
     def install_features(self, home: Path, features: Mapping[str, bool]) -> None:
-        """Drop the language server package when ``features`` turns it off."""
+        """Drop the language server package and the extensions of the features that ``features`` turns off."""
         agent_dir = home / ".pi" / "agent"
+        for name in FEATURE_EXTENSIONS:
+            if features.get(name, True) is False:
+                (agent_dir / "extensions" / f"{name}.ts").unlink(missing_ok=True)
         if features.get("lsp", True) is False:
             settings = read_json(agent_dir / "settings.json")
             settings["packages"] = [
