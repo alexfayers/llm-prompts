@@ -294,6 +294,17 @@ def byte_size(args: Mapping[str, CheckArg], ctx: CheckContext) -> CheckOutcome:
     )
 
 
+def prefix_read(args: Mapping[str, CheckArg], ctx: CheckContext) -> CheckOutcome:
+    """Pass if every shared-tasks child's first request read the whole prefix the stub cached."""
+    reads = ctx.trace.prefix_reads
+    detail = ", ".join(f"{read.read}/{read.needed}" for read in reads)
+    return CheckOutcome(
+        "prefix_read",
+        all(read.ok for read in reads),
+        f"children read/needed: {detail}" if reads else "no shared-tasks child",
+    )
+
+
 CHECKS: dict[str, CheckFn] = {
     "judge": judge,
     "tool_called": tool_called,
@@ -309,4 +320,5 @@ CHECKS: dict[str, CheckFn] = {
     "files_unchanged": files_unchanged,
     "files_changed": files_changed,
     "byte_size": byte_size,
+    "prefix_read": prefix_read,
 }

@@ -42,5 +42,8 @@ name = "fork"
 by = "lead"
 
 [[check]]
+kind = "prefix_read"
+
+[[check]]
 kind = "judge"
 rubric = "The evidence is the agent's final answer. PASS only if it gives three bullets and the numbers are 40 for the ledger desk, 44 for the beacon desk and 88 for the pylon desk. FAIL if any number is missing or different, or if it gives no bullets."

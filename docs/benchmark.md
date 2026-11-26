@@ -154,6 +154,7 @@ rubric = "The retries use exponential backoff."
 | `files_unchanged` | `path` (one or a list) | The paths still match the first commit. |
 | `files_changed` | `path` | Any path differs from the first commit. |
 | `byte_size` | `path`, `max_growth_pct` (default 0) | The file is at most `max_growth_pct` percent larger than in the first commit. |
+| `prefix_read` | none | Every shared-tasks child's first request read at least the stub's last cache read plus cache write. Passes with no child. |
 | `judge` | `rubric`, `path`, `name`, `args_regex`, `memory`, `failed`, `model` | A minimal judge answers PASS. |
 
 ### Judge

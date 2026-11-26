@@ -25,7 +25,14 @@ from llm_prompts.benchmark.runner.events import (
     mcp_name,
     parse_line,
 )
-from llm_prompts.benchmark.types import PreparedCell, Scenario, Session, Tokens, Trace
+from llm_prompts.benchmark.types import (
+    PrefixRead,
+    PreparedCell,
+    Scenario,
+    Session,
+    Tokens,
+    Trace,
+)
 
 BUILTIN_TOOLS = {
     "bash": "Bash",
@@ -85,6 +92,36 @@ def _fork_messages(files: Path, since: float) -> Iterator[Mapping[str, object]]:
                 and count(message, "timestamp") >= since * 1000
             ):
                 yield message
+
+
+def _prefix_read(files: Path) -> PrefixRead | None:
+    """Return how much of the stub's cached prefix the first request of the cold worker in ``files`` read, or None unless it continues a stub's session."""
+    boundary = read_json(files / "handshake.json", strict=False).get("billedFrom")
+    for session in files.glob("session/**/*.jsonl"):
+        entries = [
+            e for line in session.read_text().splitlines() if (e := parse_line(line))
+        ]
+        ids = [entry.get("id") for entry in entries]
+        if boundary not in ids:
+            continue
+        at = ids.index(boundary) + 1
+        usages = [
+            [
+                entry["message"].get("usage")
+                for entry in part
+                if entry.get("type") == "message"
+                and isinstance(entry.get("message"), dict)
+                and entry["message"].get("role") == "assistant"
+            ]
+            for part in (entries[:at], entries[at:])
+        ]
+        if usages[0] and usages[1]:
+            stub, child = usages[0][-1], usages[1][0]
+            return PrefixRead(
+                count(stub, "cacheRead") + count(stub, "cacheWrite"),
+                count(child, "cacheRead"),
+            )
+    return None
 
 
 BEDROCK_PROVIDER = "amazon-bedrock"
@@ -253,7 +290,10 @@ class PiAdapter:
         log = CallLog(BUILTIN_TOOLS)
         usage = list(dataclasses.astuple(trace.tokens))
         cost_usd = trace.cost_usd
+        prefix_reads = []
         for handshake in sorted((home / FORK_FILES).glob("*/handshake.json")):
+            if (prefix := _prefix_read(handshake.parent)) is not None:
+                prefix_reads.append(prefix)
             for message in _fork_messages(handshake.parent, since):
                 match message.get("role"):
                     case "toolResult":
@@ -288,6 +328,7 @@ class PiAdapter:
             ),
             tokens=Tokens(*usage),
             cost_usd=cost_usd,
+            prefix_reads=tuple(prefix_reads),
         )
 
     def replied(self, line: str) -> bool:
