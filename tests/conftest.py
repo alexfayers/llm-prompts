@@ -634,18 +634,20 @@ def isolated_auto_update_state(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Keep the automatic-update lock, log and failure record out of the user's data dir."""
-    monkeypatch.setattr(
-        "llm_prompts.auto_update.STATE_DIR", tmp_path_factory.mktemp("auto-update")
-    )
+    state_dir = tmp_path_factory.mktemp("auto-update")
+    monkeypatch.setattr("llm_prompts.auto_update.state_dir", lambda: state_dir)
 
 
 @pytest.fixture(autouse=True)
 def isolated_config_dir(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
-    """Point every module-level path under the user's llm-prompts config dir at a per-test temporary dir."""
+    """Point the llm-prompts config, data and state dirs at one per-test temporary dir."""
     config_dir = tmp_path_factory.mktemp("config")
-    monkeypatch.setattr("llm_prompts.home.config_dir", lambda: config_dir)
+    for name in ("config_dir", "data_dir", "state_dir"):
+        monkeypatch.setattr(
+            f"llm_prompts.home.{name}", lambda name="": config_dir / name
+        )
     return config_dir
 
 

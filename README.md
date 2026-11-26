@@ -8,7 +8,7 @@ Installs one shared set of rules, skills, workflows and agents into several LLM 
 curl -LsSf https://raw.githubusercontent.com/alexfayers/llm-prompts/main/install.sh | sh
 ```
 
-This installs [uv](https://docs.astral.sh/uv/) if needed, installs `llm-prompts`, and writes a starter `~/.config/llm-prompts/config.toml`.
+This installs [uv](https://docs.astral.sh/uv/) if needed, installs `llm-prompts`, and writes a starter `~/.local/share/llm-prompts/llm-prompts/config/config.toml`.
 
 ## Quick start
 
@@ -21,7 +21,7 @@ llm-prompts --help             # all commands and flags
 
 ## Config
 
-`~/.config/llm-prompts/config.toml` lists the tools and plugins that `setup` installs. `llm-prompts setup --init` creates the starter file.
+`~/.local/share/llm-prompts/llm-prompts/config/config.toml` lists the tools and plugins that `setup` installs. `llm-prompts setup --init` creates the starter file. [reference.md](docs/reference.md#config) lists how `LLM_PROMPTS_HOME` and `XDG_DATA_HOME` change the folder.
 
 Telemetry is anonymous. Turn it off with `DO_NOT_TRACK=1` or `LLM_PROMPTS_NO_TELEMETRY=1`.
 

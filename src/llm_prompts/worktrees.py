@@ -66,9 +66,7 @@ class WorktreeEntry(NamedTuple):
 def record_path() -> Path:
     """Return the record file, overridable through ``RECORD_ENV``."""
     override = os.environ.get(RECORD_ENV)
-    return (
-        Path(override) if override else home.config_dir() / "contribute-worktrees.json"
-    )
+    return Path(override) if override else home.data_dir("contribute-worktrees.json")
 
 
 def _fields_from_json(fields: tuple[str, ...], data: dict[str, Any]) -> dict[str, Any]:

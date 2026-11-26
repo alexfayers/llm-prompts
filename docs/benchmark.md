@@ -33,7 +33,7 @@ Run it from an llm-prompts checkout. Any commit, branch or `:worktree` works for
 | `--judge HARNESS` | `auto`, `pi` or `claude` (default: `auto`: pi when on PATH, else claude). |
 
 ```toml
-# ~/.config/llm-prompts/config.toml
+# ~/.local/share/llm-prompts/llm-prompts/config/config.toml
 [benchmark]
 jobs = 6
 ```

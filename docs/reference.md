@@ -48,7 +48,11 @@ Pi also gets extensions, seeded config and per-role rules. See [pi.md](pi.md).
 
 ## Config
 
-`~/.config/llm-prompts/config.toml` lists the tools `setup` installs:
+llm-prompts keeps its files in `<root>/llm-prompts/{config,data,state,cache}`. `<root>` is `$LLM_PROMPTS_HOME`, else `$XDG_DATA_HOME/llm-prompts`, else `~/.local/share/llm-prompts` on every platform. With `--root DIR`, `<root>` is `DIR/.local/share/llm-prompts`.
+
+The installed llm-prompts copies its files from `~/.config/llm-prompts`, `~/.local/share/llm-prompts`, `~/.local/state/llm-prompts` and `~/.cache/llm-prompts` into these folders. It copies a folder only where the new folder is missing or empty, and leaves the old files in place. Until a folder is copied, llm-prompts keeps using the old files for it, reports the failure, and tries again on the next run.
+
+`<root>/llm-prompts/config/config.toml` lists the tools `setup` installs:
 
 ```toml
 [[tools]]
@@ -100,7 +104,7 @@ ref = "main"                      # optional: branch, tag or SHA
 skills = ["tdd", "code-review"]   # optional: defaults to all
 ```
 
-`update` fetches and hard-resets each checkout (under `~/.config/llm-prompts/plugin-sources/<name>`) to the upstream tip. A plugin skill never overwrites a built-in or overlay skill of the same name. A plugin `agents/` directory, searched recursively (or the files and directories its `.claude-plugin/plugin.json` `agents` key names, which replace it), installs for Claude Code and pi, and a plugin agent is skipped where a built-in or overlay agent has the same filename or agent name. `commands/`, `hooks/` and MCP/LSP servers are ignored.
+`update` fetches and hard-resets each checkout (under `<root>/llm-prompts/config/plugin-sources/<name>`) to the upstream tip. A plugin skill never overwrites a built-in or overlay skill of the same name. A plugin `agents/` directory, searched recursively (or the files and directories its `.claude-plugin/plugin.json` `agents` key names, which replace it), installs for Claude Code and pi, and a plugin agent is skipped where a built-in or overlay agent has the same filename or agent name. `commands/`, `hooks/` and MCP/LSP servers are ignored.
 
 ## Overlays
 

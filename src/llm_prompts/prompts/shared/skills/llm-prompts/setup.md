@@ -2,7 +2,7 @@
 
 - MUST use the installed `llm-prompts` (PATH), never `uv run llm-prompts` - it can miss overlays and delete their installed files.
 - `llm-prompts setup` is for initial setup only. `llm-prompts update` reinstalls every tool, including local changes, from its sources.
-- Config is at `~/.config/llm-prompts/config.toml` - run `llm-prompts setup --init` to create it.
+- Config is at `$LLM_PROMPTS_HOME/llm-prompts/config/config.toml` (`$LLM_PROMPTS_HOME` defaults to `~/.local/share/llm-prompts`) - run `llm-prompts setup --init` to create it.
 
 ## Adding a tool
 

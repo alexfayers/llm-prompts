@@ -17,5 +17,5 @@ echo "Creating default config..."
 llm-prompts setup --init >/dev/null 2>&1 || true
 
 echo ""
-echo "Done! Edit ~/.config/llm-prompts/config.toml to customise, then run:"
+echo "Done! Edit ~/.local/share/llm-prompts/llm-prompts/config/config.toml to customise, then run:"
 echo "  llm-prompts install {agent}    # kiro, claude-code, codex, antigravity, opencode, pi, or all"

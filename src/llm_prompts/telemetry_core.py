@@ -76,7 +76,7 @@ def enabled() -> bool:
 
 def _state_path() -> Path:
     """Return the path of the telemetry state file."""
-    return home.config_dir() / "telemetry.json"
+    return home.state_dir("telemetry.json")
 
 
 def read_state() -> dict[str, Any]:

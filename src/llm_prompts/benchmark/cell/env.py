@@ -6,6 +6,8 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
+from llm_prompts import tool_paths
+
 MEMORY_VARS = ("MCP_MEMORY_PORT", "MCP_MEMORY_URL", "MCP_MEMORY_DB_PATH")
 HOST_PI_VARS = (
     "PI_CACHE_RETENTION",
@@ -45,12 +47,14 @@ def isolated_env(home: Path, venv: Path) -> dict[str, str]:
         PI_CODING_AGENT_DIR=str(home / ".pi" / "agent"),
         CLINE_HOOKS_DATA_DIR=str(home / ".cline-hooks"),
         GIT_CONFIG_GLOBAL=str(home / ".gitconfig"),
+        XDG_DATA_HOME=str(home / ".local" / "share"),
         DO_NOT_TRACK="1",
         LLM_PROMPTS_NO_TELEMETRY="1",
         LLM_PROMPTS_NO_UPDATE_CHECK="1",
         MCP_MEMORY_BACKUP_ENABLED="false",
     )
     env.pop("MCP_MEMORY_CALL_METRICS_ENABLED", None)
+    env.pop(tool_paths.ROOT_ENV, None)
     for name in (*MEMORY_VARS, *HOST_PI_VARS):
         env.pop(name, None)
     return with_venv(env, venv)

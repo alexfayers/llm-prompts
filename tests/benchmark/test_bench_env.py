@@ -16,6 +16,7 @@ def test_config_dirs_point_inside_home(monkeypatch: pytest.MonkeyPatch) -> None:
         "PI_CODING_AGENT_DIR",
         "CLINE_HOOKS_DATA_DIR",
         "GIT_CONFIG_GLOBAL",
+        "XDG_DATA_HOME",
     ):
         monkeypatch.setenv(name, f"/live/{name}")
 
@@ -26,6 +27,7 @@ def test_config_dirs_point_inside_home(monkeypatch: pytest.MonkeyPatch) -> None:
     assert env["PI_CODING_AGENT_DIR"] == str(HOME / ".pi" / "agent")
     assert env["CLINE_HOOKS_DATA_DIR"] == str(HOME / ".cline-hooks")
     assert env["GIT_CONFIG_GLOBAL"] == str(HOME / ".gitconfig")
+    assert env["XDG_DATA_HOME"] == str(HOME / ".local" / "share")
 
 
 def test_telemetry_off_and_call_metrics_not_disabled(
@@ -41,6 +43,14 @@ def test_telemetry_off_and_call_metrics_not_disabled(
     assert env["LLM_PROMPTS_NO_UPDATE_CHECK"] == "1"
     assert env["MCP_MEMORY_BACKUP_ENABLED"] == "false"
     assert "MCP_MEMORY_CALL_METRICS_ENABLED" not in env
+
+
+def test_the_shared_root_of_the_host_stays_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_PROMPTS_HOME", "/live/root")
+
+    assert "LLM_PROMPTS_HOME" not in isolated_env(HOME, VENV)
 
 
 @pytest.mark.parametrize(
