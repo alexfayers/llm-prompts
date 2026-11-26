@@ -38,13 +38,17 @@ test("the widget follows a background fork's events and clears when it ends", ()
 	assert.equal(listeners.length, 0);
 });
 
-test("a finished run's glyph color follows its outcome, while its prompt cache is warm", () => {
+test("finished forks fold into one summary row, each count in its outcome's color, while live forks keep their own rows", () => {
 	const registry = new Registry();
 	const view = new LiveView(registry);
+	for (const id of ["l1", "l2", "l3"]) registry.start(run({ id, name: id }));
+	const states: Run["state"][] = ["done", "done", "done", "done", "done", "done", "done", "done", "found-it", "found-it", "blocked", "failed"];
+	states.forEach((state, index) => registry.start(run({ id: `f${index}`, name: `f${index}`, state, lastRequestAt: 1_000 + index * 10_000, unread: "r" })));
+	const lines = view.lines(62_000) ?? [];
+	assert.equal(lines.length, 5);
+	assert.equal(lines[4], "\u2713 8 done \u00b7 2 found-it \u00b7 1 blocked \u00b7 1 failed \u00b7 cache 4-6m left");
 	const paint = { fg: (color: string, text: string) => `<${color}>${text}`, bold: (text: string) => `*${text}*` };
-	const states: [Run["state"], string][] = [["done", "success"], ["found-it", "success"], ["blocked", "warning"], ["failed", "error"]];
-	states.forEach(([state], index) => registry.start(run({ id: `f${index}`, name: `f${index}`, state, lastRequestAt: 1_000, unread: "r" })));
-	states.forEach(([, color], index) => assert.match(view.lines(2_000, paint)?.[index + 1] ?? "", new RegExp(`^<${color}>\u25cf`)));
+	assert.equal(view.lines(62_000, paint)?.[4], "<dim>\u2713 <success>8 done<dim> \u00b7 <success>2 found-it<dim> \u00b7 <warning>1 blocked<dim> \u00b7 <error>1 failed<dim> \u00b7 cache 4-6m left");
 });
 
 test("a widget whose session ended stops listening, so a reload's stale context cannot break the next fork", () => {
@@ -66,23 +70,27 @@ test("a read blocked fork leaves the widget once its asks are answered, but stay
 	registry.start(run({ id: "b2", name: "pending", state: "blocked", lastRequestAt: 1_000 }));
 	const entries = [{ type: "custom", customType: "pending-asks", data: { action: "add" as const, id: "fork-pending-b2-1", text: "which one?" } }];
 	assert.deepEqual(view.lines(2_000, paint, Number.POSITIVE_INFINITY, entries)?.slice(1).map((line) => line.split(" ")[1]), ["pending"]);
+	registry.update("b2", { unread: "r" });
+	registry.start(run({ id: "d1", name: "unasked", state: "done", lastRequestAt: 1_000, unread: "r" }));
+	assert.deepEqual(view.lines(2_000, paint, Number.POSITIVE_INFINITY, entries)?.slice(1), ["\u25cf pending [reader] blocked \u00b7 cache 5m left", "\u2713 1 done \u00b7 cache 5m left"]);
 });
 
-test("a fork leaves the widget once main has read its result, whatever its outcome", () => {
+test("a fork leaves the widget once its result reaches main, whatever its outcome, and returns while an aborted run re-announces it", () => {
 	const registry = new Registry();
 	const background = new Background({ sendMessage: () => undefined, appendEntry: () => undefined } as any, registry);
-	const view = new LiveView(registry);
+	const view = new LiveView(registry, (run) => background.received(run));
 	const ctx = { isIdle: () => false, hasUI: false, sessionManager: { getBranch: () => [] } } as any;
 	for (const [name, state] of [["d", "done"], ["f", "found-it"], ["b", "blocked"], ["x", "failed"]] as const) {
 		registry.start(run({ id: name, name }));
 		background.finish(ctx, name, { state, lastRequestAt: Date.now() }, `OUTCOME ${state} ref:rc`);
 	}
-	assert.equal(view.lines()?.length, 5);
+	assert.equal(view.lines()?.length, 2);
 	background.digest();
-	assert.equal(view.lines()?.length, 5);
+	assert.equal(view.lines(), undefined);
 	background.settle(ctx, true);
-	assert.equal(view.lines()?.length, 5);
+	assert.equal(view.lines()?.length, 2);
 	assert.equal(background.digest()?.split("\n").length, 4);
+	assert.equal(view.lines(), undefined);
 	background.settle(ctx, false);
 	assert.equal(view.lines(), undefined);
 });
@@ -110,8 +118,7 @@ test("forks started from the same source show it, and a fork with none shows not
 		"◓ api-scan [cold cheap:low] 1m45s · 0 turns · from stub-ab12",
 		"◓ docs-scan [cold cheap:low] 1m45s · 0 turns · from stub-ab12",
 		"◓ fix-widget [writer] 2m00s · 0 turns · fix-widget",
-		"● tests-scan [cold cheap:low] failed · cache 4m left · from stub-ab12",
-		"● review [reader] done · cache 4m left",
+		"\u2713 1 done \u00b7 1 failed \u00b7 cache 4m left",
 	]);
 });
 
