@@ -195,12 +195,12 @@ export function childGuard(handshakeFile: string): (event: ToolCallEvent, ctx: E
 	};
 }
 
-/** Puts the agent dir's AGENTS.delegate.md, the rules without the main-session-only ones, in place of its AGENTS.md. */
-export function registerDelegateRules(pi: ExtensionAPI, agentDir = getAgentDir()): void {
+/** Puts the agent dir's AGENTS.delegate.md, the rules without the main-session-only ones, in place of its AGENTS.md. A reader gets AGENTS.reader.md, without the writer-only rules too, where it exists. */
+export function registerDelegateRules(pi: ExtensionAPI, role: Role["name"], agentDir = getAgentDir()): void {
 	const rules = path.resolve(agentDir, "AGENTS.md");
-	const delegateRules = path.resolve(agentDir, "AGENTS.delegate.md");
+	const delegateRules = [`AGENTS.${role}.md`, "AGENTS.delegate.md"].map((name) => path.resolve(agentDir, name)).find((candidate) => fs.existsSync(candidate));
 	pi.on("before_agent_start", ({ systemPromptOptions: { contextFiles } }) => {
 		const file = contextFiles.find((candidate) => path.resolve(candidate.path) === rules);
-		if (file && fs.existsSync(delegateRules)) file.content = fs.readFileSync(delegateRules, "utf8");
+		if (file && delegateRules) file.content = fs.readFileSync(delegateRules, "utf8");
 	});
 }

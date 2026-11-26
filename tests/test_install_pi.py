@@ -2305,6 +2305,30 @@ class TestPiLoadWhenRules:
         }
 
 
+class TestPiReaderRules:
+    @pytest.fixture
+    def agent_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        overlay = _rule_overlay(tmp_path / "overlay", zz_core=("", "CORE-MARKER"))
+        (overlay / "shared" / "rules" / "zz_writer.md").write_text(
+            "---\naudience: writer\nroles: lead\n---\n\n# zz_writer\n\nWRITER-MARKER\n",
+            encoding="utf-8",
+        )
+        _install(tmp_path / "home", tmp_path / "installed.json", [overlay])
+        return tmp_path / "home" / ".pi" / "agent"
+
+    @pytest.mark.usefixtures("core_tree")
+    def test_reader_agents_md_leaves_out_writer_rules(self, agent_dir: Path) -> None:
+        texts = {
+            name: (agent_dir / name).read_text(encoding="utf-8")
+            for name in ("AGENTS.md", "AGENTS.delegate.md", "AGENTS.reader.md")
+        }
+        assert "WRITER-MARKER" in texts["AGENTS.md"]
+        assert "WRITER-MARKER" in texts["AGENTS.delegate.md"]
+        assert "WRITER-MARKER" not in texts["AGENTS.reader.md"]
+        assert "CORE-MARKER" in texts["AGENTS.reader.md"]
+
+
 class TestPiRoleSizes:
     @pytest.mark.real_prompts
     def test_measured_bytes_equal_the_installed_expansion(

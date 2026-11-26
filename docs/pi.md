@@ -5,7 +5,7 @@
 ## What gets installed
 
 - Rules go into the global `AGENTS.md`, and one file each under `rules/` for agent definitions (see [Roles](#roles)).
-- `AGENTS.delegate.md` next to it holds the same rules without the ones whose frontmatter sets `audience: main`. Those rules only apply to the session that talks to the user. Any other `audience` value fails the install.
+- `AGENTS.delegate.md` next to it holds the same rules without the ones whose frontmatter sets `audience: main`. Those rules only apply to the session that talks to the user. `AGENTS.reader.md` also leaves out the rules that set `audience: writer`, which a read-only delegate does not need. A cold reader loads it, and any other cold delegate loads `AGENTS.delegate.md`. Any other `audience` value fails the install.
 - [cline-hooks](https://github.com/alexfayers/cline-hooks) is wired in as a pi extension.
 - Pi packages listed in `prompts/pi/settings.json`, from core and overlays, are merged into `settings.json` in the agent dir. Pi installs them on startup. Packages you add yourself are left alone. A package can be an object with a `source` and `load_when` conditions, only `env:` and `tool:`, and is added only where they hold at install time.
 - `mcp-memory install pi` registers the memory servers in `mcp.json`, which pi's MCP support reads.

@@ -982,6 +982,7 @@ class _PiAgent(_CodexAgent):
 
     AGENTS_MD: ClassVar[str] = "AGENTS.md"
     DELEGATE_AGENTS_MD: ClassVar[str] = "AGENTS.delegate.md"
+    READER_AGENTS_MD: ClassVar[str] = "AGENTS.reader.md"
 
 
 REMOVED_AGENTS = ("cline", "copilot")
@@ -1012,6 +1013,8 @@ _GATING_FRONTMATTER_KEYS = {
 _AGENT_ROLES = ("coordinator", "reasoner", "worker", "surveyor", "reviewer")
 _RULE_ROLES = frozenset({"lead", *_AGENT_ROLES})
 _MAIN_AUDIENCE = "main"
+_WRITER_AUDIENCE = "writer"
+_AUDIENCES = (_MAIN_AUDIENCE, _WRITER_AUDIENCE)
 _LOAD_WHEN_PREFIX = "when:"
 _PATHS_PREFIX = "paths:"
 _MAIN_ONLY_KEY = "audience:main"
@@ -1080,7 +1083,7 @@ def _declared_condition(declared: dict[str, list[str]], label: str) -> None:
 
     Raises:
         ValueError: A removed ``requires_*`` key is declared, ``audience`` is
-            not ``main`` or is combined with ``paths``, or ``load_when`` is
+            not ``main`` or ``writer``, or is combined with ``paths``, or ``load_when`` is
             empty, has ``env:`` or ``tool:`` without a value, is combined with
             ``paths``, or has more than one other condition, or one with
             ``roles`` other than ``lead``. A ``<target>_load_when`` follows
@@ -1092,9 +1095,10 @@ def _declared_condition(declared: dict[str, list[str]], label: str) -> None:
             "load_when: env:<NAME> or load_when: tool:<command>"
         )
     audience = declared.get("audience", [])
-    if audience and audience[0] != _MAIN_AUDIENCE:
+    if audience and audience[0] not in _AUDIENCES:
         raise ValueError(
-            f"{label}: invalid audience '{audience[0]}' - use '{_MAIN_AUDIENCE}'"
+            f"{label}: invalid audience '{audience[0]}' - use "
+            + " or ".join(f"'{a}'" for a in _AUDIENCES)
         )
     if audience and "paths" in declared:
         raise ValueError(f"{label}: audience cannot be combined with paths")
@@ -1185,7 +1189,7 @@ def _parse_roles(content: str, label: str) -> frozenset[str]:
         label: Rule name for error messages.
 
     Returns:
-        ``{"when:<condition>"}``, plus ``main`` for ``audience: main``, when
+        ``{"when:<condition>"}``, plus the audience (``main`` or ``writer``), when
         ``_split_conditions`` leaves a condition to the session, else the
         declared roles, or ``{"core"}`` when it declares none or declares
         ``all``, plus ``main`` when ``audience: main`` keeps the rule out of
@@ -1199,7 +1203,7 @@ def _parse_roles(content: str, label: str) -> frozenset[str]:
     declared = _frontmatter_values(content)
     _declared_condition(declared, label)
     audience = declared.get("audience", [])
-    extra = frozenset({_MAIN_AUDIENCE} if audience else ())
+    extra = frozenset(audience[:1])
     _, condition = _split_conditions(declared, deferred=True)
     if condition:
         return frozenset({_LOAD_WHEN_PREFIX + condition}) | extra
@@ -2629,21 +2633,27 @@ class _PiRuleBundle:
                 conditional.setdefault(key, []).append(name)
         return conditional
 
-    def lead_text(self, *, delegate: bool = False) -> str:
+    def lead_text(self, *, delegate: bool = False, reader: bool = False) -> str:
         """Return the global ``AGENTS.md`` text: the core and lead rules.
 
         Args:
             delegate: Leave out the ``audience: main`` rules, for
                 ``AGENTS.delegate.md``.
+            reader: Also leave out the ``audience: writer`` rules, for
+                ``AGENTS.reader.md``.
 
         Returns:
             The selected rules joined in installed-filename order.
         """
+        left_out = {
+            *([_MAIN_AUDIENCE] if delegate or reader else []),
+            *([_WRITER_AUDIENCE] if reader else []),
+        }
         return normalize_whitespace(
             "\n\n".join(
                 self.texts[name]
                 for name in self.lead_names()
-                if not (delegate and _MAIN_AUDIENCE in self.roles[name])
+                if not self.roles[name] & left_out
             )
         )
 
@@ -3489,7 +3499,8 @@ def _install_pi_rule_files(bundle: _PiRuleBundle, rules_dir: Path) -> set[str]:
 
 def _install_pi_lead_rules(agent: _Agent, bundle: _PiRuleBundle) -> set[str]:
     """Write the global ``AGENTS.md`` holding the core and lead rules, and
-    ``AGENTS.delegate.md`` holding them without the ``audience: main`` rules.
+    ``AGENTS.delegate.md`` holding them without the ``audience: main`` rules,
+    and ``AGENTS.reader.md`` also without the ``audience: writer`` rules.
 
     Also writes the ``load_when`` rule list when any rule declares a condition.
 
@@ -3505,16 +3516,21 @@ def _install_pi_lead_rules(agent: _Agent, bundle: _PiRuleBundle) -> set[str]:
     log("debug", f"[{agent.name}] Installing rules...")
     dest_dir = agent.dest_dir("rules")
     dest_dir.mkdir(parents=True, exist_ok=True)
-    for filename, delegate in (
-        (_PiAgent.AGENTS_MD, False),
-        (_PiAgent.DELEGATE_AGENTS_MD, True),
+    for filename, delegate, reader in (
+        (_PiAgent.AGENTS_MD, False, False),
+        (_PiAgent.DELEGATE_AGENTS_MD, True, False),
+        (_PiAgent.READER_AGENTS_MD, True, True),
     ):
-        output = bundle.lead_text(delegate=delegate)
+        output = bundle.lead_text(delegate=delegate, reader=reader)
         for var in find_unreplaced_variables(output):
             log("warn", f"Unreplaced variable '{{{{{var}}}}}' in {filename}")
         _write_if_changed(dest_dir / filename, output, filename, "rules")
     write_rendered_rules(agent.name, bundle.texts)
-    installed = {_PiAgent.AGENTS_MD, _PiAgent.DELEGATE_AGENTS_MD}
+    installed = {
+        _PiAgent.AGENTS_MD,
+        _PiAgent.DELEGATE_AGENTS_MD,
+        _PiAgent.READER_AGENTS_MD,
+    }
     if conditional := bundle.conditional_names():
         _write_if_changed(
             dest_dir / _CONDITIONAL_RULES_FILE,
@@ -3540,7 +3556,11 @@ def _previous_pi_bundle_files(
         The previous definitions, rule files, ``AGENTS.md``,
         ``AGENTS.delegate.md`` and conditional rule list.
     """
-    agents_mds = (agents_md, agents_md.with_name(_PiAgent.DELEGATE_AGENTS_MD))
+    agents_mds = (
+        agents_md,
+        agents_md.with_name(_PiAgent.DELEGATE_AGENTS_MD),
+        agents_md.with_name(_PiAgent.READER_AGENTS_MD),
+    )
     return [
         f
         for f in previous_manifest.get("pi", {}).get("files", [])
@@ -5547,6 +5567,7 @@ def main(
                         {
                             _PiAgent.AGENTS_MD,
                             _PiAgent.DELEGATE_AGENTS_MD,
+                            _PiAgent.READER_AGENTS_MD,
                             _CONDITIONAL_RULES_FILE,
                         }
                         & {Path(f).name for f in previous_pi_bundle}
