@@ -19,8 +19,8 @@ const absolute = (agentDir: string, entry: unknown): unknown => {
 export type ReadOnlyAgentDir = { dir: string; dispose: () => void };
 
 /** Makes a directory outside `agentDir` that links each entry of `agentDir` except settings.json and holds settings that leave out the language server extension, so a read-only delegate started with it as its agent directory starts no language server. `dispose` removes it, once, and also runs when the process exits. */
-export function readOnlyAgentDir(agentDir: string): ReadOnlyAgentDir {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-agent-"));
+export function readOnlyAgentDir(agentDir: string, tempRoot = os.tmpdir()): ReadOnlyAgentDir {
+	const dir = fs.mkdtempSync(path.join(tempRoot, "pi-context-agent-"));
 	const dispose = () => {
 		process.off("exit", dispose);
 		fs.rmSync(dir, { recursive: true, force: true });
