@@ -84,12 +84,10 @@ test("a fork leaves the widget once its result reaches main, whatever its outcom
 		registry.start(run({ id: name, name }));
 		background.finish(ctx, name, { state, lastRequestAt: Date.now() }, `OUTCOME ${state} ref:rc`);
 	}
-	assert.equal(view.lines()?.length, 2);
-	background.digest();
 	assert.equal(view.lines(), undefined);
 	background.settle(ctx, true);
 	assert.equal(view.lines()?.length, 2);
-	assert.equal(background.digest()?.split("\n").length, 4);
+	assert.equal(background.digest()?.split("\n").length, 5);
 	assert.equal(view.lines(), undefined);
 	background.settle(ctx, false);
 	assert.equal(view.lines(), undefined);
