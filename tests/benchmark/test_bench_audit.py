@@ -7,6 +7,7 @@ import pytest
 
 from benchmark.traces import make_trace
 from llm_prompts.benchmark import paths
+from llm_prompts.benchmark.cell import audit as audit_module
 from llm_prompts.benchmark.cell.audit import AuditHit, audit, audit_trace
 from llm_prompts.benchmark.types import ToolCall
 
@@ -68,6 +69,18 @@ def test_audit_ignores_npm_debug_logs_but_flags_a_live_path_beside_them(
     root = tmp_path / "root"
     write(root / ".npm" / "_logs" / "run-debug-0.log", f"cwd {live}/.pi")
     real = write(root / "settings.json", f"{live}/.pi")
+
+    assert audit(root) == [AuditHit(real, str(live / ".pi"))]
+
+
+def test_audit_allows_the_guard_interpreter_under_the_live_home_only(
+    tmp_path: Path, live: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    python = f"{live}/.pi/agent/w/.venv/bin/python"
+    monkeypatch.setattr(audit_module, "GUARD_PYTHON", python)
+    root = tmp_path / "root"
+    write(root / "bench-guard.json", f'{{"argv": ["{python}", "-m", "guard"]}}')
+    real = write(root / "other.json", f"{live}/.pi/agent/sessions")
 
     assert audit(root) == [AuditHit(real, str(live / ".pi"))]
 
