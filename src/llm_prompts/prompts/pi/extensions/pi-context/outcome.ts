@@ -1,7 +1,8 @@
 // Reads a delegate's OUTCOME line and reduces its reply to what main needs to see.
 // An OUTCOME line may open with an emoji or other symbols, never words.
 const LEAD = String.raw`^(?:[^\p{L}\p{N}\n]|[\p{L}\p{N}](?=[\uFE0F\u20E3]))*`;
-const OUTCOME = new RegExp(`${LEAD}OUTCOME (done|blocked-on-user|failed|found-it)( notify)? ref:(?:\\S+([ \\t].*)?|[ \\t]*)$`, "u");
+export const OUTCOME_CODES = ["done", "blocked-on-user", "failed", "found-it"];
+const OUTCOME = new RegExp(`${LEAD}OUTCOME (${OUTCOME_CODES.join("|")})( notify)? ref:(?:\\S+([ \\t].*)?|[ \\t]*)$`, "u");
 const KEPT_ANYWHERE = /^(ASK:|DENIED: ")/;
 export const MAX_BODY_CHARS = 600;
 

@@ -23,8 +23,8 @@ export type ReadMcp = { tool: string; argsMatch?: Record<string, string> };
 
 const WARM_OPENING = "You are the delegate that the conversation above asked to fork, so do not call fork.";
 const COLD_OPENING = "You are a delegate given one self-contained task, so do not call fork.";
-const OUTCOME = "Checkpoint rewind your own finished detours. Open the final reply with `OUTCOME <code> ref:<ref>`. Put any question for the user on a line starting `ASK:` and do not ask the user directly.";
-const READ_TOOLS = ["checkpoint", "read", "grep", "find", "ls", "bash", "codemode", "web_search", "fetch_content", "get_search_content", "result_fetch", "result_query", "transcript", "tower_do_status"];
+const OUTCOME = "Checkpoint rewind your own finished detours. End by calling `reply` with your outcome, ref and report. Put any question for the user in its `asks` and do not ask the user directly.";
+const READ_TOOLS = ["checkpoint", "read", "grep", "find", "ls", "bash", "codemode", "web_search", "fetch_content", "get_search_content", "result_fetch", "result_query", "transcript", "tower_do_status", "reply"];
 const READ_MCP = [
 	"mcp__semble__*",
 	"mcp__memory__read_*",

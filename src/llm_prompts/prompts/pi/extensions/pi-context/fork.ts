@@ -7,6 +7,7 @@ import path from "node:path";
 import { buildSessionContext, defineTool, generateSummary, getAgentDir, type AgentToolResult, type ExtensionAPI, type ExtensionContext, type ExtensionToolContext, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { parseOutcome, projectResult } from "./outcome.ts";
+import { replyText } from "./reply.ts";
 import { Background } from "./background.ts";
 import { describeMain, LEAD_PREFIX_FILE, serveBridge, writeLeadPrefix, type BridgeOptions } from "./bridge.ts";
 import { createWorktree, dropIfClean, gitOut, land, mainSnapshot, restoreWorktree, type Event, type Landing, type Worktree } from "./merge.ts";
@@ -367,10 +368,16 @@ const treeNote = async (tree?: Worktree) => (!tree ? "" : (await dropIfClean(tre
 const worktreeLine = (tree?: Worktree, dir?: string) =>
 	tree ? `Your worktree: ${tree.path}. Your commits land on ${tree.branch} in ${tree.repo} when you finish. Do not name ${tree.repo} or other worktrees in commands.\n` : dir ? `${dir} is not a git checkout, so you have no worktree: write in place there. Nothing lands.\n` : "";
 
-/** What a delegate's reply says about its work: done, or an outcome that stops the landing. A reply without a valid OUTCOME line counts as failed. */
+/** The delegate's reply: its reply call's arguments in the OUTCOME format, or else its last text. */
+const replyOf = (turn: Turn): string => (turn.reply ? replyText(turn.reply) : turn.text);
+
+/** The code and notify flag of the delegate's reply call, or else of its OUTCOME line. */
+const outcomeOf = (turn: Turn): { code: string; notify: boolean } | undefined => (turn.reply ? { code: turn.reply.outcome, notify: Boolean(turn.reply.notify) } : parseOutcome(turn.text));
+
+/** What a delegate's reply says about its work: done, or an outcome that stops the landing. A reply without a reply call or a valid OUTCOME line counts as failed. */
 function replyEvent(turn: Turn): Extract<Event, { type: "fork-done" | "fork-failed" | "fork-blocked" }> {
-	const reason = turn.error ?? projectResult(turn.text);
-	const code = parseOutcome(turn.text)?.code;
+	const reason = turn.error ?? projectResult(replyOf(turn));
+	const code = outcomeOf(turn)?.code;
 	if (turn.error || code === "failed") return { type: "fork-failed", reason };
 	if (code === "blocked-on-user") return { type: "fork-blocked", reason };
 	return code === "done" || code === "found-it" ? { type: "fork-done" } : { type: "fork-failed", reason: `the reply has no valid OUTCOME line\n${reason}` };
@@ -384,7 +391,7 @@ function finalState(code: string | undefined, landing: Landing | undefined): Run
 
 /** The run fields a finished delegate's reply decides. */
 function endOf(ref: string, turn: Turn, landing: Landing | undefined): Pick<Run, "state" | "outcome" | "notify" | "ref"> {
-	const parsed = parseOutcome(turn.text);
+	const parsed = outcomeOf(turn);
 	if (turn.error) return { state: "failed", ref };
 	return { state: finalState(parsed?.code, landing), outcome: parsed?.code, notify: parsed?.notify, ref };
 }
@@ -431,9 +438,9 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			const current = registry.get(runId);
 			if (!current || !isLive(current) || runSignal.aborted) return;
 			const end = { ...endOf(ref, turn, merged.landing), lastRequestAt: turn.lastRequestAt, context: turn.context };
-			const text = turn.error ?? turn.text;
+			const text = turn.error ?? replyOf(turn);
 			const note = merged.landing && tree ? `[merge: ${describeLanding(merged.landing, tree)}]` : tree && (await dropIfClean(tree)) ? "[merge: worktree removed: clean]" : undefined;
-			background.finish(ctx, runId, end, text, note);
+			background.finish(ctx, runId, end, turn.error ?? turn.reply ?? text, note);
 			pi.appendEntry("result-cap", { ref: end.ref, text });
 		};
 		const onFail = async (error: unknown) => {
@@ -449,7 +456,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		name: "fork",
 		label: "Fork",
 		description:
-			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It returns at once and the result arrives as a message when the delegate replies with an OUTCOME line and the work has landed. from runs on a copy of a finished fork's session instead. A session over 150000 tokens of context starts the fork cold on the same model with a summary instead of a copy. shared with tasks and model runs one cold stub that reads shared, then starts one child per task from that stub when it finishes, so they share its prompt cache.",
+			"Run a delegate on a copy of this session, so it knows everything you know and reuses the prompt cache. Give it one self-contained task. A reader (the default) only reads. A writer works in its own git worktree and its commits are rebased, tested and fast-forwarded onto the current branch. A writer can only work in its own worktree, so give each branch its own writer. target points either role at another directory. A writer whose directory is not a git checkout writes in place, and nothing lands. It returns at once and the result arrives as a message when the delegate calls reply and the work has landed. from runs on a copy of a finished fork's session instead. A session over 150000 tokens of context starts the fork cold on the same model with a summary instead of a copy. shared with tasks and model runs one cold stub that reads shared, then starts one child per task from that stub when it finishes, so they share its prompt cache.",
 		promptSnippet: "Run a read-only or worktree-writing delegate on a copy of this session in the background",
 		parameters: Type.Object({
 			task: Type.Optional(Type.String({ description: "What the delegate should find out or check" })),
@@ -471,7 +478,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 				const repeated = names.find((name, at) => names.indexOf(name) !== at);
 				if (repeated) throw new Error(`task names must be unique and differ from the stub's: ${repeated}`);
 				const common = { role: params.role, target: params.target };
-				const started = await forkTool.execute(toolCallId, { ...common, name: stub, model: params.model, task: `${params.shared}\n\nYour specific task arrives next, so reply only "OUTCOME done ref:" and stop.` }, signal, onUpdate, ctx);
+				const started = await forkTool.execute(toolCallId, { ...common, name: stub, model: params.model, task: `${params.shared}\n\nYour specific task arrives next, so call reply with {"outcome":"done","ref":""} and stop.` }, signal, onUpdate, ctx);
 				const stubId = (started.details as { runId: string }).runId;
 				const failTask = ({ name, task }: { name: string; task: string }, error: unknown) => {
 					const id = newRunId();
@@ -596,7 +603,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			background.resolveForkAsks(ctx, run.name);
 			if (run.tree) await restoreWorktree(run.tree);
 			registry.update(run.id, { state: "running", endedAt: undefined, endedBy: undefined });
-			const message = `${worktreeLine(run.tree)}Your session stopped before you finished. Continue the task from where you left off, and end with your OUTCOME line.`;
+			const message = `${worktreeLine(run.tree)}Your session stopped before you finished. Continue the task from where you left off, and end by calling reply.`;
 			startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${toolCallId}`, role: ROLES[run.role as Role["name"]], tree: run.tree, target: run.target, model: run.model, files: run.files }, { message, resume: true });
 			return { content: [{ type: "text", text: `resumed fork ${run.name} (background)` }], details: { name: run.name, runId: run.id, background: true } };
 		},

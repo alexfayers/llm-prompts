@@ -28,6 +28,10 @@ function onPrompt(cmd) {
 		out({ type: "extension_ui_request", id: "ui-1", method: "confirm", title: "ok?" });
 		return;
 	}
+	if (text === "reply") {
+		out({ type: "tool_execution_end", toolName: "reply", isError: true, result: { details: {} } });
+		out({ type: "tool_execution_end", toolName: "reply", isError: false, result: { details: { outcome: "done", ref: "r1" } } });
+	}
 	if (text === "notify") out({ type: "extension_ui_request", id: "ui-n", method: "notify", message: "hi" });
 	runTurn(text);
 }
