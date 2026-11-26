@@ -102,7 +102,9 @@ async function workspaceFor(checkout: Checkout): Promise<Workspace | undefined> 
 }
 
 async function isAncestor(main: Checkout, checkout: Checkout): Promise<boolean> {
-	return (await git(main.path, ["for-each-ref", "--contains", checkout.head, "--format=%(refname)", ...MAIN_REFS])).trim() !== "";
+	if ((await git(main.path, ["for-each-ref", "--contains", checkout.head, "--format=%(refname)", ...MAIN_REFS])).trim() === "") return false;
+	mergedBranches.add(mergedKey(checkout));
+	return true;
 }
 
 function remoteHost(url: string): string {
@@ -156,7 +158,7 @@ async function gitKeepReason(main: Checkout, checkout: Checkout): Promise<string
 	if (MAIN_REFS.includes(`${BRANCH_PREFIX}${checkout.branch}`)) return "branch is main";
 	if ((await git(checkout.path, ["status", "--porcelain"])).trim()) return "has uncommitted or untracked files";
 	const hasOwnCommits = (await git(main.path, ["reflog", "show", "--format=%H", `${BRANCH_PREFIX}${checkout.branch}`])).trim().split("\n").length > 1;
-	if (hasOwnCommits && !(await isAncestor(main, checkout)) && !(await hasMergedPullRequest(main, checkout))) return "branch is not merged into main";
+	if (!(await isAncestor(main, checkout)) && hasOwnCommits && !(await hasMergedPullRequest(main, checkout))) return "branch is not merged into main";
 	const tipSeconds = Number((await git(checkout.path, ["log", "-1", "--format=%ct", checkout.head])).trim());
 	const changedMs = Math.max(tipSeconds * MS_PER_SECOND, fs.statSync(checkout.path).mtimeMs);
 	if (Date.now() - changedMs < FRESH_HOURS * MS_PER_HOUR) return `changed in the last ${FRESH_HOURS} hours`;
@@ -211,7 +213,7 @@ async function removeWorktree(worktree: Worktree): Promise<{ message: string; le
 	}
 	const removed = `pane-reaper removed worktree ${describeWorktree(worktree)}`;
 	try {
-		// git branch -d refuses a squash-merged branch, so delete it only while it still points at the merged pull request head.
+		// git branch -d refuses a branch merged into main but not into the checkout's branch or upstream, so delete a proven-merged branch only while it still points at the merged head.
 		if (mergedBranches.has(mergedKey(worktree))) await git(".", ["update-ref", "-d", `${BRANCH_PREFIX}${worktree.branch}`, worktree.head]);
 		else await git(".", ["branch", "-d", worktree.branch]);
 		return { message: removed, level: "info" };
@@ -377,6 +379,7 @@ export default function (pi: ExtensionAPI) {
 	let timer: ReturnType<typeof setInterval> | undefined;
 	const told = new Set<string>();
 	let keptSignature = "";
+	let unreported: { message: string; level: "info" | "warning" }[] = [];
 
 	function tellOnce(ui: ExtensionContext["ui"], key: string, message: string, level: "info" | "warning"): void {
 		if (told.has(key)) return;
@@ -401,11 +404,20 @@ export default function (pi: ExtensionAPI) {
 		const orphans = await sweepOrphans(orphanOptions(workspaceId));
 		for (const orphan of orphans.killed) ui.notify(`pane-reaper killed ${describeOrphan(orphan)}`, "warning");
 		const { candidates, kept } = await sweepWorktrees();
-		for (const worktree of candidates) {
-			const { message, level } = await removeWorktree(worktree);
-			tellOnce(ui, `worktree:${worktree.path}`, message, level);
+		const removals = [];
+		for (const worktree of candidates) removals.push(await removeWorktree(worktree));
+		if (listAll) {
+			const reports = [...unreported, ...removals];
+			for (const { message, level } of reports) ui.notify(message, level);
+			unreported = [];
+			tellKept(ui, kept, listAll);
+			return orphans.killed.length + reports.length + kept.length;
 		}
-		tellKept(ui, kept, listAll);
+		unreported.push(...removals);
+		if (removals.length) {
+			keptSignature = kept.map(describeWorktree).sort().join("\n");
+			ui.notify(`pane-reaper removed ${removals.length} ${removals.length === 1 ? "worktree" : "worktrees"}, kept ${kept.length} (see /pane-reaper)`, removals.some(({ level }) => level === "warning") ? "warning" : "info");
+		} else tellKept(ui, kept, listAll);
 		return orphans.killed.length + candidates.length + kept.length;
 	}
 
@@ -451,7 +463,7 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.on("session_shutdown", () => stopTimer());
 	pi.registerCommand("pane-reaper", {
-		description: "Kill orphaned processes left behind by dead Herdr agent panes, and remove merged clean feature worktrees and their branches that nothing uses, with `git worktree remove` and `git branch -d`, deleting a squash-merged branch only while it is at the merged pull request head, and never `--force` or `-D`. `on|off` toggles the periodic check.",
+		description: "Kill orphaned processes left behind by dead Herdr agent panes, and remove merged clean feature worktrees and their branches that nothing uses, with `git worktree remove` and `git branch -d`, deleting a branch proven merged into main only while it is at the merged head, and never `--force` or `-D`. `on|off` toggles the periodic check.",
 		handler: runCommand,
 	});
 }
