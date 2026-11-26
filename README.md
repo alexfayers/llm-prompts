@@ -113,7 +113,7 @@
 | tests/benchmark/\_\_init\_\_.py                                               |        0 |        0 |    100% |           |
 | tests/benchmark/conftest.py                                                   |      192 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_agents.py                                        |       52 |        0 |    100% |           |
-| tests/benchmark/test\_bench\_audit.py                                         |       67 |        0 |    100% |           |
+| tests/benchmark/test\_bench\_audit.py                                         |       72 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_cell.py                                          |      233 |        4 |     98% |169, 292, 297, 409 |
 | tests/benchmark/test\_bench\_check\_sandbox.py                                |       59 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_checks.py                                        |      186 |        0 |    100% |           |
@@ -210,7 +210,7 @@
 | tests/watch/sources/test\_github\_triage.py                                   |       92 |        0 |    100% |           |
 | tests/watch/test\_runner.py                                                   |       70 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
-| **TOTAL**                                                                     | **36305** |  **835** | **98%** |           |
+| **TOTAL**                                                                     | **36310** |  **835** | **98%** |           |
 
 
 ## Setup coverage badge
