@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">9 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">9<span class="text"> run</span></button>
+            <span class="text">19 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">19<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_a44f0ac069e85531_test_main_sync_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
-            created at 2026-11-26 00:11 +0000
+            created at 2026-11-26 00:15 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -97,6 +97,20 @@
     <p class="pln"><span class="n"><a id="t15" href="#t15">15</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t16" href="#t16">16</a></span><span class="t">    <span class="key">assert</span> <span class="nam">json</span><span class="op">.</span><span class="nam">loads</span><span class="op">(</span><span class="nam">path</span><span class="op">.</span><span class="nam">read_text</span><span class="op">(</span><span class="nam">encoding</span><span class="op">=</span><span class="str">&quot;utf-8&quot;</span><span class="op">)</span><span class="op">)</span> <span class="op">==</span> <span class="op">{</span><span class="str">&quot;a&quot;</span><span class="op">:</span> <span class="num">1</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t17" href="#t17">17</a></span><span class="t">    <span class="key">assert</span> <span class="op">[</span><span class="nam">p</span><span class="op">.</span><span class="nam">name</span> <span class="key">for</span> <span class="nam">p</span> <span class="key">in</span> <span class="nam">path</span><span class="op">.</span><span class="nam">parent</span><span class="op">.</span><span class="nam">iterdir</span><span class="op">(</span><span class="op">)</span><span class="op">]</span> <span class="op">==</span> <span class="op">[</span><span class="str">&quot;data.json&quot;</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t18" href="#t18">18</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t19" href="#t19">19</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t20" href="#t20">20</a></span><span class="t"><span class="key">def</span> <span class="nam">test_write_through_a_symlink_updates_its_target</span><span class="op">(</span><span class="nam">tmp_path</span><span class="op">:</span> <span class="nam">Path</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t21" href="#t21">21</a></span><span class="t">    <span class="nam">target</span> <span class="op">=</span> <span class="nam">tmp_path</span> <span class="op">/</span> <span class="str">&quot;dotfiles&quot;</span> <span class="op">/</span> <span class="str">&quot;data.json&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t22" href="#t22">22</a></span><span class="t">    <span class="nam">target</span><span class="op">.</span><span class="nam">parent</span><span class="op">.</span><span class="nam">mkdir</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t23" href="#t23">23</a></span><span class="t">    <span class="nam">target</span><span class="op">.</span><span class="nam">write_text</span><span class="op">(</span><span class="str">&quot;{}&quot;</span><span class="op">,</span> <span class="nam">encoding</span><span class="op">=</span><span class="str">&quot;utf-8&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t24" href="#t24">24</a></span><span class="t">    <span class="nam">link</span> <span class="op">=</span> <span class="nam">tmp_path</span> <span class="op">/</span> <span class="str">&quot;data.json&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t25" href="#t25">25</a></span><span class="t">    <span class="nam">link</span><span class="op">.</span><span class="nam">symlink_to</span><span class="op">(</span><span class="nam">target</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t27" href="#t27">27</a></span><span class="t">    <span class="nam">write_json_atomic</span><span class="op">(</span><span class="nam">link</span><span class="op">,</span> <span class="op">{</span><span class="str">&quot;a&quot;</span><span class="op">:</span> <span class="num">1</span><span class="op">}</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t28" href="#t28">28</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t29" href="#t29">29</a></span><span class="t">    <span class="key">assert</span> <span class="nam">link</span><span class="op">.</span><span class="nam">is_symlink</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t30" href="#t30">30</a></span><span class="t">    <span class="key">assert</span> <span class="nam">json</span><span class="op">.</span><span class="nam">loads</span><span class="op">(</span><span class="nam">target</span><span class="op">.</span><span class="nam">read_text</span><span class="op">(</span><span class="nam">encoding</span><span class="op">=</span><span class="str">&quot;utf-8&quot;</span><span class="op">)</span><span class="op">)</span> <span class="op">==</span> <span class="op">{</span><span class="str">&quot;a&quot;</span><span class="op">:</span> <span class="num">1</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t31" href="#t31">31</a></span><span class="t">    <span class="key">assert</span> <span class="nam">sorted</span><span class="op">(</span><span class="nam">p</span><span class="op">.</span><span class="nam">name</span> <span class="key">for</span> <span class="nam">p</span> <span class="key">in</span> <span class="nam">target</span><span class="op">.</span><span class="nam">parent</span><span class="op">.</span><span class="nam">iterdir</span><span class="op">(</span><span class="op">)</span><span class="op">)</span> <span class="op">==</span> <span class="op">[</span><span class="str">&quot;data.json&quot;</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -106,7 +120,7 @@
             <a class="nav" href="z_a44f0ac069e85531_test_main_sync_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
-            created at 2026-11-26 00:11 +0000
+            created at 2026-11-26 00:15 +0000
         </p>
     </div>
 </footer>
