@@ -4064,11 +4064,9 @@ def _path_pi_version(launcher: Path) -> str:
 
 
 def _running_pi_version() -> str:
-    """Return the version of the npm or managed pi install sessions run, or "" if unknown."""
-    version_file = _pi_agent_dir() / "install" / "current-version"
-    return _pi_package_version(_pi_package_dir(_PI_PACKAGE) / "package.json") or (
-        _read_text(version_file).strip() if version_file.exists() else ""
-    )
+    """Return the version of the pi that ``pi`` on PATH runs, or "" if unknown."""
+    which = shutil.which("pi")
+    return _path_pi_version(Path(which)) if which else ""
 
 
 def _warn_pi_version_drift(sources: Iterable[str]) -> None:
@@ -4106,7 +4104,7 @@ def _warn_pi_version_drift(sources: Iterable[str]) -> None:
             file=sys.stderr,
         )
         return
-    installed = npm_version or _path_pi_version(launcher)
+    installed = _running_pi_version()
     if not pinned or not installed:
         return
     if _version_key(installed) == _version_key(pinned):
