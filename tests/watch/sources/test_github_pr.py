@@ -456,6 +456,19 @@ def test_gh_pr_stops_while_the_pr_has_a_matching_label(
     )
 
 
+@pytest.mark.parametrize(("mergeable", "code"), [(False, 0), (True, 124), (None, 124)])
+def test_gh_pr_conflicts_stops_only_once_github_reports_a_conflict(
+    github: FakeGithub, mergeable: bool | None, code: int
+) -> None:
+    github.pr()
+    github.bodies["repos/o/r/pulls/7"]["mergeable"] = mergeable  # type: ignore[index]
+
+    assert (
+        watch([GithubPrSource("o/r", 7, None)], ["conflicts"], interval=0, timeout=0.05)
+        == code
+    )
+
+
 def _block_cache() -> Path:
     blocker = live_dir("cache")
     blocker.parent.mkdir(parents=True, exist_ok=True)
