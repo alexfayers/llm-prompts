@@ -80,7 +80,8 @@ def _pairs(kind: str, entries: list[str] | None) -> dict[str, str]:
     return pairs
 
 
-def _at_least_one(name: str, value: int) -> int:
+def at_least_one(name: str, value: int) -> int:
+    """Return ``value``, or raise ValueError naming ``name`` when it is not an int of at least 1."""
     if not isinstance(value, int) or value < 1:
         raise ValueError(f"{name} must be at least 1, got {value}")
     return value
@@ -166,14 +167,14 @@ class RunOptions:
             models=models,
             repeats=None
             if args.repeats is None
-            else _at_least_one("repeats", args.repeats),
+            else at_least_one("repeats", args.repeats),
             max_repeats=defaults.max_repeats
             if args.max_repeats is None
-            else _at_least_one("max-repeats", args.max_repeats),
+            else at_least_one("max-repeats", args.max_repeats),
             overlays=available
             if args.overlays
             else tuple(dict.fromkeys(args.overlay or ())),
-            jobs=_at_least_one("jobs", configured if args.jobs is None else args.jobs),
+            jobs=at_least_one("jobs", configured if args.jobs is None else args.jobs),
             scenarios=tuple(args.scenario or ()),
             os_sandbox=args.os_sandbox,
             judge=args.judge or defaults.judge,
@@ -184,7 +185,7 @@ class RunOptions:
             features=features,
             reuse=args.reuse,
             fail_fast=args.fail_fast,
-            fail_fast_after=_at_least_one(
+            fail_fast_after=at_least_one(
                 "fail-fast-after",
                 defaults.fail_fast_after
                 if args.fail_fast_after is None

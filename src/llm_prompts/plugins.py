@@ -19,6 +19,7 @@ from .setup import (
     _format_update_message,
     _remote_head,
     _run_parallel_ordered,
+    redact_credentials,
 )
 
 _SKILLS_DIR = "skills"
@@ -97,7 +98,7 @@ def _validate_plugins(plugins: list[dict[str, Any]]) -> list[str]:
                         f"[{name}] frontmatter_overrides.{skill_name}.{key} must be "
                         f"a string, bool, int, or float: {value!r}"
                     )
-    return errors
+    return [redact_credentials(error) for error in errors]
 
 
 def _checkout_dir(name: str) -> Path:
