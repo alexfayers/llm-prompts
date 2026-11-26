@@ -313,6 +313,18 @@ def test_setup_commands_run_in_the_workspace_after_the_first_commit(
         assert first[1]["env"]["GIT_CONFIG_GLOBAL"] == str(prepared.home / ".gitconfig")
 
 
+def test_setup_commands_see_the_workspace_path_the_agent_sees(
+    make_cell: MakeCell, fake_subprocess: FakeSubprocess, tmp_path: Path
+) -> None:
+    cell = make_cell()
+    scenario = replace(cell.scenario, setup=("true",))
+
+    with prepare(replace(cell, scenario=scenario), tmp_path / "fixed"):
+        assert fake_subprocess.calls[-1][1]["env"]["SEEN_WORKSPACE"] == str(
+            tmp_path / "fixed" / "workspace"
+        )
+
+
 def test_roots_of_dead_runs_are_swept_and_those_of_live_runs_are_kept(
     cell_roots: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Protocol
 
@@ -73,6 +73,9 @@ class AgentAdapter(Protocol):
 
     def install_guard(self, template_dir: Path) -> None:
         """Install the Bash guard into the agent template."""
+
+    def install_features(self, home: Path, features: Mapping[str, bool]) -> None:
+        """Switch the measured features of the agent in ``home`` on or off where that takes files."""
 
     def copy_logins(self, home: Path) -> tuple[Path, ...]:
         """Copy the live agent logins into ``home`` and return the paths created."""

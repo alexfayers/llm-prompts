@@ -129,6 +129,7 @@ def prepare(
         ) as handle:
             agent = AGENTS[cell.agent]
             agent.point_memory(home, handle.url)
+            agent.install_features(home, cell.variant.features)
             agent.copy_logins(home)
             if agent.git_packages:
                 stores.link_live(home, live_home(), agent.git_packages)
@@ -153,7 +154,11 @@ def prepare(
             gitconfig = home / ".gitconfig"
             if not gitconfig.exists():
                 gitconfig.write_text(PLACEHOLDER_GITCONFIG)
-            _init_repo(workspace, {**host_env, **shared}, cell.scenario.setup)
+            _init_repo(
+                workspace,
+                {**host_env, **shared, "SEEN_WORKSPACE": str(seen / "workspace")},
+                cell.scenario.setup,
+            )
             if hits := audit(root, stores=stores.roots()):
                 raise IsolationBreach(hits)
             yield PreparedCell(

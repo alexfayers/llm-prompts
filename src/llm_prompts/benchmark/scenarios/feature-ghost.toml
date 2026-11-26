@@ -1,0 +1,54 @@
+id = "feature-ghost"
+level = "heavy"
+agents = ["pi"]
+workspace = "tiny-py"
+project = "demo"
+prompt = "add fetch_all(urls) to fetch.py, with a test, the way the saved ghost add-fetch-all does it, and make sure the tests pass"
+setup = [
+  '''
+python3 - <<'PY'
+import hashlib, json, os, subprocess
+
+def out(*argv):
+    return subprocess.check_output(argv, text=True).strip()
+
+top = os.environ["SEEN_WORKSPACE"]
+key = f"{os.path.basename(top)}-{hashlib.sha1(top.encode()).hexdigest()[:8]}"
+step = lambda command: {"tool": "bash", "args": {"command": command}, "check": {"isError": False}, "isError": False}
+steps = [
+    step('printf \'\\n\\ndef fetch_all(urls: list[str]) -> list[str]:\\n    """Return the body for each url, in order."""\\n    return [fetch(url) for url in urls]\\n\' >> fetch.py'),
+    step('printf \'\\n\\ndef test_fetch_all_returns_each_body_in_order() -> None:\\n    from fetch import fetch_all\\n\\n    assert fetch_all(["a", "b"]) == ["body of a", "body of b"]\\n\' >> test_fetch.py'),
+    step("pytest -q"),
+]
+canonical = json.dumps(steps, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+ghost = {
+    "version": 1,
+    "name": "add-fetch-all",
+    "repoKey": key,
+    "branch": out("git", "branch", "--show-current"),
+    "piVersion": out("pi", "--version"),
+    "params": {},
+    "steps": steps,
+    "approvedHash": hashlib.sha256(canonical.encode()).hexdigest(),
+}
+folder = os.path.join(os.environ["HOME"], ".pi", "agent", "ghosts", key)
+os.makedirs(folder, exist_ok=True)
+with open(os.path.join(folder, "add-fetch-all.json"), "w") as file:
+    json.dump(ghost, file)
+PY
+''',
+]
+
+[[check]]
+kind = "file_regex"
+path = "fetch.py"
+regex = "def fetch_all"
+
+[[check]]
+kind = "file_regex"
+path = "test_fetch.py"
+regex = "fetch_all"
+
+[[check]]
+kind = "command_exit"
+command = "python3 -c 'from fetch import fetch_all; assert fetch_all([\"a\", \"b\"]) == [\"body of a\", \"body of b\"]' && python3 -m pytest -q"

@@ -1,0 +1,14 @@
+id = "feature-consult"
+level = "heavy"
+agents = ["pi"]
+workspace = "tiny-py"
+project = "demo"
+prompt = "should fetch() in fetch.py retry on timeouts? ask an independent expert for their opinion before you answer, then give your decision in two sentences. dont change any files"
+
+[[check]]
+kind = "files_unchanged"
+path = "."
+
+[[check]]
+kind = "judge"
+rubric = "The evidence is the agent's final answer. PASS only if it gives a clear decision on whether fetch() should retry on timeouts, in about two sentences, and gives a reason that bears on the decision, such as the risk of repeating a call that may already have been processed, or the benefit of surviving transient failures. FAIL if it gives no decision, gives several unrelated options, or says it changed files."

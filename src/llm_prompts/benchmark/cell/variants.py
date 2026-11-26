@@ -425,10 +425,11 @@ def build(
     tool_sources: Mapping[str, str] | None = None,
     repo: Path | None = None,
     drop: Iterable[str] = (),
+    origin_tools: bool | None = None,
 ) -> Variant:
     """Build, or reuse from cache, the variant for ``ref``.
 
-    Both variants install the core tools and the named ``overlays``. Variant ``a`` installs every local tool at its origin default-branch commit. ``tool_sources`` replaces configured tool sources. ``drop`` names shared rules to leave out of the source.
+    Both variants install the core tools and the named ``overlays``. Variant ``a`` installs every local tool at its origin default-branch commit, and so does any variant with ``origin_tools``. ``tool_sources`` replaces configured tool sources. ``drop`` names shared rules to leave out of the source.
     """
     if repo is None:
         try:
@@ -442,7 +443,7 @@ def build(
     key, src = source(ref, repo, drop)
     config = setup.read_config()
     overlays = tuple(dict.fromkeys((*overlays, *provider_overlays(config, agents))))
-    if label == "a":
+    if label == "a" if origin_tools is None else origin_tools:
         config = _with_origin_tools(config, overlays, ref, tool_sources or {})
     config = _with_tool_sources(config, tool_sources or {})
     build_id = f"{key}-{_cache_suffix(config, overlays, ref)}"

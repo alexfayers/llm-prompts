@@ -16,6 +16,7 @@ Run it from an llm-prompts checkout. Any commit, branch or `:worktree` works for
 | `--a-tool NAME=SOURCE`, `--b-tool NAME=SOURCE` | Use this source for a configured tool (such as `mcp-memory`) in that ref only. Repeatable. A remote source must end in `@<40 character commit sha>`, or that side's runs are not reused. |
 | `--b-env NAME=VALUE` | Set this environment variable for the agents of ref B only. Repeatable. |
 | `--b-drop RULE` | Leave this shared rule (a `shared/rules/RULE.md` source) out of ref B's build. A pinned rule is refused. Repeatable. |
+| `--feature NAME` | Measure a pi feature: `attic`, `consult`, `ghost` or `lsp`. A runs without it and B with it, so give both the same ref. Both sides use the tools pinned by `--a-tool`, and `--b-tool` is refused. Only pi runs, and `--agents` must be `pi`. Repeatable. `btw` cannot be measured, since it answers only in a pi session with a UI. The `feature-fork` scenario keeps the fork tools on for both sides, so it compares two refs, such as one before and one after #676 made every fork run in the background. |
 | `--no-reuse` | Run A and B again instead of reusing finished runs. |
 | `--level LEVEL` | `light`, `medium` or `heavy` (default: `light`). A level includes all lower levels. |
 | `--agents LIST` | Comma separated agents (default: `claude,pi`). |
@@ -134,7 +135,7 @@ path = "fetch.py"
 rubric = "The retries use exponential backoff."
 ```
 
-`setup` is a list of shell scripts run in the workspace right after its first commit. `delegation = true` leaves the claude subagent tools and the pi `fork` tools on, and the `tool_called` and `not_called` checks take `by = "lead"` or `by = "subagent"`.
+`setup` is a list of shell scripts run in the workspace right after its first commit, with `SEEN_WORKSPACE` set to the workspace path the agent sees. `delegation = true` leaves the claude subagent tools and the pi `fork` tools on, and the `tool_called` and `not_called` checks take `by = "lead"` or `by = "subagent"`.
 
 ### Check kinds
 

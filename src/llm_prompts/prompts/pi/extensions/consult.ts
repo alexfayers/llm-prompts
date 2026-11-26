@@ -35,10 +35,12 @@ export default function (pi: ExtensionAPI) {
 			const reasoning = highest === "off" ? undefined : highest;
 			const content = [params.question, ...params.evidence.map((text, index) => `Evidence ${index + 1}:\n${text}`)].join("\n\n");
 			const answer = await ctx.modelRegistry.streamSimple(model, { systemPrompt: EXPERT_PROMPT, messages: [{ role: "user", content, timestamp: Date.now() }] }, { signal, reasoning }).result();
-			if (answer.stopReason === "error" || answer.stopReason === "aborted") throw new Error(answer.errorMessage ?? `the expert call ${answer.stopReason}`);
+			const details = { model: `${model.provider}/${model.id}`, reasoning, usage: answer.usage };
+			const failure = (message: string) => ({ content: [{ type: "text" as const, text: message }], details, isError: true });
+			if (answer.stopReason === "error" || answer.stopReason === "aborted") return failure(answer.errorMessage ?? `the expert call ${answer.stopReason}`);
 			const text = answer.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
-			if (!text) throw new Error("the expert gave no answer");
-			return { content: [{ type: "text", text }], details: { model: `${model.provider}/${model.id}`, reasoning, cost: answer.usage.cost?.total ?? 0 } };
+			if (!text) return failure("the expert gave no answer");
+			return { content: [{ type: "text", text }], details };
 		},
 	});
 }
