@@ -900,14 +900,14 @@ describe("fork tool", () => {
 		});
 
 		test("fork_steer on a finished fork continues it with the message", async () => {
-			const { tools, appended, sent, ctx } = await start({ task: "STUB_REPORT", name: "done", model: "prov/cheap" });
+			const { tools, appended, background, ctx } = await start({ task: "STUB_REPORT", name: "done", model: "prov/cheap" });
 			ctx.isIdle = () => false;
 			await eventually(() => registryOf().all().find((run) => run.name === "done")?.state === "done");
 			const steered = await tools.fork_steer.execute("s", { name: "done", message: "STUB_INSPECT" }, undefined, undefined, ctx);
 			assert.equal(steered.content[0].text, "continued fork done (background)");
 			await eventually(() => registryOf().all().find((run) => run.name === "done")?.state === "failed");
 			assert.equal(JSON.parse((appended.at(-1)![1] as { text: string }).text.replace(/^echo: /, "")).prompt, "Task: STUB_INSPECT");
-			assert.equal(sent.filter(([message]) => message.content.startsWith("[fork done ")).length, 2);
+			assert.equal(background.digest()?.match(/^\[fork done /gm)?.length, 2);
 		});
 
 		test("a warm fork gets main's latest prefix, and fork_resume with a task keeps the one it started with", async () => {
@@ -1131,6 +1131,20 @@ describe("fork tool", () => {
 			assert.equal(seen.handshake.worktree, worktree);
 			assert.equal(seen.args[seen.args.indexOf("--session") + 1], path.join(files!, "seed.jsonl"));
 			await eventually(() => !isLive(run()));
+			assert.equal(fs.readFileSync(life, "utf8"), "prompt\nexit\nprompt\nexit\n");
+		});
+
+		test("a second fork_resume on a cancelled fork while it stops queues its task instead of starting the fork again", async () => {
+			const life = path.join(agentDir, "twice.log");
+			const { tools, ctx } = await start({ task: `STUB_STEER STUB_LIFE:${life}`, role: "writer", name: "twice" }, repo);
+			await eventually(() => fs.existsSync(life));
+			await tools.fork_cancel.execute("c", { name: "twice" }, undefined, undefined, ctx);
+			const resumes = await Promise.allSettled(["r1", "r2"].map((id) => tools.fork_resume.execute(id, { name: "twice", task: `STUB_LIFE:${life}` }, undefined, undefined, ctx)));
+			assert.deepEqual(
+				resumes.map((resume) => resume.status === "fulfilled" && resume.value.content[0].text),
+				["continued fork twice (background)", `queued for fork twice (background): STUB_LIFE:${life} starts after it replies`],
+			);
+			await eventually(() => !isLive(registryOf().all().find((candidate) => candidate.name === "twice")!));
 			assert.equal(fs.readFileSync(life, "utf8"), "prompt\nexit\nprompt\nexit\n");
 		});
 

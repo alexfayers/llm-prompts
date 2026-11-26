@@ -1,4 +1,4 @@
-// Tracks background fork runs: wakes the main session when one finishes, delivers results that arrive during a run when it settles, holds a session without a UI until they finish and notes a fork that runs long.
+// Tracks background fork runs: wakes an idle main session when one finishes, delivers results that arrive during a run at the end of its turn, holds a session without a UI until they finish and notes a fork that runs long.
 // Config: llmPrompts.forks.checkInMinutes in pi settings (minutes a fork runs before the next tool result names it, default 5; 0 turns the note off)
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { canResume, isLive, isOwnRun, registryOf, reloadRequested, sessionFileOf, type Registry, type Run } from "./registry.ts";
@@ -127,7 +127,7 @@ export class Background {
 	}
 
 	/** Records how a background run ended, pins what it asks, and wakes main. A cancelled run is ignored. */
-	finish(ctx: AskContext, runId: string, patch: Partial<Run>, text: string | Reply, note?: string): void {
+	finish(ctx: Pick<ExtensionContext, "isIdle"> & AskContext, runId: string, patch: Partial<Run>, text: string | Reply, note?: string): void {
 		this.controllers.delete(runId);
 		this.children.delete(runId);
 		const current = this.registry.get(runId);
@@ -137,7 +137,7 @@ export class Background {
 		const run = this.registry.update(runId, { ...ended, unread: [current.unread, digestLine(ended, text, note)].filter(Boolean).join("\n") });
 		if (!run) return;
 		this.pinned.push(...pinForkAsks(this.pi, ctx, run, text));
-		if (wakeReason(run) && !held) this.wake();
+		if (wakeReason(run) && !held && ctx.isIdle()) this.wake();
 	}
 
 	/** Stops a live background run by name. */
@@ -252,7 +252,7 @@ export class Background {
 	}
 
 	/** Steers the digest into main's turn, or starts a turn with it when main is idle. */
-	private wake() {
+	wake() {
 		const content = this.digest();
 		if (content) this.pi.sendMessage({ customType: RESULTS_TYPE, content, display: true }, { deliverAs: "steer", triggerTurn: true });
 	}
@@ -313,6 +313,10 @@ export function registerBackgroundHooks(pi: ExtensionAPI, background: Background
 		const minutes = settings?.checkInMinutes ?? DEFAULT_CHECK_IN_MINUTES;
 		const note = minutes > 0 ? background.checkIns(minutes * MINUTE_MS) : undefined;
 		return note ? { content: [...event.content, { type: "text" as const, text: note }] } : undefined;
+	});
+
+	pi.on("turn_end", (event) => {
+		if (!["aborted", "error"].includes((event.message as { stopReason?: string }).stopReason ?? "")) background.wake();
 	});
 
 	pi.on("agent_end", (event) => background.noteRun(event.messages));
