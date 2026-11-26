@@ -321,6 +321,20 @@ class TestCommitGuard:
         blocked = hook("PreShell", command="git push")
         assert blocked is not None and "commit" in (blocked.block or "")
 
+    def test_the_push_check_leaves_the_index_unwritten(
+        self, hook: RunHook, repo: Path
+    ) -> None:
+        git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*git, "add", "-A"], check=True)
+        subprocess.run([*git, "commit", "-qm", "init"], check=True)
+        os.utime(repo / "a.txt", (1, 1))
+        index = repo / ".git" / "index"
+        before = index.stat().st_mtime_ns
+
+        hook("PreShell", command="git push")
+
+        assert index.stat().st_mtime_ns == before
+
     def test_a_repo_without_a_test_command_is_left_alone(
         self, hook: RunHook, repo: Path
     ) -> None:

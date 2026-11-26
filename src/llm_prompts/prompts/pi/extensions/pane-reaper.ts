@@ -63,7 +63,7 @@ async function herdr(args: string[]): Promise<string> {
 }
 
 async function git(cwd: string, args: string[]): Promise<string> {
-	return (await execFileAsync("git", args, { cwd, timeout: HERDR_TIMEOUT_MS })).stdout;
+	return (await execFileAsync("git", args, { cwd, timeout: HERDR_TIMEOUT_MS, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" } })).stdout;
 }
 
 async function listPanes(): Promise<Pane[]> {

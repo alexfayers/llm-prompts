@@ -21,6 +21,7 @@ const REGISTRY = Symbol.for("pi-context.registry");
 const liveForks = (...runs: Json[]) => ((globalThis as any)[REGISTRY] = { live: () => runs });
 
 let world: World;
+let statusLocks: (string | undefined)[] = [];
 const memory = useMemoryFs();
 const root = memory.root;
 
@@ -66,7 +67,8 @@ function run(command: string, args: string[], cwd?: string): string {
 }
 
 const execFile = Object.assign(() => {}, {
-	[promisify.custom]: async (command: string, args: string[], options: { cwd?: string; maxBuffer?: number }) => {
+	[promisify.custom]: async (command: string, args: string[], options: { cwd?: string; maxBuffer?: number; env?: NodeJS.ProcessEnv }) => {
+		if (command === "git" && args[0] === "status") statusLocks.push(options.env?.GIT_OPTIONAL_LOCKS);
 		const stdout = run(command, args, options.cwd);
 		if (stdout.length > (options.maxBuffer ?? NODE_DEFAULT_MAX_BUFFER)) throw new RangeError("stdout maxBuffer length exceeded");
 		return { stdout, stderr: "" };
@@ -117,6 +119,7 @@ useEnv({ PI_SUBAGENT_CHILD: undefined, HERDR_ENV: undefined });
 beforeEach(() => {
 	world = { panes: [], workspaces: [], worktrees: [], mainLine: "branch refs/heads/main", herdr: [], ghCalls: [], gitCalls: [], cwds: [] };
 	delete (globalThis as any)[REGISTRY];
+	statusLocks = [];
 });
 after(restoreMocks);
 
@@ -147,6 +150,12 @@ describe("sweepWorktrees", () => {
 			assert.deepEqual(result.kept.map((w: Json) => [w.path, w.reason]), [[wip.path, reason]]);
 		});
 	}
+
+	test("reads a worktree's status without taking git's optional index lock", async () => {
+		addWorktree("done");
+		await sweepWorktrees();
+		assert.deepEqual(statusLocks, ["0"]);
+	});
 
 	test("reports a clean, idle branch with no commit of its own as a candidate", async () => {
 		const empty = addWorktree("empty", { reflog: 1, merged: false });
