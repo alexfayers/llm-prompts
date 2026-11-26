@@ -9,7 +9,8 @@ function spawn(command: string, args: string[], options: Record<string, unknown>
 	spawned.push(entry);
 	return child;
 }
-const ext = await loadExtension("session-telemetry", { mocks: { "node:child_process": { spawn } } });
+const load = () => loadExtension("session-telemetry", { mocks: { "node:child_process": { spawn } } });
+const ext = await load();
 useEnv({ PI_CONTEXT_ROLE: "writer" });
 
 const usage = (input: number, cacheRead: number, cacheWrite: number, cost: number) => ({ input, output: 50, cacheRead, cacheWrite, totalTokens: input + cacheRead + cacheWrite + 50, cost: { total: cost } });
@@ -21,11 +22,12 @@ test("a session sends its totals once at its end, across a reload, and a session
 	await ext.fire("message_end", { message: { role: "user", content: "secret prompt" } });
 	await ext.fire("session_compact", { reason: "threshold" });
 	await ext.fire("session_shutdown", { reason: "reload" });
-	await ext.fire("session_start", { reason: "reload" });
-	await ext.fire("message_end", reply(usage(500, 1000, 500, 0.25)));
-	await ext.fire("session_shutdown", { reason: "quit" });
-	await ext.fire("session_start", { reason: "new" });
-	await ext.fire("session_shutdown", { reason: "quit" });
+	const reloaded = await load();
+	await reloaded.fire("session_start", { reason: "reload" });
+	await reloaded.fire("message_end", reply(usage(500, 1000, 500, 0.25)));
+	await reloaded.fire("session_shutdown", { reason: "quit" });
+	await reloaded.fire("session_start", { reason: "new" });
+	await reloaded.fire("session_shutdown", { reason: "quit" });
 
 	assert.equal(spawned.length, 1);
 	const [{ command, args, options, unref }] = spawned;
