@@ -40,6 +40,7 @@ llm-prompts contribute list|sync|update|ready  # keep each worktree branch in sy
 - Workflows are step-by-step procedures loaded on demand. Only Pi gets them, as prompt templates.
 - Skills are directories with a `SKILL.md` the agent reads before a specific kind of task. They are symlinked, so source edits show up immediately. A skill with `inject_at_start: true` in its `metadata` frontmatter is injected as a `Startup block` by the cline-hooks `SkillStartupBlocks` plugin at the start of a main session.
 - Agents are subagent definitions: markdown files with YAML frontmatter. Files in `shared/agents/` go to Claude Code and Pi, files in `claude-code/agents/` go to Claude Code, with template variables substituted.
+- Claude Code permissions: `claude-code/permissions.json` in core and in each overlay lists `allow`, `ask` and `deny` rules. `install` and `update` add the rules missing from `~/.claude/settings.json` and record them in the manifest. A rule you already list, in any of the three lists, is kept as is. A rule you remove is not added again. A rule declared in several lists goes to the strictest one (`deny`, then `ask`, then `allow`). `uninstall` removes only the rules llm-prompts added, and only from the settings files it added them to. A file it cannot clean stays recorded for the next `uninstall`.
 
 Shared files are Jinja2 templates, with variables from each agent's `vars.json`. For example `{{RULE_FILES}}` becomes "steering files" for Kiro and "AGENTS.md" for Codex. Text can vary per agent with `{% if AGENT == "pi" %}`, and `has_command("herdr")` is true where that command is on PATH at install time. In a skill, `{{SKILL_DIR}}` becomes the skill's installed directory. Put each block tag on its own line. A placeholder with no value is left as `{{NAME}}` and reported as unreplaced. A template with invalid syntax is skipped by `install` and fails `check`.
 
@@ -126,6 +127,7 @@ shared/skills/        skills for all agents
 shared/agents/        subagents for claude-code and pi
 kiro/rules/           kiro-only rules
 claude-code/agents/   claude-code-only subagents
+claude-code/permissions.json  allow, ask and deny rules to add to ~/.claude/settings.json
 pi/settings.json      pi packages to add to ~/.pi/agent/settings.json
 pi/extensions/        pi extensions, copied to ~/.pi/agent/extensions/
 pi/seed/              files copied into the pi agent dir only where absent

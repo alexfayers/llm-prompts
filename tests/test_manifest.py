@@ -135,3 +135,25 @@ class TestRenderedRuleCache:
         write_rendered_rules("acme", {"greeting.md": "hi"})
 
         assert (rendered_rules_dir / "acme" / "greeting.md").exists()
+
+
+class TestAtomicWrites:
+    def test_a_failed_write_keeps_the_previous_manifest(
+        self, manifest_path: Path
+    ) -> None:
+        write_manifest("kiro", ["a"])
+        before = manifest_path.read_text(encoding="utf-8")
+
+        with (
+            patch("llm_prompts.jsonfile.shutil.copymode", side_effect=OSError("disk")),
+            pytest.raises(OSError),
+        ):
+            write_manifest("codex", ["b"])
+        with (
+            patch("llm_prompts.jsonfile.shutil.copymode", side_effect=OSError("disk")),
+            pytest.raises(OSError),
+        ):
+            delete_agent("kiro")
+
+        assert manifest_path.read_text(encoding="utf-8") == before
+        assert [p.name for p in manifest_path.parent.iterdir()] == ["installed.json"]

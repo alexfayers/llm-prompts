@@ -1,6 +1,7 @@
 """Install rules, workflows, skills, and prompts for each supported agent."""
 
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -79,7 +80,7 @@ from .setup import (
 )
 
 if TYPE_CHECKING:
-    from .manifest import AgentManifest
+    from .manifest import AgentManifest, ClaudePermissionState
 
 _LOAD_WHEN_KINDS = ("env", "tool")
 _REMOVED_GATE = "requires_"
@@ -4548,6 +4549,153 @@ def try_enable_task_tools_claude_code() -> None:
         log("success", f"Set {_TASK_TOOLS_ENV}=1 in Claude Code settings.")
 
 
+_PERMISSION_LISTS = ("deny", "ask", "allow")
+
+
+def _claude_default_permissions(prompt_dirs: Sequence[Path]) -> dict[str, list[str]]:
+    """Collect the permission defaults declared by every ``claude-code/permissions.json``.
+
+    Args:
+        prompt_dirs: Core prompts directory, then overlay prompts directories.
+
+    Returns:
+        Rules by list name, each rule in one list only: the strictest list that
+        declares it, in the order ``deny``, ``ask``, ``allow``.
+    """
+    declared = [
+        json.loads(_read_text(fragment))
+        for base in prompt_dirs
+        if (fragment := base / "claude-code" / "permissions.json").is_file()
+    ]
+    defaults: dict[str, list[str]] = {name: [] for name in _PERMISSION_LISTS}
+    taken: set[str] = set()
+    for name, rules in defaults.items():
+        for fragment_rules in (d.get(name, []) for d in declared):
+            rules.extend(r for r in dict.fromkeys(fragment_rules) if r not in taken)
+            taken.update(rules)
+    return defaults
+
+
+def _text_digest(text: str) -> str:
+    """Return the SHA-256 hex digest of ``text``."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _settled_claude_permissions(
+    state: "ClaudePermissionState | None", text: str | None
+) -> dict[str, list[str]]:
+    """Return the rules llm-prompts owns in a settings file.
+
+    A pending rule counts as owned only when the file's content is exactly what
+    the interrupted run was about to write.
+
+    Args:
+        state: Rules the manifest records for the file.
+        text: Current content of the file, or None when it is missing.
+    """
+    owned = state["owned"] if state else {}
+    committed = (
+        state is not None
+        and text is not None
+        and state.get("digest") == _text_digest(text)
+    )
+    pending = state["pending"] if committed and state else {}
+    return {
+        name: [*owned.get(name, []), *pending.get(name, [])]
+        for name in _PERMISSION_LISTS
+    }
+
+
+def _with_claude_state(
+    states: "dict[str, ClaudePermissionState]",
+    path: str,
+    owned: dict[str, list[str]],
+    pending: dict[str, list[str]] | None = None,
+    digest: str = "",
+) -> "dict[str, ClaudePermissionState]":
+    """Return ``states`` with one settings file's rules replaced, dropping a file with none.
+
+    Args:
+        states: Rules the manifest records, by resolved settings path.
+        path: Resolved settings path to replace.
+        owned: Rules llm-prompts owns in the file.
+        pending: Rules about to be written.
+        digest: Digest of the content the file holds once the pending rules are written.
+    """
+    state: ClaudePermissionState = {
+        "owned": {name: rules for name, rules in owned.items() if rules},
+        "pending": {name: rules for name, rules in (pending or {}).items() if rules},
+    }
+    if state["pending"]:
+        state["digest"] = digest
+    others = {key: value for key, value in states.items() if key != path}
+    return {**others, path: state} if state["owned"] or state["pending"] else others
+
+
+def _seed_claude_permissions(
+    prompt_dirs: Sequence[Path], previous: "dict[str, ClaudePermissionState] | None"
+) -> "dict[str, ClaudePermissionState] | None":
+    """Add the default permission rules that Claude Code settings lack.
+
+    A rule the user already lists in any of the three lists is left alone. A rule
+    added by an earlier run is not added again, in any list, so a rule the user
+    removed stays gone. The manifest lists new rules as pending, with the digest
+    of the content about to be written, before the settings file changes, and as
+    owned after. A later run owns a pending rule only when the file still has
+    that content, so a rule the user adds after an interrupted run is never claimed.
+
+    Args:
+        prompt_dirs: Core prompts directory, then overlay prompts directories.
+        previous: Rules the manifest records, by resolved settings path.
+
+    Returns:
+        The rules llm-prompts manages, by resolved settings path, or ``previous``
+        when the settings could not be read.
+    """
+    from .manifest import record_claude_permissions
+
+    settings_path = (user_home() / ".claude" / "settings.json").resolve()
+    key = str(settings_path)
+    states = previous or {}
+    text = _read_text(settings_path) if settings_path.exists() else None
+    try:
+        settings = json.loads(text) if text is not None else {}
+    except json.JSONDecodeError:
+        log("warn", "Could not parse Claude settings, skipping default permissions.")
+        return previous
+    permissions: dict[str, list[str]] = settings.setdefault("permissions", {})
+    owned = _settled_claude_permissions(states.get(key), text)
+    settled = _with_claude_state(states, key, owned)
+    known = {
+        rule for lists in (permissions, owned) for r in lists.values() for rule in r
+    }
+    new: dict[str, list[str]] = {name: [] for name in _PERMISSION_LISTS}
+    for name, rules in _claude_default_permissions(prompt_dirs).items():
+        for rule in rules:
+            if rule not in known:
+                new[name].append(rule)
+    if not any(new.values()):
+        return settled or None
+    for name, rules in new.items():
+        if rules:
+            permissions.setdefault(name, []).extend(rules)
+    written = json.dumps(settings, indent=2) + "\n"
+    record_claude_permissions(
+        _with_claude_state(states, key, owned, new, _text_digest(written))
+    )
+    try:
+        write_text_atomic(settings_path, written)
+    except OSError as error:
+        log("warn", f"Could not seed permissions in {settings_path}: {error}")
+        record_claude_permissions(settled or None)
+        return settled or None
+    log("success", "Added default permissions to Claude Code settings.")
+    added = {name: [*owned[name], *new[name]] for name in _PERMISSION_LISTS}
+    final = _with_claude_state(states, key, added)
+    record_claude_permissions(final)
+    return final
+
+
 def _memory_service_exists() -> bool:
     """Check whether the mcp-memory background service is installed."""
     if sys.platform == "darwin":
@@ -4756,7 +4904,11 @@ def _disallow_update_claude_code() -> None:
     settings_path = user_home() / ".claude" / "settings.json"
     if not settings_path.exists():
         return
-    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    try:
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        log("warn", "Could not parse Claude settings, keeping the update permission.")
+        return
     allow: list[str] = settings.get("permissions", {}).get("allow", [])
     rule = "Bash(llm-prompts update *)"
     if rule in allow:
@@ -4770,6 +4922,54 @@ def _disallow_update_claude_code() -> None:
         )
 
 
+def _remove_claude_permissions(
+    states: "dict[str, ClaudePermissionState] | None",
+) -> "dict[str, ClaudePermissionState]":
+    """Remove the permission rules llm-prompts added from each Claude Code settings file.
+
+    A file that is now a symlink, sits behind one, or cannot be read, parsed or
+    written is left alone.
+
+    Args:
+        states: Rules the manifest records, by resolved settings path.
+
+    Returns:
+        The records of the files that could not be cleaned, to retry later.
+    """
+    failed: dict[str, ClaudePermissionState] = {}
+    for path_text, state in (states or {}).items():
+        settings_path = Path(path_text)
+        if not settings_path.exists() and not settings_path.is_symlink():
+            continue
+        if settings_path.resolve() != settings_path or not settings_path.is_file():
+            log(
+                "warn",
+                f"{settings_path} is no longer a plain file, keeping default permissions.",
+            )
+            failed[path_text] = state
+            continue
+        try:
+            text = _read_text(settings_path)
+            settings = json.loads(text)
+            permissions: dict[str, list[str]] = settings.get("permissions", {})
+            owned = _settled_claude_permissions(state, text)
+            removed = False
+            for name, rules in owned.items():
+                kept = [r for r in permissions.get(name, []) if r not in rules]
+                if len(kept) != len(permissions.get(name, [])):
+                    permissions[name] = kept
+                    removed = True
+            if removed:
+                write_text_atomic(settings_path, json.dumps(settings, indent=2) + "\n")
+                log("success", f"Removed default permissions from {settings_path}.")
+        except (OSError, json.JSONDecodeError) as error:
+            log(
+                "warn", f"Could not clean {settings_path}: {error}. Keeping its record."
+            )
+            failed[path_text] = state
+    return failed
+
+
 def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) -> None:
     """Reverse an installation, removing installed files and manifest entries.
 
@@ -4778,7 +4978,11 @@ def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) ->
         verbose: Show debug-level output.
     """
     console._verbose = verbose
-    from .manifest import delete_agent, delete_rendered_rules, read_manifest
+    from .manifest import (
+        delete_agent,
+        delete_rendered_rules,
+        read_manifest,
+    )
 
     manifest = read_manifest()
     targets = agent_names or list(manifest)
@@ -4803,7 +5007,10 @@ def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) ->
         if agent_config:
             _unpatch_kiro_agent_config(agent_config)
         if name == "claude-code":
-            _disallow_update_claude_code()
+            unclean = _remove_claude_permissions(entry.get("claude_permissions"))
+            settings_link = user_home() / ".claude" / "settings.json"
+            if not {str(settings_link), str(settings_link.resolve())} & set(unclean):
+                _disallow_update_claude_code()
         if name == "pi":
             _remove_empty_dir(_pi_rules_dir())
             owned = set(entry.get("pi_installed_packages", []))
@@ -4814,7 +5021,11 @@ def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) ->
             _sync_pi_packages({}, entry.get("packages", []))
             _sync_pi_skills([], entry.get("skills", []))
             _sync_pi_mcp_permissions({}, entry.get("mcp_permissions", []))
-        delete_agent(name)
+        delete_agent(
+            name, claude_permissions=unclean if name == "claude-code" else None
+        )
+        if name == "claude-code" and unclean:
+            log("warn", "[claude-code] Fix the settings file, then uninstall again.")
         log("success", f"[{name}] Uninstalled.")
 
 
@@ -5401,6 +5612,14 @@ def main(
     pi_rule_roles: dict[str, list[str]] | None = previous_manifest.get("pi", {}).get(
         "pi_rule_roles"
     )
+    claude_permissions = previous_manifest.get("claude-code", {}).get(
+        "claude_permissions"
+    )
+    if "claude-code" in active_targets:
+        with isolated("claude-code"):
+            claude_permissions = _seed_claude_permissions(
+                [root_dir, *overlay_dirs], claude_permissions
+            )
     if "pi" in active_targets:
         with isolated("pi"):
             pi_rule_roles = (
@@ -5455,6 +5674,9 @@ def main(
                 mcp_permissions=pi_mcp_rules if name == "pi" else None,
                 pi_rule_roles=pi_rule_roles if name == "pi" else None,
                 pi_seeded_keys=pi_seeded_keys if name == "pi" else None,
+                claude_permissions=claude_permissions
+                if name == "claude-code"
+                else None,
             )
 
     _log_changes()

@@ -6,9 +6,10 @@ import json
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 from . import home
+from .jsonfile import write_json_atomic
 
 
 def manifest_path() -> Path:
@@ -19,6 +20,18 @@ def manifest_path() -> Path:
 def rendered_rules_dir() -> Path:
     """Return the directory that caches rendered rules."""
     return home.config_dir() / "rendered-rules"
+
+
+class ClaudePermissionState(TypedDict):
+    """Permission rules llm-prompts manages in one Claude Code settings file, by list name.
+
+    ``pending`` rules are about to be written. They count as owned only while the file
+    still has the content whose SHA-256 is ``digest``.
+    """
+
+    owned: dict[str, list[str]]
+    pending: dict[str, list[str]]
+    digest: NotRequired[str]
 
 
 class AgentManifest(TypedDict, total=False):
@@ -32,7 +45,13 @@ class AgentManifest(TypedDict, total=False):
     mcp_permissions: list[str]
     pi_rule_roles: dict[str, list[str]]
     pi_seeded_keys: dict[str, list[str]]
+    claude_permissions: dict[str, ClaudePermissionState]
     installed_at: str
+
+
+def _save(agents: dict[str, AgentManifest]) -> None:
+    """Write the manifest through a scratch file and a rename."""
+    write_json_atomic(manifest_path(), {"agents": agents})
 
 
 def read_manifest() -> dict[str, AgentManifest]:
@@ -62,6 +81,7 @@ def write_manifest(
     mcp_permissions: list[str] | None = None,
     pi_rule_roles: dict[str, list[str]] | None = None,
     pi_seeded_keys: dict[str, list[str]] | None = None,
+    claude_permissions: dict[str, ClaudePermissionState] | None = None,
 ) -> None:
     """Write or update the manifest for an agent.
 
@@ -75,6 +95,7 @@ def write_manifest(
         mcp_permissions: Agent MCP permission rule keys llm-prompts manages, if any.
         pi_rule_roles: Roles each pi rule is selected for, by rule filename, if any.
         pi_seeded_keys: Dotted seed keys already offered, by seed file path, if any.
+        claude_permissions: Permission rules llm-prompts manages, by resolved Claude Code settings path, if any.
     """
     agents = read_manifest()
 
@@ -96,31 +117,57 @@ def write_manifest(
         entry["pi_rule_roles"] = pi_rule_roles
     if pi_seeded_keys is not None:
         entry["pi_seeded_keys"] = pi_seeded_keys
+    if claude_permissions is not None:
+        entry["claude_permissions"] = claude_permissions
 
     agents[agent_name] = entry
 
-    manifest_path().parent.mkdir(parents=True, exist_ok=True)
-    manifest_path().write_text(
-        json.dumps({"agents": agents}, indent=2) + "\n",
-        encoding="utf-8",
+    _save(agents)
+
+
+def record_claude_permissions(
+    claude_permissions: dict[str, ClaudePermissionState] | None,
+) -> None:
+    """Save the Claude Code permission rules llm-prompts manages, keeping the rest of the entry.
+
+    Args:
+        claude_permissions: Rules by settings path, or None to forget them.
+    """
+    agents = read_manifest()
+    entry = agents.setdefault(
+        "claude-code",
+        {"files": [], "installed_at": datetime.now(tz=UTC).isoformat()},
     )
+    if claude_permissions is None:
+        entry.pop("claude_permissions", None)
+    else:
+        entry["claude_permissions"] = claude_permissions
+    _save(agents)
 
 
-def delete_agent(agent_name: str) -> None:
-    """Remove an agent's entry from the manifest.
+def delete_agent(
+    agent_name: str,
+    *,
+    claude_permissions: dict[str, ClaudePermissionState] | None = None,
+) -> None:
+    """Remove an agent's entry from the manifest in one write.
 
     Args:
         agent_name: Agent whose manifest entry to remove.
+        claude_permissions: Records to leave in a new entry for the agent, to retry cleanup.
     """
     agents = read_manifest()
     if agent_name not in agents:
         return
-    del agents[agent_name]
-    manifest_path().parent.mkdir(parents=True, exist_ok=True)
-    manifest_path().write_text(
-        json.dumps({"agents": agents}, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    if claude_permissions:
+        agents[agent_name] = {
+            "files": [],
+            "installed_at": datetime.now(tz=UTC).isoformat(),
+            "claude_permissions": claude_permissions,
+        }
+    else:
+        del agents[agent_name]
+    _save(agents)
 
 
 def read_rendered_rule(agent_name: str, name: str) -> str | None:
