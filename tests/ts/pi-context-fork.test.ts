@@ -11,7 +11,7 @@ import { ROLES } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/ro
 import { trackPrefix } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/bridge.ts";
 import { isLive, MAIN_TOOLS_WAIT, registryOf, type Run } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/registry.ts";
 import { Background } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/background.ts";
-import { coldArgs, coldLabel, FANOUT_EXTRA, KEEP_FINISHED_MS, SHARED_FILE_MAX_CHARS, registerFork, WARM_FORK_MAX_TOKENS, resolveModel, seedEntries, sweepFinished } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
+import { coldArgs, coldLabel, FANOUT_EXTRA, KEEP_FINISHED_MS, SHARED_FILE_MAX_CHARS, registerFork, WARM_FORK_MAX_TOKENS, resolveModel, seedEntries, summarizeSession, sweepFinished } from "../../src/llm_prompts/prompts/pi/extensions/pi-context/fork.ts";
 import { LONG_CACHE_MS } from "../../src/llm_prompts/prompts/pi/extensions/context-fold.ts";
 
 const user = (id: string) => ({ type: "message", id, message: { role: "user", content: id } });
@@ -72,6 +72,16 @@ describe("resolveModel", () => {
 	test("the label names the tier and its model and says the worker shares no context", () => {
 		assert.equal(coldLabel("x", "sol", "acme/sol-2"), "cold worker x on sol = acme/sol-2 (no shared context)");
 		assert.equal(coldLabel("x", "acme/m", "acme/m"), "cold worker x on acme/m (no shared context)");
+	});
+});
+
+describe("summarizeSession", () => {
+	test("streams the summary through the model registry, so providers that extensions register are used", async () => {
+		const model = { provider: "acme", id: "m", api: "acme-api", maxTokens: 1000, reasoning: false };
+		const streamed: unknown[] = [];
+		const modelRegistry = { streamSimple: (...args: unknown[]) => (streamed.push(args[0]), { result: async () => ({ role: "assistant", content: [{ type: "text", text: "SUMMARY" }], stopReason: "stop" }) }) };
+		assert.equal(await summarizeSession({ model, modelRegistry } as any, [user("u1")] as any), "SUMMARY");
+		assert.deepEqual(streamed, [model]);
 	});
 });
 
