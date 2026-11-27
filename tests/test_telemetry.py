@@ -998,6 +998,7 @@ def test_an_opted_out_pi_session_sends_nothing(
 
     _main("session-telemetry", json.dumps(SESSION))
     _main("session-telemetry", json.dumps({"event": "pr_opened"}))
+    telemetry.send_pr_review(rounds=1, clean=True, deferred=0)
 
     assert not telemetry_popen.called
 

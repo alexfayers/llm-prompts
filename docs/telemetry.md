@@ -26,7 +26,9 @@ Each pi session, lead or fork, sends one `pi_session` event when it ends, if it 
 
 A `pr_opened` event is sent when `llm-prompts contribute` opens a PR, or when a pi session's `gh pr create` bash call returns a PR URL. It has `role`, `model_tier` (from `PI_MODEL`), `time_to_pr_s` (seconds since the pi session started, or none outside pi), the tool versions and the platform fields.
 
-It carries no PR number, repo, branch, title or path.
+A `pr_review` event is sent when an `llm-prompts pr` review loop ends. It has `rounds` (fix rounds), `end` (`clean` or `escalated`), `deferred` (the findings the last review deferred), the tool versions and the platform fields.
+
+Neither event carries a PR number, repo, branch, title, path or any review text.
 
 A fork's event carries its role and model tier, so fork count, runtime and cost by role and tier are counts and sums over fork events.
 

@@ -10,7 +10,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from . import size_guard
+from . import size_guard, telemetry
 from .benchmark.agents import AGENTS
 from .benchmark.agents.adapter import ModelNotSet
 from .benchmark.scenarios.checks.judge import JudgeMissing, judge_harness, require_judge
@@ -34,6 +34,8 @@ CLEAN_VERDICT = re.compile(
     r"\A\s*OUTCOME[^\n]*\nCLEAN[ \t\r]*(?:\n[ \t]*DEFERRED:[^\n]*)*\s*\Z"
 )
 NUMBERED_FINDING = re.compile(r"^\s*\d+[.)]", re.MULTILINE)
+DEFERRED_LINE = re.compile(r"^[ \t]*DEFERRED:(.*)$", re.MULTILINE)
+FINDING_LOCATION = re.compile(r"\S+:\d+")
 VERDICT_FORMAT = (
     "Start the reply with a line `OUTCOME review`. Then, on the next line, write exactly "
     "`CLEAN` when there are no findings, with no numbered finding anywhere in the reply. "
@@ -87,6 +89,15 @@ def _brief(checkout: Path) -> str:
 def _is_clean(reply: str) -> bool:
     """Return whether ``reply`` starts with an OUTCOME line followed by a CLEAN line and any DEFERRED lines, and no numbered finding."""
     return bool(CLEAN_VERDICT.search(reply)) and not NUMBERED_FINDING.search(reply)
+
+
+def _deferred_count(reply: str) -> int:
+    """Return the findings on ``reply``'s DEFERRED lines: one per ``file:line``, or one for a line without any."""
+    return sum(
+        max(1, len(FINDING_LOCATION.findall(items)))
+        for items in DEFERRED_LINE.findall(reply)
+        if items.strip()
+    )
 
 
 def _ask(
@@ -183,7 +194,8 @@ def review_and_fix(
     text = json.loads(_gh(path, "pr", "view", str(number), "--json", "title,body"))
     context = f"{text['title']}\n\n{text['body']}"
     findings = ""
-    fixed = False
+    rounds = 0
+    clean = False
     for round_number in range(MAX_FIX_ROUNDS + 1):
         diff = _git(path, "diff", f"{base}...HEAD")
         earlier = f"\n\nEarlier findings:\n{findings}" if findings else ""
@@ -196,11 +208,8 @@ def review_and_fix(
             [],
         )
         print(f"review round {round_number}:\n{findings}")
-        if _is_clean(findings):
-            if fixed:
-                _push(path, branch)
-            return True
-        if round_number == MAX_FIX_ROUNDS:
+        clean = _is_clean(findings)
+        if clean or round_number == MAX_FIX_ROUNDS:
             break
         _ask(
             harness,
@@ -212,13 +221,18 @@ def review_and_fix(
         )
         if not _commit_fixes(path, base):
             print("the fixer changed nothing")
-            return False
-        fixed = True
+            break
+        rounds += 1
         if not after_fix():
             break
-    if fixed:
+    if clean and rounds:
+        _push(path, branch)
+    elif rounds:
         print("the fixes are committed locally and not pushed")
-    return False
+    telemetry.send_pr_review(
+        rounds=rounds, clean=clean, deferred=_deferred_count(findings)
+    )
+    return clean
 
 
 def _size_passes(prompts: Path) -> bool:

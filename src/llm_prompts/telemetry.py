@@ -117,6 +117,24 @@ def send_pr_opened() -> None:
     )
 
 
+def send_pr_review(*, rounds: int, clean: bool, deferred: int) -> None:
+    """Send a `pr_review` event for a finished review loop.
+
+    Args:
+        rounds: The fix rounds the loop ran.
+        clean: Whether the last review came back CLEAN.
+        deferred: The findings the last review deferred.
+    """
+    _send_workflow(
+        "pr_review",
+        {
+            "rounds": rounds,
+            "end": "clean" if clean else "escalated",
+            "deferred": deferred,
+        },
+    )
+
+
 def _exception_event(
     exc: BaseException,
     properties: dict[str, Any],
