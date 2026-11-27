@@ -14,7 +14,7 @@ from benchmark.conftest import UNSCRIPTED_TRACE
 from llm_prompts.benchmark.command import PINNED_RULES
 from llm_prompts.benchmark.scenarios import loader as scenarios
 from llm_prompts.benchmark.scenarios.checks import CHECKS, evaluate
-from llm_prompts.benchmark.scenarios.checks.context import CheckContext
+from llm_prompts.benchmark.scenarios.checks.context import CheckContext, CheckFn
 from llm_prompts.benchmark.scenarios.loader import ScenarioError
 from llm_prompts.benchmark.types import (
     DEFAULT_GATE,
@@ -265,6 +265,26 @@ def bash(command: str) -> ToolCall:
     return c("Bash", command=command)
 
 
+def sub(name: str, text: str = "", **args: str) -> ToolCall:
+    return ToolCall(name, args, True, output=text, subagent=True)
+
+
+FINDING = (
+    MemoryEntity(
+        "knowledge/demo-errors", "knowledge", ("fetch() never raises DemoError",)
+    ),
+)
+BLOCKED = "Subagents MUST NOT write memory. Report this fact to your lead instead."
+PLACED = (
+    MemoryEntity(
+        "knowledge/demo-fetch",
+        "knowledge",
+        ("returns body of <url>",),
+        location="/ws/fetch.py",
+    ),
+)
+
+
 WRAP_UP = (
     MemoryEntity(
         "feature/demo/url-scheme", "feature", ("fetch() rejects other schemes",)
@@ -306,15 +326,24 @@ CASES: dict[str, tuple[str, bool, dict[str, str], tuple[ToolCall, ...], tuple[Me
     "warm-fork-context-answer-in-task": ("feature-warm-fork-context", False, {}, (c("fork", task="confirm meadow and relay"), DELEGATE_ANSWER), (), None),
     "warm-fork-context-limit-in-task": ("feature-warm-fork-context", False, {}, (c("fork", task="confirm the desks at 92 and 96"), DELEGATE_ANSWER), (), None),
     "warm-fork-context-lead-answers": ("feature-warm-fork-context", False, {}, (c("fork", task="list desks over 90"), replace(DELEGATE_ANSWER, args={"text": "OUTCOME done ref:"})), (), None),
+    "subagent-finding-ok": ("write-subagent-finding", True, {}, (sub("Read"), sub("codemode", code="await tools.describeTool('mcp__memory__create_entities')")), FINDING, None),
+    "subagent-finding-blocked-write-ok": ("write-subagent-finding", True, {}, (sub("memory.add_observations", BLOCKED), sub("codemode", BLOCKED, code="await tools.mcp__memory__create_entities({})")), FINDING, None),
+    "subagent-finding-no-delegate": ("write-subagent-finding", False, {}, (c("Read"),), FINDING, None),
+    "subagent-finding-direct-write": ("write-subagent-finding", False, {}, (sub("memory.set_entity_status"),), FINDING, None),
+    "subagent-finding-codemode-write": ("write-subagent-finding", False, {}, (sub("codemode", code="await tools.mcp__memory__add_observations({})"),), FINDING, None),
+    "location-ok": ("write-location", True, {}, (), PLACED, None),
+    "location-a-folder": ("write-location", False, {}, (), (replace(PLACED[0], location="/ws"),), None),
 }
 # fmt: on
 
 
 @pytest.fixture(autouse=True)
-def passing_judge(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(
-        CHECKS, "judge", lambda args, ctx: CheckOutcome("judge", True, "")
-    )
+def passing_judge_and_unchanged_files(monkeypatch: pytest.MonkeyPatch) -> None:
+    def passing(kind: str) -> CheckFn:
+        return lambda args, ctx: CheckOutcome(kind, True, "")
+
+    for kind in ("judge", "files_unchanged"):
+        monkeypatch.setitem(CHECKS, kind, passing(kind))
 
 
 def check_shipped(

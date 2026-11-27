@@ -1,0 +1,14 @@
+id = "write-location"
+level = "light"
+workspace = "tiny-py"
+project = "demo"
+prompt = "Save a knowledge entity to memory for the demo project saying that fetch() in fetch.py returns `body of <url>`. Do not change any files."
+
+[[check]]
+kind = "memory_written"
+name_regex = "^knowledge/"
+location_regex = "fetch\\.py$"
+
+[[check]]
+kind = "files_unchanged"
+path = "."

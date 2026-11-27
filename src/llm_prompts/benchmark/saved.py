@@ -49,6 +49,7 @@ def _entities(items: list[dict[str, Any]]) -> tuple[MemoryEntity, ...]:
             tuple(item["observations"]),
             tuple((target, kind) for target, kind in item["relations"]),
             item["status"],
+            item.get("location"),
         )
         for item in items
     )

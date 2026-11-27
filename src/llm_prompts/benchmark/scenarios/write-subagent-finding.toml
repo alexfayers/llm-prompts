@@ -1,0 +1,34 @@
+id = "write-subagent-finding"
+level = "medium"
+workspace = "tiny-py"
+project = "demo"
+delegation = true
+prompt = "Ask one delegate to read errors.py and fetch.py and tell you whether fetch() ever raises DemoError. Then record the answer as knowledge in memory for the demo project. Do not change any files."
+
+[[check]]
+kind = "files_unchanged"
+path = "."
+
+[[check]]
+kind = "tool_called"
+name = ".+"
+by = "subagent"
+
+[[check]]
+kind = "memory_written"
+name_regex = "^knowledge/"
+regex = "(?i)DemoError"
+
+# The tool names are mcp-memory's MUTATING_TOOLS. A write the memory hook blocked passes.
+[[check]]
+kind = "not_called"
+name = "memory\\.(create_entities|create_relations|delete_entity|delete_relation|delete_project|add_observations|delete_observations|edit_observation|set_entity_status|set_metadata|move_project_entities|merge_entities|merge_observations|restore_entity|restore_observations|restore_relation|trim_observations_to_outcome|rename_entity|move_entity_cross_scope|vote)"
+by = "subagent"
+text_regex = "\\A(?![\\s\\S]*Subagents MUST NOT write memory)"
+
+[[check]]
+kind = "not_called"
+name = "codemode"
+by = "subagent"
+args_regex = "\\bmcp__memory__(create_entities|create_relations|delete_entity|delete_relation|delete_project|add_observations|delete_observations|edit_observation|set_entity_status|set_metadata|move_project_entities|merge_entities|merge_observations|restore_entity|restore_observations|restore_relation|trim_observations_to_outcome|rename_entity|move_entity_cross_scope|vote)\\s*\\("
+text_regex = "\\A(?![\\s\\S]*Subagents MUST NOT write memory)"

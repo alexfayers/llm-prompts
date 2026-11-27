@@ -171,6 +171,7 @@ def memory_written(args: Mapping[str, CheckArg], ctx: CheckContext) -> CheckOutc
     regex = optional(args, "regex")
     relation = optional(args, "relation")
     target_regex = optional(args, "target_regex")
+    location_regex = optional(args, "location_regex")
     wanted = int(str(args.get("min_entities", 1)))
     known = observation_keys(ctx.memory_before)
     matched = [
@@ -178,6 +179,10 @@ def memory_written(args: Mapping[str, CheckArg], ctx: CheckContext) -> CheckOutc
         for entity in ctx.memory_after
         if (name_regex is None or re.search(name_regex, entity.name))
         and (entity_type is None or entity.entity_type == entity_type)
+        and (
+            location_regex is None
+            or re.search(location_regex, entity.location or "") is not None
+        )
         and (
             (relation is None and target_regex is None)
             or any(

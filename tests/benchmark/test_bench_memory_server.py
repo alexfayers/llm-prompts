@@ -4,6 +4,7 @@ import socket
 import sqlite3
 import subprocess
 import urllib.request
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -147,6 +148,24 @@ def test_read_entities_works_on_a_database_without_soft_delete_columns(
     (entity,) = memory.read_entities(handle)
 
     assert entity.observations == ("one",)
+
+
+def test_read_entities_returns_the_location_where_the_database_has_one(
+    tmp_path: Path,
+) -> None:
+    with closing(sqlite3.connect(tmp_path / "memory.db")) as db:
+        db.executescript(SCHEMA)
+        db.executescript(
+            """
+            ALTER TABLE entities ADD COLUMN location TEXT;
+            INSERT INTO entities VALUES (1, 'knowledge/a', 1, NULL, NULL, '/ws/fetch.py');
+            """
+        )
+    handle = MemoryHandle(url="", port=0, db=tmp_path / "memory.db")
+
+    (entity,) = memory.read_entities(handle)
+
+    assert entity.location == "/ws/fetch.py"
 
 
 def test_restarted_server_keeps_the_database_and_drops_its_tool_calls(

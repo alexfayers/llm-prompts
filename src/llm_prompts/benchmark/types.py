@@ -39,6 +39,7 @@ class MemoryEntity:
     observations: tuple[str, ...]
     relations: tuple[tuple[str, str], ...] = ()
     status: str | None = None
+    location: str | None = None
 
 
 @dataclass(frozen=True)
