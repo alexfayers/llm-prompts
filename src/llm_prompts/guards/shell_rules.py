@@ -8,7 +8,7 @@ from typing import Any, cast
 
 from cline_hooks.core.plugin import HookResult, HooksPlugin, hookimpl
 from cline_hooks.core.vocabulary import PluginScope
-from cline_hooks.handlers.commands import CommandRule, ParsedCommand
+from cline_hooks.handlers.commands import CommandRule, ParsedCommand, extract_commands
 
 from .gate import guards_active
 
@@ -19,6 +19,19 @@ _VOLUME_MESSAGE = (
     "Delete only the specific test rows, or confirm the volume is disposable and ask the user."
 )
 
+_INLINE_JSON_MESSAGE = (
+    "MUST extract or filter JSON with `jq` (e.g. `jq -r '.version' package.json`), "
+    "not an inline `python -c` or `node -e` script."
+)
+_PYTHON = re.compile(r"python[\d.]*")
+_SCRIPT_FLAGS = {
+    "python": ({"-c"}, {"-W", "-X"}),
+    "node": (
+        {"-e", "--eval", "-p", "--print", "-pe", "-ep"},
+        {"-r", "--require", "--import", "--loader"},
+    ),
+}
+_JSON_CALL = re.compile(r"\bjson\.(loads?|tool)\b|JSON\.parse")
 
 _SET_OPTIONS = re.compile(r"[-+][a-zA-Z]+")
 _LITERAL_WORD = re.compile(r"[\w./:=@%+,^-]+")
@@ -123,6 +136,50 @@ def _lsof_into_kill(cmd: ParsedCommand, all_commands: list[ParsedCommand]) -> bo
     return kills and _lists_pids_by_port(" ".join(cmd.flags))
 
 
+def _runtime(name: str) -> str:
+    """Return the `_SCRIPT_FLAGS` key of a Python or Node command name, else an empty string."""
+    return "python" if _PYTHON.fullmatch(name) else "node" if name == "node" else ""
+
+
+def _inline_script(name: str, words: list[str]) -> str:
+    """Return the inline script a Python, Node or `uv run` command line runs, else an empty string."""
+    if name == "uv":
+        rest = words[words.index("run") + 1 :] if "run" in words else []
+        program = next((i for i, word in enumerate(rest) if _runtime(word)), None)
+        return (
+            ""
+            if program is None
+            else _inline_script(rest[program], rest[program + 1 :])
+        )
+    runtime = _runtime(name)
+    if not runtime:
+        return ""
+    script_flags, value_flags = _SCRIPT_FLAGS[runtime]
+    takes_value = False
+    for word, after in zip(words, [*words[1:], ""]):
+        if takes_value:
+            takes_value = False
+        elif word in script_flags:
+            return after
+        elif word[:1] != "-":
+            return ""
+        else:
+            takes_value = word in value_flags
+    return ""
+
+
+def _parses_json_inline(command: str) -> bool:
+    """Report a shell line that runs an inline Python or Node script that parses JSON."""
+    import bashlex
+    import bashlex.errors
+
+    try:
+        commands = extract_commands(bashlex.parse(command))
+    except (bashlex.errors.ParsingError, NotImplementedError):
+        return False
+    return any(_JSON_CALL.search(_inline_script(c.name, c.words)) for c in commands)
+
+
 def _removes_volumes(cmd: ParsedCommand, _all: list[ParsedCommand]) -> bool:
     """Report `docker compose down` with `-v` or `--volumes`, and `docker volume rm|prune`."""
     compose_down = (
@@ -134,16 +191,19 @@ def _removes_volumes(cmd: ParsedCommand, _all: list[ParsedCommand]) -> bool:
 
 
 class ShellRules(HooksPlugin):
-    """Contributes command rules for `set -o errexit`, kill by port and Docker volume removal, and drops `-e` from `set`."""
+    """Contributes command rules for `set -o errexit`, kill by port and Docker volume removal, blocks inline JSON scripts, and drops `-e` from `set`."""
 
     def on_hook(
         self, hook_name: str, *, logger: logging.Logger, **kwargs: object
     ) -> HookResult | None:
-        """Return the shell line without `-e` in its `set` calls, where the guards are active."""
+        """Block inline JSON scripts, else return the shell line without `-e` in its `set` calls, where the guards are active."""
         if hook_name != PluginScope.PRE_SHELL or not guards_active():
             return None
+        command = cast("str", kwargs.get("command") or "")
+        if _parses_json_inline(command):
+            return HookResult(block=_INLINE_JSON_MESSAGE)
         try:
-            fixed = _without_errexit(cast("str", kwargs.get("command") or ""))
+            fixed = _without_errexit(command)
         except _MaybeBareSet:
             return HookResult(block=_BARE_SET_MESSAGE)
         if fixed is None:
