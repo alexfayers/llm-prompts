@@ -898,6 +898,9 @@ SESSION = {
     "cacheRead": 30000,
     "compactions": 1,
     "wallMs": 90500,
+    "inferenceMs": 40000,
+    "commandMs": 30000,
+    "userMs": 15000,
 }
 
 
@@ -931,6 +934,8 @@ def test_a_pi_session_sends_only_its_numbers_role_tier_and_version(
     assert set(properties) == {
         *("role", "model_tier", "calls", "cost", "cost_per_call", "context_avg"),
         *("context_peak", "cache_read_share", "compactions", "wall_s"),
+        *("inference_s", "command_wait_s", "user_wait_s"),
+        *("inference_share", "command_wait_share", "user_wait_share"),
         *("llm_prompts", "cline_hooks", "mcp_memory"),
         *("os", "python", "schema", "$process_person_profile"),
     }
@@ -940,6 +945,10 @@ def test_a_pi_session_sends_only_its_numbers_role_tier_and_version(
     assert (properties["cost_per_call"], properties["context_avg"]) == (0.125, 10000)
     assert (properties["context_peak"], properties["cache_read_share"]) == (16000, 0.75)
     assert (properties["compactions"], properties["wall_s"]) == (1, 90.5)
+    waits = ("inference_s", "command_wait_s", "user_wait_s")
+    assert [properties[k] for k in waits] == [40.0, 30.0, 15.0]
+    shares = ("inference_share", "command_wait_share", "user_wait_share")
+    assert [properties[k] for k in shares] == [0.442, 0.331, 0.166]
     for tool in ("llm_prompts", "cline_hooks", "mcp_memory"):
         assert set(properties[tool]) >= {"commit", "release"}
     assert "acme" not in json.dumps(properties)

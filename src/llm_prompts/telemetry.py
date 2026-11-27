@@ -36,39 +36,64 @@ _SESSION_ROLES = ("main", "reader", "writer")
 _MODEL_TIERS = ("opus", "sonnet", "haiku")
 
 
+_WAITS = {
+    "inference": "inferenceMs",
+    "command_wait": "commandMs",
+    "user_wait": "userMs",
+}
+
+
+def _send_workflow(event: str, properties: dict[str, Any]) -> None:
+    """Send ``event`` with ``properties``, the tool versions and platform fields, unless telemetry is off."""
+    install_id = telemetry_core.active_install_id()
+    if install_id is None:
+        return
+    versions = telemetry_core.versions(read_config())
+    properties |= {name.replace("-", "_"): v for name, v in versions.items()}
+    properties |= telemetry_core.context(2)
+    telemetry_core.send({"event": event, "properties": properties}, install_id)
+
+
+def _role_and_tier(role: str, model: str) -> dict[str, str]:
+    """Return the fixed role and model tier codes for a session's role and model."""
+    return {
+        "role": role if role in _SESSION_ROLES else "other",
+        "model_tier": next((t for t in _MODEL_TIERS if t in model), "other"),
+    }
+
+
 def send_session(stats: dict[str, Any]) -> None:
     """Send one pi session's numbers, its role and model tier, unless telemetry is off.
 
     Args:
         stats: The session's role, model and totals, as the session-telemetry pi extension sends them.
     """
-    install_id = telemetry_core.active_install_id()
-    if install_id is None:
-        return
     calls = int(stats["calls"])
     cost = float(stats["cost"])
     context = int(stats["context"])
-    model = str(stats["model"])
-    properties = {
-        "role": stats["role"] if stats["role"] in _SESSION_ROLES else "other",
-        "model_tier": next((t for t in _MODEL_TIERS if t in model), "other"),
-        "calls": calls,
-        "cost": round(cost, 4),
-        "cost_per_call": round(cost / calls, 4) if calls else None,
-        "context_avg": round(context / calls) if calls else None,
-        "context_peak": int(stats["peak"]),
-        "cache_read_share": round(int(stats["cacheRead"]) / context, 3)
-        if context
-        else None,
-        "compactions": int(stats["compactions"]),
-        "wall_s": round(float(stats["wallMs"]) / 1000, 1),
-        **{
-            name.replace("-", "_"): entry
-            for name, entry in telemetry_core.versions(read_config()).items()
+    wall_ms = float(stats["wallMs"])
+    waits = {name: float(stats.get(key, 0)) for name, key in _WAITS.items()}
+    _send_workflow(
+        "pi_session",
+        {
+            **_role_and_tier(stats["role"], str(stats["model"])),
+            "calls": calls,
+            "cost": round(cost, 4),
+            "cost_per_call": round(cost / calls, 4) if calls else None,
+            "context_avg": round(context / calls) if calls else None,
+            "context_peak": int(stats["peak"]),
+            "cache_read_share": round(int(stats["cacheRead"]) / context, 3)
+            if context
+            else None,
+            "compactions": int(stats["compactions"]),
+            "wall_s": round(wall_ms / 1000, 1),
+            **{f"{name}_s": round(ms / 1000, 1) for name, ms in waits.items()},
+            **{
+                f"{name}_share": round(ms / wall_ms, 3) if wall_ms else None
+                for name, ms in waits.items()
+            },
         },
-        **telemetry_core.context(2),
-    }
-    telemetry_core.send({"event": "pi_session", "properties": properties}, install_id)
+    )
 
 
 def _exception_event(

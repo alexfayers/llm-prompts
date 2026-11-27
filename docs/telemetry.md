@@ -20,6 +20,7 @@ Each pi session, lead or fork, sends one `pi_session` event when it ends, if it 
 
 - `role`: `main`, `reader`, `writer` or `other`, and `model_tier`: `opus`, `sonnet`, `haiku` or `other`, from the last model used
 - `calls`, `cost`, `cost_per_call`, `context_avg` and `context_peak` (tokens per model call), `cache_read_share` (cache-read tokens over all input tokens), `compactions` and `wall_s`
+- `inference_s` (time from each model request to its reply), `command_wait_s` (time while any tool call runs, outside `ask_user` and UI prompts) and `user_wait_s` (time in `ask_user`, UI prompts such as permission prompts, and idle time that ends with typed or RPC input), each with a `_share` of `wall_s`. The rest of `wall_s` is other time, such as waiting for a fork or a background process
 - `llm_prompts`, `cline_hooks` and `mcp_memory`: the version entry of each tool, as in a command's `to`
 - OS, Python version and schema version
 
