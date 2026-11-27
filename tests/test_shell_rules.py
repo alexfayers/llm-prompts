@@ -68,6 +68,51 @@ class TestShellRules:
         assert not blocks(command)
 
     @pytest.mark.parametrize(
+        "command",
+        [
+            "python3 -c 'import json,sys; print(json.load(sys.stdin))' < x.json",
+            "curl -s x | python -c 'import json,sys; print(json.loads(sys.stdin.read()))'",
+            "python3.12 -c 'import json; json.load(open(\"x.json\"))'",
+            "uv run python -c 'import json; json.load(open(\"x.json\"))'",
+            "uv run --frozen python3.12 -c 'import json; json.loads(s)'",
+            "node -e 'console.log(JSON.parse(require(\"fs\").readFileSync(0)))' < x.json",
+            "node --eval 'JSON.parse(x)'",
+            "node -p 'JSON.parse(x).a'",
+            "node --print 'JSON.parse(x).a'",
+            "uv run --with rich python -c 'import json; json.loads(s)'",
+            "uv run -p 3.12 python -c 'import json; json.loads(s)'",
+            "uv run --directory x python -c 'import json; json.loads(s)'",
+            "python3 -W ignore -c 'import json; json.loads(s)'",
+            "node -r x -e 'JSON.parse(s)'",
+            "node -pe 'JSON.parse(s).a'",
+        ],
+    )
+    def test_points_inline_json_scripts_to_jq(self, command: str) -> None:
+        result = corrected(command)
+        assert result is not None
+        assert "jq" in str(result.block)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cat x.json | less",
+            "python3 -c 'print(1)' x.json",
+            "python3 -c 'print(\"use json.dumps\")'",
+            "python3 -c 'import orjson; orjson.loads(s)'",
+            "python3 -m json.tool x.json",
+            "python3 script.py -c json.load",
+            "python3 -W ignore script.py -c json.load",
+            "uv run pytest -c json.load",
+            "grep 'JSON.parse' file.js",
+            "node -e 'console.log(1)'",
+            "node app.js -e JSON.parse",
+            "llm-prompts benchmark --input x.json | jq .",
+        ],
+    )
+    def test_allows_other_json_commands(self, command: str) -> None:
+        assert corrected(command) is None
+
+    @pytest.mark.parametrize(
         ("command", "fixed"),
         [
             ("set -e", "true"),
