@@ -43,6 +43,7 @@ description: Coding guidelines to follow when generating, reviewing, or modifyin
 # Testing guidelines
 
 - Before EVERY commit, push, CR or task completion, MUST build and run the full suite to a pass. An earlier run does NOT count.
+  MUST run the test command alone in its own shell call, no heredoc, and wait for it to end before the next step.
 - MUST verify through the project's standard build/test command, with its real CI config and flags. MUST NOT use a bespoke script or a stricter config you chose.
   MUST compare against the committed baseline before calling something a regression.
 - When fixing a REPORTED bug, MUST reproduce the symptom with a harness matching how the code runs, then confirm the fix makes it pass.
