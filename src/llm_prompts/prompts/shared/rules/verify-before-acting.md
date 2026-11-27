@@ -16,10 +16,11 @@ Your confidence label MUST match how you established the fact:
 - "verified"/"confirmed" ONLY if you read the authoritative source directly (config, code, API response, rendered page). Cite it.
 - A claim from inference or pattern-matching is INFERRED - say so ("likely", "unconfirmed, verify before relying on this"). Never stamp it "verified <date>".
   A delegate MUST tag each claim observed (read or run) or inferred. The lead MUST check each inferred claim against observed results - observed wins.
-- Where a tool cannot reach the source (e.g. a client-rendered SPA), mark it UNVERIFIED and name the manual check needed - do not silently upgrade it to fact.
+- A claim about a live-edited file MUST state its read time. After a build, MUST re-read the source to confirm the build matches the disk.
+  Delegates reporting someone's edits as rogue processes, reads stale in seconds or a moved build artifact signal undeclared file ownership.
+- Where a tool cannot reach the source (e.g. a client-rendered SPA), mark it UNVERIFIED and name the manual check needed.
 - **A source EXISTING is not its CONTENTS confirmed.** A link resolving, a file present, or a doc named verifies nothing about what it says - including a subagent's "URL resolves" verdict.
-  To assert "X is documented at Y" you MUST have read Y and seen X - otherwise say "Y exists; I have not confirmed it contains X".
-  MUST NOT cite a page as the source for a claim you did not read there.
+  To assert "X is documented at Y" or cite Y for X, you MUST have read Y and seen X - otherwise say "Y exists; I have not confirmed it contains X".
 
 Where a recommendation depends on an unverified fact, frame it to hold **either way** rather than asserting the fact - an explicit known-unknown is safe, a disguised inference is a hidden landmine.
 On later confirming or refuting it, update the label in the same edit.
@@ -27,13 +28,13 @@ On later confirming or refuting it, update the label in the same edit.
 ## An exhaustive or exclusive claim needs an enumeration, not a sample
 
 A claim that something exists ONLY in one place, that nothing does X, or that a set is complete asserts something about everything you did NOT look at.
-MUST enumerate the full candidate set from the authoritative source before stating one - never generalise from instances you happened to encounter.
+MUST enumerate the full candidate set from the authoritative source before stating one.
 Where enumeration is impractical, MUST scope the claim to what was checked.
 
 ## Never dismiss a user's stated blocker without checking the rule that governs it
 
 Where a user states a concrete obstacle ("I don't have access to X", "this isn't set up"), MUST NOT reassure them from inference or analogy.
-Read the authoritative source that governs the obstacle and quote the governing rule before responding. Where you cannot verify, say the blocker is unconfirmed and name the check - never wave it away.
+Read the source that governs the obstacle and quote its rule before responding. Where you cannot verify, say the blocker is unconfirmed and name the check.
 
 ## Disambiguate before acting on an instruction with a destructive reading
 
@@ -54,11 +55,9 @@ An oddity is not one either: MUST NOT chase a discrepancy that does not change t
 - MUST NOT offer the user a safe follow-up of your own work, or say they "can" do it. Do it and report it.
 - Covers deleting your own temp files, clone dirs and scratch output, and running the obvious next command of requested work. Answering a question stays answering.
 - Destructive, irreversible or shared-state actions still need confirmation.
-- A step the user said they would do stays theirs.
 
 ## Trace dependents before changing a default or safety behavior
 
 Where a change flips a default, removes a cleanup/guard step, or alters behaviour other code relies on ("skip cleanup by default", "stop seeding X", "drop this validation"),
 MUST NOT accept the stated rationale ("each stage cleans itself anyway") at face value.
-Trace what actually depends on the old behaviour - read the consumers, fixtures and downstream stages - and confirm the premise holds for every one of them.
-Verify the premise yourself in the same turn.
+Trace what depends on the old behaviour - read the consumers, fixtures and downstream stages - and confirm the premise holds for each, yourself, in the same turn.
