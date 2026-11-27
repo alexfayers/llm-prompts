@@ -51,7 +51,7 @@
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
 | src/llm\_prompts/config\_edit.py                                              |       58 |        1 |     98% |        74 |
 | src/llm\_prompts/console.py                                                   |       18 |        1 |     94% |        48 |
-| src/llm\_prompts/contribute.py                                                |     1283 |       62 |     95% |116, 220, 247-248, 289-290, 322-323, 472, 616-617, 650, 823, 826, 883, 894, 1004-1005, 1050, 1154, 1200-1201, 1214, 1630-1633, 1821, 1823, 1837-1838, 1847-1848, 1867, 1878-1879, 1950, 2006-2011, 2015, 2135, 2178-2179, 2235, 2240-2241, 2260, 2316-2338, 2441, 2557, 2580 |
+| src/llm\_prompts/contribute.py                                                |     1285 |       62 |     95% |116, 220, 247-248, 289-290, 322-323, 472, 619-620, 653, 826, 829, 886, 897, 1007-1008, 1053, 1157, 1203-1204, 1217, 1633-1636, 1824, 1826, 1840-1841, 1850-1851, 1870, 1881-1882, 1953, 2009-2014, 2018, 2138, 2181-2182, 2238, 2243-2244, 2263, 2319-2341, 2444, 2560, 2583 |
 | src/llm\_prompts/exit\_reason.py                                              |        9 |        0 |    100% |           |
 | src/llm\_prompts/extension\_factories.py                                      |       12 |        0 |    100% |           |
 | src/llm\_prompts/git\_snapshot.py                                             |      158 |        7 |     96% |123, 167, 200, 213, 217, 231, 296 |
@@ -74,7 +74,7 @@
 | src/llm\_prompts/overlay\_merge.py                                            |       52 |        2 |     96% |   71, 109 |
 | src/llm\_prompts/path\_migration.py                                           |       94 |        2 |     98% |    24, 54 |
 | src/llm\_prompts/plugins.py                                                   |      194 |       14 |     93% |47, 134-135, 139-140, 164-168, 184, 214, 243, 291, 301, 409, 465 |
-| src/llm\_prompts/pr.py                                                        |      133 |        9 |     93% |96-112, 139, 277-278 |
+| src/llm\_prompts/pr.py                                                        |      138 |        9 |     93% |107-123, 150, 291-292 |
 | src/llm\_prompts/prompts/claude-code/skills/retrospective/extract\_signals.py |      181 |       97 |     46% |44-49, 54-69, 80-124, 186, 197, 200, 209, 254-264, 269-286, 297-332, 336 |
 | src/llm\_prompts/prompts/shared/skills/eagle-vision/focus.py                  |      689 |       10 |     99% |108, 159, 271, 676, 690, 1214-1217, 1311 |
 | src/llm\_prompts/prompts/shared/skills/git-usage/check\_repos.py              |       67 |       12 |     82% |41-42, 44, 63, 73-75, 95-96, 124-125, 159 |
@@ -94,7 +94,7 @@
 | src/llm\_prompts/size\_report.py                                              |      207 |        2 |     99% |  207, 209 |
 | src/llm\_prompts/skill\_injection.py                                          |       37 |        2 |     95% |    33, 36 |
 | src/llm\_prompts/squash\_subject.py                                           |        6 |        0 |    100% |           |
-| src/llm\_prompts/telemetry.py                                                 |       94 |        2 |     98% |   190-191 |
+| src/llm\_prompts/telemetry.py                                                 |      111 |        2 |     98% |   254-255 |
 | src/llm\_prompts/telemetry\_core.py                                           |      224 |        5 |     98% |72-73, 186-187, 423 |
 | src/llm\_prompts/tool\_paths.py                                               |       14 |        0 |    100% |           |
 | src/llm\_prompts/watch/\_\_init\_\_.py                                        |        0 |        0 |    100% |           |
@@ -153,7 +153,7 @@
 | tests/test\_commit\_guard.py                                                  |      336 |        2 |     99% |   501-502 |
 | tests/test\_config\_edit.py                                                   |       99 |        0 |    100% |           |
 | tests/test\_conftest.py                                                       |       94 |        4 |     96% |194-196, 209 |
-| tests/test\_contribute.py                                                     |      406 |        0 |    100% |           |
+| tests/test\_contribute.py                                                     |      414 |        0 |    100% |           |
 | tests/test\_contribute\_worktrees.py                                          |     2377 |        0 |    100% |           |
 | tests/test\_e2e\_git.py                                                       |      240 |        0 |    100% |           |
 | tests/test\_extension\_factories.py                                           |       29 |        0 |    100% |           |
@@ -183,7 +183,7 @@
 | tests/test\_pi\_context\_rules.py                                             |       19 |        0 |    100% |           |
 | tests/test\_pi\_extension\_factories.py                                       |        8 |        0 |    100% |           |
 | tests/test\_plugins.py                                                        |      383 |        0 |    100% |           |
-| tests/test\_pr.py                                                             |      146 |        0 |    100% |           |
+| tests/test\_pr.py                                                             |      163 |        0 |    100% |           |
 | tests/test\_prompt\_checks\_entry\_points.py                                  |       13 |        0 |    100% |           |
 | tests/test\_prompt\_sizes.py                                                  |      816 |        0 |    100% |           |
 | tests/test\_removed\_agents\_notice.py                                        |       29 |        0 |    100% |           |
@@ -200,7 +200,7 @@
 | tests/test\_size\_report.py                                                   |      254 |        0 |    100% |           |
 | tests/test\_skill\_injection.py                                               |       36 |        0 |    100% |           |
 | tests/test\_squash\_subject.py                                                |        7 |        0 |    100% |           |
-| tests/test\_telemetry.py                                                      |      436 |        0 |    100% |           |
+| tests/test\_telemetry.py                                                      |      457 |        0 |    100% |           |
 | tests/test\_telemetry\_core.py                                                |      164 |        1 |     99% |       126 |
 | tests/test\_todos\_script.py                                                  |       88 |        0 |    100% |           |
 | tests/test\_tool\_paths.py                                                    |       27 |        0 |    100% |           |
@@ -212,7 +212,7 @@
 | tests/watch/test\_runner.py                                                   |       84 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
 | tests/worker\_share.py                                                        |       54 |        1 |     98% |        21 |
-| **TOTAL**                                                                     | **37596** |  **843** | **98%** |           |
+| **TOTAL**                                                                     | **37666** |  **843** | **98%** |           |
 
 
 ## Setup coverage badge
