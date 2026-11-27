@@ -9,10 +9,7 @@ targets: claude-code, pi
 {% if AGENT == "pi" %}
 - SHOULD run mechanical or lookup work as a cold worker (`fork` with `model`), judgment work as a warm fork.
 {% else %}
-- SHOULD match {{TOOL_AGENT}}'s `model` to the work; name one only for expected follow-up.
-{% endif %}
-{% if AGENT != "pi" %}
-  - A foreseeable-blocker stop (size/lint gate, permission denial, build slot) implies follow-up: name it.
+- SHOULD match {{TOOL_AGENT}}'s `model` to the work; name one only for expected follow-up, e.g. a foreseeable-blocker stop (size/lint gate, permission denial, build slot).
 {% endif %}
 {% if AGENT == "pi" %}
   - By job, the cheapest installed model that meets it; escalate on evidence.
@@ -61,6 +58,7 @@ Every spawn prompt MUST specify:
 - source order - memory, local checkout, internal/official docs, public web last - report back if unanswered, never widen;
 - for a tracked task (memory `task/`, plan slice, ticket): its recorded decisions, and that new ones come back in the report, never to memory;
 - the scope boundary it MUST NOT cross - remote/live systems: read-only, naming disallowed mutations and PR push permission;
+- where the user or another session edits the same files: its own paths, and that it MUST NOT touch or repair others, even half-written;
 - lint/format/test conventions: package config (e.g. `pyproject.toml`) outranks memory/global preferences - MUST match the file edited;
 - where the prompt pins a shape (signature, return type, format) and says match a sibling, MUST reconcile the two;
 - for code/prose, the output-size limit - minimal diff, no unrequested comments/refactors/reformatting, terse report.
@@ -68,7 +66,7 @@ Every spawn prompt MUST specify:
 - for a shell-restricted delegate: name {% if AGENT == "pi" %}`read`/`grep`/`find`{% else %}Read/Grep/Glob{% endif %} for investigation, and exactly which command it MAY run -
   never implicit {% if AGENT == "pi" %}`bash`{% else %}Bash{% endif %}.
 - MUST NOT ask a role without write tools to write files - artifacts go to a `{% if AGENT == "pi" %}writer{% else %}worker{% endif %}`. Scratch notes stay in the report unless a file is requested.
-- a delegate asked a question MUST report the answer, not raw output or file text (except failure, error or named value). A drafted edit returns new wording only.
+- a delegate asked a question MUST report the answer, not raw output/file text (except failure, error or named value). A drafted edit returns new wording only.
 - For a code comment, state policy/convention, not draft prose.
 - A design/planning prompt MUST route full output to implementers, plus a few lines to main: what changes, what it buys, the risk. MUST NOT make it main's deliverable.
 
@@ -101,10 +99,9 @@ Every spawn prompt MUST specify:
 
 - A delegate stuck on ambiguity or needing a user preference SHOULD escalate.
 - MUST stop a review loop per `pr-review`'s `review-loop.md`.
-- A delegate whose work outgrows its estimate (steps/files/phases) MUST stop and escalate to its owner, noting more agents may help - MUST NOT grind alone.
+- A delegate whose work outgrows its estimate (steps/files/phases) MUST stop and escalate to its owner, noting more agents may help.
 - MUST NOT idle-wait on a background agent/command, `sleep` or placeholder - completion re-invokes you; work or end turn.{% if AGENT != "pi" %} Exception: while any delegate runs,
-  MUST keep ONE background `sleep 300` armed per session, not per delegate. When it fires, MUST `SendMessage` each delegate silent since arming for status, then re-arm.
-  MUST NOT request status from a delegate that messaged since.{% endif +%}
+  MUST keep ONE background `sleep 300` armed per session. On firing, MUST `SendMessage` each delegate silent since arming for status, then re-arm.{% endif +%}
 {% if AGENT != "pi" %}
 - A mid-turn message is ignored: wait or re-verify. Once idle, `SendMessage` resumes a NAMED delegate - ask for a missing/truncated section, not re-derive.
 - A resend returns a SUMMARY; read its transcript `.jsonl` under `subagents/` - MUST NOT re-ask/re-run.

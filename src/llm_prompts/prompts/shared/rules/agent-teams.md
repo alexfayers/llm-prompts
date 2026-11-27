@@ -55,5 +55,7 @@ targets: claude-code
 
 - `TaskStop` a teammate once its task is done with nothing queued - not later, unless same-role work looms; a handoff or context limit is not 'done' - checkpoint first via `SendMessage`.
 - MUST NOT stop a producer on its idle ping alone - wait for the consumer to confirm input.
+- Stopping is not final: any `SendMessage` revives a stopped teammate, which then acts on stale instructions.
+  When main replaces a roster, it MUST tell the team which teammates are stopped and that messaging one revives it.
 - Spawn a fresh replacement for a member reporting high context - don't run it degraded.
 - A stopped teammate can still leave unclaimed items: ending a lead session, run `TaskList` and home every open item via `session-end`.
