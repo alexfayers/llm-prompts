@@ -21,7 +21,7 @@
     "npm:pi-web-access@0.48.0",
     "npm:pi-compact-tools@0.18.0",
     "npm:@aliou/pi-processes@0.13.9",
-    "npm:pi-context-usage@2.1.0",
+    "npm:pi-context-usage@2.1.1",
     "npm:pi-cache-insight@1.1.0"
   ]
 }
