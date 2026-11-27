@@ -221,7 +221,25 @@ export async function resumeWorktree(tree: Worktree, root: string, name: string)
 		await restoreWorktree(tree);
 		return { ...tree, snapshot: await mainSnapshot(tree.repo) };
 	}
-	return fs.existsSync(tree.path) ? { ...tree, snapshot: await mainSnapshot(tree.repo) } : createWorktree(tree.repo, root, name);
+	if (fs.existsSync(tree.path)) return { ...tree, snapshot: await mainSnapshot(tree.repo) };
+	if (await hasBranch(tree)) {
+		if (await unmerged(tree.repo, tree.branch, "HEAD")) {
+			await restoreWorktree(tree);
+			return { ...tree, snapshot: await mainSnapshot(tree.repo) };
+		}
+		await gitOut(tree.repo, "branch", "-D", tree.branch);
+	}
+	return createWorktree(tree.repo, root, name);
+}
+
+/** Whether `branch` holds commits that neither `onto` nor a `PUSH_REMOTE` branch has. */
+const unmerged = async (repo: string, branch: string, onto: string) => (await gitOut(repo, "rev-list", "--count", `refs/heads/${branch}`, "--not", onto, `--remotes=${PUSH_REMOTE}`)) !== "0";
+
+/** The commit the worktree's HEAD was at when it last switched to `head`, or undefined when it never switched to it. */
+async function switchedAt(checkout: string, head: string): Promise<string | undefined> {
+	const short = head.replace(/^refs\/heads\//, "");
+	const entries = (await git(checkout, "reflog", "--format=%H %gs", "HEAD")).out.split("\n");
+	return entries.find((entry) => entry.endsWith(` to ${short}`) && entry.includes(" checkout: moving from "))?.split(" ")[0];
 }
 
 export interface Landing {
@@ -254,13 +272,16 @@ async function rebaseOntoBase(tree: Worktree): Promise<void> {
 
 const CANCELLED = "cancelled before landing";
 
-/** The remote branch other than the base that holds the fork branch's tip, when the worktree is on that branch, clean, and has commits past the base. Only refs of `PUSH_REMOTE` count, and a failed fetch trusts none. */
-async function pushedTo(tree: Worktree): Promise<string | undefined> {
+/** The remote branch other than the base that holds the tip of the branch the worktree is on, the fork branch or one the fork switched to and committed on, when the worktree is clean and has commits past the base. Only refs of `PUSH_REMOTE` count, and a failed fetch trusts none. */
+async function pushedTo(tree: Worktree): Promise<{ remote: string; head: string } | undefined> {
 	const checkout = checkoutOf(tree);
-	if ((await offBranch(tree)) || (await gitOut(checkout, "status", "--porcelain")) !== "" || (await gitOut(checkout, "rev-list", "--count", `${tree.base}..${tree.branch}`)) === "0") return undefined;
+	const head = (await git(checkout, "symbolic-ref", "-q", "HEAD")).out.trim();
+	if (!head || (await gitOut(checkout, "status", "--porcelain")) !== "" || (await gitOut(checkout, "rev-list", "--count", `${tree.base}..${head}`)) === "0") return undefined;
+	if (head !== `refs/heads/${tree.branch}` && (await switchedAt(checkout, head)) === (await gitOut(checkout, "rev-parse", head))) return undefined;
 	if ((await git(checkout, "fetch", "-q", "--prune", PUSH_REMOTE)).code) return undefined;
-	const contains = await git(checkout, "branch", "-r", "--list", `${PUSH_REMOTE}/*`, "--contains", `refs/heads/${tree.branch}`, "--format=%(refname:short)");
-	return contains.out.split("\n").find((name) => name && !name.endsWith("/HEAD") && !name.endsWith(`/${tree.base}`));
+	const contains = await git(checkout, "branch", "-r", "--list", `${PUSH_REMOTE}/*`, "--contains", head, "--format=%(refname:short)");
+	const remote = contains.out.split("\n").find((name) => name && !name.endsWith("/HEAD") && !name.endsWith(`/${tree.base}`));
+	return remote ? { remote, head } : undefined;
 }
 
 async function landNow({ tree, first, privateNames: extraNames, signal, rebase }: LandOptions): Promise<Landing> {
@@ -270,7 +291,8 @@ async function landNow({ tree, first, privateNames: extraNames, signal, rebase }
 	if (first.type === "fork-blocked") return escalate(`fork is blocked: ${first.reason}`);
 	const pushed = await pushedTo(tree);
 	if (signal?.aborted) return escalate(CANCELLED);
-	if (pushed) return { state: "landed", sha: await gitOut(checkoutOf(tree), "rev-parse", tree.branch), note: [`landed on ${pushed} by push`, await cleanup(tree, true)].filter(Boolean).join("; ") };
+	if (pushed && (await hasBranch(tree)) && (await unmerged(tree.repo, tree.branch, tree.base))) return escalate(`pushed ${pushed.remote} but kept ${tree.branch} with unpushed commits`);
+	if (pushed) return { state: "landed", sha: await gitOut(checkoutOf(tree), "rev-parse", pushed.head), note: [`landed on ${pushed.remote} by push`, await cleanup(tree, true)].filter(Boolean).join("; ") };
 	if (tree.own) return (await gitOut(checkoutOf(tree), "rev-list", "--count", `${tree.base}..HEAD`)) === "0" ? { state: "landed", note: await cleanup(tree) } : escalate(`${tree.branch} was not pushed`);
 	if (rebase) await rebaseOntoBase(tree);
 	const reason = await refusal(tree, extraNames);
