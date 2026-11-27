@@ -57,7 +57,7 @@
 | src/llm\_prompts/git\_snapshot.py                                             |      158 |        7 |     96% |123, 167, 200, 213, 217, 231, 296 |
 | src/llm\_prompts/github\_api.py                                               |      100 |        1 |     99% |        77 |
 | src/llm\_prompts/guards/\_\_init\_\_.py                                       |        0 |        0 |    100% |           |
-| src/llm\_prompts/guards/commit\_guard.py                                      |      243 |        6 |     98% |67-68, 165, 410, 447, 466 |
+| src/llm\_prompts/guards/commit\_guard.py                                      |      243 |        6 |     98% |67-68, 165, 411, 448, 467 |
 | src/llm\_prompts/guards/gate.py                                               |        5 |        0 |    100% |           |
 | src/llm\_prompts/guards/receipts.py                                           |       74 |        4 |     95% |71, 79, 102-103 |
 | src/llm\_prompts/guards/review\_limit.py                                      |       68 |        8 |     88% |42-43, 73-74, 95, 129, 137-138 |
@@ -150,7 +150,7 @@
 | tests/test\_cli.py                                                            |     1226 |        1 |     99% |      1550 |
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
 | tests/test\_clones.py                                                         |      251 |        0 |    100% |           |
-| tests/test\_commit\_guard.py                                                  |      310 |        2 |     99% |   441-442 |
+| tests/test\_commit\_guard.py                                                  |      319 |        2 |     99% |   455-456 |
 | tests/test\_config\_edit.py                                                   |       99 |        0 |    100% |           |
 | tests/test\_conftest.py                                                       |       94 |        4 |     96% |194-196, 209 |
 | tests/test\_contribute.py                                                     |      406 |        0 |    100% |           |
@@ -212,7 +212,7 @@
 | tests/watch/test\_runner.py                                                   |       84 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
 | tests/worker\_share.py                                                        |       54 |        1 |     98% |        21 |
-| **TOTAL**                                                                     | **37550** |  **843** | **98%** |           |
+| **TOTAL**                                                                     | **37559** |  **843** | **98%** |           |
 
 
 ## Setup coverage badge
