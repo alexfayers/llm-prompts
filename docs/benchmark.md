@@ -147,7 +147,7 @@ rubric = "The retries use exponential backoff."
 | `max_time` | `seconds` | The run took no longer than `seconds`. |
 | `file_regex` | `path`, `regex` | The file matches the regex. |
 | `memory_recalled` | `entities`, `before` | Every entity is in the start-up memory context, or a memory read was called. |
-| `memory_written` | `name_regex`, `entity_type`, `relation`, `target_regex`, `regex`, `min_entities` | Enough matching entities have a new matching observation. |
+| `memory_written` | `name_regex`, `entity_type`, `relation`, `target_regex`, `location_regex`, `regex`, `min_entities` | Enough matching entities have a new matching observation. |
 | `memory_absent` | `name_regex`, `regex`, `include_existing` | No matching entity has a new matching observation. |
 | `git_state` | `branch`, `since`, `commits`, `message_regex`, `remote` | The workspace repo matches. A `remote` must still have `branch` at `since`. |
 | `command_exit` | `command`, `exit` (default 0) | The command exits with `exit`, run in the OS sandbox. |

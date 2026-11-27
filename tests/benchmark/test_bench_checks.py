@@ -211,6 +211,18 @@ def test_memory_written_relation_filter() -> None:
     assert not run("memory_written", args, after=(wrong_type, wrong_target)).passed
 
 
+def test_memory_written_location_filter() -> None:
+    placed = MemoryEntity("knowledge/a", "knowledge", ("x",), location="/ws/fetch.py")
+    elsewhere = MemoryEntity(
+        "knowledge/b", "knowledge", ("x",), location="/ws/errors.py"
+    )
+    unplaced = MemoryEntity("knowledge/c", "knowledge", ("x",))
+    args = {"location_regex": r"fetch\.py$"}
+
+    assert run("memory_written", args, after=(placed,)).passed
+    assert not run("memory_written", args, after=(elsewhere, unplaced)).passed
+
+
 def test_memory_written_min_entities() -> None:
     task = MemoryEntity("task/a", "task", ("x",))
     other = MemoryEntity("task/b", "task", ("x",))

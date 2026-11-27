@@ -187,8 +187,11 @@ def _open_read_only(handle: MemoryHandle) -> sqlite3.Connection:
 
 def _live(db: sqlite3.Connection, table: str, alias: str) -> str:
     """Return a condition keeping live rows, which is always true where the table has no ``deleted_at``."""
-    columns = {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
-    return f"{alias}.deleted_at IS NULL" if "deleted_at" in columns else "1"
+    return f"{alias}.deleted_at IS NULL" if "deleted_at" in _columns(db, table) else "1"
+
+
+def _columns(db: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
 
 
 def read_entities(handle: MemoryHandle) -> tuple[MemoryEntity, ...]:
@@ -196,6 +199,7 @@ def read_entities(handle: MemoryHandle) -> tuple[MemoryEntity, ...]:
     with closing(_open_read_only(handle)) as db:
         live_observation = _live(db, "observations", "observations")
         live_relation = _live(db, "relations", "r")
+        location = "e.location" if "location" in _columns(db, "entities") else "NULL"
         return tuple(
             MemoryEntity(
                 name=name,
@@ -218,9 +222,10 @@ def read_entities(handle: MemoryHandle) -> tuple[MemoryEntity, ...]:
                     )
                 ),
                 status=status,
+                location=entity_location,
             )
-            for entity_id, name, entity_type, status in db.execute(
-                "SELECT e.id, e.name, t.name, e.status FROM entities e"
+            for entity_id, name, entity_type, status, entity_location in db.execute(
+                f"SELECT e.id, e.name, t.name, e.status, {location} FROM entities e"
                 " JOIN entity_types t ON t.id = e.entity_type_id"
                 " WHERE e.deleted_at IS NULL ORDER BY e.name"
             ).fetchall()
