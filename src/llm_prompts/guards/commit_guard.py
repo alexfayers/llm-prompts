@@ -213,6 +213,7 @@ def _dirty(toplevel: Path) -> bool:
         capture_output=True,
         text=True,
         check=False,
+        env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
     )
     return bool(status.stdout.strip())
 
