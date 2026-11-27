@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">15 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">15<span class="text"> run</span></button>
+            <span class="text">21 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">21<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_d1bdf89953af51cf_test_bench_variant_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
-            created at 2026-11-27 22:01 +0000
+            created at 2026-11-27 23:08 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -85,7 +85,7 @@
     <p class="pln"><span class="n"><a id="t3" href="#t3">3</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t4" href="#t4">4</a></span><span class="t"><span class="key">from</span> <span class="nam">benchmark</span><span class="op">.</span><span class="nam">traces</span> <span class="key">import</span> <span class="nam">make_trace</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t5" href="#t5">5</a></span><span class="t"><span class="key">from</span> <span class="nam">llm_prompts</span><span class="op">.</span><span class="nam">benchmark</span> <span class="key">import</span> <span class="nam">saved</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t6" href="#t6">6</a></span><span class="t"><span class="key">from</span> <span class="nam">llm_prompts</span><span class="op">.</span><span class="nam">benchmark</span><span class="op">.</span><span class="nam">types</span> <span class="key">import</span> <span class="nam">ResultRow</span><span class="op">,</span> <span class="nam">Tokens</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t6" href="#t6">6</a></span><span class="t"><span class="key">from</span> <span class="nam">llm_prompts</span><span class="op">.</span><span class="nam">benchmark</span><span class="op">.</span><span class="nam">types</span> <span class="key">import</span> <span class="nam">MemoryEntity</span><span class="op">,</span> <span class="nam">ResultRow</span><span class="op">,</span> <span class="nam">Tokens</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t7" href="#t7">7</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t8" href="#t8">8</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t9" href="#t9">9</a></span><span class="t"><span class="key">def</span> <span class="nam">test_result_row_round_trips_and_defaults_what_an_older_row_lacks</span><span class="op">(</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -111,6 +111,16 @@
     <p class="run"><span class="n"><a id="t29" href="#t29">29</a></span><span class="t">    <span class="nam">saved</span><span class="op">.</span><span class="nam">write</span><span class="op">(</span><span class="nam">tmp_path</span> <span class="op">/</span> <span class="str">&quot;cell&quot;</span><span class="op">,</span> <span class="nam">tmp_path</span> <span class="op">/</span> <span class="str">&quot;ws&quot;</span><span class="op">,</span> <span class="nam">trace</span><span class="op">,</span> <span class="op">(</span><span class="op">)</span><span class="op">,</span> <span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t30" href="#t30">30</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t31" href="#t31">31</a></span><span class="t">    <span class="key">assert</span> <span class="nam">saved</span><span class="op">.</span><span class="nam">load</span><span class="op">(</span><span class="nam">tmp_path</span> <span class="op">/</span> <span class="str">&quot;cell&quot;</span><span class="op">)</span><span class="op">.</span><span class="nam">trace</span> <span class="op">==</span> <span class="nam">trace</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t32" href="#t32">32</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t33" href="#t33">33</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t34" href="#t34">34</a></span><span class="t"><span class="key">def</span> <span class="nam">test_saved_memory_loads_back_with_its_location</span><span class="op">(</span><span class="nam">tmp_path</span><span class="op">:</span> <span class="nam">Path</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t35" href="#t35">35</a></span><span class="t">    <span class="nam">entity</span> <span class="op">=</span> <span class="nam">MemoryEntity</span><span class="op">(</span><span class="str">&quot;knowledge/a&quot;</span><span class="op">,</span> <span class="str">&quot;knowledge&quot;</span><span class="op">,</span> <span class="op">(</span><span class="str">&quot;x&quot;</span><span class="op">,</span><span class="op">)</span><span class="op">,</span> <span class="nam">location</span><span class="op">=</span><span class="str">&quot;/ws/fetch.py&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t36" href="#t36">36</a></span><span class="t">    <span class="op">(</span><span class="nam">tmp_path</span> <span class="op">/</span> <span class="str">&quot;ws&quot;</span><span class="op">)</span><span class="op">.</span><span class="nam">mkdir</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t37" href="#t37">37</a></span><span class="t">    <span class="op">(</span><span class="nam">tmp_path</span> <span class="op">/</span> <span class="str">&quot;cell&quot;</span><span class="op">)</span><span class="op">.</span><span class="nam">mkdir</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t38" href="#t38">38</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t39" href="#t39">39</a></span><span class="t">    <span class="nam">saved</span><span class="op">.</span><span class="nam">write</span><span class="op">(</span><span class="nam">tmp_path</span> <span class="op">/</span> <span class="str">&quot;cell&quot;</span><span class="op">,</span> <span class="nam">tmp_path</span> <span class="op">/</span> <span class="str">&quot;ws&quot;</span><span class="op">,</span> <span class="nam">make_trace</span><span class="op">(</span><span class="op">)</span><span class="op">,</span> <span class="op">(</span><span class="op">)</span><span class="op">,</span> <span class="op">(</span><span class="nam">entity</span><span class="op">,</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t40" href="#t40">40</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t41" href="#t41">41</a></span><span class="t">    <span class="key">assert</span> <span class="nam">saved</span><span class="op">.</span><span class="nam">load</span><span class="op">(</span><span class="nam">tmp_path</span> <span class="op">/</span> <span class="str">&quot;cell&quot;</span><span class="op">)</span><span class="op">.</span><span class="nam">memory_after</span> <span class="op">==</span> <span class="op">(</span><span class="nam">entity</span><span class="op">,</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -120,7 +130,7 @@
             <a class="nav" href="z_d1bdf89953af51cf_test_bench_variant_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
-            created at 2026-11-27 22:01 +0000
+            created at 2026-11-27 23:08 +0000
         </p>
     </div>
 </footer>
