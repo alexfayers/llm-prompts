@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
+import re
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from conftest import FakeSubprocess
 
-from llm_prompts import pr
+from llm_prompts import pr, telemetry_core
 from llm_prompts.benchmark.scenarios.checks.judge import JudgeMissing
 from llm_prompts.contribute import Checkout
 from llm_prompts.size_guard import CheckResult
@@ -337,3 +339,50 @@ def test_a_push_leases_the_pr_branch(fake_subprocess: FakeSubprocess) -> None:
     pr._push(Path("/wt"), "feat/x")
 
     assert fake_subprocess.verbs == ["push --force-with-lease origin HEAD:feat/x"]
+
+
+@pytest.mark.parametrize(
+    ("replies", "after_fix", "expected"),
+    [
+        (
+            [
+                "OUTCOME review\n1. a.py:1 bug",
+                "fixed",
+                "OUTCOME review\nCLEAN\nDEFERRED: b.py:2 (medium) x; c.py:3 (rare) y",
+            ],
+            True,
+            {"rounds": 1, "end": "clean", "deferred": 2},
+        ),
+        (
+            ["OUTCOME review\n1. a.py:1 bug", "fixed"],
+            False,
+            {"rounds": 1, "end": "escalated", "deferred": 0},
+        ),
+    ],
+)
+def test_a_finished_review_loop_sends_its_rounds_end_and_deferred_count(
+    telemetry_popen: MagicMock,
+    isolated_config_dir: Path,
+    replies: list[str],
+    after_fix: bool,
+    expected: dict[str, object],
+) -> None:
+    record = {"install_id": "synthetic-id", "opted_out": False, "at": time.time()}
+    (isolated_config_dir / "telemetry.json").write_text(json.dumps(record))
+
+    _review(replies, after_fix=after_fix)
+
+    [call] = telemetry_popen.call_args_list
+    event = json.loads(telemetry_core.resolve_versions(call.args[0][3]))
+    properties = event["properties"]
+    assert event["event"] == "pr_review"
+    assert {k: properties[k] for k in expected} == expected
+    assert set(properties) == {
+        *expected,
+        *("llm_prompts", "cline_hooks", "mcp_memory"),
+        *("os", "python", "schema", "$process_person_profile"),
+    }
+    sent = json.dumps(event)
+    for private in ("feat/x", "/wt", "a.py", "origin/main", '"t"'):
+        assert private not in sent
+    assert not re.search(r"\b7\b", sent.replace(properties["python"], ""))

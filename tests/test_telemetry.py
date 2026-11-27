@@ -898,6 +898,9 @@ SESSION = {
     "cacheRead": 30000,
     "compactions": 1,
     "wallMs": 90500,
+    "inferenceMs": 40000,
+    "commandMs": 30000,
+    "userMs": 15000,
 }
 
 
@@ -931,6 +934,8 @@ def test_a_pi_session_sends_only_its_numbers_role_tier_and_version(
     assert set(properties) == {
         *("role", "model_tier", "calls", "cost", "cost_per_call", "context_avg"),
         *("context_peak", "cache_read_share", "compactions", "wall_s"),
+        *("inference_s", "command_wait_s", "user_wait_s"),
+        *("inference_share", "command_wait_share", "user_wait_share"),
         *("llm_prompts", "cline_hooks", "mcp_memory"),
         *("os", "python", "schema", "$process_person_profile"),
     }
@@ -940,8 +945,40 @@ def test_a_pi_session_sends_only_its_numbers_role_tier_and_version(
     assert (properties["cost_per_call"], properties["context_avg"]) == (0.125, 10000)
     assert (properties["context_peak"], properties["cache_read_share"]) == (16000, 0.75)
     assert (properties["compactions"], properties["wall_s"]) == (1, 90.5)
+    waits = ("inference_s", "command_wait_s", "user_wait_s")
+    assert [properties[k] for k in waits] == [40.0, 30.0, 15.0]
+    shares = ("inference_share", "command_wait_share", "user_wait_share")
+    assert [properties[k] for k in shares] == [0.442, 0.331, 0.166]
     for tool in ("llm_prompts", "cline_hooks", "mcp_memory"):
         assert set(properties[tool]) >= {"commit", "release"}
+    assert "acme" not in json.dumps(properties)
+
+
+@pytest.mark.parametrize("time_to_pr", [125, None])
+def test_an_opened_pr_sends_only_its_time_role_tier_and_version(
+    telemetry_popen: MagicMock,
+    isolated_config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    time_to_pr: int | None,
+) -> None:
+    _fresh_record(isolated_config_dir)
+    started = "" if time_to_pr is None else str(int((time.time() - time_to_pr) * 1000))
+    monkeypatch.setenv(telemetry.SESSION_START_ENV, started)
+    monkeypatch.setenv("PI_CONTEXT_ROLE", "writer")
+    monkeypatch.setenv("PI_MODEL", "acme-claude-sonnet-4-5")
+
+    _main("session-telemetry", json.dumps({"event": "pr_opened"}))
+
+    [event] = _events(telemetry_popen)
+    properties = event["properties"]
+    assert event["event"] == "pr_opened"
+    assert set(properties) == {
+        *("role", "model_tier", "time_to_pr_s"),
+        *("llm_prompts", "cline_hooks", "mcp_memory"),
+        *("os", "python", "schema", "$process_person_profile"),
+    }
+    assert (properties["role"], properties["model_tier"]) == ("writer", "sonnet")
+    assert properties["time_to_pr_s"] == pytest.approx(time_to_pr, abs=5)
     assert "acme" not in json.dumps(properties)
 
 
@@ -960,6 +997,8 @@ def test_an_opted_out_pi_session_sends_nothing(
         monkeypatch.setenv(opt_out, "1")
 
     _main("session-telemetry", json.dumps(SESSION))
+    _main("session-telemetry", json.dumps({"event": "pr_opened"}))
+    telemetry.send_pr_review(rounds=1, clean=True, deferred=0)
 
     assert not telemetry_popen.called
 

@@ -908,9 +908,13 @@ class TestWithoutGh:
     ) -> None:
         fake_github.on("POST", "/repos/octo/widgets/pulls", {"html_url": "https://x/9"})
 
-        url = contribute.open_draft_pr(tmp_path, "origin/main", "me:topic", "t", "b")
+        with patch("llm_prompts.contribute.telemetry.send_pr_opened") as sent:
+            url = contribute.open_draft_pr(
+                tmp_path, "origin/main", "me:topic", "t", "b"
+            )
 
         assert url == "https://x/9"
+        sent.assert_called_once_with()
         assert fake_github.requests[-1][2] == {
             "base": "main",
             "head": "me:topic",
@@ -982,3 +986,15 @@ def test_check_body_command_names_an_unreadable_body_file(
     body = tmp_path / name
     assert contribute.check_body(body, tmp_path) == 1
     assert capsys.readouterr().err == f"PR body: {body}: {reason}\n"
+
+
+def test_open_draft_pr_with_gh_sends_pr_opened(
+    fake_subprocess: FakeSubprocess, tmp_path: Path
+) -> None:
+    fake_subprocess.on("gh", "pr", "create", stdout="https://x/pull/9\n")
+
+    with patch("llm_prompts.contribute.telemetry.send_pr_opened") as sent:
+        url = contribute.open_draft_pr(tmp_path, "origin/main", "me:topic", "t", "b")
+
+    assert url == "https://x/pull/9"
+    sent.assert_called_once_with()

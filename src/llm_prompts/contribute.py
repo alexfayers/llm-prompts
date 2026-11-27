@@ -22,7 +22,7 @@ from functools import cache, partial
 from pathlib import Path
 from typing import Any, NamedTuple, TextIO
 
-from . import github_api, main_sync, worktrees
+from . import github_api, main_sync, telemetry, worktrees
 from .exit_reason import ExitReason
 from .git_snapshot import (
     Diff,
@@ -562,13 +562,16 @@ def refreshed_pr(
 def open_draft_pr(repo: Path, base: str, head: str, title: str, body: str) -> str:
     """Open a draft PR against ``base`` from ``head`` and return its URL."""
     branch = base.split("/", 1)[1]
-    if not _gh_installed():
-        return with_retries(
+    if _gh_installed():
+        argv = ["gh", "pr", "create", "--draft", "--base", branch]
+        argv += ["--head", head, "--title", title, "--body", body]
+        url = _run_with_retries(argv, repo).strip()
+    else:
+        url = with_retries(
             partial(github_api.create_draft_pr, repo, branch, head, title, body)
         )
-    argv = ["gh", "pr", "create", "--draft", "--base", branch]
-    argv += ["--head", head, "--title", title, "--body", body]
-    return _run_with_retries(argv, repo).strip()
+    telemetry.send_pr_opened()
+    return url
 
 
 def _contains(repo: Path, ancestor: str, sha: str) -> bool:
