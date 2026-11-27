@@ -3,7 +3,7 @@
 // Once per run it also names the mark or tool call to rewind to, when the run's tokens cost more to carry than a rewind costs.
 // Config: settings.json llmPrompts.checkpoint.shape (set to "result" to carry the fold in the rewind tool result instead of a separate message)
 // Config: settings.json llmPrompts.checkpoint.nudgeTokens (tool-result tokens per nudge, default 10000)
-// Env: PI_CONTEXT_CHILD (set for delegates, which are never nudged), PI_CACHE_RETENTION (long prices cache writes at the one hour rate), AWS_BEDROCK_FORCE_CACHE (1 gives Bedrock models with no Claude name cache points)
+// Env: PI_CONTEXT_CHECKPOINT_NUDGE (off stops the reminders in delegates, which PI_CONTEXT_CHILD marks), PI_CACHE_RETENTION (long prices cache writes at the one hour rate), AWS_BEDROCK_FORCE_CACHE (1 gives Bedrock models with no Claude name cache points)
 import { calculateCost, type Api, type Model, type Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -179,7 +179,7 @@ function nudge(pi: ExtensionAPI) {
 }
 
 export default function (pi: ExtensionAPI) {
-	if (!process.env.PI_CONTEXT_CHILD) nudge(pi);
+	if (!process.env.PI_CONTEXT_CHILD || process.env.PI_CONTEXT_CHECKPOINT_NUDGE !== "off") nudge(pi);
 
 	pi.registerTool({
 		name: "checkpoint",

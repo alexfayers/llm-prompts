@@ -56,6 +56,11 @@ export function resolveModel(model: string, agentDir = getAgentDir()): string {
 /** A warm fork copies the session, so one over this many tokens of context starts cold with a summary instead. */
 export const WARM_FORK_MAX_TOKENS = 150_000;
 
+/** A fork given a new task past this many tokens of context is asked to rewind its earlier tasks first. */
+const RESUME_REWIND_TOKENS = 80_000;
+
+const thousands = (count: number) => `${Math.round(count / 1000)}K`;
+
 export type Summarize = (ctx: ExtensionContext, entries: SessionEntry[]) => Promise<string>;
 
 /** Summarises the session entries with main's model. */
@@ -455,13 +460,13 @@ function freshStartCost(ctx: ExtensionContext, role: Role, task: string, model?:
 	return (tokensRead * (model ? price.input : price.cacheRead)) / PER_MILLION_TOKENS;
 }
 
-/** Lines naming every finished fork `fork_resume` would pick by name, of `role` in `dir`, whose prompt cache is still warm and whose context costs less to read from the cache, at its own model's price, than `freshCost`, newest first, each with its context size and cache time left, or undefined. */
+/** Lines naming every finished fork `fork_resume` would pick by name, of `role` in `dir`, with at most `WARM_FORK_MAX_TOKENS` of context, whose prompt cache is still warm and whose context costs less to read from the cache, at its own model's price, than `freshCost`, newest first, each with its context size and cache time left, or undefined. */
 function cachedHint(runs: Run[], role: string, dir: string, priceOfRun: (run: Run) => Price | undefined, freshCost: number | undefined, now = Date.now()): string | undefined {
 	if (freshCost === undefined) return undefined;
 	const picked = new Map(runs.filter(canContinue).map((run) => [run.name, run]));
 	const cached = [...picked.values()].filter((run) => {
 		const price = priceOfRun(run);
-		return run.role === role && (run.target ?? run.cwd) === dir && (cacheLeftMs(run, now) ?? 0) > 0 && price !== undefined && ((run.context ?? 0) * price.cacheRead) / PER_MILLION_TOKENS < freshCost;
+		return run.role === role && (run.target ?? run.cwd) === dir && (run.context ?? 0) <= WARM_FORK_MAX_TOKENS && (cacheLeftMs(run, now) ?? 0) > 0 && price !== undefined && ((run.context ?? 0) * price.cacheRead) / PER_MILLION_TOKENS < freshCost;
 	});
 	if (!cached.length) return undefined;
 	const lines = cached.sort((a, b) => (b.lastRequestAt ?? 0) - (a.lastRequestAt ?? 0)).map((run) => `fork ${run.name}: ${tokens(run.context ?? 0)} ctx, ${cacheText(cacheLeftMs(run, now) ?? 0)} left`);
@@ -602,11 +607,13 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			const { next } = current;
 			const proceeds = end.state === "done" || end.state === "found-it";
 			const merge = merged.landing && tree ? `[merge: ${describeLanding(merged.landing, tree)}]` : tree && (await dropIfClean(tree)) ? "[merge: worktree removed: clean]" : undefined;
-			const note = [merge, next !== undefined && !proceeds ? `[queued task kept: ${next}]` : undefined].filter(Boolean).join(" ") || undefined;
+			const tooLarge = (end.context ?? 0) > WARM_FORK_MAX_TOKENS;
+			const kept = next !== undefined && (!proceeds ? `[queued task kept: ${next}]` : tooLarge ? `[queued task kept: ${next}: fork holds ~${thousands(end.context ?? 0)} tokens, over ${thousands(WARM_FORK_MAX_TOKENS)}]` : undefined);
+			const note = [merge, kept].filter(Boolean).join(" ") || undefined;
 			background.finish(ctx, runId, end, turn.error ?? turn.reply ?? text, note);
 			const ended = registry.get(runId);
 			if (!(ended?.stub && ended.state === "done")) pi.appendEntry("result-cap", { ref: end.ref, text: merged.landing?.state === "escalated" && tree ? `${text}\n[merge: ${describeLanding(merged.landing, tree, true)}]` : text });
-			if (next !== undefined && proceeds) await continueRun(ctx, name, next, `next-${newRunId()}`);
+			if (next !== undefined && proceeds && !tooLarge) await continueRun(ctx, name, next, `next-${newRunId()}`);
 		};
 		const onFail = async (error: unknown) => {
 			if (registry.get(runId)?.state === "cancelled") fs.rmSync(path.join(run.files, QUEUED_ENTRIES), { force: true });
@@ -816,6 +823,8 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 	async function continueRun(ctx: ExtensionToolContext, name: string, task: string, toolCallId: string) {
 		sweepFinished();
 		const run = finishedRun(registry.all(), name);
+		const context = run.context ?? 0;
+		if (context > WARM_FORK_MAX_TOKENS) throw new Error(`fork ${run.name} holds ~${thousands(context)} tokens, over ${thousands(WARM_FORK_MAX_TOKENS)}: start a fresh fork instead`);
 		assertMayStart(ROLES[run.role as Role["name"]]);
 		registry.update(run.id, { state: "running" });
 		background.resolveForkAsks(ctx, run.name);
@@ -827,7 +836,8 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			throw error;
 		});
 		registry.update(run.id, { state: "running", task, tree, worktree: tree?.path, branch: tree?.branch, startedAt: Date.now(), endedAt: undefined, endedBy: undefined, outcome: undefined, notify: undefined, next: undefined });
-		const message = `${worktreeLine(tree)}Task: ${task}`;
+		const rewind = context > RESUME_REWIND_TOKENS ? `Your context is ~${thousands(context)} tokens. Before this task, checkpoint rewind the finished work of earlier tasks into a summary.\n` : "";
+		const message = `${worktreeLine(tree)}${rewind}Task: ${task}`;
 		startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${toolCallId}`, role: ROLES[run.role as Role["name"]], tree, target: run.target ?? run.cwd, model: run.model, files: run.files }, { message, resume: true });
 		return { content: [{ type: "text" as const, text: `continued fork ${run.name} (background)` }], details: { name: run.name, runId: run.id } };
 	}

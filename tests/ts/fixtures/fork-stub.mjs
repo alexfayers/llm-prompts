@@ -1,4 +1,4 @@
-// Stands in for `pi --mode rpc` as a fork child: the task text picks the reply, STUB_STEER waits for a steer command and exits slowly once its input closes, a resumed fork replies slowly, STUB_INSPECT reports how the child was started, STUB_LOG names a file that logs each prompt and its slow first reply, STUB_LIFE:<file> logs the prompt and the child's exit to that file, and STUB_COMPLY or a cold stub's prompt calls reply with the arguments its prompt asks for (without calling it when STUB_BAD_STUB is set), STUB_REPLY:<json> calls reply with those arguments, and a cold worker, or a fork told STUB_TURN, writes one assistant entry per prompt into its session.
+// Stands in for `pi --mode rpc` as a fork child: the task text picks the reply, STUB_STEER waits for a steer command and exits slowly once its input closes, a resumed fork replies slowly, STUB_INSPECT reports how the child was started, STUB_CACHE_READ:<n> sets the cache read of the last reply, STUB_LOG names a file that logs each prompt and its slow first reply, STUB_LIFE:<file> logs the prompt and the child's exit to that file, and STUB_COMPLY or a cold stub's prompt calls reply with the arguments its prompt asks for (without calling it when STUB_BAD_STUB is set), STUB_REPLY:<json> calls reply with those arguments, and a cold worker, or a fork told STUB_TURN, writes one assistant entry per prompt into its session.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import net from "node:net";
@@ -102,7 +102,7 @@ for await (const line of createInterface({ input: process.stdin })) {
 		out({ type: "message_end", message: { role: "assistant", usage: usage(100) } });
 		const replied = (/STUB_REPLY:(\{.*\})/.exec(command.message) ?? ((command.message.includes("STUB_COMPLY") || (command.message.includes("You hold the system prompt") && !process.env.STUB_BAD_STUB)) && /call reply with (\{[^}]*\})/.exec(command.message)))?.[1];
 		if (replied) out({ type: "tool_execution_end", toolName: "reply", isError: false, result: { details: JSON.parse(replied) } });
-		out({ type: "message_end", message: { role: "assistant", usage: usage(200) } });
+		out({ type: "message_end", message: { role: "assistant", usage: usage(Number(/STUB_CACHE_READ:(\d+)/.exec(command.message)?.[1] ?? 200)) } });
 		out({ type: "agent_settled", aborted: false });
 	} else if (command.type === "get_last_assistant_text") respond({ text: reply });
 }

@@ -230,3 +230,7 @@ describe("child mode", () => {
 		}
 	});
 });
+
+test("every delegate card asks for a mark before each detour and a rewind once it is acted on", () => {
+	for (const role of Object.values(ROLES)) assert.ok(role.card.includes("Mark before each detour (a test run, a debug loop, a large log or diff) and checkpoint rewind it once acted on."), role.name);
+});

@@ -1029,6 +1029,29 @@ describe("fork tool", () => {
 			assert.equal(seen.prompt, "Task: STUB_INSPECT");
 		});
 
+		const holding = (name: string, context: number) => {
+			const run = registryOf().all().find((candidate) => candidate.name === name)!;
+			registryOf().update(run.id, { context });
+			return run;
+		};
+
+		test("fork_resume with a task asks a fork over 80K tokens to rewind earlier tasks first", async () => {
+			const { tools, sent, appended, ctx } = await fork({ task: "STUB_REPORT", name: "full", model: "prov/cheap" });
+			holding("full", 90_000);
+			sent.length = 0;
+			await tools.fork_resume.execute("r", { name: "full", task: "STUB_INSPECT" }, undefined, undefined, ctx);
+			await eventually(() => sent.length > 0);
+			const seen = JSON.parse((appended.at(-1)![1] as { text: string }).text.replace(/^echo: /, ""));
+			assert.equal(seen.prompt, "Your context is ~90K tokens. Before this task, checkpoint rewind the finished work of earlier tasks into a summary.\nTask: STUB_INSPECT");
+		});
+
+		test("fork_resume with a task refuses a fork over 150K tokens and leaves it finished", async () => {
+			const { tools, ctx } = await fork({ task: "STUB_REPORT", name: "huge", model: "prov/cheap" });
+			const run = holding("huge", 160_000);
+			await assert.rejects(tools.fork_resume.execute("r", { name: "huge", task: "STUB_INSPECT" }, undefined, undefined, ctx), /fork huge holds ~160K tokens, over 150K: start a fresh fork instead$/);
+			assert.equal(registryOf().get(run.id)?.state, run.state);
+		});
+
 		test("fork_resume with a task on a running fork queues it, lists it, and starts it after the fork replies", async () => {
 			const gate = path.join(agentDir, `gate-queue-${randomUUID()}`);
 			const { tools, appended, ctx } = await start({ task: `STUB_GATE:${gate}`, name: "busy", model: "prov/cheap" });
@@ -1053,6 +1076,18 @@ describe("fork tool", () => {
 			const run = registryOf().all().find((candidate) => candidate.name === "stuck");
 			assert.equal(run?.next, "STUB_INSPECT");
 			assert.match(run?.unread ?? "", /queued task kept: STUB_INSPECT/);
+		});
+
+		test("a queued task stays queued when the fork ends over 150K tokens, and the result says so", async () => {
+			const gate = path.join(agentDir, `gate-full-${randomUUID()}`);
+			const { tools, ctx } = await start({ task: `STUB_GATE:${gate} STUB_CACHE_READ:160000`, name: "full", model: "prov/cheap" });
+			await eventually(() => registryOf().all().some((run) => run.name === "full" && isLive(run)));
+			await tools.fork_resume.execute("r", { name: "full", task: "STUB_INSPECT" }, undefined, undefined, ctx);
+			fs.writeFileSync(gate, "");
+			await eventually(() => registryOf().all().find((run) => run.name === "full")?.state === "done");
+			const run = registryOf().all().find((candidate) => candidate.name === "full");
+			assert.equal(run?.next, "STUB_INSPECT");
+			assert.match(run?.unread ?? "", /\[queued task kept: STUB_INSPECT: fork holds ~160K tokens, over 150K\]/);
 		});
 
 		test("a second fork_resume task on a running fork is rejected and names the queued one", async () => {
@@ -1107,6 +1142,15 @@ describe("fork tool", () => {
 			await fork({ task: "STUB_REPORT", name: "warmer" });
 			const { tool } = await start({ task: "STUB_REPORT", name: "next" });
 			assert.match(tool.content[0].text, /^started fork next \(background\)\nfork warmer: 216 ctx, cache \d+m left\nfork warm: 216 ctx, cache \d+m left\nfork_resume\(\{name, task\}\) is cheaper than a fresh fork$/);
+		});
+
+		test("the warm-fork hint leaves out a fork over 150K tokens", async () => {
+			await fork({ task: "STUB_REPORT", name: "warm" });
+			await fork({ task: "STUB_REPORT", name: "huge" });
+			holding("huge", 160_000);
+			mainContext = 140_000;
+			const { tool } = await start({ task: "STUB_REPORT", name: "dearcold", model: "prov/dear" });
+			assert.match(tool.content[0].text, /\(background\)\nfork warm: 216 ctx, cache \d+m left\nfork_resume/);
 		});
 
 		test("the warm-fork hint stays silent when a fresh fork reads less cached context than the finished fork holds", async () => {
