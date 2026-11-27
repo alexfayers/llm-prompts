@@ -954,6 +954,34 @@ def test_a_pi_session_sends_only_its_numbers_role_tier_and_version(
     assert "acme" not in json.dumps(properties)
 
 
+@pytest.mark.parametrize("time_to_pr", [125, None])
+def test_an_opened_pr_sends_only_its_time_role_tier_and_version(
+    telemetry_popen: MagicMock,
+    isolated_config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    time_to_pr: int | None,
+) -> None:
+    _fresh_record(isolated_config_dir)
+    started = "" if time_to_pr is None else str(int((time.time() - time_to_pr) * 1000))
+    monkeypatch.setenv(telemetry.SESSION_START_ENV, started)
+    monkeypatch.setenv("PI_CONTEXT_ROLE", "writer")
+    monkeypatch.setenv("PI_MODEL", "acme-claude-sonnet-4-5")
+
+    _main("session-telemetry", json.dumps({"event": "pr_opened"}))
+
+    [event] = _events(telemetry_popen)
+    properties = event["properties"]
+    assert event["event"] == "pr_opened"
+    assert set(properties) == {
+        *("role", "model_tier", "time_to_pr_s"),
+        *("llm_prompts", "cline_hooks", "mcp_memory"),
+        *("os", "python", "schema", "$process_person_profile"),
+    }
+    assert (properties["role"], properties["model_tier"]) == ("writer", "sonnet")
+    assert properties["time_to_pr_s"] == pytest.approx(time_to_pr, abs=5)
+    assert "acme" not in json.dumps(properties)
+
+
 @pytest.mark.parametrize("opt_out", ["DO_NOT_TRACK", "stale"])
 def test_an_opted_out_pi_session_sends_nothing(
     telemetry_popen: MagicMock,
@@ -969,6 +997,7 @@ def test_an_opted_out_pi_session_sends_nothing(
         monkeypatch.setenv(opt_out, "1")
 
     _main("session-telemetry", json.dumps(SESSION))
+    _main("session-telemetry", json.dumps({"event": "pr_opened"}))
 
     assert not telemetry_popen.called
 

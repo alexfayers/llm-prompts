@@ -37,7 +37,7 @@ test("a session sends its totals once at its end, across a reload, and a session
 	assert.ok(wallMs >= inferenceMs + commandMs + userMs);
 });
 
-test("a session splits its wall time into model calls, tool calls and user waits", async (t) => {
+test("a session splits its wall time into model calls, tool calls and user waits, and reports each opened PR", async (t) => {
 	spawned.length = 0;
 	let now = 1_000_000;
 	t.mock.method(Date, "now", () => now);
@@ -48,6 +48,7 @@ test("a session splits its wall time into model calls, tool calls and user waits
 	const start = (toolCallId: string, toolName: string, command = "") => ({ toolCallId, toolName, args: { command } });
 	const end = (toolCallId: string, toolName: string, text = "", isError = false) => ({ toolCallId, toolName, isError, result: { content: [{ type: "text", text }] } });
 	await at(0, "session_start", { reason: "startup" });
+	assert.equal(process.env.LLM_PROMPTS_SESSION_START_MS, "1000000");
 	await at(8, "input", { source: "interactive", text: "go" });
 	await at(8, "agent_start");
 	await at(9, "before_provider_request");
@@ -74,8 +75,12 @@ test("a session splits its wall time into model calls, tool calls and user waits
 	await at(39, "agent_settled");
 	await at(45, "session_shutdown", { reason: "quit" });
 
-	assert.equal(spawned.length, 1);
-	const { wallMs, inferenceMs, commandMs, userMs } = JSON.parse(spawned[0].args[1]);
+	assert.deepEqual(
+		spawned.map(({ args }) => args[0]),
+		["session-telemetry", "session-telemetry"],
+	);
+	assert.deepEqual(JSON.parse(spawned[0].args[1]), { event: "pr_opened" });
+	const { wallMs, inferenceMs, commandMs, userMs } = JSON.parse(spawned[1].args[1]);
 	assert.deepEqual({ wallMs, inferenceMs, commandMs, userMs }, { wallMs: 45000, inferenceMs: 10000, commandMs: 7000, userMs: 17000 });
 });
 

@@ -24,6 +24,10 @@ Each pi session, lead or fork, sends one `pi_session` event when it ends, if it 
 - `llm_prompts`, `cline_hooks` and `mcp_memory`: the version entry of each tool, as in a command's `to`
 - OS, Python version and schema version
 
+A `pr_opened` event is sent when `llm-prompts contribute` opens a PR, or when a pi session's `gh pr create` bash call returns a PR URL. It has `role`, `model_tier` (from `PI_MODEL`), `time_to_pr_s` (seconds since the pi session started, or none outside pi), the tool versions and the platform fields.
+
+It carries no PR number, repo, branch, title or path.
+
 A fork's event carries its role and model tier, so fork count, runtime and cost by role and tier are counts and sums over fork events.
 
 Each llm-prompts command run with agents installed and without `--root` writes `telemetry.json` next to `config.toml`. It holds your opt-out choice, when you made it, and the install id. mcp-memory reads this file, so it follows the same opt-out and sends its events under the same install id. The file itself is never sent.

@@ -36,6 +36,7 @@ _SESSION_ROLES = ("main", "reader", "writer")
 _MODEL_TIERS = ("opus", "sonnet", "haiku")
 
 
+SESSION_START_ENV = "LLM_PROMPTS_SESSION_START_MS"
 _WAITS = {
     "inference": "inferenceMs",
     "command_wait": "commandMs",
@@ -63,11 +64,14 @@ def _role_and_tier(role: str, model: str) -> dict[str, str]:
 
 
 def send_session(stats: dict[str, Any]) -> None:
-    """Send one pi session's numbers, its role and model tier, unless telemetry is off.
+    """Send one pi session's numbers, its role and model tier, or its opened PR, unless telemetry is off.
 
     Args:
-        stats: The session's role, model and totals, as the session-telemetry pi extension sends them.
+        stats: The session's role, model and totals, as the session-telemetry pi extension sends them, or ``{"event": "pr_opened"}``.
     """
+    if stats.get("event") == "pr_opened":
+        send_pr_opened()
+        return
     calls = int(stats["calls"])
     cost = float(stats["cost"])
     context = int(stats["context"])
@@ -92,6 +96,23 @@ def send_session(stats: dict[str, Any]) -> None:
                 f"{name}_share": round(ms / wall_ms, 3) if wall_ms else None
                 for name, ms in waits.items()
             },
+        },
+    )
+
+
+def send_pr_opened() -> None:
+    """Send a `pr_opened` event with the time since the pi session started, its role and model tier."""
+    started = os.environ.get(SESSION_START_ENV, "")
+    _send_workflow(
+        "pr_opened",
+        {
+            **_role_and_tier(
+                os.environ.get("PI_CONTEXT_ROLE", "main"),
+                os.environ.get("PI_MODEL", ""),
+            ),
+            "time_to_pr_s": round(time.time() - int(started) / 1000)
+            if started.isdigit()
+            else None,
         },
     )
 
