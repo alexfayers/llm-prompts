@@ -1,0 +1,58 @@
+id = "feature-warm-fork-context"
+level = "heavy"
+agents = ["pi"]
+workspace = "tiny-py"
+project = "demo"
+delegation = true
+prompt = "read the whole of handbook.md yourself, then tell me how many open tickets the ledger desk allows at once. then fork one delegate to list every desk that allows more than 90 open tickets at once. give me the ledger number and the delegate's list as bullets. dont change any files"
+setup = [
+  '''
+python3 - <<'PY'
+import random
+
+names = "harbor ledger quarry orchard lantern bridge meadow anchor copper timber garden falcon summit canyon beacon willow marble thistle compass glacier harvest meridian cobalt saddle voyage prairie lagoon ember cinder fjord tundra bazaar mosaic pylon relay signal vertex wharf zenith atlas bramble".split()
+openers = [
+    "Staff must log every handover before the shift ends.",
+    "Requests arrive through the shared queue and wait their turn.",
+    "Spare parts are kept in the locked cabinet by the east door.",
+    "A supervisor signs off every change to the weekly rota.",
+    "Visitors collect a badge at the front desk and return it on leaving.",
+    "Late deliveries are recorded in the incident book.",
+    "Each team reviews its checklist at the start of the week.",
+    "Old paperwork moves to the archive room after ninety days.",
+]
+
+def section(i):
+    rng = random.Random(i)
+    lines = [f"## {names[i].capitalize()} desk", ""]
+    for _ in range(10):
+        lines += [" ".join(rng.sample(openers, 4)) + f" The {names[i]} team follows the same steps every time, and notes anything unusual in the {rng.choice(names)} log.", ""]
+    lines.append(f"The {names[i]} desk allows at most {rng.randint(11, 97)} open tickets at once.")
+    return "\n".join(lines) + "\n"
+
+with open("handbook.md", "w") as file:
+    file.write("# Operations handbook\n\n" + "\n".join(section(i) for i in range(len(names))))
+PY
+''',
+]
+
+[[check]]
+kind = "tool_called"
+name = "fork"
+by = "lead"
+
+[[check]]
+kind = "not_called"
+name = "fork"
+by = "lead"
+args_regex = '(?i)meadow|relay|\b9[26]\b'
+
+[[check]]
+kind = "tool_called"
+name = "reply"
+by = "subagent"
+args_regex = '(?is)meadow.*relay|relay.*meadow'
+
+[[check]]
+kind = "judge"
+rubric = "The evidence is the agent's final answer. PASS only if it says the ledger desk allows 34 open tickets and lists exactly the meadow desk and the relay desk as the desks that allow more than 90. FAIL if the ledger number is missing or different, if the list misses either desk or names another one, or if it gives no bullets."
