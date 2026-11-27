@@ -18,6 +18,7 @@ description: "Review pending changes against the repo's review instructions, and
 - MUST check every changed matching path against the rules in its file.
 - MUST also follow the rules for each changed language, such as the Python rules, and the repo's own conventions.
 - MUST always also review as a senior developer: correctness, design, naming, edge cases, tests.
+- MUST flag a PR that fixes a user-facing problem and adds no CI test that fails without the fix.
 - MUST push back hard on unnecessary changes and unnecessary tests, per the coding rules' smallest change: an unused extension point, local state a live check can replace,
   an unrequested CLI option or doc, more than one test per behaviour, or a test not through the public entry point.
 - On your own diff before pushing, MUST first make those cuts, and check with `git diff --stat $(git merge-base <base> HEAD)` before and after that they shrank it.
