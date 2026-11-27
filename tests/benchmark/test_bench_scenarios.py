@@ -287,6 +287,12 @@ SECOND_FEATURE = (
         (("feature/demo/fetch-all", "implements"),),
     ),
 )
+DELEGATE_ANSWER = ToolCall(
+    "reply",
+    {"text": "OUTCOME found-it ref:handbook.md\n- Meadow 92\n- Relay 96"},
+    True,
+    subagent=True,
+)
 # id: (scenario, expected pass, files, calls, added memory, replacement memory)
 # fmt: off
 CASES: dict[str, tuple[str, bool, dict[str, str], tuple[ToolCall, ...], tuple[MemoryEntity, ...], Any]] = {
@@ -295,6 +301,11 @@ CASES: dict[str, tuple[str, bool, dict[str, str], tuple[ToolCall, ...], tuple[Me
     "quality-ok": ("quality-simple-task", True, {"fetch.py": "raise DemoError\n"}, (), (), None),
     "second-feature-ok": ("quality-second-feature", True, {"fetch.py": "def fetch_all(urls):\n    pass\n"}, (), SECOND_FEATURE, None),
     "second-feature-only-one-feature": ("quality-second-feature", False, {"fetch.py": "def fetch_all(urls):\n    pass\n"}, (), WRAP_UP, None),
+    "warm-fork-context-ok": ("feature-warm-fork-context", True, {}, (c("fork", task="list desks over 90"), DELEGATE_ANSWER), (), None),
+    "warm-fork-context-made-up-example-ok": ("feature-warm-fork-context", True, {}, (c("fork", task="answer like `Foo 95, Bar 99`"), DELEGATE_ANSWER), (), None),
+    "warm-fork-context-answer-in-task": ("feature-warm-fork-context", False, {}, (c("fork", task="confirm meadow and relay"), DELEGATE_ANSWER), (), None),
+    "warm-fork-context-limit-in-task": ("feature-warm-fork-context", False, {}, (c("fork", task="confirm the desks at 92 and 96"), DELEGATE_ANSWER), (), None),
+    "warm-fork-context-lead-answers": ("feature-warm-fork-context", False, {}, (c("fork", task="list desks over 90"), replace(DELEGATE_ANSWER, args={"text": "OUTCOME done ref:"})), (), None),
 }
 # fmt: on
 
@@ -424,3 +435,31 @@ def test_shipped_scenarios_cover_only_unpinned_shared_rules() -> None:
     assert covered
     assert all((rules / f"{name}.md").is_file() for name in covered)
     assert not covered & PINNED_RULES
+
+
+@pytest.mark.real_io
+def test_the_warm_fork_context_scenario_writes_a_handbook_that_gives_the_answers_its_judge_expects(
+    tmp_path: Path,
+) -> None:
+    (scenario,) = (
+        s
+        for s in scenarios.load("heavy", ("pi",))
+        if s.id == "feature-warm-fork-context"
+    )
+
+    for command in scenario.setup:
+        subprocess.run(["sh", "-c", command], cwd=tmp_path, check=True)
+
+    limits = dict(
+        re.findall(
+            r"The (\w+) desk allows at most (\d+) open",
+            (tmp_path / "handbook.md").read_text(),
+        )
+    )
+    assert limits["ledger"] == "34"
+    assert sorted(desk for desk, limit in limits.items() if int(limit) > 90) == [
+        "meadow",
+        "relay",
+    ]
+    rubric = str(scenario.checks[-1].args["rubric"])
+    assert all(answer in rubric for answer in ("34", "meadow", "relay"))
