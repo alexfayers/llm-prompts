@@ -113,6 +113,15 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: just test-ts
 
+  upgrade-smoke:
+    if: github.head_ref != 'release-please--branches--main'
+    needs: unblocked
+    permissions:
+      contents: read
+    uses: alexfayers/llm-prompts-ci/.github/workflows/upgrade-smoke.yml@main
+    with:
+      repo: llm-prompts
+
   pi-pins:
     if: github.event_name == 'pull_request' && github.head_ref != 'release-please--branches--main'
     runs-on: ubuntu-latest
