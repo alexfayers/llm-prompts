@@ -239,7 +239,7 @@ export class Background {
 		for (const run of this.registry.all().filter((candidate) => candidate.name === name)) for (const id of openForkAsks(entries, run)) resolveAsk(this.pi, ctx, id);
 	}
 
-	/** Waits until no run is live or one needs main, or `maxMs` has passed. */
+	/** Waits until no run is live or one needs main, or `maxMs` has passed. A stub that ended done does not end the wait, as its children start next. */
 	hold(maxMs = MAX_HOLD_MS): Promise<void> {
 		if (!this.registry.live().length) return Promise.resolve();
 		this.holding = true;
@@ -252,7 +252,7 @@ export class Background {
 				resolve();
 			};
 			const off = this.registry.onChange((run) => {
-				if (this.registry.live().length && !wakeReason(run)) return;
+				if ((run.stub && run.state === "done") || (this.registry.live().length && !wakeReason(run))) return;
 				release();
 			});
 			const timer = setTimeout(release, maxMs);
