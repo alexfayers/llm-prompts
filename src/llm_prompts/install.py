@@ -4741,83 +4741,62 @@ def _memory_service_exists() -> bool:
     return Path("/etc/systemd/system/mcp-memory.service").exists()
 
 
+def _install_memory(agent: str, label: str, kiro_agent_config: str = "") -> None:
+    """Add mcp-memory to an agent, set up its service if needed, and record both.
+
+    Args:
+        agent: The mcp-memory agent name.
+        label: The agent's display name.
+        kiro_agent_config: The Kiro agent JSON to patch, for Kiro.
+    """
+    from .manifest import record_memory
+
+    binary = user_binary("mcp-memory")
+    if not binary:
+        log("debug", f"mcp-memory not found on PATH, skipping {label} MCP setup.")
+        return
+    installed = not _run_tool(
+        [binary, "install", agent, *([kiro_agent_config] if kiro_agent_config else [])]
+    )
+    created = not _memory_service_exists() and not _run_tool([binary, "setup-service"])
+    if installed or created:
+        record_memory(
+            agent, kiro_agent_config=kiro_agent_config, service_created=created
+        )
+
+
 def try_install_memory(agent_config_path: str) -> None:
     """Patch Kiro agent config with memory MCP server and set up service if needed.
 
     Args:
         agent_config_path: Agent JSON to patch with memory server and @memory allowedTools.
     """
-
-    binary = user_binary("mcp-memory")
-    if not binary:
-        log("debug", "mcp-memory not found on PATH, skipping MCP config injection.")
-        return
-    _run_tool([binary, "install", "kiro", agent_config_path])
-    if not _memory_service_exists():
-        _run_tool([binary, "setup-service"])
+    _install_memory("kiro", "Kiro", agent_config_path)
 
 
 def try_install_memory_claude_code() -> None:
     """Add mcp-memory to Claude Code if available."""
-
-    binary = user_binary("mcp-memory")
-    if not binary:
-        log("debug", "mcp-memory not found on PATH, skipping Claude Code MCP setup.")
-        return
-    _run_tool([binary, "install", "claude-code"])
-    if not _memory_service_exists():
-        _run_tool([binary, "setup-service"])
+    _install_memory("claude-code", "Claude Code")
 
 
 def try_install_memory_codex() -> None:
     """Add mcp-memory to Codex if available."""
-
-    binary = user_binary("mcp-memory")
-    if not binary:
-        log("debug", "mcp-memory not found on PATH, skipping Codex MCP setup.")
-        return
-    _run_tool([binary, "install", "codex"])
-    if not _memory_service_exists():
-        _run_tool([binary, "setup-service"])
+    _install_memory("codex", "Codex")
 
 
 def try_install_memory_antigravity() -> None:
     """Add mcp-memory to Antigravity if available."""
-
-    binary = user_binary("mcp-memory")
-    if not binary:
-        log(
-            "debug",
-            "mcp-memory not found on PATH, skipping Antigravity MCP setup.",
-        )
-        return
-    _run_tool([binary, "install", "antigravity"])
-    if not _memory_service_exists():
-        _run_tool([binary, "setup-service"])
+    _install_memory("antigravity", "Antigravity")
 
 
 def try_install_memory_opencode() -> None:
     """Add mcp-memory to opencode if available."""
-
-    binary = user_binary("mcp-memory")
-    if not binary:
-        log("debug", "mcp-memory not found on PATH, skipping opencode MCP setup.")
-        return
-    _run_tool([binary, "install", "opencode"])
-    if not _memory_service_exists():
-        _run_tool([binary, "setup-service"])
+    _install_memory("opencode", "opencode")
 
 
 def try_install_memory_pi() -> None:
     """Add mcp-memory to pi's MCP config if available."""
-
-    binary = user_binary("mcp-memory")
-    if not binary:
-        log("debug", "mcp-memory not found on PATH, skipping Pi MCP setup.")
-        return
-    _run_tool([binary, "install", "pi"])
-    if not _memory_service_exists():
-        _run_tool([binary, "setup-service"])
+    _install_memory("pi", "Pi")
 
 
 def _carry_forward(
@@ -5016,6 +4995,95 @@ def _remove_claude_permissions(
     return failed
 
 
+_HOOK_AGENTS = ("claude-code", "antigravity", "opencode", "pi")
+_MEMORY_TEARDOWN_OPTIONS = ("--agent", "--keep-service")
+
+
+def _run_teardown(
+    tool: str,
+    subcommand: list[str],
+    args: Sequence[str] = (),
+    *,
+    needs: tuple[str, ...] = (),
+    env: dict[str, str] | None = None,
+) -> bool:
+    """Run a companion tool's teardown command where its user-wide install has it.
+
+    Args:
+        tool: The companion tool's executable name.
+        subcommand: The teardown subcommand words.
+        args: Arguments passed after the subcommand.
+        needs: Options the subcommand's help must list for it to run.
+        env: Environment for the command, or None to inherit.
+
+    Returns:
+        Whether the command ran and succeeded.
+    """
+    binary = user_binary(tool)
+    if not binary:
+        return False
+    probe = subprocess.run(
+        [binary, *subcommand, "--help"], check=False, capture_output=True, text=True
+    )
+    retry = f"Update {tool}, then run `{shlex.join([tool, *subcommand, *args])}`."
+    if probe.returncode:
+        log(
+            "warn",
+            f"{tool} has no `{shlex.join(subcommand)}` command, skipped it. {retry}",
+        )
+        return False
+    missing = [
+        option
+        for option in needs
+        if not re.search(rf"(?<![\w-]){re.escape(option)}(?![\w-])", probe.stdout)
+    ]
+    if missing:
+        log(
+            "warn",
+            f"{tool} {shlex.join(subcommand)} lacks {', '.join(missing)}, skipped it."
+            f" {retry}",
+        )
+        return False
+    returncode = _run_tool([binary, *subcommand, *args], env=env)
+    if returncode:
+        log(
+            "error",
+            f"`{tool} {shlex.join(subcommand)}` failed with exit code {returncode}.",
+        )
+    return not returncode
+
+
+def _teardown_memory(remaining: "Mapping[str, AgentManifest]") -> None:
+    """Remove the memory setup of the agents and Kiro configs no longer installed."""
+    from .manifest import read_memory_record, write_memory_record
+
+    record = read_memory_record()
+    kept_configs = {
+        e["agent_config"] for e in remaining.values() if "agent_config" in e
+    } & set(record["kiro_agent_configs"])
+    configs = sorted(set(record["kiro_agent_configs"]) - kept_configs)
+    agents = sorted(set(record["agents"]) - set(remaining) - {"kiro"})
+    agents += ["kiro"] if configs else []
+    if not agents:
+        return
+    kept_agents = set(record["agents"]) - set(agents) - {"kiro"}
+    kept_agents |= {"kiro"} if kept_configs else set()
+    remove_service = record["service_created"] and not kept_agents
+    args = [
+        *(word for agent in agents for word in ("--agent", agent)),
+        *(word for config in configs for word in ("--kiro-agent-config", config)),
+        *([] if remove_service else ["--keep-service"]),
+    ]
+    if _run_teardown("mcp-memory", ["teardown"], args, needs=_MEMORY_TEARDOWN_OPTIONS):
+        write_memory_record(
+            {
+                "agents": sorted(kept_agents),
+                "kiro_agent_configs": sorted(kept_configs),
+                "service_created": record["service_created"] and not remove_service,
+            }
+        )
+
+
 def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) -> None:
     """Reverse an installation, removing installed files and manifest entries.
 
@@ -5049,9 +5117,16 @@ def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) ->
         delete_rendered_rules(name)
         if name == "cline":
             _remove_cline_symlinks()
+        if name in _HOOK_AGENTS:
+            _run_teardown(
+                "cline-hook",
+                ["uninstall", name],
+                env=_pi_env() if name == "pi" else None,
+            )
         agent_config = entry.get("agent_config")
         if agent_config:
             _unpatch_kiro_agent_config(agent_config)
+            _run_teardown("cline-hook", ["uninstall", "kiro"], [agent_config])
         if name == "claude-code":
             unclean = _remove_claude_permissions(entry.get("claude_permissions"))
             settings_link = user_home() / ".claude" / "settings.json"
@@ -5073,6 +5148,7 @@ def uninstall(agent_names: list[str] | None = None, *, verbose: bool = False) ->
         if name == "claude-code" and unclean:
             log("warn", "[claude-code] Fix the settings file, then uninstall again.")
         log("success", f"[{name}] Uninstalled.")
+    _teardown_memory(read_manifest())
 
 
 @contextlib.contextmanager

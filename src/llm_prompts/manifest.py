@@ -6,7 +6,7 @@ import json
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from . import home
 from .jsonfile import write_json_atomic
@@ -49,9 +49,28 @@ class AgentManifest(TypedDict, total=False):
     installed_at: str
 
 
+class MemoryRecord(TypedDict):
+    """What llm-prompts set up through mcp-memory, for `uninstall` to tear down."""
+
+    agents: list[str]
+    kiro_agent_configs: list[str]
+    service_created: bool
+
+
+def _read() -> dict[str, Any]:
+    """Read the whole manifest, or an empty one where it is missing or invalid."""
+    if not manifest_path().exists():
+        return {}
+    try:
+        data = json.loads(manifest_path().read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def _save(agents: dict[str, AgentManifest]) -> None:
     """Write the manifest through a scratch file and a rename."""
-    write_json_atomic(manifest_path(), {"agents": agents})
+    write_json_atomic(manifest_path(), {**_read(), "agents": agents})
 
 
 def read_manifest() -> dict[str, AgentManifest]:
@@ -60,14 +79,43 @@ def read_manifest() -> dict[str, AgentManifest]:
     Returns:
         Mapping of agent name to manifest entry.
     """
-    if not manifest_path().exists():
-        return {}
-    try:
-        data = json.loads(manifest_path().read_text(encoding="utf-8"))
-        agents: dict[str, AgentManifest] = data.get("agents", {})
-        return agents
-    except (json.JSONDecodeError, KeyError):
-        return {}
+    agents: dict[str, AgentManifest] = _read().get("agents", {})
+    return agents
+
+
+def read_memory_record() -> MemoryRecord:
+    """Read what llm-prompts set up through mcp-memory."""
+    return {
+        "agents": [],
+        "kiro_agent_configs": [],
+        "service_created": False,
+        **_read().get("memory", {}),
+    }
+
+
+def write_memory_record(record: MemoryRecord) -> None:
+    """Save what llm-prompts set up through mcp-memory, keeping the agent entries."""
+    write_json_atomic(manifest_path(), {**_read(), "memory": record})
+
+
+def record_memory(
+    agent: str, *, kiro_agent_config: str | None = None, service_created: bool
+) -> None:
+    """Add an agent llm-prompts set up memory for, and whether it created the service.
+
+    Args:
+        agent: The mcp-memory agent name.
+        kiro_agent_config: The Kiro agent config the memory server was added to, if any.
+        service_created: Whether this setup created the memory service.
+    """
+    record = read_memory_record()
+    record["agents"] = sorted({*record["agents"], agent})
+    if kiro_agent_config:
+        record["kiro_agent_configs"] = sorted(
+            {*record["kiro_agent_configs"], kiro_agent_config}
+        )
+    record["service_created"] = record["service_created"] or service_created
+    write_memory_record(record)
 
 
 def write_manifest(

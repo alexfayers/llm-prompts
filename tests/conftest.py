@@ -754,6 +754,21 @@ def no_uv_tools_dir_query(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(setup, "_query_uv_tools_dir", lambda: None)
 
 
+_REAL_RUN_TEARDOWN = install._run_teardown
+
+
+@pytest.fixture(autouse=True)
+def no_companion_teardown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep `uninstall` from running the real `cline-hook` and `mcp-memory` teardown commands."""
+    monkeypatch.setattr(install, "_run_teardown", lambda *args, **kwargs: None)
+
+
+@pytest.fixture
+def real_teardown(no_companion_teardown: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Restore the real companion teardown so a test can run it against fake tools."""
+    monkeypatch.setattr(install, "_run_teardown", _REAL_RUN_TEARDOWN)
+
+
 _REAL_MIGRATE_CLONES = clones.migrate
 _REAL_BLOCK_ON_INSTALLED_EDITS = clones.block_on_installed_edits
 
