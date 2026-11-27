@@ -61,7 +61,7 @@
 | src/llm\_prompts/guards/gate.py                                               |        5 |        0 |    100% |           |
 | src/llm\_prompts/guards/receipts.py                                           |       74 |        4 |     95% |71, 79, 102-103 |
 | src/llm\_prompts/guards/review\_limit.py                                      |       68 |        8 |     88% |42-43, 73-74, 95, 129, 137-138 |
-| src/llm\_prompts/guards/shell\_rules.py                                       |       90 |        2 |     98% |   99, 157 |
+| src/llm\_prompts/guards/shell\_rules.py                                       |      126 |        5 |     96% |112, 168, 178-179, 217 |
 | src/llm\_prompts/handoff\_block.py                                            |       13 |        1 |     92% |        20 |
 | src/llm\_prompts/home.py                                                      |       90 |        4 |     96% |163-164, 179, 184 |
 | src/llm\_prompts/hooks.py                                                     |      340 |       20 |     94% |94, 99, 203, 216-217, 367, 427-428, 454-456, 544, 552-553, 615, 630-631, 650-652 |
@@ -195,7 +195,7 @@
 | tests/test\_settings.py                                                       |       96 |        0 |    100% |           |
 | tests/test\_settings\_app.py                                                  |      171 |        0 |    100% |           |
 | tests/test\_setup.py                                                          |      432 |        0 |    100% |           |
-| tests/test\_shell\_rules.py                                                   |       39 |        0 |    100% |           |
+| tests/test\_shell\_rules.py                                                   |       47 |        0 |    100% |           |
 | tests/test\_size\_guard.py                                                    |      168 |        0 |    100% |           |
 | tests/test\_size\_report.py                                                   |      254 |        0 |    100% |           |
 | tests/test\_skill\_injection.py                                               |       36 |        0 |    100% |           |
@@ -212,7 +212,7 @@
 | tests/watch/test\_runner.py                                                   |       84 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
 | tests/worker\_share.py                                                        |       54 |        1 |     98% |        21 |
-| **TOTAL**                                                                     | **37677** |  **843** | **98%** |           |
+| **TOTAL**                                                                     | **37721** |  **846** | **98%** |           |
 
 
 ## Setup coverage badge
