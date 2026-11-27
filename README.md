@@ -11,7 +11,7 @@
 | src/llm\_prompts/benchmark/agents/adapter.py                                  |       34 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/agents/claude.py                                   |      158 |        3 |     98% |57, 133-134 |
 | src/llm\_prompts/benchmark/agents/files.py                                    |       53 |        1 |     98% |        32 |
-| src/llm\_prompts/benchmark/agents/pi.py                                       |      249 |        2 |     99% |  259, 338 |
+| src/llm\_prompts/benchmark/agents/pi.py                                       |      249 |        2 |     99% |  262, 341 |
 | src/llm\_prompts/benchmark/cell/\_\_init\_\_.py                               |        0 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/cell/audit.py                                      |      100 |        3 |     97% |     62-64 |
 | src/llm\_prompts/benchmark/cell/env.py                                        |       26 |        0 |    100% |           |
@@ -117,7 +117,7 @@
 | tests/benchmark/test\_bench\_cell.py                                          |      233 |        4 |     98% |169, 292, 297, 409 |
 | tests/benchmark/test\_bench\_check\_sandbox.py                                |       59 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_checks.py                                        |      191 |        0 |    100% |           |
-| tests/benchmark/test\_bench\_command.py                                       |      444 |        1 |     99% |       723 |
+| tests/benchmark/test\_bench\_command.py                                       |      448 |        1 |     99% |       736 |
 | tests/benchmark/test\_bench\_e2e.py                                           |       56 |       32 |     43% |38-40, 51-57, 61, 69-115 |
 | tests/benchmark/test\_bench\_env.py                                           |       58 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_fail\_fast.py                                    |       42 |        0 |    100% |           |
@@ -212,7 +212,7 @@
 | tests/watch/test\_runner.py                                                   |       84 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
 | tests/worker\_share.py                                                        |       54 |        1 |     98% |        21 |
-| **TOTAL**                                                                     | **37517** |  **843** | **98%** |           |
+| **TOTAL**                                                                     | **37521** |  **843** | **98%** |           |
 
 
 ## Setup coverage badge
