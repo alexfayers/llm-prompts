@@ -275,6 +275,14 @@ FINDING = (
     ),
 )
 BLOCKED = "Subagents MUST NOT write memory. Report this fact to your lead instead."
+PLACED = (
+    MemoryEntity(
+        "knowledge/demo-fetch",
+        "knowledge",
+        ("returns body of <url>",),
+        location="/ws/fetch.py",
+    ),
+)
 
 
 WRAP_UP = (
@@ -323,6 +331,8 @@ CASES: dict[str, tuple[str, bool, dict[str, str], tuple[ToolCall, ...], tuple[Me
     "subagent-finding-no-delegate": ("write-subagent-finding", False, {}, (c("Read"),), FINDING, None),
     "subagent-finding-direct-write": ("write-subagent-finding", False, {}, (sub("memory.set_entity_status"),), FINDING, None),
     "subagent-finding-codemode-write": ("write-subagent-finding", False, {}, (sub("codemode", code="await tools.mcp__memory__add_observations({})"),), FINDING, None),
+    "location-ok": ("write-location", True, {}, (), PLACED, None),
+    "location-a-folder": ("write-location", False, {}, (), (replace(PLACED[0], location="/ws"),), None),
 }
 # fmt: on
 
