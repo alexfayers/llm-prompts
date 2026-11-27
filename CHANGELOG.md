@@ -1,5 +1,124 @@
 # Changelog
 
+## [0.10.0](https://github.com/alexfayers/llm-prompts/compare/v0.9.0...v0.10.0) (2026-11-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove the lsp feature ([#762](https://github.com/alexfayers/llm-prompts/issues/762))
+* treat a "btw" message as side work and remove //btw ([#769](https://github.com/alexfayers/llm-prompts/issues/769))
+* remove the attic feature ([#761](https://github.com/alexfayers/llm-prompts/issues/761))
+
+### Features
+
+* add the shared tool path contract and a one-time copy into it ([#756](https://github.com/alexfayers/llm-prompts/issues/756)) ([b8c0cd6](https://github.com/alexfayers/llm-prompts/commit/b8c0cd6a16469ce69dcf65e780446d134197583d))
+* **benchmark:** measure a warm fork after the lead read a long handbook ([#886](https://github.com/alexfayers/llm-prompts/issues/886)) ([816abdd](https://github.com/alexfayers/llm-prompts/commit/816abdd2f24e62942343627c85cb70b788701f7c))
+* **benchmark:** measure cache warming on and off with --feature ([#779](https://github.com/alexfayers/llm-prompts/issues/779)) ([fdf8391](https://github.com/alexfayers/llm-prompts/commit/fdf8391f3334ddba4bfaaf7fdb8b2f40f641e63a))
+* **benchmark:** measure the shared tasks stub on and off with --feature shared-tasks ([#766](https://github.com/alexfayers/llm-prompts/issues/766)) ([fc0d540](https://github.com/alexfayers/llm-prompts/commit/fc0d540dd6747e304cb3cb98068f5b850f5bf361))
+* **benchmark:** measure the warm fork against a cold fork with --feature warm-fork ([#767](https://github.com/alexfayers/llm-prompts/issues/767)) ([8c91bcc](https://github.com/alexfayers/llm-prompts/commit/8c91bcc071f06351f8592ca47b1c433188985533))
+* **benchmark:** report each fork's own start context in the run summary ([#834](https://github.com/alexfayers/llm-prompts/issues/834)) ([237d725](https://github.com/alexfayers/llm-prompts/commit/237d7252862e38e1ce939716d6876bfe8105e128))
+* **claude-code:** seed default permissions into Claude Code settings on install ([#750](https://github.com/alexfayers/llm-prompts/issues/750)) ([c32edac](https://github.com/alexfayers/llm-prompts/commit/c32edacb45da1ac29976cac2cac3a54b1a6db652))
+* **contribute:** add sync --only BRANCH to sync one recorded branch ([#864](https://github.com/alexfayers/llm-prompts/issues/864)) ([b76b464](https://github.com/alexfayers/llm-prompts/commit/b76b464d5972fd4966c211684d6176bf99c9ac8c))
+* **contribute:** open no new PR at the review limit ([#848](https://github.com/alexfayers/llm-prompts/issues/848)) ([047fa1e](https://github.com/alexfayers/llm-prompts/commit/047fa1eff945921f58f0acc1f2c42257118dfc05))
+* formalise how agents file issues and set issue status ([#784](https://github.com/alexfayers/llm-prompts/issues/784)) ([c86ef60](https://github.com/alexfayers/llm-prompts/commit/c86ef6027deb5e94c8571c6094f90424b8cd7e44))
+* **install:** substitute the skill directory path at install time ([#743](https://github.com/alexfayers/llm-prompts/issues/743)) ([ff78b1b](https://github.com/alexfayers/llm-prompts/commit/ff78b1b37a6b4b163e8b62efa31bf501b23826d4))
+* keep llm-prompts files under the shared root and copy old ones there ([#768](https://github.com/alexfayers/llm-prompts/issues/768)) ([a9b7841](https://github.com/alexfayers/llm-prompts/commit/a9b7841df296776d8a7b643f829a07ee77af5bc2))
+* **lead:** add a skill for running a pipeline of PR delegates ([#809](https://github.com/alexfayers/llm-prompts/issues/809)) ([c9bb30d](https://github.com/alexfayers/llm-prompts/commit/c9bb30db9e9b52e823c7469b39a64ffbfc20429e))
+* **pi-context:** add a team role that forks members one level deep ([#729](https://github.com/alexfayers/llm-prompts/issues/729)) ([4e92818](https://github.com/alexfayers/llm-prompts/commit/4e92818317dbe67c2693c24f268c1ebe88b27bc6))
+* **pi-context:** expose the read-only tools of every MCP server to delegates ([#832](https://github.com/alexfayers/llm-prompts/issues/832)) ([9d288f6](https://github.com/alexfayers/llm-prompts/commit/9d288f60b40b3882d38d3f6ae84b061cfdb171be))
+* **pi-context:** keep reused forks small with checkpoint nudges and resume limits ([#878](https://github.com/alexfayers/llm-prompts/issues/878)) ([aa46e2d](https://github.com/alexfayers/llm-prompts/commit/aa46e2db21185a29135091e1752d8aadfe4dd922))
+* **pi-context:** let fork_resume give a task to a cancelled fork ([#831](https://github.com/alexfayers/llm-prompts/issues/831)) ([624f06a](https://github.com/alexfayers/llm-prompts/commit/624f06a458bbb91e360c692212d010b05dee778c))
+* **pi-context:** make a worktree for a writer fork started in a primary checkout ([#785](https://github.com/alexfayers/llm-prompts/issues/785)) ([e2484f9](https://github.com/alexfayers/llm-prompts/commit/e2484f90af3ed597c23d51a7a0a02e300601cf6c))
+* **pi-context:** make shared-tasks children read the stub's cache ([#813](https://github.com/alexfayers/llm-prompts/issues/813)) ([131fd8d](https://github.com/alexfayers/llm-prompts/commit/131fd8d78fba88cf43f7c6fd7d4be74b6dad098e))
+* **pi-context:** make the fork widget and result blocks less crowded ([#806](https://github.com/alexfayers/llm-prompts/issues/806)) ([cac316e](https://github.com/alexfayers/llm-prompts/commit/cac316e89972a58feff051cac68708c2a97decbf))
+* **pi-context:** note a fork that runs over the check-in interval in the next tool result ([#709](https://github.com/alexfayers/llm-prompts/issues/709)) ([cc770bc](https://github.com/alexfayers/llm-prompts/commit/cc770bca159d0d69e76c9c72b2cd561de0ad9df0))
+* **pi-context:** prune old kept fork archives at session start ([#807](https://github.com/alexfayers/llm-prompts/issues/807)) ([d9c031e](https://github.com/alexfayers/llm-prompts/commit/d9c031e20d19b830d6e163098e7adb75af2a6f69))
+* **pi-context:** remove a fork's worktree after an escalation when its work is on origin ([#783](https://github.com/alexfayers/llm-prompts/issues/783)) ([9a5958f](https://github.com/alexfayers/llm-prompts/commit/9a5958fb6951d6a33a282aa0de2675f84bb16aaa))
+* **pi-context:** resume forks that a reload_now reload ended ([#805](https://github.com/alexfayers/llm-prompts/issues/805)) ([aa2c92e](https://github.com/alexfayers/llm-prompts/commit/aa2c92eeada942831d752029b4de76d8d06e2b4d))
+* **pi-context:** show finished forks as one summary row in the widget ([#790](https://github.com/alexfayers/llm-prompts/issues/790)) ([e6f00ea](https://github.com/alexfayers/llm-prompts/commit/e6f00ea9913de3d1df5b854c4dd8e2e476e4ac9d))
+* **pi-context:** show free fork slots and ready board tasks in fork results ([#852](https://github.com/alexfayers/llm-prompts/issues/852)) ([0e34377](https://github.com/alexfayers/llm-prompts/commit/0e34377c385bc119aaa4dc3ad9ac815b847f696a))
+* **pi-context:** start cold forks from one stub per model and effort level ([#730](https://github.com/alexfayers/llm-prompts/issues/730)) ([86a1997](https://github.com/alexfayers/llm-prompts/commit/86a1997cb82a46892384b29cfa23f54fd97ce189))
+* **pi:** end the turn and compact at once in compact_now, keeping later entries ([#812](https://github.com/alexfayers/llm-prompts/issues/812)) ([d765dbc](https://github.com/alexfayers/llm-prompts/commit/d765dbcf628d29f3f0bf8f39f34cef4199f1946e))
+* **pi:** fold the output of a test or build run once it has been acted on ([#787](https://github.com/alexfayers/llm-prompts/issues/787)) ([111fb91](https://github.com/alexfayers/llm-prompts/commit/111fb91484288bded88f6166e9b435c2a3c444da))
+* **pi:** give reader forks a smaller delegate rule file ([#842](https://github.com/alexfayers/llm-prompts/issues/842)) ([045c6a6](https://github.com/alexfayers/llm-prompts/commit/045c6a64556dbdb1737ca34c9f0946b4b9cda7ab))
+* **pi:** group pane-reaper notices and delete merged branches ([#804](https://github.com/alexfayers/llm-prompts/issues/804)) ([ab5600f](https://github.com/alexfayers/llm-prompts/commit/ab5600fa0e1427ec30c6736ed1159a6b2295c48c))
+* **pi:** let a writer fork start its own branch from a base ref ([#817](https://github.com/alexfayers/llm-prompts/issues/817)) ([2ed7517](https://github.com/alexfayers/llm-prompts/commit/2ed751729f9be42ef8356941acb76765decd093c))
+* **pi:** let fork_resume queue a task for a running fork ([#826](https://github.com/alexfayers/llm-prompts/issues/826)) ([9e36423](https://github.com/alexfayers/llm-prompts/commit/9e36423752a6e957f04dad8e69882529380b3517))
+* **pi:** remove finished worktrees in pane-reaper ([#786](https://github.com/alexfayers/llm-prompts/issues/786)) ([28742b7](https://github.com/alexfayers/llm-prompts/commit/28742b74287df4e145c566b70998e04479905cfe))
+* **pi:** use the notices settings ([#668](https://github.com/alexfayers/llm-prompts/issues/668)) ([1abda40](https://github.com/alexfayers/llm-prompts/commit/1abda40192d06d030c675d9f22c34df25eebe136))
+* **pr-review:** block only on likely findings and narrow late re-reviews ([#788](https://github.com/alexfayers/llm-prompts/issues/788)) ([4573174](https://github.com/alexfayers/llm-prompts/commit/457317431b5578928a2d9cd09e4cc8e178c11041))
+* **prompts:** trigger session-end on a "thanks" only when it closes the work ([#858](https://github.com/alexfayers/llm-prompts/issues/858)) ([ce17a53](https://github.com/alexfayers/llm-prompts/commit/ce17a53ba530418be366d96664a78b85ef310968))
+* remove the attic feature ([#761](https://github.com/alexfayers/llm-prompts/issues/761)) ([83e89ea](https://github.com/alexfayers/llm-prompts/commit/83e89ea9ef4e20489c52ba2eb10f61751d05cb68))
+* remove the lsp feature ([#762](https://github.com/alexfayers/llm-prompts/issues/762)) ([bb42491](https://github.com/alexfayers/llm-prompts/commit/bb424911539b26b20371372e08e43f38d4ff1632))
+* **settings:** add a settings command that prints and checks the config ([#757](https://github.com/alexfayers/llm-prompts/issues/757)) ([d4d2105](https://github.com/alexfayers/llm-prompts/commit/d4d2105a52022c7bcbac147e178f1c05ba9d4d44))
+* **settings:** add an interactive editor for the config's settings ([#764](https://github.com/alexfayers/llm-prompts/issues/764)) ([fd02594](https://github.com/alexfayers/llm-prompts/commit/fd0259439cd58b7cabd84a9ec111ce4f7f05d2ed))
+* **settings:** edit plugin frontmatter_overrides in the settings editor ([#833](https://github.com/alexfayers/llm-prompts/issues/833)) ([d80f6a5](https://github.com/alexfayers/llm-prompts/commit/d80f6a5e2938638c6aee92565b7faeea97781aaa))
+* **settings:** edit the tools, plugins and per-repo review limits in the settings editor ([#793](https://github.com/alexfayers/llm-prompts/issues/793)) ([5396b20](https://github.com/alexfayers/llm-prompts/commit/5396b20a33df9a29350f700d5fbfedf09b18bb44))
+* **settings:** load, check and save the config file keeping its comments ([#754](https://github.com/alexfayers/llm-prompts/issues/754)) ([6ce0120](https://github.com/alexfayers/llm-prompts/commit/6ce01205b7fdb84a6f536d76f5efc3add6c65910))
+* **setup:** clone git-sourced tools locally and point their source at the clone ([#753](https://github.com/alexfayers/llm-prompts/issues/753)) ([b91ced2](https://github.com/alexfayers/llm-prompts/commit/b91ced2297f904f914d47722b91e45f99c829d4e))
+* **telemetry:** send cline-hooks and mcp-memory versions on pi_session events ([#874](https://github.com/alexfayers/llm-prompts/issues/874)) ([ed460da](https://github.com/alexfayers/llm-prompts/commit/ed460da6a669a38b1382cedd24af2f1c006a789b))
+* **telemetry:** send one anonymous event per pi session ([#818](https://github.com/alexfayers/llm-prompts/issues/818)) ([d1d6d39](https://github.com/alexfayers/llm-prompts/commit/d1d6d39a363246fd35fa34392978d63cfae72b08))
+* **telemetry:** send the cause when update stops on a source sync failure ([#877](https://github.com/alexfayers/llm-prompts/issues/877)) ([265ff25](https://github.com/alexfayers/llm-prompts/commit/265ff2596e1304a66f59471aeeef76c7c7dec761))
+* **telemetry:** send tool versions on exception events ([#875](https://github.com/alexfayers/llm-prompts/issues/875)) ([11516bc](https://github.com/alexfayers/llm-prompts/commit/11516bcfacdb0b2f14c9c18ed2fb7ad477e75bdb))
+* **telemetry:** send workflow time split, review rounds and time to PR ([#885](https://github.com/alexfayers/llm-prompts/issues/885)) ([47cb56a](https://github.com/alexfayers/llm-prompts/commit/47cb56ae347e07999119bc96d4da5bf2a7b5a4ef))
+* treat a "btw" message as side work and remove //btw ([#769](https://github.com/alexfayers/llm-prompts/issues/769)) ([1451a0e](https://github.com/alexfayers/llm-prompts/commit/1451a0ec7d09bc1200935ec242496163fe19f382))
+* **watch:** stop gh-pr on a PR label with --until label=GLOB ([#839](https://github.com/alexfayers/llm-prompts/issues/839)) ([9692ba5](https://github.com/alexfayers/llm-prompts/commit/9692ba5a5f9d157dc38e930695d15dda6af6c450))
+* **watch:** stop gh-pr on merge conflicts with --until conflicts ([#845](https://github.com/alexfayers/llm-prompts/issues/845)) ([8e791aa](https://github.com/alexfayers/llm-prompts/commit/8e791aa69dd1f212c2090924a2f2dc4e46b40d43))
+
+
+### Bug Fixes
+
+* **benchmark:** keep another run's variant builds while it uses them ([#868](https://github.com/alexfayers/llm-prompts/issues/868)) ([8880d61](https://github.com/alexfayers/llm-prompts/commit/8880d6162d89acdd87477f81fa6328532ff0cd42))
+* **benchmark:** leave npm debug logs out of the variant audit ([#797](https://github.com/alexfayers/llm-prompts/issues/797)) ([5e29360](https://github.com/alexfayers/llm-prompts/commit/5e29360f63751c984be1178bb0d5476537f4f4bb))
+* **benchmark:** let the audit accept the guard interpreter path ([#811](https://github.com/alexfayers/llm-prompts/issues/811)) ([d48cc81](https://github.com/alexfayers/llm-prompts/commit/d48cc81306eabed26434920b5c19d5fbf1ff70ac))
+* **checkpoint:** rewind nudge honours AWS_BEDROCK_FORCE_CACHE ([#739](https://github.com/alexfayers/llm-prompts/issues/739)) ([0640c04](https://github.com/alexfayers/llm-prompts/commit/0640c046cbbd53418bae148dcbbcdfe9b4132d0d))
+* **contribute:** report an unreadable PR body file instead of crashing ([#867](https://github.com/alexfayers/llm-prompts/issues/867)) ([be564a8](https://github.com/alexfayers/llm-prompts/commit/be564a8c88d0b3ee6c71246c78a7dfd8fb108847))
+* **guards:** count a just run with a uv_run override as the test run ([#860](https://github.com/alexfayers/llm-prompts/issues/860)) ([66b95dd](https://github.com/alexfayers/llm-prompts/commit/66b95dd9535a07f3e4d844a35a005a173805d2da))
+* **guards:** let gh and git help calls past the primary checkout guard ([#846](https://github.com/alexfayers/llm-prompts/issues/846)) ([5622e55](https://github.com/alexfayers/llm-prompts/commit/5622e5509a3d312f77d3ff18506dfae6311c0f5a))
+* **guards:** say when a test run was not counted because its shell line did not parse ([#879](https://github.com/alexfayers/llm-prompts/issues/879)) ([7341e45](https://github.com/alexfayers/llm-prompts/commit/7341e455f09862df773e893b87fb90aeca3ab392))
+* **hooks:** keep update-check stamps in the cline-hooks data dir ([#880](https://github.com/alexfayers/llm-prompts/issues/880)) ([e190da2](https://github.com/alexfayers/llm-prompts/commit/e190da23dc4b1d7fa32807a5e57dc5aa75b2db66))
+* **install:** hide npm output from pi package installs unless verbose or failed ([#857](https://github.com/alexfayers/llm-prompts/issues/857)) ([c453750](https://github.com/alexfayers/llm-prompts/commit/c4537507c8bd48d11deac01bad3a0b03bce5532f))
+* **install:** keep managed pi packages when update runs outside the installed tool ([#863](https://github.com/alexfayers/llm-prompts/issues/863)) ([c998efb](https://github.com/alexfayers/llm-prompts/commit/c998efb594f0811d86bababae4a07610242fe4fe))
+* **install:** name unreplaced variables once per source in the size guard report ([#856](https://github.com/alexfayers/llm-prompts/issues/856)) ([cffcbbe](https://github.com/alexfayers/llm-prompts/commit/cffcbbecab40dd7bf36960819c717695e44086ee))
+* **install:** print one short line when another pi shadows the managed pi ([#855](https://github.com/alexfayers/llm-prompts/issues/855)) ([8078f02](https://github.com/alexfayers/llm-prompts/commit/8078f0284132d7c199ffa6bd816b1e83c62672d3))
+* **just:** install pnpm dependencies before the TypeScript checks ([#751](https://github.com/alexfayers/llm-prompts/issues/751)) ([45a4784](https://github.com/alexfayers/llm-prompts/commit/45a4784357e629259e2f497ee84a3c744f73df24))
+* **lead:** skip manual rebases and landing checkouts for one-PR-per-writer work ([#825](https://github.com/alexfayers/llm-prompts/issues/825)) ([ad61f29](https://github.com/alexfayers/llm-prompts/commit/ad61f2978cafef56b1f948ca5097c8d8fe2c85bd))
+* **network:** stop git network calls waiting on a terminal credential prompt ([#847](https://github.com/alexfayers/llm-prompts/issues/847)) ([b32e62b](https://github.com/alexfayers/llm-prompts/commit/b32e62b2541d080d093a8c97ff1c68e48632d5d7))
+* **pi-context:** deliver a fork result that ends after main's last turn when main settles ([#851](https://github.com/alexfayers/llm-prompts/issues/851)) ([0a5a23a](https://github.com/alexfayers/llm-prompts/commit/0a5a23a31f42d3376f014c00f80bf697b3eb82f4))
+* **pi-context:** deliver fork results at the end of a busy turn and start a cancelled fork once ([#841](https://github.com/alexfayers/llm-prompts/issues/841)) ([4b34c42](https://github.com/alexfayers/llm-prompts/commit/4b34c42023da9175875c49114537efd69327c61a))
+* **pi-context:** give read-only forks a shared agent dir so they share a cache prefix ([#778](https://github.com/alexfayers/llm-prompts/issues/778)) ([f67daee](https://github.com/alexfayers/llm-prompts/commit/f67daeebb00b795c98cae9d501a0fb33da49ec89))
+* **pi-context:** keep a session without a UI waiting for the children of a cold stub ([#887](https://github.com/alexfayers/llm-prompts/issues/887)) ([f8ee62b](https://github.com/alexfayers/llm-prompts/commit/f8ee62bc9673835983ee86dab49c760d6c8ee8c6))
+* **pi-context:** keep the lead's tool loadout in a warm fork's seed after a compaction ([#866](https://github.com/alexfayers/llm-prompts/issues/866)) ([0c08491](https://github.com/alexfayers/llm-prompts/commit/0c0849191f41823c5fdd6fc1011e1cff51baab2b))
+* **pi-context:** land a writer that pushed a branch it switched to by that push ([#881](https://github.com/alexfayers/llm-prompts/issues/881)) ([02c3ecd](https://github.com/alexfayers/llm-prompts/commit/02c3ecdd2440403775bfbdef6a90c4b765e039c7))
+* **pi-context:** restore only the latest entry of each needed run ([#796](https://github.com/alexfayers/llm-prompts/issues/796)) ([72d296d](https://github.com/alexfayers/llm-prompts/commit/72d296d4b663220cb726b3c9bcfd36fbc94200e0))
+* **pi-context:** say cache time left in the warm-fork hint and keep escalation phrases whole ([#850](https://github.com/alexfayers/llm-prompts/issues/850)) ([8a87e06](https://github.com/alexfayers/llm-prompts/commit/8a87e06b2ab43a51c3f921b117388ac59147eeb3))
+* **pi-context:** steer fork results into the lead's turn with a live fork count ([#836](https://github.com/alexfayers/llm-prompts/issues/836)) ([6738c58](https://github.com/alexfayers/llm-prompts/commit/6738c5881c4bedb428997abb039c97bb92239e60))
+* **pi-context:** summarise large forks through the model registry ([#828](https://github.com/alexfayers/llm-prompts/issues/828)) ([34f1221](https://github.com/alexfayers/llm-prompts/commit/34f12214ee1226926a5d09cda0e816b179386f9e))
+* **pi:** read process lists larger than 1 MiB in pane-reaper ([#861](https://github.com/alexfayers/llm-prompts/issues/861)) ([a4b2461](https://github.com/alexfayers/llm-prompts/commit/a4b24615019daa5913704621940a101cd062e934))
+* **pi:** read the running pi version from the pi on PATH ([#844](https://github.com/alexfayers/llm-prompts/issues/844)) ([676dd20](https://github.com/alexfayers/llm-prompts/commit/676dd209cbe979aba67c16547e824946f1754d3e))
+* quiet two noisy update output lines ([#854](https://github.com/alexfayers/llm-prompts/issues/854)) ([99c34bd](https://github.com/alexfayers/llm-prompts/commit/99c34bdd7427cd218627b5d1e5b28eb12c157958))
+* read background git status without taking the index lock ([#882](https://github.com/alexfayers/llm-prompts/issues/882)) ([b38f816](https://github.com/alexfayers/llm-prompts/commit/b38f816e8933f517deb0c8bd82e0f4e93046d983))
+* **watch:** report author PRs that merged or closed between polls ([#820](https://github.com/alexfayers/llm-prompts/issues/820)) ([cc3184f](https://github.com/alexfayers/llm-prompts/commit/cc3184f1285ef2100c45339dc440c5002f649845))
+
+
+### Performance Improvements
+
+* batch git reads and ref writes in contribute sync ([#741](https://github.com/alexfayers/llm-prompts/issues/741)) ([2f3378c](https://github.com/alexfayers/llm-prompts/commit/2f3378c1797d7af0d66e267cbc8fd88b6a918c6d))
+* **pi-context:** scan the session for open asks once per branch change in the widget ([#794](https://github.com/alexfayers/llm-prompts/issues/794)) ([685ed75](https://github.com/alexfayers/llm-prompts/commit/685ed75e68dd4dc899962876ba442c125f65ef9d))
+* **test:** split pytest workers between concurrent test runs ([#712](https://github.com/alexfayers/llm-prompts/issues/712)) ([a58ecb8](https://github.com/alexfayers/llm-prompts/commit/a58ecb8fdf0a9bff576d7767ec29924c460f6254))
+
+
+### Miscellaneous Chores
+
+* **deps:** update all non-major dependencies ([#758](https://github.com/alexfayers/llm-prompts/issues/758)) ([089f377](https://github.com/alexfayers/llm-prompts/commit/089f377cfa990f53845aef638c53478d54e90f8c))
+* **deps:** update all non-major dependencies ([#760](https://github.com/alexfayers/llm-prompts/issues/760)) ([ae523df](https://github.com/alexfayers/llm-prompts/commit/ae523dff6989aec1921e320e8f0953801aa07b7a))
+* **deps:** update all non-major dependencies ([#829](https://github.com/alexfayers/llm-prompts/issues/829)) ([5ab2e77](https://github.com/alexfayers/llm-prompts/commit/5ab2e77298954be29e058a561bc19ac40a54d865))
+* **deps:** update all non-major dependencies ([#888](https://github.com/alexfayers/llm-prompts/issues/888)) ([4d45565](https://github.com/alexfayers/llm-prompts/commit/4d45565040814756cc72931b126ea224a39f9491))
+* **deps:** update pi extensions ([#830](https://github.com/alexfayers/llm-prompts/issues/830)) ([0c77b8f](https://github.com/alexfayers/llm-prompts/commit/0c77b8f451885e24c00dc515071cb870998fd071))
+* **deps:** update pi extensions ([#873](https://github.com/alexfayers/llm-prompts/issues/873)) ([2abc286](https://github.com/alexfayers/llm-prompts/commit/2abc2865b6137cb2ef76fe9d4ace13d01e3a2ed4))
+* **deps:** update pi extensions ([#889](https://github.com/alexfayers/llm-prompts/issues/889)) ([0e7cde5](https://github.com/alexfayers/llm-prompts/commit/0e7cde500bd9fa9d3e41aa3e9e0402741aa08f9d))
+* **deps:** update pi extensions ([#891](https://github.com/alexfayers/llm-prompts/issues/891)) ([3f0b373](https://github.com/alexfayers/llm-prompts/commit/3f0b3735e37229fcb393f4c3947ba9138795474d))
+
 ## [0.9.0](https://github.com/alexfayers/llm-prompts/compare/v0.8.0...v0.9.0) (2026-11-26)
 
 
