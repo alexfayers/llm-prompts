@@ -46,7 +46,7 @@ test("the results digest scans the session once per branch change across many di
 	const background = new Background({ sendMessage: () => undefined } as any, registry);
 	background.view = view;
 	const digested = background.digest();
-	assert.equal(digested?.split("\n").length, FINISHED_RUNS);
+	assert.equal(digested?.split("\n").length, FINISHED_RUNS + 1);
 	for (let digest = 0; digest < FRAMES; digest++) {
 		registry.update(`r${digest}`, { unread: `[fork run${digest}] again` });
 		background.digest();

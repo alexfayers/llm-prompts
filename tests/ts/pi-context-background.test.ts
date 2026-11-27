@@ -103,6 +103,21 @@ describe("Background", () => {
 		await cancelled;
 	});
 
+	test("hold waits past a stub that ended done for the child it starts", async () => {
+		background.cancel("a");
+		background.cancel("b");
+		registry.start(run("stub", { stub: true }));
+		let held = true;
+		const hold = background.hold().then(() => (held = false));
+		background.finish(ctx(), "stub", { state: "done" }, "");
+		registry.start(run("child"));
+		await new Promise((resolve) => setImmediate(resolve));
+		assert.equal(held, true);
+		background.finish(ctx(), "child", done(), "OUTCOME done ref:rc");
+		await hold;
+		assert.equal(background.digest(), "[fork child done] ref rc\n0 forks still running.");
+	});
+
 	test("hold ends after its maximum time even while a run is live", async () => {
 		await background.hold(10);
 		assert.equal(registry.live().length, 2);
