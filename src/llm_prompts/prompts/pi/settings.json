@@ -16,11 +16,11 @@
     "npm:pi-ask-user@0.17.2",
     { "source": "npm:tower-do@0.8.2", "extensions": [] },
     "npm:pi-notify@1.5.0",
-    "npm:@gotgenes/pi-permission-system@44.0.1",
+    "npm:@gotgenes/pi-permission-system@44.0.2",
     "npm:pi-zentui@0.34.0",
     "npm:pi-web-access@0.48.0",
     "npm:pi-compact-tools@0.18.0",
-    "npm:@aliou/pi-processes@0.13.8",
+    "npm:@aliou/pi-processes@0.13.9",
     "npm:pi-context-usage@2.1.0",
     "npm:pi-cache-insight@1.1.0"
   ]
