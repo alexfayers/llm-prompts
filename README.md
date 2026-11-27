@@ -135,7 +135,7 @@
 | tests/benchmark/test\_bench\_report.py                                        |      251 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_runner\_events.py                                |       96 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_sandbox\_policy.py                               |       78 |        0 |    100% |           |
-| tests/benchmark/test\_bench\_scenarios.py                                     |      152 |        0 |    100% |           |
+| tests/benchmark/test\_bench\_scenarios.py                                     |      163 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_scheduler.py                                     |      332 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_tool\_dirs.py                                    |       36 |        0 |    100% |           |
 | tests/benchmark/test\_bench\_types.py                                         |       15 |        0 |    100% |           |
@@ -212,7 +212,7 @@
 | tests/watch/test\_runner.py                                                   |       84 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
 | tests/worker\_share.py                                                        |       54 |        1 |     98% |        21 |
-| **TOTAL**                                                                     | **37666** |  **843** | **98%** |           |
+| **TOTAL**                                                                     | **37677** |  **843** | **98%** |           |
 
 
 ## Setup coverage badge
