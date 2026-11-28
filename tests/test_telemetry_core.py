@@ -326,3 +326,62 @@ def test_another_exception_sends_its_type_with_a_fixed_message() -> None:
 @pytest.mark.parametrize(("count", "bucket"), [(0, "0"), (7, "1-9"), (42, "10-99")])
 def test_bucket_names_the_power_of_ten_range(count: int, bucket: str) -> None:
     assert telemetry_core.bucket(count) == bucket
+
+
+def test_overlay_versions_names_only_overlays_whose_source_is_recorded_public(
+    isolated_config_dir: Path,
+) -> None:
+    config = {
+        "tools": [
+            {"name": "pub", "source": "git+https://github.com/acme/pub.git"},
+            {"name": "acme-private", "source": "git@github.com:acme/private.git"},
+        ]
+    }
+    (isolated_config_dir / "telemetry.json").write_text(
+        json.dumps({"public_sources": ["git+https://github.com/acme/pub.git"]})
+    )
+
+    assert set(telemetry_core.overlay_versions(config)) == {"pub"}
+
+
+def test_record_public_sources_keeps_github_repos_an_anonymous_lookup_finds_public(
+    isolated_config_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    public = "git+https://github.com/acme/pub.git"
+    config = {
+        "tools": [
+            {"name": "pub", "source": public},
+            {"name": "acme-private", "source": "git@github.com:acme/private.git"},
+            {"name": "local", "source": "~/synthetic/overlay"},
+        ]
+    }
+
+    def lookup(request: Any, **_: Any) -> MagicMock:
+        if not request.full_url.endswith("/repos/acme/pub"):
+            raise OSError("HTTP 404")
+        assert not request.has_header("Authorization")
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b'{"private": false}'
+        return response
+
+    for name in OPT_OUTS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("urllib.request.urlopen", lookup)
+
+    telemetry_core.record_public_sources(config["tools"])
+
+    assert _state(isolated_config_dir)["public_sources"] == [public]
+
+
+def test_record_public_sources_looks_nothing_up_when_telemetry_is_off(
+    isolated_config_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DO_NOT_TRACK", "1")
+    urlopen = MagicMock()
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+
+    telemetry_core.record_public_sources(
+        [{"name": "pub", "source": "git+https://github.com/acme/pub.git"}]
+    )
+
+    urlopen.assert_not_called()
