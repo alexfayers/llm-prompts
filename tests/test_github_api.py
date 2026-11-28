@@ -214,6 +214,18 @@ class TestPrList:
         assert [v["cursor"] for v in variables] == [None, "c1"]
         assert variables[0]["q"] == "repo:octo/widgets is:pr author:octocat is:open"
 
+    def test_selects_the_auto_merge_request_subfield(
+        self, fake_github: FakeGitHub, octo_repo: Path
+    ) -> None:
+        fake_github.on_graphql(
+            "viewer { login", {"data": {"viewer": {"login": "octocat"}}}
+        )
+        fake_github.on_graphql("autoMergeRequest { enabledAt }", _page([1], None))
+
+        prs = github_api.pr_list(octo_repo, "is:open", ["number", "autoMergeRequest"])
+
+        assert [pr["number"] for pr in prs] == [1]
+
 
 class TestPrView:
     def test_flattens_commits(self, fake_github: FakeGitHub, octo_repo: Path) -> None:

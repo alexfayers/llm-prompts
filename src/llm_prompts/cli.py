@@ -1681,6 +1681,11 @@ def _run_command(
         metavar="NUMBER",
         help="Only update this PR; repeatable.",
     )
+    update_parser.add_argument(
+        "--include-auto-merge",
+        action="store_true",
+        help="Also update PRs with auto-merge on, which are otherwise left to the rebase queue.",
+    )
 
     ready_parser = contribute_sub.add_parser(
         "ready",
@@ -2068,7 +2073,9 @@ def _run_command(
         if args.contribute_command == "ready":
             return run_ready(targets[0].repo, args.number)
         if args.contribute_command == "update":
-            return update_targets(targets, args.apply, args.numbers or ())
+            return update_targets(
+                targets, args.apply, args.numbers or (), args.include_auto_merge
+            )
         sync_options = _sync_options(args)
         linking = sync_options.depends_on or sync_options.no_depends_on
         return sync_targets(

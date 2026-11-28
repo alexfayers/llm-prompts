@@ -57,7 +57,7 @@ class TestOpenPrBody:
             "--author",
             "@me",
             "--json",
-            "number,state,url,headRefName,isDraft,reviewDecision,body,headRefOid,baseRefName,title",
+            "number,state,url,headRefName,isDraft,reviewDecision,body,headRefOid,baseRefName,title,autoMergeRequest",
             stdout=json.dumps(
                 [
                     {
@@ -82,7 +82,7 @@ class TestOpenPrBody:
 class TestOpenPrHeads:
     JSON_FIELDS = (
         "number,state,url,headRefName,isDraft,reviewDecision,body,"
-        "headRefOid,baseRefName,title"
+        "headRefOid,baseRefName,title,autoMergeRequest"
     )
 
     def _list(self, fake: FakeSubprocess, extra: dict[str, Any]) -> None:
@@ -424,6 +424,70 @@ class TestRunUpdate:
         updates = contribute_remote.fake.matching("gh", "pr", "update-branch")
         assert [argv[3] for argv in updates] == ["4"]
 
+    def test_auto_merge_pr_is_skipped_with_the_reason(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        self._behind(contribute_remote, 3, 4)
+        contribute_remote.auto_merge(3)
+
+        status, out = self._run(contribute_remote, tmp_path, capsys, True)
+
+        updates = contribute_remote.fake.matching("gh", "pr", "update-branch")
+        assert [argv[3] for argv in updates] == ["4"]
+        assert (
+            "#3: skipped, auto-merge is on so the rebase queue updates it "
+            "(pass --include-auto-merge to update it)" in out
+        )
+        assert status == 0
+
+    def test_dry_run_lists_skipped_auto_merge_prs(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        self._behind(contribute_remote, 3)
+        contribute_remote.auto_merge(3)
+
+        status, out = self._run(contribute_remote, tmp_path, capsys, False)
+
+        assert out == (
+            "#3: skipped, auto-merge is on so the rebase queue updates it "
+            "(pass --include-auto-merge to update it)\n"
+            "nothing to update\n"
+        )
+        assert status == 0
+
+    def test_include_auto_merge_updates_auto_merge_prs(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+    ) -> None:
+        self._behind(contribute_remote, 3)
+        contribute_remote.auto_merge(3)
+
+        contribute.run_update(tmp_path, True, include_auto_merge=True)
+
+        updates = contribute_remote.fake.matching("gh", "pr", "update-branch")
+        assert [argv[3] for argv in updates] == ["3"]
+
+    def test_named_auto_merge_pr_is_updated(
+        self,
+        contribute_remote: ContributeRemote,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        self._behind(contribute_remote, 3)
+        contribute_remote.auto_merge(3)
+
+        self._run(contribute_remote, tmp_path, capsys, True, (3,))
+
+        updates = contribute_remote.fake.matching("gh", "pr", "update-branch")
+        assert [argv[3] for argv in updates] == ["3"]
+
     def test_nothing_behind_says_so(
         self,
         contribute_remote: ContributeRemote,
@@ -591,7 +655,7 @@ def test_update_targets_runs_each_target_in_order_and_returns_max_status(
 
     assert status == 1
     assert seen == [Path("/repo-a"), Path("/repo-b")]
-    assert mock.call_args.args[1:] == (True, (3,))
+    assert mock.call_args.args[1:] == (True, (3,), False)
     assert capsys.readouterr().out == "[alpha]\n\n[beta]\n\n"
 
 

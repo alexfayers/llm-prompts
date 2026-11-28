@@ -127,10 +127,14 @@ def login() -> str:
     return str(graphql("query { viewer { login } }", {})["viewer"]["login"])
 
 
+_FIELD_SELECTIONS = {
+    "commits": _COMMITS_SELECTION,
+    "autoMergeRequest": "autoMergeRequest { enabledAt }",
+}
+
+
 def _selection(fields: Sequence[str]) -> str:
-    return " ".join(
-        _COMMITS_SELECTION if field == "commits" else field for field in fields
-    )
+    return " ".join(_FIELD_SELECTIONS.get(field, field) for field in fields)
 
 
 def pr_list(repo: Path, qualifier: str, fields: Sequence[str]) -> list[dict[str, Any]]:

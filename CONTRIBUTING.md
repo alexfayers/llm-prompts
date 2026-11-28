@@ -60,7 +60,7 @@ llm-prompts contribute sync --apply
 - When main moves, open PRs with auto-merge on are rebased onto it automatically.
 - Never commit to local `main` for a recorded worktree. `sync` replaces its copy.
 - When a copy conflicts with `main`, `sync --apply` and `update` leave `main` as it is. For an ordinary copy they print a worktree path. Resolve the files there, `git add` them, then rerun. For the copy of a merged PR they fail with the conflict and keep no worktree.
-- Repos merge by squash only and require PRs up to date with `main`. `llm-prompts contribute update --apply` rebases your open PRs behind `main`.
+- Repos merge by squash only and require PRs up to date with `main`. `llm-prompts contribute update --apply` rebases your open PRs behind `main`, leaving auto-merge PRs to the rebase queue unless `--include-auto-merge` or `--pr` names them.
 - `contribute` uses `gh` when installed. Otherwise it calls the GitHub API with `GH_TOKEN`, `GITHUB_TOKEN`, or your git credential helper's github.com token. Without gh and without push access, fork first: rename `origin` to `upstream` and add your fork as `origin`.
 
 For everything else, push your own branch and open a PR against `main` as usual.

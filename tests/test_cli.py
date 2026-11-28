@@ -2913,7 +2913,22 @@ class TestContributeSubcommand:
             patch("llm_prompts.contribute.update_targets", return_value=0) as mock,
         ):
             assert main() == 0
-        mock.assert_called_once_with(targets, True, ())
+        mock.assert_called_once_with(targets, True, (), False)
+
+    def test_update_include_auto_merge_reaches_update_targets(
+        self, tmp_path: Path
+    ) -> None:
+        targets = [_ContributeTarget("tool-a", tmp_path / "a", "src/pkg/prompts/")]
+        with (
+            patch(
+                "sys.argv",
+                ["llm-prompts", "contribute", "update", "--include-auto-merge"],
+            ),
+            patch("llm_prompts.cli._contribute_targets", return_value=targets),
+            patch("llm_prompts.contribute.update_targets", return_value=0) as mock,
+        ):
+            assert main() == 0
+        mock.assert_called_once_with(targets, False, (), True)
 
     def test_update_repeated_pr_flags_reach_update_targets(
         self, tmp_path: Path
@@ -2931,7 +2946,7 @@ class TestContributeSubcommand:
             patch("llm_prompts.contribute.update_targets", return_value=0) as mock,
         ):
             assert main() == 0
-        assert mock.call_args.args[1:] == (False, [3, 4])
+        assert mock.call_args.args[1:] == (False, [3, 4], False)
 
     def test_ready_without_tool_errors(
         self, capsys: pytest.CaptureFixture[str]
