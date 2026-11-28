@@ -114,7 +114,6 @@ jobs:
       - run: just test-ts
 
   upgrade-smoke:
-    if: github.head_ref != 'release-please--branches--main'
     needs: unblocked
     permissions:
       contents: read
