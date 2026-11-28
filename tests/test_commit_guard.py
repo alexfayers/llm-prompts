@@ -204,9 +204,27 @@ class TestCommitGuard:
     ) -> None:
         ran(hook, command, success=False)
         ran(hook, f"{command}; echo rc=$?")
+        ran(hook, f"{command}; echo rc=$?", tool_result="rc=1\n")
+        ran(hook, f"{command}; echo rc=$? > out", tool_result="")
+        ran(hook, f"{command}; echo rc=$?; echo rc=0", tool_result="rc=1\nrc=0\n")
+        ran(hook, f"{command}; echo rc=$?", tool_result="rc=0\nrc=1\n")
+        ran(hook, f"cat old.log && {command}; echo rc=$?", tool_result="rc=0\nrc=1\n")
+        ran(hook, f"cat old.log && {command}; echo rc=$?", tool_result="rc=0\n")
+        ran(hook, "just; echo exit=$?", tool_result="exit=0\n")
         assert hook("PreShell", command="git commit -m x") is not None
 
         ran(hook, f"{command} && echo ok")
+        assert hook("PreShell", command="git commit -m x") is None
+
+    @pytest.mark.parametrize("name", ["rc", "exit"])
+    def test_a_redirected_run_counts_when_its_echoed_exit_code_is_zero(
+        self, hook: RunHook, name: str
+    ) -> None:
+        ran(
+            hook,
+            f"cd . && just > j.log 2>&1; echo {name}=$?",
+            tool_result=f"{name}=0\n\n[output truncated]\n",
+        )
         assert hook("PreShell", command="git commit -m x") is None
 
     def test_a_run_chained_before_a_command_that_may_change_files_does_not_count(
