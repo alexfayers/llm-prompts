@@ -64,7 +64,7 @@
 | src/llm\_prompts/guards/shell\_rules.py                                       |      126 |        5 |     96% |112, 168, 178-179, 217 |
 | src/llm\_prompts/handoff\_block.py                                            |       13 |        1 |     92% |        20 |
 | src/llm\_prompts/home.py                                                      |       90 |        4 |     96% |163-164, 179, 184 |
-| src/llm\_prompts/hooks.py                                                     |      349 |       19 |     95% |94, 99, 203, 216-217, 441-442, 468-470, 558, 566-567, 629, 644-645, 664-666 |
+| src/llm\_prompts/hooks.py                                                     |      355 |       19 |     95% |95, 100, 204, 217-218, 442-443, 469-471, 564, 572-573, 635, 650-651, 670-672 |
 | src/llm\_prompts/install.py                                                   |     2399 |      127 |     95% |198, 598, 707, 717, 721-722, 1100, 1263-1265, 1317, 1320-1322, 1337, 1363, 1365, 1421-1422, 1586, 1595-1597, 1671, 1683, 1695, 1777-1778, 1860-1862, 1978, 1993-1994, 2076-2077, 2079, 2144, 2381-2382, 2450-2452, 2494, 2581-2583, 2885, 2989, 3048, 3404-3406, 3490, 3493, 3596-3611, 3621-3625, 3644-3651, 3703, 3782, 3791, 3860-3861, 3863-3864, 3911, 3915, 4051, 4244, 4283-4284, 4422, 4548-4561, 4574-4576, 4738, 4784, 4789, 4864-4867, 4934-4936, 4968, 5119, 5236, 5256-5257, 5447, 5509, 5511, 5923, 5927, 5940 |
 | src/llm\_prompts/jsonfile.py                                                  |       23 |        0 |    100% |           |
 | src/llm\_prompts/main\_sync.py                                                |      542 |       21 |     96% |190-191, 272-273, 358, 500-501, 635, 710, 737-738, 936, 955-956, 974, 991, 1004, 1008, 1044, 1109, 1175 |
@@ -94,7 +94,7 @@
 | src/llm\_prompts/size\_report.py                                              |      207 |        2 |     99% |  207, 209 |
 | src/llm\_prompts/skill\_injection.py                                          |       37 |        2 |     95% |    33, 36 |
 | src/llm\_prompts/squash\_subject.py                                           |        6 |        0 |    100% |           |
-| src/llm\_prompts/telemetry.py                                                 |      112 |        2 |     98% |   255-256 |
+| src/llm\_prompts/telemetry.py                                                 |      116 |        2 |     98% |   273-274 |
 | src/llm\_prompts/telemetry\_core.py                                           |      224 |        5 |     98% |72-73, 186-187, 423 |
 | src/llm\_prompts/tool\_paths.py                                               |       14 |        0 |    100% |           |
 | src/llm\_prompts/watch/\_\_init\_\_.py                                        |        0 |        0 |    100% |           |
@@ -163,7 +163,7 @@
 | tests/test\_github\_api.py                                                    |      133 |        0 |    100% |           |
 | tests/test\_handoff\_block.py                                                 |       14 |        0 |    100% |           |
 | tests/test\_home.py                                                           |      163 |        0 |    100% |           |
-| tests/test\_hooks.py                                                          |      747 |        0 |    100% |           |
+| tests/test\_hooks.py                                                          |      769 |        0 |    100% |           |
 | tests/test\_inspect\_range\_script.py                                         |       89 |        0 |    100% |           |
 | tests/test\_install.py                                                        |     1748 |        0 |    100% |           |
 | tests/test\_install\_agents.py                                                |      668 |        0 |    100% |           |
@@ -212,7 +212,7 @@
 | tests/watch/test\_runner.py                                                   |       84 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       51 |        0 |    100% |           |
 | tests/worker\_share.py                                                        |       54 |        1 |     98% |        21 |
-| **TOTAL**                                                                     | **38311** |  **823** | **98%** |           |
+| **TOTAL**                                                                     | **38343** |  **823** | **98%** |           |
 
 
 ## Setup coverage badge
