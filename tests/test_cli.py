@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 from collections.abc import Set as AbstractSet
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 from unittest.mock import ANY, MagicMock, call, patch
@@ -2546,6 +2547,26 @@ class TestCheckSubcommand:
         ):
             main()
         mock_check.assert_called_once_with()
+
+
+class TestVersionFlag:
+    def test_version_prints_the_installed_version_without_plugins_or_subprocesses(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch("sys.argv", ["llm-prompts", "--version"]),
+            patch("subprocess.run", side_effect=AssertionError) as mock_run,
+            patch("llm_prompts.cli.telemetry.Run.begin") as mock_begin,
+            patch(
+                "llm_prompts.watch.core.registry.sources", side_effect=AssertionError
+            ) as mock_sources,
+        ):
+            exit_code = run_capturing_exit(main)
+        assert exit_code == 0
+        assert capsys.readouterr().out == f"llm-prompts {version('llm-prompts')}\n"
+        mock_run.assert_not_called()
+        mock_begin.assert_not_called()
+        mock_sources.assert_not_called()
 
 
 class TestSizeReportSubcommand:
