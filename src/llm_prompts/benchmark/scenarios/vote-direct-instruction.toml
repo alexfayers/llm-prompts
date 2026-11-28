@@ -1,0 +1,26 @@
+id = "vote-direct-instruction"
+level = "light"
+workspace = "tiny-py"
+project = "demo"
+prompt = "I am telling you directly: the demo retry policy memory is exactly right, keep relying on it. Vote it up in memory. Do not change any files."
+
+[[memory]]
+name = "knowledge/demo-retry-policy"
+entityType = "knowledge"
+observations = ["Retries in the demo project use exponential backoff 2^n seconds, max 3 retries."]
+relations = [{ target = "project/demo", type = "part-of" }]
+
+# A direct user instruction earns one +3 vote. The server records the vote without the entity name.
+[[check]]
+kind = "tool_called"
+name = "memory\\.vote"
+args_regex = "(?m)^\\+?3$"
+
+[[check]]
+kind = "files_unchanged"
+path = "."
+
+[[check]]
+kind = "not_called"
+name = "memory\\.vote"
+args_regex = "(?m)^\\+?[12]$"
