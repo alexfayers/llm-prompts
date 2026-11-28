@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import shlex
 import subprocess
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
@@ -47,6 +50,10 @@ _HEREDOC_BODY = re.compile(
 )
 _UNPARSED_RUN = "\0unparsed"
 _UNPARSED_NOTE = "The test run was not counted: the shell line did not parse (for example, a heredoc). Run the test command alone."
+_BEFORE_RUN = "\0before run"
+_UNSTAGED_FIXES = "\0unstaged fixes"
+_START_UNSEEN = "\0start unseen"
+_MARKS_KEPT = 64
 _IN_PROGRESS = ("rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD")
 
 
@@ -212,6 +219,102 @@ def _just_with_uv_run(words: list[str]) -> bool:
     return value[:2] == ["uv", "run"] and _UV_RUN_OPTIONS.issuperset(value[2:])
 
 
+def _decided(
+    commands: list[ParsedCommand], line: str, tool_result: str | None, *, started: bool
+) -> list[int]:
+    """Return the indexes of the unpiped steps whose result decides the shell call: the last step, every step joined by `&&` that only read-only steps writing no file follow, or the only step redirected to a file and followed by `; echo <name>=$?` whose last `<name>=` line in the result is `<name>=0`, unchecked where the call has only started."""
+    steps = [index for index, cmd in enumerate(commands) if cmd.name != "cd"]
+    echoed = _ECHOED_EXIT.search(line)
+    if steps and echoed and not _UNCHAINED.search(line[: echoed.start()]):
+        codes = re.findall(rf"^{echoed[1]}=(\d+)$", tool_result or "", re.MULTILINE)
+        if (
+            len(steps) != 2
+            or not commands[steps[0]].redirect_outputs
+            or not (started or codes[-1:] == ["0"])
+        ):
+            return []
+        steps = steps[:1]
+    elif _UNCHAINED.search(line):
+        steps = steps[-1:]
+    return [
+        index
+        for index in steps
+        if not commands[index].piped_from
+        and not any(other.piped_from is commands[index] for other in commands)
+        and not any(
+            later.name not in _READ_ONLY_AFTER_TEST
+            or any(target != "/dev/null" for target in later.redirect_outputs)
+            for later in commands[index + 1 :]
+        )
+    ]
+
+
+def _step(
+    commands: list[ParsedCommand], index: int, roots: list[str]
+) -> tuple[Path, str, list[str]] | None:
+    """Return the repo top level, directory and gate words of the command at ``index``, or None outside a repo."""
+    cmd = commands[index]
+    directory = effective_cwd(commands, index, roots[0] if roots else os.getcwd())
+    repo = _repo(directory)
+    return repo and (repo[0], directory, _gate_words([cmd.name, *cmd.words]))
+
+
+def _gate_run(
+    commands: list[ParsedCommand], index: int, roots: list[str]
+) -> tuple[Path, str, list[str]] | None:
+    """Return the repo top level, directory and words of the command at ``index`` where it is the repo's test run, else None."""
+    step = _step(commands, index, roots)
+    gate = step and _test_gate(step[0])
+    return step if step and gate and gate.matches(step[2]) else None
+
+
+def _git_diff(toplevel: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+    """Run `git diff` between the index and working tree of the repo, without external diff or text conversion."""
+    return subprocess.run(
+        ["git", "-C", str(toplevel), "diff", "--no-ext-diff", "--no-textconv", *args],
+        capture_output=True,
+        check=False,
+        env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+    )
+
+
+def _unstaged(toplevel: Path) -> dict[str, str]:
+    """Return a hash of the working tree content of each tracked file with unstaged changes."""
+    # shortcut: hashes every unstaged file on each marked shell call, so large unstaged binaries slow each call; hash by stat (size, mtime) once that cost shows up.
+    names = os.fsdecode(
+        subprocess.run(
+            ["git", "-C", str(toplevel), "diff-files", "--name-only", "-z"],
+            capture_output=True,
+            check=False,
+        ).stdout
+    )
+    return {
+        name: hashlib.sha256(
+            b"file\0" + path.read_bytes() if path.is_file() else b"none"
+        ).hexdigest()
+        for name in names.split("\0")
+        if name and (path := toplevel / name)
+    }
+
+
+def _add_mark(key: str, snapshot: dict[str, str], old: str | None) -> str:
+    """Return the stored start snapshots with the snapshot under the key as the latest, keeping the latest ones."""
+    marks = json.loads(old or "{}")
+    marks.pop(key, None)
+    marks[key] = snapshot
+    return json.dumps(dict(list(marks.items())[-_MARKS_KEPT:]))
+
+
+def _drop_mark(key: str, old: str | None) -> str:
+    """Return the stored start snapshots without the one under the key."""
+    return json.dumps({k: v for k, v in json.loads(old or "{}").items() if k != key})
+
+
+def _change_paths(added: set[str], removed: set[str], old: str | None) -> str:
+    """Return the stored paths with the added ones and without the removed ones."""
+    return json.dumps(sorted({*json.loads(old or "[]"), *added} - removed))
+
+
 def _dirty(toplevel: Path) -> bool:
     """Report whether the repo has uncommitted or untracked changes."""
     status = subprocess.run(
@@ -270,6 +373,7 @@ class CommitGuard(HooksPlugin):
         if hook_name == PluginScope.PRE_SHELL:
             command = cast("str", kwargs.get("command") or "")
             roots = cast("list[str]", kwargs.get("workspace_roots") or [])
+            self._mark(command, roots)
             return self._skip(command, roots) or self._check(command, roots)
         if (
             hook_name == CanonicalHook.POST_TOOL_USE
@@ -289,56 +393,61 @@ class CommitGuard(HooksPlugin):
         workspace_roots: list[str],
         tool_result: str | None,
     ) -> HookResult | None:
-        """Store a receipt where a passing call's result shows the repo's test command passed: it ran last, every step was joined by `&&` and only read-only steps that write no file follow it, or the only step is redirected to a file and followed by `; echo <name>=$?` whose last `<name>=` line in the result is `<name>=0`."""
+        """Store a receipt where a passing call's result shows the repo's test command passed as a step that decides the call. The start of the run must have been seen. The files it left changed but unstaged are stored, so a commit waits until they are staged."""
         line = parameters.get("command", "")
         if "action" in parameters:
             return None
         commands = _parse(line)
         if commands is None:
             return self._unparsed(line, workspace_roots)
-        steps = [index for index, cmd in enumerate(commands) if cmd.name != "cd"]
-        if not steps:
-            return None
-        echoed = _ECHOED_EXIT.search(line)
-        if echoed and not _UNCHAINED.search(line[: echoed.start()]):
-            codes = re.findall(rf"^{echoed[1]}=(\d+)$", tool_result or "", re.MULTILINE)
-            if (
-                len(steps) != 2
-                or not commands[steps[0]].redirect_outputs
-                or codes[-1:] != ["0"]
-            ):
-                return None
-            decided = steps[:1]
-        else:
-            decided = steps if not _UNCHAINED.search(line) else steps[-1:]
-        for index in decided:
-            cmd = commands[index]
-            if cmd.piped_from or any(other.piped_from is cmd for other in commands):
-                continue
-            if any(
-                later.name not in _READ_ONLY_AFTER_TEST
-                or any(target != "/dev/null" for target in later.redirect_outputs)
-                for later in commands[index + 1 :]
-            ):
-                continue
-            directory = effective_cwd(
-                commands,
-                index,
-                workspace_roots[0] if workspace_roots else os.getcwd(),
-            )
-            repo = _repo(directory)
-            gate = repo and _test_gate(repo[0])
-            words = _gate_words([cmd.name, *cmd.words])
-            if repo and gate and gate.matches(words):
-                receipts = ReceiptStore()
-                receipts.record(repo[0], tree_fingerprint(repo[0]))
+        for index in _decided(commands, line, tool_result, started=False):
+            run = _gate_run(commands, index, workspace_roots)
+            if run:
+                toplevel, directory, words = run
+                receipts, key = ReceiptStore(), _run_key(*run)
+                marks = receipts.update(
+                    toplevel,
+                    _BEFORE_RUN,
+                    partial(_drop_mark, key),
+                )
+                started = json.loads(marks or "{}").get(key)
+                if started is None:
+                    receipts.record(toplevel, tree_fingerprint(toplevel), _START_UNSEEN)
+                    return None
+                after = _unstaged(toplevel)
+                changed = {
+                    name
+                    for name in started.keys() | after.keys()
+                    if started.get(name) != after.get(name)
+                }
+                if changed:
+                    receipts.update(
+                        toplevel,
+                        _UNSTAGED_FIXES,
+                        partial(_change_paths, changed, set()),
+                    )
+                receipts.record(toplevel, tree_fingerprint(toplevel))
                 receipts.record(
-                    repo[0],
-                    _run_fingerprint(repo[0]),
-                    _run_key(repo[0], directory, words),
+                    toplevel,
+                    _run_fingerprint(toplevel),
+                    _run_key(toplevel, directory, words),
                 )
                 return None
         return None
+
+    def _mark(self, command: str, workspace_roots: list[str]) -> None:
+        """Store the repo's unstaged changes at the start of each step that may decide the shell line, keeping the latest marks per repo, so the record of a test run finds the files it changed."""
+        commands = _parse(command) or []
+        for index in _decided(commands, command, None, started=True):
+            step = commands[index].name not in _READ_ONLY_AFTER_TEST and _step(
+                commands, index, workspace_roots
+            )
+            if step:
+                ReceiptStore().update(
+                    step[0],
+                    _BEFORE_RUN,
+                    partial(_add_mark, _run_key(*step), _unstaged(step[0])),
+                )
 
     def _unparsed(self, line: str, workspace_roots: list[str]) -> HookResult | None:
         """Mark the repo's current files and return a note where an unparsed line names the repo's test command."""
@@ -359,22 +468,12 @@ class CommitGuard(HooksPlugin):
         commands = _parse(command)
         if not commands or len(commands) > 1 or _UNCHAINED.search(command):
             return None
-        cmd = commands[0]
-        directory = effective_cwd(
-            commands, 0, workspace_roots[0] if workspace_roots else os.getcwd()
-        )
-        repo = _repo(directory)
-        gate = repo and _test_gate(repo[0])
-        words = _gate_words([cmd.name, *cmd.words])
+        run = _gate_run(commands, 0, workspace_roots)
         if (
-            not repo
-            or not gate
-            or cmd.redirect_outputs
-            or not gate.matches(words)
+            not run
+            or commands[0].redirect_outputs
             or not ReceiptStore().fresh(
-                repo[0],
-                _run_fingerprint(repo[0]),
-                _run_key(repo[0], directory, words),
+                run[0], _run_fingerprint(run[0]), _run_key(*run)
             )
         ):
             return None
@@ -407,10 +506,28 @@ class CommitGuard(HooksPlugin):
             if gate.error:
                 return HookResult(block=gate.error)
             receipts, fingerprint = ReceiptStore(), tree_fingerprint(repo[0])
+            fixes = json.loads(receipts.stored(repo[0], _UNSTAGED_FIXES) or "[]")
+            if fixes:
+                pathspecs = [f":(literal){name}" for name in fixes]
+                if _git_diff(repo[0], "--quiet", "--", *pathspecs).returncode:
+                    named = ", ".join(
+                        f"`{os.fsencode(name).decode(errors='backslashreplace')}`"
+                        for name in fixes
+                    )
+                    return HookResult(
+                        block=f"MUST stage the fixes the test run made to {named} before git {verb}."
+                    )
+                receipts.update(
+                    repo[0],
+                    _UNSTAGED_FIXES,
+                    partial(_change_paths, set(), set(fixes)),
+                )
             if not receipts.fresh(repo[0], fingerprint):
                 unparsed = (
                     " A test run on these files was not counted: its shell line did not parse."
                     if receipts.fresh(repo[0], fingerprint, _UNPARSED_RUN)
+                    else " A test run on these files was not counted: the guard did not see it start. Run the tests again."
+                    if receipts.fresh(repo[0], fingerprint, _START_UNSEEN)
                     else ""
                 )
                 return HookResult(

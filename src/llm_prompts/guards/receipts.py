@@ -8,7 +8,7 @@ import json
 import os
 import subprocess
 import uuid
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from .. import home
@@ -22,7 +22,7 @@ def _git(toplevel: Path, *args: str) -> str | None:
     ran = subprocess.run(
         ["git", "-C", str(toplevel), *args], capture_output=True, check=False
     )
-    return ran.stdout.decode() if ran.returncode == 0 else None
+    return os.fsdecode(ran.stdout) if ran.returncode == 0 else None
 
 
 def _tool_version(tool: str, toplevel: Path) -> bytes | None:
@@ -71,13 +71,13 @@ def tree_fingerprint(toplevel: Path, tools: Iterable[str] = ()) -> str:
                 return uuid.uuid4().hex
             content = b"commit\0" + head.encode()
         elif path.is_symlink():
-            content = b"link\0" + os.readlink(path).encode()
+            content = b"link\0" + os.fsencode(os.readlink(path))
         elif path.is_file():
             executable = b"x" if os.access(path, os.X_OK) else b"-"
             content = b"file" + executable + b"\0" + path.read_bytes()
         else:
             continue
-        digest.update(name.encode() + b"\0" + hashlib.sha256(content).digest())
+        digest.update(os.fsencode(name) + b"\0" + hashlib.sha256(content).digest())
     return digest.hexdigest()
 
 
@@ -104,14 +104,27 @@ class ReceiptStore:
         return receipts
 
     def record(self, toplevel: Path, fingerprint: str, command: str = "") -> None:
-        """Store the fingerprint of a passing test run in the repo, or of its run of the command, holding a lock so parallel sessions keep each other's receipts."""
+        """Store the fingerprint of a passing test run in the repo, or of its run of the command."""
+        self.update(toplevel, command, lambda _: fingerprint)
+
+    def update(
+        self, toplevel: Path, command: str, change: Callable[[str | None], str]
+    ) -> str | None:
+        """Replace the value stored for the repo, or for the command run in it, with ``change`` of it, holding a lock so parallel sessions keep each other's values, and return the old value."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._path.with_name(f"{self._path.name}.lock").open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
+            receipts = self._read()
+            old = receipts.get(_key(toplevel, command))
             write_json_atomic(
-                self._path, {**self._read(), _key(toplevel, command): fingerprint}
+                self._path, {**receipts, _key(toplevel, command): change(old)}
             )
+            return old
+
+    def stored(self, toplevel: Path, command: str = "") -> str | None:
+        """Return the value stored for the repo, or for the command run in it, or None."""
+        return self._read().get(_key(toplevel, command))
 
     def fresh(self, toplevel: Path, fingerprint: str, command: str = "") -> bool:
         """Report whether the last passing test run in the repo, or of the command, saw this fingerprint."""
-        return self._read().get(_key(toplevel, command)) == fingerprint
+        return self.stored(toplevel, command) == fingerprint
