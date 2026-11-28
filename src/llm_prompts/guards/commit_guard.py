@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 TEST_COMMAND_ENV = "PI_CONTEXT_TEST_CMD"
 _PROMPTS = Path(__file__).parent.parent / "prompts"
 _UNCHAINED = re.compile(r";|\||\n|(?<![&<>])&(?![&>])")
+_ECHOED_EXIT = re.compile(r";\s*echo\s+(\w+)=\$\?\s*$")
 _READ_ONLY_AFTER_TEST = frozenset({"echo", "printf", "true", "pwd", "ls", "cat"})
 _UV_RUN_OPTIONS = frozenset({"--frozen", "--locked", "--offline", "--no-sync"})
 _LOCKFILE_TOOLS = {
@@ -278,13 +279,17 @@ class CommitGuard(HooksPlugin):
             return self._record(
                 cast("dict[str, str]", kwargs.get("parameters") or {}),
                 cast("list[str]", kwargs.get("workspace_roots") or []),
+                cast("str | None", kwargs.get("tool_result")),
             )
         return None
 
     def _record(
-        self, parameters: dict[str, str], workspace_roots: list[str]
+        self,
+        parameters: dict[str, str],
+        workspace_roots: list[str],
+        tool_result: str | None,
     ) -> HookResult | None:
-        """Store a receipt where a passing call's result shows the repo's test command passed: it ran last, or every step was joined by `&&` and only read-only steps that write no file follow it."""
+        """Store a receipt where a passing call's result shows the repo's test command passed: it ran last, every step was joined by `&&` and only read-only steps that write no file follow it, or the only step is redirected to a file and followed by `; echo <name>=$?` whose last `<name>=` line in the result is `<name>=0`."""
         line = parameters.get("command", "")
         if "action" in parameters:
             return None
@@ -294,7 +299,18 @@ class CommitGuard(HooksPlugin):
         steps = [index for index, cmd in enumerate(commands) if cmd.name != "cd"]
         if not steps:
             return None
-        decided = steps if not _UNCHAINED.search(line) else steps[-1:]
+        echoed = _ECHOED_EXIT.search(line)
+        if echoed and not _UNCHAINED.search(line[: echoed.start()]):
+            codes = re.findall(rf"^{echoed[1]}=(\d+)$", tool_result or "", re.MULTILINE)
+            if (
+                len(steps) != 2
+                or not commands[steps[0]].redirect_outputs
+                or codes[-1:] != ["0"]
+            ):
+                return None
+            decided = steps[:1]
+        else:
+            decided = steps if not _UNCHAINED.search(line) else steps[-1:]
         for index in decided:
             cmd = commands[index]
             if cmd.piped_from or any(other.piped_from is cmd for other in commands):
@@ -398,7 +414,7 @@ class CommitGuard(HooksPlugin):
                     else ""
                 )
                 return HookResult(
-                    block=f"MUST run {gate.label} and see it pass on the current files before git {verb}. A run counts with a prefix such as `cd <dir> &&` or `timeout`, or redirected to a file. It doesn't count when piped, or when anything follows it except `&& echo`, `printf`, `true`, `pwd`, `ls` or `cat` writing to no file except /dev/null.{unparsed}"
+                    block=f"MUST run {gate.label} and see it pass on the current files before git {verb}. A run counts with a prefix such as `cd <dir> &&` or `timeout`, or redirected to a file. It also counts redirected and followed by `; echo rc=$?` where the tool result shows `rc=0`, or followed by `&& echo`, `printf`, `true`, `pwd`, `ls` or `cat` writing to no file except /dev/null. It doesn't count when piped or followed by anything else.{unparsed}"
                 )
         return None
 
