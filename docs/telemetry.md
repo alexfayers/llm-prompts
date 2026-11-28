@@ -1,11 +1,11 @@
 # Telemetry
 
-Every command sends one anonymous event to PostHog (EU). llm-prompts sends, writes and prints nothing while no agents are installed or when run with `--root`. The first run with an agent installed sends nothing and prints a notice. Turn it off with `DO_NOT_TRACK=1`, `LLM_PROMPTS_NO_TELEMETRY=1`, `CI`, or `enabled = false` under `[telemetry]` in `config.toml`. `LLM_PROMPTS_TELEMETRY_DEBUG=1` prints each event and sends it before the command exits.
+Every command sends one anonymous event to PostHog (EU). PostHog derives a coarse location from the sender's IP address. llm-prompts sends, writes and prints nothing while no agents are installed or when run with `--root`. The first run with an agent installed sends nothing and prints a notice. Turn it off with `DO_NOT_TRACK=1`, `LLM_PROMPTS_NO_TELEMETRY=1`, `CI`, or `enabled = false` under `[telemetry]` in `config.toml`. `LLM_PROMPTS_TELEMETRY_DEBUG=1` prints each event and sends it before the command exits.
 
 Each event has:
 
 - the command and the sorted names of its flags (never their values)
-- agent names, overlay count, and the version of each overlay installed from a github.com source
+- agent names, overlay count, and the version of each overlay installed from a public github.com repo. Install and update check each overlay's repo with an anonymous GitHub API call
 - tool versions before and after: the installed `commit` of a remote source, `base` (the newest `origin/main` commit the install contains), `release` (the newest stable `vX.Y.Z` tag a local checkout contains, or a remote source's installed package version with a `v` prefix), and for local checkouts `local`, `dirty` and `ahead`. A local commit not on `origin/main` is never sent
 - outcome, duration, OS, Python version and schema version
 - for an early exit, one code from a fixed list, never the message
@@ -34,6 +34,6 @@ A fork's event carries its role and model tier, so fork count, runtime and cost 
 
 Each llm-prompts command run with agents installed and without `--root` writes `telemetry.json` next to `config.toml`. It holds your opt-out choice, when you made it, and the install id. mcp-memory reads this file, so it follows the same opt-out and sends its events under the same install id. The file itself is never sent.
 
-Never sent: paths, usernames, hostnames, repo names, names of overlays not installed from github.com, prompt or config contents.
+Never sent: paths, usernames, hostnames, repo names, names of overlays not installed from a public github.com repo, prompt or config contents.
 
 [Public totals](https://eu.posthog.com/shared/qdUBSB6XFctcGy5jzZ4TCqeNN3UXcQ)

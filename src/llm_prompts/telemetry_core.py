@@ -46,7 +46,9 @@ _ROOT = Path(__file__).parent.parent
 TRACKED = ("llm-prompts", "cline-hooks", "mcp-memory")
 _CHECKOUT_KEY = "checkout"
 _INSTALLED_KEY = "installed"
-_GITHUB_SOURCE = re.compile(r"^(git\+)?(https://|ssh://git@|git@)github\.com[/:]")
+_GITHUB_REPO = re.compile(
+    r"^(?:git\+)?(?:https://|ssh://git@|git@)github\.com[/:]([^/]+)/([^/@#?]+?)(?:\.git)?(?:[@#?].*)?$"
+)
 
 
 def is_set(name: str) -> bool:
@@ -147,6 +149,43 @@ def post(body: str) -> bool:
         if is_set(DEBUG_ENV):
             print(f"telemetry error: {error}", file=sys.stderr)
         return False
+
+
+def _is_public(source: str) -> bool:
+    """Return whether an anonymous GitHub API lookup finds the source's repo public."""
+    import ssl
+    from urllib.request import Request, urlopen
+
+    import truststore
+
+    if not (match := _GITHUB_REPO.match(source)):
+        return False
+    request = Request(f"https://api.github.com/repos/{match[1]}/{match[2]}")
+    try:
+        with urlopen(
+            request,
+            timeout=SEND_TIMEOUT_SECONDS,
+            context=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
+        ) as response:
+            return json.loads(response.read()).get("private") is False
+    except Exception as error:
+        if is_set(DEBUG_ENV):
+            print(f"telemetry visibility check error: {error}", file=sys.stderr)
+        return False
+
+
+def record_public_sources(tools: list[dict[str, Any]]) -> None:
+    """Record which overlay sources are public GitHub repos, the only overlays events name."""
+    if not enabled():
+        return
+    update_state(
+        public_sources=[
+            source
+            for t in tools
+            if t.get("name") not in TRACKED
+            and _is_public(source := str(t.get("source")))
+        ]
+    )
 
 
 def _git(repo: str, *args: str) -> str:
@@ -263,13 +302,12 @@ def versions(
 
 
 def overlay_versions(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Return the version entry of every overlay installed from GitHub or a local path."""
-    local = _local_sources(config)
+    """Return the version entry of every overlay whose source the last install or update found public."""
+    public = read_state().get("public_sources", [])
     return {
-        n: local.get(n) or _installed(n)
+        n: _installed(n)
         for t in config.get("tools", [])
-        if (n := t.get("name")) not in TRACKED
-        and _GITHUB_SOURCE.match(str(t.get("source")))
+        if (n := t.get("name")) not in TRACKED and str(t.get("source")) in public
     }
 
 

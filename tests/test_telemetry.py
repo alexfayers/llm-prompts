@@ -90,13 +90,16 @@ def test_event_carries_only_allowlisted_properties(
     monkeypatch: pytest.MonkeyPatch,
     fake_subprocess: FakeSubprocess,
 ) -> None:
+    public = "git+https://github.com/acme/pub.git"
     tools = [
         {"name": "cline-hooks", "source": "/synthetic/hooks"},
         {"name": "acme-secret-overlay", "source": "~/synthetic/overlay"},
         {"name": "acme-internal", "source": "git+ssh://git.internal.example/acme"},
-        {"name": "pub-overlay", "source": "git+https://github.com/acme/pub.git"},
+        {"name": "acme-private-gh", "source": "git@github.com:acme/private.git"},
+        {"name": "pub-overlay", "source": public},
         {"name": "local-pub", "source": "~/synthetic/pub"},
     ]
+    telemetry_core.update_state(public_sources=[public])
     monkeypatch.setattr("llm_prompts.telemetry.read_config", lambda: {"tools": tools})
     monkeypatch.setattr("llm_prompts.telemetry_core.run", fake_subprocess.run)
     fake_subprocess.on("status", returncode=128)
@@ -131,7 +134,7 @@ def test_event_carries_only_allowlisted_properties(
         "ahead": None,
         "release": "v0.4.0",
     }
-    assert properties["overlay_count"] == 4
+    assert properties["overlay_count"] == 5
     assert properties["overlays"] == {
         "pub-overlay": {
             "commit": A,
@@ -144,6 +147,7 @@ def test_event_carries_only_allowlisted_properties(
     }
     assert properties["schema"] == 2
     assert "acme-internal" not in json.dumps(properties)
+    assert "acme-private" not in json.dumps(properties)
     assert "acme-secret" not in json.dumps(properties)
     assert "synthetic" not in json.dumps(properties)
 

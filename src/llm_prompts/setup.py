@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 from urllib.parse import unquote, urlparse
 
-from . import home
+from . import home, telemetry_core
 from .exit_reason import ExitReason
 from .network import run_with_retries
 from .squash_subject import squash_pr_number
@@ -1234,4 +1234,5 @@ def run_setup(
         print("\nAll tools installed successfully.")
         write_pyproject_stamp()
         write_checkout_stamp(tools)
+        telemetry_core.record_public_sources(tools)
     return changed

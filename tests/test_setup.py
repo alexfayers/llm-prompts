@@ -498,6 +498,16 @@ class TestRunSetup:
         assert "--reinstall-package" not in second
         assert not fake_subprocess.matching("uv", "tool", "install")
 
+    def test_records_which_overlay_sources_are_public(
+        self, tools_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        record = MagicMock()
+        monkeypatch.setattr("llm_prompts.telemetry_core.record_public_sources", record)
+
+        setup.run_setup()
+
+        record.assert_called_once_with(setup._load_config())
+
     def test_upgrade_reports_a_change_unless_uv_says_there_was_nothing_to_upgrade(
         self, tools_dir: Path, fake_subprocess: FakeSubprocess
     ) -> None:
