@@ -279,6 +279,11 @@ def c(name: str, **args: str) -> ToolCall:
     return ToolCall(name, args, True)
 
 
+def vote(size: int) -> ToolCall:
+    """A vote as the memory server records it, without the entity name."""
+    return ToolCall("memory.vote", {"project": "demo", "vote": size}, True)
+
+
 def bash(command: str) -> ToolCall:
     return c("Bash", command=command)
 
@@ -351,6 +356,10 @@ CASES: dict[str, tuple[str, bool, dict[str, str], tuple[ToolCall, ...], tuple[Me
     "subagent-finding-codemode-write": ("write-subagent-finding", False, {}, (sub("codemode", code="await tools.mcp__memory__add_observations({})"),), FINDING, None),
     "location-ok": ("write-location", True, {}, (), PLACED, None),
     "location-a-folder": ("write-location", False, {}, (), (replace(PLACED[0], location="/ws"),), None),
+    "vote-direct-ok": ("vote-direct-instruction", True, {}, (vote(3),), (), None),
+    "vote-direct-weak": ("vote-direct-instruction", False, {}, (vote(1),), (), None),
+    "vote-direct-looped": ("vote-direct-instruction", False, {}, (vote(1), vote(1), vote(1)), (), None),
+    "vote-direct-weak-then-strong": ("vote-direct-instruction", False, {}, (vote(1), vote(3)), (), None),
 }
 # fmt: on
 
