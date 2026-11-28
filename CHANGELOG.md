@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.11.0](https://github.com/alexfayers/llm-prompts/compare/v0.10.0...v0.11.0) (2026-11-28)
+
+
+### Features
+
+* **benchmark:** add a scenario for the vote size on a direct user instruction ([#910](https://github.com/alexfayers/llm-prompts/issues/910)) ([a73d271](https://github.com/alexfayers/llm-prompts/commit/a73d271be404e7453523bc4d243a6309e9725a06))
+* **benchmark:** add memory scenarios for delegate writes and entity location ([#894](https://github.com/alexfayers/llm-prompts/issues/894)) ([ac65839](https://github.com/alexfayers/llm-prompts/commit/ac65839dc0b46be7e6a56db41e4f944ec3274c96))
+* **benchmark:** measure context fold on and off with --feature ([#776](https://github.com/alexfayers/llm-prompts/issues/776)) ([8a50565](https://github.com/alexfayers/llm-prompts/commit/8a50565d70cec48861e737871fc70de6615a8395))
+* **benchmark:** measure fork start-up time and MCP server cost ([#922](https://github.com/alexfayers/llm-prompts/issues/922)) ([1890003](https://github.com/alexfayers/llm-prompts/commit/1890003f5b7d9af2d91e0815d9e41b9aab8f38fa))
+* **benchmark:** name each check in results.jsonl and report.json ([#912](https://github.com/alexfayers/llm-prompts/issues/912)) ([ecc5850](https://github.com/alexfayers/llm-prompts/commit/ecc58503d2e25465eb12df4e5b299e4ca8e9d81d))
+* **cli:** add --version ([#914](https://github.com/alexfayers/llm-prompts/issues/914)) ([1b279cb](https://github.com/alexfayers/llm-prompts/commit/1b279cb0c2da688fa32321c869dd42619f23c50d))
+* **contribute:** leave auto-merge PRs to the rebase queue in update ([#908](https://github.com/alexfayers/llm-prompts/issues/908)) ([f70670e](https://github.com/alexfayers/llm-prompts/commit/f70670ebc8ab75d6608ed5ce873287679af66721))
+* **guards:** block inline python and node scripts that parse JSON ([#890](https://github.com/alexfayers/llm-prompts/issues/890)) ([b0fa5e4](https://github.com/alexfayers/llm-prompts/commit/b0fa5e48c872bfff333305c7af7e41c7e7f2d7c6))
+* **pi-context:** turn the MCP proxy on by default in forks ([#907](https://github.com/alexfayers/llm-prompts/issues/907)) ([7a44c72](https://github.com/alexfayers/llm-prompts/commit/7a44c726c92c36ef94bfdb090f1fd056365985ff))
+* **tower-do-slim:** remove open board tasks idle for more than 3 days on session start (+1 more) ([#911](https://github.com/alexfayers/llm-prompts/issues/911)) ([d76c09e](https://github.com/alexfayers/llm-prompts/commit/d76c09e04400f70410fadfcda499d97579cafdfb))
+* **uninstall:** remove companion tool hooks and memory service ([#884](https://github.com/alexfayers/llm-prompts/issues/884)) ([13834f0](https://github.com/alexfayers/llm-prompts/commit/13834f0c022bed6fe0ebb8c4895562fe370fceeb))
+* **update:** warn when local main holds commits on no open PR ([#902](https://github.com/alexfayers/llm-prompts/issues/902)) ([e66c8e0](https://github.com/alexfayers/llm-prompts/commit/e66c8e086b5af4c206688a465c61cae8029b532b))
+
+
+### Bug Fixes
+
+* **guards:** count a test run followed by `; echo rc=$?` that prints rc=0 ([#915](https://github.com/alexfayers/llm-prompts/issues/915)) ([07ef7f4](https://github.com/alexfayers/llm-prompts/commit/07ef7f4395e5723d3414277af0ac679ddc07977a))
+* **guards:** do not count a test run that left its own fixes unstaged ([#919](https://github.com/alexfayers/llm-prompts/issues/919)) ([85296a9](https://github.com/alexfayers/llm-prompts/commit/85296a9cf045324a4c9f946e5e11df25696f314d))
+* **watch:** reject an --until value a field never takes ([#921](https://github.com/alexfayers/llm-prompts/issues/921)) ([d9645ba](https://github.com/alexfayers/llm-prompts/commit/d9645ba90d480ca14c6e55b34e36c2de13d83c4b))
+
+
+### Miscellaneous Chores
+
+* **deps:** update pi extensions ([#893](https://github.com/alexfayers/llm-prompts/issues/893)) ([ae3c544](https://github.com/alexfayers/llm-prompts/commit/ae3c54491eeb66287c479551878aed38d4e68f1b))
+
 ## [0.10.0](https://github.com/alexfayers/llm-prompts/compare/v0.9.0...v0.10.0) (2026-11-27)
 
 
