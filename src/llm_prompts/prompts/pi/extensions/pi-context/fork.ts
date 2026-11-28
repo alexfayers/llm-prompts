@@ -1,5 +1,5 @@
 // Adds the fork tool, which runs a delegate on a copy of this session that shares its prompt cache, or a cold worker on a cheaper model. A writer works in a git worktree and lands its commits through the merge queue.
-// Config: llmPrompts.forks in pi settings: mcpProxy (true: a fork uses main's MCP servers), privateNames (regex of names a writer's commits may not land with), memoryMax and cpuQuota (systemd limits of one fork and its processes, defaulting to a quarter of the host's memory and half its cores), readMcp (array of {tool, argsMatch?}: extra MCP tools, as globs, a delegate may call when each argsMatch regex matches the whole of that string argument), checkInMinutes (see background.ts)
+// Config: llmPrompts.forks in pi settings: mcpProxy (unset: a fork uses main's MCP servers, except a warm fork a reload resumed, which starts its own; true: always main's; false: a warm fork starts its own), privateNames (regex of names a writer's commits may not land with), memoryMax and cpuQuota (systemd limits of one fork and its processes, defaulting to a quarter of the host's memory and half its cores), readMcp (array of {tool, argsMatch?}: extra MCP tools, as globs, a delegate may call when each argsMatch regex matches the whole of that string argument), checkInMinutes (see background.ts)
 // Config: pi-context/forks.json in the pi agent directory, written by llm-prompts install from `max_live` under `[forks]` in config.toml (most forks that run at once, default 10: more wait in a queue)
 // Env: PI_CONTEXT_CHILD (set in a delegate, which cannot fork unless its role is team), PI_CONTEXT_ROLE and PI_CONTEXT_RUN_ID (set for a delegate), PI_CONTEXT_WORKTREE (set for a writer: its worktree, for hooks that resolve the session repo), PI_CONTEXT_SHARED (off: the fork tool has no shared, sharedFiles and tasks)
 import { createHash, randomUUID } from "node:crypto";
@@ -111,6 +111,9 @@ const STUB_SUFFIX = 'That is all the shared context. Once you have read it, call
 const QUEUED_ENTRIES = "queued-entries.json";
 
 const DEFAULT_MAX_LIVE = 10;
+
+/** Whether a warm fork runs its MCP calls in main: unless `mcpProxy` is false, and, when it is unset, not after a reload, because main runs no MCP call until it next runs a tool. */
+const proxiesMcp = (mcpProxy: boolean | undefined, reloaded = false) => mcpProxy ?? !reloaded;
 
 type ForkSettings = { mcpProxy?: boolean; privateNames?: string; readMcp?: unknown } & ForkLimits;
 
@@ -575,7 +578,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 	const skipsQueue = (stubId?: string) => stubId !== undefined && fanOut.has(stubId) && slots.live < maxLive() + FANOUT_EXTRA;
 
 	/** Starts the delegate of a registered run in the background, which reports its end to `background`. */
-	function startRun(ctx: ExtensionToolContext, run: { id: string; name: string; ref: string; role: Role; tree?: Worktree; target?: string; model?: string; files: string }, delegate: Pick<DelegateOptions, "entries" | "message" | "resume">, immediate = false) {
+	function startRun(ctx: ExtensionToolContext, run: { id: string; name: string; ref: string; role: Role; tree?: Worktree; target?: string; model?: string; files: string; reloaded?: boolean }, delegate: Pick<DelegateOptions, "entries" | "message" | "resume">, immediate = false) {
 		const { id: runId, name, ref, tree } = run;
 		const merged: { landing?: Landing } = {};
 		const runSignal = background.track(runId);
@@ -585,7 +588,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			merged.landing = await land({ tree, first: replyEvent(turn), privateNames: forkSettings(pi).privateNames, signal: runSignal, rebase: isTeam() });
 		});
 		const forward = process.env.PI_CONTEXT_CHILD ? readBridgeConfig(process.env.PI_CONTEXT_CHILD) : undefined;
-		const mcp = !forward && (run.model || run.role.name === "team" || forkSettings(pi).mcpProxy === true) ? async (tool: string, args: unknown) => {
+		const mcp = !forward && (run.model || run.role.name === "team" || proxiesMcp(forkSettings(pi).mcpProxy, run.reloaded)) ? async (tool: string, args: unknown) => {
 			const mainTools = await mainToolsContext();
 			if (!mainTools) return { content: [{ type: "text" as const, text: "Main has not run a tool since its reload, so it cannot run this MCP call yet, so retry in a minute." }], isError: true };
 			const { result, isError } = await mainTools.executeTool(tool, args, { signal: runSignal });
@@ -808,7 +811,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 	};
 	pi.registerTool(coldTool);
 	/** Restarts a lost run on its own session and worktree. */
-	async function resumeRun(ctx: ExtensionToolContext, run: Run & { files: string }, callId: string) {
+	async function resumeRun(ctx: ExtensionToolContext, run: Run & { files: string }, callId: string, reloaded = false) {
 		assertMayStart(ROLES[run.role as Role["name"]]);
 		background.resolveForkAsks(ctx, run.name);
 		if (run.tree) await restoreWorktree(run.tree);
@@ -816,7 +819,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		registry.update(run.id, { state: "running", endedAt: undefined, endedBy: undefined, queued: undefined });
 		const message = queued?.message ?? `${worktreeLine(run.tree)}Your session stopped before you finished. Continue the task from where you left off, and end by calling reply.`;
 		const delegate = queued ? { entries: JSON.parse(readText(path.join(run.files, QUEUED_ENTRIES)) ?? "[]") as SessionEntry[], message, resume: queued.resume } : { message, resume: true };
-		startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${callId}`, role: ROLES[run.role as Role["name"]], tree: run.tree, target: run.target, model: run.model, files: run.files }, delegate);
+		startRun(ctx, { id: run.id, name: run.name, ref: `rc-fork-${run.name}-${callId}`, role: ROLES[run.role as Role["name"]], tree: run.tree, target: run.target, model: run.model, files: run.files, reloaded }, delegate);
 	}
 
 	/** Gives a finished run a new task on its own session, model and role, in the background. */
@@ -914,7 +917,7 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		if ((process.env.PI_CONTEXT_CHILD && !isTeam()) || event.reason !== "reload" || !reloadRequested()) return;
 		const resumed: string[] = [];
 		for (const run of registry.all().filter((candidate) => isOwnRun(candidate) && candidate.endedBy === "reload" && canResume(candidate))) {
-			await resumeRun(ctx as ExtensionToolContext, { ...run, files: run.files! }, `reload-${run.id}`);
+			await resumeRun(ctx as ExtensionToolContext, { ...run, files: run.files! }, `reload-${run.id}`, true);
 			resumed.push(run.name);
 		}
 		if (resumed.length) pi.sendMessage({ customType: RESULTS_TYPE, content: `resumed forks: ${resumed.join(", ")}`, display: true }, { deliverAs: "nextTurn" });

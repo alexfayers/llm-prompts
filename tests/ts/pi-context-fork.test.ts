@@ -116,7 +116,6 @@ const STUB = path.join(import.meta.dirname, "fixtures/fork-stub.mjs");
 const agentDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pi-context-fork-")));
 after(() => fs.rmSync(agentDir, { recursive: true }));
 useEnv({ PI_CODING_AGENT_DIR: agentDir, PI_CONTEXT_CHILD: undefined });
-const PROXY_ON = { llmPrompts: { forks: { mcpProxy: true } } };
 let settings: object = {};
 let mainContext = 1000;
 let leadModel = "mod";
@@ -236,6 +235,7 @@ describe("fork tool", () => {
 	});
 
 	test("starts a reader child on the seed with main's model, thinking level and directory", async () => {
+		settings = { llmPrompts: { forks: { mcpProxy: false } } };
 		const { tool } = await fork({ task: "STUB_INSPECT" });
 		const seen = JSON.parse(tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
 		assert.deepEqual(seen.args.slice(0, 2), ["--mode", "rpc"]);
@@ -413,7 +413,6 @@ describe("fork tool", () => {
 	});
 
 	test("a setup failure leaves no files and no bridge socket behind", async () => {
-		settings = PROXY_ON;
 		const before = forkDirs();
 		const failed = (await fork({ task: "hi", name: "setup" }, process.cwd(), { activeTools: [], allTools: undefined as never })).tool;
 		assert.equal(failed.details.state, "failed");
@@ -931,13 +930,13 @@ describe("fork tool", () => {
 
 		describe("a fork that reload_now's reload resumed", () => {
 			const waitMs = MAIN_TOOLS_WAIT.ms;
+			beforeEach(() => void (settings = { llmPrompts: { forks: { mcpProxy: true } } }));
 			afterEach(() => void (MAIN_TOOLS_WAIT.ms = waitMs));
 
-			const resumeQueued = async (toolRuns: boolean, lateTool = false) => {
-				settings = PROXY_ON;
+			const resumeQueued = async (toolRuns: boolean, lateTool = false, task = "STUB_BRIDGE") => {
 				limit(1);
 				const { tools, sent, background, ctx, handlers, launch } = await start({ task: "STUB_HANG", name: "holder" });
-				await launch({ task: "STUB_BRIDGE", name: "waiting" });
+				await launch({ task, name: "waiting" });
 				background.shutdown();
 				registryOf().update(registryOf().all().find((run) => run.name === "holder")!.id, { state: "cancelled" });
 				const waiting = registryOf().all().find((run) => run.name === "waiting")!;
@@ -954,6 +953,13 @@ describe("fork tool", () => {
 				await eventually(() => sent.some(([message]) => message.content.startsWith("[fork waiting ")));
 				return sent.map(([message]) => message.content).find((content) => content.startsWith("[fork waiting "))!;
 			};
+
+			test("starts its own MCP servers when the mcpProxy setting is unset", async () => {
+				settings = {};
+				const digest = await resumeQueued(false, false, "STUB_INSPECT");
+				assert.match(digest, /"args":\[[^\]]*"--thinking","high"\]/);
+				assert.match(digest, /"readMcp":\[\]\}/);
+			});
 
 			test("reaches main's MCP tools once main has run a tool", async () => {
 				assert.match(await resumeQueued(true), /echo: ran mcp__semble__search/);
@@ -1192,7 +1198,6 @@ describe("fork tool", () => {
 	});
 
 	describe("with the MCP proxy", () => {
-		beforeEach(() => void (settings = PROXY_ON));
 
 		test("starts the child without MCP servers and describes main's tools and servers section in the handshake", async () => {
 			const { tool } = await fork({ task: "STUB_INSPECT" });
@@ -1207,8 +1212,16 @@ describe("fork tool", () => {
 			assert.match(tool.content[0].text, /^echo: ran mcp__semble__search {"query":"q"}/);
 		});
 
-		test("leaves the child's own MCP servers on when the proxy is off", async () => {
+		test("is on when the mcpProxy setting is unset", async () => {
 			settings = {};
+			const { tool } = await fork({ task: "STUB_INSPECT" });
+			const seen = JSON.parse(tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
+			assert.equal(seen.args.at(-1), "--no-mcp");
+			assert.ok(seen.handshake.bridge);
+		});
+
+		test("leaves the child's own MCP servers on when the proxy is off", async () => {
+			settings = { llmPrompts: { forks: { mcpProxy: false } } };
 			const { tool } = await fork({ task: "STUB_INSPECT" });
 			const seen = JSON.parse(tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
 			assert.equal(seen.args.includes("--no-mcp"), false);
@@ -1219,6 +1232,13 @@ describe("fork tool", () => {
 	describe("as a cold worker", () => {
 		const seen = async (params: Record<string, unknown>, ...rest: [string?, any?]) => JSON.parse((await fork({ task: "STUB_INSPECT", model: "prov/cheap", ...params }, ...rest)).tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
 		const main = { activeTools: ["read", "edit", "codemode", "mcp__semble__search", "mcp__builder_mcp__TaskeiCreateTask"], allTools: [...MAIN_TOOLS, { name: "mcp__builder_mcp__TaskeiCreateTask", description: "w", parameters: {}, exposure: "codemode" }] };
+
+		test("reaches main's MCP bridge when the mcpProxy setting is false", async () => {
+			settings = { llmPrompts: { forks: { mcpProxy: false } } };
+			const started = await seen({});
+			assert.ok(started.handshake.bridge.socket);
+			assert.ok(started.args.includes("--no-mcp"));
+		});
 	});
 
 	describe("as a writer", () => {
@@ -1313,7 +1333,8 @@ describe("fork tool", () => {
 			});
 		});
 
-		test("a team gets its own worktree and main's MCP bridge without the mcpProxy setting", async () => {
+		test("a team gets its own worktree and main's MCP bridge when the mcpProxy setting is false", async () => {
+			settings = { llmPrompts: { forks: { mcpProxy: false } } };
 			const { tool } = await fork({ task: "STUB_INSPECT", role: "team", name: "crew" }, repo);
 			const seen = JSON.parse(tool.content[0].text.split("\n")[0].replace(/^echo: /, ""));
 			assert.equal(seen.handshake.role, "team");
@@ -1473,7 +1494,6 @@ describe("fork tool", () => {
 		});
 
 		test("a failure before the child starts removes the clean worktree and its branch", async () => {
-			settings = PROXY_ON;
 			const failed = (await fork({ task: "hi", role: "writer", name: "early" }, repo, { activeTools: [], allTools: undefined as never })).tool;
 			assert.match(failed.details.digest, /^\[fork early failed\][\s\S]*\[merge: worktree removed: clean\]/);
 			assert.equal(execFileSync("git", ["-C", repo, "branch", "--list", "fork/early"], { encoding: "utf8" }), "");
