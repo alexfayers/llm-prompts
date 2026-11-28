@@ -36,6 +36,7 @@ from llm_prompts.exit_reason import REASONS, ExitReason, Reason
 A, B = "a" * 40, "b" * 40
 EVENT: dict[str, Any] = {"event": "command_run", "properties": {}}
 OPT_OUTS = ("DO_NOT_TRACK", "LLM_PROMPTS_NO_TELEMETRY", "CI")
+VERSION_KEYS = {"commit", "base", "local", "dirty", "ahead", "release", "label"}
 
 
 def _props(popen: MagicMock) -> dict[str, Any]:
@@ -122,14 +123,16 @@ def test_event_carries_only_allowlisted_properties(
         "dirty": None,
         "ahead": None,
         "release": None,
+        "label": None,
     }
     assert properties["from"]["llm-prompts"] == {
         "commit": A,
         "base": A,
         "local": False,
         "dirty": False,
-        "ahead": None,
+        "ahead": 0,
         "release": "v0.4.0",
+        "label": "v0.4.0+aaaaaaa",
     }
     assert properties["overlay_count"] == 4
     assert properties["overlays"] == {
@@ -138,8 +141,9 @@ def test_event_carries_only_allowlisted_properties(
             "base": A,
             "local": False,
             "dirty": False,
-            "ahead": None,
+            "ahead": 0,
             "release": None,
+            "label": "aaaaaaa",
         }
     }
     assert properties["schema"] == 2
@@ -209,6 +213,7 @@ def test_a_git_checkout_source_reports_its_base_on_origin_main_and_whether_it_is
             "dirty": dirty,
             "ahead": 1,
             "release": "v0.10.0",
+            "label": "v0.10.0 +1 local" + (" dirty" if dirty else ""),
         }
         assert sent["from"]["cline-hooks"] == expected
         assert sent["to"]["cline-hooks"] == expected
@@ -219,6 +224,7 @@ def test_a_git_checkout_source_reports_its_base_on_origin_main_and_whether_it_is
             "dirty": None,
             "ahead": None,
             "release": None,
+            "label": None,
         }
         assert str(tmp_path) not in posted.call_args.args[0]
         assert head not in posted.call_args.args[0]
@@ -240,7 +246,42 @@ def test_a_checkout_without_origin_main_names_no_commit(tmp_path: Path) -> None:
         "dirty": True,
         "ahead": None,
         "release": None,
+        "label": "dirty",
     }
+
+
+@pytest.mark.real_io
+@pytest.mark.parametrize("past_tag", [False, True])
+def test_a_checkout_on_origin_main_names_its_commit_and_labels_it_from_its_release(
+    tmp_path: Path, past_tag: bool
+) -> None:
+    commit = ("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q")
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, *commit, "--allow-empty", "-m", "x")
+    _git(tmp_path, "tag", "v0.11.0")
+    if past_tag:
+        _git(tmp_path, *commit, "--allow-empty", "-m", "y")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    head = _git(tmp_path, "rev-parse", "HEAD")
+
+    state = telemetry_core._checkout_state(str(tmp_path))
+
+    assert (state["commit"], state["base"], state["ahead"]) == (head, head, 0)
+    assert state["label"] == (f"v0.11.0+{head[:7]}" if past_tag else "v0.11.0")
+
+
+def test_a_remote_install_at_its_release_tag_is_labelled_with_the_release_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "llm_prompts.cli._get_installed_version", lambda _: (A, "v0.11.0")
+    )
+    monkeypatch.setattr("llm_prompts.cli._get_installed_revision", lambda _: "v0.11.0")
+
+    body = json.dumps(telemetry_core.versions({}))
+
+    resolved = json.loads(telemetry_core.resolve_versions(body))
+    assert resolved["llm-prompts"]["label"] == "v0.11.0"
 
 
 def test_post_verifies_certificates_with_the_system_trust_store(
@@ -493,6 +534,12 @@ def test_a_failed_command_also_sends_an_exception_event_without_paths(
     monkeypatch.setattr("llm_prompts.cli._get_installed_version", lambda _: (A, None))
 
     raised = next(e for e in _events(telemetry_popen) if e["event"] == "$exception")
+    assert set(raised["properties"]) == {
+        "$exception_list",
+        *telemetry._EXCEPTION_CONTEXT,
+        *("llm_prompts_commit", "versions", "dependency", "$process_person_profile"),
+    }
+    assert set(raised["properties"]["llm_prompts_commit"]) == VERSION_KEYS
     (item,) = raised["properties"]["$exception_list"]
     assert item["type"] == "OwnError"
     frames = item["stacktrace"]["frames"]
@@ -950,8 +997,30 @@ def test_a_pi_session_sends_only_its_numbers_role_tier_and_version(
     shares = ("inference_share", "command_wait_share", "user_wait_share")
     assert [properties[k] for k in shares] == [0.442, 0.331, 0.166]
     for tool in ("llm_prompts", "cline_hooks", "mcp_memory"):
-        assert set(properties[tool]) >= {"commit", "release"}
+        assert set(properties[tool]) == VERSION_KEYS
     assert "acme" not in json.dumps(properties)
+
+
+def test_a_finished_review_loop_sends_only_its_rounds_end_deferred_and_version(
+    telemetry_popen: MagicMock, isolated_config_dir: Path
+) -> None:
+    _fresh_record(isolated_config_dir)
+
+    telemetry.send_pr_review(rounds=2, clean=False, deferred=1)
+
+    [event] = _events(telemetry_popen)
+    properties = event["properties"]
+    assert event["event"] == "pr_review"
+    assert set(properties) == {
+        *("rounds", "end", "deferred"),
+        *("llm_prompts", "cline_hooks", "mcp_memory"),
+        *("os", "python", "schema", "$process_person_profile"),
+    }
+    assert (properties["rounds"], properties["end"], properties["deferred"]) == (
+        *(2, "escalated", 1),
+    )
+    for tool in ("llm_prompts", "cline_hooks", "mcp_memory"):
+        assert set(properties[tool]) == VERSION_KEYS
 
 
 @pytest.mark.parametrize("time_to_pr", [125, None])

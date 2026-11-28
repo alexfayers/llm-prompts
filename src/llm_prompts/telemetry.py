@@ -188,12 +188,16 @@ class Run(AbstractContextManager["Run"]):
                 self.outcome = outcome
             raise
 
-    def _installed(self) -> dict[str, dict[str, str | None]]:
-        """Return the installed commits and releases of every tracked package."""
+    def _installed(self) -> dict[str, dict[str, Any]]:
+        """Return the installed commits and releases of every tracked package, and whether each is at its release tag."""
         found = {name: self._installed_version(name) for name in telemetry_core.TRACKED}
         return {
             "commits": {name: commit for name, (commit, _) in found.items()},
             "releases": {name: release for name, (_, release) in found.items()},
+            "exact": {
+                name: telemetry_core.installed_at_release(name, release)
+                for name, (_, release) in found.items()
+            },
         }
 
     def begin(self, command: str, flags: list[str], installs: bool = False) -> None:
@@ -230,7 +234,7 @@ class Run(AbstractContextManager["Run"]):
     def restore(self, state: dict[str, Any] | None) -> None:
         """Take over the start time and commits of the process that handed over."""
         if state and self._begun:
-            self._begun.update({"releases": None, **state})
+            self._begun.update({"releases": None, "exact": None, **state})
 
     def __exit__(
         self,
@@ -269,7 +273,7 @@ class Run(AbstractContextManager["Run"]):
             "run_id": begun["run_id"],
             "flags": begun["flags"],
             "from": telemetry_core.versions(
-                config, begun["commits"], begun.get("releases")
+                config, begun["commits"], begun.get("releases"), begun.get("exact")
             ),
             "to": telemetry_core.versions(config),
             "agents": sorted(read_manifest()),
