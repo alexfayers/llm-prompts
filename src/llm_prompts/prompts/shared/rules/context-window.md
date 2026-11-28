@@ -11,5 +11,6 @@
 - SHOULD `checkpoint rewind` after a finished detour (investigation, debug loop, exploratory calls) once only its conclusion matters, and after large raw outputs (logs, diffs, dumps) already acted on
 - Before compacting, MUST try a rewind first. Compact only when a rewind can't free enough (most of the context is old history)
 - MUST NOT rewind over raw detail that later steps still need
-- The rewind summary MUST keep every finding, decision and open ask from the folded region, and MUST end by saying to keep using checkpoints (mark before a detour, rewind after it)
+- The rewind summary MUST keep every finding, decision, open ask and unanswered fork `ASK:` line from the folded region,
+  and MUST end by saying to keep using checkpoints (mark before a detour, rewind after it)
 {% endif %}

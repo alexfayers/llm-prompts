@@ -26,26 +26,16 @@ describe("pending asks", () => {
 		assert.match(lastWidget()!.join("\n"), /a3.*third/);
 	});
 
-	test("each ASK line of a tool result is pinned once, and an error result pins nothing", async () => {
+	test("add with an id is rejected, as add assigns the id", async () => {
 		const { ext, ctx, lastWidget } = await load();
-		const result = (toolCallId: string, text: string, isError = false) => ext.fire("tool_result", { toolCallId, toolName: "bash", content: [{ type: "text", text }], isError }, ctx);
-		await result("t1", "report\nASK: use A or B?\nnote ASK: inline\nASK: keep it?");
-		await result("t2", "ASK: use A or B?");
-		await result("t3", "ASK: broken?", true);
-		assert.deepEqual(lastWidget(), ["Pending asks - /answer or ctrl+shift+a", "t1-1: use A or B?", "t1-2: keep it?"]);
-	});
-
-	test("the ASK lines of a fork or result_fetch result are left to the fork, which pins them itself", async () => {
-		const { ext, ctx, lastWidget } = await load();
-		for (const toolName of ["fork", "result_fetch"]) await ext.fire("tool_result", { toolCallId: toolName, toolName, content: [{ type: "text", text: "ASK: keep it?" }], isError: false }, ctx);
+		await assert.rejects(ext.callTool("asks", { action: "add", text: "ok to push?", id: "push" }, ctx), /add assigns its own id/);
 		assert.equal(lastWidget(), undefined);
 	});
 
-
-	test("an ASK line after an OUTCOME line came from a fork reply through another tool and is left to the fork", async () => {
+	test("the ASK lines of a tool result pin nothing, as they are a delegate's questions for the lead", async () => {
 		const { ext, ctx, lastWidget } = await load();
-		await ext.fire("tool_result", { toolCallId: "t1", toolName: "codemode", content: [{ type: "text", text: "ASK: mine?\nOUTCOME found-it ref:x\nASK: the fork's?" }], isError: false }, ctx);
-		assert.deepEqual(lastWidget(), ["Pending asks - /answer or ctrl+shift+a", "t1-1: mine?"]);
+		for (const toolName of ["bash", "fork", "codemode"]) await ext.fire("tool_result", { toolCallId: toolName, toolName, content: [{ type: "text", text: "report\nASK: use A or B?" }], isError: false }, ctx);
+		assert.equal(lastWidget(), undefined);
 	});
 
 	test("an answered ask_user call resolves the asks open before it, and a cancelled or failed one resolves none", async () => {
