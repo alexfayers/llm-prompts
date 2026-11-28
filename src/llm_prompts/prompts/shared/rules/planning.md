@@ -27,6 +27,8 @@ then {% if AGENT == "pi" %}present the plan{% else %}`EnterPlanMode`{% endif %}.
 {% if AGENT == "claude-code" %}
 - MUST NOT skip the agent phase and plan in your head.
 {% endif %}
+- After the Explore agents and before the Plan agent, SHOULD ask the user only open preferences that would change the design's shape (e.g. rollout phases,
+  kill switches, risk appetite), if any.
 - Resuming a plan already made and approved (passed `refine-plan`, already approved - per a handoff doc, memory task-chain, or the plan file's own status) - MUST go straight to execution,
   not `refine-plan` or {% if AGENT == "pi" %}presenting the plan{% else %}`EnterPlanMode`{% endif %} again, unless the record flags a part still needing research.
 - Where the user declines a design question - a constraint, or a rejection - MUST treat it as the decision and settle the rest yourself.
