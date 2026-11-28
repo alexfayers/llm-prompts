@@ -1,8 +1,8 @@
-// Re-registers the tower_do, tower_do_talk and tower_do_status tools with shorter descriptions, parameter schemas and guidelines, shortens the board reminder to counts, task keys and the tasks the board notes still in the context do not state, and removes open tasks left idle by dead sessions on session start.
+// Re-registers the tower_do, tower_do_talk and tower_do_status tools with shorter descriptions, parameter schemas and guidelines, shortens the board reminder to counts, task keys and the tasks the board notes still in the context do not state, and on session start removes open tasks of owners with no board activity for 3 days.
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import type { ExtensionAPI, ExtensionToolContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionToolContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { IDLE_FOLD_EVENT } from "./context-fold.ts";
 import { foldBoard } from "./tower-do-patch.ts";
 
@@ -10,16 +10,29 @@ const REMINDER_TYPE = "pi-tower-do-reminder";
 const REVISION_ENTRY_TYPE = "tower-do-noted-revisions";
 
 type Slim = { description: string; promptGuidelines: string[] };
-type TowerState = { formatTakeoverWindow(): string; MAX_TOWER_DO_OPEN_TASKS: number; TASK_KEY_PATTERN: RegExp };
+type TowerState = {
+	formatTakeoverWindow(): string;
+	MAX_TOWER_DO_OPEN_TASKS: number;
+	TASK_KEY_PATTERN: RegExp;
+	normalizeIdentity(identity: string, location: string): string;
+	parseActivityLine(line: string): { by: string; at: number } | undefined;
+};
+type BoardModule = { TowerBoard: new (file: string) => { rawLines(): Promise<string[]> } };
+type PathsModule = { boardFileFor(cwd: string): string; BoardCache: new () => { entryFor(cwd: string): { config: { identity?: string } } } };
 type TowerModule = { default: (pi: ExtensionAPI) => void | Promise<void> };
 type BoardTask = Awaited<ReturnType<typeof foldBoard>>["tasks"][number];
 
 const DAY_MS = 24 * 60 * 60_000;
 export const EXPIRE_IDLE_MS = 3 * DAY_MS;
 
-/** Keys of open tasks idle for more than EXPIRE_IDLE_MS, less any that a kept task still depends on, so one removal write passes the dependency check. */
-export function expiredTaskKeys(tasks: BoardTask[], now: number): string[] {
-	const expired = new Set(tasks.filter((task) => task.status !== "completed" && now - task.updatedAt > EXPIRE_IDLE_MS).map((task) => task.key));
+/** Keys of unblocked open tasks idle for more than EXPIRE_IDLE_MS whose owner is not `caller` and wrote nothing to the board in that time, less any that a kept task still depends on, so one removal write passes the dependency check. */
+export function expiredTaskKeys(tasks: BoardTask[], lastActive: ReadonlyMap<string, number>, caller: string, now: number): string[] {
+	const idle = (at: number | undefined) => at === undefined || now - at > EXPIRE_IDLE_MS;
+	const expired = new Set(
+		tasks
+			.filter((task) => task.owner && task.owner !== caller && !["completed", "blocked"].includes(task.status) && !task.blockedBy?.length && idle(task.updatedAt) && idle(lastActive.get(task.owner)))
+			.map((task) => task.key),
+	);
 	for (let size = -1; size !== expired.size; ) {
 		size = expired.size;
 		for (const task of tasks) if (!expired.has(task.key)) for (const dependency of task.dependsOn ?? []) expired.delete(dependency);
@@ -73,6 +86,8 @@ const CHANGED_LABEL = "Changed since the last board note:";
 const OPEN_LABEL = "Open tasks:";
 const NEW_LABEL = "New:";
 const GONE_LABEL = "Completed or removed:";
+const UNLISTED_LINE = /^Not listed: \d+ open task\(s\) of others idle over 24h\.$/;
+const LISTED_IDLE_MS = DAY_MS;
 
 const listLine = (label: string, keys: string[]) => (keys.length ? `${label} ${keys.join(", ")}` : label);
 const textOf = ({ content }: { content: string | { text?: string }[] }) => (typeof content === "string" ? content : content.map((part) => part.text ?? "").join(""));
@@ -95,6 +110,7 @@ export function boardNotes(taskKeyPattern: RegExp) {
 			const list = listPattern.exec(line);
 			const task = afterLabel ? noteTaskLine.exec(line) : null;
 			if (line === CHANGED_LABEL) afterLabel = true;
+			else if (UNLISTED_LINE.test(line)) continue;
 			else if (task) note.lines.set(task[1], line);
 			else if (list) {
 				const keys = list[2] ? list[2].slice(1).split(", ") : [];
@@ -120,8 +136,9 @@ export function boardNotes(taskKeyPattern: RegExp) {
 		return board;
 	};
 
-	/** Rewrites a tower-do board reminder to counts and task keys, or to nothing for a revision already noted, with the full line only for tasks the notes in `messages` do not state. */
-	const compactReminder = (text: string, messages: any[]) => {
+	/** Rewrites a tower-do board reminder to counts and task keys, or to nothing for a revision already noted, with the full line only for tasks the notes in `messages` do not state.
+	 * With `boardTasks`, it leaves out tasks of others idle over 24h and counts them instead. */
+	const compactReminder = (text: string, messages: any[], boardTasks: BoardTask[] = [], now = Date.now()) => {
 		const [header = "", ...rest] = text.split("\n");
 		const match = REMINDER_HEADER.exec(header);
 		if (!match) return text;
@@ -130,19 +147,21 @@ export function boardNotes(taskKeyPattern: RegExp) {
 		notedRevisions.set(identity, revision);
 		const visible = visibleBoard(messages, identity);
 		const known = visible ?? new Map<string, string>();
-		const tasks = new Map<string, string>();
+		const onBoard = new Map<string, string>();
 		for (const line of rest) {
 			const task = taskLine.exec(line)?.[1];
-			if (task) tasks.set(task, line);
-			for (const hidden of OVERFLOW_LINE.exec(line)?.[1].split(", ") ?? []) tasks.set(hidden, known.get(hidden) ?? "");
+			if (task) onBoard.set(task, line);
+			for (const hidden of OVERFLOW_LINE.exec(line)?.[1].split(", ") ?? []) onBoard.set(hidden, known.get(hidden) ?? "");
 		}
-		const changed = [...tasks].filter(([task, line]) => line && known.get(task) !== line);
-		const added = visible ? [...tasks].filter(([task, line]) => !line && !known.has(task)).map(([task]) => task) : [];
-		const gone = [...known.keys()].filter((task) => !tasks.has(task));
+		const unlisted = new Set(boardTasks.filter((task) => task.owner !== identity && now - task.updatedAt > LISTED_IDLE_MS && onBoard.has(task.key)).map((task) => task.key));
+		const tasks = [...onBoard].filter(([task]) => !unlisted.has(task));
+		const changed = tasks.filter(([task, line]) => line && known.get(task) !== line);
+		const added = visible ? tasks.filter(([task, line]) => !line && !known.has(task)).map(([task]) => task) : [];
+		const gone = [...known.keys()].filter((task) => !onBoard.has(task));
 		return [
 			`[board] revision ${revision}, you are ${identity}: ${open} open (${blocked} blocked), ${unread} unread. tower_do_status for details.`,
 			...(changed.length ? [CHANGED_LABEL, ...changed.map(([, line]) => line)] : []),
-			...(visible ? [] : [listLine(OPEN_LABEL, [...tasks.keys()])]),
+			...(visible ? [] : [listLine(OPEN_LABEL, tasks.map(([task]) => task)), ...(unlisted.size ? [`Not listed: ${unlisted.size} open task(s) of others idle over 24h.`] : [])]),
 			...(added.length ? [listLine(NEW_LABEL, added)] : []),
 			...(gone.length ? [listLine(GONE_LABEL, gone)] : []),
 		].join("\n");
@@ -166,19 +185,19 @@ export default async function (pi: ExtensionAPI) {
 	const { compactReminder, notedRevisions, restoreRevisions } = boardNotes(towerState.TASK_KEY_PATTERN);
 	const { default: towerDo } = await loadFromTowerDo<TowerModule>("index.ts");
 	const isChild = () => Boolean(process.env.PI_CONTEXT_CHILD || process.env.PI_SUBAGENT_CHILD);
-	let towerDoTool: ToolDefinition | undefined;
+	const towerTools: Record<string, ToolDefinition> = {};
 	const registerTool = (tool: ToolDefinition) => {
-		if (tool.name === "tower_do") towerDoTool = tool;
+		towerTools[tool.name] = tool;
 		const override = slim[tool.name];
 		pi.registerTool(override ? { ...tool, ...override, parameters: withoutDescriptions(tool.parameters) } : tool);
 	};
-	let pendingReminder: { text: string; messages: any[] } | undefined;
+	let pendingReminder: { text: string; messages: any[]; cwd?: string } | undefined;
 	const detachReminder = (handler: Function) => async (event: any, ctx: any) => {
 		const result = await handler(event, ctx);
 		const messages: any[] | undefined = result?.messages;
 		const last = messages?.at(-1);
 		if (!messages || last?.customType !== REMINDER_TYPE) return result;
-		pendingReminder = { text: textOf(last), messages };
+		pendingReminder = { text: textOf(last), messages, cwd: ctx?.cwd };
 		return { ...result, messages: messages.slice(0, -1) };
 	};
 	const on = (event: string, handler: Function) => pi.on(event as never, (event === "context" ? detachReminder(handler) : handler) as never);
@@ -192,19 +211,46 @@ export default async function (pi: ExtensionAPI) {
 	pi.on("turn_end", () => {
 		pendingReminder = undefined;
 	});
-	pi.on("tool_result", (event) => {
+	pi.on("tool_result", async (event) => {
 		if (event.parentToolCallId || isChild() || pendingReminder === undefined) return;
-		const text = compactReminder(pendingReminder.text, pendingReminder.messages);
+		const { text: reminder, messages, cwd } = pendingReminder;
 		pendingReminder = undefined;
+		const tasks = cwd ? (await foldBoard(cwd).catch(() => undefined))?.tasks : undefined;
+		const text = compactReminder(reminder, messages, tasks);
 		if (text === undefined) return;
 		pi.appendEntry(REVISION_ENTRY_TYPE, notedRevisions());
 		return { content: [...event.content, { type: "text", text }], structuredContent: event.structuredContent };
 	});
 	const wrappers: Record<string, unknown> = { registerTool, on };
 	await towerDo(new Proxy(pi, { get: (target, key) => (typeof key === "string" && key in wrappers ? wrappers[key] : Reflect.get(target, key)) }));
-	pi.on("session_start", async (_event, ctx) => {
-		if (isChild() || !towerDoTool) return;
-		const expired = expiredTaskKeys((await foldBoard(ctx.cwd).catch(() => undefined))?.tasks ?? [], Date.now());
-		if (expired.length) await Promise.resolve(towerDoTool.execute("expire-idle-tasks", { as: "tower", tasks: [], remove: expired }, undefined, undefined, ctx as ExtensionToolContext)).catch(() => undefined);
+	const [{ TowerBoard }, { boardFileFor, BoardCache }] = await Promise.all([loadFromTowerDo<BoardModule>("board.ts"), loadFromTowerDo<PathsModule>("paths.ts")]);
+	/** The identity tower-do gives this session: the configured one, else the session name, else the session id. */
+	const callerIdentity = (cwd: string, ctx: ExtensionContext) => {
+		const configured = new BoardCache().entryFor(cwd).config.identity?.trim();
+		const name = pi.getSessionName()?.trim();
+		const named = name ? (() => { try { return towerState.normalizeIdentity(name, "session name"); } catch { return undefined; } })() : undefined;
+		return configured || named || ctx.sessionManager.getSessionId() || "main";
+	};
+	const callTool = (name: string, params: unknown, ctx: ExtensionContext) => Promise.resolve(towerTools[name]?.execute(`expire-idle-${name}`, params as never, undefined, undefined, ctx as ExtensionToolContext));
+	const expireIdleTasks = async (ctx: ExtensionContext) => {
+		const view = await foldBoard(ctx.cwd);
+		const lastActive = new Map<string, number>();
+		for (const line of await new TowerBoard(boardFileFor(ctx.cwd)).rawLines()) {
+			const entry = towerState.parseActivityLine(line);
+			if (entry && entry.at > (lastActive.get(entry.by) ?? 0)) lastActive.set(entry.by, entry.at);
+		}
+		const expired = new Set(expiredTaskKeys(view.tasks, lastActive, callerIdentity(ctx.cwd, ctx), Date.now()));
+		if (!expired.size) return;
+		const removed = view.tasks.filter((task) => expired.has(task.key));
+		for (const owner of new Set(removed.map((task) => task.owner!))) {
+			const body = removed.filter((task) => task.owner === owner).map((task) => `- ${task.key} [${task.status}]: ${task.subject ?? ""}`);
+			await callTool("tower_do_talk", { as: "tower", action: "send", to: owner, subject: "Removing your idle board tasks", body: [`You wrote nothing to the board for ${EXPIRE_IDLE_MS / DAY_MS} days, so these open tasks are being removed. Re-create any you still need:`, ...body].join("\n") }, ctx);
+		}
+		await callTool("tower_do", { as: "tower", baseRevision: view.revision, tasks: [], remove: [...expired] }, ctx);
+		ctx.ui.notify(`tower-do: removed open tasks of owners idle for ${EXPIRE_IDLE_MS / DAY_MS} days: ${[...expired].join(", ")}`, "info");
+	};
+	pi.on("session_start", async (event, ctx) => {
+		if (isChild() || !["startup", "new"].includes(event.reason)) return;
+		await expireIdleTasks(ctx).catch(() => undefined);
 	});
 }
