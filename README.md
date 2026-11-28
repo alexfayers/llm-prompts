@@ -45,7 +45,7 @@
 | src/llm\_prompts/benchmark/transient.py                                       |       41 |        0 |    100% |           |
 | src/llm\_prompts/benchmark/types.py                                           |      225 |        0 |    100% |           |
 | src/llm\_prompts/claude\_models.py                                            |       23 |        0 |    100% |           |
-| src/llm\_prompts/cli.py                                                       |      925 |       65 |     93% |107-108, 134-135, 142-155, 261-262, 277-282, 424, 724, 727, 752, 779, 817, 850, 976, 1183-1185, 1198-1201, 1272-1281, 1832-1834, 1837-1843, 1855-1857, 1868-1874, 1884, 1889, 1901, 2064, 2094-2095, 2100 |
+| src/llm\_prompts/cli.py                                                       |      931 |       65 |     93% |108-109, 135-136, 143-156, 262-263, 278-283, 425, 725, 728, 753, 780, 818, 851, 977, 1184-1186, 1199-1202, 1273-1282, 1841-1843, 1846-1852, 1864-1866, 1877-1883, 1893, 1898, 1910, 2073, 2103-2104, 2109 |
 | src/llm\_prompts/clones.py                                                    |      145 |       12 |     92% |75, 93-94, 127-129, 182-184, 248, 266-267 |
 | src/llm\_prompts/collection\_size.py                                          |      133 |        3 |     98% |295-296, 500 |
 | src/llm\_prompts/colors.py                                                    |        6 |        0 |    100% |           |
@@ -147,7 +147,7 @@
 | tests/test\_check\_reduction\_script.py                                       |       61 |        0 |    100% |           |
 | tests/test\_check\_repos\_script.py                                           |       67 |        0 |    100% |           |
 | tests/test\_claude\_models.py                                                 |       25 |        0 |    100% |           |
-| tests/test\_cli.py                                                            |     1231 |        1 |     99% |      1553 |
+| tests/test\_cli.py                                                            |     1241 |        1 |     99% |      1554 |
 | tests/test\_cli\_uninstall.py                                                 |       15 |        0 |    100% |           |
 | tests/test\_clones.py                                                         |      251 |        0 |    100% |           |
 | tests/test\_commit\_guard.py                                                  |      336 |        2 |     99% |   501-502 |
@@ -212,7 +212,7 @@
 | tests/watch/test\_runner.py                                                   |       84 |        0 |    100% |           |
 | tests/watch/test\_watch\_cli.py                                               |       40 |        0 |    100% |           |
 | tests/worker\_share.py                                                        |       54 |        1 |     98% |        21 |
-| **TOTAL**                                                                     | **37893** |  **848** | **98%** |           |
+| **TOTAL**                                                                     | **37909** |  **848** | **98%** |           |
 
 
 ## Setup coverage badge
