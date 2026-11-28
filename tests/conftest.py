@@ -365,6 +365,7 @@ class ContributeRemote:
         self._branch_commits: dict[str, list[dict[str, str]]] = {}
         self._bodies: dict[int, str] = {}
         self._pr_heads: dict[int, tuple[str, str]] = {}
+        self._auto_merge: set[int] = set()
         self._paths: dict[str, Sequence[str]] = {}
         self._register_fetch()
         self._register_ls_remote()
@@ -418,6 +419,10 @@ class ContributeRemote:
     def body(self, number: int, text: str) -> None:
         """Set an open PR's body."""
         self._bodies[number] = text
+
+    def auto_merge(self, number: int) -> None:
+        """Turn auto-merge on for an open PR."""
+        self._auto_merge.add(number)
 
     def _pr_item(self, branch: str, pr: Pr) -> dict[str, Any]:
         return {
@@ -532,6 +537,11 @@ class ContributeRemote:
                     "reviewDecision": "",
                     "body": self._bodies.get(item["number"], ""),
                     "title": "",
+                    "autoMergeRequest": (
+                        {"enabledAt": "2026-01-01T00:00:00Z"}
+                        if item["number"] in self._auto_merge
+                        else None
+                    ),
                     **(
                         {
                             "headRefOid": self._pr_heads[item["number"]][0],
@@ -555,7 +565,7 @@ class ContributeRemote:
             "--author",
             "@me",
             "--json",
-            "number,state,url,headRefName,isDraft,reviewDecision,body,headRefOid,baseRefName,title",
+            "number,state,url,headRefName,isDraft,reviewDecision,body,headRefOid,baseRefName,title,autoMergeRequest",
             side_effect=side_effect,
         )
 

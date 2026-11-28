@@ -83,6 +83,7 @@ class OpenPr(NamedTuple):
     head_sha: str = ""
     base_branch: str = ""
     title: str = ""
+    auto_merge: bool = False
 
 
 def _git(*args: str, repo: Path) -> str:
@@ -309,7 +310,7 @@ def open_prs(repo: Path) -> tuple[list[OpenPr], frozenset[int]]:
     items = _pr_list(
         repo,
         "open",
-        "number,state,url,headRefName,isDraft,reviewDecision,body,headRefOid,baseRefName,title",
+        "number,state,url,headRefName,isDraft,reviewDecision,body,headRefOid,baseRefName,title,autoMergeRequest",
     )
     prs: list[OpenPr] = []
     skipped: set[int] = set()
@@ -331,6 +332,7 @@ def open_prs(repo: Path) -> tuple[list[OpenPr], frozenset[int]]:
                 head_sha=item.get("headRefOid") or "",
                 base_branch=item.get("baseRefName") or "",
                 title=item.get("title") or "",
+                auto_merge=bool(item.get("autoMergeRequest")),
             )
         )
     return prs, frozenset(skipped)
@@ -663,8 +665,16 @@ Target = tuple[str, Path, str]
 Node = tuple[str, str]
 
 
-def run_update(repo: Path, apply: bool, numbers: Collection[int] = ()) -> int:
-    """Rebase the open PRs that are behind main onto it, or print the commands when not applying."""
+def run_update(
+    repo: Path,
+    apply: bool,
+    numbers: Collection[int] = (),
+    include_auto_merge: bool = False,
+) -> int:
+    """Rebase the open PRs that are behind main onto it, or print the commands when not applying.
+
+    PRs with auto-merge on are left to the rebase queue unless named in ``numbers`` or ``include_auto_merge`` is set.
+    """
     base = base_ref(repo)
     remote = base.split("/", 1)[0]
     fetch_base(repo, remote)
@@ -680,6 +690,18 @@ def run_update(repo: Path, apply: bool, numbers: Collection[int] = ()) -> int:
         if set(numbers) - open_numbers:
             return 1
         behind = [open_pr for open_pr in behind if open_pr.pr.number in numbers]
+    elif not include_auto_merge:
+        for open_pr in behind:
+            if open_pr.auto_merge:
+                print(
+                    f"#{open_pr.pr.number}: skipped, auto-merge is on so the rebase queue "
+                    "updates it (pass --include-auto-merge to update it)"
+                )
+        skipped = any(open_pr.auto_merge for open_pr in behind)
+        behind = [open_pr for open_pr in behind if not open_pr.auto_merge]
+        if skipped and not behind:
+            print("nothing to update")
+            return 0
     if not behind:
         print("nothing behind main")
         return 0
@@ -742,14 +764,17 @@ def run_ready(repo: Path, number: int) -> int:
 
 
 def update_targets(
-    targets: Sequence[Target], apply: bool, numbers: Collection[int] = ()
+    targets: Sequence[Target],
+    apply: bool,
+    numbers: Collection[int] = (),
+    include_auto_merge: bool = False,
 ) -> int:
     """Update each target's behind PRs in order and return the highest status."""
     status = 0
     for name, repo, _ in targets:
         if len(targets) > 1:
             print(f"[{name}]")
-        status = max(status, run_update(repo, apply, numbers))
+        status = max(status, run_update(repo, apply, numbers, include_auto_merge))
         if len(targets) > 1:
             print()
     return status

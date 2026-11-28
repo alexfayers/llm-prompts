@@ -133,7 +133,7 @@ def _open_pr_items(contribute_remote: ContributeRemote) -> list[dict[str, Any]]:
             "--author",
             "@me",
             "--json",
-            "number,state,url,headRefName,isDraft,reviewDecision,body,headRefOid,baseRefName,title",
+            "number,state,url,headRefName,isDraft,reviewDecision,body,headRefOid,baseRefName,title,autoMergeRequest",
         ],
         text=True,
         check=True,
