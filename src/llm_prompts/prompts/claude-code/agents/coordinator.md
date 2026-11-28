@@ -52,11 +52,11 @@ You {% if HS %}do not design, do not read files, and do not edit{% else %}do not
   Where it names a file, symbol or path, MUST have an `Explore` subagent confirm it exists before writing it into a task.
 {% endif %}
 {% if AGENT == "pi" %}
-- Break the design into tasks sized for ONE teammate each and create them with `tower_do_patch`: send only the changed rows (`tasks` to upsert,
+- Break the design into tasks sized for ONE teammate's context each (one package or fixed-interface part) and create them with `tower_do_patch`: send only the changed rows (`tasks` to upsert,
   `remove` to delete) and the `baseRevision` from `tower_do_status`.
   Each description MUST be a complete contract - inputs, exact output format, file paths, conventions to match, constraints - executable from `tower_do_status` alone with no design left to infer.
 {% else %}
-- Break the design into tasks sized for ONE teammate each and create them with `TaskCreate`.
+- Break the design into tasks sized for ONE teammate's context each (one package or fixed-interface part) and create them with `TaskCreate`.
   Each description MUST be a complete contract - inputs, exact output format, file paths, conventions to match, constraints - executable from `TaskGet` alone with no design left to infer.
 {% endif %}
 {% if AGENT == "pi" %}

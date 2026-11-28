@@ -36,6 +36,7 @@ targets: claude-code, pi
 - Only main and a `team` delegate hold `fork`. Any other delegate MUST NOT fork.
 - A `team` forks its own readers and writers, which cannot fork. Its writers' commits land in its worktree, and it reports once.
 - A `reader` (default) only reads. A `writer` works only in its own git worktree and its commits land on the current branch - one writer per branch.
+- SHOULD size each writer's task to one context (one package or fixed-interface part), not relay it across context stops.
 - A warm fork inherits the session and its rules. A cold worker (`model` set) starts with an empty session: its `task` MUST carry every binding constraint.
 {% else %}
 - MUST use only named tiers, passing the installed `<tier>-<model>-<effort>` name, never the bare tier - `reasoner` (Opus, holds `{{TOOL_AGENT}}`), `worker` (mechanical),
