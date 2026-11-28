@@ -30,6 +30,8 @@ class AgentAdapter(Protocol):
     cumulative_cost: bool
     shared_dirs: tuple[Path, ...]
     git_packages: Path | None
+    mcp_config: Path
+    """The MCP config file of the agent, relative to its home."""
 
     @property
     def default_model(self) -> str:

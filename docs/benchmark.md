@@ -137,6 +137,15 @@ rubric = "The retries use exponential backoff."
 
 `setup` is a list of shell scripts run in the workspace right after its first commit, with `SEEN_WORKSPACE` set to the workspace path the agent sees. `delegation = true` leaves the claude subagent tools and the pi `fork` tools on, and the `tool_called` and `not_called` checks take `by = "lead"` or `by = "subagent"`.
 
+Each `[[mcp]]` table adds a stdio MCP server to the agent config of the run's home, next to the memory server. It takes `name` (letters, digits, `_` or `-`, not `memory`), `command` and an optional `args` list. With the start-up time of the forks and the peak RSS in the report, it measures what a server costs.
+
+```toml
+[[mcp]]
+name = "docs"
+command = "uvx"
+args = ["some-mcp-server"]
+```
+
 ### Check kinds
 
 | Kind | Arguments | Passes when |
@@ -165,7 +174,7 @@ The judge's full reply is the check's `detail` in `results.jsonl` and in `judge-
 
 ### Follow-ups
 
-A scenario with `base = "<id>"` is a follow-up. It gives only `id`, `level`, `prompt`, its checks, and optionally `timeout_s`, `gate` and `wait_s`. It takes `workspace`, `project`, `memory`, `setup` and `agents` from its base. Selecting a follow-up also runs its base. A follow-up with `wait_s = N` starts N seconds after its base ended.
+A scenario with `base = "<id>"` is a follow-up. It gives only `id`, `level`, `prompt`, its checks, and optionally `timeout_s`, `gate` and `wait_s`. It takes `workspace`, `project`, `memory`, `setup`, `agents` and `mcp` from its base. Selecting a follow-up also runs its base. A follow-up with `wait_s = N` starts N seconds after its base ended.
 
 A follow-up runs as a fork of its base's agent session, so it reuses the base's cached prompt and reports only its own cost, time and turns. A base that errors gives its follow-ups the error `base failed: <error>`.
 

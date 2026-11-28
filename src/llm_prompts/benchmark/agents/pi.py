@@ -180,6 +180,7 @@ class PiAdapter:
     cumulative_cost = False
     shared_dirs: tuple[Path, ...] = (Path(".pi/agent/npm"), Path(".npm"))
     git_packages: Path | None = Path(".pi/agent/git")
+    mcp_config = Path(".pi/agent/mcp.json")
 
     @property
     def default_model(self) -> str:
@@ -192,7 +193,7 @@ class PiAdapter:
         return f"global.{model}" if model.startswith("anthropic.") else model
 
     def point_memory(self, home: Path, url: str) -> None:
-        config_path = home / ".pi" / "agent" / "mcp.json"
+        config_path = home / self.mcp_config
         config = read_json(config_path)
         config.setdefault("mcpServers", {})["memory"] = {"url": url}
         write_json(config_path, config)

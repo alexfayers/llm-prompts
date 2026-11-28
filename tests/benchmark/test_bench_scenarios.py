@@ -20,6 +20,7 @@ from llm_prompts.benchmark.types import (
     DEFAULT_GATE,
     CheckOutcome,
     CheckSpec,
+    McpServer,
     MemoryEntity,
     Scenario,
     ToolCall,
@@ -53,6 +54,11 @@ observations = ["retry 3 times"]
 relations = [{ target = "project/demo", type = "part-of" }]
 status = "active"
 
+[[mcp]]
+name = "slow-start"
+command = "python3"
+args = ["-m", "http.server"]
+
 [[check]]
 kind = "tool_called"
 name = "a"
@@ -84,6 +90,7 @@ def test_parse_full_file_and_defaults(data_dir: Path) -> None:
         (MemoryEntity("pattern/retry", "pattern", ("retry 3 times",), (("project/demo", "part-of"),), "active"),),
         (CheckSpec("tool_called", {"name": "done"}), CheckSpec("tool_called", {"name": "a", "before": ("Edit", "Write")})),
         setup=("git branch x", "ls"), covers=("a", "b"),
+        mcp=(McpServer("slow-start", "python3", ("-m", "http.server")),),
     )  # fmt: skip
     assert (plain.agents, plain.timeout_s, plain.gate) == (
         ("claude", "pi"),
@@ -112,6 +119,14 @@ def test_parse_full_file_and_defaults(data_dir: Path) -> None:
         ('"done"', "1.5"),
         ('id = "demo"', 'id = "other"'),
         ('[[check]]\nkind = "tool_called"\nname = "done"\n', ""),
+        ("[[check]]", '[[mcp]]\nname = "memory"\ncommand = "x"\n[[check]]'),
+        ("[[check]]", '[[mcp]]\nname = "a b"\ncommand = "x"\n[[check]]'),
+        ("[[check]]", '[[mcp]]\nname = "a"\n[[check]]'),
+        (
+            "[[check]]",
+            '[[mcp]]\nname = "a"\ncommand = "x"\n[[mcp]]\nname = "a"\ncommand = "y"\n[[check]]',
+        ),
+        ("[[check]]", '[[mcp]]\nname = "a"\ncommand = "x"\nurl = "u"\n[[check]]'),
     ],
 )
 def test_parse_rejects_violation(data_dir: Path, old: str, new: str) -> None:
@@ -168,6 +183,7 @@ def test_follow_up_takes_workspace_project_memory_agents_and_setup_from_its_base
     )  # fmt: skip
     assert follow_up.prompt == "Then this."
     assert follow_up.setup == root.setup == ("git branch x", "ls")
+    assert follow_up.mcp == root.mcp
 
 
 FRESH = FOLLOW_UP.replace(

@@ -43,6 +43,15 @@ class MemoryEntity:
 
 
 @dataclass(frozen=True)
+class McpServer:
+    """A stdio MCP server that a scenario adds to the agent config of its cell home."""
+
+    name: str
+    command: str
+    args: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class CheckSpec:
     kind: str
     args: Mapping[str, CheckArg]
@@ -73,6 +82,7 @@ class Scenario:
     delegation: bool = False
     covers: tuple[str, ...] = ()
     wait_s: int = 0
+    mcp: tuple[McpServer, ...] = ()
 
     @property
     def ask(self) -> str:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import re
 import tomllib
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -17,6 +18,7 @@ from llm_prompts.benchmark.types import (
     CheckSpec,
     Gate,
     Level,
+    McpServer,
     MemoryEntity,
     Scenario,
 )
@@ -30,7 +32,17 @@ TOP_KEYS = {field.name for field in dataclasses.fields(Scenario)} - {"checks"} |
 GATE_KEYS = {field.name for field in dataclasses.fields(Gate)}
 MEMORY_KEYS = {"name", "entityType", "observations", "relations", "status"}
 RELATION_KEYS = {"target", "type"}
-INHERITED_KEYS = ("workspace", "project", "memory", "agents", "setup", "delegation")
+MCP_KEYS = {field.name for field in dataclasses.fields(McpServer)}
+MCP_NAME = re.compile(r"[A-Za-z0-9_-]+")
+INHERITED_KEYS = (
+    "workspace",
+    "project",
+    "memory",
+    "agents",
+    "setup",
+    "delegation",
+    "mcp",
+)
 MISSING: Any = object()
 
 
@@ -115,6 +127,18 @@ def _memory(path: Path, table: Mapping[str, Any]) -> MemoryEntity:
     )
 
 
+def _mcp(path: Path, table: Mapping[str, Any]) -> McpServer:
+    _no_unknown_keys(path, table, MCP_KEYS)
+    name = _get(path, table, "name", str)
+    if not MCP_NAME.fullmatch(name) or name == "memory":
+        raise ScenarioError(
+            path, f"mcp name must be letters, digits, _ or - and not memory: {name}"
+        )
+    return McpServer(
+        name, _get(path, table, "command", str), _strings(path, table, "args", [])
+    )
+
+
 def _check(path: Path, table: Mapping[str, Any]) -> CheckSpec:
     kind = _get(path, table, "kind", str)
     if kind not in CHECKS:
@@ -189,6 +213,14 @@ def parse(path: Path, parents: tuple[str, ...] = ()) -> Scenario:
         raise ScenarioError(
             path, f"wait_s must be at least 0 and needs a base: {wait_s}"
         )
+    mcp = (
+        base.mcp
+        if base
+        else tuple(_mcp(path, server) for server in _tables(path, data, "mcp"))
+    )
+    names = [server.name for server in mcp]
+    if duplicates := sorted({name for name in names if names.count(name) > 1}):
+        raise ScenarioError(path, f"duplicate mcp name: {', '.join(duplicates)}")
     checks = _tables(path, data, "check")
     if not checks:
         raise ScenarioError(path, "at least one [[check]] is required")
@@ -214,6 +246,7 @@ def parse(path: Path, parents: tuple[str, ...] = ()) -> Scenario:
         delegation=delegation,
         covers=_strings(path, data, "covers", []),
         wait_s=wait_s,
+        mcp=mcp,
     )
 
 

@@ -20,7 +20,14 @@ from llm_prompts.benchmark.cell.prepare import (
     snapshot,
 )
 from llm_prompts.benchmark.cell.shared import SharedStores, remove_stale_roots
-from llm_prompts.benchmark.types import Cell, Gate, MemoryEntity, Scenario, Variant
+from llm_prompts.benchmark.types import (
+    Cell,
+    Gate,
+    McpServer,
+    MemoryEntity,
+    Scenario,
+    Variant,
+)
 
 pytestmark = pytest.mark.usefixtures(
     "live", "cell_roots", "fake_memory", "fake_subprocess"
@@ -104,6 +111,25 @@ def test_claude_cell_gets_isolated_home_workspace_memory_and_logins(
         assert fake_memory.entities(prepared.memory) == prepared.seeded == SEED
 
     assert hook.read_text() == f"python {template}/run.py\n"
+
+
+@pytest.mark.parametrize(
+    ("agent", "config"),
+    [("claude", ".claude/.claude.json"), ("pi", ".pi/agent/mcp.json")],
+)
+def test_the_cell_home_starts_the_stdio_mcp_servers_of_its_scenario(
+    make_cell: MakeCell, agent: str, config: str
+) -> None:
+    cell = make_cell(agent)
+    server = McpServer("slow", "python3", ("-m", "slow"))
+    cell = replace(cell, scenario=replace(cell.scenario, mcp=(server,)))
+
+    with prepare(cell) as prepared:
+        servers = _json(prepared.home / config)["mcpServers"]
+
+    assert isinstance(servers, dict)
+    assert servers["slow"] == {"command": "python3", "args": ["-m", "slow"]}
+    assert set(servers) == {"memory", "slow"}
 
 
 def test_seen_root_gives_the_agent_fixed_paths_and_host_steps_real_ones(
