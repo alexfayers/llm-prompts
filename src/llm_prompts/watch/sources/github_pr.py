@@ -18,6 +18,7 @@ FAILED_CONCLUSIONS = frozenset(
 ADVISORY_CHECK = "automate / rebase-queue"
 ADVISORY_WORKFLOW = ".github/workflows/project-automation.yml"
 PAGE = "?per_page=100"
+BOOLEAN = ["true", "false"]
 
 
 def _now() -> str:
@@ -152,6 +153,13 @@ class GithubPrSource:
         "conflicts": ["conflicts=true"],
     }
     terminal: ClassVar[Sequence[str]] = ["merged=true", "state=CLOSED"]
+    values: ClassVar[Mapping[str, Sequence[str]]] = {
+        "state": ["OPEN", "CLOSED"],
+        "merged": BOOLEAN,
+        "approved": BOOLEAN,
+        "ci": ["pass", "fail", "pending", "none"],
+        "conflicts": BOOLEAN,
+    }
 
     def __init__(self, repo: str, number: int, head: str | None) -> None:
         """Watch pull request number in repo, reporting ``ci=pending`` until head is the PR's head."""

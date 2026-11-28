@@ -17,6 +17,7 @@ class Source(Protocol):
     """Something that reports named fields about a target.
 
     An optional ``terminal`` sequence of field=value conditions ends a follow watch once one holds.
+    An optional ``values`` mapping gives each field with a fixed set of values that set.
     """
 
     @property
