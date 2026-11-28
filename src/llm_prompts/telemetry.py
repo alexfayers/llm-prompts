@@ -34,6 +34,8 @@ _NOTICE = (
 
 _SESSION_ROLES = ("main", "reader", "writer")
 _MODEL_TIERS = ("opus", "sonnet", "haiku")
+_FRONTENDS = ("claude-code", "codex", "kiro", "pi", "antigravity")
+_SESSION_START_SOURCES = {"": "fresh", "resume": "resume", "compact": "compact"}
 
 
 SESSION_START_ENV = "LLM_PROMPTS_SESSION_START_MS"
@@ -131,6 +133,22 @@ def send_pr_review(*, rounds: int, clean: bool, deferred: int) -> None:
             "rounds": rounds,
             "end": "clean" if clean else "escalated",
             "deferred": deferred,
+        },
+    )
+
+
+def send_session_start(frontend: str, source: str) -> None:
+    """Send a `session_start` event with the fixed frontend and start source codes.
+
+    Args:
+        frontend: The running agent frontend's name.
+        source: The TaskStart source ("", "resume" or "compact").
+    """
+    _send_workflow(
+        "session_start",
+        {
+            "frontend": frontend if frontend in _FRONTENDS else "other",
+            "source": _SESSION_START_SOURCES.get(source, "other"),
         },
     )
 
