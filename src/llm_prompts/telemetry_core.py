@@ -160,33 +160,63 @@ def _git(repo: str, *args: str) -> str:
     ).stdout
 
 
+def _entry(
+    commit: str | None,
+    base: str | None,
+    local: bool,
+    dirty: bool | None,
+    ahead: int | None,
+    release: str | None,
+    exact: bool,
+) -> dict[str, Any]:
+    """Return a tool's version entry with a label such as `v0.11.0+abc1234 +2 local dirty`.
+
+    Args:
+        commit: The installed commit, only when it is on origin/main.
+        base: The newest origin/main commit the install contains.
+        local: Whether the tool is a local checkout.
+        dirty: Whether the checkout has uncommitted changes.
+        ahead: The commits on top of `base`.
+        release: The newest stable release tag the install contains.
+        exact: Whether `base` is the `release` commit.
+    """
+    core = release if exact else "+".join(filter(None, (release, base and base[:7])))
+    parts = (core, f"+{ahead} local" if ahead else "", "dirty" if dirty else "")
+    return {
+        "commit": commit,
+        "base": base,
+        "local": local,
+        "dirty": dirty,
+        "ahead": ahead,
+        "release": release,
+        "label": " ".join(filter(None, parts)) or None,
+    }
+
+
 def _local_state(
     base: str | None,
     dirty: bool | None,
     ahead: int | None,
     release: str | None = None,
+    exact: bool = False,
 ) -> dict[str, Any]:
     """Return a local checkout's entry, which never names a commit missing from origin/main."""
-    return {
-        "commit": None,
-        "base": base,
-        "local": True,
-        "dirty": dirty,
-        "ahead": ahead,
-        "release": release,
-    }
+    commit = base if ahead == 0 else None
+    return _entry(commit, base, True, dirty, ahead, release, exact)
 
 
-def _release(repo: str, base: str) -> str | None:
-    """Return the highest stable vX.Y.Z tag that `base` contains, or None."""
+def _release(repo: str, base: str) -> tuple[str | None, bool]:
+    """Return the highest stable vX.Y.Z tag that `base` contains, or None, and whether it tags `base`."""
     from .setup import release_version
 
     try:
         tags = _git(repo, "tag", "--merged", base, "--list", "v*").split()
+        at_base = _git(repo, "tag", "--points-at", base).split()
     except (OSError, ValueError, SubprocessError):
-        return None
+        return None, False
     releases = {v: t for t in tags if (v := release_version(t))}
-    return releases[max(releases)] if releases else None
+    release = releases[max(releases)] if releases else None
+    return release, release in at_base
 
 
 def _checkout_state(repo: str) -> dict[str, Any]:
@@ -200,19 +230,21 @@ def _checkout_state(repo: str) -> dict[str, Any]:
         ahead = int(_git(repo, "rev-list", "--count", f"{base}..HEAD"))
     except (OSError, ValueError, SubprocessError):
         return _local_state(None, dirty, None)
-    return _local_state(base, dirty, ahead, _release(repo, base))
+    return _local_state(base, dirty, ahead, *_release(repo, base))
 
 
-def _remote(commit: str | None, release: str | None = None) -> dict[str, Any]:
+def _remote(
+    commit: str | None, release: str | None = None, exact: bool = False
+) -> dict[str, Any]:
     """Return the version entry of a source installed from git."""
-    return {
-        "commit": commit,
-        "base": commit,
-        "local": False,
-        "dirty": False,
-        "ahead": None,
-        "release": release,
-    }
+    return _entry(commit, commit, False, False, 0, release, exact)
+
+
+def installed_at_release(package: str, release: str | None) -> bool:
+    """Return whether a package's git install was requested at its release tag."""
+    from .cli import _get_installed_revision
+
+    return release is not None and _get_installed_revision(package) == release
 
 
 def _local(source: str) -> dict[str, str]:
@@ -242,6 +274,7 @@ def versions(
     config: dict[str, Any],
     found: dict[str, str | None] | None = None,
     releases: dict[str, str | None] | None = None,
+    exact: dict[str, bool] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Return the version entry of every tracked tool, with placeholders for unresolved ones.
 
@@ -249,12 +282,13 @@ def versions(
         config: The llm-prompts config.
         found: Installed commits by tool name, or None to leave installs as placeholders.
         releases: Installed releases by tool name.
+        exact: Whether each tool was installed at its release tag, by tool name.
     """
     local = _local_sources(config)
     return {
         n: local.get(n)
         or (
-            _remote(found.get(n), (releases or {}).get(n))
+            _remote(found.get(n), (releases or {}).get(n), (exact or {}).get(n, False))
             if found is not None
             else _installed(n)
         )
@@ -283,7 +317,9 @@ def resolve_versions(body: str) -> str:
             if _INSTALLED_KEY in node:
                 from .cli import _get_installed_version
 
-                return _remote(*_get_installed_version(node[_INSTALLED_KEY]))
+                package = node[_INSTALLED_KEY]
+                commit, release = _get_installed_version(package)
+                return _remote(commit, release, installed_at_release(package, release))
             return {k: resolve(v) for k, v in node.items()}
         return node
 
