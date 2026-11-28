@@ -200,7 +200,7 @@ async function start(params: Record<string, unknown>, cwd = process.cwd(), main 
 	};
 	const execute = tools.fork.execute;
 	tools.fork = { ...tools.fork, execute: async (...args: unknown[]) => settle(await execute(...args), appended, sent) };
-	return { tool: await execute("call-id", params, signal, undefined, ctx).catch((error: Error) => error), appended, sent, tools, background, ctx, handlers, launch: (more: Record<string, unknown>) => execute(`call-${randomUUID()}`, more, undefined, undefined, ctx) };
+	return { tool: await execute("call-id", params, signal, undefined, ctx).catch((error: Error) => error), appended, sent, tools, background, ctx, handlers, launch: (more: Record<string, unknown>, id = `call-${randomUUID()}`) => execute(id, more, undefined, undefined, ctx) };
 }
 
 async function fork(...args: Parameters<typeof start>) {
@@ -301,12 +301,11 @@ describe("fork tool", () => {
 		let written!: (summary: string) => void;
 		const pending = new Promise<string>((resolve) => (written = resolve));
 		const summarize = () => (calls++, pending);
-		const { tool, tools, ctx, appended, sent } = await start({ task: "STUB_INSPECT", name: "big1" }, process.cwd(), undefined, undefined, WARM_FORK_MAX_TOKENS + 1, summarize);
+		const { tool, launch, appended, sent } = await start({ task: "STUB_INSPECT", name: "big1" }, process.cwd(), undefined, undefined, WARM_FORK_MAX_TOKENS + 1, summarize);
 		assert.equal(registryOf().all().find((run) => run.name === "big1")?.state, "running");
-		const second = tools.fork.execute("call-id", { task: "STUB_INSPECT", name: "big2" }, undefined, undefined, ctx);
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		const second = await launch({ task: "STUB_INSPECT", name: "big2" }, "call-id");
 		written("SHARED SUMMARY");
-		const [first, other] = await Promise.all([settle(tool, appended, sent), second]);
+		const [first, other] = await Promise.all([settle(tool, appended, sent), settle(second, appended, sent)]);
 		assert.equal(calls, 1);
 		for (const reply of [first, other]) assert.match(JSON.parse(reply.content[0].text.split("\n")[0].replace(/^echo: /, "")).prompt, /SHARED SUMMARY/);
 	});
