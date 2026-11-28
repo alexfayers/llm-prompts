@@ -19,7 +19,7 @@ from urllib.error import URLError
 
 import pytest
 import truststore
-from conftest import FakeSubprocess, run_capturing_exit
+from conftest import FakeSubprocess, run_capturing_exit, spooled_events
 
 from llm_prompts import (
     cli,
@@ -46,8 +46,8 @@ def _props(popen: MagicMock) -> dict[str, Any]:
 def _events(popen: MagicMock) -> list[dict[str, Any]]:
     """Return the sent events, with placeholders resolved as the detached sender does."""
     return [
-        json.loads(telemetry_core.resolve_versions(call.args[0][3]))
-        for call in popen.call_args_list
+        json.loads(telemetry_core.resolve_versions(json.dumps(event)))
+        for event in spooled_events(popen)
     ]
 
 
@@ -107,7 +107,7 @@ def test_event_carries_only_allowlisted_properties(
 
     posted = MagicMock()
     monkeypatch.setattr("llm_prompts.telemetry_core.post", posted)
-    telemetry_core.deliver(telemetry_popen.call_args.args[0][3])
+    telemetry_core.flush()
     properties = json.loads(posted.call_args.args[0])["properties"]
     assert set(properties) == {
         *("command", "from", "to", "agents", "overlay_count", "overlays", "outcome"),
@@ -199,7 +199,7 @@ def test_a_git_checkout_source_reports_its_base_on_origin_main_and_whether_it_is
             run.begin("update", [])
         posted = MagicMock()
         monkeypatch.setattr("llm_prompts.telemetry_core.post", posted)
-        telemetry_core.deliver(telemetry_popen.call_args.args[0][3])
+        telemetry_core.flush()
         sent = json.loads(posted.call_args.args[0])["properties"]
         telemetry_popen.reset_mock()
         expected = {
@@ -254,9 +254,11 @@ def test_post_verifies_certificates_with_the_system_trust_store(
     assert isinstance(urlopen.call_args.kwargs["context"], truststore.SSLContext)
 
 
+@pytest.mark.usefixtures("telemetry_popen")
 def test_debug_mode_shows_why_a_post_failed(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    telemetry_core.save_opt_state()
     monkeypatch.setenv("LLM_PROMPTS_TELEMETRY_DEBUG", "1")
     monkeypatch.setattr(
         "urllib.request.urlopen", MagicMock(side_effect=URLError("no cert"))
@@ -273,6 +275,7 @@ def test_debug_mode_shows_why_a_post_failed(
 def test_send_spawns_a_detached_sender_unless_debugging(
     telemetry_popen: MagicMock, monkeypatch: pytest.MonkeyPatch, debug: str
 ) -> None:
+    telemetry_core.save_opt_state()
     urlopen = MagicMock(side_effect=URLError("offline"))
     monkeypatch.setenv("LLM_PROMPTS_TELEMETRY_DEBUG", debug)
     monkeypatch.setattr("urllib.request.urlopen", urlopen)
@@ -598,7 +601,7 @@ def test_the_parent_never_looks_up_versions_unless_the_command_installs(
     monkeypatch.setattr("llm_prompts.cli._get_installed_version", lambda _: (B, None))
     posted = MagicMock()
     monkeypatch.setattr("llm_prompts.telemetry_core.post", posted)
-    telemetry_core.deliver(telemetry_popen.call_args.args[0][3])
+    telemetry_core.flush()
     properties = json.loads(posted.call_args.args[0])["properties"]
     assert properties["from"]["llm-prompts"]["commit"] == B
     assert properties["to"]["llm-prompts"]["commit"] == B
@@ -615,7 +618,7 @@ def test_an_installing_command_captures_from_before_it_runs(
     monkeypatch.setattr("llm_prompts.cli._get_installed_version", lambda _: (B, None))
     posted = MagicMock()
     monkeypatch.setattr("llm_prompts.telemetry_core.post", posted)
-    telemetry_core.deliver(telemetry_popen.call_args.args[0][3])
+    telemetry_core.flush()
     properties = json.loads(posted.call_args.args[0])["properties"]
     assert properties["from"]["llm-prompts"]["commit"] == A
     assert properties["to"]["llm-prompts"]["commit"] == B
@@ -907,6 +910,36 @@ SESSION = {
 def _fresh_record(isolated_config_dir: Path) -> None:
     record = {"install_id": "synthetic-id", "opted_out": False, "at": time.time()}
     (isolated_config_dir / "telemetry.json").write_text(json.dumps(record))
+
+
+def test_a_spooled_pi_session_posts_its_numbers_under_its_own_id_and_time(
+    telemetry_popen: MagicMock,
+    isolated_config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fresh_record(isolated_config_dir)
+    posted = MagicMock(return_value=True)
+    monkeypatch.setattr("llm_prompts.telemetry_core.post", posted)
+    monkeypatch.setattr("llm_prompts.cli._get_installed_version", lambda _: (A, None))
+    spool = telemetry_core.spool_dir()
+    spool.mkdir()
+    entry = {
+        "kind": "pi-stats",
+        "at": 1_700_000_000_000,
+        "uuid": "u-1",
+        "stats": SESSION,
+    }
+    (spool / f"{time.time_ns()}-u-1.json").write_text(json.dumps(entry))
+
+    _main("session-telemetry")
+
+    event = json.loads(posted.call_args.args[0])
+    assert (event["event"], event["uuid"]) == ("pi_session", "u-1")
+    assert event["timestamp"] == "2023-11-14T22:13:20+00:00"
+    assert event["properties"]["role"] == "writer"
+    assert event["properties"]["llm_prompts"]["commit"] == A
+    assert not list(spool.iterdir())
+    telemetry_popen.assert_not_called()
 
 
 @pytest.mark.parametrize(

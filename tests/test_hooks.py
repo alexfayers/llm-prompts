@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from cline_hooks.core.plugin import HookResult
-from conftest import FakeSubprocess
+from conftest import FakeSubprocess, spooled_events
 
 from llm_prompts import network
 from llm_prompts.cli import UpdateCheckFailure, _source_identity
@@ -1012,7 +1012,7 @@ class TestUpdateCheckOnTaskStart:
             assert telemetry_popen.called is cached
             self._finish(background)
         telemetry_popen.assert_called_once()
-        event = json.loads(telemetry_popen.call_args.args[0][3])
+        event = spooled_events(telemetry_popen)[-1]
         assert event["properties"]["command"] == "startup-check"
         assert event["properties"]["flags"] == flags
         assert event["properties"]["auto_update"] == (None if cached else "no-update")
@@ -1045,7 +1045,7 @@ class TestUpdateCheckOnTaskStart:
         messages = ["[pkg] update available:\n- did a thing", _UPDATE_INSTRUCTION]
         with patch("llm_prompts.cli._collect_update_messages", return_value=messages):
             refresh_update_check(str(tmp_path / "update-stamp"))
-        event = json.loads(telemetry_popen.call_args.args[0][3])
+        event = spooled_events(telemetry_popen)[-1]
         assert event["properties"]["auto_update"] == auto_update
 
     def test_refresh_sends_no_telemetry_before_the_first_run_notice(

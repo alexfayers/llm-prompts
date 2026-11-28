@@ -44,15 +44,20 @@ _WAITS = {
 }
 
 
+def _workflow_event(event: str, properties: dict[str, Any]) -> dict[str, Any]:
+    """Return ``event`` with ``properties``, the tool versions and platform fields."""
+    versions = telemetry_core.versions(read_config())
+    properties |= {name.replace("-", "_"): v for name, v in versions.items()}
+    properties |= telemetry_core.context(2)
+    return {"event": event, "properties": properties}
+
+
 def _send_workflow(event: str, properties: dict[str, Any]) -> None:
     """Send ``event`` with ``properties``, the tool versions and platform fields, unless telemetry is off."""
     install_id = telemetry_core.active_install_id()
     if install_id is None:
         return
-    versions = telemetry_core.versions(read_config())
-    properties |= {name.replace("-", "_"): v for name, v in versions.items()}
-    properties |= telemetry_core.context(2)
-    telemetry_core.send({"event": event, "properties": properties}, install_id)
+    telemetry_core.send(_workflow_event(event, properties), install_id)
 
 
 def _role_and_tier(role: str, model: str) -> dict[str, str]:
@@ -63,41 +68,50 @@ def _role_and_tier(role: str, model: str) -> dict[str, str]:
     }
 
 
-def send_session(stats: dict[str, Any]) -> None:
-    """Send one pi session's numbers, its role and model tier, or its opened PR, unless telemetry is off.
+def send_session(stats: dict[str, Any] | None = None) -> None:
+    """Send one pi session's numbers or its opened PR unless telemetry is off, or flush the spool.
 
     Args:
-        stats: The session's role, model and totals, as the session-telemetry pi extension sends them, or ``{"event": "pr_opened"}``.
+        stats: The session's role, model and totals, ``{"event": "pr_opened"}``, or None to only flush.
     """
-    if stats.get("event") == "pr_opened":
+    if stats is None:
+        telemetry_core.flush()
+    elif stats.get("event") == "pr_opened":
         send_pr_opened()
-        return
+    else:
+        _send_workflow("pi_session", _session_properties(stats))
+
+
+def session_event(stats: dict[str, Any]) -> dict[str, Any]:
+    """Return the `pi_session` event of one pi session's stats, as the session-telemetry pi extension spools them."""
+    return _workflow_event("pi_session", _session_properties(stats))
+
+
+def _session_properties(stats: dict[str, Any]) -> dict[str, Any]:
+    """Return a pi session's role, model tier and numbers."""
     calls = int(stats["calls"])
     cost = float(stats["cost"])
     context = int(stats["context"])
     wall_ms = float(stats["wallMs"])
     waits = {name: float(stats.get(key, 0)) for name, key in _WAITS.items()}
-    _send_workflow(
-        "pi_session",
-        {
-            **_role_and_tier(stats["role"], str(stats["model"])),
-            "calls": calls,
-            "cost": round(cost, 4),
-            "cost_per_call": round(cost / calls, 4) if calls else None,
-            "context_avg": round(context / calls) if calls else None,
-            "context_peak": int(stats["peak"]),
-            "cache_read_share": round(int(stats["cacheRead"]) / context, 3)
-            if context
-            else None,
-            "compactions": int(stats["compactions"]),
-            "wall_s": round(wall_ms / 1000, 1),
-            **{f"{name}_s": round(ms / 1000, 1) for name, ms in waits.items()},
-            **{
-                f"{name}_share": round(ms / wall_ms, 3) if wall_ms else None
-                for name, ms in waits.items()
-            },
+    return {
+        **_role_and_tier(stats["role"], str(stats["model"])),
+        "calls": calls,
+        "cost": round(cost, 4),
+        "cost_per_call": round(cost / calls, 4) if calls else None,
+        "context_avg": round(context / calls) if calls else None,
+        "context_peak": int(stats["peak"]),
+        "cache_read_share": round(int(stats["cacheRead"]) / context, 3)
+        if context
+        else None,
+        "compactions": int(stats["compactions"]),
+        "wall_s": round(wall_ms / 1000, 1),
+        **{f"{name}_s": round(ms / 1000, 1) for name, ms in waits.items()},
+        **{
+            f"{name}_share": round(ms / wall_ms, 3) if wall_ms else None
+            for name, ms in waits.items()
         },
-    )
+    }
 
 
 def send_pr_opened() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import json
 import os
@@ -12,12 +13,13 @@ import time
 import tomllib
 import traceback
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from subprocess import DEVNULL, CalledProcessError, Popen, SubprocessError, run
 from typing import Any
 
-from . import home
+from . import home, tool_paths
 
 POSTHOG_URL = "https://eu.i.posthog.com/i/v0/e/"
 DEBUG_ENV = "LLM_PROMPTS_TELEMETRY_DEBUG"
@@ -25,6 +27,9 @@ POSTHOG_TOKEN = "phc_u9CarYTyF9mvobdXzSZ7bCv9DVNj8yF3JFzzD2j3ixgS"
 OPT_OUT_ENV = ("DO_NOT_TRACK", "LLM_PROMPTS_NO_TELEMETRY", "CI")
 OPT_STATE_MAX_AGE = 24 * 60 * 60
 SEND_TIMEOUT_SECONDS = 3
+SPOOL_MAX_FILES = 50
+SPOOL_MAX_AGE = 7 * 24 * 60 * 60
+SPOOL_CLAIM_MAX_AGE = 5 * 60
 _MAX_CAUSES = 3
 _MAX_MESSAGE_LENGTH = 200
 _MIN_IDENTITY_LENGTH = 3
@@ -290,11 +295,6 @@ def resolve_versions(body: str) -> str:
     return json.dumps(resolve(json.loads(body)))
 
 
-def deliver(body: str) -> None:
-    """Resolve placeholders in a body and post it."""
-    post(resolve_versions(body))
-
-
 def _envelope(event: dict[str, Any], install_id: str) -> str:
     """Return the PostHog capture body of an event."""
     return json.dumps({**event, "api_key": POSTHOG_TOKEN, "distinct_id": install_id})
@@ -321,27 +321,93 @@ def post_event(event: dict[str, Any], install_id: str) -> bool:
     return _post_logged(_envelope(event, install_id))
 
 
-def send(
-    event: dict[str, Any],
-    install_id: str,
-    module: str = __name__,
-    resolve: Callable[[str], str] = resolve_versions,
-) -> None:
-    """Post an event from a detached process, or inline when debugging.
+def spool_dir() -> Path:
+    """Return the folder of events waiting to be posted."""
+    return home.state_dir("telemetry-spool")
+
+
+def send(event: dict[str, Any], install_id: str) -> None:
+    """Spool an event, then flush the spool from a detached process, or inline when debugging.
 
     Args:
         event: The PostHog event without `api_key` and `distinct_id`.
         install_id: The random install id used as `distinct_id`.
-        module: The module whose `__main__` delivers the body in the detached process.
-        resolve: Rewrites the body before an inline debug post.
     """
-    body = _envelope(event, install_id)
+    stamp = {"uuid": str(uuid.uuid4()), "timestamp": datetime.now(UTC).isoformat()}
+    folder = spool_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    name = f"{time.time_ns()}-{stamp['uuid']}.json"
+    entry = {"kind": "envelope", "body": _envelope({**event, **stamp}, install_id)}
+    (folder / f".{name}.tmp").write_text(json.dumps(entry), encoding="utf-8")
+    (folder / f".{name}.tmp").replace(folder / name)
     if is_set(DEBUG_ENV):
-        _post_logged(resolve(body))
+        flush()
         return
-    env = {k: v for k, v in os.environ.items() if not k.startswith("LLM_PROMPTS_")}
-    cmd = [sys.executable, "-m", module, body]
+    kept = (*OPT_OUT_ENV, tool_paths.ROOT_ENV)
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("LLM_PROMPTS_") or k in kept
+    }
+    cmd = [sys.executable, "-m", __name__]
     Popen(cmd, stdout=DEVNULL, stderr=DEVNULL, start_new_session=True, env=env)
+
+
+def _spooled_body(entry: dict[str, Any], install_id: str) -> str:
+    """Return the capture body of a spooled envelope or pi session's stats."""
+    if entry["kind"] != "pi-stats":
+        return str(entry["body"])
+    from .telemetry import session_event
+
+    at = datetime.fromtimestamp(entry["at"] / 1000, UTC).isoformat()
+    event = {**session_event(entry["stats"]), "uuid": entry["uuid"], "timestamp": at}
+    return _envelope(event, install_id)
+
+
+def _claim(path: Path, claim: Path) -> bool:
+    """Rename `path` to `claim`, returning whether no other sender took it first."""
+    try:
+        path.replace(claim)
+    except FileNotFoundError:
+        return False
+    os.utime(claim)
+    return True
+
+
+def flush() -> None:
+    """Post every spooled event, or delete them all when telemetry is off.
+
+    A sender claims a file by renaming it, deletes it once posted, and releases it and stops when
+    a post fails. A claim older than `SPOOL_CLAIM_MAX_AGE` seconds is released for any sender.
+    """
+    folder = spool_dir()
+    install_id = active_install_id()
+    if install_id is None:
+        for path in folder.glob("*"):
+            path.unlink(missing_ok=True)
+        return
+    now = time.time()
+    for claim in folder.glob("[0-9]*.json.*"):
+        with contextlib.suppress(OSError):
+            if now - claim.stat().st_mtime > SPOOL_CLAIM_MAX_AGE:
+                claim.replace(claim.with_suffix(""))
+    waiting = sorted(folder.glob("[0-9]*.json"))
+    for index, path in enumerate(waiting):
+        claim = path.with_name(f"{path.name}.{os.getpid()}")
+        age = now - int(path.name.split("-")[0]) / 1e9
+        if len(waiting) - index > SPOOL_MAX_FILES or age > SPOOL_MAX_AGE:
+            path.unlink(missing_ok=True)
+        elif _claim(path, claim):
+            try:
+                entry = json.loads(claim.read_text(encoding="utf-8"))
+                body = resolve_versions(_spooled_body(entry, install_id))
+            except (OSError, ValueError, KeyError, TypeError):
+                claim.unlink(missing_ok=True)
+                continue
+            if not _post_logged(body):
+                claim.replace(path)
+                return
+            claim.unlink()
 
 
 @functools.cache
@@ -469,4 +535,4 @@ def exception_event(
 
 
 if __name__ == "__main__":
-    deliver(sys.argv[1])
+    flush()

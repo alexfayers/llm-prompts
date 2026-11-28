@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from conftest import FakeSubprocess
+from conftest import FakeSubprocess, spooled_events
 
 from llm_prompts import pr, telemetry_core
 from llm_prompts.benchmark.scenarios.checks.judge import JudgeMissing
@@ -372,8 +372,8 @@ def test_a_finished_review_loop_sends_its_rounds_end_and_deferred_count(
 
     _review(replies, after_fix=after_fix)
 
-    [call] = telemetry_popen.call_args_list
-    event = json.loads(telemetry_core.resolve_versions(call.args[0][3]))
+    [spooled] = spooled_events(telemetry_popen)
+    event = json.loads(telemetry_core.resolve_versions(json.dumps(spooled)))
     properties = event["properties"]
     assert event["event"] == "pr_review"
     assert {k: properties[k] for k in expected} == expected

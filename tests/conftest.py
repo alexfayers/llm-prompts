@@ -960,6 +960,15 @@ def telemetry_popen(
     return popen
 
 
+def spooled_events(popen: MagicMock) -> list[dict[str, Any]]:
+    """Return the events of the sends `popen` recorded, oldest first, as their spool files hold them."""
+    files = sorted(telemetry_core.spool_dir().glob("*.json"))
+    return [
+        json.loads(json.loads(f.read_text(encoding="utf-8"))["body"])
+        for f in files[len(files) - popen.call_count :]
+    ]
+
+
 _PROMPTS = Path(__file__).parent.parent / "src" / "llm_prompts" / "prompts"
 _BARE_DROPPED = (
     "shared/skills",

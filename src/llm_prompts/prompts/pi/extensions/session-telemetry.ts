@@ -1,5 +1,9 @@
-// Sends one session's totals (model calls, cost, context, cache reads, compactions, wall time and its split into model calls, tool calls and user waits) to `llm-prompts session-telemetry` when the session ends, and a `pr_opened` event after each `gh pr create` call that returns a PR URL. `llm-prompts session-telemetry` applies the telemetry opt-out and sends only numbers.
+// Spools one session's totals (model calls, cost, context, cache reads, compactions, wall time and its split into model calls, tool calls and user waits) when the session ends, then runs `llm-prompts session-telemetry` to post them. Sends a `pr_opened` event after each `gh pr create` call that returns a PR URL. `llm-prompts session-telemetry` applies the telemetry opt-out and sends only numbers.
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 type Clock = { inference?: number; tools: number; userTools: number; prompts: number; last: number; idleSince?: number; prCalls: Set<string> };
@@ -16,10 +20,23 @@ const fresh = (now = Date.now()): Totals => ({
 	...{ model: "", calls: 0, cost: 0, context: 0, peak: 0, cacheRead: 0, compactions: 0, inferenceMs: 0, commandMs: 0, userMs: 0, startedAt: now },
 	clock: { tools: 0, userTools: 0, prompts: 0, last: now, idleSince: now, prCalls: new Set() },
 });
-const send = (stats: object) =>
-	spawn("llm-prompts", ["session-telemetry", JSON.stringify(stats)], { detached: true, stdio: "ignore" })
+const send = (stats?: object) =>
+	spawn("llm-prompts", ["session-telemetry", ...(stats ? [JSON.stringify(stats)] : [])], { detached: true, stdio: "ignore" })
 		.on("error", () => {})
 		.unref();
+/** Returns the llm-prompts telemetry spool folder, as `tool_paths.root` and `telemetry_core.spool_dir` place it. */
+const spoolDir = () =>
+	path.join(process.env.LLM_PROMPTS_HOME || path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "llm-prompts"), "llm-prompts", "state", "telemetry-spool");
+/** Writes a session's stats to the spool under a name that starts with the time in nanoseconds, through a hidden scratch file. */
+const spool = (stats: object) => {
+	const [at, uuid, folder] = [Date.now(), randomUUID(), spoolDir()];
+	const name = `${at}000000-${uuid}.json`;
+	try {
+		mkdirSync(folder, { recursive: true });
+		writeFileSync(path.join(folder, `.${name}.tmp`), JSON.stringify({ kind: "pi-stats", at, uuid, stats }));
+		renameSync(path.join(folder, `.${name}.tmp`), path.join(folder, name));
+	} catch {}
+};
 const resultText = (result: unknown) =>
 	((result as { content?: { type: string; text?: string }[] } | undefined)?.content ?? []).map((part) => (part.type === "text" ? part.text : "")).join("\n");
 
@@ -85,6 +102,7 @@ export default function (pi: ExtensionAPI) {
 		const { startedAt, clock, ...sums } = totals();
 		store[TOTALS] = undefined;
 		if (!sums.calls) return;
-		send({ role: process.env.PI_CONTEXT_ROLE ?? "main", ...sums, wallMs: Date.now() - startedAt });
+		spool({ role: process.env.PI_CONTEXT_ROLE ?? "main", ...sums, wallMs: Date.now() - startedAt });
+		send();
 	});
 }
