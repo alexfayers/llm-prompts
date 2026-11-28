@@ -1,0 +1,9 @@
+id = "feature-context-fold-resume"
+level = "heavy"
+base = "feature-context-fold"
+wait_s = 330
+prompt = "you read every file in logs/ earlier. which of them announced a deploy freeze, and from what date? answer in one sentence. dont change any files"
+
+[[check]]
+kind = "judge"
+rubric = "The evidence is the agent's final answer. PASS only if it names svc-03.log (or logs/svc-03.log) as the file and gives 2031-04-17 as the date. FAIL if it names another file or date, or gives no answer."

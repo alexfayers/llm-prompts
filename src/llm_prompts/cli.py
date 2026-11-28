@@ -1484,7 +1484,7 @@ def _run_command(
         "--feature",
         action="append",
         metavar="NAME",
-        help="Measure a pi feature (cache-warming, consult, ghost, test-output-fold, warm-fork, shared-tasks or delegate-checkpoint-nudge): A runs without it and B with it. Repeatable.",
+        help="Measure a pi feature (cache-warming, consult, context-fold, ghost, test-output-fold, warm-fork, shared-tasks or delegate-checkpoint-nudge): A runs without it and B with it. Repeatable.",
     )
     add(
         "--no-reuse",

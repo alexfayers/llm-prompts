@@ -66,6 +66,7 @@ class Scenario:
     setup: tuple[str, ...] = ()
     delegation: bool = False
     covers: tuple[str, ...] = ()
+    wait_s: int = 0
 
     @property
     def ask(self) -> str:

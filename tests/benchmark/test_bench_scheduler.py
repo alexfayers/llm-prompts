@@ -211,6 +211,19 @@ def test_follow_ups_fork_the_finished_base_each_in_its_own_copy(
     assert len((go.run_dir / "results.jsonl").read_text().splitlines()) == 3
 
 
+def test_a_follow_up_waits_for_the_rest_of_its_wait_after_the_base_ended(
+    go: Go, fake_agent: FakeAgent, pauses: list[float]
+) -> None:
+    cells = _chain(go, "one")
+    cells[1] = replace(cells[1], scenario=replace(cells[1].scenario, wait_s=330))
+    fake_agent.script("root", trace=trace())
+    fake_agent.script("one", trace=trace())
+
+    scheduler.run(cells, 1, DEFAULT_MODELS, go.run_dir, False)
+
+    assert len(pauses) == 1 and 300 < pauses[0] <= 330
+
+
 def test_the_base_tree_is_deleted_once_its_follow_ups_are_copied(
     go: Go,
     fake_agent: FakeAgent,

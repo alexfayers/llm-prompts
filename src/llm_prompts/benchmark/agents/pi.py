@@ -50,6 +50,7 @@ FEATURE_TOOLS = {"consult": ("consult",), "ghost": ("ghost_run",)}
 FEATURE_EXTENSIONS = ("test-output-fold",)
 FORK_MODE = "warm-fork"
 FEATURE_OFF_ENV = {
+    "context-fold": {"CONTEXT_FOLD": "off"},
     "shared-tasks": {"PI_CONTEXT_SHARED": "off"},
     "delegate-checkpoint-nudge": {"PI_CONTEXT_CHECKPOINT_NUDGE": "off"},
 }

@@ -380,6 +380,8 @@ def _run_follow_up(
     after: AfterBase | None,
 ) -> ResultRow:
     with open_prepared() as prepared:
+        if cell.scenario.wait_s:
+            process.pause(max(0.0, ended + cell.scenario.wait_s - time.monotonic()))
         gap = time.monotonic() - ended
         retries = NO_RETRIES
         while True:

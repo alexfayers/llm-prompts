@@ -1,0 +1,30 @@
+id = "feature-context-fold"
+level = "heavy"
+agents = ["pi"]
+workspace = "tiny-py"
+project = "demo"
+timeout_s = 900
+prompt = "call the read tool directly on every file in logs/, one call per file. dont use codemode, bash, grep or any script to read them. then reply with only the number of files you read. dont change any files"
+setup = [
+  '''
+python3 - <<'PY'
+import os
+
+os.makedirs("logs")
+words = "alpha river stone cloud market signal garden window copper violet harbor engine pencil forest anchor bridge candle meadow summit lantern orchard pillar ribbon saddle thunder velvet willow yellow zephyr basket cactus dagger ember falcon glacier hammer island jungle kettle".split()
+for number in range(1, 15):
+    lines = [
+        f"2031-03-{number:02d} svc-{number:02d} line {line:03d} " + " ".join(words[(line * 7 + step * 13 + number) % len(words)] for step in range(14))
+        for line in range(150)
+    ]
+    if number == 3:
+        lines[64] = "2031-03-03 svc-03 line 064 WARN deploy freeze starts 2031-04-17 for release train R-48"
+    with open(f"logs/svc-{number:02d}.log", "w") as file:
+        file.write("\n".join(lines) + "\n")
+PY
+''',
+]
+
+[[check]]
+kind = "judge"
+rubric = "The evidence is the agent's final answer. PASS only if it states that 14 files were read. FAIL if it gives another number or no number."
