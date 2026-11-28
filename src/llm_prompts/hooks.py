@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from cline_hooks.core.plugin import HookResult, HooksPlugin, UserFacingNote
+from cline_hooks.core.protocol import get_protocol
 
 from . import network
 from .manifest import read_manifest
@@ -482,6 +483,11 @@ class AutoReinstallPlugin(HooksPlugin):
                     logger.warning("Failed to start the llm-prompts update check")
             elif source not in _DEBOUNCED_TASK_START_SOURCES:
                 run.begin("startup-check", ["--cached"])
+            try:
+                spec = get_protocol().frontend_spec
+                telemetry.send_session_start(spec.name if spec else "other", source)
+            except (Exception, SystemExit):
+                logger.warning("Failed to send the session start event")
             messages = self._update_check_debouncer.cached_notice(fingerprint)
             if source in _DEBOUNCED_TASK_START_SOURCES and (
                 self._update_check_debouncer.was_shown(task_id, messages)

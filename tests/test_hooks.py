@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from contextlib import ExitStack, nullcontext
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -692,6 +693,21 @@ class TestPromptSizeGate:
         assert not _looks_like_prompt_source(path)
 
 
+_PI_SPEC = SimpleNamespace(name="pi")
+
+
+def _allow_session_start(
+    monkeypatch: pytest.MonkeyPatch,
+    config_dir: Path,
+    spec: SimpleNamespace | None = _PI_SPEC,
+) -> None:
+    monkeypatch.setattr(
+        "llm_prompts.hooks.get_protocol", lambda: SimpleNamespace(frontend_spec=spec)
+    )
+    record = {"install_id": "synthetic-id", "opted_out": False, "at": time.time()}
+    (config_dir / "telemetry.json").write_text(json.dumps(record))
+
+
 class TestUpdateCheckOnTaskStart:
     """Tests for the TaskStart update-check dispatch."""
 
@@ -983,6 +999,40 @@ class TestUpdateCheckOnTaskStart:
         assert len(result.user_notes) == 1
         note = result.user_notes[0]
         assert note.user_text == _format_user_text("[pkg] update available (a -> b)")
+
+    @pytest.mark.parametrize(
+        ("source", "spec", "expected"),
+        [
+            ("", SimpleNamespace(name="pi"), ("pi", "fresh")),
+            ("resume", None, ("other", "resume")),
+            ("compact", SimpleNamespace(name="acme-agent"), ("other", "compact")),
+        ],
+    )
+    def test_task_start_sends_one_session_start_event(
+        self,
+        tmp_path: Path,
+        telemetry_popen: MagicMock,
+        isolated_config_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        source: str,
+        spec: SimpleNamespace | None,
+        expected: tuple[str, str],
+    ) -> None:
+        _allow_session_start(monkeypatch, isolated_config_dir, spec)
+        plugin = AutoReinstallPlugin()
+        plugin._update_check_debouncer = _ReinstallDebouncer(
+            tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
+        )
+        (tmp_path / "update-stamp").write_text(str(time.time()))
+        with patch("llm_prompts.cli._collect_update_messages", return_value=[]):
+            plugin.on_hook("TaskStart", task_id="t1", workspace_roots=[], source=source)
+        events = [json.loads(c.args[0][3]) for c in telemetry_popen.call_args_list]
+        starts = [e["properties"] for e in events if e["event"] == "session_start"]
+        assert [(p["frontend"], p["source"]) for p in starts] == [expected]
+        assert set(starts[0]) == {
+            *("frontend", "source", "llm_prompts", "cline_hooks", "mcp_memory"),
+            *("os", "python", "schema", "$process_person_profile"),
+        }
 
     @pytest.mark.parametrize(
         ("cached", "flags"),
@@ -1526,14 +1576,29 @@ class TestUpdateCheckOnTaskStart:
         ],
     )
     def test_headless_start_emits_nothing(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, value: str
+        self,
+        tmp_path: Path,
+        telemetry_popen: MagicMock,
+        isolated_config_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        name: str,
+        value: str,
     ) -> None:
         monkeypatch.setenv(name, value)
+        _allow_session_start(monkeypatch, isolated_config_dir)
         with patch("llm_prompts.cli._collect_update_messages") as mock_collect:
             assert self._fresh_start(tmp_path / "update-stamp") is None
         mock_collect.assert_not_called()
+        telemetry_popen.assert_not_called()
 
-    def test_subagent_task_start_skips_check(self, tmp_path: Path) -> None:
+    def test_subagent_task_start_skips_check(
+        self,
+        tmp_path: Path,
+        telemetry_popen: MagicMock,
+        isolated_config_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _allow_session_start(monkeypatch, isolated_config_dir)
         plugin = AutoReinstallPlugin()
         plugin._update_check_debouncer = _ReinstallDebouncer(
             tmp_path / "update-stamp", interval_seconds=_UPDATE_CHECK_INTERVAL
@@ -1549,6 +1614,7 @@ class TestUpdateCheckOnTaskStart:
         assert result is None
         mock_collect.assert_not_called()
         assert not (tmp_path / "update-stamp").exists()
+        telemetry_popen.assert_not_called()
 
 
 @pytest.mark.real_io
