@@ -432,6 +432,9 @@ class TestPullLocalSources:
             "commit-tree",
             "update-ref",
             "rebase --quiet",
+            "log --format=%s",
+            "cherry",
+            "log --no-merges",
         )
         assert (
             "[core] rebased local commits onto 1 new commit(s)"

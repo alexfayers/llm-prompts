@@ -671,6 +671,28 @@ def _source_test_warnings(name: str, repo: Path, test: str) -> list[str]:
 def _pull_one_local_source(
     name: str, source: str, test: str = "", ref: str = ""
 ) -> _PullOutcome:
+    """Pull a single local-path tool source, warning when its main then holds commits on no open PR."""
+    from . import worktrees
+    from .main_sync import UPSTREAM, unpublished
+    from .setup import _expand
+
+    outcome = _sync_local_source(name, source, test, ref)
+    repo = _expand(source)
+    if outcome.failed or not (repo / ".git").is_dir():
+        return outcome
+    if not (shas := unpublished(repo, UPSTREAM, worktrees.copied_identities(repo))):
+        return outcome
+    warning = (
+        f"[{name}] warning: main holds {len(shas)} commit(s) on no open PR"
+        f" ({', '.join(shas)}); drop them with:"
+        f" cd {shlex.quote(str(repo))} && git rebase -i {UPSTREAM} main"
+    )
+    return outcome._replace(messages=[*outcome.messages, warning])
+
+
+def _sync_local_source(
+    name: str, source: str, test: str = "", ref: str = ""
+) -> _PullOutcome:
     """Pull upstream changes for a single local-path tool source.
 
     Args:

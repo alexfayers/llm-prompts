@@ -458,6 +458,50 @@ def _open_pr_commits(
     return commits
 
 
+def unpublished(repo: Path, upstream: str, copied: Collection[str]) -> list[str]:
+    """The short shas of local main commits that are not on ``upstream``, its upstream branch or an open pull request.
+
+    A commit counts as on the upstream branch when the branch holds the same patch or a squash merge with its subject.
+    Recorded worktree copies, by ``copied`` identity, are left out. None are returned when git or the remote cannot be read.
+    """
+    try:
+        followed = "main@{u}"
+        squashes = {
+            _SQUASH_SUFFIX.sub("", subject)
+            for subject in _read(
+                repo, "log", "--format=%s", f"main..{followed}"
+            ).splitlines()
+            if squash_pr_number(subject) is not None
+        }
+        new = set(_cherry(repo, followed, "main", "+"))
+        rows = [
+            (short, rest)
+            for sha, short, rest in (
+                line.split("\t", 2)
+                for line in _read(
+                    repo,
+                    "log",
+                    "--no-merges",
+                    "--format=%H%x09%h%x09%at%x09%s",
+                    "main",
+                    "--not",
+                    upstream,
+                    followed,
+                ).splitlines()
+            )
+            if sha in new
+            and rest not in copied
+            and rest.partition("\t")[2] not in squashes
+        ]
+        if not rows:
+            return []
+        remote = _read(repo, "config", "branch.main.remote").strip()
+        on_open_prs = _open_pr_commits(repo, remote, upstream)
+    except _Bail:
+        return []
+    return [sha for sha, rest in reversed(rows) if _identity(rest) not in on_open_prs]
+
+
 def _merge_tree(repo: Path, base: str, ours: str, theirs: str) -> str:
     result = run_git(
         repo,
