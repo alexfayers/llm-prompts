@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { after, test } from "node:test";
 import { loadExtension, useEnv } from "./helpers.ts";
 
 const spawned: { command: string; args: string[]; options: Record<string, unknown>; unref: boolean }[] = [];
@@ -11,7 +14,17 @@ function spawn(command: string, args: string[], options: Record<string, unknown>
 }
 const load = () => loadExtension("session-telemetry", { mocks: { "node:child_process": { spawn } } });
 const ext = await load();
-useEnv({ PI_CONTEXT_ROLE: "writer" });
+const home = mkdtempSync(path.join(os.tmpdir(), "spool-"));
+const spoolDir = path.join(home, "llm-prompts", "state", "telemetry-spool");
+after(() => rmSync(home, { recursive: true }));
+useEnv({ PI_CONTEXT_ROLE: "writer", LLM_PROMPTS_HOME: home });
+/** Returns and removes the spooled session stats, oldest first. */
+const spooled = () => {
+	const files = readdirSync(spoolDir).sort();
+	const entries = files.map((name) => JSON.parse(readFileSync(path.join(spoolDir, name), "utf8")));
+	rmSync(spoolDir, { recursive: true });
+	return entries;
+};
 
 const usage = (input: number, cacheRead: number, cacheWrite: number, cost: number) => ({ input, output: 50, cacheRead, cacheWrite, totalTokens: input + cacheRead + cacheWrite + 50, cost: { total: cost } });
 const reply = (u: ReturnType<typeof usage>) => ({ message: { role: "assistant", provider: "acme", model: "claude-opus-4-1", stopReason: "stop", usage: u } });
@@ -31,8 +44,10 @@ test("a session sends its totals once at its end, across a reload, and a session
 
 	assert.equal(spawned.length, 1);
 	const [{ command, args, options, unref }] = spawned;
-	assert.deepEqual([command, args[0], options.detached, options.stdio, unref], ["llm-prompts", "session-telemetry", true, "ignore", true]);
-	const { wallMs, inferenceMs, commandMs, userMs, ...stats } = JSON.parse(args[1]);
+	assert.deepEqual([command, args, options.detached, options.stdio, unref], ["llm-prompts", ["session-telemetry"], true, "ignore", true]);
+	const [{ kind, at, uuid, stats: spooledStats }] = spooled();
+	assert.deepEqual([kind, typeof at, typeof uuid], ["pi-stats", "number", "string"]);
+	const { wallMs, inferenceMs, commandMs, userMs, ...stats } = spooledStats;
 	assert.deepEqual(stats, { role: "writer", model: "acme/claude-opus-4-1", calls: 2, cost: 0.5, context: 6000, peak: 4000, cacheRead: 4000, compactions: 1 });
 	assert.ok(wallMs >= inferenceMs + commandMs + userMs);
 });
@@ -80,7 +95,7 @@ test("a session splits its wall time into model calls, tool calls and user waits
 		["session-telemetry", "session-telemetry"],
 	);
 	assert.deepEqual(JSON.parse(spawned[0].args[1]), { event: "pr_opened" });
-	const { wallMs, inferenceMs, commandMs, userMs } = JSON.parse(spawned[1].args[1]);
+	const { wallMs, inferenceMs, commandMs, userMs } = spooled()[0].stats;
 	assert.deepEqual({ wallMs, inferenceMs, commandMs, userMs }, { wallMs: 45000, inferenceMs: 10000, commandMs: 7000, userMs: 17000 });
 });
 
@@ -114,7 +129,7 @@ test("a request while idle or while a tool runs, or one cut off by a compaction,
 	await at(32, "agent_settled");
 	await at(32, "session_shutdown", { reason: "quit" });
 
-	const { wallMs, inferenceMs, commandMs, userMs } = JSON.parse(spawned[0].args[1]);
+	const { wallMs, inferenceMs, commandMs, userMs } = spooled()[0].stats;
 	assert.deepEqual({ wallMs, inferenceMs, commandMs, userMs }, { wallMs: 32000, inferenceMs: 4000, commandMs: 4000, userMs: 21000 });
 });
 
@@ -140,6 +155,6 @@ test("a nested tool call that never ends does not keep the tool clock running", 
 	await at(8, "agent_settled");
 	await at(8, "session_shutdown", { reason: "quit" });
 
-	const { wallMs, inferenceMs, commandMs, userMs } = JSON.parse(spawned[0].args[1]);
+	const { wallMs, inferenceMs, commandMs, userMs } = spooled()[0].stats;
 	assert.deepEqual({ wallMs, inferenceMs, commandMs, userMs }, { wallMs: 8000, inferenceMs: 4000, commandMs: 3000, userMs: 0 });
 });

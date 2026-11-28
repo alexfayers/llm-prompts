@@ -1482,10 +1482,13 @@ def _run_command(
     )
     session_telemetry_parser = subparsers.add_parser(
         "session-telemetry",
-        help="Send one pi session's anonymous numbers. The session-telemetry pi extension runs it.",
+        help="Send one pi session's anonymous numbers, or post the spooled events. The session-telemetry pi extension runs it.",
     )
     session_telemetry_parser.add_argument(
-        "stats", type=json.loads, help="The session's totals as JSON."
+        "stats",
+        nargs="?",
+        type=json.loads,
+        help="The session's totals as JSON. Without it, only the spooled events are posted.",
     )
     size_report_parser = subparsers.add_parser(
         "size-report",

@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from conftest import FakeSubprocess, run_capturing_exit
+from conftest import FakeSubprocess, run_capturing_exit, spooled_events
 
 from llm_prompts import auto_update, cli, plugins
 from llm_prompts.main_sync import point_upstream
@@ -179,9 +179,7 @@ def test_a_run_logs_its_start_before_the_update_runs(
 
 
 def _reported(telemetry_popen: MagicMock) -> dict[str, object]:
-    properties: dict[str, object] = json.loads(telemetry_popen.call_args.args[0][3])[
-        "properties"
-    ]
+    properties: dict[str, object] = spooled_events(telemetry_popen)[-1]["properties"]
     return properties
 
 

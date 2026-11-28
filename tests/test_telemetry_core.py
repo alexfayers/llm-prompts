@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import runpy
 import subprocess
 import sys
@@ -159,11 +160,12 @@ def test_a_sent_versions_payload_is_resolved_without_paths(
         MagicMock(side_effect=subprocess.SubprocessError),
     )
 
+    telemetry_core.save_opt_state()
     telemetry_core.send(
         {"event": "e", "properties": {"versions": telemetry_core.versions(config)}},
         "id-1",
     )
-    telemetry_core.deliver(telemetry_popen.call_args.args[0][3])
+    telemetry_core.flush()
 
     body = posted.call_args.args[0]
     versions = json.loads(body)["properties"]["versions"]
@@ -193,10 +195,14 @@ def test_an_installed_source_reports_its_installed_version_as_its_release(
 
 
 def test_the_detached_sender_posts_each_event_once_without_paths(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    telemetry_popen: MagicMock, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     config = {"tools": [{"name": "mcp-memory", "source": str(tmp_path)}]}
-    body = json.dumps({"properties": {"versions": telemetry_core.versions(config)}})
+    telemetry_core.save_opt_state()
+    telemetry_core.send(
+        {"event": "e", "properties": {"versions": telemetry_core.versions(config)}},
+        "id-1",
+    )
     urlopen = MagicMock()
     monkeypatch.setattr("urllib.request.urlopen", urlopen)
     monkeypatch.setattr(
@@ -205,7 +211,7 @@ def test_the_detached_sender_posts_each_event_once_without_paths(
     monkeypatch.setattr(
         "llm_prompts.cli._get_installed_version", lambda _: (None, None)
     )
-    monkeypatch.setattr(sys, "argv", ["telemetry_core", body])
+    monkeypatch.setattr(sys, "argv", [telemetry_popen.call_args.args[0][2]])
     monkeypatch.delitem(sys.modules, "llm_prompts.telemetry_core")
 
     runpy.run_module("llm_prompts.telemetry_core", run_name="__main__")
@@ -326,3 +332,105 @@ def test_another_exception_sends_its_type_with_a_fixed_message() -> None:
 @pytest.mark.parametrize(("count", "bucket"), [(0, "0"), (7, "1-9"), (42, "10-99")])
 def test_bucket_names_the_power_of_ten_range(count: int, bucket: str) -> None:
     assert telemetry_core.bucket(count) == bucket
+
+
+def test_a_killed_sender_loses_no_event_and_a_later_flush_reposts_it_unchanged(
+    telemetry_popen: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    telemetry_core.save_opt_state()
+    posted = MagicMock(side_effect=[False, True])
+    monkeypatch.setattr("llm_prompts.telemetry_core.post", posted)
+
+    telemetry_core.send({"event": "e", "properties": {}}, "id-1")
+    for _ in range(3):
+        telemetry_core.flush()
+
+    first, second = (json.loads(call.args[0]) for call in posted.call_args_list)
+    assert first == second
+    assert (first["event"], first["distinct_id"]) == ("e", "id-1")
+    assert first["uuid"] and first["timestamp"]
+    assert not list(telemetry_core.spool_dir().iterdir())
+
+
+def test_a_sender_never_posts_a_file_another_sender_claimed(
+    telemetry_popen: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    telemetry_core.save_opt_state()
+
+    def post_while_another_sender_flushes(_: str) -> bool:
+        telemetry_core.flush()
+        return True
+
+    posted = MagicMock(side_effect=post_while_another_sender_flushes)
+    monkeypatch.setattr("llm_prompts.telemetry_core.post", posted)
+
+    telemetry_core.send({"event": "e", "properties": {}}, "id-1")
+    telemetry_core.flush()
+
+    posted.assert_called_once()
+
+
+@pytest.mark.parametrize(("age", "posted_calls"), [(60, 0), (10 * 60, 1)])
+def test_a_claim_is_released_once_it_is_old(
+    telemetry_popen: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    age: float,
+    posted_calls: int,
+) -> None:
+    telemetry_core.save_opt_state()
+    posted = MagicMock(return_value=True)
+    monkeypatch.setattr("llm_prompts.telemetry_core.post", posted)
+    telemetry_core.send({"event": "e", "properties": {}}, "id-1")
+    [spooled] = telemetry_core.spool_dir().iterdir()
+    claim = spooled.with_name(f"{spooled.name}.1")
+    spooled.replace(claim)
+    os.utime(claim, (time.time() - age,) * 2)
+
+    telemetry_core.flush()
+
+    assert posted.call_count == posted_calls
+
+
+@pytest.mark.parametrize(
+    ("extra", "aged"), [(1, False), (0, True)], ids=["count", "age"]
+)
+def test_the_spool_keeps_the_newest_events_for_a_week(
+    telemetry_popen: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    extra: int,
+    aged: bool,
+) -> None:
+    telemetry_core.save_opt_state()
+    posted = MagicMock(return_value=True)
+    monkeypatch.setattr("llm_prompts.telemetry_core.post", posted)
+    sent = telemetry_core.SPOOL_MAX_FILES + extra
+    for n in range(sent):
+        telemetry_core.send({"event": f"e{n}", "properties": {}}, "id-1")
+    if aged:
+        week_old = time.time_ns() - (telemetry_core.SPOOL_MAX_AGE + 60) * 10**9
+        oldest = min(telemetry_core.spool_dir().iterdir())
+        oldest.replace(oldest.with_name(f"{week_old}-old.json"))
+
+    telemetry_core.flush()
+
+    events = [json.loads(call.args[0])["event"] for call in posted.call_args_list]
+    assert events == [f"e{n}" for n in range(1, sent)]
+    assert not list(telemetry_core.spool_dir().iterdir())
+
+
+def test_opting_out_empties_the_spool(
+    telemetry_popen: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    telemetry_core.save_opt_state()
+    posted = MagicMock()
+    monkeypatch.setattr("llm_prompts.telemetry_core.post", posted)
+    telemetry_core.send({"event": "e", "properties": {}}, "id-1")
+    telemetry_core.send({"event": "e", "properties": {}}, "id-1")
+    claimed = min(telemetry_core.spool_dir().iterdir())
+    claimed.replace(claimed.with_name(f"{claimed.name}.1"))
+    monkeypatch.setenv("DO_NOT_TRACK", "1")
+
+    telemetry_core.flush()
+
+    posted.assert_not_called()
+    assert not list(telemetry_core.spool_dir().iterdir())
