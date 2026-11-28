@@ -345,7 +345,7 @@ describe("fork tool", () => {
 	test("a reply call's arguments decide the outcome and the kept reply, whatever the text says", async () => {
 		const { tool, appended } = await fork({ task: 'STUB_REPLY:{"outcome":"found-it","ref":"pr-1","verdict":"CLEAN","asks":["Which?"],"text":"ASK: an example"}', name: "replied" });
 		assert.equal(tool.content[0].text, "OUTCOME found-it ref:pr-1\nVerdict: CLEAN\nASK: Which?\nASK: an example");
-		assert.deepEqual(appended.filter(([type]) => type === "pending-asks").map(([, entry]) => (entry as any).text), ["replied: Which?"]);
+		assert.deepEqual(appended.filter(([type]) => type === "pending-asks"), []);
 		assert.equal(tool.details.outcome, "found-it");
 		const failed = await fork({ task: 'STUB_REPORT STUB_REPLY:{"outcome":"failed","ref":""}', name: "replyfailed" });
 		assert.equal(failed.tool.details.outcome, "failed");

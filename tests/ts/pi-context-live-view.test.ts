@@ -64,19 +64,6 @@ test("a widget whose session ended stops listening, so a reload's stale context 
 	assert.doesNotThrow(() => registry.start(run()));
 });
 
-test("a read blocked fork leaves the widget once its asks are answered, but stays while one is open", () => {
-	const registry = new Registry();
-	const view = new LiveView(registry);
-	const paint = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
-	registry.start(run({ id: "b1", name: "answered", state: "blocked", lastRequestAt: 1_000 }));
-	registry.start(run({ id: "b2", name: "pending", state: "blocked", lastRequestAt: 1_000 }));
-	const asks = ["fork-pending-b2-1"];
-	assert.deepEqual(view.lines(2_000, paint, Number.POSITIVE_INFINITY, asks)?.slice(1).map((line) => line.split(" ")[1]), ["pending"]);
-	registry.update("b2", { unread: "r" });
-	registry.start(run({ id: "d1", name: "unasked", state: "done", lastRequestAt: 1_000, unread: "r" }));
-	assert.deepEqual(view.lines(2_000, paint, Number.POSITIVE_INFINITY, asks)?.slice(1), ["\u25cf pending [reader] blocked \u00b7 cache 5m", "\u2713 1 done \u00b7 cache 5m"]);
-});
-
 test("a fork leaves the widget once its result reaches main, whatever its outcome, and returns while an aborted run re-announces it", () => {
 	const registry = new Registry();
 	const background = new Background({ sendMessage: () => undefined, appendEntry: () => undefined } as any, registry);
@@ -89,20 +76,12 @@ test("a fork leaves the widget once its result reaches main, whatever its outcom
 	assert.equal(view.lines()?.length, 2);
 	background.digest();
 	assert.equal(view.lines(), undefined);
-	background.settle(ctx, true);
+	background.settle(true);
 	assert.equal(view.lines()?.length, 2);
 	assert.equal(background.digest()?.split("\n").length, 5);
 	assert.equal(view.lines(), undefined);
-	background.settle(ctx, false);
+	background.settle(false);
 	assert.equal(view.lines(), undefined);
-});
-
-test("a read failed fork stays while one of its asks is open, with no request to cache", () => {
-	const registry = new Registry();
-	const view = new LiveView(registry);
-	registry.start(run({ id: "x1", name: "broken", state: "failed" }));
-	assert.deepEqual(view.lines(2_000, undefined, Number.POSITIVE_INFINITY, ["fork-broken-x1-1"])?.slice(1).map((line) => line.split(" ")[1]), ["broken"]);
-	assert.equal(view.lines(2_000), undefined);
 });
 
 test("forks started from the same source show it, and a fork with none shows nothing", () => {
@@ -129,28 +108,6 @@ test("two sources that share a name are told apart by their cache key", () => {
 	for (const [id, key] of [["a", "3f9a2c11"], ["b", "3f9a2c11"], ["c", "77b0de42"]]) registry.start(run({ id, name: `kid-${id}`, from: "stub", cacheKey: key }));
 	registry.start(run({ id: "d", name: "kid-d", from: "other", cacheKey: "0000aa" }));
 	assert.deepEqual(view.lines(2_000)?.slice(1).map((line) => line.split(" · ").at(-1)), ["from stub#3f9a2c", "from stub#3f9a2c", "from stub#77b0de", "from other"]);
-});
-
-test("the widget scans the session for open asks once per branch change, not per run or per frame", () => {
-	const registry = new Registry();
-	const view = new LiveView(registry);
-	for (let index = 0; index < 20; index++) registry.start(run({ id: `f${index}`, name: `f${index}`, state: "done", lastRequestAt: Date.now(), unread: "r" }));
-	let scans = 0;
-	let leaf = "a";
-	const entries = [{ type: "custom", customType: "pending-asks", data: { action: "add", id: "fork-f0-f0-1", text: "which?" } }];
-	const widgets: any[] = [];
-	view.bind({ hasUI: true, ui: { setWidget: (_key: string, widget?: unknown) => widgets.push(widget) }, sessionManager: { getLeafId: () => leaf, getBranch: () => (scans++, entries) } } as any);
-	const paint = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
-	const frames = () => Array.from({ length: 5 }, () => widgets.at(-1)(undefined, paint).render(200)).at(-1);
-	assert.deepEqual(frames().slice(1).map((line: string) => line.split(" ")[1]), ["f0", "19"]);
-	assert.equal(scans, 1);
-	registry.update("f1", { unread: "r2" });
-	frames();
-	assert.equal(scans, 1);
-	leaf = "b";
-	view.refresh();
-	assert.equal(scans, 2);
-	view.release();
 });
 
 test("a fork row with a long command fits in 100 columns and shows the tool with a 40 character command", () => {

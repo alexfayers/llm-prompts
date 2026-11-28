@@ -813,7 +813,6 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 	/** Restarts a lost run on its own session and worktree. */
 	async function resumeRun(ctx: ExtensionToolContext, run: Run & { files: string }, callId: string, reloaded = false) {
 		assertMayStart(ROLES[run.role as Role["name"]]);
-		background.resolveForkAsks(ctx, run.name);
 		if (run.tree) await restoreWorktree(run.tree);
 		const { queued } = run;
 		registry.update(run.id, { state: "running", endedAt: undefined, endedBy: undefined, queued: undefined });
@@ -830,7 +829,6 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 		if (context > WARM_FORK_MAX_TOKENS) throw new Error(`fork ${run.name} holds ~${thousands(context)} tokens, over ${thousands(WARM_FORK_MAX_TOKENS)}: start a fresh fork instead`);
 		assertMayStart(ROLES[run.role as Role["name"]]);
 		registry.update(run.id, { state: "running" });
-		background.resolveForkAsks(ctx, run.name);
 		const tree = await (async () => {
 			await background.ended(run.id);
 			return run.tree && (await resumeWorktree(run.tree, path.join(getAgentDir(), "pi-context", WORKTREES), run.name));
@@ -907,7 +905,6 @@ export function registerFork(pi: ExtensionAPI, command?: string[], background = 
 			const isLiveFork = registry.live().some((run) => !run.stub && run.name === params.name);
 			if (!isLiveFork && registry.all().some((run) => run.name === params.name && canContinue(run))) return continueRun(ctx, params.name, params.message, toolCallId);
 			await background.steer(params.name, params.message);
-			background.resolveForkAsks(ctx, params.name);
 			return { content: [{ type: "text", text: `steered fork ${params.name}` }], details: { name: params.name } };
 		},
 	});

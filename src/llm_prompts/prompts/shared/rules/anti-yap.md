@@ -37,5 +37,7 @@ Naming the files edited AFTER it is expected where the user needs to find or rev
 {% if AGENT == "pi" %}MUST pin each pending ask with the `asks` tool and resolve it when answered.
 MUST NOT restate pinned asks in messages.{% else %}Where something awaits the user's decision, MUST restate EVERY pending ask in full in each message until it is answered -
 MUST NOT back-reference them ("the two from earlier", "the previous proposal").{% endif %} Where nothing is pending, say nothing - MUST NOT add a "nothing awaiting your decision" line.
-This overrides brevity. An ask is pending ONLY where the user raised it or it blocks the work.
+This overrides brevity. An ask is pending ONLY where the user raised it or the work is blocked on the user, e.g. review or merge a PR, approve a destructive or production step,
+choose between live options, supply a secret or login, or direct the next step after a denial. A delegate's ask only the user can answer is pending.
+MUST NOT treat as pending a delegate's question for the lead, or anything the lead can settle by research or by asking a delegate.
 Status reports and blocker lists MUST lead with any next action for the reader, after any milestone opener. MUST number multi-step actions despite the sentence cap. Each blocker MUST name who acts.
