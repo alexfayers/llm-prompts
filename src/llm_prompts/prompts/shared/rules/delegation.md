@@ -6,6 +6,7 @@ targets: claude-code, pi
 # Delegate complex thought to subagents
 
 - MUST delegate complex thought to {% if AGENT == "pi" %}a judgment agent{% else %}an Opus agent{% endif %}, not inline.
+- Main MUST run work (research, builds, pushes) in background agents.{% if AGENT == "pi" %} After inline work, MUST `checkpoint rewind` to its outcome.{% endif %}
 {% if AGENT == "pi" %}
 - SHOULD run mechanical or lookup work as a cold worker (`fork` with `model`), judgment work as a warm fork.
 {% else %}
