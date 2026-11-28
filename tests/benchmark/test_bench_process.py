@@ -1,4 +1,5 @@
 import json
+import os
 import signal
 import subprocess
 import threading
@@ -342,6 +343,25 @@ def test_each_fork_reports_the_context_of_its_own_first_request(
     trace = PiAdapter().add_delegates(make_trace(), tmp_path, 0)
 
     assert sorted(trace.fork_start_contexts) == [70, 540]
+
+
+def test_each_fork_reports_the_seconds_from_its_spawn_to_its_first_request(
+    tmp_path: Path,
+) -> None:
+    spawned = LATER_MS / 1000
+    for first_ms in (1500, 250):
+        files = _fork_files(
+            tmp_path,
+            None,
+            {"type": "message", "id": "old", "message": _reply(0, LATER_MS - 9)},
+            {"type": "message", "id": "f1", "message": _reply(0, LATER_MS + first_ms)},
+            {"type": "message", "id": "f2", "message": _reply(0, LATER_MS + 9000)},
+        )
+        os.utime(files / "handshake.json", (spawned, spawned))
+
+    trace = PiAdapter().add_delegates(make_trace(), tmp_path, 0)
+
+    assert sorted(trace.fork_start_s) == [0.25, 1.5]
 
 
 def test_a_fork_start_context_is_its_earliest_call_across_its_sessions(

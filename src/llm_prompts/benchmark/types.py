@@ -209,6 +209,7 @@ class Trace:
     turns: int = 0
     prefix_reads: tuple[PrefixRead, ...] = ()
     fork_start_contexts: tuple[int, ...] = ()
+    fork_start_s: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -260,6 +261,7 @@ class ResultRow:
     context: int = 0
     start_context: int = 0
     fork_start_contexts: tuple[int, ...] = ()
+    fork_start_s: tuple[float, ...] = ()
     cost_usd: float | None = None
     turns: int = 0
     tool_calls: int = 0
@@ -299,6 +301,7 @@ class ResultRow:
                 data[name] = _pick(kind, {**asdict(getattr(cls, name)), **data[name]})
         if "checks" in data:
             data["checks"] = tuple(_pick(CheckOutcome, c) for c in data["checks"])
-        if "fork_start_contexts" in data:
-            data["fork_start_contexts"] = tuple(data["fork_start_contexts"])
+        for name in ("fork_start_contexts", "fork_start_s"):
+            if name in data:
+                data[name] = tuple(data[name])
         return cls(**data)

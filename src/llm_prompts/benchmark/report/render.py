@@ -177,7 +177,16 @@ COLUMNS = (
     *_pair("Turns", lambda s: f"{s.median_turns:g}"),
     *_pair("Failed tests", lambda s: str(s.failed_test_runs)),
 )
-_MARKDOWN_COLUMNS = (*COLUMNS, *_pair("Memory", lambda s: _memory(s)))
+_MARKDOWN_COLUMNS = (
+    *COLUMNS,
+    *_pair("Memory", lambda s: _memory(s)),
+    *_pair(
+        "Fork start time",
+        lambda s: (
+            "-" if s.median_fork_start_s is None else f"{s.median_fork_start_s:.1f}s"
+        ),
+    ),
+)
 
 
 def _row(delta: ScenarioDelta) -> str:

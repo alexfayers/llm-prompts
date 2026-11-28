@@ -161,6 +161,7 @@ def _row(
         context=trace.context,
         start_context=trace.start_context,
         fork_start_contexts=trace.fork_start_contexts,
+        fork_start_s=trace.fork_start_s,
         cost_usd=trace.cost_usd,
         turns=trace.turns,
         tool_calls=len(trace.tool_calls),

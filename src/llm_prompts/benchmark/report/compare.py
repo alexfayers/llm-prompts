@@ -46,6 +46,7 @@ class Summary:
     chain_runs: int = 0
     median_start_context: float = 0.0
     median_fork_start_context: float = 0.0
+    median_fork_start_s: float | None = None
     median_turns: float = 0.0
     median_wall_s: float = 0.0
     failed_test_runs: int = 0
@@ -200,6 +201,10 @@ def _median(values: Sequence[float]) -> float:
     return median(values) if values else 0.0
 
 
+def _sampled_median(values: Sequence[float]) -> float | None:
+    return median(values) if values else None
+
+
 def _skipped(rows: Sequence[ResultRow]) -> dict[str, tuple[int, ...]]:
     reasons: dict[str, list[int]] = defaultdict(list)
     for row in rows:
@@ -236,6 +241,9 @@ def _summarise(all_rows: Sequence[ResultRow]) -> Summary:
         median_start_context=_median([r.start_context for r in completed]),
         median_fork_start_context=_median(
             [start for r in completed for start in r.fork_start_contexts]
+        ),
+        median_fork_start_s=_sampled_median(
+            [start for r in completed for start in r.fork_start_s]
         ),
         median_turns=_median([r.turns for r in completed]),
         median_wall_s=_median([r.wall_s for r in completed]),
