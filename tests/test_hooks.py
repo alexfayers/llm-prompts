@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterator
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -1047,6 +1047,71 @@ class TestUpdateCheckOnTaskStart:
             refresh_update_check(str(tmp_path / "update-stamp"))
         event = json.loads(telemetry_popen.call_args.args[0][3])
         assert event["properties"]["auto_update"] == auto_update
+
+    @pytest.mark.parametrize(
+        ("identity", "source"),
+        [
+            (["cline-hooks", "digest", "", "tool"], "cline-hooks"),
+            (["private-overlay", "digest", "", "tool"], "overlay"),
+            (["private-plugin", "digest", "", "plugin"], "plugin"),
+            (["cline-hooks", "digest", "", "plugin"], "plugin"),
+        ],
+    )
+    def test_refresh_reports_which_source_check_failed(
+        self,
+        tmp_path: Path,
+        telemetry_popen: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        identity: list[str],
+        source: str,
+    ) -> None:
+        monkeypatch.setattr(
+            "llm_prompts.cli._get_installed_version", lambda _: (None, None)
+        )
+        messages = [UpdateCheckFailure("update check failed: offline", identity)]
+        with patch("llm_prompts.cli._collect_update_messages", return_value=messages):
+            refresh_update_check(str(tmp_path / "update-stamp"))
+        properties = json.loads(telemetry_popen.call_args.args[0][3])["properties"]
+        assert (properties["auto_update"], properties["check_failed_source"]) == (
+            "check-failed",
+            source,
+        )
+
+    def test_refresh_reports_a_crashed_check(
+        self,
+        tmp_path: Path,
+        telemetry_popen: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            "llm_prompts.cli._get_installed_version", lambda _: (None, None)
+        )
+        with patch(
+            "llm_prompts.cli._collect_update_messages", side_effect=OSError("boom")
+        ):
+            refresh_update_check(str(tmp_path / "update-stamp"))
+        properties = json.loads(telemetry_popen.call_args.args[0][3])["properties"]
+        assert (properties["auto_update"], properties["check_failed_source"]) == (
+            "error",
+            None,
+        )
+
+    def test_refresh_reports_a_busy_check_lock(
+        self,
+        tmp_path: Path,
+        telemetry_popen: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            "llm_prompts.cli._get_installed_version", lambda _: (None, None)
+        )
+        monkeypatch.setattr(
+            _ReinstallDebouncer, "single_flight", lambda _: nullcontext(False)
+        )
+        with patch("llm_prompts.cli._collect_update_messages", return_value=[]):
+            refresh_update_check(str(tmp_path / "update-stamp"))
+        event = json.loads(telemetry_popen.call_args.args[0][3])
+        assert event["properties"]["auto_update"] == "lock-busy"
 
     def test_refresh_sends_no_telemetry_before_the_first_run_notice(
         self,

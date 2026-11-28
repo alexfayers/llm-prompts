@@ -359,22 +359,36 @@ def refresh_update_check(stamp: str) -> None:
                 )
         except (Exception, SystemExit):
             logger.warning("Failed to check for llm-prompts updates")
+            run.auto_update = "error"
             if fetch:
                 debouncer.mark_run(failed=True)
             return
         with debouncer.single_flight() as holds_lock:
             if not holds_lock:
+                run.auto_update = "lock-busy"
                 return
-            failed = any(isinstance(m, UpdateCheckFailure) for m in messages)
+            failures = [m for m in messages if isinstance(m, UpdateCheckFailure)]
             if fetch:
-                debouncer.mark_run(failed)
-            if not failed:
+                debouncer.mark_run(bool(failures))
+            if failures:
+                run.auto_update = "check-failed"
+                run.check_failed_source = _reported_source(failures[0].source)
+            else:
                 run.auto_update = (
                     _start_auto_update(fingerprint) if messages else "no-update"
                 )
                 if run.auto_update == "started":
                     messages = [*messages, _AUTO_UPDATE_STARTED]
             debouncer.store_notice(messages, fingerprint)
+
+
+def _reported_source(identity: list[str]) -> str:
+    """Return a source's tool name for telemetry, or ``overlay`` or ``plugin`` for an untracked one."""
+    from .telemetry_core import TRACKED
+
+    if identity[-1:] == ["plugin"]:
+        return "plugin"
+    return identity[0] if identity and identity[0] in TRACKED else "overlay"
 
 
 def _start_auto_update(fingerprint: str) -> str:
