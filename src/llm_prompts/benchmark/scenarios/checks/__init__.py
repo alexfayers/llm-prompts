@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 
 from llm_prompts.benchmark.cell.memory import (
     MEMORY_TOOL_PREFIX,
@@ -41,8 +42,8 @@ def _run(spec: CheckSpec, ctx: CheckContext) -> CheckOutcome:
 
 
 def evaluate(specs: Sequence[CheckSpec], ctx: CheckContext) -> list[CheckOutcome]:
-    """Run every check in ``specs`` against ``ctx`` and return their outcomes."""
-    return [_run(spec, ctx) for spec in specs]
+    """Run every check in ``specs`` against ``ctx`` and return their outcomes, each named after its check."""
+    return [replace(_run(spec, ctx), name=spec.name) for spec in specs]
 
 
 BASH = r"(?i)bash"

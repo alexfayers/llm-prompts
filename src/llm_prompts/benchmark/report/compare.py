@@ -162,6 +162,7 @@ class JudgeReason:
     variant: str
     repeat: int
     detail: str
+    name: str
 
 
 @dataclass(frozen=True)
@@ -544,7 +545,9 @@ def usage(rows: Sequence[ResultRow]) -> Usage:
 def judge_reasons(rows: Sequence[ResultRow]) -> tuple[JudgeReason, ...]:
     """Return the full detail of every failed judge check."""
     return tuple(
-        JudgeReason(row.scenario, row.agent, row.variant, row.repeat, check.detail)
+        JudgeReason(
+            row.scenario, row.agent, row.variant, row.repeat, check.detail, check.name
+        )
         for row in rows
         for check in row.checks
         if check.kind == "judge" and not check.passed

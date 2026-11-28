@@ -47,6 +47,12 @@ class CheckSpec:
     kind: str
     args: Mapping[str, CheckArg]
 
+    @property
+    def name(self) -> str:
+        """Return the check's full one-line name: its kind and arguments."""
+        args = ", ".join(f"{key}={value}" for key, value in self.args.items())
+        return " ".join((f"{self.kind}({args})" if args else self.kind).split())
+
 
 @dataclass(frozen=True)
 class Scenario:
@@ -211,6 +217,7 @@ class CheckOutcome:
     passed: bool
     detail: str
     tokens: int = 0
+    name: str = ""
 
 
 @dataclass(frozen=True)
