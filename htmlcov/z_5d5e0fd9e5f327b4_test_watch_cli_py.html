@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">40 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">40<span class="text"> run</span></button>
+            <span class="text">51 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">51<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_a44f0ac069e85531_worker_share_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
-            created at 2026-11-28 01:46 +0000
+            created at 2026-11-28 01:59 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -183,6 +183,37 @@
     <p class="run"><span class="n"><a id="t101" href="#t101">101</a></span><span class="t">    <span class="nam">fake_subprocess</span><span class="op">.</span><span class="nam">on</span><span class="op">(</span><span class="str">&quot;test&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t102" href="#t102">102</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t103" href="#t103">103</a></span><span class="t">    <span class="key">assert</span> <span class="nam">run_cli</span><span class="op">(</span><span class="nam">monkeypatch</span><span class="op">,</span> <span class="str">&quot;plugin-cmd&quot;</span><span class="op">,</span> <span class="str">&quot;--until&quot;</span><span class="op">,</span> <span class="str">&quot;ok&quot;</span><span class="op">,</span> <span class="str">&quot;--&quot;</span><span class="op">,</span> <span class="str">&quot;test&quot;</span><span class="op">)</span> <span class="op">==</span> <span class="num">0</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t104" href="#t104">104</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t105" href="#t105">105</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t106" href="#t106">106</a></span><span class="t"><span class="key">def</span> <span class="nam">test_cli_exits_1_when_a_field_never_takes_the_value</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t107" href="#t107">107</a></span><span class="t">    <span class="nam">monkeypatch</span><span class="op">:</span> <span class="nam">pytest</span><span class="op">.</span><span class="nam">MonkeyPatch</span><span class="op">,</span> <span class="nam">capsys</span><span class="op">:</span> <span class="nam">pytest</span><span class="op">.</span><span class="nam">CaptureFixture</span><span class="op">[</span><span class="nam">str</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t108" href="#t108">108</a></span><span class="t"><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t109" href="#t109">109</a></span><span class="t">    <span class="key">assert</span> <span class="nam">run_cli</span><span class="op">(</span><span class="nam">monkeypatch</span><span class="op">,</span> <span class="str">&quot;gh-pr&quot;</span><span class="op">,</span> <span class="str">&quot;1&quot;</span><span class="op">,</span> <span class="str">&quot;--until&quot;</span><span class="op">,</span> <span class="str">&quot;ci=failure&quot;</span><span class="op">)</span> <span class="op">==</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t110" href="#t110">110</a></span><span class="t">    <span class="key">assert</span> <span class="nam">capsys</span><span class="op">.</span><span class="nam">readouterr</span><span class="op">(</span><span class="op">)</span><span class="op">.</span><span class="nam">err</span> <span class="op">==</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t111" href="#t111">111</a></span><span class="t">        <span class="str">&quot;watch: ci takes pass, fail, pending or none, not &#x27;failure&#x27;.\n&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t112" href="#t112">112</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t113" href="#t113">113</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t114" href="#t114">114</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t115" href="#t115">115</a></span><span class="t"><span class="key">def</span> <span class="nam">test_cli_help_lists_the_values_each_field_takes</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t116" href="#t116">116</a></span><span class="t">    <span class="nam">monkeypatch</span><span class="op">:</span> <span class="nam">pytest</span><span class="op">.</span><span class="nam">MonkeyPatch</span><span class="op">,</span> <span class="nam">capsys</span><span class="op">:</span> <span class="nam">pytest</span><span class="op">.</span><span class="nam">CaptureFixture</span><span class="op">[</span><span class="nam">str</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t117" href="#t117">117</a></span><span class="t"><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t118" href="#t118">118</a></span><span class="t">    <span class="key">with</span> <span class="nam">pytest</span><span class="op">.</span><span class="nam">raises</span><span class="op">(</span><span class="nam">SystemExit</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t119" href="#t119">119</a></span><span class="t">        <span class="nam">run_cli</span><span class="op">(</span><span class="nam">monkeypatch</span><span class="op">,</span> <span class="str">&quot;gh-pr&quot;</span><span class="op">,</span> <span class="str">&quot;--help&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t120" href="#t120">120</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t121" href="#t121">121</a></span><span class="t">    <span class="key">assert</span> <span class="str">&quot;ci takes pass, fail, pending or none&quot;</span> <span class="key">in</span> <span class="str">&quot; &quot;</span><span class="op">.</span><span class="nam">join</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t122" href="#t122">122</a></span><span class="t">        <span class="nam">capsys</span><span class="op">.</span><span class="nam">readouterr</span><span class="op">(</span><span class="op">)</span><span class="op">.</span><span class="nam">out</span><span class="op">.</span><span class="nam">split</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t123" href="#t123">123</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t124" href="#t124">124</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t125" href="#t125">125</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t126" href="#t126">126</a></span><span class="t"><span class="key">def</span> <span class="nam">test_cli_exits_1_on_a_value_a_field_never_takes_before_any_pr_is_found</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t127" href="#t127">127</a></span><span class="t">    <span class="nam">monkeypatch</span><span class="op">:</span> <span class="nam">pytest</span><span class="op">.</span><span class="nam">MonkeyPatch</span><span class="op">,</span> <span class="nam">capsys</span><span class="op">:</span> <span class="nam">pytest</span><span class="op">.</span><span class="nam">CaptureFixture</span><span class="op">[</span><span class="nam">str</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t128" href="#t128">128</a></span><span class="t"><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t129" href="#t129">129</a></span><span class="t">    <span class="nam">argv</span> <span class="op">=</span> <span class="op">(</span><span class="str">&quot;gh-pr&quot;</span><span class="op">,</span> <span class="str">&quot;--author&quot;</span><span class="op">,</span> <span class="str">&quot;@me&quot;</span><span class="op">,</span> <span class="str">&quot;--repo&quot;</span><span class="op">,</span> <span class="str">&quot;o/r&quot;</span><span class="op">,</span> <span class="str">&quot;--follow&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t130" href="#t130">130</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t131" href="#t131">131</a></span><span class="t">    <span class="key">assert</span> <span class="nam">run_cli</span><span class="op">(</span><span class="nam">monkeypatch</span><span class="op">,</span> <span class="op">*</span><span class="nam">argv</span><span class="op">,</span> <span class="str">&quot;--until&quot;</span><span class="op">,</span> <span class="str">&quot;ci=failure&quot;</span><span class="op">)</span> <span class="op">==</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t132" href="#t132">132</a></span><span class="t">    <span class="key">assert</span> <span class="nam">capsys</span><span class="op">.</span><span class="nam">readouterr</span><span class="op">(</span><span class="op">)</span><span class="op">.</span><span class="nam">err</span> <span class="op">==</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t133" href="#t133">133</a></span><span class="t">        <span class="str">&quot;watch: ci takes pass, fail, pending or none, not &#x27;failure&#x27;.\n&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t134" href="#t134">134</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -192,7 +223,7 @@
             <a class="nav" href="z_a44f0ac069e85531_worker_share_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.5">coverage.py v7.17.5</a>,
-            created at 2026-11-28 01:46 +0000
+            created at 2026-11-28 01:59 +0000
         </p>
     </div>
 </footer>
