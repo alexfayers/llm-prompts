@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.12.0](https://github.com/alexfayers/llm-prompts/compare/v0.11.0...v0.12.0) (2026-11-28)
+
+
+### Features
+
+* **pi:** pin only asks that await the user, not a fork's asks ([#926](https://github.com/alexfayers/llm-prompts/issues/926)) ([0cfa047](https://github.com/alexfayers/llm-prompts/commit/0cfa047638d5e454eaf853bec8c2fa68f851785d))
+* **telemetry:** report why the startup check did not start the auto-update ([#937](https://github.com/alexfayers/llm-prompts/issues/937)) ([325199c](https://github.com/alexfayers/llm-prompts/commit/325199c64dcd91b782b76c51a10991b491763f14))
+* **telemetry:** send a session_start event on each agent session start ([#936](https://github.com/alexfayers/llm-prompts/issues/936)) ([7e408f8](https://github.com/alexfayers/llm-prompts/commit/7e408f8cefd90a490f60d0b4cd0e2d05bda89189))
+
 ## [0.11.0](https://github.com/alexfayers/llm-prompts/compare/v0.10.0...v0.11.0) (2026-11-28)
 
 
