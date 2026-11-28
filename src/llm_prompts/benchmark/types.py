@@ -210,6 +210,7 @@ class Trace:
     prefix_reads: tuple[PrefixRead, ...] = ()
     fork_start_contexts: tuple[int, ...] = ()
     fork_start_s: tuple[float, ...] = ()
+    peak_rss_kb: int = 0
 
 
 @dataclass(frozen=True)
@@ -262,6 +263,7 @@ class ResultRow:
     start_context: int = 0
     fork_start_contexts: tuple[int, ...] = ()
     fork_start_s: tuple[float, ...] = ()
+    peak_rss_kb: int = 0
     cost_usd: float | None = None
     turns: int = 0
     tool_calls: int = 0

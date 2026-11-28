@@ -14,6 +14,7 @@ def test_result_row_round_trips_and_defaults_what_an_older_row_lacks() -> None:
         tokens=Tokens(input=3),
         fork_start_contexts=(5, 6),
         fork_start_s=(1.5,),
+        peak_rss_kb=2048,
     )
 
     assert ResultRow.from_json(json.loads(json.dumps(row.to_json()))) == row
@@ -23,7 +24,9 @@ def test_result_row_round_trips_and_defaults_what_an_older_row_lacks() -> None:
 
 
 def test_a_saved_trace_loads_back_equal(tmp_path: Path) -> None:
-    trace = make_trace(fork_start_contexts=(5, 6), fork_start_s=(1.5,))
+    trace = make_trace(
+        fork_start_contexts=(5, 6), fork_start_s=(1.5,), peak_rss_kb=2048
+    )
     (tmp_path / "ws").mkdir()
     (tmp_path / "cell").mkdir()
 

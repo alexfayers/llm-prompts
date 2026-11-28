@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections import defaultdict
 from collections.abc import Callable, Iterator
 from concurrent.futures import CancelledError
 from contextlib import contextmanager, suppress
@@ -23,6 +24,7 @@ from llm_prompts.benchmark.types import (
     Trace,
 )
 
+RSS_SAMPLE_S = 1.0
 _live: set[subprocess.Popen[str]] = set()
 _lock = threading.Lock()
 _stopping = threading.Event()
@@ -31,6 +33,54 @@ _stopping = threading.Event()
 def _kill_group(process: subprocess.Popen[str]) -> None:
     with suppress(ProcessLookupError):
         os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+
+
+def _tree_rss_kb(root: int) -> int:
+    """Return the summed resident memory in KiB of process ``root`` and its descendants."""
+    try:
+        listing = subprocess.run(
+            ["ps", "-A", "-o", "pid=,ppid=,rss="],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=RSS_SAMPLE_S * 5,
+        ).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return 0
+    rss: dict[int, int] = {}
+    children: defaultdict[int, list[int]] = defaultdict(list)
+    for line in listing.splitlines():
+        try:
+            pid, ppid, kb = map(int, line.split())
+        except ValueError:
+            continue
+        rss[pid] = kb
+        children[ppid].append(pid)
+    tree = [root]
+    for pid in tree:
+        tree.extend(children[pid])
+    return sum(rss.get(pid, 0) for pid in tree)
+
+
+@contextmanager
+def _peak_rss_kb(root: int) -> Iterator[list[int]]:
+    """Sample the resident memory of process ``root`` and its descendants every ``RSS_SAMPLE_S`` while active, and yield a list holding the peak."""
+    peak = [0]
+    done = threading.Event()
+
+    def sample() -> None:
+        while True:
+            peak[0] = max(peak[0], _tree_rss_kb(root))
+            if done.wait(RSS_SAMPLE_S):
+                return
+
+    sampler = threading.Thread(target=sample, daemon=True)
+    sampler.start()
+    try:
+        yield peak
+    finally:
+        done.set()
+        sampler.join()
 
 
 @contextmanager
@@ -108,18 +158,19 @@ def execute(
         timer = threading.Timer(scenario.timeout_s, kill)
         timer.start()
         try:
-            assert process.stdout is not None
-            lines: list[tuple[float, str]] = []
-            replied = False
-            for line in process.stdout:
-                lines.append((time.time(), line))
-                if on_reply and not replied and runner.replied(line):
-                    replied = True
-                    on_reply()
-                if on_tool:
-                    for name in runner.tool_started(line):
-                        on_tool(name)
-            returncode = process.wait()
+            with _peak_rss_kb(process.pid) as peak_rss_kb:
+                assert process.stdout is not None
+                lines: list[tuple[float, str]] = []
+                replied = False
+                for line in process.stdout:
+                    lines.append((time.time(), line))
+                    if on_reply and not replied and runner.replied(line):
+                        replied = True
+                        on_reply()
+                    if on_tool:
+                        for name in runner.tool_started(line):
+                            on_tool(name)
+                returncode = process.wait()
         finally:
             timer.cancel()
             _live.discard(process)
@@ -130,4 +181,6 @@ def execute(
     if timed_out.is_set():
         raise TimeoutError(f"{prepared.cell.id} exceeded {scenario.timeout_s}s")
     trace = runner.add_delegates(runner.parse(lines, wall_s), prepared.home, since)
-    return dataclasses.replace(trace, exit_code=returncode or trace.exit_code)
+    return dataclasses.replace(
+        trace, exit_code=returncode or trace.exit_code, peak_rss_kb=peak_rss_kb[0]
+    )

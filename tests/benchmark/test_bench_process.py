@@ -63,6 +63,11 @@ def popen(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakePopen]:
     fake = FakePopen()
     monkeypatch.setattr(subprocess, "Popen", fake)
     monkeypatch.setattr("os.getpgid", lambda pid: pid)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda argv, **_: subprocess.CompletedProcess(argv, 0, stdout=""),
+    )
     monkeypatch.setattr("os.killpg", lambda pgid, sig: fake.killed.set())
     monkeypatch.setattr(ClaudeAdapter, "parse", lambda *_: make_trace())
     yield fake
@@ -185,6 +190,40 @@ def test_execute_runs_agent_in_workspace_and_logs_stdout_then_stderr(
     assert (kwargs["cwd"], kwargs["env"]) == (prepared.workspace, prepared.env)
     assert result.exit_code == 3
     assert (prepared.root / "agent.log").read_text() == f"{TOOL_LINE}out\nerr\n"
+
+
+def test_execute_reports_the_peak_resident_memory_of_the_agent_and_its_descendants(
+    popen: FakePopen,
+    cell: tuple[PreparedCell, Scenario],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared, scenario = cell
+    listing = f"{PID} 1 1000\n4300 {PID} 2000\n4301 4300 500\n9999 1 7777\n4302 {PID}\n"
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda argv, **_: subprocess.CompletedProcess(argv, 0, stdout=listing),
+    )
+
+    trace = process.execute(prepared, scenario, "m", None)
+
+    assert trace.peak_rss_kb == 3500
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_a_ps_that_times_out_leaves_the_peak_resident_memory_unknown(
+    popen: FakePopen,
+    cell: tuple[PreparedCell, Scenario],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared, scenario = cell
+
+    def hang(argv: list[str], timeout: float, **_: Any) -> None:
+        raise subprocess.TimeoutExpired(argv, timeout)
+
+    monkeypatch.setattr(subprocess, "run", hang)
+
+    assert process.execute(prepared, scenario, "m", None).peak_rss_kb == 0
 
 
 LATER_MS = 4102444800000

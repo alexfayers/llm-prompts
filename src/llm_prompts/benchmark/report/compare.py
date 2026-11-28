@@ -47,6 +47,7 @@ class Summary:
     median_start_context: float = 0.0
     median_fork_start_context: float = 0.0
     median_fork_start_s: float | None = None
+    median_peak_rss_kb: float | None = None
     median_turns: float = 0.0
     median_wall_s: float = 0.0
     failed_test_runs: int = 0
@@ -244,6 +245,9 @@ def _summarise(all_rows: Sequence[ResultRow]) -> Summary:
         ),
         median_fork_start_s=_sampled_median(
             [start for r in completed for start in r.fork_start_s]
+        ),
+        median_peak_rss_kb=_sampled_median(
+            [r.peak_rss_kb for r in completed if r.peak_rss_kb]
         ),
         median_turns=_median([r.turns for r in completed]),
         median_wall_s=_median([r.wall_s for r in completed]),

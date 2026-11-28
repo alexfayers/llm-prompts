@@ -186,6 +186,14 @@ _MARKDOWN_COLUMNS = (
             "-" if s.median_fork_start_s is None else f"{s.median_fork_start_s:.1f}s"
         ),
     ),
+    *_pair(
+        "Peak RSS",
+        lambda s: (
+            "-"
+            if s.median_peak_rss_kb is None
+            else f"{s.median_peak_rss_kb / 1024:,.0f} MB"
+        ),
+    ),
 )
 
 
