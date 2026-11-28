@@ -61,7 +61,10 @@ def _poll_until_done(
             added.append(len(sources))
             sources.append(source)
             terminals.append(terminal)
-            conditions.append(expand(untils, source.aliases) + terminal)
+            conditions.append(
+                expand(untils, source.aliases, getattr(found_source, "values", {}))
+                + terminal
+            )
         return added
 
     waiting = add(initial)

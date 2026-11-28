@@ -54,15 +54,33 @@ def parse(text: str, label: str) -> Condition:
     return Condition(label, field, value)
 
 
+def takes(field: str, values: Sequence[str]) -> str:
+    """Describe the values a field takes, as ``ci takes pass, fail or none``."""
+    listed = ", ".join(values[:-1]) + " or " if len(values) > 1 else ""
+    return f"{field} takes {listed}{values[-1]}"
+
+
 def expand(
-    untils: Sequence[str], aliases: Mapping[str, Sequence[str]]
+    untils: Sequence[str],
+    aliases: Mapping[str, Sequence[str]],
+    values: Mapping[str, Sequence[str]],
 ) -> list[Condition]:
-    """Turn each ``--until`` value, or the alias it names, into conditions."""
+    """Turn each ``--until`` value, or the alias it names, into conditions.
+
+    values maps each field with a fixed set of values to that set, and a condition naming another value is an error.
+    """
     try:
-        return [
+        conditions = [
             parse(text, until)
             for until in untils
             for text in aliases.get(until, [until])
         ]
     except WatchError as error:
         raise WatchError(f"{error} Aliases: {', '.join(aliases)}.") from None
+    for condition in conditions:
+        known = values.get(condition.field)
+        if known and condition.value is not None and condition.value not in known:
+            raise WatchError(
+                f"{takes(condition.field, known)}, not '{condition.value}'."
+            )
+    return conditions

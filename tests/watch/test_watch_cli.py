@@ -101,3 +101,34 @@ def test_cli_runs_a_source_an_installed_package_provides(
     fake_subprocess.on("test")
 
     assert run_cli(monkeypatch, "plugin-cmd", "--until", "ok", "--", "test") == 0
+
+
+def test_cli_exits_1_when_a_field_never_takes_the_value(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert run_cli(monkeypatch, "gh-pr", "1", "--until", "ci=failure") == 1
+    assert capsys.readouterr().err == (
+        "watch: ci takes pass, fail, pending or none, not 'failure'.\n"
+    )
+
+
+def test_cli_help_lists_the_values_each_field_takes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit):
+        run_cli(monkeypatch, "gh-pr", "--help")
+
+    assert "ci takes pass, fail, pending or none" in " ".join(
+        capsys.readouterr().out.split()
+    )
+
+
+def test_cli_exits_1_on_a_value_a_field_never_takes_before_any_pr_is_found(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    argv = ("gh-pr", "--author", "@me", "--repo", "o/r", "--follow")
+
+    assert run_cli(monkeypatch, *argv, "--until", "ci=failure") == 1
+    assert capsys.readouterr().err == (
+        "watch: ci takes pass, fail, pending or none, not 'failure'.\n"
+    )

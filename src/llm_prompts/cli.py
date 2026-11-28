@@ -1315,6 +1315,7 @@ def _add_watch_parser(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
     """Add the ``watch`` command with one subcommand per watch source."""
+    from .watch.core.condition import takes
     from .watch.core.registry import sources
 
     watch_parser = subparsers.add_parser(
@@ -1332,7 +1333,20 @@ def _add_watch_parser(
             "--until",
             action="append",
             required=True,
-            help="Stop when field=value or changed:field holds, label=GLOB (gh-pr) matches a label, or an alias does. Repeat to stop on any.",
+            help=" ".join(
+                [
+                    "Stop when field=value or changed:field holds, label=GLOB (gh-pr) matches a label, or an alias does. Repeat to stop on any.",
+                    *(
+                        [f"Aliases: {', '.join(source.aliases)}."]
+                        if source.aliases
+                        else []
+                    ),
+                    *(
+                        f"{takes(field, values)}."
+                        for field, values in getattr(source, "values", {}).items()
+                    ),
+                ]
+            ),
         )
         source_parser.add_argument(
             "--interval",
@@ -2034,10 +2048,17 @@ def _run_command(
 
         print(build_report(args.base_root))
     elif args.command == "watch":
+        from .watch.core.condition import expand
         from .watch.core.registry import sources
         from .watch.core.runner import watch
+        from .watch.core.source import WatchError
 
         source_type = sources()[args.source]
+        try:
+            expand(args.until, source_type.aliases, getattr(source_type, "values", {}))
+        except WatchError as error:
+            print(f"watch: {error}", file=sys.stderr)
+            return 1
         built = source_type.from_args(args)
         discoverer = getattr(source_type, "discoverer", None)
         return watch(
