@@ -742,6 +742,76 @@ def _land_upstream(project: Project, name: str, pull: bool = True) -> None:
         git(project.repo, "pull", "-q", "--ff-only")
 
 
+def test_update_warns_about_unrecorded_branches_with_work_not_on_origin_main(
+    project: Project,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_sources(project)
+    project.worktree("feat/a", "feat: a")
+    project.run(branch="feat/a")
+    landed = project.worktree("feat/c")
+    project.commit(landed, "c.txt", "upstream\n", "feat: c")
+    _land_upstream(project, "c.txt")
+    project.worktree("feat/s", "feat: s")
+    project.commit(project.repo, "s.txt", "squashed\n", "feat: s (#7)")
+    git(project.repo, "push", "-q", "origin", "main")
+    git(project.repo, "branch", "feat/d", "origin/main")
+    project.worktree("backup/e", "feat: e")
+    git(project.repo, "worktree", "remove", str(project.worktree("feat/new", "n")))
+    with monkeypatch.context() as old:
+        old.setenv("GIT_COMMITTER_DATE", "1700000000 +0000")
+        git(project.repo, "worktree", "remove", str(project.worktree("feat/old", "o")))
+        project.worktree("feat/b", "feat: b")
+    capsys.readouterr()
+
+    cli._pull_local_sources()
+
+    warnings = [
+        line for line in capsys.readouterr().out.splitlines() if "not recorded" in line
+    ]
+    assert warnings == [
+        (
+            "[tool] warning: 2 local branch(es) with commits not on origin/main"
+            " are not recorded: feat/new, feat/b"
+        )
+    ]
+
+
+def test_update_names_why_it_could_not_check_for_unrecorded_branches(
+    project: Project, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure_sources(project)
+    failure = subprocess.CalledProcessError(1, "git", stderr="fatal: broken\n")
+
+    with patch.object(contribute, "unrecorded_warning", side_effect=failure):
+        cli._pull_local_sources()
+
+    assert (
+        "[tool] unrecorded branches not checked (fatal: broken)"
+        in capsys.readouterr().out
+    )
+
+
+def test_update_names_only_the_newest_unrecorded_branches(
+    project: Project,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_sources(project)
+    for n in range(6):
+        monkeypatch.setenv("GIT_COMMITTER_DATE", f"{1_700_000_000 + n} +0000")
+        project.worktree(f"feat/{n}", f"feat: {n}")
+    capsys.readouterr()
+
+    cli._pull_local_sources()
+
+    assert (
+        "[tool] warning: 6 local branch(es) with commits not on origin/main are not"
+        " recorded: feat/5, feat/4, feat/3, feat/2, feat/1, ..."
+    ) in capsys.readouterr().out
+
+
 def _main_with_empty_commits(project: Project) -> None:
     """Land ``feat: a (#5)`` and ``feat: b (#6)`` upstream, then put an empty recorded copy of ``feat: a``, a real commit and a deliberate empty ``feat: b`` on local main."""
     other = project.root / "upstream-clone"

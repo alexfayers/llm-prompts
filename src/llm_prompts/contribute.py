@@ -15,6 +15,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -33,7 +34,7 @@ from .git_snapshot import (
     resolve_ref,
 )
 from .network import run_with_retries, with_retries
-from .squash_subject import squash_pr_number
+from .squash_subject import SQUASH_SUFFIX, squash_pr_number
 from .worktrees import Link, WorktreeEntry
 
 _DEPENDS_PREFIX = "Depends on "
@@ -46,6 +47,8 @@ _HEADING = re.compile(r"^## ", re.MULTILINE)
 _SECTION_HEADING = re.compile(r"^##[ \t]+(.*?)[ \t]*$", re.MULTILINE)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _BLANK_LINES = re.compile(r"\n{3,}")
+UNRECORDED_DAYS = 14
+UNRECORDED_NAMES = 5
 _PR_TEMPLATE_PATH = ".github/PULL_REQUEST_TEMPLATE.md"
 _FALLBACK_TEMPLATE = "## What\n\n## Why\n\n## Dependencies\n\n## Issues\n"
 _SLUG_MAX_LEN = 50
@@ -280,6 +283,83 @@ def stale_main_warning(repo: Path, base: str) -> str | None:
     return (
         "warning: local main has commits already merged upstream that are not "
         f"ancestors of {base} - fix with: llm-prompts update"
+    )
+
+
+def _landed(
+    repo: Path, base: str, base_tree: str, squashes: set[str], branch: str
+) -> bool:
+    """Return whether ``base`` holds ``branch``'s content: every patch, a squash with its first or last subject, or its merged tree."""
+    rows = [
+        line.split("\t", 1)
+        for line in _git(
+            "log",
+            "--right-only",
+            "--cherry-mark",
+            "--no-merges",
+            "--format=%m%x09%s",
+            f"{base}...{branch}",
+            repo=repo,
+        ).splitlines()
+    ]
+    return (
+        all(mark == "=" for mark, _ in rows)
+        or bool({rows[0][1], rows[-1][1]} & squashes)
+        or main_sync.run_git(
+            repo, "merge-tree", "--write-tree", base, branch
+        ).stdout.strip()
+        == base_tree
+    )
+
+
+def unrecorded_warning(repo: Path, entries: Sequence[WorktreeEntry]) -> str | None:
+    """Warn about the unrecorded local branches whose content has not landed on the base, newest first.
+
+    Only a branch checked out in a worktree or with a commit in the last ``UNRECORDED_DAYS`` days counts, and ``backup/`` branches never do.
+    """
+    base = base_ref(repo)
+    rows = _git(
+        "for-each-ref",
+        f"--no-merged={base}",
+        "--sort=-committerdate",
+        "--format=%(committerdate:unix)%09%(refname:short)",
+        "refs/heads",
+        repo=repo,
+    ).splitlines()
+    if not rows:
+        return None
+    key = _repo_key(repo)
+    skipped = {e.branch for e in entries if e.repo == key} | {"main"}
+    checked_out = {c.branch for c in checkouts(repo)}
+    since = time.time() - UNRECORDED_DAYS * 86400
+    squashes = {
+        SQUASH_SUFFIX.sub("", subject)
+        for subject in _git("log", "--format=%s", base, repo=repo).splitlines()
+        if SQUASH_SUFFIX.search(subject)
+    }
+    candidates = [
+        branch
+        for at, branch in (row.split("\t", 1) for row in rows)
+        if branch not in skipped
+        and not branch.startswith("backup/")
+        and (branch in checked_out or int(at) >= since)
+    ]
+    landed = partial(
+        _landed, repo, base, _git("rev-parse", f"{base}^{{tree}}", repo=repo), squashes
+    )
+    with ThreadPoolExecutor() as pool:
+        branches = [
+            branch
+            for branch, done in zip(candidates, pool.map(landed, candidates))
+            if not done
+        ]
+    if not branches:
+        return None
+    names = ", ".join(branches[:UNRECORDED_NAMES])
+    more = ", ..." if len(branches) > UNRECORDED_NAMES else ""
+    return (
+        f"warning: {len(branches)} local branch(es) with commits not on {base}"
+        f" are not recorded: {names}{more}"
     )
 
 
