@@ -32,19 +32,17 @@ beforeEach(() => {
 });
 
 describe("Background", () => {
-	test("each ASK line of a finished run is pinned as a pending ask named after the fork", () => {
+	test("the asks of a finished run are left in its digest line and not pinned, as they are for main", () => {
 		background.finish(ctx(), "a", { state: "blocked", outcome: "blocked-on-user", ref: "rc" }, "OUTCOME blocked-on-user ref:rc\nASK: A or B?\nASK: keep it?");
-		assert.deepEqual(openAsks(appended), [
-			{ id: "fork-a-a-1", text: "a: A or B?" },
-			{ id: "fork-a-a-2", text: "a: keep it?" },
-		]);
+		assert.deepEqual(openAsks(appended), []);
+		assert.equal(sent[0][0].content, "[fork a blocked-on-user] ASK: A or B?\nASK: keep it? ref rc\n1 fork still running.");
 	});
 
 	test("each finished run wakes an idle main at once, while another run is still live", () => {
 		background.finish(ctx(), "a", done(), "OUTCOME done ref:rc");
 		assert.deepEqual(sent, [[{ customType: "pi-context-results", content: "[fork a done] ref rc\n1 fork still running.", display: true }, { deliverAs: "steer", triggerTurn: true }]]);
 		background.finish(ctx(), "b", done(), "OUTCOME done ref:rc\nASK: keep it?");
-		assert.equal(sent[1][0].content, "[fork b done] ASK: keep it? ref rc\nPinned: fork-b-b-1. They clear at the end of this turn unless you put them to the user with ask_user.\n0 forks still running.");
+		assert.equal(sent[1][0].content, "[fork b done] ASK: keep it? ref rc\n0 forks still running.");
 		assert.equal(background.digest(), undefined);
 	});
 
@@ -57,7 +55,7 @@ describe("Background", () => {
 	test("a run that needs main wakes it at once and the digest keeps what it asks", () => {
 		background.finish(ctx(), "a", { state: "blocked", outcome: "blocked-on-user", ref: "rc" }, "OUTCOME blocked-on-user ref:rc\nASK: A or B?");
 		assert.equal(sent.length, 1);
-		assert.equal(sent[0][0].content, "[fork a blocked-on-user] ASK: A or B? ref rc\nPinned: fork-a-a-1. They clear at the end of this turn unless you put them to the user with ask_user.\n1 fork still running.");
+		assert.equal(sent[0][0].content, "[fork a blocked-on-user] ASK: A or B? ref rc\n1 fork still running.");
 	});
 
 	test("a digest not yet sent is handed over once", () => {
@@ -306,19 +304,17 @@ describe("hooks", () => {
 		assert.deepEqual(appended.map(([type, data]) => [type, data.id, data.state]), [["pi-context-run", "a", "running"], ["pi-context-run", "a", "landing"]]);
 	});
 
-	test("a new session restores only runs that are unread, have an open ask or can be continued", () => {
+	test("a new session restores only runs that are unread or can be continued", () => {
 		const files = fs.mkdtempSync(path.join(os.tmpdir(), "bound-"));
 		fs.writeFileSync(path.join(files, "seed.jsonl"), "");
-		const asked = { type: "custom", customType: "pending-asks", data: { action: "add", id: "fork-asked-asked-1", text: "asked: q?" } };
-		const sessionWith = (...runs: Run[]) => ({ ...session(...runs), sessionManager: { getEntries: () => [...session(...runs).sessionManager.getEntries(), asked] } });
-		handlers.session_start({ reason: "startup" }, sessionWith(
+		handlers.session_start({ reason: "startup" }, session(
 			run("old", { state: "done" }),
 			run("unread", { state: "done", unread: "u" }),
 			run("asked", { state: "done" }),
 			run("warm", { state: "done", files, lastRequestAt: Date.now() }),
 		));
 		fs.rmSync(files, { recursive: true });
-		assert.deepEqual(registry.all().map((r) => r.id), ["unread", "asked", "warm"]);
+		assert.deepEqual(registry.all().map((r) => r.id), ["unread", "warm"]);
 	});
 
 	test("a session whose pi is stale stops saving and does not break the registry", () => {
@@ -381,21 +377,6 @@ describe("hooks", () => {
 		});
 	});
 
-	test("a woken run's fork pins clear when it settles, unless its ask_user was cancelled", () => {
-		const branch = () => appended.map(([customType, data]) => ({ type: "custom", customType, data }));
-		const main = { ...ctx(), hasUI: false, sessionManager: { getBranch: branch } };
-		const wakeWith = (name: string, messages: unknown[]) => {
-			registry.start(run(name));
-			background.finish(main, name, { state: "blocked", outcome: "blocked-on-user", ref: "rc" }, "OUTCOME blocked-on-user ref:rc\nASK: A or B?");
-			assert.match(sent.at(-1)![0].content, new RegExp(`\nPinned: fork-${name}-${name}-1\\. They clear at the end of this turn unless you put them to the user with ask_user\\.\n2 forks still running\\.$`));
-			handlers.agent_end({ messages }, main);
-			handlers.agent_settled({ aborted: false }, main);
-		};
-		wakeWith("x", [{ role: "assistant" }]);
-		wakeWith("y", [{ role: "toolResult", toolName: "ask_user", isError: false, details: { cancelled: true } }]);
-		assert.deepEqual(openAsks(branch()).map((ask) => ask.id), ["fork-y-y-1"]);
-	});
-
 	test("a result stays unread until a turn that delivered it settles, so an aborted or failed turn loses none", () => {
 		const main = { ...ctx(), hasUI: false, sessionManager: { getBranch: () => [] } };
 		finishHeld(main, "a", done(), "OUTCOME done ref:rc");
@@ -409,24 +390,6 @@ describe("hooks", () => {
 		assert.equal(registry.get("a")?.unread, "[fork a done] ref rc");
 		settle(false, { role: "assistant", stopReason: "stop" });
 		assert.equal(registry.get("a")?.unread, undefined);
-	});
-
-	test("the pins of a result whose turn failed are announced again with it, and clear once a later turn settles", () => {
-		const branch = () => appended.map(([customType, data]) => ({ type: "custom", customType, data }));
-		const main = { ...ctx(), hasUI: false, sessionManager: { getBranch: branch } };
-		finishHeld(main, "a", { state: "blocked", outcome: "blocked-on-user", ref: "rc" }, "OUTCOME blocked-on-user ref:rc\nASK: A or B?");
-		const pinned = /Pinned: fork-a-a-1\./;
-		const turn = (stopReason: string) => {
-			const content = handlers.before_agent_start({}, main)?.message.content;
-			handlers.agent_end({ messages: [{ role: "assistant", stopReason }] }, main);
-			handlers.agent_settled({ aborted: false }, main);
-			return content;
-		};
-		assert.match(turn("error"), pinned);
-		assert.match(turn("aborted"), pinned);
-		assert.deepEqual(openAsks(branch()).map((ask) => ask.id), ["fork-a-a-1"]);
-		assert.match(turn("stop"), pinned);
-		assert.deepEqual(openAsks(branch()), []);
 	});
 
 	test("a result that arrived while main was busy reaches the session that restarts after a quit", () => {

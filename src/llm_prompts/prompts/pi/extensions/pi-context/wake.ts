@@ -1,7 +1,5 @@
 // Decides which fork runs wake the main session, and builds their digest lines.
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { MAX_BODY_CHARS, OUTCOME_CODES, projectReply } from "./outcome.ts";
-import { openAsks, pinAsk } from "../pending-asks.ts";
 import type { Run } from "./registry.ts";
 import { replyText, type Reply } from "./reply.ts";
 
@@ -19,33 +17,6 @@ export function wakeReason(run: Run): WakeReason | undefined {
 }
 
 const NEVER_CUT = /^(ASK:|DENIED: ")/;
-
-const ASK = /^ASK:\s*(.*)$/;
-export const askPrefix = (run: Pick<Run, "id" | "name">) => `fork-${run.name}-${run.id}-`;
-
-/** Pins each ask of a fork's reply call, or else each `ASK:` line of its reply text, as a pending ask, and returns their ids. */
-export function pinForkAsks(pi: Pick<ExtensionAPI, "appendEntry">, ctx: Pick<ExtensionContext, "hasUI" | "ui" | "sessionManager">, run: Pick<Run, "id" | "name">, reply: string | Reply): string[] {
-	const asks = typeof reply === "string" ? reply.split("\n").flatMap((line) => ASK.exec(line)?.slice(1) ?? []) : (reply.asks ?? []);
-	return asks.map((ask, index) => {
-		const id = `${askPrefix(run)}${index + 1}`;
-		pinAsk(pi, ctx, id, `${run.name}: ${ask}`);
-		return id;
-	});
-}
-
-/** The ids of a fork's pinned asks still open on the branch. */
-export const openForkAsks = (entries: Parameters<typeof openAsks>[0], run: Pick<Run, "id" | "name">): string[] =>
-	openAsks(entries).flatMap(({ id }) => (id.startsWith(askPrefix(run)) ? [id] : []));
-
-/** The fork pin prefixes of the open ask ids, to look a fork up in. */
-export const askPrefixes = (openIds: string[]): Set<string> => new Set(openIds.map((id) => id.replace(/\d+$/, "")));
-
-/** Whether one of the open asks, by their prefixes, is a pin of the fork. */
-export const forkAsking = (prefixes: Set<string>, run: Pick<Run, "id" | "name">): boolean => prefixes.has(askPrefix(run));
-
-/** Whether an `ask_user` call among the messages ended without the user's answer: cancelled, timed out or failed. */
-export const askUserUnanswered = (messages: { role: string; toolName?: string; isError?: boolean; details?: unknown }[]): boolean =>
-	messages.some((message) => message.role === "toolResult" && message.toolName === "ask_user" && (message.isError || (message.details as { cancelled?: boolean } | undefined)?.cancelled === true));
 
 /** The lines of a reply main may keep, each marked whole when it is never cut: a reply call's verdict, findings, asks and denials, then its report quoted, or a text reply's ASK and DENIED lines. */
 function digestParts(reply: string | Reply): { lines: { line: string; whole: boolean }[]; cut: boolean } {

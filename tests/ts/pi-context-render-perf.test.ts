@@ -11,14 +11,13 @@ const FINISHED_RUNS = 500;
 const FRAMES = 20;
 
 const message = (index: number) => ({ type: "message", message: { role: "assistant", usage: { input: 1, output: 1, totalTokens: index } } });
-const askEntry = (run: { id: string; name: string }) => ({ type: "custom", customType: "pending-asks", data: { action: "add", id: `fork-${run.name}-${run.id}-1`, text: "which?" } });
 
-/** A session of 25,000 entries with 500 finished runs, each with an open ask, that counts how often the branch is read. */
+/** A session of 25,000 entries with 500 finished runs that counts how often the branch is read. */
 const session = () => {
 	const registry = new Registry();
 	const runs = Array.from({ length: FINISHED_RUNS }, (_, index) => ({ id: `r${index}`, name: `run${index}`, role: "reader", background: true, state: "done" as const, task: "t", startedAt: 1_000, endedAt: 2_000 + index, unread: `[fork run${index}] done` }));
 	runs.forEach((run) => registry.start(run));
-	const entries: object[] = [...Array.from({ length: ENTRIES - FINISHED_RUNS }, (_, index) => message(index)), ...runs.map(askEntry)];
+	const entries: object[] = [...Array.from({ length: ENTRIES }, (_, index) => message(index))];
 	const widgets: any[] = [];
 	const state = { scans: 0, leaf: "a" };
 	const view = new LiveView(registry);
@@ -26,22 +25,21 @@ const session = () => {
 	return { registry, view, widgets, state };
 };
 
-test("the widget scans the session once per branch change across many frames and run updates", () => {
+test("the widget never scans the session across many frames, run updates and branch changes", () => {
 	const { registry, view, widgets, state } = session();
 	const paint = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
 	for (let frame = 0; frame < FRAMES; frame++) {
 		registry.update(`r${frame}`, { unread: `[fork run${frame}] again` });
 		widgets.at(-1)(undefined, paint).render(200);
 	}
-	assert.equal(widgets.at(-1)(undefined, paint).render(200).length, FINISHED_RUNS + 1);
-	assert.equal(state.scans, 1);
+	assert.equal(widgets.at(-1)(undefined, paint).render(200).length, 2);
 	state.leaf = "b";
 	view.refresh();
-	assert.equal(state.scans, 2);
+	assert.equal(state.scans, 0);
 	view.release();
 });
 
-test("the results digest scans the session once per branch change across many digests", () => {
+test("the results digest never scans the session across many digests", () => {
 	const { registry, view, state } = session();
 	const background = new Background({ sendMessage: () => undefined } as any, registry);
 	background.view = view;
@@ -51,6 +49,6 @@ test("the results digest scans the session once per branch change across many di
 		registry.update(`r${digest}`, { unread: `[fork run${digest}] again` });
 		background.digest();
 	}
-	assert.equal(state.scans, 1);
+	assert.equal(state.scans, 0);
 	view.release();
 });

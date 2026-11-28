@@ -3,15 +3,13 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { canResume, isLive, isOwnRun, registryOf, reloadRequested, sessionFileOf, type Registry, type Run } from "./registry.ts";
 import type { LiveView, Watchable } from "./live-view.ts";
-import { openAsks, resolveAsk } from "../pending-asks.ts";
 import type { Reply } from "./reply.ts";
 import { isTeam } from "./roles.ts";
-import { askPrefix, askUserUnanswered, digestLine, openForkAsks, pinForkAsks, wakeReason } from "./wake.ts";
+import { digestLine, wakeReason } from "./wake.ts";
 import { foldBoard, readyTasks } from "../tower-do-patch.ts";
 
 export const RESULTS_TYPE = "pi-context-results";
 
-type AskContext = Pick<ExtensionContext, "hasUI" | "ui" | "sessionManager">;
 type Steerable = Watchable & { steer(text: string): Promise<string | undefined> };
 const MAX_HOLD_MS = 2 * 60 * 60 * 1000;
 const MINUTE_MS = 60_000;
@@ -72,11 +70,6 @@ export class Background {
 	private controllers = new Map<string, AbortController>();
 	private children = new Map<string, Steerable>();
 	private holding = false;
-	/** Fork-ask pins not yet announced to main. */
-	private pinned: string[] = [];
-	/** Fork-ask pins announced in the current main run, cleared when it settles unless an `ask_user` went unanswered. */
-	private announced: string[] = [];
-	private askUnanswered = false;
 	/** Each started run's end, once its delegate has stopped and its landing is over. */
 	private following = new Map<string, Promise<unknown>>();
 	/** Ends the wait of `hold`, while one is running. */
@@ -133,8 +126,8 @@ export class Background {
 		if (refused) throw new Error(`fork ${name} did not take the message: ${refused}`);
 	}
 
-	/** Records how a background run ended, pins what it asks, and wakes main. A cancelled run is ignored, and a stub that finished done is recorded without a message. */
-	finish(ctx: Pick<ExtensionContext, "isIdle"> & AskContext, runId: string, patch: Partial<Run>, text: string | Reply, note?: string): void {
+	/** Records how a background run ended and wakes main. A cancelled run is ignored, and a stub that finished done is recorded without a message. */
+	finish(ctx: Pick<ExtensionContext, "isIdle">, runId: string, patch: Partial<Run>, text: string | Reply, note?: string): void {
 		this.controllers.delete(runId);
 		this.children.delete(runId);
 		const current = this.registry.get(runId);
@@ -147,7 +140,6 @@ export class Background {
 		}
 		const run = this.registry.update(runId, { ...ended, unread: [current.unread, digestLine(ended, text, note)].filter(Boolean).join("\n") });
 		if (!run) return;
-		this.pinned.push(...pinForkAsks(this.pi, ctx, run, text));
 		const refreshed = this.capacity?.refresh?.();
 		if (!wakeReason(run) || held) return;
 		if (!refreshed) {
@@ -170,16 +162,13 @@ export class Background {
 		return this.registry.update(run.id, { state: "cancelled", endedAt: Date.now() });
 	}
 
-	/** The digest lines of the runs that finished since main last received them, with the pins they made and the live fork count, or undefined. A line stays unread until the run that received it settles. */
+	/** The digest lines of the runs that finished since main last received them and the live fork count, or undefined. A line stays unread until the run that received it settles. */
 	digest(): string | undefined {
 		const unread = this.registry.all().filter((run) => run.unread && this.delivered.get(run.id) !== run.unread).sort((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0));
 		if (!unread.length) return undefined;
 		const lines = unread.map((run) => run.unread!);
 		for (const run of unread) this.delivered.set(run.id, run.unread!);
 		this.view?.refresh();
-		const pins = this.pinned.splice(0);
-		this.announced.push(...pins);
-		if (pins.length) lines.push(`Pinned: ${pins.join(", ")}. They clear at the end of this turn unless you put them to the user with ask_user.`);
 		const live = this.registry.live().length;
 		lines.push(`${live} fork${live === 1 ? "" : "s"} still running.${this.slotsNote(live)}`);
 		return lines.join("\n");
@@ -211,32 +200,18 @@ export class Background {
 		return Boolean(run.unread) && this.delivered.get(run.id) === run.unread;
 	}
 
-	/** Notes whether an `ask_user` call of a main run went unanswered, and whether the run ended in an error. */
-	noteRun(messages: (Parameters<typeof askUserUnanswered>[0][number] & { stopReason?: string })[]): void {
-		this.askUnanswered ||= askUserUnanswered(messages);
+	/** Notes whether a main run ended in an error. */
+	noteRun(messages: { role: string; stopReason?: string }[]): void {
 		this.runFailed = ["error", "aborted"].includes(messages.filter((message) => message.role === "assistant").at(-1)?.stopReason ?? "");
 	}
 
-	/** Once the main run settles, marks the results it received as read and resolves the pins announced in it, unless it was aborted or failed, when the next digest announces them again. A pin also stays while an `ask_user` call went unanswered. Returns whether the run was aborted or failed. */
-	settle(ctx: AskContext, aborted: boolean): boolean {
-		const ids = this.announced.splice(0);
+	/** Once the main run settles, marks the results it received as read, unless it was aborted or failed. Returns whether it was aborted or failed. */
+	settle(aborted: boolean): boolean {
 		const failed = aborted || this.runFailed;
-		const keep = failed || this.askUnanswered;
-		this.askUnanswered = false;
 		for (const [id, line] of this.delivered) if (!failed && this.registry.get(id)?.unread === line) this.registry.update(id, { unread: undefined });
 		this.delivered.clear();
 		this.view?.refresh();
-		if (failed) this.pinned.unshift(...ids);
-		if (keep) return failed;
-		const open = new Set(openAsks(ctx.sessionManager.getBranch() as Parameters<typeof openAsks>[0]).map((ask) => ask.id));
-		for (const id of ids) if (open.has(id)) resolveAsk(this.pi, ctx, id);
-		return false;
-	}
-
-	/** Resolves a fork's open pins, once main resumes or steers it with the answer. */
-	resolveForkAsks(ctx: AskContext, name: string): void {
-		const entries = ctx.sessionManager.getBranch() as Parameters<typeof openAsks>[0];
-		for (const run of this.registry.all().filter((candidate) => candidate.name === name)) for (const id of openForkAsks(entries, run)) resolveAsk(this.pi, ctx, id);
+		return failed;
 	}
 
 	/** Waits until no run is live or one needs main, or `maxMs` has passed. A stub that ended done does not end the wait, as its children start next. */
@@ -304,9 +279,9 @@ const RUN_TYPE = "pi-context-run";
 const lostNote = ({ endedBy, worktree, task, files, name }: Run) =>
 	`${endedBy === "reload" ? "a /reload ended it" : "its session ended"} before it finished.${worktree ? ` Its worktree ${worktree} is kept.` : ""}${files ? ` fork_resume ${name} continues it.` : ""} Task: ${task}`;
 
-/** Whether a restored run is still needed: unread, asking, or with files a `fork_resume` continues from. */
-const isRetained = (run: Run, askIds: string[]): boolean =>
-	isLive(run) || Boolean(run.unread || run.queued) || askIds.some((id) => id.startsWith(askPrefix(run))) || Boolean(run.files && sessionFileOf(run.files, Boolean(run.model)));
+/** Whether a restored run is still needed: unread, or with files a `fork_resume` continues from. */
+const isRetained = (run: Run): boolean =>
+	isLive(run) || Boolean(run.unread || run.queued) || Boolean(run.files && sessionFileOf(run.files, Boolean(run.model)));
 
 /** Hooks that deliver the digest, hold a session without a UI, and save and restore the runs across sessions. */
 export function registerBackgroundHooks(pi: ExtensionAPI, background: Background, registry: Registry = registryOf()) {
@@ -325,8 +300,7 @@ export function registerBackgroundHooks(pi: ExtensionAPI, background: Background
 		const entries = ctx.sessionManager.getEntries();
 		const latest = new Map<string, Run>();
 		for (const entry of entries) if (entry.type === "custom" && entry.customType === RUN_TYPE && isOwnRun(entry.data as Run)) latest.set((entry.data as Run).id, entry.data as Run);
-		const askIds = openAsks(entries as Parameters<typeof openAsks>[0]).map((ask) => ask.id);
-		const lost = registry.restore([...latest.values()], (run) => isRetained(run, askIds));
+		const lost = registry.restore([...latest.values()], isRetained);
 		for (const run of lost) {
 			save(run);
 			if (event.reason === "reload" && reloadRequested() && run.endedBy === "reload" && canResume(run)) continue;
@@ -361,8 +335,8 @@ export function registerBackgroundHooks(pi: ExtensionAPI, background: Background
 
 	pi.on("agent_end", (event) => background.noteRun(event.messages));
 
-	pi.on("agent_settled", (event, ctx) => {
-		if (!background.settle(ctx, event.aborted)) background.wake();
+	pi.on("agent_settled", (event) => {
+		if (!background.settle(event.aborted)) background.wake();
 	});
 
 	pi.on("agent_before_settle", async (event, ctx) => {

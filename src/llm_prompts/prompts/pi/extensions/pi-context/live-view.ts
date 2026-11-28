@@ -4,8 +4,6 @@ import os from "node:os";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { cacheLeftMs, cacheText, FINISHED, isLive, registryOf, type Registry, type Run } from "./registry.ts";
-import { openAsks } from "../pending-asks.ts";
-import { askPrefixes, forkAsking } from "./wake.ts";
 
 type Event = { [key: string]: any };
 export type Watchable = { watch(listener: (record: Event) => void): () => void };
@@ -46,11 +44,6 @@ const sourceText = (run: Run, shown: Run[]): string => {
 	if (!run.from) return "";
 	const ambiguous = shown.some((other) => other.from === run.from && other.cacheKey !== run.cacheKey);
 	return ` · from ${run.from}${ambiguous && run.cacheKey ? `#${run.cacheKey.slice(0, KEY_CHARS)}` : ""}`;
-};
-/** A finished run's cache time left, as ` · cache 3m` or ` · cache expired`. */
-const cacheNote = (run: Run, now: number): string => {
-	const left = FINISHED.includes(run.state) ? cacheLeftMs(run, now) : undefined;
-	return left === undefined ? "" : ` · ${cacheText(left)}`;
 };
 const argOf = (args: Event): string | undefined => {
 	if (typeof args.command === "string") return args.command;
@@ -153,14 +146,11 @@ export class LiveView {
 	}
 
 	/** The widget lines, or undefined when no background fork is live or still cached. */
-	lines(now = Date.now(), paint: Paint = PLAIN, width = Number.POSITIVE_INFINITY, openIds: string[] = []): string[] | undefined {
+	lines(now = Date.now(), paint: Paint = PLAIN, width = Number.POSITIVE_INFINITY): string[] | undefined {
 		const live = this.registry.live();
 		const finished = this.registry.all().filter((run) => FINISHED.includes(run.state));
-		const prefixes = askPrefixes(openIds);
-		const asking = finished.filter((run) => forkAsking(prefixes, run));
-		const unread = finished.filter((run) => run.unread && !this.received(run) && !asking.includes(run));
-		if (!live.length && !asking.length && !unread.length) return undefined;
-		const shown = [...live, ...asking];
+		const unread = finished.filter((run) => run.unread && !this.received(run));
+		if (!live.length && !unread.length) return undefined;
 		const frame = SPINNER[Math.floor(now / CLOCK_MS) % SPINNER.length];
 		const fit = (line: string) => (Number.isFinite(width) ? truncateToWidth(line, width) : line);
 		return [
@@ -169,11 +159,10 @@ export class LiveView {
 				const activity = this.activity.get(run.id);
 				const turns = activity?.turns ?? 0;
 				const glyph = run.state === "landing" ? paint.fg("success", "↳") : paint.fg("accent", frame);
-				const meta = paint.fg("dim", `${elapsed(now - run.startedAt)} · ${turns} turn${turns === 1 ? "" : "s"}${targetText(run)}${sourceText(run, shown)}`) + usageText(activity?.usage, windowFor(run, this.modelRegistry, this.window), paint) + (run.state === "landing" ? paint.fg("dim", " · landing") : "") + (run.next ? paint.fg("dim", ` · next: ${run.next}`) : "");
+				const meta = paint.fg("dim", `${elapsed(now - run.startedAt)} · ${turns} turn${turns === 1 ? "" : "s"}${targetText(run)}${sourceText(run, live)}`) + usageText(activity?.usage, windowFor(run, this.modelRegistry, this.window), paint) + (run.state === "landing" ? paint.fg("dim", " · landing") : "") + (run.next ? paint.fg("dim", ` · next: ${run.next}`) : "");
 				const last = activity?.last ? `  ${paint.fg("muted", activity.last)}` : "";
 				return fit(`${glyph} ${paint.fg("accent", paint.bold(run.name))} ${roleTag(run, paint)} ${meta}${last}`);
 			}),
-			...asking.map((run) => fit(`${paint.fg(FINISH_COLOR[run.state] ?? "dim", "●")} ${paint.fg("accent", run.name)} ${roleTag(run, paint)} ${paint.fg("dim", `${run.state}${cacheNote(run, now)}${sourceText(run, shown)}`)}`)),
 			...(unread.length ? [fit(summaryRow(unread, now, paint))] : []),
 		];
 	}
@@ -183,21 +172,14 @@ export class LiveView {
 		if (!showsUi(ctx)) return;
 		this.window = ctx.model?.contextWindow;
 		this.modelRegistry = ctx.modelRegistry;
-		let scannedLeaf: string | null | undefined;
-		let openIds: string[] = [];
 		this.render = () => {
-			const leaf = ctx.sessionManager?.getLeafId?.();
-			if (leaf === undefined || leaf !== scannedLeaf) {
-				scannedLeaf = leaf;
-				openIds = openAsks((ctx.sessionManager?.getBranch() ?? []) as Parameters<typeof openAsks>[0]).map((ask) => ask.id);
-			}
 			const now = Date.now();
-			const shown = Boolean(this.lines(now, PLAIN, Number.POSITIVE_INFINITY, openIds));
+			const shown = Boolean(this.lines(now));
 			ctx.ui.setWidget(
 				WIDGET_KEY,
 				shown
 					? (_tui, theme) => {
-							const lines = this.lines(now, theme, Number.POSITIVE_INFINITY, openIds) ?? [];
+							const lines = this.lines(now, theme) ?? [];
 							return { render: (width: number) => lines.map((line) => truncateToWidth(line, width)), invalidate: () => undefined };
 						}
 					: undefined,

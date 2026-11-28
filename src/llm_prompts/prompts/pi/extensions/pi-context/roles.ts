@@ -23,7 +23,7 @@ export type ReadMcp = { tool: string; argsMatch?: Record<string, string> };
 
 const WARM_OPENING = "You are the delegate that the conversation above asked to fork, so do not call fork.";
 const COLD_OPENING = "You are a delegate given one self-contained task, so do not call fork.";
-const OUTCOME = "Mark before each detour (a test run, a debug loop, a large log or diff) and checkpoint rewind it once acted on. End by calling `reply` with your outcome, ref and report. Put any question for the user in its `asks` and do not ask the user directly.";
+const OUTCOME = "Mark before each detour (a test run, a debug loop, a large log or diff) and checkpoint rewind it once acted on. End by calling `reply` with your outcome, ref and report. Put any question only the user can answer in its `asks` and do not ask the user directly.";
 const READ_TOOLS = ["checkpoint", "read", "grep", "find", "ls", "bash", "codemode", "web_search", "fetch_content", "get_search_content", "result_fetch", "result_query", "transcript", "tower_do_status", "reply"];
 const FORK_TOOLS = ["fork", "fork_resume", "fork_cancel", "fork_steer"];
 const READ_MCP = [

@@ -10,7 +10,7 @@ const replyParameters = Type.Object({
 	notify: Type.Optional(Type.Boolean({ description: "Wake the lead even when the outcome is done" })),
 	verdict: Type.Optional(Type.Union([Type.Literal("CLEAN"), Type.Literal("FINDINGS")], { description: "A review's verdict" })),
 	findings: Type.Optional(Type.Array(Type.Object({ severity: Type.String(), location: Type.String({ description: "file:line" }), text: Type.String() }))),
-	asks: Type.Optional(Type.Array(Type.String(), { description: "Questions for the user" })),
+	asks: Type.Optional(Type.Array(Type.String(), { description: "Questions only the user can answer" })),
 	denied: Type.Optional(Type.Array(Type.String(), { description: "The verbatim reason of each permission denial" })),
 	text: Type.Optional(Type.String({ description: "The report" })),
 });
