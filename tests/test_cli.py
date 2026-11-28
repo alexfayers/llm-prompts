@@ -436,6 +436,8 @@ class TestPullLocalSources:
             "log --format=%s",
             "cherry",
             "log --no-merges",
+            "remote",
+            "for-each-ref --no-merged",
         )
         assert (
             "[core] rebased local commits onto 1 new commit(s)"

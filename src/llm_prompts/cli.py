@@ -823,23 +823,29 @@ def _sync_local_source(
     )
 
 
-def _recorded_sources(
-    tools: list[dict[str, Any]], entries: list[WorktreeEntry]
-) -> dict[str, Path]:
-    """Map each local-path tool source with recorded worktrees to its checkout."""
-    from .contribute import _repo_key
+def _local_sources(tools: list[dict[str, Any]]) -> dict[str, Path]:
+    """Map each local-path tool source that is a git checkout to its checkout."""
     from .setup import _expand, _is_local_path
 
-    recorded = {entry.repo for entry in entries}
     sources = {
         str(tool.get("name", "")): _expand(str(tool.get("source", "")))
         for tool in tools
         if _is_local_path(str(tool.get("source", "")))
     }
+    return {name: repo for name, repo in sources.items() if (repo / ".git").is_dir()}
+
+
+def _recorded_sources(
+    tools: list[dict[str, Any]], entries: list[WorktreeEntry]
+) -> dict[str, Path]:
+    """Map each local-path tool source with recorded worktrees to its checkout."""
+    from .contribute import _repo_key
+
+    recorded = {entry.repo for entry in entries}
     return {
         name: repo
-        for name, repo in sources.items()
-        if (repo / ".git").is_dir() and _repo_key(repo) in recorded
+        for name, repo in _local_sources(tools).items()
+        if _repo_key(repo) in recorded
     }
 
 
@@ -921,8 +927,10 @@ def _pull_and_copy(
     """
     from functools import partial
 
+    from .contribute import first_stderr_line, unrecorded_warning
     from .setup import _run_parallel_ordered
 
+    local = _local_sources(tools)
     recorded = _recorded_sources(tools, entries)
     for name, repo in recorded.items():
         if (blocker := _copy_blocker(repo)) is not None:
@@ -955,6 +963,15 @@ def _pull_and_copy(
                 failed[outcome.name] = "copy_failed"
             if moved:
                 changed.add(outcome.name)
+        if not outcome.failed and outcome.name in local:
+            try:
+                warning = unrecorded_warning(local[outcome.name], entries)
+            except subprocess.CalledProcessError as error:
+                warning = (
+                    f"unrecorded branches not checked ({first_stderr_line(error)})"
+                )
+            if warning is not None:
+                print(f"[{outcome.name}] {warning}")
     return changed, entries
 
 
