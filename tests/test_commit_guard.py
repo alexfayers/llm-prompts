@@ -51,8 +51,16 @@ def hook(repo: Path) -> RunHook:
     return run
 
 
-def ran(hook: RunHook, command: str, success: bool = True, **extra: object) -> None:
-    """Report a finished shell call."""
+def ran(
+    hook: RunHook,
+    command: str,
+    success: bool = True,
+    changes: Callable[[], object] = lambda: None,
+    **extra: object,
+) -> None:
+    """Report a shell call starting, making the changes, then finishing."""
+    hook("PreShell", command=command)
+    changes()
     hook(
         "PostToolUse",
         tool_name="execute_command",
@@ -239,6 +247,44 @@ class TestCommitGuard:
         ran(hook, "just && echo done > /dev/null")
         assert hook("PreShell", command="git commit -m x") is None
 
+    @pytest.mark.parametrize(
+        ("command", "tool_result"),
+        [("cd . && just", None), ("just > j.log 2>&1; echo rc=$?", "rc=0\n")],
+    )
+    def test_a_commit_waits_until_the_fixes_of_a_run_are_staged(
+        self, hook: RunHook, repo: Path, command: str, tool_result: str | None
+    ) -> None:
+        (repo / "a.txt").write_text("edited", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "a.txt"], check=True)
+        (repo / "a.txt").write_text("edited again", encoding="utf-8")
+        ran(hook, "just")
+        assert hook("PreShell", command="git commit -m x") is None
+
+        subprocess.run(["git", "-C", str(repo), "add", "a.txt"], check=True)
+        ran(
+            hook,
+            command,
+            changes=lambda: (repo / "a.txt").write_text("fixed", encoding="utf-8"),
+            tool_result=tool_result,
+        )
+        blocked = hook("PreShell", command="git commit -m x")
+        assert blocked is not None and "stage" in (blocked.block or "")
+        ran(hook, "timeout 600 just")
+        assert hook("PreShell", command="git commit -m x") is not None
+
+        subprocess.run(["git", "-C", str(repo), "add", "a.txt"], check=True)
+        assert hook("PreShell", command="git commit -m x") is None
+
+    def test_a_run_whose_start_was_not_seen_does_not_count(self, hook: RunHook) -> None:
+        hook(
+            "PostToolUse",
+            tool_name="execute_command",
+            parameters={"command": "just"},
+            success=True,
+        )
+        blocked = hook("PreShell", command="git commit -m x")
+        assert blocked is not None and "did not see it start" in (blocked.block or "")
+
     def test_a_redirected_or_chained_run_counts_when_its_result_decides_the_call(
         self, hook: RunHook
     ) -> None:
@@ -353,6 +399,7 @@ class TestCommitGuard:
                 hook_name, logger=LOGGER, workspace_roots=[str(directory)], **kwargs
             )
 
+        at(sub, "PreShell", command="just")
         at(
             sub,
             "PostToolUse",

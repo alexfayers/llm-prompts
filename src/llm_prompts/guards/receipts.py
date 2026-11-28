@@ -112,6 +112,10 @@ class ReceiptStore:
                 self._path, {**self._read(), _key(toplevel, command): fingerprint}
             )
 
+    def stored(self, toplevel: Path, command: str = "") -> str | None:
+        """Return the value stored for the repo, or for the command run in it, or None."""
+        return self._read().get(_key(toplevel, command))
+
     def fresh(self, toplevel: Path, fingerprint: str, command: str = "") -> bool:
         """Report whether the last passing test run in the repo, or of the command, saw this fingerprint."""
-        return self._read().get(_key(toplevel, command)) == fingerprint
+        return self.stored(toplevel, command) == fingerprint
