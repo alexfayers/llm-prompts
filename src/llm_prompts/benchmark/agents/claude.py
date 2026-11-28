@@ -110,9 +110,10 @@ class ClaudeAdapter:
     cumulative_cost = True
     shared_dirs: tuple[Path, ...] = ()
     git_packages: Path | None = None
+    mcp_config = Path(".claude/.claude.json")
 
     def point_memory(self, home: Path, url: str) -> None:
-        config_path = home / ".claude" / ".claude.json"
+        config_path = home / self.mcp_config
         config = read_json(config_path)
         config.setdefault("mcpServers", {})["memory"] = {"type": "http", "url": url}
         settings_path = home / ".claude" / "settings.json"

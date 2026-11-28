@@ -99,6 +99,7 @@ def load(cell_dir: Path) -> Saved:
                 PrefixRead(**read) for read in raw.get("prefix_reads", ())
             ),
             "fork_start_contexts": tuple(raw.get("fork_start_contexts", ())),
+            "fork_start_s": tuple(raw.get("fork_start_s", ())),
         }
     )
     return Saved(

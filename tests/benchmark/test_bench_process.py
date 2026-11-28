@@ -1,4 +1,5 @@
 import json
+import os
 import signal
 import subprocess
 import threading
@@ -62,6 +63,11 @@ def popen(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakePopen]:
     fake = FakePopen()
     monkeypatch.setattr(subprocess, "Popen", fake)
     monkeypatch.setattr("os.getpgid", lambda pid: pid)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda argv, **_: subprocess.CompletedProcess(argv, 0, stdout=""),
+    )
     monkeypatch.setattr("os.killpg", lambda pgid, sig: fake.killed.set())
     monkeypatch.setattr(ClaudeAdapter, "parse", lambda *_: make_trace())
     yield fake
@@ -184,6 +190,40 @@ def test_execute_runs_agent_in_workspace_and_logs_stdout_then_stderr(
     assert (kwargs["cwd"], kwargs["env"]) == (prepared.workspace, prepared.env)
     assert result.exit_code == 3
     assert (prepared.root / "agent.log").read_text() == f"{TOOL_LINE}out\nerr\n"
+
+
+def test_execute_reports_the_peak_resident_memory_of_the_agent_and_its_descendants(
+    popen: FakePopen,
+    cell: tuple[PreparedCell, Scenario],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared, scenario = cell
+    listing = f"{PID} 1 1000\n4300 {PID} 2000\n4301 4300 500\n9999 1 7777\n4302 {PID}\n"
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda argv, **_: subprocess.CompletedProcess(argv, 0, stdout=listing),
+    )
+
+    trace = process.execute(prepared, scenario, "m", None)
+
+    assert trace.peak_rss_kb == 3500
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_a_ps_that_times_out_leaves_the_peak_resident_memory_unknown(
+    popen: FakePopen,
+    cell: tuple[PreparedCell, Scenario],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared, scenario = cell
+
+    def hang(argv: list[str], timeout: float, **_: Any) -> None:
+        raise subprocess.TimeoutExpired(argv, timeout)
+
+    monkeypatch.setattr(subprocess, "run", hang)
+
+    assert process.execute(prepared, scenario, "m", None).peak_rss_kb == 0
 
 
 LATER_MS = 4102444800000
@@ -342,6 +382,25 @@ def test_each_fork_reports_the_context_of_its_own_first_request(
     trace = PiAdapter().add_delegates(make_trace(), tmp_path, 0)
 
     assert sorted(trace.fork_start_contexts) == [70, 540]
+
+
+def test_each_fork_reports_the_seconds_from_its_spawn_to_its_first_request(
+    tmp_path: Path,
+) -> None:
+    spawned = LATER_MS / 1000
+    for first_ms in (1500, 250):
+        files = _fork_files(
+            tmp_path,
+            None,
+            {"type": "message", "id": "old", "message": _reply(0, LATER_MS - 9)},
+            {"type": "message", "id": "f1", "message": _reply(0, LATER_MS + first_ms)},
+            {"type": "message", "id": "f2", "message": _reply(0, LATER_MS + 9000)},
+        )
+        os.utime(files / "handshake.json", (spawned, spawned))
+
+    trace = PiAdapter().add_delegates(make_trace(), tmp_path, 0)
+
+    assert sorted(trace.fork_start_s) == [0.25, 1.5]
 
 
 def test_a_fork_start_context_is_its_earliest_call_across_its_sessions(

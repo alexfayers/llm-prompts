@@ -34,7 +34,7 @@ def _definition(scenario: Scenario) -> dict[str, JsonValue]:
     fields = asdict(scenario)
     for judged in ("gate", "base", "checks", "headline", "covers"):
         fields.pop(judged)
-    for unset in ("setup", "delegation"):
+    for unset in ("setup", "delegation", "mcp"):
         if not fields[unset]:
             fields.pop(unset)
     return {

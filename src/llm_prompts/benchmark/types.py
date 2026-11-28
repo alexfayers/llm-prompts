@@ -43,6 +43,15 @@ class MemoryEntity:
 
 
 @dataclass(frozen=True)
+class McpServer:
+    """A stdio MCP server that a scenario adds to the agent config of its cell home."""
+
+    name: str
+    command: str
+    args: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class CheckSpec:
     kind: str
     args: Mapping[str, CheckArg]
@@ -73,6 +82,7 @@ class Scenario:
     delegation: bool = False
     covers: tuple[str, ...] = ()
     wait_s: int = 0
+    mcp: tuple[McpServer, ...] = ()
 
     @property
     def ask(self) -> str:
@@ -209,6 +219,8 @@ class Trace:
     turns: int = 0
     prefix_reads: tuple[PrefixRead, ...] = ()
     fork_start_contexts: tuple[int, ...] = ()
+    fork_start_s: tuple[float, ...] = ()
+    peak_rss_kb: int = 0
 
 
 @dataclass(frozen=True)
@@ -260,6 +272,8 @@ class ResultRow:
     context: int = 0
     start_context: int = 0
     fork_start_contexts: tuple[int, ...] = ()
+    fork_start_s: tuple[float, ...] = ()
+    peak_rss_kb: int = 0
     cost_usd: float | None = None
     turns: int = 0
     tool_calls: int = 0
@@ -299,6 +313,7 @@ class ResultRow:
                 data[name] = _pick(kind, {**asdict(getattr(cls, name)), **data[name]})
         if "checks" in data:
             data["checks"] = tuple(_pick(CheckOutcome, c) for c in data["checks"])
-        if "fork_start_contexts" in data:
-            data["fork_start_contexts"] = tuple(data["fork_start_contexts"])
+        for name in ("fork_start_contexts", "fork_start_s"):
+            if name in data:
+                data[name] = tuple(data[name])
         return cls(**data)

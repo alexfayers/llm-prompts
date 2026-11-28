@@ -12,7 +12,7 @@ from pathlib import Path
 
 from llm_prompts.benchmark.agents import AGENTS
 from llm_prompts.benchmark.agents.claude import CLAUDE_SETTINGS_KEYS
-from llm_prompts.benchmark.agents.files import read_json
+from llm_prompts.benchmark.agents.files import read_json, write_json
 from llm_prompts.benchmark.cell import memory
 from llm_prompts.benchmark.cell.audit import SESSION_DIRS, AuditHit, audit
 from llm_prompts.benchmark.cell.env import isolated_env
@@ -22,7 +22,7 @@ from llm_prompts.benchmark.cell.home_dirs import (
 )
 from llm_prompts.benchmark.cell.shared import SharedStores, ignoring, rewrite_paths
 from llm_prompts.benchmark.paths import live_home, new_cell_root
-from llm_prompts.benchmark.types import Cell, PreparedCell
+from llm_prompts.benchmark.types import Cell, McpServer, PreparedCell
 
 COMMIT_MESSAGE = "chore: add demo project"
 PLACEHOLDER_GITCONFIG = (
@@ -42,6 +42,17 @@ def login_env() -> dict[str, str]:
         )
         if (path := aws / name).exists()
     }
+
+
+def _add_mcp_servers(config_path: Path, servers: Iterable[McpServer]) -> None:
+    config = read_json(config_path)
+    config.setdefault("mcpServers", {}).update(
+        {
+            server.name: {"command": server.command, "args": list(server.args)}
+            for server in servers
+        }
+    )
+    write_json(config_path, config)
 
 
 def _helper_commands(home: Path) -> tuple[str, ...]:
@@ -129,6 +140,8 @@ def prepare(
         ) as handle:
             agent = AGENTS[cell.agent]
             agent.point_memory(home, handle.url)
+            if cell.scenario.mcp:
+                _add_mcp_servers(home / agent.mcp_config, cell.scenario.mcp)
             agent.install_features(home, cell.variant.features)
             agent.copy_logins(home)
             if agent.git_packages:

@@ -180,6 +180,7 @@ class PiAdapter:
     cumulative_cost = False
     shared_dirs: tuple[Path, ...] = (Path(".pi/agent/npm"), Path(".npm"))
     git_packages: Path | None = Path(".pi/agent/git")
+    mcp_config = Path(".pi/agent/mcp.json")
 
     @property
     def default_model(self) -> str:
@@ -192,7 +193,7 @@ class PiAdapter:
         return f"global.{model}" if model.startswith("anthropic.") else model
 
     def point_memory(self, home: Path, url: str) -> None:
-        config_path = home / ".pi" / "agent" / "mcp.json"
+        config_path = home / self.mcp_config
         config = read_json(config_path)
         config.setdefault("mcpServers", {})["memory"] = {"url": url}
         write_json(config_path, config)
@@ -323,13 +324,15 @@ class PiAdapter:
         ]
 
     def add_delegates(self, trace: Trace, home: Path, since: float) -> Trace:
-        """Return ``trace`` with the usage and tool calls that forks wrote to their sessions in ``home`` since ``since``."""
+        """Return ``trace`` with the usage and tool calls that forks wrote to their sessions in ``home`` since ``since``, and the seconds from each fork's spawn, when it wrote its handshake, to its first model call."""
         log = CallLog(BUILTIN_TOOLS)
         usage = list(dataclasses.astuple(trace.tokens))
         cost_usd = trace.cost_usd
         prefix_reads = []
         start_contexts = []
+        start_s = []
         for handshake in sorted((home / FORK_FILES).glob("*/handshake.json")):
+            spawned_ms = handshake.stat().st_mtime * 1000
             if (prefix := _prefix_read(handshake.parent)) is not None:
                 prefix_reads.append(prefix)
             calls = []
@@ -371,6 +374,8 @@ class PiAdapter:
                                 )
             if calls:
                 start_contexts.append(min(calls)[1])
+                if since_spawn := [at for at, _ in calls if at >= spawned_ms]:
+                    start_s.append((min(since_spawn) - spawned_ms) / 1000)
         return dataclasses.replace(
             trace,
             tool_calls=tuple(
@@ -380,6 +385,7 @@ class PiAdapter:
             cost_usd=cost_usd,
             prefix_reads=tuple(prefix_reads),
             fork_start_contexts=tuple(start_contexts),
+            fork_start_s=tuple(start_s),
         )
 
     def replied(self, line: str) -> bool:

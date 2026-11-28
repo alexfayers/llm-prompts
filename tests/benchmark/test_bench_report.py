@@ -508,6 +508,33 @@ def test_every_summary_shows_the_median_start_context_of_the_forks_per_side() ->
     assert "fork start 580 -> 300" in summary(list(report.scenarios), "")
 
 
+def test_the_markdown_report_shows_the_median_fork_start_time_per_side() -> None:
+    rows = [
+        base_row("s", "a", fork_start_s=[1.0, 3.0]),
+        base_row("s", "a", fork_start_s=[2.5]),
+        base_row("s", "b"),
+    ]
+
+    text = render(full_report(rows))
+
+    assert "| Fork start time A | Fork start time B |" in text
+    assert "| 2.5s | - |" in text
+
+
+def test_the_markdown_report_shows_the_median_peak_resident_memory_per_side() -> None:
+    rows = [
+        base_row("s", "a", peak_rss_kb=102400),
+        base_row("s", "a", peak_rss_kb=307200),
+        base_row("s", "a"),
+        base_row("s", "b"),
+    ]
+
+    text = render(full_report(rows))
+
+    assert "| Peak RSS A | Peak RSS B |" in text
+    assert "| 200 MB | - |" in text
+
+
 def test_terminal_table_fits_without_truncating_any_column_or_scenario_name() -> None:
     width = 140
     names = [
