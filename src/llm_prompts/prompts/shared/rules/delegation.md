@@ -6,6 +6,7 @@ targets: claude-code, pi
 # Delegate complex thought to subagents
 
 - MUST delegate complex thought to {% if AGENT == "pi" %}a judgment agent{% else %}an Opus agent{% endif %}, not inline.
+- Main MUST run work (research, builds, pushes) in background agents.{% if AGENT == "pi" %} After inline work, MUST `checkpoint rewind` to its outcome.{% endif %}
 {% if AGENT == "pi" %}
 - SHOULD run mechanical or lookup work as a cold worker (`fork` with `model`), judgment work as a warm fork.
 {% else %}
@@ -19,7 +20,7 @@ targets: claude-code, pi
 {% else %}
   - **Opus** - design, architecture, root-cause work, debugging, planning, synthesis.
   - **Sonnet** - parallel mechanical work Opus decided: edit pattern, bounded search.
-  - **Haiku** - trivial work: a lookup, exact change, known shell recipe. Judgment, not file count, sets tier; never real reasoning.
+  - **Haiku** - a lookup, exact change, known shell recipe. Judgment, not file count, sets tier; never real reasoning.
 {% endif %}
 {% if AGENT == "pi" %}
 - A known target (file, symbol, doc) is a trivial lookup: read it yourself, or `fork` a cold worker if cheaper. MUST NOT let it become "find out about X". 2+ units: one `fork` each, in one turn.
@@ -35,10 +36,11 @@ targets: claude-code, pi
 {% if AGENT == "pi" %}
 - Only main and a `team` delegate hold `fork`. Any other delegate MUST NOT fork.
 - A `team` forks its own readers and writers, which cannot fork. Its writers' commits land in its worktree, and it reports once.
-- A `reader` (default) only reads. A `writer` works only in its own git worktree and its commits land on the current branch - give each branch its own writer.
+- A `reader` (default) only reads. A `writer` works only in its own git worktree and its commits land on the current branch - one writer per branch.
+- SHOULD size each writer's task to one context (one package or fixed-interface part), not relay it across context stops.
 - A warm fork inherits the session and its rules. A cold worker (`model` set) starts with an empty session: its `task` MUST carry every binding constraint.
 {% else %}
-- MUST use only named tiers, passing the installed `<tier>-<model>-<effort>` name (e.g. `reasoner-opus-high`), never the bare tier - `reasoner` (Opus, holds `{{TOOL_AGENT}}`), `worker` (mechanical),
+- MUST use only named tiers, passing the installed `<tier>-<model>-<effort>` name, never the bare tier - `reasoner` (Opus, holds `{{TOOL_AGENT}}`), `worker` (mechanical),
   `surveyor` (read-only), `coordinator` (breakdown, `Explore`-only `{{TOOL_AGENT}}`); never `general-purpose`.
 - `Explore`/`Plan` inherit no rules: their prompt MUST carry every binding constraint. SHOULD prefer `Explore` to `surveyor` for bounded read-only search.
 - Only main spawns a NAMED teammate; roster is flat. `reasoner` MAY fan out unnamed subagents (may recurse), `coordinator` unnamed `Explore` only; else report to `coordinator` for the AGENT REQUEST.
@@ -56,10 +58,10 @@ Every spawn prompt MUST specify:
 - the memory/MCP facts it needs;
 {% endif %}
 - source order - memory, local checkout, internal/official docs, public web last - report back if unanswered, never widen;
-- for a tracked task (memory `task/`, plan slice, ticket): its recorded decisions, and that new ones come back in the report, never to memory;
+- for a tracked task (memory `task/`, plan slice, ticket): its recorded decisions, and that new ones come back in the report, not memory;
 - the scope boundary it MUST NOT cross - remote/live systems: read-only, naming disallowed mutations and PR push permission;
 - where the user or another session edits the same files: its own paths, and that it MUST NOT touch or repair others, even half-written;
-- lint/format/test conventions: package config (e.g. `pyproject.toml`) outranks memory/global preferences - MUST match the file edited;
+- lint/format/test conventions: package config outranks memory/global preferences - MUST match the file edited;
 - where the prompt pins a shape (signature, return type, format) and says match a sibling, MUST reconcile the two;
 - for code/prose, the output-size limit - minimal diff, no unrequested comments/refactors/reformatting, terse report.
 - for a UI/visual change: coding.md's rendered check, reported as seen - MUST NOT accept "done" from a test pass or "folded into another slice".
@@ -78,9 +80,9 @@ Every spawn prompt MUST specify:
 {% if AGENT == "pi" %}
 ## Reuse a warm fork
 
-- SHOULD give a finished fork whose cache is warm and whose context is low its next task with `fork_resume`, not start a cold fork - cheaper.
-  The `fork` result lists each such fork with its context and cache time left.
-- MUST start cold only when no warm fork holds the context, or when the warm fork's context costs more than a cold start.
+- SHOULD give a finished fork with a warm cache and low context its next task with `fork_resume`, not a cold fork - cheaper.
+  The `fork` result lists each with its context and cache time left.
+- MUST start cold only when no warm fork holds the context, or its context costs more than a cold start.
 - SHOULD use `from` and `shared` mainly to start several forks on one base.
 
 {% endif %}
