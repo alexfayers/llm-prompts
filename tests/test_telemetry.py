@@ -111,7 +111,7 @@ def test_event_carries_only_allowlisted_properties(
     properties = json.loads(posted.call_args.args[0])["properties"]
     assert set(properties) == {
         *("command", "from", "to", "agents", "overlay_count", "overlays", "outcome"),
-        *("exit_reason", "auto_update"),
+        *("exit_reason", "auto_update", "check_failed_source"),
         "run_id",
         *("flags", "duration_s", "os", "python", "schema", "$process_person_profile"),
     }

@@ -171,6 +171,7 @@ class Run(AbstractContextManager["Run"]):
         self.outcome = "ok"
         self.exit_reason: str | None = None
         self.auto_update: str | None = None
+        self.check_failed_source: str | None = None
         self._installed_version = installed_version
         self._begun: dict[str, Any] | None = None
 
@@ -280,6 +281,7 @@ class Run(AbstractContextManager["Run"]):
             "outcome": self.outcome,
             "exit_reason": self.exit_reason,
             "auto_update": self.auto_update,
+            "check_failed_source": self.check_failed_source,
             "duration_s": round(time.time() - begun["started_at"], 1),
             **telemetry_core.context(2),
         }
