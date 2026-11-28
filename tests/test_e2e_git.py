@@ -211,7 +211,7 @@ class TestPullLocalSourceE2E:
         commit_file(clone, "local.txt", "local\n", "local change")
         push_commit(other, "second upstream change", "up again\n")
 
-        assert sync(clone) == ["[core] rebased local commits onto 1 new commit(s)"]
+        assert sync(clone)[0] == "[core] rebased local commits onto 1 new commit(s)"
         assert subjects(clone) == [
             "local change",
             "second upstream change",
@@ -219,6 +219,53 @@ class TestPullLocalSourceE2E:
             "base",
         ]
         assert git(clone, "status", "--porcelain") == ""
+
+    @pytest.mark.parametrize("upstream_moved", [False, True])
+    @pytest.mark.parametrize("on_open_pr", [False, True])
+    def test_e2e_warns_only_about_local_commits_on_no_open_pr(
+        self, clone: Path, other: Path, on_open_pr: bool, upstream_moved: bool
+    ) -> None:
+        commit_file(clone, "local.txt", "local\n", "local change")
+        if on_open_pr:
+            for ref in ("heads/local", "pull/5/head", "pull/5/merge"):
+                git(clone, "push", "-q", "origin", f"HEAD:refs/{ref}")
+        if upstream_moved:
+            push_commit(other, "upstream change", "up\n")
+
+        messages = sync(clone)
+
+        warning = (
+            f"[core] warning: main holds 1 commit(s) on no open PR"
+            f" ({git(clone, 'rev-parse', '--short', 'HEAD')}); drop them with:"
+            f" cd {clone} && git rebase -i {main_sync.UPSTREAM} main"
+        )
+        moved = ["[core] rebased local commits onto 1 new commit(s)"]
+        assert messages == [
+            *(moved if upstream_moved else []),
+            *([] if on_open_pr else [warning]),
+        ]
+
+    def test_e2e_unpublished_leaves_out_recorded_copies(self, clone: Path) -> None:
+        commit_file(clone, "local.txt", "local\n", "local change")
+        identity = git(clone, "log", "-1", "--format=%at%x09%s")
+
+        assert main_sync.unpublished(clone, "origin/main", {identity}) == []
+        assert main_sync.unpublished(clone, "origin/main", set()) == [
+            git(clone, "rev-parse", "--short", "HEAD")
+        ]
+
+    @pytest.mark.parametrize("subject", ["local change", "local change (#7)"])
+    def test_e2e_unpublished_leaves_out_commits_on_the_followed_branch_past_the_release(
+        self, clone: Path, other: Path, subject: str
+    ) -> None:
+        release = git(clone, "rev-parse", "HEAD")
+        commit_file(clone, "local.txt", "local\n", "local change")
+        content = "local\n" if subject == "local change" else "squashed\n"
+        commit_file(other, "local.txt", content, subject)
+        git(other, "push", "-q", "origin", "main")
+        git(clone, "fetch", "-q")
+
+        assert main_sync.unpublished(clone, release, set()) == []
 
     @pytest.mark.parametrize("identical", [False, True])
     def test_e2e_a_rewritten_main_stays_reachable_from_the_earlier_mains_ref(
