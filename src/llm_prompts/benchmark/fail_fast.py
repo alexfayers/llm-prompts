@@ -18,9 +18,8 @@ Key = tuple[str, str, str]
 
 
 def check_label(spec: CheckSpec) -> str:
-    """Return a short one-line name for a check: its kind and arguments."""
-    args = ", ".join(f"{name}={value}" for name, value in spec.args.items())
-    text = " ".join((f"{spec.kind}({args})" if args else spec.kind).split())
+    """Return the check's name, cut to a short display label."""
+    text = spec.name
     return text if len(text) <= MAX_CHECK_CHARS else text[: MAX_CHECK_CHARS - 3] + "..."
 
 

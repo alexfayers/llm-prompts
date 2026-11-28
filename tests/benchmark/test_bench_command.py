@@ -243,6 +243,13 @@ def test_each_judge_reason_is_kept_in_full_per_cell_and_listed_in_the_report(
     assert rubrics == ["New rubric."] * 2
     for row in _results(bench_dirs, "20260101-000001-aaaa"):
         assert row["checks"][0]["detail"].endswith(f"\n{reason}")
+        assert row["checks"][0]["name"] == "judge(rubric=New rubric.)"
+    report_json = json.loads(
+        (bench_dirs.state / "runs" / "20260101-000001-aaaa" / "report.json").read_text()
+    )
+    assert {r["name"] for r in report_json["judge_reasons"]} == {
+        "judge(rubric=New rubric.)"
+    }
     report = (
         bench_dirs.state / "runs" / "20260101-000001-aaaa" / "report.md"
     ).read_text()

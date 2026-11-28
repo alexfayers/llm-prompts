@@ -74,6 +74,16 @@ def test_a_raising_check_fails_without_stopping_the_next(
 
     assert (raised.passed, ok.passed) == (False, True)
     assert "ZeroDivisionError" in raised.detail
+    assert (raised.name, ok.name) == ("boom", "not_called(name=x)")
+
+
+def test_a_check_name_keeps_its_arguments_in_full() -> None:
+    rubric = "PASS only if " + "the answer names every desk. " * 5
+    ctx = CheckContext(make_trace(final_text="x"), Path("ws"), (), ())
+
+    (outcome,) = evaluate([CheckSpec("not_called", {"name": rubric})], ctx)
+
+    assert outcome.name == " ".join(f"not_called(name={rubric})".split())
 
 
 EXITED = "2 failed\n\nCommand exited with code 1"
