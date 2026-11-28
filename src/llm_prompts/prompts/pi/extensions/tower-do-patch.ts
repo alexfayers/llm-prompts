@@ -10,7 +10,7 @@ import { Type } from "typebox";
 export const loadTowerDo = <T>(file: string): Promise<T> =>
 	import(pathToFileURL(join(getAgentDir(), "npm", "node_modules", "tower-do", file)).href);
 
-type BoardView = { revision: number; tasks: { key: string; subject?: string; status: string; owner?: string; dependsOn?: string[] }[] };
+type BoardView = { revision: number; tasks: { key: string; subject?: string; status: string; owner?: string; dependsOn?: string[]; blockedBy?: string[]; updatedAt: number }[] };
 type BoardModule = { TowerBoard: new (file: string) => { fold(): Promise<BoardView> } };
 type PathsModule = { boardFileFor: (cwd: string) => string };
 

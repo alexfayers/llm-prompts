@@ -8,14 +8,32 @@ import { loadExtension, useEnv } from "./helpers.ts";
 const AGENT_DIR = "/agent";
 const towerUrl = (file: string) => pathToFileURL(join(AGENT_DIR, "npm", "node_modules", "tower-do", file)).href;
 const sources: Record<string, string> = {
-	[towerUrl("state.ts")]: "export const MAX_TOWER_DO_OPEN_TASKS = 50; export const formatTakeoverWindow = () => '6h'; export const TASK_KEY_PATTERN = /^[a-z0-9][a-z0-9._-]{0,39}$/;",
+	[towerUrl("state.ts")]: `export const MAX_TOWER_DO_OPEN_TASKS = 50; export const formatTakeoverWindow = () => '6h'; export const TASK_KEY_PATTERN = /^[a-z0-9][a-z0-9._-]{0,39}$/;
+		export const normalizeIdentity = (identity) => identity; export const parseActivityLine = (line) => JSON.parse(line);`,
 	[towerUrl("index.ts")]: `export default function (pi) {
 		pi.on("session_start", () => {});
 		pi.on("context", (event) => ({ messages: [...event.messages, ...(event.remind ? [{ role: "custom", customType: "pi-tower-do-reminder", content: event.remind }] : [])] }));
-		pi.registerTool({ name: "tower_do", description: "long", promptGuidelines: ["long"], parameters: { type: "object", description: "x", properties: { description: { type: "string", description: "long" }, key: { type: "string", pattern: "^a" } } }, execute: () => "do" });
+		pi.registerTool({ name: "tower_do", description: "long", promptGuidelines: ["long"], parameters: { type: "object", description: "x", properties: { description: { type: "string", description: "long" }, key: { type: "string", pattern: "^a" } } }, execute: (_id, params, _signal, _update, ctx) => globalThis.towerCall("tower_do", params, ctx) });
+		pi.registerTool({ name: "tower_do_talk", description: "long", promptGuidelines: ["long"], parameters: { type: "object" }, execute: (_id, params, _signal, _update, ctx) => globalThis.towerCall("tower_do_talk", params, ctx) });
 		pi.registerTool({ name: "tower_do_status", description: "long", promptGuidelines: ["long"], parameters: { type: "object" }, execute: () => "status" });
 		pi.registerTool({ name: "other", description: "kept", parameters: { description: "kept" }, execute: () => "other" });
 	}`,
+	[towerUrl("paths.ts")]: "export const boardFileFor = (cwd) => `${cwd}/no-board-file.jsonl`; export class BoardCache { entryFor() { return { config: {} }; } }",
+	[towerUrl("board.ts")]: `export class TowerBoard {
+		async fold() { return { revision: 7, tasks: globalThis.boardTasks() }; }
+		async rawLines() { return globalThis.boardActivity.map((entry) => JSON.stringify(entry)); }
+	}`,
+};
+type Call = { tool: string; params: any; cwd?: string };
+const globals = globalThis as unknown as { towerDoCalls: Call[]; boardTasks: () => unknown[]; boardActivity: { by: string; at: number }[]; towerCall: (tool: string, params: any, ctx: any) => string };
+globals.towerDoCalls = [];
+globals.boardTasks = () => [];
+globals.boardActivity = [];
+let rejectWrites = false;
+globals.towerCall = (tool, params, ctx) => {
+	globals.towerDoCalls.push({ tool, params, cwd: ctx?.cwd });
+	if (rejectWrites && tool === "tower_do") throw new Error("stale baseRevision");
+	return "do";
 };
 const hooks = registerHooks({
 	resolve: (specifier, context, next) => (specifier in sources ? { url: specifier, format: "module", shortCircuit: true } : next(specifier, context)),
@@ -27,7 +45,13 @@ const ext = await loadExtension("tower-do-slim", { agentDir: AGENT_DIR });
 
 describe("tower-do-slim", () => {
 	useEnv({ PI_CONTEXT_CHILD: undefined, PI_SUBAGENT_CHILD: undefined });
-	beforeEach(() => ext.fire("session_start", {}));
+	beforeEach(async () => {
+		globals.boardTasks = () => [];
+		globals.boardActivity = [];
+		rejectWrites = false;
+		await ext.fire("session_start", {});
+		globals.towerDoCalls = [];
+	});
 	test("replaces the description and guidelines of a tower-do tool", () => {
 		const { tower_do } = ext.tools;
 		assert.match(tower_do.description, /idle 6h\+/);
@@ -44,10 +68,63 @@ describe("tower-do-slim", () => {
 	});
 
 	test("keeps the tool's execute, leaves other tools alone and passes other pi calls through", async () => {
-		assert.equal(await ext.callTool("tower_do"), "do");
+		assert.equal(await ext.callTool("tower_do", {}), "do");
 		assert.equal(ext.tools.other.description, "kept");
 		assert.deepEqual(ext.tools.other.parameters, { description: "kept" });
-		assert.equal(ext.handlers.session_start.length, 2);
+		assert.equal(ext.handlers.session_start.length, 3);
+	});
+
+	const DAY = 24 * 60 * 60_000;
+	const ago = (days: number) => Date.now() - days * DAY;
+	const row = (key: string, ageDays: number, extra: Record<string, unknown> = {}) => ({ key, subject: `subject ${key}`, status: "in_progress", owner: "gone", dependsOn: [], updatedAt: ago(ageDays), ...extra });
+	const start = (reason = "startup", ctx = ext.makeCtx()) => ext.fire("session_start", { reason }, ctx);
+	const writes = () => globals.towerDoCalls.filter(({ tool }) => tool === "tower_do").map(({ params }) => params.remove);
+
+	test("a startup tells each idle owner, then removes its open tasks idle for more than 3 days as tower, against the folded revision", async () => {
+		const ctx = ext.makeCtx({ cwd: "/repo" });
+		globals.boardTasks = () => [row("old", 4), row("fresh", 2), row("done", 9, { status: "completed" }), row("other", 5, { owner: "left" })];
+		globals.boardActivity = [{ by: "gone", at: ago(4) }, { by: "left", at: ago(6) }];
+		await start("startup", ctx);
+		assert.deepEqual(globals.towerDoCalls.map(({ tool, params, cwd }) => [tool, params.to, cwd]), [["tower_do_talk", "gone", "/repo"], ["tower_do_talk", "left", "/repo"], ["tower_do", undefined, "/repo"]]);
+		assert.match(globals.towerDoCalls[0].params.body, /^- old \[in_progress\]: subject old$/m);
+		assert.deepEqual(globals.towerDoCalls[2].params, { as: "tower", baseRevision: 7, tasks: [], remove: ["old", "other"] });
+		assert.deepEqual(ctx.notices.at(-1), ["tower-do: removed open tasks of owners idle for 3 days: old, other", "info"]);
+	});
+
+	test("keeps tasks of this session, of an owner active in the last 3 days, unowned, blocked or waiting on a blocker", async () => {
+		globals.boardTasks = () => [row("mine", 9, { owner: "session-id" }), row("busy", 9, { owner: "alive" }), row("free", 9, { owner: undefined }), row("parked", 9, { status: "blocked" }), row("waiting", 9, { status: "pending", blockedBy: ["review"] }), row("old", 9)];
+		globals.boardActivity = [{ by: "alive", at: ago(1) }];
+		await start("new");
+		assert.deepEqual(writes(), [["old"]]);
+	});
+
+	for (const reason of ["resume", "reload", "fork"])
+		test(`a ${reason} removes no task`, async () => {
+			globals.boardTasks = () => [row("old", 9)];
+			await start(reason);
+			assert.deepEqual(globals.towerDoCalls, []);
+		});
+
+	test("an idle task that a kept task depends on stays, with every idle task it depends on", async () => {
+		globals.boardTasks = () => [row("base", 6), row("middle", 5, { dependsOn: ["base"] }), row("live", 1, { dependsOn: ["middle"] }), row("lone", 4)];
+		await start();
+		assert.deepEqual(writes(), [["lone"]]);
+	});
+
+	test("a board with no idle task, or one that cannot be read, gets no write, and a rejected removal tells the user nothing", async () => {
+		globals.boardTasks = () => [row("fresh", 1)];
+		await start();
+		globals.boardTasks = () => {
+			throw new Error("unreadable");
+		};
+		await start();
+		assert.deepEqual(globals.towerDoCalls, []);
+		globals.boardTasks = () => [row("old", 4)];
+		rejectWrites = true;
+		const ctx = ext.makeCtx();
+		await start("startup", ctx);
+		assert.deepEqual(writes(), [["old"]]);
+		assert.deepEqual(ctx.notices, []);
 	});
 
 	const board = (revision: number, tasks: string[], identity = "main") =>
@@ -64,6 +141,7 @@ describe("tower-do-slim", () => {
 		assert.deepEqual(out.content[0], { type: "text", text: "out" });
 		return out.content[1].text as string;
 	};
+	const more = (...keys: string[]) => `\u2026 and ${keys.length} more open task(s): ${keys.join(", ")}`;
 	const a = "- [blocked] a: long subject a @main (me)";
 	const b = "- [pending] b: long subject b";
 
@@ -71,10 +149,29 @@ describe("tower-do-slim", () => {
 		const first = await remind([], board(1, [a, b]));
 		assert.equal(first, [header(1, 2), "Changed since the last board note:", a, b, "Open tasks: a, b"].join("\n"));
 		const c = "- [in_progress] c: subject c";
-		const second = await remind([toolResult("out", first!)], board(2, [a, c, "… and 1 more open task(s): d"]));
+		const second = await remind([toolResult("out", first!)], board(2, [a, c, more("d")]));
 		assert.equal(second, [header(2, 3), "Changed since the last board note:", c, "New: d", "Completed or removed: b"].join("\n"));
-		assert.equal(await remind([toolResult("out", first!), toolResult("out", second!)], board(3, [a, c, "… and 2 more open task(s): d, e"])), [header(3, 3), "New: e"].join("\n"));
+		assert.equal(await remind([toolResult("out", first!), toolResult("out", second!)], board(3, [a, c, more("d", "e")])), [header(3, 3), "New: e"].join("\n"));
 		assert.equal(await ext.fire("tool_result", { content: [] }), undefined);
+	});
+
+	test("lists only the caller's tasks and tasks updated in the last 24h, with a count of the rest", async () => {
+		const hours = (n: number) => Date.now() - n * 60 * 60_000;
+		const mine = "- [in_progress] mine: subject @main (me)";
+		const recent = "- [pending] recent: subject @peer";
+		const idle = "- [pending] idle: subject @peer";
+		globals.boardTasks = () => [
+			{ key: "mine", status: "in_progress", owner: "main", updatedAt: hours(40) },
+			{ key: "recent", status: "pending", owner: "peer", updatedAt: hours(2) },
+			{ key: "idle", status: "pending", owner: "peer", updatedAt: hours(30) },
+			{ key: "old", status: "pending", updatedAt: hours(50) },
+		];
+		const first = (await remind([], board(1, [mine, recent, idle, more("old")])))!;
+		assert.equal(first, [header(1, 4), "Changed since the last board note:", mine, recent, "Open tasks: mine, recent", "Not listed: 2 open task(s) of others idle over 24h."].join("\n"));
+		assert.equal(await remind([toolResult("out", first)], board(2, [mine, recent, idle, more("old")])), header(2, 4));
+		globals.boardTasks = () => [{ key: "idle", status: "in_progress", owner: "peer", updatedAt: hours(0) }, { key: "mine", status: "in_progress", owner: "main", updatedAt: hours(40) }];
+		const woke = "- [in_progress] idle: subject @peer";
+		assert.equal(await remind([toolResult("out", first)], board(3, [woke, mine])), [header(3, 2), "Changed since the last board note:", woke, "Completed or removed: recent"].join("\n"));
 	});
 
 	test("a result of a call another tool made takes no note, and the next top-level result does", async () => {
@@ -119,9 +216,12 @@ describe("tower-do-slim", () => {
 	});
 
 	for (const marker of ["PI_CONTEXT_CHILD", "PI_SUBAGENT_CHILD"])
-		test(`a fork marked by ${marker} gets no board note`, async () => {
+		test(`a fork marked by ${marker} gets no board note and expires no task`, async () => {
 			process.env[marker] = "1";
 			assert.equal(await remind([], board(1, [a])), undefined);
+			globals.boardTasks = () => [row("old", 4)];
+			await start();
+			assert.deepEqual(globals.towerDoCalls, []);
 		});
 
 	test("a revision already noted gets no second note, even when the note was folded away", async () => {
