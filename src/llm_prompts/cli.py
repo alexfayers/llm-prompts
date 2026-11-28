@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
+from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, Self
 from urllib.parse import urlparse
@@ -1357,9 +1358,17 @@ def _run_command(
     run: telemetry.Run, stack: contextlib.ExitStack[bool | None]
 ) -> int | None:
     """Parse the command line and run the chosen command."""
+    version_parser = argparse.ArgumentParser(add_help=False)
+    version_parser.add_argument(
+        "--version", action="store_true", help="Print the installed version and exit."
+    )
+    if version_parser.parse_known_args()[0].version:
+        print(f"llm-prompts {version('llm-prompts')}")
+        return 0
     parser = argparse.ArgumentParser(
         prog="llm-prompts",
         description="Manage LLM prompt rules, workflows, and skills.",
+        parents=[version_parser],
     )
     subparsers = parser.add_subparsers(dest="command")
     install_parser = subparsers.add_parser(
