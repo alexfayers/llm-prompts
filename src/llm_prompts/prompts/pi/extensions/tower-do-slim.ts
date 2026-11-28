@@ -1,9 +1,10 @@
-// Re-registers the tower_do, tower_do_talk and tower_do_status tools with shorter descriptions, parameter schemas and guidelines, and shortens the board reminder to counts, task keys and the tasks the board notes still in the context do not state.
+// Re-registers the tower_do, tower_do_talk and tower_do_status tools with shorter descriptions, parameter schemas and guidelines, shortens the board reminder to counts, task keys and the tasks the board notes still in the context do not state, and removes open tasks left idle by dead sessions on session start.
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionToolContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { IDLE_FOLD_EVENT } from "./context-fold.ts";
+import { foldBoard } from "./tower-do-patch.ts";
 
 const REMINDER_TYPE = "pi-tower-do-reminder";
 const REVISION_ENTRY_TYPE = "tower-do-noted-revisions";
@@ -11,6 +12,20 @@ const REVISION_ENTRY_TYPE = "tower-do-noted-revisions";
 type Slim = { description: string; promptGuidelines: string[] };
 type TowerState = { formatTakeoverWindow(): string; MAX_TOWER_DO_OPEN_TASKS: number; TASK_KEY_PATTERN: RegExp };
 type TowerModule = { default: (pi: ExtensionAPI) => void | Promise<void> };
+type BoardTask = Awaited<ReturnType<typeof foldBoard>>["tasks"][number];
+
+const DAY_MS = 24 * 60 * 60_000;
+export const EXPIRE_IDLE_MS = 3 * DAY_MS;
+
+/** Keys of open tasks idle for more than EXPIRE_IDLE_MS, less any that a kept task still depends on, so one removal write passes the dependency check. */
+export function expiredTaskKeys(tasks: BoardTask[], now: number): string[] {
+	const expired = new Set(tasks.filter((task) => task.status !== "completed" && now - task.updatedAt > EXPIRE_IDLE_MS).map((task) => task.key));
+	for (let size = -1; size !== expired.size; ) {
+		size = expired.size;
+		for (const task of tasks) if (!expired.has(task.key)) for (const dependency of task.dependsOn ?? []) expired.delete(dependency);
+	}
+	return [...expired];
+}
 
 export function withoutDescriptions<T>(node: T): T {
 	if (Array.isArray(node)) return node.map(withoutDescriptions) as T;
@@ -150,7 +165,10 @@ export default async function (pi: ExtensionAPI) {
 	const slim = slimTools(towerState);
 	const { compactReminder, notedRevisions, restoreRevisions } = boardNotes(towerState.TASK_KEY_PATTERN);
 	const { default: towerDo } = await loadFromTowerDo<TowerModule>("index.ts");
+	const isChild = () => Boolean(process.env.PI_CONTEXT_CHILD || process.env.PI_SUBAGENT_CHILD);
+	let towerDoTool: ToolDefinition | undefined;
 	const registerTool = (tool: ToolDefinition) => {
+		if (tool.name === "tower_do") towerDoTool = tool;
 		const override = slim[tool.name];
 		pi.registerTool(override ? { ...tool, ...override, parameters: withoutDescriptions(tool.parameters) } : tool);
 	};
@@ -175,7 +193,7 @@ export default async function (pi: ExtensionAPI) {
 		pendingReminder = undefined;
 	});
 	pi.on("tool_result", (event) => {
-		if (event.parentToolCallId || process.env.PI_CONTEXT_CHILD || process.env.PI_SUBAGENT_CHILD || pendingReminder === undefined) return;
+		if (event.parentToolCallId || isChild() || pendingReminder === undefined) return;
 		const text = compactReminder(pendingReminder.text, pendingReminder.messages);
 		pendingReminder = undefined;
 		if (text === undefined) return;
@@ -184,4 +202,9 @@ export default async function (pi: ExtensionAPI) {
 	});
 	const wrappers: Record<string, unknown> = { registerTool, on };
 	await towerDo(new Proxy(pi, { get: (target, key) => (typeof key === "string" && key in wrappers ? wrappers[key] : Reflect.get(target, key)) }));
+	pi.on("session_start", async (_event, ctx) => {
+		if (isChild() || !towerDoTool) return;
+		const expired = expiredTaskKeys((await foldBoard(ctx.cwd).catch(() => undefined))?.tasks ?? [], Date.now());
+		if (expired.length) await Promise.resolve(towerDoTool.execute("expire-idle-tasks", { as: "tower", tasks: [], remove: expired }, undefined, undefined, ctx as ExtensionToolContext)).catch(() => undefined);
+	});
 }
