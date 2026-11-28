@@ -22,7 +22,7 @@ def _git(toplevel: Path, *args: str) -> str | None:
     ran = subprocess.run(
         ["git", "-C", str(toplevel), *args], capture_output=True, check=False
     )
-    return ran.stdout.decode() if ran.returncode == 0 else None
+    return os.fsdecode(ran.stdout) if ran.returncode == 0 else None
 
 
 def _tool_version(tool: str, toplevel: Path) -> bytes | None:
@@ -71,13 +71,13 @@ def tree_fingerprint(toplevel: Path, tools: Iterable[str] = ()) -> str:
                 return uuid.uuid4().hex
             content = b"commit\0" + head.encode()
         elif path.is_symlink():
-            content = b"link\0" + os.readlink(path).encode()
+            content = b"link\0" + os.fsencode(os.readlink(path))
         elif path.is_file():
             executable = b"x" if os.access(path, os.X_OK) else b"-"
             content = b"file" + executable + b"\0" + path.read_bytes()
         else:
             continue
-        digest.update(name.encode() + b"\0" + hashlib.sha256(content).digest())
+        digest.update(os.fsencode(name) + b"\0" + hashlib.sha256(content).digest())
     return digest.hexdigest()
 
 
@@ -112,6 +112,10 @@ class ReceiptStore:
                 self._path, {**self._read(), _key(toplevel, command): fingerprint}
             )
 
+    def stored(self, toplevel: Path, command: str = "") -> str | None:
+        """Return the value stored for the repo, or for the command run in it, or None."""
+        return self._read().get(_key(toplevel, command))
+
     def fresh(self, toplevel: Path, fingerprint: str, command: str = "") -> bool:
         """Report whether the last passing test run in the repo, or of the command, saw this fingerprint."""
-        return self._read().get(_key(toplevel, command)) == fingerprint
+        return self.stored(toplevel, command) == fingerprint
